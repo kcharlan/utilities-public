@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "low",
+  "effort": "small",
+  "summary": "Two small fixes applied: (1) SSE step label in full scan path was stale ('branches' → 'deps') after packet 16 added dep scanning to full scan, (2) redundant 'import re' inside check_ruby_outdated removed. All 345/345 tests pass before and after fixes. No architectural drift. Carryover: 7 untracked test files.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Schema, all 12 API contracts, CSS design system, full dependency pipeline (detection → parsing → 6 ecosystem health checks → DB orchestration → fleet API integration), and tracker state all match the intended architecture. KPIs vulnerable_deps and outdated_deps now correctly computed from DB (packet 16). dep_summary correctly null vs populated based on dependencies table rows. SSE step label fix: packet 08 originally set step='branches' as the last step in full scan; packet 16 added run_dep_scan_for_repo after branches but did not update the SSE event. Fixed to 'deps'. Redundant import: check_ruby_outdated had 'import re' inside the function despite module-level import at line 14. Sequential dep scan is a known accepted deviation from spec's semaphore(4) suggestion — deliberate packet 16 design choice."
+}

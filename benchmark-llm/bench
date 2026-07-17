@@ -1,0 +1,27 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "PyYAML>=6.0",
+# ]
+# ///
+"""benchmark-llm launcher.
+
+PEP 723 inline metadata cannot express an editable self-install, so rather than
+installing the package we add this script's directory (the repo checkout) to
+sys.path and invoke ``benchmark_llm.cli.main`` directly — equivalent to
+``python -m benchmark_llm``. benchmark-llm requires the repo checkout to run, so
+a repo-relative import does not weaken its delivery model.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from benchmark_llm.cli import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

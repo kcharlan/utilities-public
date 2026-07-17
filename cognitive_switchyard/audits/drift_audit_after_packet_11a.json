@@ -1,0 +1,11 @@
+{
+  "status": "repair_packet",
+  "severity": "high",
+  "effort": "medium",
+  "summary": "Packet 12 is supposed to stay UI-only, but the packet-11/11A backend still lacks setup-side preflight transport and a reconnection-safe worker snapshot, so another backend repair packet is required before the SPA can land cleanly.",
+  "fixes_applied": false,
+  "validation_rerun": "none",
+  "repair_packet_id": "11B",
+  "repair_packet_doc": "plans/packet_11b_backend_setup_and_monitor_contract_repair.md",
+  "notes": "Trackers were updated to insert repair packet 11B immediately after packet 11A, and audits/drift_audit_state.json was updated to record this cumulative audit."
+}

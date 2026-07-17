@@ -1,0 +1,22 @@
+plan_name: Demo Plan B
+
+benefits:
+  - service_category: primary care visit
+    coverage_status: covered
+    member_cost: "$25 copay"
+
+  - service_category: emergency room physician
+    coverage_status: covered
+    member_cost: included in professional claim
+
+  - service_category: diagnostic imaging technical
+    coverage_status: covered
+    member_cost: "20% after deductible"
+
+  - service_category: home health visit
+    coverage_status: covered
+    member_cost: "30% coinsurance"
+
+  - service_category: specialist consultation
+    coverage_status: covered
+    member_cost: "$50 copay"

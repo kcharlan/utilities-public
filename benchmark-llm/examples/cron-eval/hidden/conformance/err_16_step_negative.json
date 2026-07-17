@@ -1,0 +1,1 @@
+{"id": "err_16_step_negative","category": "errors","weight": 0.2,"input": {"expr": "*/-5 * * * *","after": "2026-01-15T00:00:00+00:00","n": 1,"tz": "UTC"},"expected": {"kind": "raises","value": "InvalidCronExpr"}}

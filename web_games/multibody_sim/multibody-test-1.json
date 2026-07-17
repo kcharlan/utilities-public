@@ -1,0 +1,100 @@
+{
+  "type": "multibody-user-setup",
+  "version": 2,
+  "savedAt": "2026-02-08T01:46:56.177Z",
+  "bodies": [
+    {
+      "id": 1,
+      "pos": {
+        "x": -191.13052057045624,
+        "y": 185.2386958075785
+      },
+      "vel": {
+        "x": -0.11938305034196887,
+        "y": 0.24844394686710886
+      },
+      "mass": 540,
+      "radius": 39.50443013131565,
+      "color": {
+        "r": 234,
+        "g": 125,
+        "b": 74
+      }
+    },
+    {
+      "id": 2,
+      "pos": {
+        "x": 9.900178926361448,
+        "y": -25.96155860881999
+      },
+      "vel": {
+        "x": 0.6610482700385018,
+        "y": 1.080082647820064
+      },
+      "mass": 45,
+      "radius": 11.403946685248927,
+      "color": {
+        "r": 77,
+        "g": 230,
+        "b": 240
+      }
+    }
+  ],
+  "nextBodyId": 3,
+  "selectedBodyId": null,
+  "settings": {
+    "timeSpeed": 4.3,
+    "timeMultiplier": 8,
+    "screensaverN": 3,
+    "G": 1,
+    "epsilon": 8,
+    "trailsEnabled": true,
+    "trailLength": 60,
+    "leadsEnabled": true,
+    "leadsLength": 80,
+    "autoAssignOnStart": false,
+    "autoVelFactor": 0.9,
+    "autoCameraSetup": false
+  },
+  "userSetupBaseline": {
+    "bodies": [
+      {
+        "id": 1,
+        "pos": {
+          "x": -156.19023089684524,
+          "y": -29.161464228040046
+        },
+        "vel": {
+          "x": -0.0067119164471111025,
+          "y": 0.20788733567815446
+        },
+        "mass": 540,
+        "radius": 39.50443013131565,
+        "color": {
+          "r": 234,
+          "g": 125,
+          "b": 74
+        }
+      },
+      {
+        "id": 2,
+        "pos": {
+          "x": 75.03975395526636,
+          "y": -3.1497581848082064
+        },
+        "vel": {
+          "x": -0.6910053366998187,
+          "y": 1.566761982087523
+        },
+        "mass": 45,
+        "radius": 11.403946685248927,
+        "color": {
+          "r": 77,
+          "g": 230,
+          "b": 240
+        }
+      }
+    ],
+    "nextBodyId": 3
+  }
+}

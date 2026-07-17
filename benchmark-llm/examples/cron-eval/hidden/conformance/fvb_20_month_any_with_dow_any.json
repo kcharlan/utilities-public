@@ -1,0 +1,1 @@
+{"id": "fvb_20_month_any_with_dow_any","category": "field_validity_basic","weight": 1,"input": {"expr": "30 14 * * *","after": "2026-01-01T00:00:00+00:00","n": 3,"tz": "UTC"},"expected": {"kind": "fires","value": ["2026-01-01T14:30:00+00:00","2026-01-02T14:30:00+00:00","2026-01-03T14:30:00+00:00"]}}

@@ -1,0 +1,44 @@
+type: repo_task
+id: policy-engine
+runs: 3
+run_order: breadth
+output_dir: /Users/example/Documents/benchmark-llm
+
+workspace:
+  kind: git_worktree
+  source_repo: ${BENCH_POLICY_ENGINE_SOURCE_REPO}
+  commit_outputs: true
+
+visibility:
+  expose:
+    - visible/**
+    - visible/.gitignore
+    - prompt.txt
+  hide:
+    - hidden/**
+
+executor:
+  kind: cli
+  command: ./scripts/invoke_model.sh
+
+execution_defaults:
+  timeout_sec: 3600
+  inactivity_timeout_sec: 900
+  retries:
+    max_attempts: 2
+    backoff_sec: 20
+
+steps:
+  - name: prepare
+    run: ./scripts/prepare.sh
+  - name: execute
+    use_executor: true
+  - name: validate
+    run: ./scripts/run_checks.sh
+  - name: mutation_probe
+    run: ./scripts/run_mutation_check.sh
+  - name: adjudicate
+    run: ./scripts/adjudicate.sh
+
+scoring:
+  output: score.json

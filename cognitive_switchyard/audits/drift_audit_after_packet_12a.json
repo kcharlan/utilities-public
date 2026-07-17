@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "medium",
+  "effort": "small",
+  "summary": "Repaired self-bootstrap drift for the validated serve surface and aligned adjacent docs/tests with the packet-12A frontier.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Targeted validation rerun: .venv/bin/python -m pytest tests/test_cli.py tests/test_bootstrap_smoke.py -q (15 passed)."
+}

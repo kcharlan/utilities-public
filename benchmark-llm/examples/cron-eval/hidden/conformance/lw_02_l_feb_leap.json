@@ -1,0 +1,1 @@
+{"id": "lw_02_l_feb_leap","category": "l_and_w","weight": 1,"input": {"expr": "0 12 L 2 *","after": "2028-02-01T00:00:00+00:00","n": 2,"tz": "UTC"},"expected": {"kind": "fires","value": ["2028-02-29T12:00:00+00:00","2029-02-28T12:00:00+00:00"]}}

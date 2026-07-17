@@ -1,0 +1,2166 @@
+#!/usr/bin/env python3
+"""Interactive helper for git worktree management."""
+
+from __future__ import annotations
+
+import argparse
+import curses
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import textwrap
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable, Optional
+
+
+STATE_DIR = Path.home() / ".worktree-helper"
+STATE_FILE = STATE_DIR / "state.json"
+VERSION = "0.1.0"
+BACK = object()
+
+
+class WorktreeError(RuntimeError):
+    """Raised for user-facing worktree problems."""
+
+
+@dataclass
+class HistoryState:
+    recent_repos: list[str] = field(default_factory=list)
+    recent_target_parents: list[str] = field(default_factory=list)
+    recent_worktrees: list[str] = field(default_factory=list)
+    last_result_summary: str = ""  # session-only, not persisted
+
+
+@dataclass
+class WorktreeEntry:
+    path: Path
+    head: str = ""
+    branch_ref: str = ""
+    detached: bool = False
+    bare: bool = False
+    locked: bool = False
+    lock_reason: str = ""
+    prunable: str = ""
+
+    @property
+    def branch_name(self) -> str:
+        if self.branch_ref.startswith("refs/heads/"):
+            return self.branch_ref[len("refs/heads/") :]
+        if self.branch_ref:
+            return self.branch_ref
+        if self.detached:
+            return "DETACHED"
+        return "(unknown)"
+
+    @property
+    def short_head(self) -> str:
+        return self.head[:10] if self.head else "?"
+
+    @property
+    def is_main(self) -> bool:
+        git_dir = self.path / ".git"
+        return git_dir.is_dir()
+
+
+@dataclass
+class BranchEntry:
+    name: str
+    full_ref: str
+    kind: str
+    upstream: str = ""
+    sha: str = ""
+    relative_date: str = ""
+
+
+@dataclass
+class ActionRequest:
+    action: Optional[str] = None
+    repo: Optional[Path] = None
+    path: Optional[Path] = None
+    worktree: Optional[Path] = None
+    new_path: Optional[Path] = None
+    branch: Optional[str] = None
+    new_branch: Optional[str] = None
+    reset_branch: Optional[str] = None
+    from_ref: Optional[str] = None
+    detach: bool = False
+    orphan: bool = False
+    force: bool = False
+    no_checkout: bool = False
+    lock_on_create: bool = False
+    lock_reason: Optional[str] = None
+    expire: Optional[str] = None
+    dry_run: bool = False
+    repair_paths: list[Path] = field(default_factory=list)
+    raw_path: bool = False
+    yes: bool = False
+    verbose: bool = False
+    no_color: bool = False
+
+
+@dataclass
+class ActionResult:
+    action: str
+    title: str
+    lines: list[str]
+    command_hint: str
+    raw_output: Optional[str] = None
+
+
+@dataclass
+class MenuItem:
+    value: Any
+    label: str
+    meta: str = ""
+    keywords: str = ""
+    is_separator: bool = False
+    glyph: str = ""
+
+
+def load_state() -> HistoryState:
+    if not STATE_FILE.exists():
+        return HistoryState()
+    try:
+        data = json.loads(STATE_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return HistoryState()
+    return HistoryState(
+        recent_repos=[str(Path(p).expanduser()) for p in data.get("recent_repos", [])][:15],
+        recent_target_parents=[
+            str(Path(p).expanduser()) for p in data.get("recent_target_parents", [])
+        ][:15],
+        recent_worktrees=[str(Path(p).expanduser()) for p in data.get("recent_worktrees", [])][:25],
+    )
+
+
+def remember_path(bucket: list[str], path: Path, limit: int) -> list[str]:
+    raw = str(path.expanduser())
+    updated = [raw] + [item for item in bucket if item != raw]
+    return updated[:limit]
+
+
+def normalize_ui_path(path: Path) -> Path:
+    raw = os.path.abspath(os.path.expanduser(str(path)))
+    return Path(raw)
+
+
+def save_state(state: HistoryState) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "recent_repos": state.recent_repos[:15],
+        "recent_target_parents": state.recent_target_parents[:15],
+        "recent_worktrees": state.recent_worktrees[:25],
+    }
+    STATE_FILE.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def shell_join(parts: Iterable[str]) -> str:
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def supports_color(no_color: bool) -> bool:
+    return sys.stdout.isatty() and not no_color and os.getenv("TERM", "dumb") != "dumb"
+
+
+def ansi(code: str, text: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def git(
+    repo: Optional[Path],
+    args: list[str],
+    *,
+    check: bool = True,
+    capture: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    cmd = ["git"]
+    if repo is not None:
+        cmd.extend(["-C", str(repo)])
+    cmd.extend(args)
+    completed = subprocess.run(
+        cmd,
+        text=True,
+        capture_output=capture,
+        check=False,
+    )
+    if check and completed.returncode != 0:
+        stderr = completed.stderr.strip() or completed.stdout.strip() or "git command failed"
+        raise WorktreeError(stderr)
+    return completed
+
+
+def resolve_repo_root(path: Path) -> Optional[Path]:
+    candidate = path.expanduser().resolve()
+    completed = git(candidate, ["rev-parse", "--show-toplevel"], check=False)
+    if completed.returncode != 0:
+        return None
+    return Path(completed.stdout.strip()).resolve()
+
+
+def pick_default_repo(seed: Optional[Path]) -> Optional[Path]:
+    if seed is not None:
+        root = resolve_repo_root(seed)
+        if root is not None:
+            return root
+    return resolve_repo_root(Path.cwd())
+
+
+def parse_worktree_list(text: str) -> list[WorktreeEntry]:
+    entries: list[WorktreeEntry] = []
+    current: dict[str, Any] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            if current.get("path"):
+                entries.append(
+                    WorktreeEntry(
+                        path=Path(current["path"]).expanduser().resolve(),
+                        head=current.get("head", ""),
+                        branch_ref=current.get("branch_ref", ""),
+                        detached=current.get("detached", False),
+                        bare=current.get("bare", False),
+                        locked=current.get("locked", False),
+                        lock_reason=current.get("lock_reason", ""),
+                        prunable=current.get("prunable", ""),
+                    )
+                )
+            current = {}
+            continue
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            current["path"] = value
+        elif key == "HEAD":
+            current["head"] = value
+        elif key == "branch":
+            current["branch_ref"] = value
+        elif key == "detached":
+            current["detached"] = True
+        elif key == "bare":
+            current["bare"] = True
+        elif key == "locked":
+            current["locked"] = True
+            current["lock_reason"] = value
+        elif key == "prunable":
+            current["prunable"] = value
+    if current.get("path"):
+        entries.append(
+            WorktreeEntry(
+                path=Path(current["path"]).expanduser().resolve(),
+                head=current.get("head", ""),
+                branch_ref=current.get("branch_ref", ""),
+                detached=current.get("detached", False),
+                bare=current.get("bare", False),
+                locked=current.get("locked", False),
+                lock_reason=current.get("lock_reason", ""),
+                prunable=current.get("prunable", ""),
+            )
+        )
+    return entries
+
+
+def list_worktrees(repo: Path) -> list[WorktreeEntry]:
+    completed = git(repo, ["worktree", "list", "--porcelain"])
+    return parse_worktree_list(completed.stdout)
+
+
+def get_local_branches(repo: Path) -> list[BranchEntry]:
+    completed = git(
+        repo,
+        [
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)\t%(refname)\t%(upstream:short)\t%(objectname:short)\t%(committerdate:relative)",
+            "refs/heads",
+        ],
+    )
+    branches: list[BranchEntry] = []
+    for line in completed.stdout.splitlines():
+        name, full_ref, upstream, sha, relative_date = (line.split("\t") + ["", "", "", "", ""])[:5]
+        branches.append(
+            BranchEntry(
+                name=name,
+                full_ref=full_ref,
+                kind="local",
+                upstream=upstream,
+                sha=sha,
+                relative_date=relative_date,
+            )
+        )
+    return branches
+
+
+def get_remote_refs(repo: Path) -> list[BranchEntry]:
+    completed = git(
+        repo,
+        [
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)\t%(refname)\t%(objectname:short)\t%(committerdate:relative)",
+            "refs/remotes",
+        ],
+    )
+    refs: list[BranchEntry] = []
+    for line in completed.stdout.splitlines():
+        name, full_ref, sha, relative_date = (line.split("\t") + ["", "", "", ""])[:4]
+        if name.endswith("/HEAD"):
+            continue
+        refs.append(
+            BranchEntry(
+                name=name,
+                full_ref=full_ref,
+                kind="remote",
+                sha=sha,
+                relative_date=relative_date,
+            )
+        )
+    return refs
+
+
+def get_current_branch(repo: Path) -> Optional[str]:
+    completed = git(repo, ["branch", "--show-current"], check=False)
+    name = completed.stdout.strip()
+    return name or None
+
+
+def git_status_summary(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "exists": False,
+            "clean": False,
+            "branch_line": "(missing on disk)",
+            "changes": 0,
+            "untracked": 0,
+            "raw": [],
+        }
+    completed = git(path, ["status", "--short", "--branch"], check=False)
+    if completed.returncode != 0:
+        return {
+            "exists": True,
+            "clean": False,
+            "branch_line": "(unable to read status)",
+            "changes": 0,
+            "untracked": 0,
+            "raw": [],
+        }
+    lines = completed.stdout.splitlines()
+    branch_line = lines[0] if lines else "## ?"
+    changes = 0
+    untracked = 0
+    for line in lines[1:]:
+        if line.startswith("??"):
+            untracked += 1
+        if line.strip():
+            changes += 1
+    return {
+        "exists": True,
+        "clean": changes == 0,
+        "branch_line": branch_line.replace("## ", ""),
+        "changes": changes,
+        "untracked": untracked,
+        "raw": lines[1:],
+    }
+
+
+def path_name_for_branch(repo: Path, branch_like: str) -> str:
+    safe = branch_like.replace("/", "-").replace(" ", "-")
+    safe = "".join(ch for ch in safe if ch.isalnum() or ch in "-_.")
+    safe = safe.strip("-_.") or "worktree"
+    return f"{repo.name}-{safe}"
+
+
+def ensure_git_available() -> None:
+    if shutil.which("git") is None:
+        raise WorktreeError("git is not installed or not available on PATH.")
+
+
+def ensure_repo(value: Optional[Path]) -> Path:
+    repo = pick_default_repo(value)
+    if repo is None:
+        raise WorktreeError(
+            "Could not detect a git repository. Run inside a repo, pass --repo, or use the interactive picker."
+        )
+    return repo
+
+
+def validate_create_request(request: ActionRequest, repo: Path) -> None:
+    modes = [
+        bool(request.branch),
+        bool(request.new_branch),
+        bool(request.reset_branch),
+        request.detach,
+        request.orphan,
+    ]
+    if sum(1 for mode in modes if mode) == 0:
+        raise WorktreeError(
+            "Create mode is ambiguous. Use --branch, --new-branch, --reset-branch, --detach, or --orphan."
+        )
+    if sum(1 for mode in modes if mode) > 1:
+        raise WorktreeError(
+            "Choose only one create mode: existing branch, new branch, reset branch, detached, or orphan."
+        )
+    if request.path is None:
+        raise WorktreeError("Missing target path for create. Pass --path or use the picker.")
+    if request.orphan and not (request.new_branch or request.reset_branch):
+        raise WorktreeError("Orphan creation needs --new-branch or --reset-branch.")
+    if request.branch:
+        available = {entry.name for entry in get_local_branches(repo)}
+        if request.branch not in available:
+            raise WorktreeError(f"Local branch '{request.branch}' does not exist in {repo}.")
+        for entry in list_worktrees(repo):
+            if entry.branch_name == request.branch and entry.path != request.path and not request.force:
+                raise WorktreeError(
+                    f"Branch '{request.branch}' is already checked out in {entry.path}. Use --force or choose a different branch."
+                )
+
+
+def validate_target_path(path: Path, *, allow_existing_empty: bool) -> tuple[Path, list[str]]:
+    resolved = path.expanduser().resolve()
+    notes: list[str] = []
+    if resolved.exists():
+        if not resolved.is_dir():
+            raise WorktreeError(f"{resolved} exists but is not a directory.")
+        entries = list(resolved.iterdir())
+        if entries and not allow_existing_empty:
+            raise WorktreeError(f"{resolved} exists and is not empty.")
+        if entries and allow_existing_empty:
+            notes.append("Target directory already exists and is not empty. Git may reject this path.")
+        elif not entries:
+            notes.append("Target directory already exists and is empty.")
+    else:
+        notes.append("Target directory does not exist yet and will be created by git.")
+    return resolved, notes
+
+
+def equivalent_command(request: ActionRequest) -> str:
+    parts = ["worktree"]
+    action_to_flag = {
+        "create": "--create",
+        "delete": "--delete",
+        "list": "--list",
+        "status": "--status",
+        "prune": "--prune",
+        "open": "--open",
+        "cd": "--cd",
+        "lock": "--lock",
+        "unlock": "--unlock",
+        "move": "--move",
+        "repair": "--repair",
+        "doctor": "--doctor",
+    }
+    if request.action:
+        parts.append(action_to_flag[request.action])
+    if request.repo:
+        parts.extend(["--repo", str(request.repo)])
+    if request.path:
+        parts.extend(["--path", str(request.path)])
+    if request.worktree:
+        parts.extend(["--worktree", str(request.worktree)])
+    if request.new_path:
+        parts.extend(["--new-path", str(request.new_path)])
+    if request.branch:
+        parts.extend(["--branch", request.branch])
+    if request.new_branch:
+        parts.extend(["--new-branch", request.new_branch])
+    if request.reset_branch:
+        parts.extend(["--reset-branch", request.reset_branch])
+    if request.from_ref:
+        parts.extend(["--from", request.from_ref])
+    if request.detach:
+        parts.append("--detach")
+    if request.orphan:
+        parts.append("--orphan")
+    if request.force:
+        parts.append("--force")
+    if request.no_checkout:
+        parts.append("--no-checkout")
+    if request.lock_on_create:
+        parts.append("--lock-on-create")
+    if request.lock_reason:
+        parts.extend(["--lock-reason", request.lock_reason])
+    if request.expire:
+        parts.extend(["--expire", request.expire])
+    if request.dry_run:
+        parts.append("--dry-run")
+    for repair_path in request.repair_paths:
+        parts.extend(["--repair-path", str(repair_path)])
+    if request.raw_path:
+        parts.append("--raw-path")
+    if request.yes:
+        parts.append("--yes")
+    if request.verbose:
+        parts.append("--verbose")
+    return shell_join(parts)
+
+
+def detect_action(namespace: argparse.Namespace) -> Optional[str]:
+    for name in (
+        "create",
+        "delete",
+        "list",
+        "status",
+        "prune",
+        "open",
+        "cd",
+        "lock",
+        "unlock",
+        "move",
+        "repair",
+        "doctor",
+    ):
+        if getattr(namespace, name):
+            return name
+    return None
+
+
+def request_from_args(namespace: argparse.Namespace) -> ActionRequest:
+    return ActionRequest(
+        action=detect_action(namespace),
+        repo=Path(namespace.repo).expanduser().resolve() if namespace.repo else None,
+        path=Path(namespace.path).expanduser().resolve() if namespace.path else None,
+        worktree=Path(namespace.worktree).expanduser().resolve() if namespace.worktree else None,
+        new_path=Path(namespace.new_path).expanduser().resolve() if namespace.new_path else None,
+        branch=namespace.branch,
+        new_branch=namespace.new_branch,
+        reset_branch=namespace.reset_branch,
+        from_ref=namespace.from_ref,
+        detach=namespace.detach,
+        orphan=namespace.orphan,
+        force=namespace.force,
+        no_checkout=namespace.no_checkout,
+        lock_on_create=namespace.lock_on_create,
+        lock_reason=namespace.lock_reason,
+        expire=namespace.expire,
+        dry_run=namespace.dry_run,
+        repair_paths=[Path(item).expanduser().resolve() for item in namespace.repair_path or []],
+        raw_path=namespace.raw_path,
+        yes=namespace.yes,
+        verbose=namespace.verbose,
+        no_color=namespace.no_color,
+    )
+
+
+
+ACTION_LABELS = {
+    "create": "Create",
+    "delete": "Delete",
+    "list": "List",
+    "status": "Status",
+    "prune": "Prune",
+    "open": "Open",
+    "cd": "CD",
+    "lock": "Lock",
+    "unlock": "Unlock",
+    "move": "Move",
+    "repair": "Repair",
+    "doctor": "Doctor",
+}
+
+
+class TUI:
+    """Terminal UI with Unicode borders, glyphs, breadcrumbs, and inline confirm."""
+
+    RULE = "\u2500"
+    GLYPH_SEL = "\u25b8"
+    CRUMB_SEP = " \u203a "
+    SCROLL_TRACK = "\u2502"
+    SCROLL_THUMB = "\u2503"
+
+    def __init__(self, stdscr: "curses._CursesWindow", state: HistoryState):
+        self.stdscr = stdscr
+        self.state = state
+        self.status_message = ""
+        self.breadcrumbs: list[str] = []
+        if hasattr(curses, "set_escdelay"):
+            curses.set_escdelay(25)
+        curses.curs_set(0)
+        curses.use_default_colors()
+        self._init_colors()
+        self.stdscr.keypad(True)
+
+    def _init_colors(self) -> None:
+        dim = getattr(curses, "A_DIM", curses.A_NORMAL)
+        self.colors: dict[str, int] = {
+            "header": curses.A_BOLD,
+            "accent": curses.A_BOLD,
+            "muted": dim,
+            "highlight": curses.A_REVERSE | curses.A_BOLD,
+            "status": curses.A_BOLD,
+            "separator": dim,
+            "glyph": curses.A_BOLD,
+            "dim": dim,
+            "border": dim,
+            "crumb_done": dim,
+            "crumb_active": curses.A_BOLD,
+            "confirm_key": curses.A_BOLD,
+        }
+        if curses.has_colors():
+            curses.start_color()
+            try:
+                curses.init_pair(1, curses.COLOR_CYAN, -1)
+                curses.init_pair(2, curses.COLOR_YELLOW, -1)
+                curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_CYAN)
+                curses.init_pair(4, curses.COLOR_GREEN, -1)
+                curses.init_pair(5, curses.COLOR_WHITE, -1)
+                curses.init_pair(6, curses.COLOR_RED, -1)
+                curses.init_pair(7, curses.COLOR_MAGENTA, -1)
+                curses.init_pair(8, curses.COLOR_BLUE, -1)
+                self.colors.update({
+                    "header": curses.color_pair(1) | curses.A_BOLD,
+                    "accent": curses.color_pair(2) | curses.A_BOLD,
+                    "highlight": curses.color_pair(3) | curses.A_BOLD,
+                    "status": curses.color_pair(4) | curses.A_BOLD,
+                    "muted": curses.color_pair(5) | dim,
+                    "separator": curses.color_pair(7),
+                    "border": curses.color_pair(8) | dim,
+                    "glyph": curses.color_pair(2) | curses.A_BOLD,
+                    "dim": dim,
+                    "crumb_done": dim,
+                    "crumb_active": curses.color_pair(1) | curses.A_BOLD,
+                    "confirm_key": curses.color_pair(2) | curses.A_BOLD,
+                })
+            except curses.error:
+                pass
+
+    def _screen_size(self) -> tuple[int, int]:
+        return self.stdscr.getmaxyx()
+
+    def _safe_addstr(self, y: int, x: int, text: str, attr: int = curses.A_NORMAL) -> None:
+        h, w = self.stdscr.getmaxyx()
+        if y < 0 or y >= h or x >= w:
+            return
+        max_len = w - x
+        if max_len <= 0:
+            return
+        try:
+            self.stdscr.addnstr(y, x, text, max_len, attr)
+        except curses.error:
+            pass
+
+    def _truncate(self, text: str, width: int) -> str:
+        if width <= 0:
+            return ""
+        if len(text) <= width:
+            return text
+        if width <= 3:
+            return text[:width]
+        return text[: width - 3] + "..."
+
+    def _wrap(self, text: str, width: int) -> list[str]:
+        if width <= 10:
+            return [text[:width]]
+        return textwrap.wrap(text, width=width) or [""]
+
+    def _draw_frame(self, title: str, subtitle: str = "") -> tuple[int, int]:
+        self.stdscr.erase()
+        h, w = self._screen_size()
+        # Row 0: title embedded in horizontal rule
+        pre = self.RULE * 4 + " "
+        tdisp = self._truncate(title, max(1, w - len(pre) - 2))
+        suf_len = max(0, w - len(pre) - len(tdisp) - 1)
+        self._safe_addstr(0, 0, pre, self.colors["border"])
+        self._safe_addstr(0, len(pre), tdisp, self.colors["header"])
+        self._safe_addstr(0, len(pre) + len(tdisp), " " + self.RULE * suf_len, self.colors["border"])
+        # Row 1: breadcrumbs or subtitle
+        if self.breadcrumbs:
+            self._draw_breadcrumbs(1, 5)
+        elif subtitle:
+            self._safe_addstr(1, 5, self._truncate(subtitle, max(1, w - 6)), self.colors["muted"])
+        # Row 2: separator
+        self._safe_addstr(2, 0, self.RULE * w, self.colors["border"])
+        # Bottom separator at h-2
+        if h > 4:
+            self._safe_addstr(h - 2, 0, self.RULE * w, self.colors["border"])
+        return h, w
+
+    def _draw_breadcrumbs(self, y: int, x: int) -> None:
+        _, w = self._screen_size()
+        col = x
+        for i, crumb in enumerate(self.breadcrumbs):
+            is_last = i == len(self.breadcrumbs) - 1
+            if i > 0:
+                self._safe_addstr(y, col, self.CRUMB_SEP, self.colors["crumb_done"])
+                col += len(self.CRUMB_SEP)
+            attr = self.colors["crumb_active"] if is_last else self.colors["crumb_done"]
+            remaining = w - col - 1
+            if remaining <= 0:
+                break
+            text = self._truncate(crumb, remaining)
+            self._safe_addstr(y, col, text, attr)
+            col += len(text)
+
+    def _draw_footer(self, h: int, w: int, text: str) -> None:
+        if h <= 3:
+            return
+        if self.status_message:
+            self._safe_addstr(h - 1, 2, self._truncate(self.status_message, max(1, w - 4)), self.colors["status"])
+            self.status_message = ""
+        else:
+            self._safe_addstr(h - 1, 2, self._truncate(text, max(1, w - 4)), self.colors["muted"])
+
+    def _draw_scrollbar(self, track_start: int, track_end: int, total: int, visible: int, offset: int) -> None:
+        _, w = self._screen_size()
+        track_h = track_end - track_start
+        if track_h <= 0 or total <= visible:
+            return
+        thumb_size = max(1, track_h * visible // total)
+        denom = max(1, total - visible)
+        thumb_pos = track_start + offset * (track_h - thumb_size) // denom
+        for y in range(track_start, track_end):
+            if thumb_pos <= y < thumb_pos + thumb_size:
+                self._safe_addstr(y, w - 1, self.SCROLL_THUMB, self.colors["accent"])
+            else:
+                self._safe_addstr(y, w - 1, self.SCROLL_TRACK, self.colors["dim"])
+
+    def choose(
+        self,
+        title: str,
+        subtitle: str,
+        items: list[MenuItem],
+        footer: str,
+        *,
+        compact: bool = True,
+    ) -> Any:
+        filter_text = ""
+        index = 0
+        offset = 0
+        while True:
+            # Filter items
+            if filter_text:
+                ft = filter_text.lower()
+                filtered = [
+                    item
+                    for item in items
+                    if not item.is_separator
+                    and (
+                        ft in item.label.lower()
+                        or ft in item.meta.lower()
+                        or ft in item.keywords.lower()
+                    )
+                ]
+                if not filtered:
+                    filtered = [MenuItem(None, "(no matches)", "backspace to clear")]
+            else:
+                filtered = list(items)
+            # Build selectable indices (skip separators and None-valued items)
+            selectable = [
+                i
+                for i, item in enumerate(filtered)
+                if not item.is_separator and item.value is not None
+            ]
+            if not selectable:
+                selectable = [0]
+            if index not in selectable:
+                index = min(selectable, key=lambda si: abs(si - index))
+
+            h, w = self._draw_frame(title, subtitle)
+            # Filter line (only show for large lists or when actively filtering)
+            item_count = sum(1 for item in items if not item.is_separator)
+            show_filter = item_count > 6 or bool(filter_text)
+            content_y = 3
+            if show_filter:
+                if filter_text:
+                    fdisp = f" \u2315 {filter_text}"
+                    fattr = self.colors["accent"]
+                else:
+                    fdisp = " \u2315 type to filter"
+                    fattr = self.colors["dim"]
+                self._safe_addstr(content_y, 1, self._truncate(fdisp, w - 3), fattr)
+                content_y += 1
+            # Available content area
+            content_end = h - 2
+            avail_lines = max(1, content_end - content_y)
+            lines_per = 1 if compact else 2
+            vis_items = max(1, avail_lines // lines_per)
+            # Adjust offset to keep selection visible
+            if index < offset:
+                offset = index
+            if index >= offset + vis_items:
+                offset = index - vis_items + 1
+            offset = max(0, offset)
+            # Draw items
+            y = content_y
+            for item_idx in range(offset, len(filtered)):
+                if y >= content_end:
+                    break
+                item = filtered[item_idx]
+                if item.is_separator:
+                    sep_label = f" {self.RULE}{self.RULE} {item.label} "
+                    sep_fill = max(0, w - 4 - len(sep_label))
+                    sep_line = sep_label + self.RULE * sep_fill
+                    self._safe_addstr(y, 1, self._truncate(sep_line, w - 2), self.colors["separator"])
+                    y += 1
+                    continue
+                selected = item_idx == index
+                glyph = self.GLYPH_SEL if selected else " "
+                if compact:
+                    if selected:
+                        line = f" {glyph} {item.label}"
+                        if item.meta:
+                            gap = max(2, w - 4 - len(line) - len(item.meta))
+                            line += " " * gap + item.meta
+                        line = line[: w - 2].ljust(w - 2)
+                        self._safe_addstr(y, 1, line, self.colors["highlight"])
+                    else:
+                        self._safe_addstr(y, 1, f" {glyph} ", self.colors["glyph"])
+                        self._safe_addstr(y, 4, self._truncate(item.label, max(1, w - 6)), curses.A_NORMAL)
+                        if item.meta:
+                            meta_start = max(len(item.label) + 6, w - 2 - len(item.meta))
+                            if meta_start < w - 2:
+                                self._safe_addstr(
+                                    y,
+                                    meta_start,
+                                    self._truncate(item.meta, w - meta_start - 1),
+                                    self.colors["dim"],
+                                )
+                    y += 1
+                else:
+                    if selected:
+                        label_line = f" {glyph} {item.label}"
+                        label_line = label_line[: w - 2].ljust(w - 2)
+                        self._safe_addstr(y, 1, label_line, self.colors["highlight"])
+                    else:
+                        self._safe_addstr(y, 1, f" {glyph} ", curses.A_NORMAL)
+                        self._safe_addstr(y, 4, self._truncate(item.label, max(1, w - 5)), curses.A_NORMAL)
+                    y += 1
+                    if item.meta and y < content_end:
+                        if selected:
+                            meta_line = f"     {item.meta}"
+                            meta_line = meta_line[: w - 2].ljust(w - 2)
+                            self._safe_addstr(y, 1, meta_line, self.colors["highlight"])
+                        else:
+                            self._safe_addstr(y, 5, self._truncate(item.meta, max(1, w - 6)), self.colors["dim"])
+                        y += 1
+            # Scrollbar
+            total_items = len(filtered)
+            if total_items > vis_items:
+                self._draw_scrollbar(content_y, content_end, total_items, vis_items, offset)
+            # Footer
+            self._draw_footer(h, w, footer)
+            self.stdscr.refresh()
+            # Input handling
+            key = self.stdscr.get_wch()
+            # Esc: two-stage (clear filter first, then back out)
+            if key == "\x1b":
+                if filter_text:
+                    filter_text = ""
+                    continue
+                return None
+            # q: quit when no filter, filter char otherwise
+            if key == "q":
+                if not filter_text:
+                    return None
+                filter_text += key
+                continue
+            # j/k: navigate when no filter, filter char otherwise
+            if key == "k":
+                if not filter_text:
+                    ci = selectable.index(index) if index in selectable else 0
+                    if ci > 0:
+                        index = selectable[ci - 1]
+                    continue
+                filter_text += key
+                continue
+            if key == "j":
+                if not filter_text:
+                    ci = selectable.index(index) if index in selectable else 0
+                    if ci < len(selectable) - 1:
+                        index = selectable[ci + 1]
+                    continue
+                filter_text += key
+                continue
+            # Arrow keys always work
+            if key == curses.KEY_UP:
+                ci = selectable.index(index) if index in selectable else 0
+                if ci > 0:
+                    index = selectable[ci - 1]
+            elif key == curses.KEY_DOWN:
+                ci = selectable.index(index) if index in selectable else 0
+                if ci < len(selectable) - 1:
+                    index = selectable[ci + 1]
+            elif key == curses.KEY_NPAGE:
+                ci = selectable.index(index) if index in selectable else 0
+                index = selectable[min(len(selectable) - 1, ci + vis_items)]
+            elif key == curses.KEY_PPAGE:
+                ci = selectable.index(index) if index in selectable else 0
+                index = selectable[max(0, ci - vis_items)]
+            elif key in ("\n", curses.KEY_ENTER, "\r"):
+                if 0 <= index < len(filtered) and not filtered[index].is_separator:
+                    return filtered[index].value
+            elif key in ("\b", "\x7f", curses.KEY_BACKSPACE):
+                filter_text = filter_text[:-1]
+            elif isinstance(key, str) and key.isprintable():
+                filter_text += key
+
+    def confirm(self, title: str, message: str, default_yes: bool = True) -> bool:
+        while True:
+            h, w = self._draw_frame(title, "")
+            msg_lines = message.split("\n")
+            for i, line in enumerate(msg_lines):
+                if 4 + i >= h - 3:
+                    break
+                self._safe_addstr(4 + i, 3, self._truncate(line, max(1, w - 6)), curses.A_NORMAL)
+            prompt_y = min(4 + len(msg_lines) + 1, h - 4)
+            self._safe_addstr(prompt_y, 3, "Continue?  ", curses.A_NORMAL)
+            col = 14
+            if default_yes:
+                self._safe_addstr(prompt_y, col, "[Y]", self.colors["confirm_key"])
+                self._safe_addstr(prompt_y, col + 3, "es  ", self.colors["muted"])
+                self._safe_addstr(prompt_y, col + 7, "[n]", self.colors["dim"])
+                self._safe_addstr(prompt_y, col + 10, "o", self.colors["muted"])
+            else:
+                self._safe_addstr(prompt_y, col, "[y]", self.colors["dim"])
+                self._safe_addstr(prompt_y, col + 3, "es  ", self.colors["muted"])
+                self._safe_addstr(prompt_y, col + 7, "[N]", self.colors["confirm_key"])
+                self._safe_addstr(prompt_y, col + 10, "o", self.colors["muted"])
+            self._draw_footer(h, w, "y/n choose  enter default  esc cancel")
+            self.stdscr.refresh()
+            key = self.stdscr.get_wch()
+            if key in ("y", "Y"):
+                return True
+            if key in ("n", "N"):
+                return False
+            if key in ("\n", curses.KEY_ENTER, "\r"):
+                return default_yes
+            if key == "\x1b":
+                return False
+
+    def prompt(
+        self,
+        title: str,
+        subtitle: str,
+        prompt: str,
+        *,
+        default: str = "",
+        allow_empty: bool = False,
+        replace_on_first_edit: bool = False,
+    ) -> Optional[str]:
+        value = default
+        pristine = bool(default)
+        while True:
+            h, w = self._draw_frame(title, subtitle)
+            prompt_lines = self._wrap(prompt, max(1, w - 6))
+            for idx, line in enumerate(prompt_lines):
+                self._safe_addstr(4 + idx, 3, line, curses.A_NORMAL)
+            input_y = min(4 + len(prompt_lines) + 1, h - 4)
+            self._safe_addstr(input_y, 3, self.GLYPH_SEL + " ", self.colors["glyph"])
+            self._safe_addstr(input_y, 5, value, curses.A_BOLD)
+            self.stdscr.move(input_y, min(w - 2, 5 + len(value)))
+            curses.curs_set(1)
+            if replace_on_first_edit and pristine:
+                hint = "enter submit  esc back  first key replaces  ctrl-u clear"
+            else:
+                hint = "enter submit  esc back  ctrl-u clear"
+            self._draw_footer(h, w, hint)
+            self.stdscr.refresh()
+            key = self.stdscr.get_wch()
+            curses.curs_set(0)
+            if key == "\x1b":
+                return None
+            if key in ("\n", curses.KEY_ENTER, "\r"):
+                trimmed = value.strip()
+                if trimmed or allow_empty:
+                    return trimmed
+                self.status_message = "A value is required."
+            elif key == "\x15":
+                value = ""
+                pristine = False
+            elif key in ("\b", "\x7f", curses.KEY_BACKSPACE):
+                if replace_on_first_edit and pristine:
+                    value = ""
+                else:
+                    value = value[:-1]
+                pristine = False
+            elif isinstance(key, str) and key.isprintable():
+                if replace_on_first_edit and pristine:
+                    value = key
+                else:
+                    value += key
+                pristine = False
+
+    def message(self, title: str, lines: list[str]) -> None:
+        offset = 0
+        while True:
+            h, w = self._draw_frame(title, "")
+            content_start = 3
+            content_end = h - 2
+            visible = max(1, content_end - content_start)
+            for row in range(visible):
+                idx = offset + row
+                if idx >= len(lines):
+                    break
+                self._safe_addstr(content_start + row, 3, self._truncate(lines[idx], max(1, w - 5)), curses.A_NORMAL)
+            if len(lines) > visible:
+                self._draw_scrollbar(content_start, content_end, len(lines), visible, offset)
+            pos = f" [{offset + 1}\u2013{min(offset + visible, len(lines))}/{len(lines)}]" if len(lines) > visible else ""
+            self._draw_footer(h, w, f"\u2191\u2193 scroll  enter/esc dismiss{pos}")
+            self.stdscr.refresh()
+            key = self.stdscr.get_wch()
+            if key in ("q", "\x1b", "\n", curses.KEY_ENTER, "\r"):
+                return
+            if key in (curses.KEY_UP, "k"):
+                offset = max(0, offset - 1)
+            elif key in (curses.KEY_DOWN, "j"):
+                offset = min(max(0, len(lines) - visible), offset + 1)
+            elif key == curses.KEY_NPAGE:
+                offset = min(max(0, len(lines) - visible), offset + visible)
+            elif key == curses.KEY_PPAGE:
+                offset = max(0, offset - visible)
+
+    def browse_directory(
+        self,
+        title: str,
+        subtitle: str,
+        *,
+        start: Path,
+        select_label: str,
+        allow_manual: bool = True,
+        allow_new_child: bool = False,
+        repo_mode: bool = False,
+    ) -> Optional[Path]:
+        current = normalize_ui_path(start)
+        while True:
+            items: list[MenuItem] = []
+            if repo_mode:
+                repo_root = resolve_repo_root(current)
+                if repo_root is not None:
+                    items.append(
+                        MenuItem(
+                            ("select", repo_root),
+                            f"\u25c6 {repo_root.name}",
+                            f"Select repo: {repo_root}",
+                            str(repo_root),
+                        )
+                    )
+            else:
+                items.append(
+                    MenuItem(("select", current), select_label, str(current), str(current))
+                )
+            if allow_new_child:
+                items.append(
+                    MenuItem(("new-child", current), "+ Create new folder", "Enter a folder name")
+                )
+            if allow_manual:
+                items.append(
+                    MenuItem(("manual", current), "> Type a path", "Absolute or relative path")
+                )
+            parent = current.parent if current.parent != current else current
+            if parent != current:
+                items.append(
+                    MenuItem(("enter", parent), ".. (parent)", str(parent), str(parent))
+                )
+            try:
+                children = sorted(
+                    [child for child in current.iterdir() if child.is_dir()],
+                    key=lambda item: (item.name.lower().startswith("."), item.name.lower()),
+                )
+            except OSError as exc:
+                self.status_message = str(exc)
+                children = []
+            for child in children:
+                is_repo = resolve_repo_root(child) == child or (child / ".git").exists()
+                marker = "\u25c6 repo" if is_repo else "\u25aa dir"
+                items.append(
+                    MenuItem(("enter", child), child.name, marker, str(child))
+                )
+            choice = self.choose(
+                title,
+                f"Current: {current}",
+                items,
+                "\u2191\u2193 navigate  enter select  esc back  type to filter",
+            )
+            if choice is None:
+                return None
+            kind, payload = choice
+            if kind == "select":
+                return payload
+            if kind == "enter":
+                current = normalize_ui_path(payload)
+                continue
+            if kind == "new-child":
+                name = self.prompt(
+                    title,
+                    f"Current: {current}",
+                    "New folder name:",
+                    default="",
+                )
+                if name is None:
+                    continue
+                return (current / name).expanduser()
+            if kind == "manual":
+                typed = self.prompt(
+                    title,
+                    f"Current: {current}",
+                    "Full or relative path (esc to return):",
+                    default="",
+                )
+                if typed is None:
+                    continue
+                candidate = Path(typed).expanduser()
+                if not candidate.is_absolute():
+                    candidate = current / candidate
+                return candidate
+
+
+class InteractiveWizard:
+    def __init__(self, tui: TUI, state: HistoryState):
+        self.tui = tui
+        self.state = state
+
+    def _reset_to_action(self, request: ActionRequest) -> None:
+        request.action = None
+        self._reset_to_repo(request)
+
+    def _reset_to_repo(self, request: ActionRequest) -> None:
+        request.repo = None
+        request.path = None
+        request.worktree = None
+        request.new_path = None
+        request.branch = None
+        request.new_branch = None
+        request.reset_branch = None
+        request.from_ref = None
+        request.detach = False
+        request.orphan = False
+        request.force = False
+        request.lock_reason = None
+        request.repair_paths = []
+        request.yes = False
+
+    def _action_label(self, request: ActionRequest) -> str:
+        return ACTION_LABELS.get(request.action or "", request.action or "")
+
+    def complete(self, request: ActionRequest) -> Optional[ActionRequest]:
+        action_locked = request.action is not None
+        if request.action is None:
+            request.action = self.choose_action()
+            if request.action is None:
+                return None
+        while True:
+            if request.action is None:
+                request.action = self.choose_action()
+                if request.action is None:
+                    return None
+            self.tui.breadcrumbs = [self._action_label(request)]
+            repo = self.complete_repo(request)
+            if repo is BACK:
+                if action_locked:
+                    return None
+                self._reset_to_action(request)
+                continue
+            request.repo = repo
+            if request.action == "create":
+                completed = self.complete_create(request)
+                if completed is BACK:
+                    self._reset_to_repo(request)
+                    continue
+                return completed
+            if request.action in {"delete", "open", "cd", "lock", "unlock", "move"}:
+                completed = self.complete_existing_worktree_action(request)
+                if completed is BACK:
+                    self._reset_to_repo(request)
+                    continue
+                return completed
+            if request.action == "repair":
+                completed = self.complete_repair(request)
+                if completed is BACK:
+                    self._reset_to_repo(request)
+                    continue
+                return completed
+            if request.action in {"list", "status", "prune", "doctor"}:
+                if request.action == "prune" and not request.yes:
+                    self.tui.breadcrumbs = [self._action_label(request), request.repo.name]
+                    message = "Prune removes stale worktree admin records, not live directories."
+                    if not self.tui.confirm("Prune", message):
+                        if action_locked:
+                            return None
+                        self._reset_to_action(request)
+                        continue
+                    request.yes = True
+                return request
+            return request
+
+    def choose_action(self) -> Optional[str]:
+        self.tui.breadcrumbs = []
+        if self.state.last_result_summary:
+            self.tui.status_message = self.state.last_result_summary
+            self.state.last_result_summary = ""
+        items = [
+            MenuItem(None, "CORE", is_separator=True),
+            MenuItem("create", "Create a worktree", "New linked worktree from a branch"),
+            MenuItem("delete", "Delete a worktree", "Remove a linked worktree safely"),
+            MenuItem("list", "List worktrees", "Quick table of the repo family"),
+            MenuItem("status", "Status overview", "Clean/dirty state for each worktree"),
+            MenuItem(None, "NAVIGATE", is_separator=True),
+            MenuItem("open", "Open a worktree", "Reveal in Finder"),
+            MenuItem("cd", "CD helper", "Print the cd command or raw path"),
+            MenuItem(None, "MAINTENANCE", is_separator=True),
+            MenuItem("prune", "Prune stale records", "Clean broken metadata entries"),
+            MenuItem("lock", "Lock a worktree", "Protect from pruning/removal"),
+            MenuItem("unlock", "Unlock a worktree", "Remove a lock"),
+            MenuItem("move", "Move a worktree", "Relocate a linked worktree"),
+            MenuItem("repair", "Repair worktree paths", "Fix metadata after manual moves"),
+            MenuItem("doctor", "Doctor", "Inspect the repo family and flag issues"),
+        ]
+        return self.tui.choose(
+            "WORKTREE HELPER",
+            "Keyboard-first git worktree manager",
+            items,
+            "\u2191\u2193/jk navigate  enter select  esc/q quit",
+        )
+
+    def complete_repo(self, request: ActionRequest) -> Any:
+        while True:
+            existing = pick_default_repo(request.repo or request.worktree or request.path or request.new_path)
+            if existing is not None:
+                if request.action in {"list", "status", "prune", "doctor"}:
+                    return existing
+                self.tui.breadcrumbs = [self._action_label(request), "repo"]
+                if request.repo is None and self.tui.confirm(
+                    "Repository",
+                    f"Use detected repository root?\n{existing}",
+                ):
+                    return existing
+            items: list[MenuItem] = []
+            seen: set[str] = set()
+            if existing is not None:
+                items.append(MenuItem(existing, f"\u25c6 Detected: {existing.name}", str(existing)))
+                seen.add(str(existing))
+            for raw in self.state.recent_repos:
+                path = Path(raw)
+                if path.exists() and str(path) not in seen:
+                    items.append(MenuItem(path, f"  Recent: {path.name}", str(path)))
+                    seen.add(str(path))
+            items.append(MenuItem("__browse__", "  Browse for a repository", "Pick a folder on disk"))
+            self.tui.breadcrumbs = [self._action_label(request), "repo"]
+            choice = self.tui.choose(
+                "Repository",
+                "Select the repo family to manage",
+                items,
+                "enter select  esc back",
+            )
+            if choice is None:
+                return BACK
+            if choice == "__browse__":
+                start = (
+                    existing
+                    or (Path(self.state.recent_repos[0]).expanduser() if self.state.recent_repos else Path.cwd())
+                )
+                picked = self.tui.browse_directory(
+                    "Repository Browser",
+                    "Navigate to a repository folder.",
+                    start=start,
+                    select_label="Use this folder",
+                    repo_mode=True,
+                )
+                if picked is None:
+                    continue
+                repo = resolve_repo_root(picked)
+                if repo is None:
+                    self.tui.message("Repository", [f"{picked} is not inside a git repository."])
+                    continue
+                return repo
+            return choice
+
+    def complete_create(self, request: ActionRequest) -> Any:
+        assert request.repo is not None
+        while True:
+            if not any([request.branch, request.new_branch, request.reset_branch, request.detach, request.orphan]):
+                self.tui.breadcrumbs = [self._action_label(request), request.repo.name, "branch mode"]
+                mode = self.choose_create_mode(request.repo)
+                if mode is None:
+                    return BACK
+                mode_kind = mode["kind"]
+                if mode_kind == "existing":
+                    request.branch = mode["branch"]
+                elif mode_kind == "new":
+                    request.new_branch = mode["branch"]
+                    request.from_ref = mode["from_ref"]
+                elif mode_kind == "reset":
+                    request.reset_branch = mode["branch"]
+                    request.from_ref = mode["from_ref"]
+                elif mode_kind == "detach":
+                    request.detach = True
+                    request.from_ref = mode["from_ref"]
+                elif mode_kind == "orphan":
+                    request.orphan = True
+                    request.new_branch = mode["branch"]
+            branch_display = request.branch or request.new_branch or request.reset_branch or request.from_ref or "detached"
+            default_target_name = path_name_for_branch(request.repo, branch_display)
+            if request.path is None:
+                self.tui.breadcrumbs = [self._action_label(request), request.repo.name, branch_display, "target"]
+                request.path = self.choose_target_path(request.repo, default_target_name)
+                if request.path is None:
+                    request.branch = None
+                    request.new_branch = None
+                    request.reset_branch = None
+                    request.from_ref = None
+                    request.detach = False
+                    request.orphan = False
+                    continue
+            notes = []
+            try:
+                _, notes = validate_target_path(request.path, allow_existing_empty=True)
+            except WorktreeError as exc:
+                self.tui.message("Target Path", [str(exc)])
+                request.path = None
+                continue
+            self.tui.breadcrumbs = [self._action_label(request), request.repo.name, branch_display, request.path.name]
+            if request.path.exists():
+                if not self.tui.confirm("Target Path", "\n".join(notes + [f"Proceed with {request.path}?"])):
+                    request.path = None
+                    continue
+            elif not self.tui.confirm(
+                "Target Path",
+                f"{request.path} does not exist yet.\nGit will create it during add.\nContinue?",
+            ):
+                request.path = None
+                continue
+            if request.branch and not request.force:
+                for entry in list_worktrees(request.repo):
+                    if entry.branch_name == request.branch:
+                        if not self.tui.confirm(
+                            "Branch Already In Use",
+                            f"{request.branch} is already checked out at {entry.path}.\nUse --force and continue anyway?",
+                            default_yes=False,
+                        ):
+                            request.path = None
+                            request.branch = None
+                            break
+                        request.force = True
+                        break
+                if request.path is None:
+                    continue
+            if not request.yes and not self.tui.confirm(
+                "Create Worktree",
+                f"Create the worktree now?\nRepo: {request.repo}\nPath: {request.path}",
+            ):
+                request.path = None
+                continue
+            request.yes = True
+            return request
+
+    def choose_target_path(self, repo: Path, default_name: str) -> Optional[Path]:
+        recent_parent = (
+            Path(self.state.recent_target_parents[0]).expanduser()
+            if self.state.recent_target_parents
+            else repo.parent
+        )
+        while True:
+            picked = self.tui.browse_directory(
+                "Target Parent",
+                "Choose the parent folder for the new worktree.",
+                start=recent_parent,
+                select_label=self.tui.GLYPH_SEL + " Use this folder as parent",
+                allow_new_child=False,
+                repo_mode=False,
+            )
+            if picked is None:
+                return None
+            name = self.tui.prompt(
+                "Target Path",
+                f"Parent: {picked}",
+                "Worktree folder name (may include slashes for nesting):",
+                default=default_name,
+                replace_on_first_edit=True,
+            )
+            if name is None:
+                recent_parent = picked
+                continue
+            return (picked / name).expanduser()
+
+    def choose_create_mode(self, repo: Path) -> Optional[dict[str, str]]:
+        local = get_local_branches(repo)
+        items: list[MenuItem] = [
+            MenuItem(None, "BRANCH MODES", is_separator=True),
+            MenuItem(("special", "new"), "+ Create a new branch", "Recommended for feature work"),
+            MenuItem(("special", "reset"), "\u21bb Create or reset a branch", "Uses git worktree add -B"),
+            MenuItem(("special", "detach"), "\u2298 Detached HEAD", "Temporary checkout from a ref"),
+            MenuItem(("special", "orphan"), "\u2205 Orphan branch", "Unborn branch with no history"),
+        ]
+        if local:
+            items.append(MenuItem(None, "EXISTING BRANCHES", is_separator=True))
+        for branch in local:
+            meta = "local"
+            if branch.upstream:
+                meta = f"tracks {branch.upstream}"
+            details = f"{meta} \u00b7 {branch.sha} \u00b7 {branch.relative_date}"
+            items.append(MenuItem(("existing", branch.name), branch.name, details, f"{branch.name} {branch.upstream}"))
+        while True:
+            choice = self.tui.choose(
+                "Create Mode",
+                "Pick a branch or choose how to create one.",
+                items,
+                "\u2191\u2193 navigate  enter select  esc back  type to filter",
+                compact=True,
+            )
+            if choice is None:
+                return None
+            kind, payload = choice
+            if kind == "existing":
+                return {"kind": "existing", "branch": payload}
+            if payload == "detach":
+                base_ref = self.choose_base_ref(repo, prompt_for_detach=True)
+                if base_ref is None:
+                    continue
+                return {"kind": "detach", "from_ref": base_ref}
+            branch_name = self.tui.prompt(
+                "Branch Name",
+                "Name the branch for this worktree.",
+                "Branch name:",
+                default="",
+            )
+            if branch_name is None:
+                continue
+            if payload == "orphan":
+                return {"kind": "orphan", "branch": branch_name}
+            base_ref = self.choose_base_ref(repo)
+            if base_ref is None:
+                continue
+            return {"kind": payload, "branch": branch_name, "from_ref": base_ref}
+
+    def choose_base_ref(self, repo: Path, *, prompt_for_detach: bool = False) -> Optional[str]:
+        local = get_local_branches(repo)
+        remote = get_remote_refs(repo)
+        items: list[MenuItem] = [
+            MenuItem("HEAD", "HEAD", "Current checkout of the selected repo"),
+        ]
+        if local:
+            items.append(MenuItem(None, "LOCAL", is_separator=True))
+        for branch in local:
+            items.append(
+                MenuItem(
+                    branch.name,
+                    branch.name,
+                    f"local \u00b7 {branch.sha} \u00b7 {branch.relative_date}",
+                    f"{branch.name} {branch.upstream}",
+                )
+            )
+        if remote:
+            items.append(MenuItem(None, "REMOTE", is_separator=True))
+        for branch in remote:
+            items.append(
+                MenuItem(
+                    branch.name,
+                    branch.name,
+                    f"remote \u00b7 {branch.sha} \u00b7 {branch.relative_date}",
+                    branch.name,
+                )
+            )
+        items.append(MenuItem("__manual__", "> Type a ref manually", "Any branch, tag, or commit SHA"))
+        title = "Detach From" if prompt_for_detach else "Base Ref"
+        subtitle = "Choose the start-point for the new worktree."
+        while True:
+            choice = self.tui.choose(
+                title,
+                subtitle,
+                items,
+                "\u2191\u2193 navigate  enter select  esc back  type to filter",
+                compact=True,
+            )
+            if choice is None:
+                return None
+            if choice == "__manual__":
+                manual = self.tui.prompt(title, subtitle, "Branch, tag, or commit SHA:", default="HEAD")
+                if manual is None:
+                    continue
+                return manual
+            return str(choice)
+
+    def complete_existing_worktree_action(self, request: ActionRequest) -> Any:
+        assert request.repo is not None
+        while True:
+            if request.worktree is None:
+                self.tui.breadcrumbs = [self._action_label(request), request.repo.name, "worktree"]
+                selected = self.choose_existing_worktree(request.repo, request.action)
+                if selected is BACK:
+                    return BACK
+                request.worktree = selected.path
+            self.tui.breadcrumbs = [self._action_label(request), request.repo.name, request.worktree.name]
+            if request.action == "move" and request.new_path is None:
+                default_name = request.worktree.name if request.worktree else "worktree"
+                request.new_path = self.choose_target_path(request.repo, default_name)
+                if request.new_path is None:
+                    request.worktree = None
+                    continue
+            if request.action == "lock" and request.lock_reason is None:
+                request.lock_reason = self.tui.prompt(
+                    "Lock Reason",
+                    "Optional reason for the lock",
+                    "Why are you locking this worktree?",
+                    default="",
+                    allow_empty=True,
+                )
+                if request.lock_reason is None:
+                    request.worktree = None
+                    continue
+            if request.action in {"delete", "move"} and not request.force and request.worktree is not None:
+                summary = git_status_summary(request.worktree)
+                if summary["changes"]:
+                    if not self.tui.confirm(
+                        request.action.title(),
+                        f"{request.worktree} has {summary['changes']} change(s).\nUse --force and continue?",
+                        default_yes=False,
+                    ):
+                        request.worktree = None
+                        request.new_path = None
+                        continue
+                    request.force = True
+            if request.action in {"delete", "move", "lock", "unlock"} and not request.yes:
+                prompt_msg = f"Proceed with {request.action} on\n{request.worktree}?"
+                if request.new_path is not None:
+                    prompt_msg += f"\nNew path: {request.new_path}"
+                if not self.tui.confirm(request.action.title(), prompt_msg):
+                    request.worktree = None
+                    request.new_path = None
+                    request.lock_reason = None if request.action == "lock" else request.lock_reason
+                    continue
+                request.yes = True
+            return request
+
+    def choose_existing_worktree(self, repo: Path, action: str) -> Any:
+        entries = list_worktrees(repo)
+        if action in {"delete", "lock", "unlock", "move"}:
+            entries = [entry for entry in entries if not entry.is_main]
+        items = []
+        for entry in entries:
+            status = git_status_summary(entry.path)
+            state = "\u2713 clean" if status["clean"] else f"\u2717 {status['changes']} change(s)"
+            extra = []
+            if entry.locked:
+                extra.append("locked")
+            if entry.prunable:
+                extra.append("prunable")
+            if not status["exists"]:
+                extra.append("missing")
+            meta = " \u00b7 ".join([entry.branch_name, state] + extra + [str(entry.path)])
+            items.append(MenuItem(entry, entry.path.name or str(entry.path), meta, f"{entry.path} {entry.branch_name}"))
+        if not items:
+            self.tui.message("Worktrees", [f"No selectable worktrees found for {action}."])
+            return BACK
+        choice = self.tui.choose(
+            "Worktree",
+            f"Select the worktree to {action}.",
+            items,
+            "\u2191\u2193 navigate  enter select  esc back  type to filter",
+            compact=False,
+        )
+        if choice is None:
+            return BACK
+        return choice
+
+    def complete_repair(self, request: ActionRequest) -> Any:
+        assert request.repo is not None
+        if request.repair_paths:
+            return request
+        self.tui.breadcrumbs = [self._action_label(request), request.repo.name, "paths"]
+        while True:
+            selected: list[Path] = []
+            confirmed = False
+            while True:
+                choice = self.tui.choose(
+                    "Repair",
+                    "Add paths that were moved manually.",
+                    [
+                        MenuItem("known", "Add a known worktree path", "From git worktree list"),
+                        MenuItem("browse", "Browse for a path", "Pick any directory"),
+                        MenuItem("done", self.tui.GLYPH_SEL + " Finish and run repair", f"{len(selected)} path(s) selected"),
+                    ],
+                    "enter select  esc back",
+                )
+                if choice is None:
+                    return BACK
+                if choice == "done":
+                    confirmed = True
+                    break
+                if choice == "known":
+                    picked = self.choose_existing_worktree(request.repo, "repair")
+                    if picked is not BACK:
+                        selected.append(picked.path)
+                        self.tui.status_message = f"\u2713 Added {picked.path}"
+                    continue
+                path = self.tui.browse_directory(
+                    "Repair Browser",
+                    "Choose the moved path to repair.",
+                    start=Path.cwd(),
+                    select_label=self.tui.GLYPH_SEL + " Use this directory",
+                    allow_new_child=False,
+                    repo_mode=False,
+                )
+                if path is not None:
+                    selected.append(path)
+                    self.tui.status_message = f"\u2713 Added {path}"
+            if not confirmed:
+                continue
+            request.repair_paths = selected
+            if not request.yes and selected:
+                if not self.tui.confirm("Repair", "Run git worktree repair now?"):
+                    request.repair_paths = []
+                    continue
+                request.yes = True
+            return request
+
+
+
+def needs_interactive(request: ActionRequest) -> bool:
+    if request.action is None:
+        return True
+    if request.action == "create":
+        if request.repo is None or request.path is None:
+            return True
+        if not any([request.branch, request.new_branch, request.reset_branch, request.detach, request.orphan]):
+            return True
+    if request.action in {"delete", "open", "cd", "lock", "unlock", "move"}:
+        if request.repo is None and request.worktree is None:
+            return True
+        if request.worktree is None:
+            return True
+        if request.action == "move" and request.new_path is None:
+            return True
+    if request.action == "repair" and request.repo is None and not request.repair_paths:
+        return True
+    return False
+
+
+def execute_create(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo)
+    request.repo = repo
+    validate_create_request(request, repo)
+    path, notes = validate_target_path(request.path, allow_existing_empty=True)
+    request.path = path
+    cmd = ["worktree", "add"]
+    if request.force:
+        cmd.append("-f")
+    if request.no_checkout:
+        cmd.append("--no-checkout")
+    if request.lock_on_create:
+        cmd.append("--lock")
+        if request.lock_reason:
+            cmd.extend(["--reason", request.lock_reason])
+    if request.orphan:
+        cmd.append("--orphan")
+    if request.detach:
+        cmd.append("--detach")
+    if request.new_branch:
+        cmd.extend(["-b", request.new_branch])
+    if request.reset_branch:
+        cmd.extend(["-B", request.reset_branch])
+    cmd.append(str(request.path))
+    if request.branch:
+        cmd.append(request.branch)
+    elif request.new_branch or request.reset_branch or request.detach or request.orphan:
+        if request.from_ref:
+            cmd.append(request.from_ref)
+    completed = git(repo, cmd)
+    status = git_status_summary(request.path)
+    branch_name = request.branch or request.new_branch or request.reset_branch or "DETACHED"
+    lines = [
+        completed.stdout.strip() or f"Created worktree at {request.path}",
+        f"Repo family: {repo}",
+        f"Target path: {request.path}",
+        f"Branch mode: {branch_name}",
+        f"Status: {status['branch_line']}",
+    ]
+    lines.extend(notes)
+    return ActionResult(
+        action="create",
+        title="Worktree created",
+        lines=lines,
+        command_hint=equivalent_command(request),
+    )
+
+
+def find_matching_entry(repo: Path, worktree_path: Path) -> Optional[WorktreeEntry]:
+    target = worktree_path.expanduser().resolve()
+    for entry in list_worktrees(repo):
+        if entry.path == target:
+            return entry
+    return None
+
+
+def execute_delete(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo or request.worktree)
+    request.repo = repo
+    if request.worktree is None:
+        raise WorktreeError("Missing --worktree for delete.")
+    entry = find_matching_entry(repo, request.worktree)
+    if entry is None:
+        raise WorktreeError(f"{request.worktree} is not a known worktree in {repo}.")
+    if entry.is_main:
+        raise WorktreeError("The main working tree cannot be removed with git worktree remove.")
+    if entry.locked:
+        raise WorktreeError(f"{entry.path} is locked. Unlock it first.")
+    cmd = ["worktree", "remove"]
+    if request.force:
+        cmd.append("-f")
+    cmd.append(str(entry.path))
+    completed = git(repo, cmd)
+    lines = [
+        completed.stdout.strip() or f"Removed worktree {entry.path}",
+        f"Repo family: {repo}",
+        f"Removed path: {entry.path}",
+    ]
+    return ActionResult(
+        action="delete",
+        title="Worktree removed",
+        lines=lines,
+        command_hint=equivalent_command(request),
+    )
+
+
+def render_list(repo: Path, *, detailed: bool) -> list[str]:
+    entries = list_worktrees(repo)
+    lines = [f"Repo family: {repo}", ""]
+    for entry in entries:
+        status = git_status_summary(entry.path)
+        prefix = "*" if entry.is_main else "-"
+        state = "clean" if status["clean"] else f"dirty:{status['changes']}"
+        missing = " missing" if not status["exists"] else ""
+        lock_state = " locked" if entry.locked else ""
+        prune_state = f" prunable({entry.prunable})" if entry.prunable else ""
+        lines.append(f"{prefix} {entry.path}")
+        lines.append(f"    branch: {entry.branch_name} @ {entry.short_head}")
+        lines.append(f"    state:  {state}{missing}{lock_state}{prune_state}")
+        if detailed and status["exists"]:
+            lines.append(f"    git:    {status['branch_line']}")
+            raw = status["raw"][:5]
+            if raw:
+                lines.append("    changes:")
+                for item in raw:
+                    lines.append(f"      {item}")
+                if len(status["raw"]) > len(raw):
+                    lines.append(f"      ... and {len(status['raw']) - len(raw)} more")
+        lines.append("")
+    return lines
+
+
+def execute_list(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo)
+    request.repo = repo
+    return ActionResult(
+        action="list",
+        title="Worktree list",
+        lines=render_list(repo, detailed=False),
+        command_hint=equivalent_command(request),
+    )
+
+
+def execute_status(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo)
+    request.repo = repo
+    return ActionResult(
+        action="status",
+        title="Worktree status",
+        lines=render_list(repo, detailed=True),
+        command_hint=equivalent_command(request),
+    )
+
+
+def execute_prune(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo)
+    request.repo = repo
+    cmd = ["worktree", "prune"]
+    if request.dry_run:
+        cmd.append("-n")
+    if request.verbose or request.dry_run:
+        cmd.append("-v")
+    if request.expire:
+        cmd.extend(["--expire", request.expire])
+    completed = git(repo, cmd)
+    output = completed.stdout.strip() or "No stale worktree entries were pruned."
+    lines = [
+        f"Repo family: {repo}",
+        output,
+    ]
+    return ActionResult(
+        action="prune",
+        title="Worktree prune",
+        lines=lines,
+        command_hint=equivalent_command(request),
+    )
+
+
+def opener_command() -> Optional[list[str]]:
+    if sys.platform == "darwin":
+        return ["open"]
+    if shutil.which("xdg-open"):
+        return ["xdg-open"]
+    return None
+
+
+def execute_open(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo or request.worktree)
+    request.repo = repo
+    if request.worktree is None:
+        raise WorktreeError("Missing --worktree for open.")
+    target = request.worktree.expanduser().resolve()
+    opener = opener_command()
+    if opener is None:
+        raise WorktreeError("No system opener was found. Use --cd or open the path manually.")
+    subprocess.run(opener + [str(target)], check=False)
+    return ActionResult(
+        action="open",
+        title="Worktree opened",
+        lines=[f"Opened {target}"],
+        command_hint=equivalent_command(request),
+    )
+
+
+def execute_cd(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo or request.worktree)
+    request.repo = repo
+    if request.worktree is None:
+        raise WorktreeError("Missing --worktree for cd.")
+    target = request.worktree.expanduser().resolve()
+    if request.raw_path:
+        return ActionResult(
+            action="cd",
+            title="Worktree path",
+            lines=[],
+            command_hint=equivalent_command(request),
+            raw_output=str(target),
+        )
+    return ActionResult(
+        action="cd",
+        title="CD helper",
+        lines=[
+            f"cd {shlex.quote(str(target))}",
+            "",
+            "Shell integration:",
+            '  function cwt() { eval "$(worktree --cd "$@")"; }',
+        ],
+        command_hint=equivalent_command(request),
+    )
+
+
+def execute_lock(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo or request.worktree)
+    request.repo = repo
+    if request.worktree is None:
+        raise WorktreeError("Missing --worktree for lock.")
+    cmd = ["worktree", "lock"]
+    if request.lock_reason:
+        cmd.extend(["--reason", request.lock_reason])
+    cmd.append(str(request.worktree.expanduser().resolve()))
+    completed = git(repo, cmd)
+    return ActionResult(
+        action="lock",
+        title="Worktree locked",
+        lines=[completed.stdout.strip() or f"Locked {request.worktree}"],
+        command_hint=equivalent_command(request),
+    )
+
+
+def execute_unlock(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo or request.worktree)
+    request.repo = repo
+    if request.worktree is None:
+        raise WorktreeError("Missing --worktree for unlock.")
+    completed = git(repo, ["worktree", "unlock", str(request.worktree.expanduser().resolve())])
+    return ActionResult(
+        action="unlock",
+        title="Worktree unlocked",
+        lines=[completed.stdout.strip() or f"Unlocked {request.worktree}"],
+        command_hint=equivalent_command(request),
+    )
+
+
+def execute_move(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo or request.worktree)
+    request.repo = repo
+    if request.worktree is None or request.new_path is None:
+        raise WorktreeError("Move needs --worktree and --new-path.")
+    entry = find_matching_entry(repo, request.worktree)
+    if entry is None:
+        raise WorktreeError(f"{request.worktree} is not a known worktree in {repo}.")
+    if entry.is_main:
+        raise WorktreeError("The main worktree cannot be moved with git worktree move.")
+    request.new_path, _ = validate_target_path(request.new_path, allow_existing_empty=True)
+    cmd = ["worktree", "move"]
+    cmd.extend([str(entry.path), str(request.new_path.expanduser())])
+    completed = git(repo, cmd)
+    return ActionResult(
+        action="move",
+        title="Worktree moved",
+        lines=[
+            completed.stdout.strip() or f"Moved {entry.path} to {request.new_path}",
+            f"From: {entry.path}",
+            f"To:   {request.new_path}",
+        ],
+        command_hint=equivalent_command(request),
+    )
+
+
+def execute_repair(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo or (request.repair_paths[0] if request.repair_paths else None))
+    request.repo = repo
+    cmd = ["worktree", "repair"] + [str(path.expanduser()) for path in request.repair_paths]
+    completed = git(repo, cmd)
+    paths = ", ".join(str(path) for path in request.repair_paths) if request.repair_paths else "(current repo)"
+    return ActionResult(
+        action="repair",
+        title="Worktree repaired",
+        lines=[completed.stdout.strip() or f"Repaired metadata for {paths}"],
+        command_hint=equivalent_command(request),
+    )
+
+
+def execute_doctor(request: ActionRequest) -> ActionResult:
+    repo = ensure_repo(request.repo)
+    request.repo = repo
+    entries = list_worktrees(repo)
+    issues: list[str] = []
+    branch_map: dict[str, list[Path]] = {}
+    lines = [f"Repo family: {repo}", ""]
+    for entry in entries:
+        status = git_status_summary(entry.path)
+        branch_map.setdefault(entry.branch_name, []).append(entry.path)
+        lines.append(f"{entry.path}")
+        lines.append(f"  branch: {entry.branch_name} @ {entry.short_head}")
+        lines.append(f"  status: {status['branch_line']}")
+        if not status["exists"]:
+            issues.append(f"Missing worktree path: {entry.path}")
+        if entry.prunable:
+            issues.append(f"Prunable metadata for {entry.path}: {entry.prunable}")
+        if status["changes"]:
+            issues.append(f"Dirty worktree: {entry.path} ({status['changes']} change(s))")
+        if entry.locked:
+            lines.append(f"  lock:   {entry.lock_reason or '(locked)'}")
+        lines.append("")
+    for branch_name, paths in branch_map.items():
+        if branch_name != "DETACHED" and len(paths) > 1:
+            issues.append(f"Branch '{branch_name}' appears in multiple worktrees: {', '.join(str(path) for path in paths)}")
+    if issues:
+        lines.append("Issues:")
+        for issue in issues:
+            lines.append(f"  - {issue}")
+    else:
+        lines.append("Issues:")
+        lines.append("  - None detected.")
+    lines.append("")
+    lines.append("Suggested follow-ups:")
+    lines.append(f"  - {shell_join(['worktree', '--status', '--repo', str(repo)])}")
+    lines.append(f"  - {shell_join(['worktree', '--prune', '--repo', str(repo), '--dry-run'])}")
+    return ActionResult(
+        action="doctor",
+        title="Worktree doctor",
+        lines=lines,
+        command_hint=equivalent_command(request),
+    )
+
+
+ACTION_HANDLERS = {
+    "create": execute_create,
+    "delete": execute_delete,
+    "list": execute_list,
+    "status": execute_status,
+    "prune": execute_prune,
+    "open": execute_open,
+    "cd": execute_cd,
+    "lock": execute_lock,
+    "unlock": execute_unlock,
+    "move": execute_move,
+    "repair": execute_repair,
+    "doctor": execute_doctor,
+}
+
+
+def update_history_from_request(state: HistoryState, request: ActionRequest) -> None:
+    if request.repo:
+        state.recent_repos = remember_path(state.recent_repos, request.repo, 15)
+    if request.path:
+        state.recent_target_parents = remember_path(state.recent_target_parents, request.path.parent, 15)
+    if request.new_path:
+        state.recent_target_parents = remember_path(state.recent_target_parents, request.new_path.parent, 15)
+    if request.worktree:
+        state.recent_worktrees = remember_path(state.recent_worktrees, request.worktree, 25)
+
+
+def print_result(result: ActionResult, *, color: bool) -> None:
+    if result.raw_output is not None:
+        print(result.raw_output)
+        return
+    print(ansi("1;36", result.title, color))
+    for line in result.lines:
+        print(line)
+    print()
+    print(ansi("1;33", "Repeat this without the wizard:", color))
+    print(f"  {result.command_hint}")
+
+
+def interactive_result_lines(result: ActionResult) -> list[str]:
+    lines = [result.raw_output] if result.raw_output is not None else list(result.lines)
+    if result.command_hint:
+        if lines:
+            lines.append("")
+        lines.append("Repeat this without the wizard:")
+        lines.append(f"  {result.command_hint}")
+    return lines
+
+
+def show_result_tui(result: ActionResult, state: HistoryState) -> None:
+    def runner(stdscr: "curses._CursesWindow") -> None:
+        tui = TUI(stdscr, state)
+        tui.message(result.title, interactive_result_lines(result))
+
+    curses.wrapper(runner)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="worktree",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent(
+            """\
+            WORKTREE CONTROL
+
+            Interactive, keyboard-first helper for the git worktree commands people never remember.
+
+            With no action flags, `worktree` launches a curses TUI that walks through the missing choices.
+            With flags, it can run headlessly for scripting or quick repeat use.
+            """
+        ),
+        epilog=textwrap.dedent(
+            """\
+            Core actions:
+              --create    Create a new linked worktree
+              --delete    Remove a linked worktree
+              --list      List every worktree in the repo family
+              --status    Show clean/dirty state for each worktree
+              --prune     Remove stale worktree admin records
+              --open      Open a selected worktree in Finder
+              --cd        Print a `cd ...` command, or a raw path with --raw-path
+              --lock      Lock a linked worktree
+              --unlock    Unlock a linked worktree
+              --move      Move a linked worktree to a new path
+              --repair    Repair worktree metadata after manual moves
+              --doctor    Inspect the repo family and flag issues
+
+            Create modes:
+              --branch NAME         Use an existing local branch
+              --new-branch NAME     Create a new branch from --from
+              --reset-branch NAME   Create or reset a branch from --from
+              --detach              Create a detached HEAD worktree from --from
+              --orphan              Create an unborn branch; pair with --new-branch or --reset-branch
+
+            Useful examples:
+              worktree
+              worktree --create --repo ~/src/myapp --new-branch feature/auth --from main --path ~/wt/myapp-auth
+              worktree --delete --repo ~/src/myapp --worktree ~/wt/myapp-auth --force
+              worktree --status --repo ~/src/myapp
+              worktree --prune --repo ~/src/myapp --dry-run
+              eval "$(worktree --cd --repo ~/src/myapp --worktree ~/wt/myapp-auth)"
+            """
+        ),
+    )
+    action_group = parser.add_mutually_exclusive_group()
+    action_group.add_argument("--create", action="store_true", help="Create a new worktree.")
+    action_group.add_argument("--delete", action="store_true", help="Delete a linked worktree.")
+    action_group.add_argument("--list", action="store_true", help="List worktrees in a repo family.")
+    action_group.add_argument("--status", action="store_true", help="Show worktree status details.")
+    action_group.add_argument("--prune", action="store_true", help="Prune stale worktree metadata.")
+    action_group.add_argument("--open", action="store_true", help="Open a worktree in Finder.")
+    action_group.add_argument("--cd", action="store_true", help="Print a shell-safe cd command.")
+    action_group.add_argument("--lock", action="store_true", help="Lock a linked worktree.")
+    action_group.add_argument("--unlock", action="store_true", help="Unlock a linked worktree.")
+    action_group.add_argument("--move", action="store_true", help="Move a linked worktree.")
+    action_group.add_argument("--repair", action="store_true", help="Repair moved worktree metadata.")
+    action_group.add_argument("--doctor", action="store_true", help="Inspect the repo family for issues.")
+
+    parser.add_argument("--repo", help="Path to any worktree in the repo family you want to manage.")
+    parser.add_argument("--path", help="Target path for --create.")
+    parser.add_argument("--worktree", help="Existing worktree path for --delete, --open, --cd, --lock, --unlock, or --move.")
+    parser.add_argument("--new-path", help="Destination path for --move.")
+    parser.add_argument("--branch", help="Existing local branch for --create.")
+    parser.add_argument("--new-branch", help="Create a new branch for --create.")
+    parser.add_argument("--reset-branch", help="Create or reset a branch for --create.")
+    parser.add_argument("--from", dest="from_ref", help="Start-point ref, branch, tag, or commit for create flows.")
+    parser.add_argument("--detach", action="store_true", help="Create a detached worktree from --from.")
+    parser.add_argument("--orphan", action="store_true", help="Create an unborn branch. Pair with --new-branch or --reset-branch.")
+    parser.add_argument("--force", action="store_true", help="Pass -f where the underlying git command supports it.")
+    parser.add_argument("--no-checkout", action="store_true", help="Create metadata without populating files for --create.")
+    parser.add_argument("--lock-on-create", action="store_true", help="Lock the new worktree immediately after create.")
+    parser.add_argument("--lock-reason", help="Reason to use with --lock or --lock-on-create.")
+    parser.add_argument("--expire", help="Expire specification for --prune, such as now or 3.days.ago.")
+    parser.add_argument("--dry-run", action="store_true", help="Preview --prune without changing anything.")
+    parser.add_argument("--repair-path", action="append", default=[], help="Path to repair. Repeat for multiple values.")
+    parser.add_argument("--raw-path", action="store_true", help="For --cd, print only the path so scripts can capture it.")
+    parser.add_argument("--yes", action="store_true", help="Skip interactive confirmation prompts when flags are sufficient.")
+    parser.add_argument("--verbose", action="store_true", help="Show extra detail where supported.")
+    parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in printed output.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
+    return parser
+
+
+def launch_wizard(request: ActionRequest, state: HistoryState) -> Optional[ActionRequest]:
+    def runner(stdscr: "curses._CursesWindow") -> Optional[ActionRequest]:
+        tui = TUI(stdscr, state)
+        wizard = InteractiveWizard(tui, state)
+        return wizard.complete(request)
+
+    return curses.wrapper(runner)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    ensure_git_available()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    request = request_from_args(args)
+    state = load_state()
+    session_mode = request.action is None
+    if needs_interactive(request):
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            parser.error("Missing required options and no TTY is available for the interactive wizard.")
+        if session_mode:
+            session_defaults = ActionRequest(verbose=request.verbose, no_color=request.no_color)
+            while True:
+                try:
+                    completed = launch_wizard(request, state)
+                except curses.error as exc:
+                    raise WorktreeError(f"Unable to start the TUI: {exc}")
+                if completed is None:
+                    return 130
+                handler = ACTION_HANDLERS[completed.action]
+                result = handler(completed)
+                update_history_from_request(state, completed)
+                save_state(state)
+                state.last_result_summary = f"\u2713 {result.title}"
+                try:
+                    show_result_tui(result, state)
+                except curses.error as exc:
+                    raise WorktreeError(f"Unable to show the TUI result view: {exc}")
+                request = ActionRequest(verbose=session_defaults.verbose, no_color=session_defaults.no_color)
+        else:
+            try:
+                completed = launch_wizard(request, state)
+            except curses.error as exc:
+                raise WorktreeError(f"Unable to start the TUI: {exc}")
+            if completed is None:
+                return 130
+            request = completed
+
+    if request.action is None:
+        parser.print_help()
+        return 0
+
+    handler = ACTION_HANDLERS[request.action]
+    result = handler(request)
+    update_history_from_request(state, request)
+    save_state(state)
+    print_result(result, color=supports_color(request.no_color))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except WorktreeError as exc:
+        color = supports_color(False)
+        print(ansi("1;31", "Error", color), file=sys.stderr)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2)

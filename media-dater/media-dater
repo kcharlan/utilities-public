@@ -1,0 +1,249 @@
+#!/bin/bash
+
+# ==============================================================================
+# Media Dater
+# Rename media files based on their creation date metadata (EXIF).
+# ==============================================================================
+
+set -euo pipefail
+
+# ------------------------------------------------------------------------------
+# Configuration & Defaults
+# ------------------------------------------------------------------------------
+SCRIPT_NAME="media-dater"
+VERSION="1.0.0"
+
+# Defaults
+VERBOSE=false
+DRY_RUN=false
+RECURSIVE=false
+PREFIX="IMG_"
+EXTENSIONS="" # Empty means all
+TARGET_DIR=""
+
+# ------------------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------------------
+
+die() {
+    echo "Error: $1" >&2
+    exit 1
+}
+
+log() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo "[INFO] $1"
+    fi
+}
+
+require_tool() {
+    local tool="$1"
+    if ! command -v "$tool" &> /dev/null; then
+        die "Required tool '$tool' is not installed. Please install it (e.g., 'brew install exiftool')."
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Usage
+# ------------------------------------------------------------------------------
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [OPTIONS] [TARGET_DIR]
+
+Renames image and video files in the target directory to a standardized date-based format:
+  {PREFIX}YYYYMMDD_HHMMSS_{COUNTER}.ext
+  Example: IMG_20241224_100422_00.jpg
+
+It extracts the creation date from the file's EXIF metadata.
+Files that already match this pattern are automatically skipped to prevent double-renaming.
+
+Options:
+  -h, --help            Show this help message
+  -v, --verbose         Enable verbose output
+  -n, --dry-run         Show what would happen without renaming files
+  -r, --recursive       Process subdirectories recursively
+  -p, --prefix STRING   Set filename prefix (default: 'IMG_')
+  -e, --ext LIST        Comma-separated list of extensions to process (e.g., 'jpg,mov')
+      --version         Show version
+
+Examples:
+  $SCRIPT_NAME .                                  # Rename files in current dir
+  $SCRIPT_NAME --dry-run ~/Pictures               # Preview changes
+  $SCRIPT_NAME -r -p "VACATION_" --ext jpg,png .  # Recursive, custom prefix, filtered
+
+EOF
+}
+
+# ------------------------------------------------------------------------------
+# Argument Parsing
+# ------------------------------------------------------------------------------
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;; 
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;; 
+            -n|--dry-run)
+                DRY_RUN=true
+                shift
+                ;; 
+            -r|--recursive)
+                RECURSIVE=true
+                shift
+                ;; 
+            -p|--prefix)
+                if [[ -z "${2:-}" ]]; then die "Option -p/--prefix requires an argument."; fi
+                PREFIX="$2"
+                shift 2
+                ;; 
+            -e|--ext)
+                if [[ -z "${2:-}" ]]; then die "Option -e/--ext requires an argument."; fi
+                EXTENSIONS="$2"
+                shift 2
+                ;; 
+            --version)
+                echo "$SCRIPT_NAME $VERSION"
+                exit 0
+                ;; 
+            -*)
+                die "Unknown option: $1"
+                ;; 
+            *)
+                if [[ -z "${TARGET_DIR:-}" ]]; then
+                    TARGET_DIR="$1"
+                else
+                    die "Multiple target directories specified: '$TARGET_DIR' and '$1'."
+                fi
+                shift
+                ;; 
+        esac
+    done
+
+    TARGET_DIR="${TARGET_DIR:-.}"
+}
+
+# ------------------------------------------------------------------------------
+# Main Logic
+# ------------------------------------------------------------------------------
+main() {
+    parse_args "$@"
+
+    require_tool "exiftool"
+    
+    if [[ ! -d "$TARGET_DIR" ]]; then
+        die "Directory not found: $TARGET_DIR"
+    fi
+
+    log "Starting $SCRIPT_NAME in: $TARGET_DIR"
+
+    # 1. Build Find Command
+    # We use an array to build the command dynamically and safely
+    local find_cmd=(find "$TARGET_DIR")
+
+    if [[ "$RECURSIVE" == "false" ]]; then
+        find_cmd+=(-maxdepth 1)
+    fi
+
+    # Handle Extensions
+    if [[ -n "$EXTENSIONS" ]]; then
+        # If user passed "jpg,mov", we build: \( -iname "*.jpg" -o -iname "*.mov" \)
+        find_cmd+=(\() 
+        IFS=',' read -ra EXT_ARRAY <<< "$EXTENSIONS"
+        local first=true
+        for ext in "${EXT_ARRAY[@]}"; do
+            if [[ "$first" == "false" ]]; then
+                find_cmd+=(-o)
+            fi
+            # Trim whitespace
+            ext=$(echo "$ext" | xargs) 
+            find_cmd+=(-iname "*.$ext")
+            first=false
+        done
+        find_cmd+=(\))
+    else
+        # Default ignore generic system files if no extension filter
+        find_cmd+=(! -name ".*")
+    fi
+    
+    # Always use files only
+    find_cmd+=(-type f)
+
+    log "Scanning for files..."
+
+    # 2. Filter Files
+    # We create a temporary file to hold the list of files to process.
+    # We use mktemp for safety.
+    local argfile
+    argfile=$(mktemp) || die "Could not create temporary file."
+    
+    # Ensure cleanup on exit
+    trap "rm -f \"$argfile\"" EXIT
+
+    local count=0
+    local skipped=0
+    
+    # Regex to detect already renamed files:
+    # Starts with PREFIX, followed by 8 digits (date), _, 6 digits (time)
+    # We escape the prefix for regex usage just in case it has special chars.
+    local safe_prefix
+    safe_prefix=$(printf '%s' "$PREFIX" | sed 's/[.["*^$]/\\&/g')
+    local pattern="^${safe_prefix}[0-9]{8}_[0-9]{6}"
+
+    # We read from find using process substitution <(...)
+    # -print0 handles spaces/newlines correctly
+    while IFS= read -r -d '' file; do
+        local filename
+        filename=$(basename "$file")
+        
+        if [[ "$filename" =~ $pattern ]]; then
+            # Log only if verbose to avoid clutter
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "[SKIP] $filename (Already matches pattern)"
+            fi
+            ((skipped++))
+        else
+            # Add to list for processing
+            echo "$file" >> "$argfile"
+            ((count++))
+        fi
+    done < <("${find_cmd[@]}" -print0)
+
+    # 3. Execute Exiftool
+    if [[ "$count" -eq 0 ]]; then
+        echo "No files need renaming. (Skipped: $skipped)"
+        exit 0
+    fi
+
+    echo "Found $count files to rename. (Skipped: $skipped)"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo ""
+        echo "[DRY-RUN] The following command would be executed:"
+        echo "exiftool \\"
+        echo "  '-filename<CreateDate' \\"
+        echo "  -d '${PREFIX}%Y%m%d_%H%M%S_%%%-02.c.%%e' \\"
+        echo "  -@ list_of_${count}_files.txt"
+        echo ""
+        echo "[DRY-RUN] Files that would be processed:"
+        head -n 5 "$argfile"
+        if [[ "$count" -gt 5 ]]; then echo "... and $((count - 5)) more."; fi
+    else
+        # Run Exiftool
+        # -d specifies the date format string
+        # %%%-02.c creates a counter if filenames collide (duplicate second)
+        # %%e preserves the original extension
+        exiftool \
+            '-filename<CreateDate' \
+            -d "${PREFIX}%Y%m%d_%H%M%S_%%%-02.c.%%e" \
+            -@ "$argfile"
+        
+        echo "Done."
+    fi
+}
+
+main "$@"

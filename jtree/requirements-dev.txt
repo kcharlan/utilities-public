@@ -1,0 +1,8 @@
+# Dev/test dependencies for jtree
+# Install: pip install -r requirements-dev.txt
+fastapi
+uvicorn
+pydantic
+httpx
+pytest
+pytest-cov

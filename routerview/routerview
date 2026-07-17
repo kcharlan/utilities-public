@@ -1,0 +1,3507 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn[standard]",
+#     "aiosqlite",
+#     "python-multipart",
+# ]
+# ///
+"""RouterView -- OpenRouter Analytics Dashboard"""
+
+import argparse
+import csv
+import io
+import json
+import logging
+import os
+import re
+import signal
+import socket
+import sqlite3
+import stat
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+from calendar import monthcalendar
+from dataclasses import dataclass
+from datetime import date as date_type
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import aiosqlite
+import uvicorn
+from fastapi import FastAPI, File, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+
+VERSION = "1.0.0"
+PRIVATE_DIRECTORY_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
+
+
+@dataclass(frozen=True)
+class RuntimePaths:
+    home: Path
+    db_default: Path
+    mapping_file: Path
+    port_file: Path
+    traces_dir: Path
+
+
+def build_runtime_paths():
+    override = os.environ.get("ROUTERVIEW_HOME")
+    home = Path(override).expanduser() if override else Path.home() / ".routerview"
+    return RuntimePaths(
+        home=home,
+        db_default=home / "routerview.db",
+        mapping_file=home / "attribute_mapping.json",
+        port_file=home / "last_port",
+        traces_dir=home / "traces",
+    )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="routerview",
+        description="RouterView -- OpenRouter Analytics Dashboard"
+    )
+    parser.add_argument("-p", "--port", type=int, default=8100,
+                        help="Preferred port (default: 8100)")
+    parser.add_argument("--db", type=str, default=str(DB_DEFAULT),
+                        help=f"SQLite database path (default: {DB_DEFAULT})")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug logging")
+    parser.add_argument("--host", type=str, default="127.0.0.1",
+                        help="Bind address (default: 127.0.0.1)")
+    return parser.parse_args()
+
+
+RUNTIME_PATHS = build_runtime_paths()
+DATA_DIR = str(RUNTIME_PATHS.home)
+DB_DEFAULT = str(RUNTIME_PATHS.db_default)
+MAPPING_FILE = str(RUNTIME_PATHS.mapping_file)
+PORT_FILE = str(RUNTIME_PATHS.port_file)
+TRACES_DIR = str(RUNTIME_PATHS.traces_dir)
+
+
+logger = logging.getLogger("routerview")
+
+
+def _path_status(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+
+
+def secure_private_directory(path: Path) -> None:
+    """Create or harden a private directory without following its final link."""
+    status = _path_status(path)
+    if status is None:
+        path.mkdir(parents=True, mode=PRIVATE_DIRECTORY_MODE, exist_ok=True)
+        status = path.lstat()
+    if stat.S_ISLNK(status.st_mode):
+        raise RuntimeError(f"refusing symbolic link for private directory: {path}")
+    if not stat.S_ISDIR(status.st_mode):
+        raise RuntimeError(f"private directory path is not a directory: {path}")
+
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened_status = os.fstat(descriptor)
+        if not stat.S_ISDIR(opened_status.st_mode):
+            raise RuntimeError(f"private directory path is not a directory: {path}")
+        if (opened_status.st_dev, opened_status.st_ino) != (
+            status.st_dev,
+            status.st_ino,
+        ):
+            raise RuntimeError(f"private directory changed while it was opened: {path}")
+        os.fchmod(descriptor, PRIVATE_DIRECTORY_MODE)
+    finally:
+        os.close(descriptor)
+
+
+def secure_private_file(path: Path, description: str) -> None:
+    """Harden an existing regular file without following symbolic links."""
+    status = path.lstat()
+    if stat.S_ISLNK(status.st_mode):
+        raise RuntimeError(f"refusing symbolic link for {description}: {path}")
+    if not stat.S_ISREG(status.st_mode):
+        raise RuntimeError(f"{description} is not a regular file: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened_status = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_status.st_mode):
+            raise RuntimeError(f"{description} is not a regular file: {path}")
+        if (opened_status.st_dev, opened_status.st_ino) != (
+            status.st_dev,
+            status.st_ino,
+        ):
+            raise RuntimeError(f"{description} changed while it was opened: {path}")
+        os.fchmod(descriptor, PRIVATE_FILE_MODE)
+    finally:
+        os.close(descriptor)
+
+
+def secure_runtime_tree(runtime_home: Path) -> None:
+    """Harden the runtime directory and all existing mutable state beneath it."""
+    secure_private_directory(runtime_home)
+    for entry in runtime_home.iterdir():
+        status = entry.lstat()
+        if stat.S_ISLNK(status.st_mode):
+            raise RuntimeError(f"refusing symbolic link in runtime directory: {entry}")
+        if stat.S_ISDIR(status.st_mode):
+            secure_runtime_tree(entry)
+        elif stat.S_ISREG(status.st_mode):
+            secure_private_file(entry, "runtime file")
+        else:
+            raise RuntimeError(f"unsupported runtime path type: {entry}")
+
+
+def prepare_private_file(path: Path, description: str) -> None:
+    """Create an empty 0600 file, or harden an existing regular file."""
+    status = _path_status(path)
+    if status is not None:
+        secure_private_file(path, description)
+        return
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, PRIVATE_FILE_MODE)
+    except FileExistsError:
+        secure_private_file(path, description)
+        return
+    os.close(descriptor)
+
+
+def write_private_text(path: Path, value: str) -> None:
+    """Atomically replace a private text file without following a destination link."""
+    existing_status = _path_status(path)
+    if existing_status is not None:
+        secure_private_file(path, "runtime file")
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", text=True
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), PRIVATE_FILE_MODE)
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        secure_private_file(path, "runtime file")
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def secure_sqlite_files(db_path: Path) -> None:
+    """Harden a database and any SQLite sidecar files that currently exist."""
+    for candidate in (
+        db_path,
+        Path(f"{db_path}-wal"),
+        Path(f"{db_path}-shm"),
+        Path(f"{db_path}-journal"),
+    ):
+        if _path_status(candidate) is not None:
+            secure_private_file(candidate, "SQLite state file")
+
+# === GLOBALS ===
+_db_path: str = DB_DEFAULT
+_debug_mode: bool = False
+_model_stats: Dict[str, Dict] = {}  # model -> {cost_mean, cost_std, lat_mean, lat_std, tok_mean, tok_std}
+
+
+# === DATABASE INITIALIZATION ===
+def init_database(db_path: str) -> None:
+    database_path = Path(db_path)
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    prepare_private_file(database_path, "SQLite database")
+    conn = sqlite3.connect(database_path)
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -64000")
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.executescript("""
+CREATE TABLE IF NOT EXISTS generations (
+    id                          TEXT PRIMARY KEY,
+    created_at                  TEXT NOT NULL,
+    created_date                TEXT NOT NULL,
+    created_hour                INTEGER NOT NULL,
+    model                       TEXT NOT NULL,
+    model_short                 TEXT NOT NULL,
+    provider_name               TEXT,
+    app_id                      TEXT,
+    api_key_id                  TEXT,
+    api_key_label               TEXT,
+    tokens_prompt               INTEGER DEFAULT 0,
+    tokens_completion           INTEGER DEFAULT 0,
+    tokens_total                INTEGER GENERATED ALWAYS AS (tokens_prompt + tokens_completion) STORED,
+    native_tokens_prompt        INTEGER DEFAULT 0,
+    native_tokens_completion    INTEGER DEFAULT 0,
+    native_tokens_reasoning     INTEGER DEFAULT 0,
+    native_tokens_cached        INTEGER DEFAULT 0,
+    num_media_prompt            INTEGER DEFAULT 0,
+    num_input_audio_prompt      INTEGER DEFAULT 0,
+    num_media_completion        INTEGER DEFAULT 0,
+    cost_usd                    REAL DEFAULT 0.0,
+    cost_upstream_usd           REAL DEFAULT 0.0,
+    cost_cache_usd              REAL DEFAULT 0.0,
+    cost_data_usd               REAL DEFAULT 0.0,
+    cost_web_usd                REAL DEFAULT 0.0,
+    generation_time_ms          INTEGER,
+    latency_ms                  INTEGER,
+    moderation_latency_ms       INTEGER,
+    streamed                    BOOLEAN DEFAULT 0,
+    cancelled                   BOOLEAN DEFAULT 0,
+    finish_reason               TEXT,
+    origin                      TEXT,
+    external_user               TEXT,
+    num_search_results          INTEGER DEFAULT 0,
+    trace_metadata              TEXT,
+    ingestion_source            TEXT NOT NULL DEFAULT 'csv_import',
+    ingested_at                 TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_gen_created_date ON generations(created_date);
+CREATE INDEX IF NOT EXISTS idx_gen_created_at   ON generations(created_at);
+CREATE INDEX IF NOT EXISTS idx_gen_model        ON generations(model);
+CREATE INDEX IF NOT EXISTS idx_gen_model_short  ON generations(model_short);
+CREATE INDEX IF NOT EXISTS idx_gen_provider     ON generations(provider_name);
+CREATE INDEX IF NOT EXISTS idx_gen_api_key      ON generations(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_gen_cost         ON generations(cost_usd);
+CREATE INDEX IF NOT EXISTS idx_gen_origin       ON generations(origin);
+CREATE INDEX IF NOT EXISTS idx_gen_date_model   ON generations(created_date, model);
+CREATE INDEX IF NOT EXISTS idx_gen_date_key     ON generations(created_date, api_key_id);
+CREATE INDEX IF NOT EXISTS idx_gen_finish       ON generations(finish_reason);
+CREATE INDEX IF NOT EXISTS idx_gen_key_label    ON generations(api_key_label);
+
+CREATE TABLE IF NOT EXISTS daily_summaries (
+    date                    TEXT NOT NULL,
+    model                   TEXT NOT NULL,
+    provider_name           TEXT NOT NULL DEFAULT '',
+    api_key_id              TEXT NOT NULL DEFAULT '',
+    request_count           INTEGER DEFAULT 0,
+    tokens_prompt           INTEGER DEFAULT 0,
+    tokens_completion       INTEGER DEFAULT 0,
+    tokens_total            INTEGER DEFAULT 0,
+    native_tokens_cached    INTEGER DEFAULT 0,
+    native_tokens_reasoning INTEGER DEFAULT 0,
+    cost_usd                REAL DEFAULT 0.0,
+    avg_generation_ms       REAL DEFAULT 0.0,
+    p50_generation_ms       REAL,
+    p95_generation_ms       REAL,
+    p99_generation_ms       REAL,
+    cancelled_count         INTEGER DEFAULT 0,
+    streamed_count          INTEGER DEFAULT 0,
+    PRIMARY KEY (date, model, provider_name, api_key_id)
+);
+
+CREATE TABLE IF NOT EXISTS ingestion_log (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    source           TEXT NOT NULL,
+    started_at       TEXT NOT NULL,
+    completed_at     TEXT,
+    records_received INTEGER DEFAULT 0,
+    records_inserted INTEGER DEFAULT 0,
+    records_skipped  INTEGER DEFAULT 0,
+    error_message    TEXT,
+    metadata         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS saved_views (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    config     TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+        """)
+        conn.commit()
+        secure_sqlite_files(database_path)
+    finally:
+        conn.close()
+        secure_sqlite_files(database_path)
+
+
+# === ASYNC DB HELPERS ===
+async def get_db() -> aiosqlite.Connection:
+    database_path = Path(_db_path)
+    prepare_private_file(database_path, "SQLite database")
+    db = await aiosqlite.connect(_db_path)
+    db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA journal_mode=WAL")
+    await db.execute("PRAGMA busy_timeout=5000")
+    await db.execute("PRAGMA synchronous=NORMAL")
+    await db.execute("PRAGMA cache_size=-8000")
+    secure_sqlite_files(database_path)
+    return db
+
+
+async def db_dependency():
+    db = await get_db()
+    try:
+        yield db
+    finally:
+        await db.close()
+
+
+async def log_ingestion(db, source: str, inserted: int, skipped: int,
+                        error: str = None, metadata: dict = None):
+    now = datetime.now(timezone.utc).isoformat()
+    await db.execute(
+        """INSERT INTO ingestion_log
+           (source, started_at, completed_at, records_inserted, records_skipped, error_message, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (source, now, now, inserted, skipped, error,
+         json.dumps(metadata) if metadata else None)
+    )
+    await db.commit()
+
+
+# === DEFAULT ATTRIBUTE MAPPING ===
+DEFAULT_ATTRIBUTE_MAPPING = {
+    "_comment": "Maps OTLP span attribute names to RouterView database columns.",
+    "_comment2": "Edit this file to adapt to OpenRouter schema changes. No restart needed.",
+    "id": {
+        "attribute": "openrouter.trace.id",
+        "fallbacks": ["gen_ai.generation.id", "openrouter.generation_id", "generation_id"],
+        "_source": "resource"
+    },
+    "model": {
+        "attribute": "gen_ai.request.model",
+        "fallbacks": ["gen_ai.response.model", "llm.request.model"]
+    },
+    "provider_name": {
+        "attribute": "trace.metadata.openrouter.provider_name",
+        "fallbacks": ["trace.metadata.openrouter.provider_slug", "gen_ai.provider.name", "gen_ai.system", "llm.provider"]
+    },
+    "app_id": {
+        "attribute": "openrouter.app_id",
+        "fallbacks": ["trace.metadata.openrouter.app_id"]
+    },
+    "api_key_id": {
+        "attribute": "openrouter.api_key_id",
+        "fallbacks": ["trace.metadata.openrouter.entity_id", "openrouter.key_id"]
+    },
+    "api_key_label": {
+        "attribute": "trace.metadata.openrouter.api_key_name",
+        "fallbacks": ["openrouter.api_key_label", "openrouter.key_label"]
+    },
+    "tokens_prompt": {
+        "attribute": "gen_ai.usage.input_tokens",
+        "fallbacks": ["gen_ai.usage.prompt_tokens", "llm.usage.prompt_tokens"],
+        "type": "integer"
+    },
+    "tokens_completion": {
+        "attribute": "gen_ai.usage.output_tokens",
+        "fallbacks": ["gen_ai.usage.completion_tokens", "llm.usage.completion_tokens"],
+        "type": "integer"
+    },
+    "native_tokens_prompt": {
+        "attribute": "gen_ai.usage.native_prompt_tokens",
+        "fallbacks": ["openrouter.native_tokens_prompt"],
+        "type": "integer"
+    },
+    "native_tokens_completion": {
+        "attribute": "gen_ai.usage.native_completion_tokens",
+        "fallbacks": ["openrouter.native_tokens_completion"],
+        "type": "integer"
+    },
+    "native_tokens_reasoning": {
+        "attribute": "gen_ai.usage.output_tokens.reasoning",
+        "fallbacks": ["gen_ai.usage.reasoning_tokens", "openrouter.native_tokens_reasoning"],
+        "type": "integer"
+    },
+    "native_tokens_cached": {
+        "attribute": "gen_ai.usage.input_tokens.cached",
+        "fallbacks": ["gen_ai.usage.cached_tokens", "openrouter.native_tokens_cached"],
+        "type": "integer"
+    },
+    "cost_usd": {
+        "attribute": "gen_ai.usage.total_cost",
+        "fallbacks": ["openrouter.usage.total_cost", "gen_ai.usage.cost", "llm.usage.total_cost"],
+        "type": "float"
+    },
+    "cost_upstream_usd": {
+        "attribute": "openrouter.usage.upstream_cost",
+        "fallbacks": [],
+        "type": "float"
+    },
+    "cost_cache_usd": {
+        "attribute": "openrouter.usage.cache_cost",
+        "fallbacks": [],
+        "type": "float"
+    },
+    "cost_data_usd": {
+        "attribute": "openrouter.usage.data_cost",
+        "fallbacks": [],
+        "type": "float"
+    },
+    "cost_web_usd": {
+        "attribute": "openrouter.usage.web_cost",
+        "fallbacks": [],
+        "type": "float"
+    },
+    "generation_time_ms": {
+        "attribute": "openrouter.generation_time",
+        "fallbacks": ["gen_ai.latency"],
+        "type": "integer"
+    },
+    "finish_reason": {
+        "attribute": "gen_ai.response.finish_reason",
+        "fallbacks": ["gen_ai.response.finish_reasons", "trace.metadata.openrouter.finish_reason", "gen_ai.completion.finish_reason", "llm.response.stop_reason"]
+    },
+    "streamed": {
+        "attribute": "gen_ai.request.streaming",
+        "fallbacks": ["openrouter.streamed"],
+        "type": "boolean"
+    },
+    "cancelled": {
+        "attribute": "openrouter.cancelled",
+        "fallbacks": [],
+        "type": "boolean"
+    },
+    "origin": {
+        "attribute": "trace.metadata.openrouter.source",
+        "fallbacks": ["openrouter.origin", "http.url", "url.full"]
+    },
+    "external_user": {
+        "attribute": "openrouter.external_user",
+        "fallbacks": []
+    },
+    "num_media_prompt": {
+        "attribute": "openrouter.num_media_prompt",
+        "fallbacks": [],
+        "type": "integer"
+    },
+    "num_input_audio_prompt": {
+        "attribute": "openrouter.num_input_audio_prompt",
+        "fallbacks": [],
+        "type": "integer"
+    },
+    "num_media_completion": {
+        "attribute": "openrouter.num_media_completion",
+        "fallbacks": [],
+        "type": "integer"
+    },
+    "num_search_results": {
+        "attribute": "openrouter.num_search_results",
+        "fallbacks": [],
+        "type": "integer"
+    }
+}
+
+
+def _validate_mapping(mapping: dict) -> bool:
+    for k, v in mapping.items():
+        if k.startswith("_"):
+            continue
+        if not isinstance(v, dict) or "attribute" not in v or "fallbacks" not in v:
+            return False
+    return True
+
+
+def load_attribute_mapping() -> dict:
+    mapping_path = Path(MAPPING_FILE)
+    if _path_status(mapping_path) is not None:
+        try:
+            secure_private_file(mapping_path, "attribute mapping")
+            with mapping_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if _validate_mapping(data):
+                return data
+            logger.warning("attribute_mapping.json is malformed; falling back to default")
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to read attribute_mapping.json: %s; using default", e)
+    # Write default to file
+    try:
+        write_private_text(
+            mapping_path, json.dumps(DEFAULT_ATTRIBUTE_MAPPING, indent=2)
+        )
+    except OSError:
+        pass
+    return DEFAULT_ATTRIBUTE_MAPPING
+
+
+# === OTLP PARSER ===
+def derive_model_short(model: str) -> str:
+    if not model:
+        return ""
+    short = re.sub(r'^[^/]+/', '', model)          # strip provider prefix
+    short = re.sub(r'-\d{8}$', '', short)           # strip YYYYMMDD suffix
+    short = re.sub(r'-\d{4}-\d{2}-\d{2}$', '', short)  # strip YYYY-MM-DD suffix
+    return short
+
+
+def _flatten_attrs(attrs: list) -> dict:
+    flat = {}
+    for item in attrs or []:
+        key = item.get("key", "")
+        val_obj = item.get("value", {})
+        if "stringValue" in val_obj:
+            flat[key] = val_obj["stringValue"]
+        elif "intValue" in val_obj:
+            flat[key] = val_obj["intValue"]
+        elif "doubleValue" in val_obj:
+            flat[key] = val_obj["doubleValue"]
+        elif "boolValue" in val_obj:
+            flat[key] = val_obj["boolValue"]
+        elif "arrayValue" in val_obj:
+            vals = val_obj["arrayValue"].get("values", [])
+            flat[key] = ", ".join(str(v.get("stringValue", v)) for v in vals)
+        else:
+            flat[key] = str(val_obj)
+    return flat
+
+
+def _cast(value, type_str: str):
+    if value is None:
+        return None
+    try:
+        if type_str == "integer":
+            return int(float(str(value)))
+        if type_str == "float":
+            return float(str(value))
+        if type_str == "boolean":
+            if isinstance(value, bool):
+                return value
+            return str(value).lower() in ("true", "1", "yes")
+    except (ValueError, TypeError):
+        return None
+    return str(value)
+
+
+def extract_generation(span: dict, mapping: dict, resource_attrs: dict = None) -> dict:
+    attrs = _flatten_attrs(span.get("attributes", []))
+    if resource_attrs:
+        # Resource-level attrs are available for mappings tagged with _source=resource
+        # Merge them in (span attrs take precedence on collision)
+        merged = dict(resource_attrs)
+        merged.update(attrs)
+        attrs = merged
+    consumed_keys = set()
+    gen = {}
+
+    for col, cfg in mapping.items():
+        if col.startswith("_"):
+            continue
+        primary = cfg.get("attribute", "")
+        fallbacks = cfg.get("fallbacks", [])
+        type_str = cfg.get("type", "string")
+
+        value = None
+        for key in [primary] + fallbacks:
+            if key and key in attrs:
+                value = attrs[key]
+                consumed_keys.add(key)
+                break
+
+        if value is not None and type_str != "string":
+            value = _cast(value, type_str)
+        gen[col] = value
+
+    # Unconsumed attributes -> trace_metadata
+    leftover = {k: v for k, v in attrs.items() if k not in consumed_keys}
+    gen["trace_metadata"] = json.dumps(leftover) if leftover else None
+
+    # Derived fields
+    start_ns = span.get("startTimeUnixNano")
+    end_ns = span.get("endTimeUnixNano")
+    if start_ns:
+        try:
+            start_ns = int(start_ns)
+            dt = datetime.fromtimestamp(start_ns / 1e9, tz=timezone.utc)
+            gen["created_at"] = dt.isoformat()
+            gen["created_date"] = dt.strftime("%Y-%m-%d")
+            gen["created_hour"] = dt.hour
+            if end_ns:
+                gen["latency_ms"] = int((int(end_ns) - start_ns) / 1_000_000)
+        except (ValueError, OSError):
+            pass
+    if "created_at" not in gen or not gen.get("created_at"):
+        now = datetime.now(timezone.utc)
+        gen["created_at"] = now.isoformat()
+        gen["created_date"] = now.strftime("%Y-%m-%d")
+        gen["created_hour"] = now.hour
+
+    # If the mapping didn't populate generation_time_ms, fall back to span latency
+    if not gen.get("generation_time_ms") and gen.get("latency_ms"):
+        gen["generation_time_ms"] = gen["latency_ms"]
+
+    model = gen.get("model") or ""
+    gen["model_short"] = derive_model_short(model)
+    if not model:
+        gen["model"] = gen.get("id", "unknown")
+
+    gen["ingestion_source"] = "broadcast"
+    gen["ingested_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Ensure numeric defaults
+    for int_col in ("tokens_prompt", "tokens_completion", "native_tokens_prompt",
+                    "native_tokens_completion", "native_tokens_reasoning",
+                    "native_tokens_cached", "num_media_prompt",
+                    "num_input_audio_prompt", "num_media_completion", "num_search_results"):
+        if not gen.get(int_col):
+            gen[int_col] = 0
+    for float_col in ("cost_usd", "cost_upstream_usd", "cost_cache_usd",
+                      "cost_data_usd", "cost_web_usd"):
+        if not gen.get(float_col):
+            gen[float_col] = 0.0
+    for bool_col in ("streamed", "cancelled"):
+        if not gen.get(bool_col):
+            gen[bool_col] = False
+
+    return gen
+
+
+# === TIME RANGE HELPERS ===
+def _get_tz(tz_str: str):
+    try:
+        return ZoneInfo(tz_str or "UTC")
+    except (ZoneInfoNotFoundError, Exception):
+        return timezone.utc
+
+
+_GEN_ID_EPOCH_RE = re.compile(r"^gen-(\d{10})-")
+_EXPLICIT_TZ_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
+_EPOCH_MIN = 1577836800  # 2020-01-01 UTC
+_EPOCH_MAX = 4102444800  # 2100-01-01 UTC
+
+
+def extract_gen_epoch(gen_id: Optional[str]) -> Optional[int]:
+    """Return the Unix epoch seconds embedded in an OpenRouter ``gen-<epoch>-<rand>``
+    identifier, or ``None`` if not present or outside a plausible range."""
+    if not gen_id:
+        return None
+    m = _GEN_ID_EPOCH_RE.match(gen_id)
+    if not m:
+        return None
+    try:
+        epoch = int(m.group(1))
+    except ValueError:
+        return None
+    if _EPOCH_MIN <= epoch <= _EPOCH_MAX:
+        return epoch
+    return None
+
+
+def parse_csv_created_at(raw_ts: Optional[str], gen_id: Optional[str] = None) -> datetime:
+    """Parse an OpenRouter CSV ``created_at`` value and return a UTC-aware datetime.
+
+    Resolution order:
+      1. Explicit timezone (Z or +hh:mm) in the CSV string.
+      2. Unix epoch embedded in ``gen_id`` (authoritative for current exports).
+         Preserves sub-second precision from the CSV value when it agrees with
+         the epoch to within 60 seconds.
+      3. Naive CSV string parsed as UTC.
+      4. ``datetime.now(UTC)`` fallback.
+    """
+    s = (raw_ts or "").strip()
+    if s and _EXPLICIT_TZ_RE.search(s):
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except (ValueError, TypeError):
+            pass
+
+    epoch = extract_gen_epoch(gen_id)
+    if epoch is not None:
+        epoch_dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
+        if s:
+            try:
+                naive = datetime.fromisoformat(s)
+                if naive.tzinfo is not None:
+                    naive = naive.astimezone(timezone.utc).replace(tzinfo=None)
+                naive_utc = naive.replace(tzinfo=timezone.utc)
+                if abs((naive_utc - epoch_dt).total_seconds()) <= 60:
+                    return naive_utc
+            except (ValueError, TypeError):
+                pass
+        return epoch_dt
+
+    if s:
+        try:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except (ValueError, TypeError):
+            pass
+
+    return datetime.now(timezone.utc)
+
+
+def recover_created_at(stored_iso: Optional[str], gen_id: Optional[str]) -> Optional[str]:
+    """Return the corrected UTC ISO ``created_at`` for a row using its gen-ID epoch,
+    preserving the stored sub-second component when possible.
+
+    Returns ``None`` if the ID carries no recoverable epoch.
+    """
+    epoch = extract_gen_epoch(gen_id)
+    if epoch is None:
+        return None
+    epoch_dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
+    micros = 0
+    if stored_iso:
+        try:
+            stored = datetime.fromisoformat(stored_iso.replace("Z", "+00:00"))
+            micros = stored.microsecond
+        except (ValueError, TypeError):
+            micros = 0
+    return epoch_dt.replace(microsecond=micros).isoformat()
+
+
+def _local_midnight(dt_local: datetime) -> datetime:
+    return dt_local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _start_of_week(dt_local: datetime) -> datetime:
+    """Monday 00:00:00 of the week containing dt_local."""
+    monday = dt_local - timedelta(days=dt_local.weekday())
+    return _local_midnight(monday)
+
+
+def _start_of_month(dt_local: datetime) -> datetime:
+    return dt_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _start_of_quarter(dt_local: datetime) -> datetime:
+    q_start_month = ((dt_local.month - 1) // 3) * 3 + 1
+    return dt_local.replace(month=q_start_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _start_of_year(dt_local: datetime) -> datetime:
+    return dt_local.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _end_of_day(dt_local: datetime) -> datetime:
+    return dt_local.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+
+def _end_of_week(start_of_week: datetime) -> datetime:
+    return _end_of_day(start_of_week + timedelta(days=6))
+
+
+def _end_of_month(dt_local: datetime) -> datetime:
+    import calendar as cal_mod
+    last_day = cal_mod.monthrange(dt_local.year, dt_local.month)[1]
+    return dt_local.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
+
+
+def _end_of_quarter(dt_local: datetime) -> datetime:
+    q_end_month = (((dt_local.month - 1) // 3) + 1) * 3
+    import calendar as cal_mod
+    last_day = cal_mod.monthrange(dt_local.year, q_end_month)[1]
+    return dt_local.replace(month=q_end_month, day=last_day, hour=23, minute=59, second=59, microsecond=999999)
+
+
+def _end_of_year(dt_local: datetime) -> datetime:
+    return dt_local.replace(month=12, day=31, hour=23, minute=59, second=59, microsecond=999999)
+
+
+def _prev_month(dt_local: datetime) -> datetime:
+    if dt_local.month == 1:
+        return dt_local.replace(year=dt_local.year - 1, month=12)
+    return dt_local.replace(month=dt_local.month - 1)
+
+
+def parse_time_range(range_p: str, from_p: str, to_p: str, tz_p: str) -> Tuple[Optional[str], Optional[str]]:
+    tz = _get_tz(tz_p)
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(tz)
+
+    if from_p and to_p:
+        try:
+            from_dt = datetime.fromisoformat(from_p.replace("Z", "+00:00"))
+            to_dt = datetime.fromisoformat(to_p.replace("Z", "+00:00"))
+            if from_dt.tzinfo is None:
+                from_dt = from_dt.replace(tzinfo=tz)
+            if to_dt.tzinfo is None:
+                to_dt = to_dt.replace(tzinfo=tz)
+            return from_dt.astimezone(timezone.utc).isoformat(), to_dt.astimezone(timezone.utc).isoformat()
+        except ValueError:
+            pass
+
+    rng = range_p or "today"
+
+    if rng == "all":
+        return None, None
+
+    if rng == "today":
+        start = _local_midnight(now_local)
+        end = now_local
+    elif rng == "yesterday":
+        yesterday = now_local - timedelta(days=1)
+        start = _local_midnight(yesterday)
+        end = _end_of_day(yesterday)
+    elif rng == "this_week":
+        start = _start_of_week(now_local)
+        end = now_local
+    elif rng == "last_week":
+        prev_week_end = _start_of_week(now_local) - timedelta(seconds=1)
+        start = _start_of_week(prev_week_end)
+        end = _end_of_week(start)
+    elif rng == "this_month":
+        start = _start_of_month(now_local)
+        end = now_local
+    elif rng == "last_month":
+        last_m = _prev_month(now_local)
+        start = _start_of_month(last_m)
+        end = _end_of_month(last_m)
+    elif rng == "this_quarter":
+        start = _start_of_quarter(now_local)
+        end = now_local
+    elif rng == "last_quarter":
+        q_start = _start_of_quarter(now_local)
+        prev_q_end = q_start - timedelta(seconds=1)
+        start = _start_of_quarter(prev_q_end)
+        end = _end_of_quarter(prev_q_end)
+    elif rng == "this_year":
+        start = _start_of_year(now_local)
+        end = now_local
+    elif rng == "last_year":
+        prev_year = now_local.replace(year=now_local.year - 1)
+        start = _start_of_year(prev_year)
+        end = _end_of_year(prev_year)
+    elif rng == "last_1h":
+        start = now_utc - timedelta(hours=1)
+        return start.isoformat(), now_utc.isoformat()
+    elif rng == "last_6h":
+        start = now_utc - timedelta(hours=6)
+        return start.isoformat(), now_utc.isoformat()
+    elif rng == "last_24h":
+        start = now_utc - timedelta(hours=24)
+        return start.isoformat(), now_utc.isoformat()
+    elif rng == "last_7d":
+        start = now_utc - timedelta(days=7)
+        return start.isoformat(), now_utc.isoformat()
+    elif rng == "last_30d":
+        start = now_utc - timedelta(days=30)
+        return start.isoformat(), now_utc.isoformat()
+    elif rng == "last_90d":
+        start = now_utc - timedelta(days=90)
+        return start.isoformat(), now_utc.isoformat()
+    else:
+        # Default: today
+        start = _local_midnight(now_local)
+        end = now_local
+
+    return start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat()
+
+
+def build_where_clause(model=None, provider=None, api_key=None,
+                       origin=None, finish_reason=None) -> Tuple[str, list]:
+    clauses = []
+    params = []
+
+    def multi(col, val):
+        if not val:
+            return
+        items = [v.strip() for v in val.split(",") if v.strip()]
+        if items:
+            placeholders = ",".join("?" * len(items))
+            clauses.append(f"AND {col} IN ({placeholders})")
+            params.extend(items)
+
+    multi("model_short", model)
+    multi("provider_name", provider)
+    multi("COALESCE(api_key_label, api_key_id)", api_key)
+    multi("origin", origin)
+    multi("finish_reason", finish_reason)
+
+    return " ".join(clauses), params
+
+
+# === COMPARISON RANGE COMPUTATION ===
+def nth_weekday_of_month(year: int, month: int, weekday: int, n: int) -> Optional[int]:
+    count = 0
+    last = None
+    for week in monthcalendar(year, month):
+        if week[weekday] != 0:
+            count += 1
+            last = week[weekday]
+            if count == n:
+                return week[weekday]
+    return last  # fall back to last occurrence
+
+
+def which_occurrence(year: int, month: int, day: int) -> Tuple[int, int]:
+    dt = date_type(year, month, day)
+    weekday = dt.weekday()
+    n = (day - 1) // 7 + 1
+    return weekday, n
+
+
+def compute_comparison_range(from_utc_str: str, to_utc_str: str, mode: str,
+                              tz_str: str = "UTC",
+                              range_preset: str = "") -> Tuple[str, str]:
+    tz = _get_tz(tz_str)
+    from_dt = datetime.fromisoformat(from_utc_str.replace("Z", "+00:00")).astimezone(tz)
+    to_dt = datetime.fromisoformat(to_utc_str.replace("Z", "+00:00")).astimezone(tz)
+    duration = to_dt - from_dt
+
+    if mode == "prior_period":
+        # Calendar-aware prior period for named ranges
+        import calendar as cal_mod
+        if range_preset in ("this_month", "last_month"):
+            # Full prior calendar month
+            if from_dt.month == 1:
+                pm, py = 12, from_dt.year - 1
+            else:
+                pm, py = from_dt.month - 1, from_dt.year
+            comp_from = from_dt.replace(year=py, month=pm, day=1)
+            last_day = cal_mod.monthrange(py, pm)[1]
+            comp_to = comp_from.replace(day=last_day, hour=23, minute=59, second=59)
+        elif range_preset in ("this_week", "last_week"):
+            comp_from = from_dt - timedelta(weeks=1)
+            comp_to = comp_from + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        elif range_preset in ("this_quarter", "last_quarter"):
+            # Prior quarter: shift start back ~3 months
+            q_month = from_dt.month
+            if q_month <= 3:
+                pm_start, py = 10, from_dt.year - 1
+            else:
+                pm_start, py = q_month - 3, from_dt.year
+            comp_from = from_dt.replace(year=py, month=pm_start, day=1)
+            end_month = pm_start + 2
+            end_year = py
+            if end_month > 12:
+                end_month -= 12
+                end_year += 1
+            last_day = cal_mod.monthrange(end_year, end_month)[1]
+            comp_to = from_dt.replace(year=end_year, month=end_month, day=last_day,
+                                       hour=23, minute=59, second=59)
+        elif range_preset in ("this_year", "last_year"):
+            comp_from = from_dt.replace(year=from_dt.year - 1, month=1, day=1)
+            comp_to = from_dt.replace(year=from_dt.year - 1, month=12, day=31,
+                                       hour=23, minute=59, second=59)
+        else:
+            # Generic: shift back by duration
+            comp_from = from_dt - duration
+            comp_to = from_dt
+    elif mode == "dow":
+        comp_from = from_dt - timedelta(days=7)
+        comp_to = to_dt - timedelta(days=7)
+    elif mode == "wow":
+        comp_from = from_dt - timedelta(weeks=1)
+        comp_to = to_dt - timedelta(weeks=1)
+    elif mode == "mom_date":
+        def prev_month_date(dt):
+            if dt.month == 1:
+                m, y = 12, dt.year - 1
+            else:
+                m, y = dt.month - 1, dt.year
+            import calendar as cal_mod
+            max_day = cal_mod.monthrange(y, m)[1]
+            d = min(dt.day, max_day)
+            return dt.replace(year=y, month=m, day=d)
+        comp_from = prev_month_date(from_dt)
+        comp_to = prev_month_date(to_dt)
+    elif mode == "mom_relative":
+        weekday, n = which_occurrence(from_dt.year, from_dt.month, from_dt.day)
+        if from_dt.month == 1:
+            pm, py = 12, from_dt.year - 1
+        else:
+            pm, py = from_dt.month - 1, from_dt.year
+        comp_day = nth_weekday_of_month(py, pm, weekday, n)
+        if comp_day:
+            comp_from = from_dt.replace(year=py, month=pm, day=comp_day)
+            comp_to = comp_from + duration
+        else:
+            comp_from = from_dt - timedelta(days=30)
+            comp_to = to_dt - timedelta(days=30)
+    elif mode == "qoq":
+        # Shift back one quarter (~91 days)
+        comp_from = from_dt - timedelta(days=91)
+        comp_to = to_dt - timedelta(days=91)
+    elif mode == "yoy_date":
+        def prev_year_date(dt):
+            try:
+                return dt.replace(year=dt.year - 1)
+            except ValueError:
+                return dt.replace(year=dt.year - 1, day=28)
+        comp_from = prev_year_date(from_dt)
+        comp_to = prev_year_date(to_dt)
+    elif mode == "yoy_relative":
+        weekday, n = which_occurrence(from_dt.year, from_dt.month, from_dt.day)
+        py = from_dt.year - 1
+        comp_day = nth_weekday_of_month(py, from_dt.month, weekday, n)
+        if comp_day:
+            comp_from = from_dt.replace(year=py, day=comp_day)
+            comp_to = comp_from + duration
+        else:
+            comp_from = from_dt - timedelta(days=365)
+            comp_to = to_dt - timedelta(days=365)
+    else:
+        comp_from = from_dt - duration
+        comp_to = from_dt
+
+    return comp_from.astimezone(timezone.utc).isoformat(), comp_to.astimezone(timezone.utc).isoformat()
+
+
+def default_comparison_mode(range_preset: str) -> Optional[str]:
+    mapping = {
+        "today": "dow", "yesterday": "dow",
+        "this_week": "wow", "last_week": "wow",
+        "this_month": "mom_date", "last_month": "mom_date",
+        "this_quarter": "qoq", "last_quarter": "qoq",
+        "this_year": "yoy_date", "last_year": "yoy_date",
+    }
+    if range_preset in mapping:
+        return mapping[range_preset]
+    if range_preset in ("all",):
+        return None
+    return "prior_period"
+
+
+# === DAILY SUMMARY UPSERT ===
+async def upsert_daily_summary(db: aiosqlite.Connection, gen: dict):
+    date = gen.get("created_date", "")
+    model = gen.get("model", "")
+    provider = gen.get("provider_name") or ""
+    key_id = gen.get("api_key_id") or ""
+    tp = gen.get("tokens_prompt", 0) or 0
+    tc = gen.get("tokens_completion", 0) or 0
+    tt = tp + tc
+    ntc_cached = gen.get("native_tokens_cached", 0) or 0
+    ntr = gen.get("native_tokens_reasoning", 0) or 0
+    cost = gen.get("cost_usd", 0.0) or 0.0
+    gen_ms = gen.get("generation_time_ms") or 0
+    cancelled = 1 if gen.get("cancelled") else 0
+    streamed = 1 if gen.get("streamed") else 0
+
+    await db.execute("""
+        INSERT INTO daily_summaries
+            (date, model, provider_name, api_key_id,
+             request_count, tokens_prompt, tokens_completion, tokens_total,
+             native_tokens_cached, native_tokens_reasoning, cost_usd,
+             avg_generation_ms, cancelled_count, streamed_count)
+        VALUES (?, ?, ?, ?,
+                1, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?)
+        ON CONFLICT(date, model, provider_name, api_key_id)
+        DO UPDATE SET
+            request_count           = request_count + 1,
+            tokens_prompt           = tokens_prompt + excluded.tokens_prompt,
+            tokens_completion       = tokens_completion + excluded.tokens_completion,
+            tokens_total            = tokens_total + excluded.tokens_total,
+            native_tokens_cached    = native_tokens_cached + excluded.native_tokens_cached,
+            native_tokens_reasoning = native_tokens_reasoning + excluded.native_tokens_reasoning,
+            cost_usd                = cost_usd + excluded.cost_usd,
+            avg_generation_ms       = (avg_generation_ms * request_count + excluded.avg_generation_ms)
+                                      / (request_count + 1),
+            cancelled_count         = cancelled_count + excluded.cancelled_count,
+            streamed_count          = streamed_count + excluded.streamed_count
+    """, (date, model, provider, key_id, tp, tc, tt,
+          ntc_cached, ntr, cost, gen_ms, cancelled, streamed))
+
+
+async def refresh_daily_summaries(days: Optional[int] = 2):
+    db = await get_db()
+    try:
+        now = datetime.now(timezone.utc)
+        if days is not None:
+            cutoff = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+            await db.execute("DELETE FROM daily_summaries WHERE date >= ?", (cutoff,))
+            where = "WHERE created_date >= ?"
+            w_params = (cutoff,)
+        else:
+            await db.execute("DELETE FROM daily_summaries")
+            where = ""
+            w_params = ()
+
+        await db.execute(f"""
+            INSERT INTO daily_summaries
+                (date, model, provider_name, api_key_id,
+                 request_count, tokens_prompt, tokens_completion, tokens_total,
+                 native_tokens_cached, native_tokens_reasoning, cost_usd,
+                 avg_generation_ms, cancelled_count, streamed_count)
+            SELECT
+                created_date,
+                model,
+                COALESCE(provider_name, ''),
+                COALESCE(api_key_id, ''),
+                COUNT(*),
+                SUM(tokens_prompt), SUM(tokens_completion), SUM(tokens_total),
+                SUM(native_tokens_cached), SUM(native_tokens_reasoning),
+                SUM(cost_usd),
+                AVG(generation_time_ms),
+                SUM(CASE WHEN cancelled THEN 1 ELSE 0 END),
+                SUM(CASE WHEN streamed THEN 1 ELSE 0 END)
+            FROM generations
+            {where}
+            GROUP BY created_date, model, COALESCE(provider_name,''), COALESCE(api_key_id,'')
+        """, w_params)
+
+        # Compute percentiles per group
+        cursor = await db.execute("""
+            SELECT DISTINCT date, model, provider_name, api_key_id FROM daily_summaries
+        """ + ("WHERE date >= ?" if days is not None else ""),
+            (cutoff,) if days is not None else ())
+        groups = await cursor.fetchall()
+
+        for row in groups:
+            d, m, prov, kid = row[0], row[1], row[2], row[3]
+            cur2 = await db.execute("""
+                SELECT generation_time_ms FROM generations
+                WHERE created_date = ?
+                  AND model = ?
+                  AND COALESCE(provider_name,'') = ?
+                  AND COALESCE(api_key_id,'') = ?
+                  AND generation_time_ms IS NOT NULL
+                ORDER BY generation_time_ms
+            """, (d, m, prov, kid))
+            vals = [r[0] for r in await cur2.fetchall()]
+            if vals:
+                p50 = vals[int(len(vals) * 0.50)]
+                p95 = vals[min(int(len(vals) * 0.95), len(vals) - 1)]
+                p99 = vals[min(int(len(vals) * 0.99), len(vals) - 1)]
+                await db.execute("""
+                    UPDATE daily_summaries
+                    SET p50_generation_ms=?, p95_generation_ms=?, p99_generation_ms=?
+                    WHERE date=? AND model=? AND provider_name=? AND api_key_id=?
+                """, (p50, p95, p99, d, m, prov, kid))
+
+        await db.commit()
+    finally:
+        await db.close()
+
+
+# === ANOMALY DETECTION ===
+async def refresh_model_stats():
+    global _model_stats
+    db = await get_db()
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        cur = await db.execute("""
+            SELECT model_short,
+                   AVG(cost_usd) as cost_mean,
+                   AVG(cost_usd * cost_usd) as cost_sq_mean,
+                   AVG(generation_time_ms) as lat_mean,
+                   AVG(generation_time_ms * generation_time_ms) as lat_sq_mean,
+                   AVG(tokens_total) as tok_mean,
+                   AVG(tokens_total * tokens_total) as tok_sq_mean,
+                   COUNT(*) as cnt
+            FROM generations
+            WHERE created_at >= ? AND cost_usd IS NOT NULL
+            GROUP BY model_short
+            HAVING cnt >= 5
+        """, (cutoff,))
+        rows = await cur.fetchall()
+        stats = {}
+        import math
+        for r in rows:
+            ms = dict(r)
+            model = ms["model_short"]
+            def std(mean, sq_mean):
+                variance = sq_mean - mean * mean
+                return math.sqrt(max(variance, 0))
+            stats[model] = {
+                "cost_mean": ms["cost_mean"] or 0,
+                "cost_std": std(ms["cost_mean"] or 0, ms["cost_sq_mean"] or 0),
+                "lat_mean": ms["lat_mean"] or 0,
+                "lat_std": std(ms["lat_mean"] or 0, ms["lat_sq_mean"] or 0),
+                "tok_mean": ms["tok_mean"] or 0,
+                "tok_std": std(ms["tok_mean"] or 0, ms["tok_sq_mean"] or 0),
+            }
+        _model_stats = stats
+    finally:
+        await db.close()
+
+
+def get_anomalies(gen: dict) -> list:
+    model = gen.get("model_short", "")
+    if model not in _model_stats:
+        return []
+    s = _model_stats[model]
+    flags = []
+    cost = gen.get("cost_usd") or 0
+    lat = gen.get("generation_time_ms") or 0
+    tok = (gen.get("tokens_prompt", 0) or 0) + (gen.get("tokens_completion", 0) or 0)
+    if s["cost_std"] > 0 and cost > s["cost_mean"] + 3 * s["cost_std"]:
+        flags.append("high_cost")
+    if s["lat_std"] > 0 and lat > s["lat_mean"] + 3 * s["lat_std"]:
+        flags.append("high_latency")
+    if s["tok_std"] > 0 and tok > s["tok_mean"] + 3 * s["tok_std"]:
+        flags.append("high_tokens")
+    return flags
+
+
+app = FastAPI(title="RouterView", version=VERSION)
+
+
+# === PERCENTILE QUERY HELPER ===
+async def _percentile(db, pct: float, col: str, from_s: str, to_s: str,
+                      extra_where: str, params: list) -> Optional[float]:
+    count_where = f"WHERE {col} IS NOT NULL"
+    if from_s:
+        count_where += " AND created_at >= ? AND created_at < ?"
+    count_where += f" {extra_where}"
+    count_params = ([from_s, to_s] if from_s else []) + params
+    cur = await db.execute(f"SELECT COUNT(*) FROM generations {count_where}", count_params)
+    n = (await cur.fetchone())[0]
+    if not n:
+        return None
+    offset = int(n * pct)
+    select_where = count_where
+    cur2 = await db.execute(
+        f"SELECT {col} FROM generations {select_where} ORDER BY {col} LIMIT 1 OFFSET ?",
+        count_params + [offset]
+    )
+    row = await cur2.fetchone()
+    return row[0] if row else None
+
+
+async def _run_summary_query(db, from_s, to_s, extra_where, params):
+    where = "WHERE 1=1"
+    w_params = []
+    if from_s:
+        where += " AND created_at >= ? AND created_at < ?"
+        w_params = [from_s, to_s]
+    where += f" {extra_where}"
+    w_params = w_params + params
+
+    cur = await db.execute(f"""
+        SELECT
+            COUNT(*) as request_count,
+            COALESCE(SUM(cost_usd), 0) as total_cost,
+            COALESCE(AVG(cost_usd), 0) as avg_cost,
+            COALESCE(SUM(tokens_total), 0) as total_tokens,
+            COALESCE(AVG(generation_time_ms), 0) as avg_latency_ms,
+            COALESCE(SUM(native_tokens_cached), 0) as total_cached_tokens,
+            COALESCE(SUM(native_tokens_prompt), 0) as total_prompt_tokens,
+            MIN(cost_usd) as min_cost,
+            MAX(cost_usd) as max_cost,
+            MIN(generation_time_ms) as min_latency_ms,
+            MAX(generation_time_ms) as max_latency_ms
+        FROM generations {where}
+    """, w_params)
+    row = dict(await cur.fetchone())
+
+    p50_lat = await _percentile(db, 0.50, "generation_time_ms", from_s, to_s, extra_where, params)
+    p95_lat = await _percentile(db, 0.95, "generation_time_ms", from_s, to_s, extra_where, params)
+    p50_cost = await _percentile(db, 0.50, "cost_usd", from_s, to_s, extra_where, params)
+    p95_cost = await _percentile(db, 0.95, "cost_usd", from_s, to_s, extra_where, params)
+
+    cached = row["total_cached_tokens"]
+    prompt = row["total_prompt_tokens"]
+    cache_hit_rate = (cached / prompt) if prompt else 0.0
+
+    # Cost projection for partial periods
+    now_utc = datetime.now(timezone.utc)
+    projected_cost = None
+    projected_requests = None
+    if from_s and to_s:
+        try:
+            from_dt = datetime.fromisoformat(from_s.replace("Z", "+00:00"))
+            to_dt = datetime.fromisoformat(to_s.replace("Z", "+00:00"))
+            period_end = to_dt
+            elapsed = (min(now_utc, period_end) - from_dt).total_seconds()
+            total = (period_end - from_dt).total_seconds()
+            if total > 0 and elapsed > 0:
+                fraction = elapsed / total
+                if fraction < 0.99:
+                    projected_cost = row["total_cost"] / fraction
+                    projected_requests = row["request_count"] / fraction
+        except Exception:
+            pass
+
+    return {
+        "request_count": row["request_count"],
+        "total_cost": row["total_cost"],
+        "avg_cost_per_request": row["avg_cost"],
+        "min_cost_per_request": row["min_cost"],
+        "max_cost_per_request": row["max_cost"],
+        "p50_cost_per_request": p50_cost,
+        "p95_cost_per_request": p95_cost,
+        "total_tokens": row["total_tokens"],
+        "avg_latency_ms": row["avg_latency_ms"],
+        "min_latency_ms": row["min_latency_ms"],
+        "max_latency_ms": row["max_latency_ms"],
+        "p50_latency_ms": p50_lat,
+        "p95_latency_ms": p95_lat,
+        "cache_hit_rate": cache_hit_rate,
+        "projected_cost": projected_cost,
+        "projected_requests": projected_requests,
+    }
+
+
+# === SUMMARY ENDPOINT ===
+@app.get("/api/summary")
+async def get_summary(
+    range: str = Query("today"), from_: str = Query(None, alias="from"),
+    to: str = Query(None), tz: str = Query("UTC"),
+    model: str = Query(None), provider: str = Query(None),
+    api_key: str = Query(None), origin: str = Query(None),
+    finish_reason: str = Query(None), compare: str = Query(None)
+):
+    from_s, to_s = parse_time_range(range, from_, to, tz)
+    extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
+
+    db = await get_db()
+    try:
+        primary = await _run_summary_query(db, from_s, to_s, extra_where, params)
+        primary["from"] = from_s
+        primary["to"] = to_s
+
+        comparison = None
+        if compare and from_s and to_s:
+            comp_from, comp_to = compute_comparison_range(from_s, to_s, compare, tz, range_preset=range)
+            comparison = await _run_summary_query(db, comp_from, comp_to, extra_where, params)
+            comparison["from"] = comp_from
+            comparison["to"] = comp_to
+
+        result = {**primary, "comparison": comparison, "compare_mode": compare}
+        return result
+    finally:
+        await db.close()
+
+
+# === TIMESERIES ENDPOINT ===
+@app.get("/api/timeseries")
+async def get_timeseries(
+    range: str = Query("today"), from_: str = Query(None, alias="from"),
+    to: str = Query(None), tz: str = Query("UTC"),
+    model: str = Query(None), provider: str = Query(None),
+    api_key: str = Query(None), origin: str = Query(None),
+    finish_reason: str = Query(None),
+    bucket: str = Query(None), metric: str = Query("cost"),
+    group_by: str = Query("model"), compare: str = Query(None)
+):
+    from_s, to_s = parse_time_range(range, from_, to, tz)
+    extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
+
+    # Auto-select bucket
+    if not bucket:
+        if from_s and to_s:
+            try:
+                f = datetime.fromisoformat(from_s.replace("Z", "+00:00"))
+                t = datetime.fromisoformat(to_s.replace("Z", "+00:00"))
+                diff_h = (t - f).total_seconds() / 3600
+                if diff_h < 6:
+                    bucket = "minute"
+                elif diff_h <= 24:
+                    bucket = "hour"
+                elif diff_h < 2160:
+                    bucket = "day"
+                elif diff_h < 17520:
+                    bucket = "week"
+                else:
+                    bucket = "month"
+            except Exception:
+                bucket = "day"
+        else:
+            bucket = "day"
+
+    # Compute UTC offset for the user's timezone so bucket labels are in local time
+    _tz = _get_tz(tz)
+    _now_local = datetime.now(timezone.utc).astimezone(_tz)
+    _utc_offset_s = int(_tz.utcoffset(_now_local.replace(tzinfo=None)).total_seconds())
+    _offset_str = f"{_utc_offset_s:+d} seconds" if _utc_offset_s else ""
+    _local = f"datetime(created_at, '{_offset_str}')" if _utc_offset_s else "created_at"
+    bucket_expr = {
+        "minute": f"strftime('%Y-%m-%dT%H:%M', {_local})",
+        "hour":   f"strftime('%Y-%m-%dT%H:00', {_local})",
+        "day":    f"strftime('%Y-%m-%d', {_local})",
+        "week":   f"strftime('%Y-W%W', {_local})",
+        "month":  f"strftime('%Y-%m', {_local})",
+    }.get(bucket, f"strftime('%Y-%m-%d', {_local})")
+
+    metric_expr = {
+        "cost":     "SUM(cost_usd)",
+        "requests": "COUNT(*)",
+        "tokens":   "SUM(tokens_total)",
+        "latency":  "AVG(generation_time_ms)",
+    }.get(metric, "SUM(cost_usd)")
+
+    group_col = {
+        "model":    "model_short",
+        "provider": "provider_name",
+        "api_key":  "COALESCE(api_key_label, api_key_id)",  # pragma: allowlist secret
+        "none":     None,
+    }.get(group_by)
+
+    db = await get_db()
+    try:
+        async def fetch_series(f_s, t_s):
+            where = "WHERE 1=1"
+            w_p = []
+            if f_s:
+                where += " AND created_at >= ? AND created_at < ?"
+                w_p = [f_s, t_s]
+            where += f" {extra_where}"
+            w_p = w_p + params
+
+            if group_col:
+                cur = await db.execute(f"""
+                    SELECT {bucket_expr} as bucket,
+                           COALESCE({group_col}, 'unknown') as grp,
+                           {metric_expr} as value,
+                           COUNT(*) as cnt
+                    FROM generations {where}
+                    GROUP BY bucket, grp
+                    ORDER BY bucket
+                """, w_p)
+            else:
+                cur = await db.execute(f"""
+                    SELECT {bucket_expr} as bucket,
+                           'total' as grp,
+                           {metric_expr} as value,
+                           COUNT(*) as cnt
+                    FROM generations {where}
+                    GROUP BY bucket
+                    ORDER BY bucket
+                """, w_p)
+
+            rows = await cur.fetchall()
+            buckets_set = sorted({r[0] for r in rows})
+            groups_set = list(dict.fromkeys(r[1] for r in rows))
+
+            lookup = {}
+            for r in rows:
+                lookup[(r[0], r[1])] = r[2] or 0
+
+            series = []
+            for grp in groups_set:
+                data = [lookup.get((b, grp), 0) for b in buckets_set]
+                series.append({"name": grp, "data": data})
+
+            return buckets_set, series
+
+        buckets, series = await fetch_series(from_s, to_s)
+
+        # Fill empty buckets so chart spans the full time range
+        if from_s and to_s and bucket in ("minute", "hour", "day"):
+            try:
+                f_dt = datetime.fromisoformat(from_s.replace("Z", "+00:00")).astimezone(_tz)
+                t_dt = datetime.fromisoformat(to_s.replace("Z", "+00:00")).astimezone(_tz)
+                all_buckets = []
+                cur_dt = f_dt
+                if bucket == "minute":
+                    step = timedelta(minutes=1)
+                    fmt_b = lambda d: d.strftime("%Y-%m-%dT%H:%M")
+                elif bucket == "hour":
+                    step = timedelta(hours=1)
+                    fmt_b = lambda d: d.strftime("%Y-%m-%dT%H:00")
+                else:  # day
+                    step = timedelta(days=1)
+                    fmt_b = lambda d: d.strftime("%Y-%m-%d")
+                while cur_dt < t_dt:
+                    all_buckets.append(fmt_b(cur_dt))
+                    cur_dt += step
+                # Deduplicate while preserving order
+                all_buckets = list(dict.fromkeys(all_buckets))
+                if len(all_buckets) > 1:
+                    # Rebuild series data to include zeroes for new buckets
+                    old_lookup = {}
+                    for s in series:
+                        for i, b in enumerate(buckets):
+                            if s["data"][i]:
+                                old_lookup[(b, s["name"])] = s["data"][i]
+                    buckets = all_buckets
+                    series = [{"name": s["name"], "data": [old_lookup.get((b, s["name"]), 0) for b in all_buckets]} for s in series]
+            except Exception:
+                pass
+
+        comparison_series = None
+        comparison_buckets = None
+        comp_range_label = None
+        if compare and from_s and to_s:
+            comp_from, comp_to = compute_comparison_range(from_s, to_s, compare, tz, range_preset=range)
+            comp_buckets, comp_series = await fetch_series(comp_from, comp_to)
+
+            # Fill comparison buckets the same way as primary
+            comp_filled_buckets = comp_buckets
+            if comp_from and comp_to and bucket in ("minute", "hour", "day"):
+                try:
+                    cf_dt = datetime.fromisoformat(comp_from.replace("Z", "+00:00")).astimezone(_tz)
+                    ct_dt = datetime.fromisoformat(comp_to.replace("Z", "+00:00")).astimezone(_tz)
+                    comp_all = []
+                    cur_dt = cf_dt
+                    if bucket == "minute":
+                        step = timedelta(minutes=1)
+                        fmt_b = lambda d: d.strftime("%Y-%m-%dT%H:%M")
+                    elif bucket == "hour":
+                        step = timedelta(hours=1)
+                        fmt_b = lambda d: d.strftime("%Y-%m-%dT%H:00")
+                    else:
+                        step = timedelta(days=1)
+                        fmt_b = lambda d: d.strftime("%Y-%m-%d")
+                    while cur_dt < ct_dt:
+                        comp_all.append(fmt_b(cur_dt))
+                        cur_dt += step
+                    comp_all = list(dict.fromkeys(comp_all))
+                    if len(comp_all) > 1:
+                        old_lookup = {}
+                        for s in comp_series:
+                            for i, b in enumerate(comp_buckets):
+                                if i < len(s["data"]) and s["data"][i]:
+                                    old_lookup[(b, s["name"])] = s["data"][i]
+                        comp_series = [{"name": s["name"], "data": [old_lookup.get((b, s["name"]), 0) for b in comp_all]} for s in comp_series]
+                        comp_filled_buckets = comp_all
+                except Exception:
+                    pass
+
+            comparison_buckets = comp_filled_buckets
+            comparison_series = comp_series
+            comp_range_label = f"{comp_from[:10]} to {comp_to[:10]}"
+
+        return {
+            "buckets": buckets,
+            "series": series,
+            "metric": metric,
+            "bucket_size": bucket,
+            "comparison_series": comparison_series,
+            "comparison_buckets": comparison_buckets,
+            "compare_mode": compare,
+            "compare_range": comp_range_label,
+        }
+    finally:
+        await db.close()
+
+
+# === GENERATIONS ENDPOINT ===
+@app.get("/api/generations")
+async def get_generations(
+    range: str = Query("today"), from_: str = Query(None, alias="from"),
+    to: str = Query(None), tz: str = Query("UTC"),
+    model: str = Query(None), provider: str = Query(None),
+    api_key: str = Query(None), origin: str = Query(None),
+    finish_reason: str = Query(None),
+    page: int = Query(1), page_size: int = Query(50),
+    sort: str = Query("created_at"), order: str = Query("desc"),
+    search: str = Query(None)
+):
+    from_s, to_s = parse_time_range(range, from_, to, tz)
+    extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
+    page_size = min(max(page_size, 1), 250)
+
+    # Whitelist sort columns
+    allowed_sorts = {
+        "created_at", "model_short", "provider_name", "tokens_total",
+        "cost_usd", "generation_time_ms", "finish_reason", "api_key_label"
+    }
+    if sort not in allowed_sorts:
+        sort = "created_at"
+    order = "ASC" if order.upper() == "ASC" else "DESC"
+
+    where = "WHERE 1=1"
+    w_p = []
+    if from_s:
+        where += " AND created_at >= ? AND created_at < ?"
+        w_p = [from_s, to_s]
+    where += f" {extra_where}"
+    w_p = w_p + params
+
+    if search:
+        where += (" AND (id LIKE ? OR model LIKE ? OR model_short LIKE ?"
+                  " OR provider_name LIKE ? OR origin LIKE ?"
+                  " OR finish_reason LIKE ? OR api_key_label LIKE ?)")
+        term = f"%{search}%"
+        w_p += [term] * 7
+
+    db = await get_db()
+    try:
+        cur = await db.execute(f"SELECT COUNT(*) FROM generations {where}", w_p)
+        total = (await cur.fetchone())[0]
+
+        offset = (page - 1) * page_size
+        cur2 = await db.execute(
+            f"SELECT * FROM generations {where} ORDER BY {sort} {order} LIMIT ? OFFSET ?",
+            w_p + [page_size, offset]
+        )
+        rows = await cur2.fetchall()
+        data = []
+        for row in rows:
+            d = dict(row)
+            d["anomalies"] = get_anomalies(d)
+            data.append(d)
+
+        return {
+            "data": data,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": max(1, (total + page_size - 1) // page_size),
+        }
+    finally:
+        await db.close()
+
+
+# === DIMENSIONS ENDPOINT ===
+@app.get("/api/dimensions")
+async def get_dimensions():
+    db = await get_db()
+    try:
+        async def fetch(sql, *args):
+            cur = await db.execute(sql, args)
+            return [r[0] for r in await cur.fetchall()]
+
+        models = await fetch("SELECT DISTINCT model_short FROM generations WHERE model_short IS NOT NULL ORDER BY model_short")
+        providers = await fetch("SELECT DISTINCT provider_name FROM generations WHERE provider_name IS NOT NULL ORDER BY provider_name")
+        origins = await fetch("SELECT DISTINCT origin FROM generations WHERE origin IS NOT NULL ORDER BY origin")
+        reasons = await fetch("SELECT DISTINCT finish_reason FROM generations WHERE finish_reason IS NOT NULL ORDER BY finish_reason")
+
+        cur = await db.execute(
+            "SELECT DISTINCT COALESCE(api_key_label, api_key_id) AS id"
+            " FROM generations"
+            " WHERE api_key_id IS NOT NULL OR api_key_label IS NOT NULL"
+            " ORDER BY id"
+        )
+        keys_raw = await cur.fetchall()
+        api_keys = [r[0] for r in keys_raw]
+
+        return {
+            "models": models,
+            "providers": providers,
+            "api_keys": api_keys,
+            "origins": origins,
+            "finish_reasons": reasons,
+        }
+    finally:
+        await db.close()
+
+
+# === HEALTH ENDPOINT ===
+@app.get("/api/health")
+async def health():
+    db = await get_db()
+    try:
+        cur = await db.execute("SELECT COUNT(*) FROM generations")
+        total = (await cur.fetchone())[0]
+        try:
+            db_size_mb = round(os.path.getsize(_db_path) / 1024 / 1024, 2)
+        except OSError:
+            db_size_mb = 0
+        return {
+            "status": "ok",
+            "version": VERSION,
+            "total_generations": total,
+            "db_size_mb": db_size_mb,
+            "connected_clients": 0,
+        }
+    finally:
+        await db.close()
+
+
+# === BREAKDOWN ENDPOINT ===
+@app.get("/api/breakdown")
+async def get_breakdown(
+    group_by: str = Query("model"),
+    metric: str = Query("cost"),
+    range: str = Query("today"), from_: str = Query(None, alias="from"),
+    to: str = Query(None), tz: str = Query("UTC"),
+    model: str = Query(None), provider: str = Query(None),
+    api_key: str = Query(None), origin: str = Query(None),
+    finish_reason: str = Query(None),
+):
+    from_s, to_s = parse_time_range(range, from_, to, tz)
+    extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
+
+    dim_col = {
+        "model":    "model_short",
+        "provider": "provider_name",
+        "api_key":  "COALESCE(api_key_label, api_key_id)",  # pragma: allowlist secret
+        "origin":   "origin",
+    }.get(group_by, "model_short")
+
+    metric_expr = {
+        "cost":     "SUM(cost_usd)",
+        "requests": "COUNT(*)",
+        "tokens":   "SUM(tokens_total)",
+        "latency":  "AVG(generation_time_ms)",
+    }.get(metric, "SUM(cost_usd)")
+
+    where = "WHERE 1=1"
+    w_p = []
+    if from_s:
+        where += " AND created_at >= ? AND created_at < ?"
+        w_p = [from_s, to_s]
+    where += f" {extra_where}"
+    w_p = w_p + params
+
+    db = await get_db()
+    try:
+        cur = await db.execute(f"""
+            SELECT COALESCE({dim_col}, 'unknown') as dimension,
+                   {metric_expr} as value,
+                   COUNT(*) as count
+            FROM generations {where}
+            GROUP BY dimension
+            ORDER BY value DESC
+            LIMIT 20
+        """, w_p)
+        rows = await cur.fetchall()
+        return {
+            "group_by": group_by,
+            "metric": metric,
+            "data": [{"dimension": r[0], "value": r[1] or 0, "count": r[2]} for r in rows]
+        }
+    finally:
+        await db.close()
+
+
+# === HEATMAP ENDPOINT ===
+@app.get("/api/heatmap")
+async def get_heatmap(
+    metric: str = Query("cost"),
+    range: str = Query("this_week"), from_: str = Query(None, alias="from"),
+    to: str = Query(None), tz: str = Query("UTC"),
+    model: str = Query(None), provider: str = Query(None),
+    api_key: str = Query(None), origin: str = Query(None),
+    finish_reason: str = Query(None),
+):
+    from_s, to_s = parse_time_range(range, from_, to, tz)
+    extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
+
+    metric_expr = {
+        "cost":     "SUM(cost_usd)",
+        "requests": "COUNT(*)",
+        "tokens":   "SUM(tokens_total)",
+    }.get(metric, "SUM(cost_usd)")
+
+    where = "WHERE 1=1"
+    w_p = []
+    if from_s:
+        where += " AND created_at >= ? AND created_at < ?"
+        w_p = [from_s, to_s]
+    where += f" {extra_where}"
+    w_p = w_p + params
+
+    _tz = _get_tz(tz)
+    _now_local = datetime.now(timezone.utc).astimezone(_tz)
+    _utc_offset_s = int(_tz.utcoffset(_now_local.replace(tzinfo=None)).total_seconds())
+    _offset_str = f"{_utc_offset_s:+d} seconds" if _utc_offset_s else ""
+    _local = f"datetime(created_at, '{_offset_str}')" if _utc_offset_s else "created_at"
+
+    db = await get_db()
+    try:
+        cur = await db.execute(f"""
+            SELECT CAST(strftime('%w', {_local}) AS INTEGER) as dow,
+                   CAST(strftime('%H', {_local}) AS INTEGER) as hour,
+                   {metric_expr} as value
+            FROM generations {where}
+            GROUP BY dow, hour
+        """, w_p)
+        rows = await cur.fetchall()
+
+        # Build 7x24 matrix (dow 0=Sun...6=Sat, hour 0-23)
+        matrix = [[None] * 24 for _ in range(7)]
+        for r in rows:
+            dow, hour, val = r[0], r[1], r[2]
+            if 0 <= dow <= 6 and 0 <= hour <= 23:
+                matrix[dow][hour] = val
+
+        return {"matrix": matrix, "metric": metric}
+    finally:
+        await db.close()
+
+
+# === EXPORT CSV ENDPOINT ===
+@app.get("/api/export/csv")
+async def export_csv(
+    view: str = Query("generations"),
+    range: str = Query("today"), from_: str = Query(None, alias="from"),
+    to: str = Query(None), tz: str = Query("UTC"),
+    model: str = Query(None), provider: str = Query(None),
+    api_key: str = Query(None), origin: str = Query(None),
+    finish_reason: str = Query(None),
+    group_by: str = Query("model"), metric: str = Query("cost"),
+    bucket: str = Query("day"),
+):
+    from_s, to_s = parse_time_range(range, from_, to, tz)
+    extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
+
+    where = "WHERE 1=1"
+    w_p = []
+    if from_s:
+        where += " AND created_at >= ? AND created_at < ?"
+        w_p = [from_s, to_s]
+    where += f" {extra_where}"
+    w_p = w_p + params
+
+    db = await get_db()
+    output = io.StringIO()
+    try:
+        writer = csv.writer(output)
+
+        if view == "generations":
+            cur = await db.execute(
+                f"SELECT * FROM generations {where} ORDER BY created_at DESC", w_p
+            )
+            rows = await cur.fetchall()
+            if rows:
+                writer.writerow(rows[0].keys())
+                for r in rows:
+                    writer.writerow(list(r))
+
+        elif view == "summary":
+            summary = await _run_summary_query(db, from_s, to_s, extra_where, params)
+            writer.writerow(summary.keys())
+            writer.writerow(summary.values())
+
+        elif view == "breakdown":
+            dim_col = {"model": "model_short", "provider": "provider_name",
+                       "api_key": "COALESCE(api_key_label, api_key_id)", "origin": "origin"}.get(group_by, "model_short")  # pragma: allowlist secret
+            metric_expr = {"cost": "SUM(cost_usd)", "requests": "COUNT(*)",
+                           "tokens": "SUM(tokens_total)", "latency": "AVG(generation_time_ms)"}.get(metric, "SUM(cost_usd)")
+            cur = await db.execute(f"""
+                SELECT COALESCE({dim_col},'unknown') as dimension,
+                       {metric_expr} as value, COUNT(*) as count
+                FROM generations {where}
+                GROUP BY dimension ORDER BY value DESC
+            """, w_p)
+            rows = await cur.fetchall()
+            writer.writerow(["dimension", "value", "count"])
+            for r in rows:
+                writer.writerow(list(r))
+
+        output.seek(0)
+        today = datetime.now(timezone.utc).strftime("%Y%m%d")
+        return StreamingResponse(
+            io.StringIO(output.getvalue()),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=routerview_{view}_{today}.csv"}
+        )
+    finally:
+        await db.close()
+
+
+# === SETTINGS ENDPOINTS ===
+@app.get("/api/settings")
+async def get_settings():
+    db = await get_db()
+    try:
+        cur = await db.execute("SELECT key, value FROM settings")
+        rows = await cur.fetchall()
+        return {r[0]: r[1] for r in rows}
+    finally:
+        await db.close()
+
+
+@app.put("/api/settings")
+async def update_settings(request: Request):
+    body = await request.json()
+    db = await get_db()
+    try:
+        for key, value in body.items():
+            await db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=?",
+                (key, str(value), str(value))
+            )
+        await db.commit()
+        return {"status": "ok"}
+    finally:
+        await db.close()
+
+
+@app.post("/api/purge")
+async def purge_data(before: str = Query(...)):
+    db = await get_db()
+    try:
+        result = await db.execute("DELETE FROM generations WHERE created_date < ?", (before,))
+        deleted = result.rowcount
+        await db.execute("DELETE FROM daily_summaries WHERE date < ?", (before,))
+        await db.commit()
+        return {"status": "ok", "deleted_generations": deleted}
+    finally:
+        await db.close()
+
+
+# === CSV IMPORT (OpenRouter Activity Export) ===
+@app.post("/api/import/csv")
+async def import_csv(file: UploadFile = File(...)):
+    """Import an OpenRouter activity CSV export (generation-level data)."""
+    content = (await file.read()).decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(content))
+
+    db = await get_db()
+    inserted = skipped = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        for row in reader:
+            try:
+                gen_id = row.get("generation_id", "").strip()
+                if not gen_id:
+                    skipped += 1
+                    continue
+
+                dt = parse_csv_created_at(row.get("created_at"), gen_id)
+                created_at = dt.isoformat()
+                created_date = dt.strftime("%Y-%m-%d")
+                created_hour = dt.hour
+
+                model = row.get("model_permaslug", "").strip()
+                model_short = derive_model_short(model)
+                provider = row.get("provider_name", "").strip()
+                api_key_label = row.get("api_key_name", "").strip() or None
+                app_id = row.get("app_name", "").strip() or None
+
+                def _int(v):
+                    try: return int(float(v)) if v and v.strip() else 0
+                    except (ValueError, TypeError): return 0
+                def _float(v):
+                    try: return float(v) if v and v.strip() else 0.0
+                    except (ValueError, TypeError): return 0.0
+                def _bool(v):
+                    return str(v).strip().lower() in ("true", "1", "yes")
+
+                tokens_prompt = _int(row.get("tokens_prompt"))
+                tokens_completion = _int(row.get("tokens_completion"))
+                native_tokens_reasoning = _int(row.get("tokens_reasoning"))
+                native_tokens_cached = _int(row.get("tokens_cached"))
+                cost_usd = _float(row.get("cost_total"))
+                cost_cache_usd = _float(row.get("cost_cache"))
+                cost_web_usd = _float(row.get("cost_web_search"))
+                cost_data_usd = _float(row.get("cost_file_processing"))
+                generation_time_ms = _int(row.get("generation_time_ms"))
+                finish_reason = row.get("finish_reason_normalized", "").strip() or None
+                streamed = _bool(row.get("streamed"))
+                cancelled = _bool(row.get("cancelled"))
+                num_search_results = _int(row.get("num_search_results"))
+                external_user = row.get("user", "").strip() or None
+                ttft_ms = _int(row.get("time_to_first_token_ms"))
+
+                result = await db.execute("""
+                    INSERT INTO generations
+                    (id, created_at, created_date, created_hour, model, model_short,
+                     provider_name, app_id, api_key_label,
+                     tokens_prompt, tokens_completion,
+                     native_tokens_reasoning, native_tokens_cached,
+                     cost_usd, cost_cache_usd, cost_web_usd, cost_data_usd,
+                     generation_time_ms, latency_ms, finish_reason,
+                     streamed, cancelled, num_search_results,
+                     external_user, ingestion_source, ingested_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(id) DO NOTHING
+                """, (
+                    gen_id, created_at, created_date, created_hour, model, model_short,
+                    provider, app_id, api_key_label,
+                    tokens_prompt, tokens_completion,
+                    native_tokens_reasoning, native_tokens_cached,
+                    cost_usd, cost_cache_usd, cost_web_usd, cost_data_usd,
+                    generation_time_ms, ttft_ms or generation_time_ms, finish_reason,
+                    streamed, cancelled, num_search_results,
+                    external_user, "csv_import", now_iso,
+                ))
+                if result.rowcount:
+                    inserted += 1
+                else:
+                    skipped += 1
+            except Exception:
+                logger.debug("CSV import row error", exc_info=True)
+                skipped += 1
+
+        await db.commit()
+        await refresh_daily_summaries(days=None)
+        await refresh_model_stats()
+        await log_ingestion(db, "csv_import", inserted, skipped)
+    finally:
+        await db.close()
+
+    return {"status": "ok", "inserted": inserted, "skipped": skipped}
+
+
+# === ADMIN ENDPOINTS ===
+@app.post("/api/admin/refresh-summaries")
+async def refresh_summaries_endpoint():
+    await refresh_daily_summaries(days=2)
+    return {"status": "ok", "refreshed_days": 2}
+
+
+@app.post("/api/admin/rebuild-summaries")
+async def rebuild_summaries_endpoint(confirm: bool = Query(False)):
+    if not confirm:
+        return JSONResponse(status_code=400,
+            content={"error": "Pass confirm=true to rebuild all summaries"})
+    await refresh_daily_summaries(days=None)
+    return {"status": "ok"}
+
+
+def _snapshot_db_to_backups(db_path: str) -> str:
+    """Write a point-in-time consistent SQLite backup to ~/.routerview/backups/."""
+    backups_dir = RUNTIME_PATHS.home / "backups"
+    secure_private_directory(backups_dir)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dest = backups_dir / f"routerview-{ts}.db"
+    prepare_private_file(dest, "SQLite backup")
+    src_conn = sqlite3.connect(db_path)
+    dst_conn = sqlite3.connect(str(dest))
+    try:
+        with dst_conn:
+            src_conn.backup(dst_conn)
+    finally:
+        src_conn.close()
+        dst_conn.close()
+        secure_private_file(dest, "SQLite backup")
+    return str(dest)
+
+
+@app.post("/api/admin/rebuild-timestamps")
+async def rebuild_timestamps_endpoint(confirm: bool = Query(False)):
+    """Recompute ``created_at`` / ``created_date`` / ``created_hour`` from the
+    Unix epoch embedded in each ``gen-<epoch>-<rand>`` generation ID.
+
+    Writes a point-in-time backup of the database under ``~/.routerview/backups/``
+    before mutating. Idempotent: rows already aligned with their embedded epoch
+    are left alone.
+    """
+    if not confirm:
+        return JSONResponse(status_code=400,
+            content={"error": "Pass confirm=true to rebuild timestamps"})
+
+    backup_path = _snapshot_db_to_backups(_db_path)
+
+    db = await get_db()
+    scanned = updated = skipped_no_epoch = 0
+    try:
+        cur = await db.execute(
+            "SELECT id, created_at FROM generations"
+        )
+        rows = await cur.fetchall()
+        updates: List[Tuple[str, str, int, str]] = []
+        for row in rows:
+            scanned += 1
+            gid = row["id"]
+            old_iso = row["created_at"]
+            new_iso = recover_created_at(old_iso, gid)
+            if new_iso is None:
+                skipped_no_epoch += 1
+                continue
+            if new_iso == old_iso:
+                continue
+            try:
+                new_dt = datetime.fromisoformat(new_iso)
+            except (ValueError, TypeError):
+                continue
+            updates.append((new_iso, new_dt.strftime("%Y-%m-%d"), new_dt.hour, gid))
+
+        if updates:
+            await db.executemany(
+                "UPDATE generations SET created_at=?, created_date=?, created_hour=? WHERE id=?",
+                updates,
+            )
+            await db.commit()
+        updated = len(updates)
+    finally:
+        await db.close()
+
+    if updated:
+        await refresh_daily_summaries(days=None)
+        await refresh_model_stats()
+
+    return {
+        "status": "ok",
+        "scanned": scanned,
+        "updated": updated,
+        "skipped_no_epoch": skipped_no_epoch,
+        "backup_path": backup_path,
+    }
+
+
+# === SAVED VIEWS ENDPOINTS ===
+@app.get("/api/views")
+async def list_views():
+    db = await get_db()
+    try:
+        cur = await db.execute("SELECT id, name, config, created_at, updated_at FROM saved_views ORDER BY name")
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+@app.post("/api/views")
+async def save_view(request: Request):
+    body = await request.json()
+    name = body.get("name", "").strip()
+    config = body.get("config", {})
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "name required"})
+    now = datetime.now(timezone.utc).isoformat()
+    db = await get_db()
+    try:
+        await db.execute("""
+            INSERT INTO saved_views (name, config, created_at, updated_at) VALUES (?,?,?,?)
+            ON CONFLICT(name) DO UPDATE SET config=excluded.config, updated_at=excluded.updated_at
+        """, (name, json.dumps(config), now, now))
+        await db.commit()
+        cur = await db.execute("SELECT id FROM saved_views WHERE name=?", (name,))
+        row = await cur.fetchone()
+        return {"status": "ok", "id": row[0]}
+    finally:
+        await db.close()
+
+
+@app.delete("/api/views/{view_id}")
+async def delete_view(view_id: int):
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM saved_views WHERE id=?", (view_id,))
+        await db.commit()
+        return {"status": "ok"}
+    finally:
+        await db.close()
+
+# === SPA PLACEHOLDER (HTML filled below) ===
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RouterView</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2.13.3/umd/Recharts.js"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: { extend: { colors: {
+    surface: { DEFAULT: '#1e293b', dark: '#0f172a' },
+    card: '#334155'
+  }}}
+}
+</script>
+<style>
+body { background: #0f172a; color: #f1f5f9; font-family: ui-sans-serif,system-ui,sans-serif; margin:0; }
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-track { background: #1e293b; }
+::-webkit-scrollbar-thumb { background: #475569; border-radius:3px; }
+.animate-pulse-dot { animation: pulse-dot 2s cubic-bezier(0.4,0,0.6,1) infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
+.rv-row-new { animation: row-highlight 2s ease-out; }
+@keyframes row-highlight { from{background:#1e3a5f} to{background:transparent} }
+.drag-over { outline: 2px dashed #3b82f6; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef, useMemo, memo } = React;
+const COLORS = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#22c55e','#06b6d4','#f97316','#a855f7','#14b8a6','#ef4444','#84cc16','#64748b'];
+const { AreaChart,Area,LineChart,Line,BarChart,Bar,PieChart,Pie,Cell,XAxis,YAxis,CartesianGrid,Tooltip,Legend,ResponsiveContainer,ReferenceLine } = Recharts;
+
+// Inline SVG icons — no CDN dependency
+const _i = (d,extra='') => ({size=14,className='',...p}) =>
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...p}
+    dangerouslySetInnerHTML={{__html:d+extra}}/>;
+const LI = {
+  Settings:      _i('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
+  X:             _i('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
+  ChevronDown:   _i('<polyline points="6 9 12 15 18 9"/>'),
+  ChevronUp:     _i('<polyline points="18 15 12 9 6 15"/>'),
+  ChevronLeft:   _i('<polyline points="15 18 9 12 15 6"/>'),
+  ChevronRight:  _i('<polyline points="9 18 15 12 9 6"/>'),
+  ChevronsUpDown:_i('<polyline points="7 15 12 20 17 15"/><polyline points="7 9 12 4 17 9"/>'),
+  Download:      _i('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>'),
+  Sun:           _i('<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'),
+  Moon:          _i('<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'),
+  Search:        _i('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
+  GripVertical:  _i('<circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>'),
+  Trash2:        _i('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>'),
+  Plus:          _i('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
+  Bookmark:      _i('<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>'),
+  Check:         _i('<polyline points="20 6 9 17 4 12"/>'),
+  Copy:          _i('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
+  RefreshCw:     _i('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>'),
+  Upload:        _i('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>'),
+  BarChart2:     _i('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>'),
+  Columns:       _i('<rect x="3" y="3" width="8" height="18" rx="1"/><rect x="13" y="3" width="8" height="18" rx="1"/>'),
+};
+
+function modelColor(name) {
+  if(!name) return COLORS[0];
+  let h=0; for(let i=0;i<name.length;i++) h=((h<<5)-h+name.charCodeAt(i))|0;
+  return COLORS[Math.abs(h)%COLORS.length];
+}
+const fmt$ = (v,d=2) => v==null?'-':'$'+Number(v).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmt$4 = v => fmt$(v,4);
+const fmtNum = v => v==null?'-':Number(v).toLocaleString();
+const fmtMs = v => v==null?'-':v>=1000?(v/1000).toFixed(1)+'s':Math.round(v)+'ms';
+const fmtPct = v => v==null?'-':(v*100).toFixed(1)+'%';
+const fmtDate = ts => {if(!ts) return '-'; const d=new Date(ts); return d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' '+d.toLocaleTimeString();};
+const fmtDateFull = ts => ts?new Date(ts).toLocaleString():'-';
+function formatResolvedRange(fromIso,toIso,tz) {
+  try {
+    const fmt = new Intl.DateTimeFormat(undefined, {
+      month:'short', day:'numeric', hour:'numeric', minute:'2-digit', timeZone:tz, timeZoneName:'short'
+    });
+    return `${fmt.format(new Date(fromIso))} - ${fmt.format(new Date(toIso))}`;
+  } catch {
+    return null;
+  }
+}
+
+function Spinner() {
+  return <div className="inline-block w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"/>;
+}
+function SkeletonCard() {
+  return <div className="bg-slate-800 dark:bg-slate-800 light:bg-white rounded-xl p-4 h-28 animate-pulse"/>;
+}
+function EmptyState({message='No data for this range'}) {
+  return <div className="flex flex-col items-center justify-center h-40 text-slate-500 gap-2">
+    <LI.BarChart2 size={32} className="opacity-30"/>
+    <p className="text-sm">{message}</p>
+  </div>;
+}
+function ErrorBanner({error,onRetry}) {
+  if(!error) return null;
+  return <div className="fixed top-0 left-0 right-0 z-50 bg-red-900/90 text-red-100 px-4 py-2 flex items-center justify-between text-sm">
+    <span>{error}</span>
+    <button onClick={onRetry} className="ml-4 underline">Retry</button>
+  </div>;
+}
+
+// ── Export helpers ────────────────────────────────────────────────────────────
+function exportChartSVG(ref, name) {
+  const svg = ref.current?.querySelector('svg'); if(!svg) return;
+  const clone = svg.cloneNode(true);
+  // Insert dark background as first child
+  const bg = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  bg.setAttribute('width','100%'); bg.setAttribute('height','100%'); bg.setAttribute('fill','#0f172a');
+  clone.insertBefore(bg, clone.firstChild);
+  const data = new XMLSerializer().serializeToString(clone);
+  const blob = new Blob([data],{type:'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=name+'.svg'; a.click();
+  URL.revokeObjectURL(url);
+}
+function exportChartRaster(ref, name, fmt='png') {
+  const svg = ref.current?.querySelector('svg'); if(!svg) return;
+  const data = new XMLSerializer().serializeToString(svg);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  const blob = new Blob([data],{type:'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  img.onload = () => {
+    canvas.width=img.width*2; canvas.height=img.height*2;
+    ctx.scale(2,2); ctx.fillStyle='#0f172a'; ctx.fillRect(0,0,img.width,img.height);
+    ctx.drawImage(img,0,0);
+    canvas.toBlob(b=>{
+      const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=name+'.'+fmt; a.click();
+    }, fmt==='jpg'?'image/jpeg':'image/png',0.95);
+    URL.revokeObjectURL(url);
+  }; img.src=url;
+}
+function ExportMenu({chartRef, onCSV, name='chart'}) {
+  const [open,setOpen]=useState(false);
+  const ref=useRef();
+  useEffect(()=>{ const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown',h); return()=>document.removeEventListener('mousedown',h); },[]);
+  return <div ref={ref} className="relative">
+    <button onClick={()=>setOpen(!open)} className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded hover:border-slate-500">
+      <LI.Download size={12}/> Export
+    </button>
+    {open&&<div className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-32 py-1">
+      {onCSV&&<button onClick={()=>{onCSV();setOpen(false);}} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700">CSV</button>}
+      {chartRef&&<>
+        <button onClick={()=>{exportChartSVG(chartRef,name);setOpen(false);}} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700">SVG</button>
+        <button onClick={()=>{exportChartRaster(chartRef,name,'png');setOpen(false);}} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700">PNG</button>
+        <button onClick={()=>{exportChartRaster(chartRef,name,'jpg');setOpen(false);}} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700">JPG</button>
+      </>}
+    </div>}
+  </div>;
+}
+
+// ── FilterDropdown ────────────────────────────────────────────────────────────
+function FilterDropdown({label, options=[], selected=[], onChange}) {
+  const [open,setOpen]=useState(false);
+  const [search,setSearch]=useState('');
+  const ref=useRef();
+  useEffect(()=>{ const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown',h); return()=>document.removeEventListener('mousedown',h); },[]);
+  const filtered = options.filter(o=>{const s=search.toLowerCase(),t=typeof o==='object'?`${o.label||''} ${o.id||''}`:String(o); return t.toLowerCase().includes(s);});
+  const toggle = val => onChange(selected.includes(val)?selected.filter(v=>v!==val):[...selected,val]);
+  const getLabel = o => typeof o==='object'?(o.label||o.id):o;
+  const getId = o => typeof o==='object'?o.id:o;
+  return <div ref={ref} className="relative">
+    <button onClick={()=>setOpen(!open)}
+      className={`flex items-center gap-1 px-2.5 py-1.5 rounded text-xs border transition-colors ${selected.length>0?'border-blue-500 bg-blue-500/10 text-blue-400':'border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'}`}>
+      {label}{selected.length>0&&<span className="bg-blue-500 text-white rounded-full px-1.5 ml-0.5">{selected.length}</span>}
+      <LI.ChevronDown size={10}/>
+    </button>
+    {open&&<div className="absolute top-full mt-1 left-0 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-50 w-56 max-h-72 overflow-hidden flex flex-col">
+      <div className="p-2 border-b border-slate-700">
+        <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
+          placeholder="Search..." autoFocus
+          className="w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none placeholder-slate-500"/>
+      </div>
+      <div className="flex text-xs px-2 py-1 gap-3 border-b border-slate-700">
+        <button onClick={()=>onChange(filtered.map(getId))} className="text-blue-400 hover:text-blue-300">All</button>
+        <button onClick={()=>onChange([])} className="text-slate-400 hover:text-slate-300">Clear</button>
+      </div>
+      <div className="overflow-y-auto flex-1">
+        {filtered.length===0&&<div className="px-3 py-2 text-xs text-slate-500">No matches</div>}
+        {filtered.map(opt=>{
+          const id=getId(opt), lbl=getLabel(opt);
+          return <label key={id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700 cursor-pointer text-xs text-slate-300">
+            <input type="checkbox" checked={selected.includes(id)} onChange={()=>toggle(id)} className="accent-blue-500"/>
+            <span className="truncate" title={lbl}>{lbl}</span>
+          </label>;
+        })}
+      </div>
+    </div>}
+  </div>;
+}
+
+// ── KPI Cards ─────────────────────────────────────────────────────────────────
+const COST_CYCLES = ['avg','p50','p95','min','max'];
+const LAT_CYCLES  = ['avg','p50','p95','min','max'];
+function KPICard({title,value,subValue,delta,deltaLabel,positive,children}) {
+  const deltaColor = delta==null?'text-slate-500':positive===false?'text-red-400':'text-green-400';
+  return <div className="bg-slate-800 rounded-xl p-4 flex flex-col gap-1 min-w-0">
+    <p className="text-xs text-slate-400 truncate">{title}</p>
+    <p className="text-2xl font-bold text-slate-100 truncate">{value}</p>
+    {subValue&&<p className="text-xs text-slate-500">{subValue}</p>}
+    {delta!=null&&<p className={`text-xs ${deltaColor}`}>{delta>0?'+':''}{(delta*100).toFixed(1)}% {deltaLabel}</p>}
+    {children}
+  </div>;
+}
+function KPICards({summary,costCycle,setCostCycle,latCycle,setLatCycle}) {
+  if(!summary) return <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+    {Array(6).fill(0).map((_,i)=><SkeletonCard key={i}/>)}</div>;
+  const s = summary;
+  const comp = s.comparison;
+  const compLabel = s.compare_mode ? ({dow:'DoD',wow:'WoW',mom_date:'MoM',mom_relative:'MoM',qoq:'QoQ',yoy_date:'YoY',yoy_relative:'YoY',prior_period:'vs prior'}[s.compare_mode]||'vs prior') : null;
+  const delta = (cur,prev) => (prev&&prev>0)?(cur-prev)/prev:null;
+
+  const costKey = {avg:'avg_cost_per_request',p50:'p50_cost_per_request',p95:'p95_cost_per_request',min:'min_cost_per_request',max:'max_cost_per_request'}[costCycle]||'avg_cost_per_request';
+  const latKey  = {avg:'avg_latency_ms',p50:'p50_latency_ms',p95:'p95_latency_ms',min:'min_latency_ms',max:'max_latency_ms'}[latCycle]||'avg_latency_ms';
+
+  return <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+    <KPICard title="Total Requests" value={fmtNum(s.request_count)}
+      delta={comp?delta(s.request_count,comp.request_count):null} deltaLabel={compLabel} positive={true}/>
+    <KPICard title="Total Cost" value={fmt$(s.total_cost)}
+      subValue={s.projected_cost?`~${fmt$(s.projected_cost)} projected`:null}
+      delta={comp?delta(s.total_cost,comp.total_cost):null} deltaLabel={compLabel} positive={false}/>
+    <KPICard title={`Cost/Req (${costCycle.toUpperCase()})`} value={fmt$4(s[costKey])}
+      delta={comp?delta(s[costKey],comp[costKey]):null} deltaLabel={compLabel} positive={false}>
+      <button onClick={()=>setCostCycle(c=>COST_CYCLES[(COST_CYCLES.indexOf(c)+1)%COST_CYCLES.length])}
+        className="text-xs text-blue-400 hover:text-blue-300 self-start">cycle →</button>
+    </KPICard>
+    <KPICard title={`Latency (${latCycle.toUpperCase()})`} value={fmtMs(s[latKey])}
+      delta={comp?delta(s[latKey],comp[latKey]):null} deltaLabel={compLabel} positive={false}>
+      <button onClick={()=>setLatCycle(c=>LAT_CYCLES[(LAT_CYCLES.indexOf(c)+1)%LAT_CYCLES.length])}
+        className="text-xs text-blue-400 hover:text-blue-300 self-start">cycle →</button>
+    </KPICard>
+    <KPICard title="Cache Hit Rate" value={fmtPct(s.cache_hit_rate)}
+      delta={comp?delta(s.cache_hit_rate,comp.cache_hit_rate):null} deltaLabel={compLabel} positive={true}/>
+    <KPICard title="Total Tokens" value={fmtNum(s.total_tokens)}
+      delta={comp?delta(s.total_tokens,comp.total_tokens):null} deltaLabel={compLabel} positive={true}/>
+  </div>;
+}
+
+// ── Custom Tooltip ────────────────────────────────────────────────────────────
+function sumTooltipValues(items) {
+  return items.reduce((sum, item) => sum + (Number(item?.value) || 0), 0);
+}
+
+function sortTooltipItems(items, metric) {
+  if(metric!=='cost') return items;
+  return [...items].sort((a,b)=>(Number(b?.value)||0)-(Number(a?.value)||0));
+}
+
+function ChartTooltip({active,payload,label,metric,compareRange}) {
+  if(!active||!payload?.length) return null;
+  const fmt = v=>metric==='cost'?fmt$(v,4):metric==='latency'?fmtMs(v):fmtNum(v);
+  const primary = payload.filter(p=>!String(p.dataKey).startsWith('_c_'));
+  const comp = payload.filter(p=>String(p.dataKey).startsWith('_c_'));
+  const orderedPrimary = sortTooltipItems(primary, metric);
+  const orderedComp = sortTooltipItems(comp, metric);
+  const showTotals = metric!=='latency';
+  const primaryTotal = sumTooltipValues(primary);
+  const compTotal = sumTooltipValues(comp);
+  return <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl text-xs max-w-xs">
+    <p className="text-slate-400 mb-2">{label}</p>
+    {orderedPrimary.map((p,i)=><div key={i} className="flex justify-between gap-4">
+      <span className="flex items-center gap-1"><span style={{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}}/>{p.name}</span>
+      <span className="font-mono text-slate-200">{fmt(p.value)}</span>
+    </div>)}
+    {showTotals&&primary.length>1&&<div className="flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700">
+      <span className="font-medium text-slate-300">Total</span>
+      <span className="font-mono text-slate-100">{fmt(primaryTotal)}</span>
+    </div>}
+    {comp.length>0&&<>
+      <p className="text-slate-500 mt-2 mb-1 border-t border-slate-700 pt-1">{compareRange||'Comparison'}</p>
+      {orderedComp.map((p,i)=><div key={i} className="flex justify-between gap-4 opacity-60">
+        <span className="flex items-center gap-1"><span style={{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}}/>{p.name.replace(/^_c_/,'')}</span>
+        <span className="font-mono text-slate-200">{fmt(p.value)}</span>
+      </div>)}
+      {showTotals&&comp.length>1&&<div className="flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700 opacity-80">
+        <span className="font-medium text-slate-300">Total</span>
+        <span className="font-mono text-slate-100">{fmt(compTotal)}</span>
+      </div>}
+    </>}
+  </div>;
+}
+
+// ── Main Chart ────────────────────────────────────────────────────────────────
+function MainChart({data,chartType='area',metric='cost',groupBy='model',comparison,onExport}) {
+  const ref=useRef();
+  const [hidden,setHidden]=useState(new Set());
+  const [hoverIdx,setHoverIdx]=useState(null);
+  const [cumulative,setCumulative]=useState(false);
+
+  // Shared Y domain across both charts so scale differences are honest
+  const yDomain = useMemo(()=>{
+    if(!data?.series?.length) return undefined;
+    const isCum_ = metric!=='latency' && cumulative;
+    // For stacked (non-cumulative): max is sum of all series at each bucket
+    // For cumulative (unstacked): max is the largest individual series running total
+    const maxOfData = (seriesList, nBuckets) => {
+      let maxVal=0;
+      if(isCum_) {
+        for(const s of seriesList) {
+          let run=0;
+          for(let i=0;i<nBuckets;i++){ run+=(s.data[i]||0); if(run>maxVal) maxVal=run; }
+        }
+      } else {
+        for(let i=0;i<nBuckets;i++){
+          let sum=0;
+          for(const s of seriesList) sum+=(s.data[i]||0);
+          if(sum>maxVal) maxVal=sum;
+        }
+      }
+      return maxVal;
+    };
+    let maxVal = maxOfData(data.series, data.buckets?.length||0);
+    if(data?.comparison_series?.length){
+      const compLen = (data.comparison_buckets||data.buckets).length;
+      const compMax = maxOfData(data.comparison_series, compLen);
+      if(compMax>maxVal) maxVal=compMax;
+    }
+    return maxVal>0 ? [0, Math.ceil(maxVal*1.05*100)/100] : undefined;
+  },[data?.series,data?.comparison_series,data?.buckets,data?.comparison_buckets,cumulative,metric]);
+
+  if(!data||!data.series) return <div className="bg-slate-800 rounded-xl p-4 h-96 flex items-center justify-center"><Spinner/></div>;
+  if(!data.buckets?.length) return <div className="bg-slate-800 rounded-xl p-4"><EmptyState/></div>;
+
+  const hasComp = !!(data.comparison_series?.length);
+  const canCumulative = metric!=='latency';
+  const isCum = canCumulative && cumulative;
+
+  // Build chart data, optionally cumulative
+  const buildChartData = (buckets, seriesList) => {
+    const accum = {};
+    return buckets.map((b,i)=>{
+      const pt={bucket:b};
+      seriesList.forEach(s=>{
+        const val = s.data[i]??0;
+        if(isCum){
+          accum[s.name] = (accum[s.name]||0) + val;
+          pt[s.name] = accum[s.name];
+        } else {
+          pt[s.name] = val;
+        }
+      });
+      return pt;
+    });
+  };
+
+  const primaryData = buildChartData(data.buckets, data.series);
+  const compBuckets = data.comparison_buckets||data.buckets;
+  const compData = hasComp ? buildChartData(compBuckets, data.comparison_series) : null;
+
+  const yFmt = v=>metric==='cost'?fmt$(v,2):metric==='latency'?fmtMs(v):fmtNum(v);
+  const bucketSize = data.bucket_size||'day';
+  const xFmt = v=>{
+    if(!v) return '';
+    if(bucketSize==='minute') return v.slice(11,16);
+    if(bucketSize==='hour') return v.slice(11,16)||v;
+    if(bucketSize==='day') return v.slice(5,10);
+    if(bucketSize==='week') return v;
+    if(bucketSize==='month') return v;
+    return v;
+  };
+  const commonAxisProps={stroke:'#475569',fontSize:11,tick:{fill:'#94a3b8'}};
+  const gridProps={strokeDasharray:'3 3',stroke:'#334155'};
+  const handleLegend = e => setHidden(prev=>{const n=new Set(prev);n.has(e.value)?n.delete(e.value):n.add(e.value);return n;});
+
+  const ChartEl = chartType==='line'?LineChart:chartType==='bar'?BarChart:AreaChart;
+  const SeriesEl = chartType==='line'?Line:chartType==='bar'?Bar:Area;
+  const stackId = isCum?undefined:(chartType==='area'||chartType==='bar'?'1':undefined);
+
+  // Linked crosshair: store fractional position (0-1) so charts with different bucket counts sync proportionally
+  const handleMouseMove = (state, len) => {
+    if(state?.activeTooltipIndex!=null && len>1) setHoverIdx(state.activeTooltipIndex/(len-1));
+    else if(state?.activeTooltipIndex!=null) setHoverIdx(0);
+  };
+  const handleMouseLeave = () => setHoverIdx(null);
+
+  const refLineIdx = (chartData) => {
+    if(hoverIdx==null||!chartData.length) return null;
+    return Math.round(hoverIdx*(chartData.length-1));
+  };
+
+  const metricLabel = metric==='cost'?'Cost':metric==='requests'?'Requests':metric==='tokens'?'Tokens':'Latency';
+
+  const renderChart = (chartData, label, height) => (
+    <div>
+      {hasComp && <p className="text-xs text-slate-500 mb-1 ml-1">{label}</p>}
+      <ResponsiveContainer width="100%" height={height}>
+        <ChartEl data={chartData} onMouseMove={s=>handleMouseMove(s,chartData.length)} onMouseLeave={handleMouseLeave}>
+          <CartesianGrid {...gridProps}/>
+          <XAxis dataKey="bucket" {...commonAxisProps} tickFormatter={xFmt}/>
+          <YAxis {...commonAxisProps} tickFormatter={yFmt} width={70} {...(yDomain?{domain:yDomain}:{})}/>
+          <Tooltip content={<ChartTooltip metric={metric}/>} wrapperStyle={{outline:'none'}}/>
+          {!hasComp && <Legend onClick={handleLegend} wrapperStyle={{paddingTop:8,fontSize:11,color:'#94a3b8'}}/>}
+          {data.series.map((s)=>{
+            const col=modelColor(s.name);
+            const hiddenS=hidden.has(s.name);
+            return <SeriesEl key={s.name} type="monotone" dataKey={s.name}
+              stroke={col} fill={col}
+              fillOpacity={hiddenS?0:0.5} strokeOpacity={hiddenS?0:1}
+              stackId={stackId} dot={false}/>;
+          })}
+          {(()=>{const ri=refLineIdx(chartData);return ri!=null&&<ReferenceLine x={chartData[ri]?.bucket} stroke="#94a3b8" strokeDasharray="3 3" strokeOpacity={0.5}/>;})()}
+        </ChartEl>
+      </ResponsiveContainer>
+    </div>
+  );
+
+  const renderCompChart = (chartData, label, height) => (
+    <div>
+      <p className="text-xs text-slate-500 mb-1 ml-1">{label}</p>
+      <ResponsiveContainer width="100%" height={height}>
+        <ChartEl data={chartData} onMouseMove={s=>handleMouseMove(s,chartData.length)} onMouseLeave={handleMouseLeave}>
+          <CartesianGrid {...gridProps}/>
+          <XAxis dataKey="bucket" {...commonAxisProps} tickFormatter={xFmt}/>
+          <YAxis {...commonAxisProps} tickFormatter={yFmt} width={70} {...(yDomain?{domain:yDomain}:{})}/>
+          <Tooltip content={<ChartTooltip metric={metric}/>} wrapperStyle={{outline:'none'}}/>
+          {data.comparison_series.map((s)=>{
+            const col=modelColor(s.name);
+            const hiddenS=hidden.has(s.name);
+            return <SeriesEl key={s.name} type="monotone" dataKey={s.name}
+              stroke={col} fill={col}
+              fillOpacity={hiddenS?0:0.4} strokeOpacity={hiddenS?0:0.8}
+              strokeDasharray="5 3"
+              stackId={stackId} dot={false}/>;
+          })}
+          {(()=>{const ri=refLineIdx(chartData);return ri!=null&&<ReferenceLine x={chartData[ri]?.bucket} stroke="#94a3b8" strokeDasharray="3 3" strokeOpacity={0.5}/>;})()}
+        </ChartEl>
+      </ResponsiveContainer>
+    </div>
+  );
+
+  return <div className="bg-slate-800 rounded-xl p-4">
+    <div className="flex items-center justify-between mb-3">
+      <h2 className="text-sm font-medium text-slate-300">
+        {metricLabel} over Time{isCum?' (Cumulative)':''}
+        {groupBy!=='none'&&<span className="text-slate-500 font-normal ml-1">by {groupBy}</span>}
+      </h2>
+      <div className="flex items-center gap-2">
+        {canCumulative&&<button onClick={()=>setCumulative(c=>!c)}
+          className={`text-xs px-2 py-1 rounded ${cumulative?'bg-blue-600 text-white':'bg-slate-700 text-slate-400 hover:text-slate-300'}`}
+          title="Toggle cumulative view">Σ Cumulative</button>}
+        <ExportMenu chartRef={ref} onCSV={onExport} name="timeseries"/>
+      </div>
+    </div>
+    <div ref={ref}>
+      {hasComp ? <>
+        {renderChart(primaryData, 'Current Period', 240)}
+        <div className="my-2"/>
+        {renderCompChart(compData, data.compare_range||'Prior Period', 200)}
+        <div className="flex flex-wrap justify-center gap-3 mt-2 text-xs">
+          {data.series.map(s=>{
+            const col=modelColor(s.name);
+            const dim=hidden.has(s.name);
+            return <button key={s.name} className="flex items-center gap-1" style={{opacity:dim?0.3:1}}
+              onClick={()=>setHidden(prev=>{const n=new Set(prev);n.has(s.name)?n.delete(s.name):n.add(s.name);return n;})}>
+              <span style={{width:8,height:8,borderRadius:'50%',background:col,display:'inline-block'}}/><span className="text-slate-400">{s.name}</span>
+            </button>;
+          })}
+        </div>
+      </> : renderChart(primaryData, '', 380)}
+    </div>
+  </div>;
+}
+
+// ── Heatmap ───────────────────────────────────────────────────────────────────
+function HeatmapView({data}) {
+  if(!data) return <div className="bg-slate-800 rounded-xl p-4 h-64 animate-pulse"/>;
+  const matrix = data.matrix||[];
+  const allVals = matrix.flat().filter(v=>v!=null);
+  const maxVal = allVals.length?Math.max(...allVals):1;
+  const DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const HOURS=Array.from({length:24},(_,i)=>i);
+  return <div className="bg-slate-800 rounded-xl p-4 overflow-x-auto">
+    <h2 className="text-sm font-medium text-slate-300 mb-3">Usage Heatmap</h2>
+    <div className="flex gap-1">
+      <div className="flex flex-col gap-1 pt-5">
+        {DAYS.map(d=><div key={d} className="h-6 w-8 text-xs text-slate-500 flex items-center">{d}</div>)}
+      </div>
+      <div>
+        <div className="flex gap-1 mb-1">
+          {HOURS.map(h=><div key={h} className="w-6 text-center text-slate-600" style={{fontSize:9}}>{h%6===0?h:''}</div>)}
+        </div>
+        {DAYS.map((d,di)=><div key={di} className="flex gap-1 mb-1">
+          {HOURS.map(h=>{
+            const v=matrix[di]?.[h];
+            const intensity=v!=null?v/maxVal:0;
+            return <div key={h} title={`${d} ${h}:00 — ${v!=null?v.toFixed(4):'no data'}`}
+              className="w-6 h-6 rounded-sm cursor-default"
+              style={{background:v!=null?`rgba(59,130,246,${0.1+intensity*0.9})`:'#1e293b'}}/>;
+          })}
+        </div>)}
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Breakdown Panel ───────────────────────────────────────────────────────────
+function BreakdownPanel({title,data,type='bar',metric='cost',onFilter,chartRef,panelKey,dragProps,exportQS=''}) {
+  if(!data) return <div className="bg-slate-800 rounded-xl p-4 h-64 animate-pulse"/>;
+  const items = data.data||[];
+  if(!items.length) return <div className="bg-slate-800 rounded-xl p-4"><h3 className="text-sm text-slate-400 mb-3">{title}</h3><EmptyState/></div>;
+  const fmtVal = v=>metric==='cost'?fmt$(v,2):metric==='latency'?fmtMs(v):fmtNum(v);
+  const BDTooltip = ({active,payload,label})=>{
+    if(!active||!payload?.length) return null;
+    const d=payload[0]?.payload;
+    return <div className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 shadow-xl text-xs">
+      <p className="text-slate-300 font-medium mb-1">{d?.dimension||label}</p>
+      <p className="text-slate-400">{fmtVal(payload[0]?.value)}</p>
+    </div>;
+  };
+  const tooltipProps={content:<BDTooltip/>,wrapperStyle:{outline:'none'}};
+
+  return <div className="bg-slate-800 rounded-xl p-4" {...dragProps}>
+    <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center gap-2">
+        {dragProps&&<LI.GripVertical size={14} className="text-slate-600 cursor-grab"/>}
+        <h3 className="text-sm font-medium text-slate-300">{title}</h3>
+      </div>
+      <ExportMenu chartRef={chartRef} name={panelKey} onCSV={()=>window.open(`/api/export/csv?view=breakdown&group_by=${panelKey}&metric=${metric}&${exportQS}`)}/>
+    </div>
+    <div ref={chartRef}>
+      {type==='pie'
+        ? (()=>{
+            // Roll up small slices into "Other" when there are many items
+            const MAX_SLICES = 7;
+            let pieItems = items;
+            if(items.length > MAX_SLICES) {
+              const sorted = [...items].sort((a,b)=>b.value-a.value);
+              const top = sorted.slice(0,MAX_SLICES-1);
+              const rest = sorted.slice(MAX_SLICES-1);
+              const otherVal = rest.reduce((s,r)=>s+r.value,0);
+              pieItems = [...top, {dimension:`Other (${rest.length})`, value:otherVal}];
+            }
+            const legendRows = Math.ceil(pieItems.length/3);
+            const pieH = 200 + legendRows * 22;
+            return <ResponsiveContainer width="100%" height={pieH}>
+              <PieChart>
+                <Pie data={pieItems} dataKey="value" nameKey="dimension" cx="50%" cy="45%" innerRadius={50} outerRadius={85}
+                  onClick={e=>onFilter&&e.dimension&&!e.dimension.startsWith('Other')&&onFilter(e.dimension)}>
+                  {pieItems.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                </Pie>
+                <Tooltip {...tooltipProps}/>
+                <Legend wrapperStyle={{fontSize:11,color:'#94a3b8'}}/>
+              </PieChart>
+            </ResponsiveContainer>;
+          })()
+        : (()=>{
+            const barItems = items.slice(0,10);
+            const barH = Math.max(220, barItems.length * 28 + 40);
+            return <ResponsiveContainer width="100%" height={barH}>
+              <BarChart layout="vertical" data={barItems} onClick={e=>onFilter&&e&&onFilter(e.activePayload?.[0]?.payload?.dimension)}>
+                <XAxis type="number" stroke="#475569" fontSize={11} tickFormatter={fmtVal}/>
+                <YAxis type="category" dataKey="dimension" stroke="#475569" fontSize={10} width={130}
+                  tick={({x,y,payload})=>{
+                    const t=payload.value||'';
+                    const label=t.length>20?t.slice(0,18)+'…':t;
+                    return <g transform={`translate(${x},${y})`}><title>{t}</title><text x={-4} y={0} dy={4} textAnchor="end" fill="#94a3b8" fontSize={10}>{label}</text></g>;
+                  }}/>
+                <Tooltip {...tooltipProps}/>
+                <Bar dataKey="value" radius={[0,4,4,0]}>
+                  {barItems.map((entry,i)=><Cell key={i} fill={modelColor(entry.dimension)}/>)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>;
+          })()
+      }
+    </div>
+  </div>;
+}
+
+// ── Log Viewer ────────────────────────────────────────────────────────────────
+const ALL_COLS=[
+  {key:'created_at',label:'Time',fmt:fmtDate},
+  {key:'model_short',label:'Model'},
+  {key:'provider_name',label:'Provider'},
+  {key:'tokens_total',label:'Tokens',fmt:fmtNum,align:'right'},
+  {key:'native_tokens_cached',label:'Cached',fmt:fmtNum,align:'right'},
+  {key:'native_tokens_reasoning',label:'Reasoning',fmt:fmtNum,align:'right'},
+  {key:'cost_usd',label:'Cost',fmt:fmt$4,align:'right'},
+  {key:'generation_time_ms',label:'Latency',fmt:fmtMs,align:'right'},
+  {key:'streamed',label:'Stream',fmt:v=>v?'✓':'-',align:'center'},
+  {key:'finish_reason',label:'Finish'},
+  {key:'origin',label:'Origin'},
+  {key:'api_key_label',label:'API Key'},
+];
+const DEFAULT_COLS=['created_at','model_short','provider_name','tokens_total','cost_usd','generation_time_ms','finish_reason'];
+
+function LogViewer({logData,logSort,setLogSort,logSearch,setLogSearch,logPage,setLogPage,logPageSize,setLogPageSize,visibleCols,setVisibleCols,expandedRow,setExpandedRow,onExportCSV}) {
+  const [colOpen,setColOpen]=useState(false);
+  const searchTimeout=useRef(null);
+  const [localSearch,setLocalSearch]=useState(logSearch);
+  const data = logData?.data||[];
+
+  const handleSearch=v=>{setLocalSearch(v); clearTimeout(searchTimeout.current); searchTimeout.current=setTimeout(()=>setLogSearch(v),300);};
+  const handleSort=col=>{
+    if(logSort.col===col) setLogSort(s=>({...s,dir:s.dir==='desc'?'asc':'desc'}));
+    else setLogSort({col,dir:'desc'});
+  };
+  const SortIcon=({col})=>{
+    if(logSort.col!==col) return <LI.ChevronsUpDown size={10} className="text-slate-600 ml-0.5"/>;
+    return logSort.dir==='desc'?<LI.ChevronDown size={10} className="text-blue-400 ml-0.5"/>:<LI.ChevronUp size={10} className="text-blue-400 ml-0.5"/>;
+  };
+  const cols=ALL_COLS.filter(c=>visibleCols.includes(c.key));
+  const total=logData?.total||0;
+  const pages=logData?.pages||1;
+
+  return <div className="bg-slate-800 rounded-xl p-4">
+    <div className="flex items-center gap-3 mb-3 flex-wrap">
+      <h2 className="text-sm font-medium text-slate-300">Recent Generations</h2>
+      <div className="flex items-center gap-1 bg-slate-700 rounded px-2 flex-1 min-w-32 max-w-56">
+        <LI.Search size={12} className="text-slate-500"/>
+        <input id="log-search" type="text" value={localSearch} onChange={e=>handleSearch(e.target.value)}
+          placeholder="Search..." className="bg-transparent text-xs text-slate-200 outline-none py-1 w-full placeholder-slate-600"/>
+      </div>
+      <div className="relative">
+        <button onClick={()=>setColOpen(!colOpen)} className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500">
+          <LI.Columns size={12}/> Cols
+        </button>
+        {colOpen&&<div className="absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-40 w-40 py-2">
+          {ALL_COLS.map(c=><label key={c.key} className="flex items-center gap-2 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 cursor-pointer">
+            <input type="checkbox" checked={visibleCols.includes(c.key)}
+              onChange={()=>setVisibleCols(prev=>prev.includes(c.key)?prev.filter(k=>k!==c.key):[...prev,c.key])}
+              className="accent-blue-500"/>
+            {c.label}
+          </label>)}
+        </div>}
+      </div>
+      <button onClick={onExportCSV} className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500">
+        <LI.Download size={12}/> CSV
+      </button>
+      <span className="text-xs text-slate-500 ml-auto">
+        {total>0?`${(logPage-1)*logPageSize+1}–${Math.min(logPage*logPageSize,total)} of ${fmtNum(total)}`:'0 results'}
+      </span>
+    </div>
+
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-slate-700">
+            {cols.map(c=><th key={c.key} className={`p-2 text-slate-400 font-medium cursor-pointer hover:text-slate-200 select-none ${c.align==='right'?'text-right':c.align==='center'?'text-center':'text-left'}`}
+              onClick={()=>handleSort(c.key)}>
+              <span className="flex items-center gap-0.5 whitespace-nowrap justify-start">{c.align==='right'&&<span className="flex-1"/>}{c.label}<SortIcon col={c.key}/></span>
+            </th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {data.length===0&&<tr><td colSpan={cols.length} className="p-4 text-center text-slate-500">No generations found</td></tr>}
+          {data.map(row=><React.Fragment key={row.id}>
+            <tr className={`border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer transition-colors ${row.anomalies?.length?'border-l-2 border-l-amber-500':''} ${expandedRow===row.id?'bg-slate-700/40':''}`}
+              onClick={()=>setExpandedRow(expandedRow===row.id?null:row.id)}>
+              {cols.map(c=><td key={c.key} className={`p-2 text-slate-300 ${c.align==='right'?'text-right':c.align==='center'?'text-center':''} max-w-32 truncate`}>
+                {c.fmt?c.fmt(row[c.key]):row[c.key]??'-'}
+                {c.key==='model_short'&&row.anomalies?.length>0&&<span className="ml-1 text-amber-400" title={row.anomalies.join(', ')}>⚠</span>}
+              </td>)}
+            </tr>
+            {expandedRow===row.id&&<tr>
+              <td colSpan={cols.length} className="p-3 bg-slate-900/50">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs mb-2">
+                  {Object.entries(row).filter(([k])=>!['trace_metadata','anomalies'].includes(k)).map(([k,v])=><div key={k} className="flex gap-2">
+                    <span className="text-slate-500 shrink-0">{k}:</span>
+                    <span className="text-slate-300 break-all">{String(v??'-')}</span>
+                  </div>)}
+                </div>
+                {row.trace_metadata&&<details className="mt-2">
+                  <summary className="text-xs text-slate-500 cursor-pointer">trace_metadata</summary>
+                  <pre className="mt-1 text-xs text-slate-400 bg-slate-900 rounded p-2 overflow-auto max-h-40">{JSON.stringify(JSON.parse(row.trace_metadata||'{}'),null,2)}</pre>
+                </details>}
+              </td>
+            </tr>}
+          </React.Fragment>)}
+        </tbody>
+      </table>
+    </div>
+
+    <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-700">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-slate-500">Per page:</span>
+        {[25,50,100,250].map(n=><button key={n} onClick={()=>{setLogPageSize(n);setLogPage(1);}}
+          className={`px-2 py-0.5 text-xs rounded ${logPageSize===n?'bg-blue-600 text-white':'text-slate-400 hover:text-slate-200'}`}>{n}</button>)}
+      </div>
+      <div className="flex items-center gap-1">
+        <button onClick={()=>setLogPage(1)} disabled={logPage<=1}
+          className="px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30">First</button>
+        <button onClick={()=>setLogPage(p=>Math.max(1,p-1))} disabled={logPage<=1}
+          className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"><LI.ChevronLeft size={14}/></button>
+        <input type="text" value={logPage} onChange={e=>{
+          const v=parseInt(e.target.value,10);
+          if(!isNaN(v)&&v>=1&&v<=pages) setLogPage(v);
+          else if(e.target.value==='') setLogPage(1);
+        }}
+          onKeyDown={e=>{if(e.key==='Enter'){const v=parseInt(e.target.value,10);if(!isNaN(v))setLogPage(Math.max(1,Math.min(pages,v)));}}}
+          className="w-10 text-center text-xs text-slate-300 bg-slate-700 rounded px-1 py-0.5 outline-none border border-slate-600 focus:border-blue-500"
+        />
+        <span className="text-xs text-slate-500">/ {pages}</span>
+        <button onClick={()=>setLogPage(p=>Math.min(pages,p+1))} disabled={logPage>=pages}
+          className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"><LI.ChevronRight size={14}/></button>
+        <button onClick={()=>setLogPage(pages)} disabled={logPage>=pages}
+          className="px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30">Last</button>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Settings Panel ────────────────────────────────────────────────────────────
+function SettingsPanel({onClose,onImportComplete}) {
+  const [health,setHealth]=useState(null);
+  const [purgeDate,setPurgeDate]=useState('');
+  const [importing,setImporting]=useState(false);
+  const [importResult,setImportResult]=useState(null);
+  const fileRef=useRef();
+
+  useEffect(()=>{ fetch('/api/health').then(r=>r.json()).then(setHealth).catch(()=>{}); },[]);
+
+  const purge=async()=>{
+    if(!purgeDate||!confirm(`Delete all data before ${purgeDate}?`)) return;
+    const r=await fetch(`/api/purge?before=${purgeDate}`,{method:'POST'}); const d=await r.json();
+    alert(`Deleted ${d.deleted_generations} generations`);
+    onImportComplete?.();
+  };
+  const importFile=async e=>{
+    const file=e.target.files?.[0]; if(!file) return;
+    setImporting(true); setImportResult(null);
+    const fd=new FormData(); fd.append('file',file);
+    try {
+      const r=await fetch('/api/import/csv',{method:'POST',body:fd});
+      const d=await r.json();
+      setImportResult(d);
+      if(d.status==='ok') onImportComplete?.();
+    }
+    catch(e){setImportResult({error:String(e)});}
+    setImporting(false);
+  };
+  const refreshStats=async()=>{ await fetch('/api/admin/refresh-summaries',{method:'POST'}); alert('Summaries refreshed'); };
+  const [rebuilding,setRebuilding]=useState(false);
+  const rebuildTimestamps=async()=>{
+    if(!confirm(`Rebuild created_at for every generation from its gen-ID epoch? The database will be backed up to ~/.routerview/backups/ first.`)) return;
+    setRebuilding(true);
+    try {
+      const r=await fetch('/api/admin/rebuild-timestamps?confirm=true',{method:'POST'});
+      const d=await r.json();
+      if(d.error) alert('Error: '+d.error);
+      else { alert(`Scanned ${d.scanned}, updated ${d.updated}. Backup: ${d.backup_path}`); onImportComplete?.(); }
+    } catch(e){ alert('Error: '+String(e)); }
+    setRebuilding(false);
+  };
+
+  return <div className="fixed inset-0 z-50 flex">
+    <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={onClose}/>
+    <div className="w-96 bg-slate-900 border-l border-slate-700 overflow-y-auto p-6 flex flex-col gap-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-slate-100">Settings</h2>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-200"><LI.X size={20}/></button>
+      </div>
+
+      {health&&<section className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium text-slate-300 border-b border-slate-700 pb-1">Database</h3>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="text-slate-500">Generations:</div><div className="text-slate-300">{fmtNum(health.total_generations)}</div>
+          <div className="text-slate-500">DB size:</div><div className="text-slate-300">{health.db_size_mb} MB</div>
+          <div className="text-slate-500">Version:</div><div className="text-slate-300">{health.version}</div>
+        </div>
+        <button onClick={refreshStats} className="px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded">Refresh Stats</button>
+        <button onClick={rebuildTimestamps} disabled={rebuilding} className="px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded disabled:opacity-50">{rebuilding?'Rebuilding...':'Rebuild Timestamps'}</button>
+      </section>}
+
+      <section className="flex flex-col gap-3">
+        <h3 className="text-sm font-medium text-slate-300 border-b border-slate-700 pb-1">Purge Data</h3>
+        <input type="date" value={purgeDate} onChange={e=>setPurgeDate(e.target.value)}
+          className="bg-slate-800 text-xs text-slate-200 px-3 py-2 rounded border border-slate-700 outline-none focus:border-blue-500"/>
+        <button onClick={purge} className="px-3 py-2 text-xs bg-red-700 hover:bg-red-600 text-white rounded">Purge Before Date</button>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h3 className="text-sm font-medium text-slate-300 border-b border-slate-700 pb-1">Import</h3>
+        <input type="file" ref={fileRef} accept=".csv" onChange={importFile} className="hidden"/>
+        <button onClick={()=>fileRef.current?.click()} disabled={importing}
+          className="flex items-center gap-2 px-3 py-2 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded">
+          {importing?<Spinner/>:<LI.Upload size={12}/>} Import CSV
+        </button>
+        {importResult&&<div className={`text-xs p-2 rounded ${importResult.error?'bg-red-900/40 text-red-300':'bg-green-900/40 text-green-300'}`}>
+          {importResult.error||`Inserted: ${importResult.inserted}, Skipped: ${importResult.skipped}`}
+        </div>}
+      </section>
+    </div>
+  </div>;
+}
+
+// ── Shortcuts Modal ───────────────────────────────────────────────────────────
+function ShortcutsModal({onClose}) {
+  const shortcuts=[
+    ['/','Focus log search'],['←','Previous time period'],['→','Next time period'],
+    ['R','Refresh data'],['Esc','Clear all filters'],['?','Show this help'],
+  ];
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-80" onClick={e=>e.stopPropagation()}>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-semibold text-slate-200">Keyboard Shortcuts</h3>
+        <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><LI.X size={16}/></button>
+      </div>
+      {shortcuts.map(([k,d])=><div key={k} className="flex items-center justify-between py-1.5 border-b border-slate-800">
+        <span className="text-xs text-slate-400">{d}</span>
+        <kbd className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs text-slate-300 font-mono">{k}</kbd>
+      </div>)}
+    </div>
+  </div>;
+}
+
+// ── Saved Views ───────────────────────────────────────────────────────────────
+function SavedViewsDropdown({views,onSelect,onSave,onDelete}) {
+  const [open,setOpen]=useState(false);
+  const [name,setName]=useState('');
+  const [saving,setSaving]=useState(false);
+  const ref=useRef();
+  useEffect(()=>{ const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown',h); return()=>document.removeEventListener('mousedown',h); },[]);
+  return <div ref={ref} className="relative">
+    <button onClick={()=>setOpen(!open)} className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-400 border border-slate-600 rounded hover:border-slate-500 hover:text-slate-300">
+      <LI.Bookmark size={12}/> Views <LI.ChevronDown size={10}/>
+    </button>
+    {open&&<div className="absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-56 py-2">
+      {saving?<div className="px-3 py-2">
+        <input type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="View name..."
+          autoFocus onKeyDown={e=>{if(e.key==='Enter'&&name){onSave(name);setSaving(false);setName('');setOpen(false);}if(e.key==='Escape') setSaving(false);}}
+          className="w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none mb-2"/>
+        <div className="flex gap-2">
+          <button onClick={()=>setSaving(false)} className="flex-1 py-1 text-xs text-slate-400 border border-slate-700 rounded">Cancel</button>
+          <button onClick={()=>{if(name){onSave(name);setSaving(false);setName('');setOpen(false);}}} className="flex-1 py-1 text-xs bg-blue-600 text-white rounded">Save</button>
+        </div>
+      </div>:<>
+        <button onClick={()=>setSaving(true)} className="w-full text-left px-3 py-1.5 text-xs text-blue-400 hover:bg-slate-700 flex items-center gap-2">
+          <LI.Plus size={12}/> Save current view
+        </button>
+        {views.length>0&&<div className="border-t border-slate-700 mt-1 pt-1">
+          {views.map(v=><div key={v.id} className="flex items-center justify-between px-3 py-1.5 hover:bg-slate-700 group">
+            <button onClick={()=>{onSelect(v);setOpen(false);}} className="text-xs text-slate-300 truncate flex-1 text-left">{v.name}</button>
+            <button onClick={()=>onDelete(v.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 ml-2"><LI.Trash2 size={10}/></button>
+          </div>)}
+        </div>}
+      </>}
+    </div>}
+  </div>;
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+const RANGE_OPTS=[
+  {v:'today',l:'Today'},{v:'yesterday',l:'Yesterday'},
+  {v:'this_week',l:'This Week'},{v:'last_week',l:'Last Week'},
+  {v:'this_month',l:'This Month'},{v:'last_month',l:'Last Month'},
+  {v:'this_quarter',l:'This Quarter'},{v:'last_quarter',l:'Last Quarter'},
+  {v:'this_year',l:'This Year'},{v:'last_year',l:'Last Year'},
+  {v:'last_1h',l:'Last 1 Hour'},{v:'last_6h',l:'Last 6 Hours'},{v:'last_24h',l:'Last 24 Hours'},
+  {v:'last_7d',l:'Last 7d (rolling)'},{v:'last_30d',l:'Last 30d (rolling)'},{v:'last_90d',l:'Last 90d (rolling)'},
+  {v:'all',l:'All Time'},{v:'custom',l:'Custom Range…'},
+];
+const COMPARE_OPTS=[
+  {v:'prior_period',l:'vs Prior Period'},{v:'dow',l:'vs Same Day Last Week'},
+  {v:'wow',l:'vs Last Week'},{v:'mom_date',l:'vs Same Date Last Month'},
+  {v:'mom_relative',l:'vs Same Weekday Last Month'},{v:'qoq',l:'vs Same Day Last Quarter'},
+  {v:'yoy_date',l:'vs Same Date Last Year'},{v:'yoy_relative',l:'vs Same Weekday Last Year'},
+];
+
+function Header({timeRange,setTimeRange,customFrom,setCustomFrom,customTo,setCustomTo,filters,setFilters,dimensions,onSettings,compareEnabled,setCompareEnabled,compareMode,setCompareMode,views,onSelectView,onSaveView,onDeleteView,chartType,setChartType,metric,setMetric,groupBy,setGroupBy,summary,tz}) {
+  const clearAll=()=>setFilters({model:[],provider:[],api_key:[],origin:[],finish_reason:[]});
+  const hasFilters=Object.values(filters).some(v=>v.length>0);
+  const CHART_TYPES=[{v:'area',l:'Area'},{v:'line',l:'Line'},{v:'bar',l:'Bar'},{v:'heatmap',l:'Heatmap'}];
+  const METRICS=[{v:'cost',l:'Cost $'},{v:'requests',l:'Requests'},{v:'tokens',l:'Tokens'},{v:'latency',l:'Latency'}];
+  const GROUPS=[{v:'model',l:'By Model'},{v:'provider',l:'By Provider'},{v:'api_key',l:'By Key'},{v:'none',l:'No Group'}];
+  const activeRangeLabel = RANGE_OPTS.find(o=>o.v===timeRange)?.l||'Custom Range';
+  const resolvedRange = summary?.from&&summary?.to ? formatResolvedRange(summary.from, summary.to, tz) : null;
+
+  return <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex flex-col gap-2 sticky top-0 z-30">
+    <div className="flex items-center gap-3 flex-wrap">
+      <span className="font-bold text-blue-400 text-sm tracking-wide shrink-0">RouterView</span>
+
+      <select value={timeRange} onChange={e=>setTimeRange(e.target.value)}
+        className="bg-slate-800 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-700 outline-none focus:border-blue-500 cursor-pointer">
+        {RANGE_OPTS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+      </select>
+
+      {timeRange==='custom'&&<>
+        <input type="datetime-local" value={customFrom||''} onChange={e=>setCustomFrom(e.target.value)}
+          className="bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"/>
+        <span className="text-slate-600 text-xs">to</span>
+        <input type="datetime-local" value={customTo||''} onChange={e=>setCustomTo(e.target.value)}
+          className="bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"/>
+      </>}
+
+      <div className="flex items-center gap-1.5">
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <div onClick={()=>setCompareEnabled(!compareEnabled)} className={`w-8 h-4 rounded-full transition-colors cursor-pointer relative ${compareEnabled?'bg-blue-600':'bg-slate-700'}`}>
+            <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${compareEnabled?'left-4.5':'left-0.5'}`} style={{left:compareEnabled?18:2}}/>
+          </div>
+          <span className="text-xs text-slate-400">Compare</span>
+        </label>
+        {compareEnabled&&<select value={compareMode} onChange={e=>setCompareMode(e.target.value)}
+          className="bg-slate-800 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700 outline-none">
+          {COMPARE_OPTS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+        </select>}
+      </div>
+
+      <div className="flex items-center gap-1 ml-auto">
+        <select value={chartType} onChange={e=>setChartType(e.target.value)}
+          className="bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none">
+          {CHART_TYPES.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+        </select>
+        <select value={metric} onChange={e=>setMetric(e.target.value)}
+          className="bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none">
+          {METRICS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+        </select>
+        <select value={groupBy} onChange={e=>setGroupBy(e.target.value)}
+          className="bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none">
+          {GROUPS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+        </select>
+        <SavedViewsDropdown views={views} onSelect={onSelectView} onSave={onSaveView} onDelete={onDeleteView}/>
+        <button onClick={onSettings} className="p-1.5 text-slate-400 hover:text-slate-200 rounded"><LI.Settings size={14}/></button>
+      </div>
+    </div>
+
+    {resolvedRange&&<div className="text-xs text-slate-500">
+      {activeRangeLabel}: {resolvedRange}
+    </div>}
+
+    {dimensions&&<div className="flex items-center gap-2 flex-wrap">
+      <FilterDropdown label="Model" options={dimensions.models||[]} selected={filters.model} onChange={v=>setFilters(f=>({...f,model:v}))}/>
+      <FilterDropdown label="Provider" options={dimensions.providers||[]} selected={filters.provider} onChange={v=>setFilters(f=>({...f,provider:v}))}/>
+      <FilterDropdown label="API Key" options={dimensions.api_keys||[]} selected={filters.api_key} onChange={v=>setFilters(f=>({...f,api_key:v}))}/>
+      <FilterDropdown label="Origin" options={dimensions.origins||[]} selected={filters.origin} onChange={v=>setFilters(f=>({...f,origin:v}))}/>
+      <FilterDropdown label="Finish" options={dimensions.finish_reasons||[]} selected={filters.finish_reason} onChange={v=>setFilters(f=>({...f,finish_reason:v}))}/>
+      {hasFilters&&<button onClick={clearAll} className="text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1"><LI.X size={10}/> Clear all</button>}
+    </div>}
+
+    {hasFilters&&<div className="flex flex-wrap gap-1.5">
+      {Object.entries(filters).flatMap(([k,vals])=>vals.map(v=><span key={k+v} className="flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-300 text-xs rounded-full">
+        {k}:{v}
+        <button onClick={()=>setFilters(f=>({...f,[k]:f[k].filter(x=>x!==v)}))} className="hover:text-blue-100"><LI.X size={9}/></button>
+      </span>))}
+    </div>}
+  </div>;
+}
+
+// ── Error Boundary ────────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(p){super(p);this.state={error:null};}
+  static getDerivedStateFromError(e){return{error:e};}
+  render(){
+    if(this.state.error) return <div className="p-8 text-red-400 text-sm">
+      <h2 className="font-bold mb-2">Something went wrong</h2>
+      <pre className="text-xs opacity-70 overflow-auto">{this.state.error.message}</pre>
+      <button onClick={()=>this.setState({error:null})} className="mt-4 px-3 py-1 border border-red-700 rounded text-xs hover:bg-red-900/30">Retry</button>
+    </div>;
+    return this.props.children;
+  }
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App() {
+  // Time range
+  const [timeRange,setTimeRange]=useState(()=>new URLSearchParams(location.search).get('range')||'today');
+  const [customFrom,setCustomFrom]=useState(null);
+  const [customTo,setCustomTo]=useState(null);
+  const [tz]=useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+  // Filters
+  const [filters,setFilters]=useState(()=>{
+    const p=new URLSearchParams(location.search);
+    return {
+      model: p.get('model')?.split(',').filter(Boolean)||[],
+      provider: p.get('provider')?.split(',').filter(Boolean)||[],
+      api_key: p.get('api_key')?.split(',').filter(Boolean)||[],
+      origin: p.get('origin')?.split(',').filter(Boolean)||[],
+      finish_reason: p.get('finish_reason')?.split(',')||[],
+    };
+  });
+
+  // Comparison
+  const [compareEnabled,setCompareEnabled]=useState(false);
+  const [compareMode,setCompareMode]=useState('prior_period');
+
+  // Chart controls
+  const [chartType,setChartType]=useState('area');
+  const [metric,setMetric]=useState('cost');
+  const [groupBy,setGroupBy]=useState('model');
+
+  // Data
+  const [summary,setSummary]=useState(null);
+  const [timeseries,setTimeseries]=useState(null);
+  const [logData,setLogData]=useState(null);
+  const [dimensions,setDimensions]=useState(null);
+  const [breakdown,setBreakdown]=useState({model:null,api_key:null,provider:null});
+  const [heatmapData,setHeatmapData]=useState(null);
+
+  // Log viewer state
+  const [logSort,setLogSort]=useState({col:'created_at',dir:'desc'});
+  const [logSearch,setLogSearch]=useState('');
+  const [logPage,setLogPage]=useState(1);
+  const [logPageSize,setLogPageSize]=useState(50);
+  const [visibleCols,setVisibleCols]=useState(()=>JSON.parse(localStorage.getItem('rv_cols')||'null')||DEFAULT_COLS);
+  const [expandedRow,setExpandedRow]=useState(null);
+
+  // UI
+  const [showSettings,setShowSettings]=useState(false);
+  const [showShortcuts,setShowShortcuts]=useState(false);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState(null);
+
+  // Panel order (drag-and-drop)
+  const [panelOrder,setPanelOrder]=useState(()=>JSON.parse(localStorage.getItem('rv_panels')||'["model","api_key","provider"]'));
+  const dragSrc=useRef(null);
+
+  // Saved views
+  const [views,setViews]=useState([]);
+
+  // Chart refs for export
+  const mainChartRef=useRef();
+  const panelRefs={model:useRef(),api_key:useRef(),provider:useRef()};
+
+  // Ensure dark mode
+  useEffect(()=>{ document.documentElement.classList.add('dark'); },[]);
+
+  // Persist cols
+  useEffect(()=>{ localStorage.setItem('rv_cols',JSON.stringify(visibleCols)); },[visibleCols]);
+
+  // URL sync
+  useEffect(()=>{
+    const p=new URLSearchParams();
+    if(timeRange!=='today') p.set('range',timeRange);
+    Object.entries(filters).forEach(([k,v])=>{if(v.length) p.set(k,v.join(','));});
+    const qs=p.toString(); history.replaceState(null,'',qs?`?${qs}`:'/');
+  },[timeRange,filters]);
+
+  // Load saved views
+  useEffect(()=>{ fetch('/api/views').then(r=>r.json()).then(setViews).catch(()=>{}); },[]);
+
+  // Build query string
+  const buildQS = useCallback((extra={})=>{
+    const p=new URLSearchParams();
+    if(timeRange==='custom'){if(customFrom)p.set('from',customFrom);if(customTo)p.set('to',customTo);}
+    else p.set('range',timeRange);
+    p.set('tz',tz);
+    if(filters.model.length) p.set('model',filters.model.join(','));
+    if(filters.provider.length) p.set('provider',filters.provider.join(','));
+    if(filters.api_key.length) p.set('api_key',filters.api_key.join(','));
+    if(filters.origin.length) p.set('origin',filters.origin.join(','));
+    if(filters.finish_reason.length) p.set('finish_reason',filters.finish_reason.join(','));
+    if(compareEnabled) p.set('compare',compareMode);
+    Object.entries(extra).forEach(([k,v])=>p.set(k,v));
+    return p.toString();
+  },[timeRange,customFrom,customTo,tz,filters,compareEnabled,compareMode]);
+
+  // Fetch all data
+  const fetchAbort = useRef(null);
+  const fetchData = useCallback(async()=>{
+    if(fetchAbort.current) fetchAbort.current.abort();
+    const ac = new AbortController(); fetchAbort.current = ac;
+    const sig = {signal:ac.signal};
+    setLoading(true); setError(null);
+    const qs=buildQS();
+    const tsqs=buildQS({metric,group_by:groupBy});
+    try {
+      const [sumRes,tsRes,dimRes] = await Promise.all([
+        fetch(`/api/summary?${qs}`,sig).then(r=>r.json()),
+        fetch(`/api/timeseries?${tsqs}`,sig).then(r=>r.json()),
+        fetch('/api/dimensions',sig).then(r=>r.json()),
+      ]);
+      setSummary(sumRes); setTimeseries(tsRes); setDimensions(dimRes);
+
+      // Breakdown panels
+      const [bmRes,bkRes,bpRes] = await Promise.all([
+        fetch(`/api/breakdown?group_by=model&metric=cost&${qs}`,sig).then(r=>r.json()),
+        fetch(`/api/breakdown?group_by=api_key&metric=cost&${qs}`,sig).then(r=>r.json()),
+        fetch(`/api/breakdown?group_by=provider&metric=requests&${qs}`,sig).then(r=>r.json()),
+      ]);
+      setBreakdown({model:bmRes,api_key:bkRes,provider:bpRes});
+
+      if(chartType==='heatmap') {
+        const hm=await fetch(`/api/heatmap?metric=${metric}&${qs}`,sig).then(r=>r.json());
+        setHeatmapData(hm);
+      }
+    } catch(e){ if(e.name==='AbortError') return; setError(String(e)); }
+    finally { if(!ac.signal.aborted) setLoading(false); }
+  },[buildQS,metric,groupBy,chartType]);
+
+  const fetchLog = useCallback(async()=>{
+    const qs=buildQS({page:logPage,page_size:logPageSize,sort:logSort.col,order:logSort.dir,search:logSearch});
+    try { const d=await fetch(`/api/generations?${qs}`).then(r=>r.json()); setLogData(d); }
+    catch(e){ console.warn('Log fetch failed',e); }
+  },[buildQS,logPage,logPageSize,logSort,logSearch]);
+
+  // KPI card cycles (persisted)
+  const [costCycle,setCostCycle]=useState(()=>localStorage.getItem('rv_cost_agg')||'avg');
+  const [latCycle,setLatCycle]=useState(()=>localStorage.getItem('rv_lat_agg')||'avg');
+  useEffect(()=>localStorage.setItem('rv_cost_agg',costCycle),[costCycle]);
+  useEffect(()=>localStorage.setItem('rv_lat_agg',latCycle),[latCycle]);
+
+  // Fetch on mount and state changes
+  useEffect(()=>{ fetchData(); },[fetchData]);
+  useEffect(()=>{ fetchLog(); },[fetchLog]);
+
+  // Keyboard shortcuts
+  useEffect(()=>{
+    const RANGES=RANGE_OPTS.map(o=>o.v).filter(v=>v!=='custom');
+    function handleKey(e){
+      if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT') return;
+      if(e.key==='/'){e.preventDefault();document.getElementById('log-search')?.focus();}
+      else if(e.key==='ArrowLeft'){const i=RANGES.indexOf(timeRange);if(i>0)setTimeRange(RANGES[i-1]);else if(i===-1)setTimeRange(RANGES[RANGES.length-1]);}
+      else if(e.key==='ArrowRight'){const i=RANGES.indexOf(timeRange);if(i>=0&&i<RANGES.length-1)setTimeRange(RANGES[i+1]);else if(i===-1)setTimeRange(RANGES[0]);}
+      else if(e.key==='r'&&!e.metaKey){fetchData();fetchLog();}
+      else if(e.key==='Escape'){setFilters({model:[],provider:[],api_key:[],origin:[],finish_reason:[]});}
+      else if(e.key==='?'){setShowShortcuts(true);}
+    }
+    window.addEventListener('keydown',handleKey);
+    return()=>window.removeEventListener('keydown',handleKey);
+  },[timeRange,fetchData,fetchLog]);
+
+  // Auto smart compare mode — fire on range change AND when comparison is enabled
+  useEffect(()=>{
+    const defaults={today:'dow',yesterday:'dow',this_week:'wow',last_week:'wow',this_month:'mom_date',last_month:'mom_date',this_quarter:'qoq',last_quarter:'qoq',this_year:'yoy_date',last_year:'yoy_date'};
+    if(defaults[timeRange]) setCompareMode(defaults[timeRange]);
+  },[timeRange,compareEnabled]);
+
+  // Drag-and-drop for panels
+  const dragStart=(e,key)=>{dragSrc.current=key;};
+  const dragOver=e=>{e.preventDefault();e.currentTarget.classList.add('drag-over');};
+  const dragLeave=e=>e.currentTarget.classList.remove('drag-over');
+  const drop=(e,key)=>{
+    e.currentTarget.classList.remove('drag-over');
+    if(!dragSrc.current||dragSrc.current===key) return;
+    const src=dragSrc.current;
+    setPanelOrder(prev=>{
+      const next=[...prev]; const fi=next.indexOf(src); const ti=next.indexOf(key);
+      next.splice(fi,1); next.splice(ti,0,src);
+      localStorage.setItem('rv_panels',JSON.stringify(next));
+      return next;
+    });
+    dragSrc.current=null;
+  };
+
+  // Saved views
+  const selectView=v=>{
+    const cfg=JSON.parse(v.config||'{}');
+    if(cfg.timeRange) setTimeRange(cfg.timeRange);
+    if(cfg.filters) setFilters(cfg.filters);
+    if(cfg.chartType) setChartType(cfg.chartType);
+    if(cfg.metric) setMetric(cfg.metric);
+    if(cfg.groupBy) setGroupBy(cfg.groupBy);
+    if(cfg.panelOrder) setPanelOrder(cfg.panelOrder);
+    if(cfg.compareMode) setCompareMode(cfg.compareMode);
+    if(cfg.compareEnabled!=null) setCompareEnabled(cfg.compareEnabled);
+  };
+  const saveView=async name=>{
+    const config={timeRange,filters,chartType,metric,groupBy,panelOrder,compareMode,compareEnabled};
+    await fetch('/api/views',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,config})});
+    const v=await fetch('/api/views').then(r=>r.json()); setViews(v);
+  };
+  const deleteView=async id=>{
+    await fetch(`/api/views/${id}`,{method:'DELETE'});
+    setViews(prev=>prev.filter(v=>v.id!==id));
+  };
+
+  // Panel filter click -> set filter
+  const onPanelFilter=(dim,val)=>{
+    if(dim==='model') setFilters(f=>({...f,model:[...f.model.filter(x=>x!==val),val]}));
+    else if(dim==='api_key') setFilters(f=>({...f,api_key:[...f.api_key.filter(x=>x!==val),val]}));
+    else if(dim==='provider') setFilters(f=>({...f,provider:[...f.provider.filter(x=>x!==val),val]}));
+  };
+
+  const panelDefs={
+    model:{title:'Cost by Model',type:'bar',metric:'cost',dim:'model'},
+    api_key:{title:'Cost by API Key',type:'bar',metric:'cost',dim:'api_key'},
+    provider:{title:'Requests by Provider',type:'pie',metric:'requests',dim:'provider'},
+  };
+
+  const exportLog=()=>window.open(`/api/export/csv?view=generations&${buildQS()}`);
+  const exportTimeseries=()=>window.open(`/api/export/csv?view=timeseries&${buildQS()}`);
+
+  return <div className="min-h-screen bg-slate-950">
+    <ErrorBanner error={error} onRetry={()=>{fetchData();fetchLog();}}/>
+    <Header
+      timeRange={timeRange} setTimeRange={setTimeRange}
+      customFrom={customFrom} setCustomFrom={setCustomFrom}
+      customTo={customTo} setCustomTo={setCustomTo}
+      filters={filters} setFilters={setFilters}
+      dimensions={dimensions}
+      summary={summary}
+      tz={tz}
+      onSettings={()=>setShowSettings(true)}
+      compareEnabled={compareEnabled} setCompareEnabled={setCompareEnabled}
+      compareMode={compareMode} setCompareMode={setCompareMode}
+      views={views} onSelectView={selectView} onSaveView={saveView} onDeleteView={deleteView}
+      chartType={chartType} setChartType={setChartType}
+      metric={metric} setMetric={setMetric}
+      groupBy={groupBy} setGroupBy={setGroupBy}
+    />
+
+    <div className="p-4 flex flex-col gap-4 max-w-[1600px] mx-auto">
+      <KPICards summary={summary} costCycle={costCycle} setCostCycle={setCostCycle} latCycle={latCycle} setLatCycle={setLatCycle}/>
+
+      <div ref={mainChartRef}>
+        {chartType==='heatmap'
+          ?<HeatmapView data={heatmapData}/>
+          :<MainChart data={timeseries} chartType={chartType} metric={metric} groupBy={groupBy} comparison={compareEnabled} onExport={exportTimeseries}/>
+        }
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {panelOrder.map(key=>{
+          const def=panelDefs[key]; if(!def) return null;
+          return <BreakdownPanel key={key}
+            title={def.title} data={breakdown[key]} type={def.type} metric={def.metric}
+            onFilter={val=>onPanelFilter(def.dim,val)}
+            chartRef={panelRefs[key]} panelKey={key} exportQS={buildQS()}
+            dragProps={{
+              draggable:true,
+              onDragStart:e=>dragStart(e,key),
+              onDragOver:dragOver, onDragLeave:dragLeave,
+              onDrop:e=>drop(e,key),
+            }}/>;
+        })}
+      </div>
+
+      <LogViewer logData={logData} logSort={logSort} setLogSort={setLogSort}
+        logSearch={logSearch} setLogSearch={setLogSearch}
+        logPage={logPage} setLogPage={setLogPage}
+        logPageSize={logPageSize} setLogPageSize={setLogPageSize}
+        visibleCols={visibleCols} setVisibleCols={setVisibleCols}
+        expandedRow={expandedRow} setExpandedRow={setExpandedRow}
+        onExportCSV={exportLog}/>
+    </div>
+
+    {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onImportComplete={()=>{fetchData();fetchLog();}}/>}
+    {showShortcuts&&<ShortcutsModal onClose={()=>setShowShortcuts(false)}/>}
+  </div>;
+}
+
+// ── Mount ─────────────────────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById('root')).render(
+  React.createElement(ErrorBoundary, null, React.createElement(App))
+);
+</script>
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_spa():
+    return HTMLResponse(
+        content=HTML_TEMPLATE,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
+
+
+# === MAIN ===
+def find_open_port(preferred: int, max_attempts: int = 20) -> int:
+    for port in range(preferred, preferred + max_attempts):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(("", port))
+            s.close()
+            return port
+        except OSError:
+            continue
+    raise RuntimeError(f"No open port found in range {preferred}-{preferred + max_attempts - 1}")
+
+
+def testing_mode_enabled() -> bool:
+    value = os.environ.get("UTILITIES_TESTING", "")
+    return value.lower() not in {"", "0", "false", "no"}
+
+
+def announce_resolved_port(preferred: int, resolved: int) -> None:
+    if resolved != preferred:
+        print(f"Port {preferred} is in use; using port {resolved} instead.")
+
+
+def open_browser_when_ready(url: str, timeout_seconds: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    health_url = f"{url}/api/health"
+
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(health_url, timeout=1.0) as response:
+                status = getattr(response, "status", response.getcode())
+                if status == 200:
+                    break
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+        time.sleep(0.2)
+
+    import webbrowser
+    webbrowser.open(url)
+
+
+def main():
+    global _db_path, _debug_mode
+    args = parse_args()
+    _db_path = args.db
+    _debug_mode = args.debug
+
+    secure_runtime_tree(RUNTIME_PATHS.home)
+
+    init_database(args.db)
+
+    port = find_open_port(args.port)
+    announce_resolved_port(args.port, port)
+    write_private_text(RUNTIME_PATHS.port_file, str(port))
+
+    url = f"http://{args.host}:{port}"
+    print(f"RouterView running at {url}")
+
+    if not testing_mode_enabled():
+        threading.Thread(target=open_browser_when_ready, args=(url,), daemon=True).start()
+
+    def _cleanup(signum=None, frame=None):
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _cleanup)
+    signal.signal(signal.SIGTERM, _cleanup)
+
+    try:
+        uvicorn.run(app, host=args.host, port=port,
+                    log_level="debug" if args.debug else "warning")
+    finally:
+        _cleanup()
+
+
+if __name__ == "__main__":
+    main()

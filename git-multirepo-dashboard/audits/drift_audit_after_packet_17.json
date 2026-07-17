@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "low",
+  "effort": "small",
+  "summary": "One trivial fix applied: removed unused 'import urllib.error' (line 23, never referenced — all exception handling uses broad 'except Exception'). All 356/356 tests pass before and after fix. No architectural drift. Carryover: 8 untracked test files (was 7, +test_deps_subtab_ui.py).",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Schema, all 14 API contracts, CSS design system, full dependency pipeline (detection → parsing → 6 ecosystem health checks → DB orchestration → fleet API integration → deps sub-tab UI), and tracker state all match the intended architecture. Packet 17's GET /api/repos/{id}/deps and POST /api/repos/{id}/scan/deps endpoints match spec §4.0 exactly. DepsTab component correctly replaces PlaceholderTab, uses CSS vars for severity colors, sorts vulnerable → major → outdated → ok. All 15 acceptance criteria reverified. The unused import was likely introduced alongside 'import urllib.request' in packet 13 (PyPI lookups) and never caught because it causes no runtime error. Carryover findings unchanged: last_quick_scan_at never written (spec slot), 2 transparent CSS border tokens (design intent), last_commit_hash extra field (additive)."
+}

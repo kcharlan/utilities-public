@@ -1,0 +1,1 @@
+{"id": "fvb_08_month_literal_january","category": "field_validity_basic","weight": 1,"input": {"expr": "0 0 * 1 *","after": "2026-01-15T00:00:00+00:00","n": 3,"tz": "UTC"},"expected": {"kind": "fires","value": ["2026-01-16T00:00:00+00:00","2026-01-17T00:00:00+00:00","2026-01-18T00:00:00+00:00"]}}

@@ -1,0 +1,3966 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multibody Gravity Simulator</title>
+  <style>
+    :root {
+      --bg-0: #0b1018;
+      --bg-1: #141a2b;
+      --panel: rgba(17, 25, 38, 0.84);
+      --panel-border: rgba(137, 189, 255, 0.28);
+      --stats-safe-gap: 0px;
+      --text: #dce8ff;
+      --text-soft: #a5b6d8;
+      --accent: #6dd8ff;
+      --accent-2: #6dffbf;
+      --warn: #ffb870;
+      --danger: #ff6f7d;
+      --shadow: rgba(2, 7, 15, 0.65);
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 15% 20%, rgba(83, 160, 255, 0.12), transparent 38%),
+        radial-gradient(circle at 80% 14%, rgba(109, 255, 191, 0.1), transparent 35%),
+        linear-gradient(160deg, var(--bg-0), var(--bg-1));
+      color: var(--text);
+      font-family: "Trebuchet MS", "Gill Sans", "Avenir Next", sans-serif;
+    }
+
+    #canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .panel {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      width: min(280px, calc(100vw - 24px));
+      max-height: calc(100vh - 24px - var(--stats-safe-gap));
+      overflow: auto;
+      padding: 8px;
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      background: var(--panel);
+      backdrop-filter: blur(9px);
+      box-shadow: 0 22px 36px -24px var(--shadow);
+    }
+
+    .title {
+      margin: 0 0 8px;
+      font-family: "Palatino Linotype", "Book Antiqua", serif;
+      font-size: 1.15rem;
+      letter-spacing: 0.02em;
+      color: #eff6ff;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .row {
+      margin: 5px 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .row-inline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 0.8rem;
+      color: var(--text-soft);
+    }
+
+    input,
+    select,
+    button {
+      width: 100%;
+      border: 1px solid rgba(151, 179, 226, 0.35);
+      background: rgba(5, 13, 22, 0.72);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font: inherit;
+      font-size: 0.82rem;
+    }
+
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #7fe4ff;
+      padding: 0;
+      border: none;
+      background: transparent;
+    }
+
+    input[type="range"] {
+      padding: 0;
+      height: 28px;
+    }
+
+    button {
+      cursor: pointer;
+      transition: transform 120ms ease, border-color 150ms ease, background 180ms ease;
+    }
+
+    button:hover:enabled {
+      border-color: rgba(109, 216, 255, 0.65);
+      background: rgba(14, 27, 43, 0.9);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.48;
+      cursor: not-allowed;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .controls.screensaver-mode {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .section {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(132, 170, 228, 0.2);
+    }
+
+    .section h3 {
+      margin: 0 0 5px;
+      font-size: 0.82rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #c9ddff;
+      font-family: "Palatino Linotype", "Book Antiqua", serif;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: color 150ms ease;
+    }
+
+    .section h3:hover {
+      color: #dde9ff;
+    }
+
+    .section h3::after {
+      content: '▼';
+      font-size: 0.7rem;
+      transition: transform 200ms ease;
+      color: var(--text-soft);
+    }
+
+    .section.collapsed h3::after {
+      transform: rotate(-90deg);
+    }
+
+    .section-content {
+      max-height: 2000px;
+      overflow: hidden;
+      transition: max-height 300ms ease, opacity 200ms ease;
+      opacity: 1;
+    }
+
+    .section.collapsed .section-content {
+      max-height: 0;
+      opacity: 0;
+    }
+
+    .value {
+      color: #f2f8ff;
+      font-weight: 600;
+    }
+
+    .warning {
+      min-height: 16px;
+      margin: 5px 0 0;
+      color: var(--warn);
+      font-size: 0.78rem;
+    }
+
+    .danger {
+      border-color: rgba(255, 111, 125, 0.7);
+      color: #ffdce1;
+    }
+
+    .debug {
+      font-size: 0.77rem;
+      color: #b9c9e8;
+      line-height: 1.35;
+      white-space: pre-line;
+    }
+
+    .stats-overlay {
+      position: fixed;
+      bottom: 12px;
+      left: 12px;
+      padding: 8px 12px;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      background: var(--panel);
+      backdrop-filter: blur(9px);
+      box-shadow: 0 12px 24px -16px var(--shadow);
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .camera-overlay {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      width: min(198px, calc(100vw - 24px));
+      padding: 8px;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      background: var(--panel);
+      backdrop-filter: blur(9px);
+      box-shadow: 0 12px 24px -16px var(--shadow);
+      pointer-events: auto;
+      z-index: 11;
+    }
+
+    .camera-overlay-title {
+      margin: 0 0 6px;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #c9ddff;
+      font-family: "Palatino Linotype", "Book Antiqua", serif;
+    }
+
+    .camera-overlay .row {
+      margin: 4px 0;
+    }
+
+    .camera-stepper {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .camera-stepper button {
+      width: auto;
+      min-width: 34px;
+      padding: 6px 8px;
+    }
+
+    .camera-stepper input {
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 820px) {
+      .panel {
+        top: 0;
+        left: 0;
+        width: 100%;
+        max-height: 50vh;
+        border-radius: 0 0 14px 14px;
+        border-left: 0;
+        border-right: 0;
+      }
+
+      .controls {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .controls.screensaver-mode {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .camera-overlay {
+        width: min(182px, calc(100vw - 24px));
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <aside class="panel" id="panel">
+    <h1 class="title">Multibody Gravity Lab</h1>
+
+    <div class="row">
+      <label for="modeSelect">Mode</label>
+      <select id="modeSelect">
+        <option value="screensaver">Screensaver</option>
+        <option value="user">User setup</option>
+      </select>
+    </div>
+
+    <div class="controls" id="controlsGrid">
+      <button id="startPauseBtn">Pause</button>
+      <button id="resetBtn">Reset</button>
+      <button id="screensaverSaveBtn" class="hidden">Save</button>
+      <button id="clearBtn" class="hidden">Clear</button>
+      <button id="autoVelocityNowBtn" class="hidden">Auto velocities</button>
+      <button id="loadBtn" class="hidden">Load</button>
+      <button id="saveBtn" class="hidden">Save</button>
+    </div>
+    <input id="loadFileInput" type="file" accept=".json,application/json" class="hidden" />
+
+    <div class="section hidden" id="userSection">
+      <h3>User setup</h3>
+
+      <div class="section-content">
+        <div class="section" id="selectedBodySection">
+          <h3>Selected body</h3>
+
+          <div class="section-content">
+            <div class="row">
+              <button id="deleteBodyBtn" class="danger">Delete selected</button>
+            </div>
+
+            <div class="row">
+              <div class="row-inline">
+                <label for="selectedMass">Mass</label>
+                <span class="value" id="selectedMassValue">0</span>
+              </div>
+              <input id="selectedMass" type="range" min="5" max="1000" step="1" value="120" />
+            </div>
+
+            <div class="row-inline">
+              <label>Velocity (drag x10)</label>
+              <span class="value" id="velocityReadout">vx 0.00, vy 0.00</span>
+            </div>
+
+            <div class="row">
+              <div class="row-inline">
+                <label for="selectedVx">Velocity X</label>
+              </div>
+              <input id="selectedVx" type="number" step="0.001" value="0" />
+            </div>
+
+            <div class="row">
+              <div class="row-inline">
+                <label for="selectedVy">Velocity Y</label>
+              </div>
+              <input id="selectedVy" type="number" step="0.001" value="0" />
+            </div>
+
+            <div class="row">
+              <div class="row-inline">
+                <label for="selectedSingularity">Singularity</label>
+                <input id="selectedSingularity" type="checkbox" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="autoAssignOnStart">Auto-assign velocities on Start</label>
+            <input id="autoAssignOnStart" type="checkbox" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="autoVelFactor">Auto velocity factor</label>
+            <span class="value" id="autoVelFactorValue">0.90</span>
+          </div>
+          <input id="autoVelFactor" type="range" min="0" max="2" step="0.01" value="0.9" />
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="autoCameraSetup">Auto camera while paused</label>
+            <input id="autoCameraSetup" type="checkbox" />
+          </div>
+        </div>
+
+        <p class="warning" id="warningText"></p>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="row-inline">
+        <label for="timeSpeed">Time speed</label>
+        <span class="value" id="timeSpeedValue">1.00x</span>
+      </div>
+      <input id="timeSpeed" type="range" min="0.1" max="10" step="0.1" value="1" />
+    </div>
+    <div class="row">
+      <div class="row-inline">
+        <label for="timeMultiplier">Time multiplier</label>
+        <span class="value" id="timeMultiplierValue">8.00x</span>
+      </div>
+      <input id="timeMultiplier" type="number" min="0.1" max="20" step="0.1" value="8" />
+    </div>
+
+    <div class="row" id="screensaverBodyRow">
+      <label for="screensaverNInput">Screensaver bodies</label>
+      <input id="screensaverNInput" type="number" min="2" max="50" step="1" value="5" />
+    </div>
+
+    <div class="row" id="screensaverSingularityChanceRow">
+      <label for="screensaverSingularityChanceInput">Singularity chance (%)</label>
+      <input id="screensaverSingularityChanceInput" type="number" min="0" max="100" step="1" value="0" />
+    </div>
+
+    <div class="row" id="screensaverSingularityMaxRow">
+      <label for="screensaverSingularityMaxInput">Max singularities</label>
+      <input id="screensaverSingularityMaxInput" type="number" min="1" max="50" step="1" value="1" />
+    </div>
+
+    <div class="section">
+      <h3>Physics</h3>
+
+      <div class="section-content">
+        <div class="row">
+          <div class="row-inline">
+            <label for="gravity">Gravity (G)</label>
+            <span class="value" id="gravityValue">1.00</span>
+          </div>
+          <input id="gravity" type="range" min="0.1" max="5" step="0.05" value="1" />
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="epsilon">Softening (epsilon)</label>
+            <span class="value" id="epsilonValue">8.00</span>
+          </div>
+          <input id="epsilon" type="range" min="0" max="30" step="0.5" value="8" />
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="trailsToggle">Trails</label>
+            <input id="trailsToggle" type="checkbox" checked />
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="trailLength">Trail length</label>
+            <span class="value" id="trailLengthValue">60</span>
+          </div>
+          <input id="trailLength" type="range" min="0" max="300" step="1" value="60" />
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="leadsToggle">Leads</label>
+            <input id="leadsToggle" type="checkbox" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="leadsLength">Leads length</label>
+            <span class="value" id="leadsLengthValue">2400</span>
+          </div>
+          <input id="leadsLength" type="range" min="20" max="300" step="1" value="80" />
+        </div>
+
+        <div class="row">
+          <div class="row-inline">
+            <label for="showBodyIdsToggle">Show object numbers</label>
+            <input id="showBodyIdsToggle" type="checkbox" checked />
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <div class="stats-overlay" id="statsOverlay">
+    <div class="debug" id="debugReadout">FPS: -- | Bodies: -- | Sim Time: 0.0s</div>
+  </div>
+
+  <div class="camera-overlay" id="cameraOverlay">
+    <p class="camera-overlay-title">Camera Subject</p>
+    <div class="row">
+      <label for="cameraSubjectMode">Selection</label>
+      <select id="cameraSubjectMode">
+        <option value="auto">Auto</option>
+        <option value="full">Full</option>
+        <option value="object">Follow</option>
+      </select>
+    </div>
+    <div class="row hidden" id="cameraSubjectFollowRow">
+      <label for="cameraSubjectBodyInput">Follow ID</label>
+      <div class="camera-stepper">
+        <button id="cameraSubjectPrevBtn" type="button" aria-label="Previous object">◀</button>
+        <input id="cameraSubjectBodyInput" type="number" min="1" step="1" value="1" />
+        <button id="cameraSubjectNextBtn" type="button" aria-label="Next object">▶</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    /** @typedef {{x:number,y:number}} Vec2 */
+    /** @typedef {{r:number,g:number,b:number}} RGB */
+    /**
+     * @typedef {Object} Body
+     * @property {number} id
+     * @property {Vec2} pos
+     * @property {Vec2} vel
+     * @property {number} mass
+     * @property {number} radius
+     * @property {RGB} color
+     * @property {boolean} isSingularity
+     * @property {Vec2[]} trail
+     */
+
+    const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('canvas'));
+    const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
+
+    const ui = {
+      panel: document.getElementById('panel'),
+      controlsGrid: document.getElementById('controlsGrid'),
+      modeSelect: document.getElementById('modeSelect'),
+      startPauseBtn: document.getElementById('startPauseBtn'),
+      resetBtn: document.getElementById('resetBtn'),
+      screensaverSaveBtn: document.getElementById('screensaverSaveBtn'),
+      clearBtn: document.getElementById('clearBtn'),
+      autoVelocityNowBtn: document.getElementById('autoVelocityNowBtn'),
+      loadBtn: document.getElementById('loadBtn'),
+      saveBtn: document.getElementById('saveBtn'),
+      loadFileInput: document.getElementById('loadFileInput'),
+      timeSpeed: document.getElementById('timeSpeed'),
+      timeSpeedValue: document.getElementById('timeSpeedValue'),
+      timeMultiplier: document.getElementById('timeMultiplier'),
+      timeMultiplierValue: document.getElementById('timeMultiplierValue'),
+      screensaverNInput: document.getElementById('screensaverNInput'),
+      screensaverBodyRow: document.getElementById('screensaverBodyRow'),
+      screensaverSingularityChanceInput: document.getElementById('screensaverSingularityChanceInput'),
+      screensaverSingularityChanceRow: document.getElementById('screensaverSingularityChanceRow'),
+      screensaverSingularityMaxInput: document.getElementById('screensaverSingularityMaxInput'),
+      screensaverSingularityMaxRow: document.getElementById('screensaverSingularityMaxRow'),
+      gravity: document.getElementById('gravity'),
+      gravityValue: document.getElementById('gravityValue'),
+      epsilon: document.getElementById('epsilon'),
+      epsilonValue: document.getElementById('epsilonValue'),
+      trailsToggle: document.getElementById('trailsToggle'),
+      trailLength: document.getElementById('trailLength'),
+      trailLengthValue: document.getElementById('trailLengthValue'),
+      leadsToggle: document.getElementById('leadsToggle'),
+      leadsLength: document.getElementById('leadsLength'),
+      leadsLengthValue: document.getElementById('leadsLengthValue'),
+      showBodyIdsToggle: document.getElementById('showBodyIdsToggle'),
+      userSection: document.getElementById('userSection'),
+      autoAssignOnStart: document.getElementById('autoAssignOnStart'),
+      autoVelFactor: document.getElementById('autoVelFactor'),
+      autoVelFactorValue: document.getElementById('autoVelFactorValue'),
+      autoCameraSetup: document.getElementById('autoCameraSetup'),
+      selectedBodySection: document.getElementById('selectedBodySection'),
+      selectedMass: document.getElementById('selectedMass'),
+      selectedMassValue: document.getElementById('selectedMassValue'),
+      velocityReadout: document.getElementById('velocityReadout'),
+      selectedVx: document.getElementById('selectedVx'),
+      selectedVy: document.getElementById('selectedVy'),
+      selectedSingularity: document.getElementById('selectedSingularity'),
+      deleteBodyBtn: document.getElementById('deleteBodyBtn'),
+      warningText: document.getElementById('warningText'),
+      debugReadout: document.getElementById('debugReadout'),
+      statsOverlay: document.getElementById('statsOverlay'),
+      cameraOverlay: document.getElementById('cameraOverlay'),
+      cameraSubjectMode: document.getElementById('cameraSubjectMode'),
+      cameraSubjectFollowRow: document.getElementById('cameraSubjectFollowRow'),
+      cameraSubjectPrevBtn: document.getElementById('cameraSubjectPrevBtn'),
+      cameraSubjectBodyInput: document.getElementById('cameraSubjectBodyInput'),
+      cameraSubjectNextBtn: document.getElementById('cameraSubjectNextBtn')
+    };
+
+    const cfg = {
+      dt: 1 / 120,
+      maxSubsteps: 40,
+      maxSubstepsHard: 240,
+      minEpsilonSquared: 1e-6,
+      maxInverseDistanceCubed: 1e12,
+      collisionFactor: 1,
+      radiusScale: 1.7,
+      singularityMassMin: 50,
+      singularityMassMax: 150,
+      singularityEffectiveMassBase: 520,
+      singularityEffectiveMassGain: 1250,
+      singularityEffectiveMassLogScale: 8,
+      singularityAbsorbMassFactor: 0.18,
+      singularityRadiusBase: 3.1,
+      singularityRadiusLogGain: 0.92,
+      singularityRadiusLogScale: 8,
+      cameraLerp: 0.12,
+      cameraLerpFocus: 0.06,
+      cameraPaddingFactor: 1.3,
+      cameraMaxZoomScreensaver: 2.0,
+      cameraMaxZoomUser: 7,
+      screensaverMinSpanFactor: 0.65,
+      settleTime: 3,
+      boundaryMultiplier: 4,
+      restartZoomOutFactor: 3,
+      restartQuietTime: 480,
+      singleBodyRestartDelayRealSec: 2,
+      nearPairLockMultiplier: 10,
+      nearPairFocusEnvelopeFactor: 2,
+      nearPairEnvelopePadding: 1.15,
+      lowBodyInteractionImmediateRatio: 2.5,
+      lowBodyInteractionFallbackRatio: 6,
+      leadRefreshInterval: 0.12,
+      leadPredictDt: 1 / 90,
+      leadLengthMultiplier: 30,
+      leadVelocityRef: 5,
+      leadVelocityScaleMax: 8,
+      leadMinVisibleRadiusFactor: 2.4,
+      mergeFxDuration: 0.42,
+      mergeFxFollowRate: 12,
+      screensaverSpawnOverlapFactor: 1.4,
+      singularityGlowRadiusFactor: 2.5,
+      singularityRingOuterRadiusFactor: 1.42,
+      singularityRingInnerRadiusFactor: 1.72,
+      singularityRingOuterSpeed: 0.72,
+      singularityRingInnerSpeed: 0.54,
+      singularityRingOuterArcTurns: 1.62,
+      singularityRingInnerArcTurns: 1.14,
+      singularityRingInnerPhaseOffset: 0.85,
+      velocityArrowScale: 12,
+      velocityDragDivider: 10,
+      maxBodiesHard: 50
+    };
+
+    /** @type {{center:Vec2,zoom:number,targetCenter:Vec2,targetZoom:number}} */
+    const camera = {
+      center: { x: 0, y: 0 },
+      zoom: 1,
+      targetCenter: { x: 0, y: 0 },
+      targetZoom: 1
+    };
+
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+
+    const state = {
+      mode: /** @type {'screensaver'|'user'} */ ('screensaver'),
+      running: true,
+      bodies: /** @type {Body[]} */ ([]),
+      nextBodyId: 1,
+      selectedBodyId: /** @type {number|null} */ (null),
+      G: 1,
+      epsilon: 8,
+      timeSpeed: 1,
+      timeMultiplier: 8,
+      trailsEnabled: true,
+      trailLength: 60,
+      leadsEnabled: false,
+      leadsLength: 80,
+      showBodyIds: true,
+      autoAssignOnStart: false,
+      autoVelFactor: 0.9,
+      autoCameraSetup: false,
+      cameraSubjectMode: /** @type {'auto'|'full'|'object'} */ ('auto'),
+      cameraSubjectBodyId: /** @type {number|null} */ (null),
+      simTime: 0,
+      warningText: '',
+      fps: 0,
+      screensaverN: 5,
+      screensaverSingularityChance: 0,
+      screensaverSingularityMax: 1,
+      boundaryTrackedExtent: 1,
+      finalBoundary: Infinity,
+      timeSinceCollision: 0,
+      referenceZoomCaptured: false,
+      screensaverReferenceZoom: 1,
+      singleBodyRealElapsed: 0,
+      leadPaths: /** @type {Map<number, Vec2[]>} */ (new Map()),
+      leadRefreshClock: 0,
+      leadDirty: true,
+      mergeEffects: /** @type {Array<{
+        id:number,
+        mergedBodyId:number,
+        elapsed:number,
+        duration:number,
+        aStartPos:Vec2,
+        bStartPos:Vec2,
+        aRadius:number,
+        bRadius:number,
+        aColor:RGB,
+        bColor:RGB,
+        coreStartColor:RGB,
+        renderPos:Vec2
+      }>} */ ([]),
+      nextMergeFxId: 1,
+      velocityDrag: /** @type {null|{bodyId:number}} */ (null),
+      massDrag: /** @type {null|{bodyId:number}} */ (null),
+      moveDrag: /** @type {null|{bodyId:number,offset:Vec2}} */ (null),
+      pointerWorld: { x: 0, y: 0 },
+      pointerScreen: { x: 0, y: 0 },
+      userRunMinCameraSpan: 0,
+      screensaverSetupBaseline: /** @type {null|{bodies:Array<{
+        id:number,
+        pos:Vec2,
+        vel:Vec2,
+        mass:number,
+        radius:number,
+        color:RGB,
+        isSingularity:boolean
+      }>, nextBodyId:number}} */ (null),
+      userSetupBaseline: /** @type {null|{bodies:Array<{
+        id:number,
+        pos:Vec2,
+        vel:Vec2,
+        mass:number,
+        radius:number,
+        color:RGB,
+        isSingularity:boolean
+      }>, nextBodyId:number}} */ (null)
+    };
+
+    const temp = {
+      accX: new Float64Array(0),
+      accY: new Float64Array(0)
+    };
+
+    const v = {
+      add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+      sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+      scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
+      len: (a) => Math.hypot(a.x, a.y),
+      /** Returns a unit-length vector in the same direction as `a`. */
+      norm: (a) => {
+        const l = Math.hypot(a.x, a.y) || 1;
+        return { x: a.x / l, y: a.y / l };
+      },
+      /** Returns a 90-degree counter-clockwise perpendicular vector. */
+      perp: (a) => ({ x: -a.y, y: a.x })
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function normalizeSingularityFlag(value) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim().toLowerCase();
+        if (trimmed === 'true' || trimmed === '1' || trimmed === 'yes' || trimmed === 'on') {
+          return true;
+        }
+        if (trimmed === 'false' || trimmed === '0' || trimmed === 'no' || trimmed === 'off' || trimmed === '') {
+          return false;
+        }
+      }
+      if (typeof value === 'number') {
+        if (value === 1) return true;
+        if (value === 0) return false;
+      }
+      return value === true;
+    }
+
+    function normalizeCameraSubjectMode(value) {
+      if (value === 'follow') return 'object';
+      return value === 'full' || value === 'object' ? value : 'auto';
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function smoothstep01(t) {
+      const x = clamp(t, 0, 1);
+      return x * x * (3 - 2 * x);
+    }
+
+    /**
+     * @param {Vec2} a
+     * @param {Vec2} b
+     * @param {number} t
+     * @returns {Vec2}
+     */
+    function lerpVec2(a, b, t) {
+      return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) };
+    }
+
+    /**
+     * @param {RGB} a
+     * @param {RGB} b
+     * @param {number} t
+     * @returns {RGB}
+     */
+    function lerpColor(a, b, t) {
+      return {
+        r: Math.round(lerp(a.r, b.r, t)),
+        g: Math.round(lerp(a.g, b.g, t)),
+        b: Math.round(lerp(a.b, b.b, t))
+      };
+    }
+
+    function singularityEffectiveMass(mass) {
+      const safeMass = Math.max(0.001, mass);
+      return (
+        cfg.singularityEffectiveMassBase +
+        cfg.singularityEffectiveMassGain *
+          Math.log1p(safeMass / cfg.singularityEffectiveMassLogScale)
+      );
+    }
+
+    function massToRadius(mass, isSingularity = false) {
+      const safeMass = Math.max(mass, 0.001);
+      if (!isSingularity) {
+        return cfg.radiusScale * Math.sqrt(safeMass);
+      }
+      return (
+        cfg.radiusScale *
+        (cfg.singularityRadiusBase +
+          cfg.singularityRadiusLogGain * Math.log1p(safeMass / cfg.singularityRadiusLogScale))
+      );
+    }
+
+    function effectiveMass(body) {
+      const safeMass = Math.max(0.001, Number(body?.mass) || 0.001);
+      const singularity = normalizeSingularityFlag(body?.isSingularity);
+      if (
+        body &&
+        body._cachedEffectiveMass != null &&
+        body._cachedMassInput === safeMass &&
+        body._cachedSingularityFlag === singularity
+      ) {
+        return body._cachedEffectiveMass;
+      }
+      const mass = singularity ? singularityEffectiveMass(safeMass) : safeMass;
+      if (body) {
+        body._cachedMassInput = safeMass;
+        body._cachedSingularityFlag = singularity;
+        body._cachedEffectiveMass = mass;
+      }
+      return mass;
+    }
+
+    function syncBodyRadius(body) {
+      body.radius = massToRadius(body.mass, normalizeSingularityFlag(body.isSingularity));
+    }
+
+    function randomColor() {
+      const hue = Math.random() * 360;
+      const sat = 72 + Math.random() * 18;
+      const light = 55 + Math.random() * 12;
+      return hslToRgb(hue / 360, sat / 100, light / 100);
+    }
+
+    function randomSingularityColor() {
+      const hue = 26 + Math.random() * 14;
+      const sat = 78 + Math.random() * 16;
+      const light = 50 + Math.random() * 11;
+      return hslToRgb(hue / 360, sat / 100, light / 100);
+    }
+
+    function assignDiverseColors(bodies) {
+      if (!bodies.length) return;
+      const regularBodies = bodies.filter((body) => !body.isSingularity);
+      if (regularBodies.length === 0) return;
+      const n = regularBodies.length;
+      const baseHue = Math.random() * 360;
+      const spacing = 360 / n;
+      for (let i = 0; i < n; i += 1) {
+        const jitter = (Math.random() * 2 - 1) * Math.min(8, spacing * 0.18);
+        const hue = (baseHue + i * spacing + jitter + 360) % 360;
+        const sat = 72 + Math.random() * 18;
+        const light = 54 + Math.random() * 11;
+        regularBodies[i].color = hslToRgb(hue / 360, sat / 100, light / 100);
+      }
+    }
+
+    function hslToRgb(h, s, l) {
+      const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+      };
+      let r;
+      let g;
+      let b;
+      if (s === 0) {
+        r = g = b = l;
+      } else {
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1 / 3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1 / 3);
+      }
+      return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+    }
+
+    const colorStyleCache = new Map();
+
+    function colorStyle(color, alpha = 1) {
+      const normalizedAlpha = Math.round(alpha * 1000) / 1000;
+      const key = `${color.r},${color.g},${color.b},${normalizedAlpha}`;
+      const cached = colorStyleCache.get(key);
+      if (cached) return cached;
+      const style = `rgba(${color.r}, ${color.g}, ${color.b}, ${normalizedAlpha})`;
+      if (colorStyleCache.size > 4000) colorStyleCache.clear();
+      colorStyleCache.set(key, style);
+      return style;
+    }
+
+    function bodyIdLabelStyle(body) {
+      const singularity = normalizeSingularityFlag(body.isSingularity);
+      if (singularity) {
+        return {
+          fill: 'rgba(246, 251, 255, 0.97)',
+          stroke: 'rgba(6, 9, 14, 0.9)'
+        };
+      }
+      const luminance =
+        (0.2126 * body.color.r + 0.7152 * body.color.g + 0.0722 * body.color.b) / 255;
+      if (luminance >= 0.56) {
+        return {
+          fill: 'rgba(11, 16, 24, 0.95)',
+          stroke: 'rgba(236, 245, 255, 0.9)'
+        };
+      }
+      return {
+        fill: 'rgba(246, 251, 255, 0.97)',
+        stroke: 'rgba(9, 14, 22, 0.9)'
+      };
+    }
+
+    function drawBodyIdLabel(body, center, radiusPx) {
+      if (radiusPx < 6) return;
+      const label = String(body.id);
+      const size = clamp(radiusPx * 0.72, 10, 26);
+      const style = bodyIdLabelStyle(body);
+      ctx.save();
+      ctx.font = `600 ${size}px "Trebuchet MS", "Gill Sans", "Avenir Next", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.max(2, size * 0.2);
+      ctx.strokeStyle = style.stroke;
+      ctx.strokeText(label, center.x, center.y + size * 0.02);
+      ctx.fillStyle = style.fill;
+      ctx.fillText(label, center.x, center.y + size * 0.02);
+      ctx.restore();
+    }
+
+    function nextUserCreatedBodyId() {
+      const preferred = state.bodies.length + 1;
+      const used = new Set();
+      for (const b of state.bodies) used.add(b.id);
+      if (!used.has(preferred)) return preferred;
+      let fallback = 1;
+      while (used.has(fallback)) fallback += 1;
+      return fallback;
+    }
+
+    function syncNextBodyIdFromBodies() {
+      let maxId = 0;
+      for (const b of state.bodies) maxId = Math.max(maxId, b.id);
+      state.nextBodyId = Math.max(1, maxId + 1);
+    }
+
+    function newBody(pos, mass = 120, isSingularity = false, idOverride = null) {
+      const hasOverride = idOverride != null && Number.isFinite(Number(idOverride));
+      const bodyId = hasOverride
+        ? Math.max(1, Math.round(Number(idOverride)))
+        : state.nextBodyId++;
+      state.nextBodyId = Math.max(state.nextBodyId, bodyId + 1);
+      return {
+        id: bodyId,
+        pos: { x: pos.x, y: pos.y },
+        vel: { x: 0, y: 0 },
+        mass,
+        radius: massToRadius(mass, isSingularity),
+        color: isSingularity ? randomSingularityColor() : randomColor(),
+        isSingularity,
+        trail: []
+      };
+    }
+
+    function setBodySingularity(body, isSingularity, preserveColor = false) {
+      const nextValue = normalizeSingularityFlag(isSingularity);
+      const changed = normalizeSingularityFlag(body.isSingularity) !== nextValue;
+      body.isSingularity = nextValue;
+      if (changed && !preserveColor) {
+        body.color = nextValue ? randomSingularityColor() : randomColor();
+      }
+      syncBodyRadius(body);
+    }
+
+    function ensureTempBuffers(n) {
+      if (temp.accX.length !== n) {
+        temp.accX = new Float64Array(n);
+        temp.accY = new Float64Array(n);
+      }
+    }
+
+    function clearMergeEffects() {
+      state.mergeEffects.length = 0;
+    }
+
+    function activeMergedBodyIdSet() {
+      const ids = new Set();
+      for (const fx of state.mergeEffects) {
+        ids.add(fx.mergedBodyId);
+      }
+      return ids;
+    }
+
+    function queueMergeEffect(a, b, merged) {
+      const coreStartColor = effectiveMass(a) >= effectiveMass(b) ? { ...a.color } : { ...b.color };
+      state.mergeEffects.push({
+        id: state.nextMergeFxId++,
+        mergedBodyId: merged.id,
+        elapsed: 0,
+        duration: cfg.mergeFxDuration,
+        aStartPos: { x: a.pos.x, y: a.pos.y },
+        bStartPos: { x: b.pos.x, y: b.pos.y },
+        aRadius: a.radius,
+        bRadius: b.radius,
+        aColor: { ...a.color },
+        bColor: { ...b.color },
+        coreStartColor,
+        renderPos: { x: merged.pos.x, y: merged.pos.y }
+      });
+    }
+
+    function updateMergeEffects(deltaSec) {
+      if (state.mergeEffects.length === 0) return;
+      const keep = [];
+      for (const fx of state.mergeEffects) {
+        const body = state.bodies.find((b) => b.id === fx.mergedBodyId);
+        if (!body) continue;
+        fx.elapsed += deltaSec;
+        const follow = clamp(deltaSec * cfg.mergeFxFollowRate, 0, 1);
+        fx.renderPos.x += (body.pos.x - fx.renderPos.x) * follow;
+        fx.renderPos.y += (body.pos.y - fx.renderPos.y) * follow;
+        if (fx.elapsed < fx.duration) {
+          keep.push(fx);
+        }
+      }
+      state.mergeEffects = keep;
+    }
+
+    function updateAccelerations(bodies, accX, accY) {
+      accX.fill(0);
+      accY.fill(0);
+      const eps2 = Math.max(cfg.minEpsilonSquared, state.epsilon * state.epsilon);
+
+      for (let i = 0; i < bodies.length; i += 1) {
+        const bi = bodies[i];
+        const massI = effectiveMass(bi);
+        for (let j = i + 1; j < bodies.length; j += 1) {
+          const bj = bodies[j];
+          const massJ = effectiveMass(bj);
+          const dx = bj.pos.x - bi.pos.x;
+          const dy = bj.pos.y - bi.pos.y;
+          const d2 = dx * dx + dy * dy + eps2;
+          const invD = 1 / Math.sqrt(d2);
+          const invD3 = Math.min(invD * invD * invD, cfg.maxInverseDistanceCubed);
+          const factor = state.G * invD3;
+
+          const ax = dx * factor;
+          const ay = dy * factor;
+
+          accX[i] += ax * massJ;
+          accY[i] += ay * massJ;
+          accX[j] -= ax * massI;
+          accY[j] -= ay * massI;
+        }
+      }
+    }
+
+    function physicsStep(dt) {
+      const bodies = state.bodies;
+      if (bodies.length === 0) {
+        state.simTime += dt;
+        return;
+      }
+      if (bodies.length === 1) {
+        const b = bodies[0];
+        b.pos.x += b.vel.x * dt;
+        b.pos.y += b.vel.y * dt;
+        state.timeSinceCollision += dt;
+        state.simTime += dt;
+        return;
+      }
+
+      ensureTempBuffers(bodies.length);
+      const { accX, accY } = temp;
+
+      updateAccelerations(bodies, accX, accY);
+
+      for (let i = 0; i < bodies.length; i += 1) {
+        const b = bodies[i];
+        b.vel.x += accX[i] * (0.5 * dt);
+        b.vel.y += accY[i] * (0.5 * dt);
+        if (!Number.isFinite(b.vel.x) || !Number.isFinite(b.vel.y)) {
+          return;
+        }
+        b.pos.x += b.vel.x * dt;
+        b.pos.y += b.vel.y * dt;
+      }
+
+      updateAccelerations(bodies, accX, accY);
+      for (let i = 0; i < bodies.length; i += 1) {
+        const b = bodies[i];
+        b.vel.x += accX[i] * (0.5 * dt);
+        b.vel.y += accY[i] * (0.5 * dt);
+        if (!Number.isFinite(b.vel.x) || !Number.isFinite(b.vel.y)) {
+          return;
+        }
+      }
+
+      const mergedCount = resolveCollisions();
+      if (mergedCount > 0) state.timeSinceCollision = 0;
+      else state.timeSinceCollision += dt;
+
+      state.simTime += dt;
+    }
+
+    function selectDominantBody(b1, b2, em1, em2) {
+      if (em1 > em2) return b1;
+      if (em2 > em1) return b2;
+      if (b1.mass > b2.mass) return b1;
+      if (b2.mass > b1.mass) return b2;
+      return b1.id <= b2.id ? b1 : b2;
+    }
+
+    function resolveCollisions() {
+      let mergedAny = false;
+      let mergedCount = 0;
+      for (let i = 0; i < state.bodies.length; i += 1) {
+        for (let j = i + 1; j < state.bodies.length; j += 1) {
+          const b1 = state.bodies[i];
+          const b2 = state.bodies[j];
+          const dx = b2.pos.x - b1.pos.x;
+          const dy = b2.pos.y - b1.pos.y;
+          const collisionRange = (b1.radius + b2.radius) * cfg.collisionFactor;
+          if (Math.abs(dx) > collisionRange || Math.abs(dy) > collisionRange) continue;
+          const dist = Math.hypot(dx, dy);
+          if (dist < collisionRange) {
+            const mergedIsSingularity =
+              normalizeSingularityFlag(b1.isSingularity) ||
+              normalizeSingularityFlag(b2.isSingularity);
+            const mass1 =
+              mergedIsSingularity && !b1.isSingularity
+                ? b1.mass * cfg.singularityAbsorbMassFactor
+                : b1.mass;
+            const mass2 =
+              mergedIsSingularity && !b2.isSingularity
+                ? b2.mass * cfg.singularityAbsorbMassFactor
+                : b2.mass;
+            const m = Math.max(0.001, mass1 + mass2);
+            const em1 = effectiveMass(b1);
+            const em2 = effectiveMass(b2);
+            const dominantSource = selectDominantBody(b1, b2, em1, em2);
+            const emTotal = Math.max(0.001, em1 + em2);
+            const baseColorDenom = Math.max(0.001, b1.mass + b2.mass);
+            let mergedColor;
+            if (mergedIsSingularity) {
+              if (b1.isSingularity && !b2.isSingularity) mergedColor = { ...b1.color };
+              else if (b2.isSingularity && !b1.isSingularity) mergedColor = { ...b2.color };
+              else {
+                mergedColor = {
+                  r: Math.round((b1.color.r * em1 + b2.color.r * em2) / emTotal),
+                  g: Math.round((b1.color.g * em1 + b2.color.g * em2) / emTotal),
+                  b: Math.round((b1.color.b * em1 + b2.color.b * em2) / emTotal)
+                };
+              }
+            } else {
+              mergedColor = {
+                r: Math.round((b1.color.r * b1.mass + b2.color.r * b2.mass) / baseColorDenom),
+                g: Math.round((b1.color.g * b1.mass + b2.color.g * b2.mass) / baseColorDenom),
+                b: Math.round((b1.color.b * b1.mass + b2.color.b * b2.mass) / baseColorDenom)
+              };
+            }
+            const merged = {
+              id: dominantSource.id,
+              mass: m,
+              radius: massToRadius(m, mergedIsSingularity),
+              pos: {
+                x: (b1.pos.x * em1 + b2.pos.x * em2) / emTotal,
+                y: (b1.pos.y * em1 + b2.pos.y * em2) / emTotal
+              },
+              vel: {
+                x: (b1.vel.x * em1 + b2.vel.x * em2) / emTotal,
+                y: (b1.vel.y * em1 + b2.vel.y * em2) / emTotal
+              },
+              color: mergedColor,
+              isSingularity: mergedIsSingularity,
+              trail: []
+            };
+
+            if (state.selectedBodyId === b1.id || state.selectedBodyId === b2.id) {
+              state.selectedBodyId = merged.id;
+            }
+            if (
+              state.cameraSubjectMode === 'object' &&
+              (state.cameraSubjectBodyId === b1.id || state.cameraSubjectBodyId === b2.id)
+            ) {
+              state.cameraSubjectBodyId = merged.id;
+            }
+
+            queueMergeEffect(b1, b2, merged);
+            state.bodies.splice(j, 1);
+            state.bodies.splice(i, 1, merged);
+            mergedAny = true;
+            mergedCount += 1;
+            // Re-check the merged body at index i against all later bodies.
+            // Outer-loop i progression still guarantees full pair coverage.
+            j = i;
+          }
+        }
+      }
+
+      if (mergedAny) {
+        invalidateLeads();
+        updateSelectedBodyUI();
+      }
+      return mergedCount;
+    }
+
+    /**
+     * @returns {{pos:Vec2,totalMass:number}}
+     */
+    function computeCOM() {
+      let totalMass = 0;
+      let cx = 0;
+      let cy = 0;
+      for (const body of state.bodies) {
+        const mass = effectiveMass(body);
+        totalMass += mass;
+        cx += body.pos.x * mass;
+        cy += body.pos.y * mass;
+      }
+      if (totalMass === 0) {
+        return { pos: { x: 0, y: 0 }, totalMass: 0 };
+      }
+      return { pos: { x: cx / totalMass, y: cy / totalMass }, totalMass };
+    }
+
+    /**
+     * @returns {{minX:number,minY:number,maxX:number,maxY:number}}
+     */
+    function boundsOfBodies() {
+      if (state.bodies.length === 0) {
+        return { minX: -120, minY: -80, maxX: 120, maxY: 80 };
+      }
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const b of state.bodies) {
+        minX = Math.min(minX, b.pos.x - b.radius);
+        minY = Math.min(minY, b.pos.y - b.radius);
+        maxX = Math.max(maxX, b.pos.x + b.radius);
+        maxY = Math.max(maxY, b.pos.y + b.radius);
+      }
+      return { minX, minY, maxX, maxY };
+    }
+
+    function effectiveAutoCamera() {
+      if (state.cameraSubjectMode !== 'auto') return true;
+      if (state.mode === 'screensaver') return true;
+      if (state.running) return true;
+      return state.autoCameraSetup;
+    }
+
+    function hasBodyWithId(bodyId) {
+      return bodyId != null && state.bodies.some((b) => b.id === bodyId);
+    }
+
+    function getCameraSubjectBody() {
+      if (state.cameraSubjectBodyId == null) return null;
+      return state.bodies.find((b) => b.id === state.cameraSubjectBodyId) || null;
+    }
+
+    function enforceValidCameraSubject() {
+      state.cameraSubjectMode = normalizeCameraSubjectMode(state.cameraSubjectMode);
+      if (state.cameraSubjectMode !== 'object') return;
+      if (!hasBodyWithId(state.cameraSubjectBodyId)) {
+        const missingId = state.cameraSubjectBodyId;
+        state.warningText =
+          missingId == null
+            ? 'Camera target no longer exists; camera set to Auto.'
+            : `Body ${missingId} no longer exists; camera set to Auto.`;
+        state.cameraSubjectMode = 'auto';
+        state.cameraSubjectBodyId = null;
+      }
+    }
+
+    /**
+     * @returns {{x:number,y:number,width:number,height:number,cx:number,cy:number}}
+     */
+    function getViewRect() {
+      const panelRect = ui.panel.getBoundingClientRect();
+      const margin = 12;
+      const full = {
+        x: 0,
+        y: 0,
+        width: viewport.width,
+        height: viewport.height
+      };
+      if (panelRect.width <= 0 || panelRect.height <= 0) {
+        return { ...full, cx: viewport.width * 0.5, cy: viewport.height * 0.5 };
+      }
+      const panelMostlyTop = panelRect.width >= viewport.width * 0.85;
+      if (panelMostlyTop) {
+        const topInset = Math.min(viewport.height - 40, panelRect.bottom + margin);
+        const h = Math.max(40, viewport.height - topInset);
+        return {
+          x: 0,
+          y: topInset,
+          width: viewport.width,
+          height: h,
+          cx: viewport.width * 0.5,
+          cy: topInset + h * 0.5
+        };
+      }
+      const leftInset = Math.min(viewport.width - 40, panelRect.right + margin);
+      const w = Math.max(40, viewport.width - leftInset);
+      return {
+        x: leftInset,
+        y: 0,
+        width: w,
+        height: viewport.height,
+        cx: leftInset + w * 0.5,
+        cy: viewport.height * 0.5
+      };
+    }
+
+    /**
+     * @param {number} [multiplier]
+     * @returns {{i:number,j:number,dist:number}[]}
+     */
+    function nearPairs(multiplier = cfg.nearPairLockMultiplier) {
+      /** @type {{i:number,j:number,dist:number}[]} */
+      const pairs = [];
+      for (let i = 0; i < state.bodies.length; i += 1) {
+        const a = state.bodies[i];
+        for (let j = i + 1; j < state.bodies.length; j += 1) {
+          const b = state.bodies[j];
+          const dist = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y);
+          const threshold = Math.max(a.radius, b.radius) * multiplier;
+          if (dist <= threshold) {
+            pairs.push({ i, j, dist });
+          }
+        }
+      }
+      return pairs;
+    }
+
+    /**
+     * Focuses the camera on the strongest active near-interaction cluster.
+     * Algorithm:
+     * 1) find pairwise near links, 2) build connected components,
+     * 3) score each component by density/relative distance, 4) bound the best one.
+     * @param {number} [multiplier]
+     * @returns {{minX:number,minY:number,maxX:number,maxY:number}|null}
+     */
+    function focusedNearPairBounds(multiplier = cfg.nearPairLockMultiplier) {
+      const pairs = nearPairs(multiplier);
+      if (pairs.length === 0) return null;
+
+      // Build connected components from near-pair links and focus the strongest cluster.
+      /** @type {Map<number, number[]>} */
+      const adj = new Map();
+      for (const p of pairs) {
+        if (!adj.has(p.i)) adj.set(p.i, []);
+        if (!adj.has(p.j)) adj.set(p.j, []);
+        adj.get(p.i).push(p.j);
+        adj.get(p.j).push(p.i);
+      }
+
+      const visited = new Set();
+      /** @type {{nodes:number[],score:number}[]} */
+      const components = [];
+      for (const start of adj.keys()) {
+        if (visited.has(start)) continue;
+        const queue = [start];
+        visited.add(start);
+        const nodes = [];
+        while (queue.length) {
+          const n = queue.pop();
+          nodes.push(n);
+          for (const m of adj.get(n) || []) {
+            if (!visited.has(m)) {
+              visited.add(m);
+              queue.push(m);
+            }
+          }
+        }
+        const nodeSet = new Set(nodes);
+        let score = 0;
+        for (const p of pairs) {
+          if (nodeSet.has(p.i) && nodeSet.has(p.j)) {
+            const a = state.bodies[p.i];
+            const b = state.bodies[p.j];
+            score += 1 / Math.max(1, p.dist / Math.max(a.radius, b.radius));
+          }
+        }
+        components.push({ nodes, score });
+      }
+
+      components.sort((a, b) => {
+        if (b.nodes.length !== a.nodes.length) return b.nodes.length - a.nodes.length;
+        return b.score - a.score;
+      });
+      const chosen = components[0];
+      if (!chosen || chosen.nodes.length === 0) return null;
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      let maxRadius = 1;
+      for (const idx of chosen.nodes) {
+        const b = state.bodies[idx];
+        minX = Math.min(minX, b.pos.x - b.radius);
+        minY = Math.min(minY, b.pos.y - b.radius);
+        maxX = Math.max(maxX, b.pos.x + b.radius);
+        maxY = Math.max(maxY, b.pos.y + b.radius);
+        maxRadius = Math.max(maxRadius, b.radius);
+      }
+
+      // Keep room around tight near-pair interactions to avoid over-zoom and jitter.
+      const minSpan = maxRadius * multiplier * cfg.nearPairFocusEnvelopeFactor;
+      const centerX = (minX + maxX) * 0.5;
+      const centerY = (minY + maxY) * 0.5;
+      const spanX = Math.max(maxX - minX, minSpan);
+      const spanY = Math.max(maxY - minY, minSpan);
+      const pad = cfg.nearPairEnvelopePadding;
+      return {
+        minX: centerX - (spanX * pad) * 0.5,
+        maxX: centerX + (spanX * pad) * 0.5,
+        minY: centerY - (spanY * pad) * 0.5,
+        maxY: centerY + (spanY * pad) * 0.5
+      };
+    }
+
+    /**
+     * @param {Body|null} body
+     * @param {number} [multiplier]
+     * @returns {{minX:number,minY:number,maxX:number,maxY:number}|null}
+     */
+    function focusedObjectBounds(body, multiplier = cfg.nearPairLockMultiplier) {
+      if (!body) return null;
+      const maxRadius = Math.max(1, body.radius);
+      const minSpan = maxRadius * multiplier * cfg.nearPairFocusEnvelopeFactor;
+      const spanX = Math.max(body.radius * 2, minSpan);
+      const spanY = Math.max(body.radius * 2, minSpan);
+      const pad = cfg.nearPairEnvelopePadding;
+      return {
+        minX: body.pos.x - (spanX * pad) * 0.5,
+        maxX: body.pos.x + (spanX * pad) * 0.5,
+        minY: body.pos.y - (spanY * pad) * 0.5,
+        maxY: body.pos.y + (spanY * pad) * 0.5
+      };
+    }
+
+    function maxCameraZoomForMode() {
+      return state.mode === 'screensaver' ? cfg.cameraMaxZoomScreensaver : cfg.cameraMaxZoomUser;
+    }
+
+    function screensaverRunMinSpan() {
+      if (state.mode !== 'screensaver' || !state.running || state.bodies.length === 0) return 0;
+      const trackedDiameter = Math.max(2, state.boundaryTrackedExtent * 2);
+      return trackedDiameter * cfg.screensaverMinSpanFactor;
+    }
+
+    function updateCamera() {
+      if (!effectiveAutoCamera()) return;
+      if (state.mode === 'screensaver' && state.running && state.bodies.length <= 1) return;
+
+      enforceValidCameraSubject();
+      const cameraSubjectMode = normalizeCameraSubjectMode(state.cameraSubjectMode);
+      let focusNearPairs = false;
+      let bounds = null;
+
+      if (cameraSubjectMode === 'object') {
+        const subjectBody = getCameraSubjectBody();
+        if (subjectBody) {
+          bounds = focusedObjectBounds(subjectBody, cfg.nearPairLockMultiplier) || boundsOfBodies();
+          focusNearPairs = true;
+        }
+      } else if (cameraSubjectMode === 'full') {
+        bounds = boundsOfBodies();
+      } else {
+        const quietReady = state.timeSinceCollision >= cfg.restartQuietTime;
+        const nearInteractionActive = hasNearInteractionException(cfg.nearPairLockMultiplier);
+        focusNearPairs =
+          state.mode === 'screensaver' && state.running && quietReady && nearInteractionActive;
+        bounds =
+          focusNearPairs
+            ? focusedNearPairBounds(cfg.nearPairLockMultiplier) || boundsOfBodies()
+            : boundsOfBodies();
+      }
+      if (!bounds) bounds = boundsOfBodies();
+      const centerX = (bounds.minX + bounds.maxX) * 0.5;
+      const centerY = (bounds.minY + bounds.maxY) * 0.5;
+      const userRunMinSpan =
+        state.mode === 'user' && state.running ? Math.max(0, state.userRunMinCameraSpan) : 0;
+      const minSpan = Math.max(userRunMinSpan, screensaverRunMinSpan());
+      const spanX = Math.max(bounds.maxX - bounds.minX, minSpan);
+      const spanY = Math.max(bounds.maxY - bounds.minY, minSpan);
+      const width = Math.max(25, spanX * cfg.cameraPaddingFactor);
+      const height = Math.max(25, spanY * cfg.cameraPaddingFactor);
+      const viewRect = getViewRect();
+      const zoomX = viewRect.width / width;
+      const zoomY = viewRect.height / height;
+      const targetZoom = clamp(Math.min(zoomX, zoomY), 0.08, maxCameraZoomForMode());
+
+      camera.targetCenter.x = centerX;
+      camera.targetCenter.y = centerY;
+      camera.targetZoom = targetZoom;
+      const lerp = focusNearPairs ? cfg.cameraLerpFocus : cfg.cameraLerp;
+      camera.center.x += (camera.targetCenter.x - camera.center.x) * lerp;
+      camera.center.y += (camera.targetCenter.y - camera.center.y) * lerp;
+      camera.zoom += (camera.targetZoom - camera.zoom) * lerp;
+    }
+
+    function velocityDisplayScale() {
+      return cfg.velocityArrowScale * cfg.velocityDragDivider;
+    }
+
+    function velocityArrowWorld(body) {
+      const speed = Math.hypot(body.vel.x, body.vel.y);
+      if (speed < 1e-8) return null;
+      const dirX = body.vel.x / speed;
+      const dirY = body.vel.y / speed;
+      const from = {
+        x: body.pos.x + dirX * body.radius,
+        y: body.pos.y + dirY * body.radius
+      };
+      const scale = velocityDisplayScale();
+      const to = {
+        x: from.x + body.vel.x * scale,
+        y: from.y + body.vel.y * scale
+      };
+      return { from, to };
+    }
+
+    function boundsWithVelocityArrows() {
+      const bounds = boundsOfBodies();
+      let minX = bounds.minX;
+      let minY = bounds.minY;
+      let maxX = bounds.maxX;
+      let maxY = bounds.maxY;
+      for (const b of state.bodies) {
+        const arrow = velocityArrowWorld(b);
+        if (!arrow) continue;
+        const pad = Math.max(b.radius * 0.45, 6);
+        minX = Math.min(minX, arrow.from.x - pad, arrow.to.x - pad);
+        minY = Math.min(minY, arrow.from.y - pad, arrow.to.y - pad);
+        maxX = Math.max(maxX, arrow.from.x + pad, arrow.to.x + pad);
+        maxY = Math.max(maxY, arrow.from.y + pad, arrow.to.y + pad);
+      }
+      return { minX, minY, maxX, maxY };
+    }
+
+    function resetSetupMinSpan() {
+      if (state.bodies.length === 0) return 0;
+      let maxRadius = 1;
+      for (const b of state.bodies) maxRadius = Math.max(maxRadius, b.radius);
+      const nearLockSpan = maxRadius * cfg.nearPairLockMultiplier * 2;
+      return nearLockSpan * cfg.nearPairEnvelopePadding;
+    }
+
+    function snapCameraToCurrentBounds(includeVelocityArrows = false, minSpan = 0) {
+      const bounds = includeVelocityArrows ? boundsWithVelocityArrows() : boundsOfBodies();
+      const centerX = (bounds.minX + bounds.maxX) * 0.5;
+      const centerY = (bounds.minY + bounds.maxY) * 0.5;
+      const spanFloor = Math.max(minSpan, screensaverRunMinSpan());
+      const spanX = Math.max(bounds.maxX - bounds.minX, spanFloor);
+      const spanY = Math.max(bounds.maxY - bounds.minY, spanFloor);
+      const width = Math.max(25, spanX * cfg.cameraPaddingFactor);
+      const height = Math.max(25, spanY * cfg.cameraPaddingFactor);
+      const viewRect = getViewRect();
+      const zoomX = viewRect.width / width;
+      const zoomY = viewRect.height / height;
+      const targetZoom = clamp(Math.min(zoomX, zoomY), 0.08, maxCameraZoomForMode());
+
+      camera.targetCenter.x = centerX;
+      camera.targetCenter.y = centerY;
+      camera.targetZoom = targetZoom;
+      camera.center.x = centerX;
+      camera.center.y = centerY;
+      camera.zoom = targetZoom;
+    }
+
+    function worldToScreen(world) {
+      const viewRect = getViewRect();
+      return {
+        x: (world.x - camera.center.x) * camera.zoom + viewRect.cx,
+        y: (world.y - camera.center.y) * camera.zoom + viewRect.cy
+      };
+    }
+
+    function screenToWorld(sx, sy) {
+      const viewRect = getViewRect();
+      return {
+        x: (sx - viewRect.cx) / camera.zoom + camera.center.x,
+        y: (sy - viewRect.cy) / camera.zoom + camera.center.y
+      };
+    }
+
+    function drawLeads() {
+      if (!state.leadsEnabled || state.leadPaths.size === 0) return;
+      const mergedHiddenIds = activeMergedBodyIdSet();
+      for (const body of state.bodies) {
+        if (mergedHiddenIds.has(body.id)) continue;
+        const path = state.leadPaths.get(body.id);
+        if (!path || path.length < 1) continue;
+        const firstPred = path[0];
+        const velSpeed = Math.hypot(body.vel.x, body.vel.y);
+        const velDir =
+          velSpeed > 1e-6 ? { x: body.vel.x / velSpeed, y: body.vel.y / velSpeed } : null;
+        const predVec = v.sub(firstPred, body.pos);
+        const predSpeed = v.len(predVec);
+        const predDir = predSpeed > 1e-6 ? v.scale(predVec, 1 / predSpeed) : null;
+
+        /** @type {Vec2} */
+        let edgeDir = { x: 1, y: 0 };
+        if (velDir && predDir) {
+          const d = velDir.x * predDir.x + velDir.y * predDir.y;
+          if (d < -0.25) {
+            // Prevent flickering front/back leads when predicted first step flips behind velocity.
+            edgeDir = velDir;
+          } else {
+            edgeDir = v.norm({
+              x: velDir.x * 0.75 + predDir.x * 0.25,
+              y: velDir.y * 0.75 + predDir.y * 0.25
+            });
+          }
+        } else if (velDir) {
+          edgeDir = velDir;
+        } else if (predDir) {
+          edgeDir = predDir;
+        }
+
+        const startWorld = {
+          x: body.pos.x + edgeDir.x * body.radius,
+          y: body.pos.y + edgeDir.y * body.radius
+        };
+
+        // Keep leads forward-biased; stop when prediction turns strongly backward.
+        const worldPath = [];
+        const minForwardProj = body.radius * 0.12;
+        let prevForwardProj = minForwardProj;
+        for (const p of path) {
+          const relX = p.x - body.pos.x;
+          const relY = p.y - body.pos.y;
+          const forwardProj = relX * edgeDir.x + relY * edgeDir.y;
+          if (forwardProj < minForwardProj) {
+            continue;
+          }
+          if (forwardProj + body.radius * 0.2 < prevForwardProj) {
+            break;
+          }
+          worldPath.push({ x: p.x, y: p.y });
+          prevForwardProj = forwardProj;
+        }
+
+        let tipWorld = worldPath[worldPath.length - 1] || { x: startWorld.x, y: startWorld.y };
+        const tipDist = Math.hypot(tipWorld.x - startWorld.x, tipWorld.y - startWorld.y);
+        const minVisibleDist = body.radius * cfg.leadMinVisibleRadiusFactor;
+        if (tipDist < minVisibleDist) {
+          tipWorld = {
+            x: startWorld.x + edgeDir.x * minVisibleDist,
+            y: startWorld.y + edgeDir.y * minVisibleDist
+          };
+          if (worldPath.length === 0) {
+            worldPath.push(tipWorld);
+          } else {
+            worldPath[worldPath.length - 1] = tipWorld;
+          }
+        }
+
+        const points = [worldToScreen(startWorld), ...worldPath.map(worldToScreen)];
+        if (points.length < 2) continue;
+        const width = clamp(body.radius * camera.zoom * 0.24, 1.4, 3.4);
+
+        // Trail-style dashed future path, stronger visibility than body glow/trails.
+        ctx.lineCap = 'round';
+        for (let i = 1; i < points.length; i += 1) {
+          if (i % 6 >= 3) continue;
+          const p0 = points[i - 1];
+          const p1 = points[i];
+          const t = i / points.length;
+          const alpha = clamp(0.28 + 0.72 * Math.pow(t, 1.2), 0.2, 0.95);
+          ctx.strokeStyle = colorStyle(body.color, alpha);
+          ctx.lineWidth = width;
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.stroke();
+        }
+
+        const last = points[points.length - 1];
+        const prev = points[points.length - 2];
+        const dx = last.x - prev.x;
+        const dy = last.y - prev.y;
+        const len = Math.hypot(dx, dy);
+        if (len > 0.0001) {
+          const ux = dx / len;
+          const uy = dy / len;
+          const px = -uy;
+          const py = ux;
+          const headLen = clamp(6 + width * 2.1, 6, 12);
+          ctx.fillStyle = colorStyle(body.color, 0.88);
+          ctx.beginPath();
+          ctx.moveTo(last.x, last.y);
+          ctx.lineTo(
+            last.x - ux * headLen + px * headLen * 0.42,
+            last.y - uy * headLen + py * headLen * 0.42
+          );
+          ctx.lineTo(
+            last.x - ux * headLen - px * headLen * 0.42,
+            last.y - uy * headLen - py * headLen * 0.42
+          );
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        const anchor = points[0];
+        ctx.fillStyle = colorStyle(body.color, 0.68);
+        ctx.beginPath();
+        ctx.arc(anchor.x, anchor.y, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawMergeEffects() {
+      if (state.mergeEffects.length === 0) return;
+      for (const fx of state.mergeEffects) {
+        const body = state.bodies.find((b) => b.id === fx.mergedBodyId);
+        if (!body) continue;
+
+        const t = clamp(fx.elapsed / fx.duration, 0, 1);
+        const e = smoothstep01(t);
+        const center = { x: fx.renderPos.x, y: fx.renderPos.y };
+        const aPos = lerpVec2(fx.aStartPos, center, e);
+        const bPos = lerpVec2(fx.bStartPos, center, e);
+        const aRadius = lerp(fx.aRadius, body.radius * 0.22, e);
+        const bRadius = lerp(fx.bRadius, body.radius * 0.22, e);
+        const coreRadius = lerp(Math.max(fx.aRadius, fx.bRadius) * 0.82, body.radius, e);
+        const coreColor = lerpColor(fx.coreStartColor, body.color, e);
+        const lobeAlpha = clamp((1 - e) * 0.78, 0, 0.78);
+        const coreAlpha = clamp(0.3 + 0.7 * e, 0.3, 1);
+
+        const aS = worldToScreen(aPos);
+        const bS = worldToScreen(bPos);
+        const cS = worldToScreen(center);
+
+        const aR = Math.max(1.2, aRadius * camera.zoom);
+        const bR = Math.max(1.2, bRadius * camera.zoom);
+        const cR = Math.max(1.2, coreRadius * camera.zoom);
+
+        const bridgeWidth = Math.max(1, ((aRadius + bRadius) * 0.55) * camera.zoom);
+        ctx.strokeStyle = colorStyle(coreColor, lobeAlpha * 0.7);
+        ctx.lineWidth = bridgeWidth;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(aS.x, aS.y);
+        ctx.lineTo(bS.x, bS.y);
+        ctx.stroke();
+
+        ctx.fillStyle = colorStyle(fx.aColor, lobeAlpha);
+        ctx.beginPath();
+        ctx.arc(aS.x, aS.y, aR, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = colorStyle(fx.bColor, lobeAlpha);
+        ctx.beginPath();
+        ctx.arc(bS.x, bS.y, bR, 0, Math.PI * 2);
+        ctx.fill();
+
+        const glow = cR * 2;
+        const grad = ctx.createRadialGradient(cS.x, cS.y, cR * 0.25, cS.x, cS.y, glow);
+        grad.addColorStop(0, colorStyle(coreColor, coreAlpha * 0.55));
+        grad.addColorStop(1, colorStyle(coreColor, 0));
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cS.x, cS.y, glow, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = colorStyle(coreColor, coreAlpha);
+        ctx.beginPath();
+        ctx.arc(cS.x, cS.y, cR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawSingularityBody(body, center, radius) {
+      const time = state.simTime * 1.35 + body.id * 0.71;
+      const glowRadius = radius * cfg.singularityGlowRadiusFactor;
+      const warm = body.color;
+      const hot = { r: 255, g: 235, b: 178 };
+      const outer = ctx.createRadialGradient(
+        center.x,
+        center.y,
+        radius * 0.8,
+        center.x,
+        center.y,
+        glowRadius
+      );
+      outer.addColorStop(0, colorStyle(warm, 0.22));
+      outer.addColorStop(0.55, colorStyle(warm, 0.09));
+      outer.addColorStop(1, colorStyle(warm, 0));
+      ctx.fillStyle = outer;
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, glowRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      const flickerA = 0.8 + 0.14 * Math.sin(time * 2.4);
+      const flickerB = 0.72 + 0.14 * Math.sin(time * 2.0 + 0.8);
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.shadowBlur = Math.max(6, radius * 1.2);
+      ctx.shadowColor = colorStyle(warm, 0.55);
+
+      ctx.strokeStyle = colorStyle(warm, clamp(0.52 * flickerA, 0.24, 0.85));
+      ctx.lineWidth = Math.max(1.3, radius * 0.28);
+      ctx.beginPath();
+      ctx.arc(
+        center.x,
+        center.y,
+        radius * cfg.singularityRingOuterRadiusFactor,
+        time * cfg.singularityRingOuterSpeed,
+        time * cfg.singularityRingOuterSpeed + Math.PI * cfg.singularityRingOuterArcTurns
+      );
+      ctx.stroke();
+
+      ctx.strokeStyle = colorStyle(hot, clamp(0.38 * flickerB, 0.18, 0.62));
+      ctx.lineWidth = Math.max(1, radius * 0.18);
+      ctx.beginPath();
+      ctx.arc(
+        center.x,
+        center.y,
+        radius * cfg.singularityRingInnerRadiusFactor,
+        -time * cfg.singularityRingInnerSpeed + cfg.singularityRingInnerPhaseOffset,
+        -time * cfg.singularityRingInnerSpeed +
+          cfg.singularityRingInnerPhaseOffset +
+          Math.PI * cfg.singularityRingInnerArcTurns
+      );
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = 'rgba(2, 4, 8, 0.98)';
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(10, 14, 20, 0.9)';
+      ctx.lineWidth = Math.max(1, radius * 0.08);
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, radius * 1.03, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, viewport.width, viewport.height);
+      const mergedHiddenIds = activeMergedBodyIdSet();
+
+      const showTrails = state.trailsEnabled && effectiveTrailLength() > 0;
+      if (showTrails) {
+        for (const b of state.bodies) {
+          if (mergedHiddenIds.has(b.id)) continue;
+          if (b.trail.length < 2) {
+            if (b.trail.length === 1) {
+              const p = worldToScreen(b.trail[0]);
+              ctx.fillStyle = colorStyle(b.color, 0.45);
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            continue;
+          }
+          const segWidth = clamp(b.radius * camera.zoom * 0.22, 1, 3);
+          const screenTrail = b.trail.map(worldToScreen);
+          drawDashedFadingTrail(screenTrail, b.color, segWidth);
+
+          const tail = worldToScreen(b.trail[0]);
+          ctx.fillStyle = colorStyle(b.color, 0.24);
+          ctx.beginPath();
+          ctx.arc(tail.x, tail.y, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      for (const b of state.bodies) {
+        if (mergedHiddenIds.has(b.id)) continue;
+        const s = worldToScreen(b.pos);
+        const r = Math.max(1.2, b.radius * camera.zoom);
+        if (b.isSingularity) {
+          drawSingularityBody(b, s, r);
+        } else {
+          const glow = r * 2.2;
+          const grad = ctx.createRadialGradient(s.x, s.y, r * 0.2, s.x, s.y, glow);
+          grad.addColorStop(0, colorStyle(b.color, 0.35));
+          grad.addColorStop(1, colorStyle(b.color, 0));
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, glow, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = colorStyle(b.color, 1);
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        if (state.selectedBodyId === b.id && state.mode === 'user' && !state.running) {
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, r + 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        if (state.showBodyIds) {
+          drawBodyIdLabel(b, s, r);
+        }
+      }
+
+      drawMergeEffects();
+      drawLeads();
+      drawVelocityHandles();
+    }
+
+    function drawDashedFadingTrail(points, color, width) {
+      if (points.length < 2) return;
+
+      const dash = 12;
+      const gap = 10;
+      let draw = true;
+      let remaining = dash;
+      let traveled = 0;
+
+      let totalLength = 0;
+      for (let i = 1; i < points.length; i += 1) {
+        totalLength += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      }
+      if (totalLength < 0.001) return;
+
+      ctx.lineCap = 'butt';
+      ctx.lineWidth = width;
+
+      for (let i = 1; i < points.length; i += 1) {
+        const p0 = points[i - 1];
+        const p1 = points[i];
+        const segDx = p1.x - p0.x;
+        const segDy = p1.y - p0.y;
+        const segLength = Math.hypot(segDx, segDy);
+        if (segLength < 0.0001) continue;
+        const ux = segDx / segLength;
+        const uy = segDy / segLength;
+        let segConsumed = 0;
+
+        while (segConsumed < segLength) {
+          const take = Math.min(remaining, segLength - segConsumed);
+          const sx = p0.x + ux * segConsumed;
+          const sy = p0.y + uy * segConsumed;
+          const ex = p0.x + ux * (segConsumed + take);
+          const ey = p0.y + uy * (segConsumed + take);
+
+          if (draw) {
+            const midProgress = clamp((traveled + take * 0.5) / totalLength, 0, 1);
+            const alpha = clamp(0.03 + 0.85 * Math.pow(midProgress, 1.45), 0.03, 0.85);
+            ctx.strokeStyle = colorStyle(color, alpha);
+            ctx.beginPath();
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(ex, ey);
+            ctx.stroke();
+          }
+
+          segConsumed += take;
+          traveled += take;
+          remaining -= take;
+          if (remaining <= 0.0001) {
+            draw = !draw;
+            remaining = draw ? dash : gap;
+          }
+        }
+      }
+    }
+
+    function drawVelocityHandles() {
+      if (state.mode !== 'user' || state.running) return;
+
+      if (state.velocityDrag) {
+        const body = state.bodies.find((b) => b.id === state.velocityDrag.bodyId);
+        if (!body) return;
+        const dx = state.pointerWorld.x - body.pos.x;
+        const dy = state.pointerWorld.y - body.pos.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > body.radius + 1e-6) {
+          const edge = {
+            x: body.pos.x + (dx / dist) * body.radius,
+            y: body.pos.y + (dy / dist) * body.radius
+          };
+          const from = worldToScreen(edge);
+          const to = { x: state.pointerScreen.x, y: state.pointerScreen.y };
+          drawArrow(from, to, '#ffcf7c');
+        }
+      }
+
+      const selected = getSelectedBody();
+      if (selected) {
+        const arrow = velocityArrowWorld(selected);
+        if (arrow) {
+          const base = worldToScreen(arrow.from);
+          const tip = worldToScreen(arrow.to);
+          drawArrow(base, tip, 'rgba(173, 235, 255, 0.75)');
+        }
+      }
+    }
+
+    function drawArrow(from, to, color) {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 0.0001) return;
+      const ux = dx / len;
+      const uy = dy / len;
+
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+
+      const head = 10;
+      const px = -uy;
+      const py = ux;
+      ctx.beginPath();
+      ctx.moveTo(to.x, to.y);
+      ctx.lineTo(to.x - ux * head + px * (head * 0.45), to.y - uy * head + py * (head * 0.45));
+      ctx.lineTo(to.x - ux * head - px * (head * 0.45), to.y - uy * head - py * (head * 0.45));
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function applyVelocityDrag(body) {
+      const dx = state.pointerWorld.x - body.pos.x;
+      const dy = state.pointerWorld.y - body.pos.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= body.radius + 1e-6) {
+        body.vel = { x: 0, y: 0 };
+        return;
+      }
+      const edge = {
+        x: body.pos.x + (dx / dist) * body.radius,
+        y: body.pos.y + (dy / dist) * body.radius
+      };
+      const drag = {
+        x: state.pointerWorld.x - edge.x,
+        y: state.pointerWorld.y - edge.y
+      };
+      body.vel = v.scale(drag, 1 / velocityDisplayScale());
+    }
+
+    function applyMassDrag(body) {
+      const dx = state.pointerWorld.x - body.pos.x;
+      const dy = state.pointerWorld.y - body.pos.y;
+      const dist = Math.hypot(dx, dy);
+      const singularity = normalizeSingularityFlag(body.isSingularity);
+      const minRadius = massToRadius(5, singularity);
+      const maxRadius = massToRadius(1000, singularity);
+      const targetRadius = clamp(dist, minRadius, maxRadius);
+      let targetMass;
+      if (singularity) {
+        const normalized = targetRadius / cfg.radiusScale;
+        const exponent =
+          (normalized - cfg.singularityRadiusBase) / Math.max(0.001, cfg.singularityRadiusLogGain);
+        targetMass = cfg.singularityRadiusLogScale * (Math.exp(exponent) - 1);
+      } else {
+        targetMass = (targetRadius / cfg.radiusScale) ** 2;
+      }
+      targetMass = clamp(targetMass, 5, 1000);
+      body.mass = targetMass;
+      syncBodyRadius(body);
+    }
+
+    function effectiveTrailLength() {
+      if (!state.trailsEnabled) return 0;
+      let len = state.trailLength * 15;
+      if (state.bodies.length > 20) len = Math.min(len, 40);
+      if (state.bodies.length > 35) len = Math.min(len, 20);
+      if (state.bodies.length > 45) len = 0;
+      return len;
+    }
+
+    function effectiveLeadLength() {
+      return state.leadsLength * cfg.leadLengthMultiplier;
+    }
+
+    function hasInvalidBodyState() {
+      for (const b of state.bodies) {
+        if (
+          !Number.isFinite(b.pos.x) ||
+          !Number.isFinite(b.pos.y) ||
+          !Number.isFinite(b.vel.x) ||
+          !Number.isFinite(b.vel.y) ||
+          !Number.isFinite(b.mass) ||
+          !Number.isFinite(b.radius) ||
+          !Number.isFinite(effectiveMass(b))
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function hasNearInteractionException(multiplier = 6) {
+      if (state.bodies.length < 2) return false;
+      for (let i = 0; i < state.bodies.length; i += 1) {
+        const a = state.bodies[i];
+        for (let j = i + 1; j < state.bodies.length; j += 1) {
+          const b = state.bodies[j];
+          const dist = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y);
+          const threshold = Math.max(a.radius, b.radius) * multiplier;
+          if (dist <= threshold) return true;
+        }
+      }
+      return false;
+    }
+
+    function screensaverRestartRequired() {
+      if (state.bodies.length <= 1) {
+        return state.singleBodyRealElapsed >= cfg.singleBodyRestartDelayRealSec;
+      }
+      // Safety timeout retained for future tuning, currently disabled by request.
+      // if (state.simTime >= 300) return true;
+      const nearInteractionActive = hasNearInteractionException(cfg.nearPairLockMultiplier);
+      const zoomedOutEnough =
+        state.referenceZoomCaptured &&
+        camera.zoom <= state.screensaverReferenceZoom / cfg.restartZoomOutFactor;
+      const quietEnough = state.timeSinceCollision >= cfg.restartQuietTime;
+      // Exit gate requires all three:
+      // 1) quiet timer elapsed, 2) near-pair lock off, 3) zoom boundary exceeded.
+      return quietEnough && !nearInteractionActive && zoomedOutEnough;
+    }
+
+    function trackScreensaverBoundary() {
+      const { pos: center } = computeCOM();
+      let maxExtent = 1;
+      for (const b of state.bodies) {
+        maxExtent = Math.max(maxExtent, Math.hypot(b.pos.x - center.x, b.pos.y - center.y));
+      }
+      if (state.simTime <= cfg.settleTime) {
+        state.boundaryTrackedExtent = Math.max(state.boundaryTrackedExtent, maxExtent);
+        state.finalBoundary = state.boundaryTrackedExtent * cfg.boundaryMultiplier;
+      } else if (!state.referenceZoomCaptured) {
+        state.screensaverReferenceZoom = Math.max(0.01, camera.zoom);
+        state.referenceZoomCaptured = true;
+      }
+    }
+
+    function randomInRadius(radius) {
+      const angle = Math.random() * Math.PI * 2;
+      const rr = radius * Math.sqrt(Math.random());
+      return { x: Math.cos(angle) * rr, y: Math.sin(angle) * rr };
+    }
+
+    function assignLowBodyInteractionVelocities(velFactor = state.autoVelFactor) {
+      if (state.bodies.length < 2) return;
+      const { pos: comPos, totalMass } = computeCOM();
+      const baseSpin = Math.random() < 0.5 ? -1 : 1;
+      const r0 = 22;
+
+      for (let i = 0; i < state.bodies.length; i += 1) {
+        const body = state.bodies[i];
+        const rVec = v.sub(body.pos, comPos);
+        const dist = Math.max(1, v.len(rVec));
+        const radial = v.norm(rVec);
+        const tangential = v.perp(radial);
+        const localSpin = Math.random() < 0.25 ? -baseSpin : baseSpin;
+        const circular = Math.sqrt(state.G * totalMass / (dist + r0)) * velFactor;
+        const tangentialScale = 0.46 + Math.random() * 0.3;
+        const inwardScale = 0.22 + Math.random() * 0.28;
+        const pairPullScale = 0.1 + Math.random() * 0.12;
+
+        let nearest = null;
+        let nearestDist = Infinity;
+        for (let j = 0; j < state.bodies.length; j += 1) {
+          if (i === j) continue;
+          const other = state.bodies[j];
+          const d = Math.hypot(other.pos.x - body.pos.x, other.pos.y - body.pos.y);
+          if (d < nearestDist) {
+            nearestDist = d;
+            nearest = other;
+          }
+        }
+
+        const towardNearest = nearest
+          ? v.norm({ x: nearest.pos.x - body.pos.x, y: nearest.pos.y - body.pos.y })
+          : { x: 0, y: 0 };
+        const noise = 0.08 * circular;
+
+        body.vel = {
+          x:
+            tangential.x * circular * tangentialScale * localSpin -
+            radial.x * circular * inwardScale +
+            towardNearest.x * circular * pairPullScale +
+            (Math.random() * 2 - 1) * noise,
+          y:
+            tangential.y * circular * tangentialScale * localSpin -
+            radial.y * circular * inwardScale +
+            towardNearest.y * circular * pairPullScale +
+            (Math.random() * 2 - 1) * noise
+        };
+      }
+
+      const corrected = computeCOMVelocity();
+      for (const body of state.bodies) {
+        body.vel.x -= corrected.x;
+        body.vel.y -= corrected.y;
+      }
+    }
+
+    function assignOrbitishVelocities(velFactor = state.autoVelFactor) {
+      if (state.bodies.length < 2) return;
+      if (state.bodies.length <= 4) {
+        assignLowBodyInteractionVelocities(velFactor);
+        return;
+      }
+      const { pos: comPos, totalMass } = computeCOM();
+      const r0 = 30;
+
+      for (const body of state.bodies) {
+        const r = v.sub(body.pos, comPos);
+        const tangential = v.norm(v.perp(r));
+        const dist = v.len(r);
+        const speed = Math.sqrt(state.G * totalMass / (dist + r0)) * velFactor;
+        const noise = 0.06 * speed;
+        body.vel = {
+          x: tangential.x * speed + (Math.random() * 2 - 1) * noise,
+          y: tangential.y * speed + (Math.random() * 2 - 1) * noise
+        };
+      }
+
+      // Remove net drift.
+      const corrected = computeCOMVelocity();
+      for (const body of state.bodies) {
+        body.vel.x -= corrected.x;
+        body.vel.y -= corrected.y;
+      }
+    }
+
+    /**
+     * @returns {Vec2}
+     */
+    function computeCOMVelocity() {
+      let totalMass = 0;
+      let vx = 0;
+      let vy = 0;
+      for (const body of state.bodies) {
+        const mass = effectiveMass(body);
+        totalMass += mass;
+        vx += body.vel.x * mass;
+        vy += body.vel.y * mass;
+      }
+      if (totalMass === 0) return { x: 0, y: 0 };
+      return { x: vx / totalMass, y: vy / totalMass };
+    }
+
+    function validateScreensaverStart(minLookaheadSeconds = 20) {
+      for (let i = 0; i < state.bodies.length; i += 1) {
+        const a = state.bodies[i];
+        for (let j = i + 1; j < state.bodies.length; j += 1) {
+          const b = state.bodies[j];
+          const dx = b.pos.x - a.pos.x;
+          const dy = b.pos.y - a.pos.y;
+          const dist = Math.hypot(dx, dy);
+          const minDist = (a.radius + b.radius) * 1.25;
+          if (dist <= minDist) return false;
+
+          const ux = dx / dist;
+          const uy = dy / dist;
+          const rvx = b.vel.x - a.vel.x;
+          const rvy = b.vel.y - a.vel.y;
+          const closingSpeed = Math.max(0, -(rvx * ux + rvy * uy));
+          const dynamicMin = minDist + closingSpeed * minLookaheadSeconds;
+          if (dist <= dynamicMin) return false;
+        }
+      }
+      return true;
+    }
+
+    /**
+     * Forward-simulates a ghost copy to detect whether low-body-count starts
+     * are likely to produce interesting near interactions rather than immediate drift.
+     * @param {number} [horizonSec]
+     * @param {number} [dt]
+     * @returns {boolean}
+     */
+    function hasLowBodyInteractionPotential(horizonSec = 80, dt = 0.45) {
+      const n = state.bodies.length;
+      if (n < 2) return false;
+      const ghosts = state.bodies.map((b) => ({
+        mass: b.mass,
+        radius: b.radius,
+        isSingularity: normalizeSingularityFlag(b.isSingularity),
+        pos: { x: b.pos.x, y: b.pos.y },
+        vel: { x: b.vel.x, y: b.vel.y }
+      }));
+      const accX = new Float64Array(n);
+      const accY = new Float64Array(n);
+      updateAccelerations(ghosts, accX, accY);
+      let bestRatio = Infinity;
+      const steps = Math.max(1, Math.round(horizonSec / dt));
+
+      for (let step = 0; step < steps; step += 1) {
+        for (let i = 0; i < n; i += 1) {
+          const g = ghosts[i];
+          g.vel.x += accX[i] * (0.5 * dt);
+          g.vel.y += accY[i] * (0.5 * dt);
+          g.pos.x += g.vel.x * dt;
+          g.pos.y += g.vel.y * dt;
+        }
+
+        updateAccelerations(ghosts, accX, accY);
+        for (let i = 0; i < n; i += 1) {
+          const g = ghosts[i];
+          g.vel.x += accX[i] * (0.5 * dt);
+          g.vel.y += accY[i] * (0.5 * dt);
+        }
+
+        for (let i = 0; i < n; i += 1) {
+          const a = ghosts[i];
+          for (let j = i + 1; j < n; j += 1) {
+            const b = ghosts[j];
+            const dist = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y);
+            const sumR = Math.max(1, a.radius + b.radius);
+            const ratio = dist / sumR;
+            bestRatio = Math.min(bestRatio, ratio);
+            if (bestRatio <= cfg.lowBodyInteractionImmediateRatio) return true;
+          }
+        }
+      }
+      return bestRatio <= cfg.lowBodyInteractionFallbackRatio;
+    }
+
+    function tryPlaceBodies(
+      n,
+      radius,
+      { massMin, massMax, singularityMassMin, singularityMassMax, singularityChance, singularityMax }
+    ) {
+      const maxAttempts = 120;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        state.bodies = [];
+        state.selectedBodyId = null;
+        state.nextBodyId = 1;
+        let singularityCount = 0;
+
+        for (let i = 0; i < n; i += 1) {
+          let placed = false;
+          for (let tries = 0; tries < 40; tries += 1) {
+            const isSingularity =
+              singularityChance > 0 &&
+              singularityCount < singularityMax &&
+              Math.random() < singularityChance;
+            const mass = isSingularity
+              ? singularityMassMin + Math.random() * (singularityMassMax - singularityMassMin)
+              : massMin + Math.random() * (massMax - massMin);
+            const candidate = newBody(randomInRadius(radius), mass, isSingularity);
+            const overlaps = state.bodies.some((other) => {
+              const dist = Math.hypot(candidate.pos.x - other.pos.x, candidate.pos.y - other.pos.y);
+              return (
+                dist < (candidate.radius + other.radius) * cfg.screensaverSpawnOverlapFactor
+              );
+            });
+            if (!overlaps) {
+              candidate.trail = [];
+              state.bodies.push(candidate);
+              if (candidate.isSingularity) singularityCount += 1;
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) break;
+        }
+
+        if (state.bodies.length === n) {
+          assignDiverseColors(state.bodies);
+          assignOrbitishVelocities(0.9);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function validateStartConditions(n) {
+      const validStart = validateScreensaverStart(20);
+      const lowBodyInteresting = n <= 4 ? hasLowBodyInteractionPotential(80, 0.45) : true;
+      return validStart && lowBodyInteresting;
+    }
+
+    function initializeScreensaverState() {
+      state.running = true;
+      state.simTime = 0;
+      state.boundaryTrackedExtent = 1;
+      state.finalBoundary = Infinity;
+      state.timeSinceCollision = 0;
+      state.referenceZoomCaptured = false;
+      state.screensaverReferenceZoom = Math.max(0.01, camera.zoom);
+      state.singleBodyRealElapsed = 0;
+      clearTrails();
+      clearMergeEffects();
+      invalidateLeads(true);
+      snapshotScreensaverSetupBaseline();
+      if (state.cameraSubjectMode === 'object' && !hasBodyWithId(state.cameraSubjectBodyId)) {
+        state.cameraSubjectBodyId = state.bodies.length > 0 ? state.bodies[0].id : null;
+      }
+      enforceValidCameraSubject();
+      updateSelectedBodyUI();
+      updateUI();
+    }
+
+    /**
+     * Generates a randomized screensaver setup with bounded retries.
+     * Each attempt enforces initial separation, then assigns orbit-ish velocities,
+     * then validates short-horizon interaction potential before accepting.
+     * @param {number} [n]
+     * @returns {void}
+     */
+    function generateScreensaverBodies(n = state.screensaverN) {
+      const massMin = 50;
+      const massMax = 300;
+      const spawnRadius = 200;
+      const singularityMassMin = cfg.singularityMassMin;
+      const singularityMassMax = cfg.singularityMassMax;
+      const singularityChance = clamp(state.screensaverSingularityChance, 0, 100) / 100;
+      const singularityMax = clamp(
+        Math.round(state.screensaverSingularityMax || 1),
+        1,
+        Math.max(1, n)
+      );
+      const success = tryPlaceBodies(n, spawnRadius, {
+        massMin,
+        massMax,
+        singularityMassMin,
+        singularityMassMax,
+        singularityChance,
+        singularityMax
+      });
+
+      if (success && !validateStartConditions(n)) {
+        // Retry once with fresh placement if the generated candidate is too quiet.
+        tryPlaceBodies(n, spawnRadius, {
+          massMin,
+          massMax,
+          singularityMassMin,
+          singularityMassMax,
+          singularityChance,
+          singularityMax
+        });
+      }
+
+      if (!success || !validateStartConditions(n)) {
+        if (state.bodies.length !== n) {
+          state.bodies = [];
+          state.selectedBodyId = null;
+          state.nextBodyId = 1;
+          let singularityCount = 0;
+          for (let i = 0; i < n; i += 1) {
+            const isSingularity =
+              singularityChance > 0 &&
+              singularityCount < singularityMax &&
+              Math.random() < singularityChance;
+            const mass = isSingularity
+              ? singularityMassMin + Math.random() * (singularityMassMax - singularityMassMin)
+              : massMin + Math.random() * (massMax - massMin);
+            const body = newBody(randomInRadius(spawnRadius), mass, isSingularity);
+            if (body.isSingularity) singularityCount += 1;
+            state.bodies.push(body);
+          }
+          assignDiverseColors(state.bodies);
+          assignOrbitishVelocities(0.9);
+        }
+        state.warningText =
+          'Could not find a fully separated starting layout; using best-effort spawn.';
+      } else {
+        state.warningText = '';
+      }
+      initializeScreensaverState();
+    }
+
+    function clearTrails() {
+      for (const body of state.bodies) body.trail.length = 0;
+    }
+
+    function recordTrails() {
+      const trailLength = effectiveTrailLength();
+      for (const body of state.bodies) {
+        if (trailLength <= 0) {
+          if (body.trail.length) body.trail.length = 0;
+          continue;
+        }
+        let dx = body.vel.x;
+        let dy = body.vel.y;
+        let speed = Math.hypot(dx, dy);
+        if (speed < 1e-6 && body.trail.length > 0) {
+          const lastTrailPoint = body.trail[body.trail.length - 1];
+          dx = body.pos.x - lastTrailPoint.x;
+          dy = body.pos.y - lastTrailPoint.y;
+          speed = Math.hypot(dx, dy);
+        }
+        if (speed < 1e-6) {
+          dx = 1;
+          dy = 0;
+          speed = 1;
+        }
+        const ux = dx / speed;
+        const uy = dy / speed;
+        body.trail.push({
+          x: body.pos.x - ux * body.radius,
+          y: body.pos.y - uy * body.radius
+        });
+        if (body.trail.length > trailLength) {
+          body.trail.shift();
+        }
+      }
+    }
+
+    function invalidateLeads(clear = false) {
+      state.leadDirty = true;
+      if (clear) {
+        state.leadPaths.clear();
+      }
+    }
+
+    /**
+     * Chooses lead-path prediction fidelity based on body count and current velocity.
+     * Higher counts and higher speeds reduce sampling density to cap frame cost.
+     * @param {number} bodyCount
+     * @returns {{steps:number,sampleStride:number,dt:number,refreshInterval:number}}
+     */
+    function leadPredictSettings(bodyCount) {
+      let steps = effectiveLeadLength();
+      let sampleStride = 1;
+      let dt = cfg.leadPredictDt;
+      let refreshInterval = cfg.leadRefreshInterval;
+
+      // Velocity-adaptive horizon so fast bodies do not visually outrun leads.
+      let peakSpeed = 0;
+      for (const b of state.bodies) {
+        peakSpeed = Math.max(peakSpeed, Math.hypot(b.vel.x, b.vel.y));
+      }
+      const velocityScale = clamp(
+        1 + peakSpeed / cfg.leadVelocityRef,
+        1,
+        cfg.leadVelocityScaleMax
+      );
+      steps = Math.round(steps * velocityScale);
+      sampleStride = Math.max(1, Math.ceil(velocityScale / 2));
+
+      if (bodyCount > 15) {
+        steps = Math.min(steps, 170);
+        sampleStride = 2;
+        dt *= 1.3;
+        refreshInterval = 0.16;
+      }
+      if (bodyCount > 30) {
+        steps = Math.min(steps, 110);
+        sampleStride = 3;
+        dt *= 1.7;
+        refreshInterval = 0.22;
+      }
+      if (bodyCount > 45) {
+        steps = Math.min(steps, 70);
+        sampleStride = 4;
+        dt *= 2.1;
+        refreshInterval = 0.3;
+      }
+
+      if (bodyCount <= 8) {
+        steps = Math.min(steps, 12000);
+      } else if (bodyCount <= 20) {
+        steps = Math.min(steps, 4000);
+      } else if (bodyCount <= 35) {
+        steps = Math.min(steps, 2000);
+      } else {
+        steps = Math.min(steps, 900);
+      }
+
+      return { steps, sampleStride, dt, refreshInterval };
+    }
+
+    /**
+     * Builds predicted lead trajectories by integrating a ghost system forward in time.
+     * Uses leapfrog integration to match the live simulation behavior.
+     * @returns {void}
+     */
+    function computeLeadPaths() {
+      if (!state.leadsEnabled || state.bodies.length === 0) {
+        state.leadPaths.clear();
+        return;
+      }
+
+      const n = state.bodies.length;
+      const { steps, sampleStride, dt } = leadPredictSettings(n);
+      const ghosts = state.bodies.map((b) => ({
+        id: b.id,
+        mass: b.mass,
+        isSingularity: normalizeSingularityFlag(b.isSingularity),
+        pos: { x: b.pos.x, y: b.pos.y },
+        vel: { x: b.vel.x, y: b.vel.y }
+      }));
+
+      const paths = new Map();
+      for (const b of state.bodies) {
+        paths.set(b.id, []);
+      }
+
+      const accX = new Float64Array(n);
+      const accY = new Float64Array(n);
+      updateAccelerations(ghosts, accX, accY);
+
+      for (let step = 0; step < steps; step += 1) {
+        for (let i = 0; i < n; i += 1) {
+          const g = ghosts[i];
+          g.vel.x += accX[i] * (0.5 * dt);
+          g.vel.y += accY[i] * (0.5 * dt);
+          g.pos.x += g.vel.x * dt;
+          g.pos.y += g.vel.y * dt;
+        }
+
+        updateAccelerations(ghosts, accX, accY);
+        for (let i = 0; i < n; i += 1) {
+          const g = ghosts[i];
+          g.vel.x += accX[i] * (0.5 * dt);
+          g.vel.y += accY[i] * (0.5 * dt);
+        }
+
+        if (step % sampleStride === 0) {
+          for (let i = 0; i < n; i += 1) {
+            const g = ghosts[i];
+            const path = paths.get(g.id);
+            path.push({ x: g.pos.x, y: g.pos.y });
+          }
+        }
+      }
+
+      state.leadPaths = paths;
+    }
+
+    function updateLeadPaths(deltaSec) {
+      if (!state.leadsEnabled || state.bodies.length === 0) {
+        state.leadRefreshClock = 0;
+        state.leadPaths.clear();
+        return;
+      }
+
+      const { refreshInterval } = leadPredictSettings(state.bodies.length);
+      state.leadRefreshClock += deltaSec;
+      const shouldRefresh = state.leadDirty || state.leadRefreshClock >= refreshInterval;
+
+      if (!shouldRefresh) return;
+      computeLeadPaths();
+      state.leadDirty = false;
+      state.leadRefreshClock = 0;
+    }
+
+    function switchMode(mode) {
+      state.mode = mode;
+      state.warningText = '';
+      state.singleBodyRealElapsed = 0;
+      state.userRunMinCameraSpan = 0;
+      state.userSetupBaseline = null;
+      state.selectedBodyId = null;
+      state.velocityDrag = null;
+      state.massDrag = null;
+      state.moveDrag = null;
+      if (mode === 'screensaver') {
+        state.trailsEnabled = true;
+        state.running = true;
+        generateScreensaverBodies(state.screensaverN);
+      } else {
+        state.running = false;
+        state.simTime = 0;
+        state.bodies = [];
+        state.nextBodyId = 1;
+        clearTrails();
+        clearMergeEffects();
+        invalidateLeads(true);
+        enforceValidCameraSubject();
+      }
+      updateUI();
+    }
+
+    function getSelectedBody() {
+      if (state.selectedBodyId == null) return null;
+      return state.bodies.find((b) => b.id === state.selectedBodyId) || null;
+    }
+
+    function setSelectedBody(bodyId) {
+      state.selectedBodyId = bodyId;
+      updateSelectedBodyUI();
+    }
+
+    function preferredCameraSubjectBodyId() {
+      if (hasBodyWithId(state.selectedBodyId)) return state.selectedBodyId;
+      return state.bodies.length > 0 ? state.bodies[0].id : null;
+    }
+
+    function sortedCameraSubjectIds() {
+      return state.bodies.map((b) => b.id).sort((a, b) => a - b);
+    }
+
+    function cycleCameraSubject(step) {
+      const ids = sortedCameraSubjectIds();
+      if (ids.length === 0) {
+        const changed = state.cameraSubjectMode !== 'auto' || state.cameraSubjectBodyId != null;
+        state.cameraSubjectMode = 'auto';
+        state.cameraSubjectBodyId = null;
+        return changed;
+      }
+      setCameraSubjectMode('object');
+      let idx = ids.findIndex((id) => id === state.cameraSubjectBodyId);
+      if (idx < 0) idx = 0;
+      else idx = (idx + step + ids.length) % ids.length;
+      const nextId = ids[idx];
+      const changed = state.cameraSubjectBodyId !== nextId;
+      state.cameraSubjectBodyId = nextId;
+      return changed;
+    }
+
+    function setCameraSubjectMode(mode) {
+      const nextMode = normalizeCameraSubjectMode(mode);
+      if (nextMode === 'object') {
+        if (!hasBodyWithId(state.cameraSubjectBodyId)) {
+          const fallback = preferredCameraSubjectBodyId();
+          if (fallback == null) {
+            state.cameraSubjectMode = 'auto';
+            state.cameraSubjectBodyId = null;
+            return;
+          }
+          state.cameraSubjectBodyId = fallback;
+        }
+      }
+      state.cameraSubjectMode = nextMode;
+      if (nextMode !== 'object') {
+        state.cameraSubjectBodyId = hasBodyWithId(state.cameraSubjectBodyId)
+          ? state.cameraSubjectBodyId
+          : null;
+      }
+    }
+
+    function setCameraSubjectBodyId(rawId) {
+      const bodyId = Number(rawId);
+      if (!Number.isFinite(bodyId) || !hasBodyWithId(bodyId)) return false;
+      state.cameraSubjectBodyId = bodyId;
+      return true;
+    }
+
+    function updateCameraSubjectUI() {
+      enforceValidCameraSubject();
+      ui.cameraSubjectMode.value = state.cameraSubjectMode;
+      ui.cameraSubjectFollowRow.classList.toggle('hidden', state.cameraSubjectMode !== 'object');
+      const hasBodies = state.bodies.length > 0;
+      const canSelectObject = state.cameraSubjectMode === 'object' && hasBodies;
+      const ids = sortedCameraSubjectIds();
+      const minId = ids.length > 0 ? ids[0] : 1;
+      const maxId = ids.length > 0 ? ids[ids.length - 1] : 1;
+      ui.cameraSubjectBodyInput.min = String(minId);
+      ui.cameraSubjectBodyInput.max = String(maxId);
+      ui.cameraSubjectPrevBtn.disabled = !canSelectObject;
+      ui.cameraSubjectNextBtn.disabled = !canSelectObject;
+      ui.cameraSubjectBodyInput.disabled = !canSelectObject;
+      if (canSelectObject && hasBodyWithId(state.cameraSubjectBodyId)) {
+        ui.cameraSubjectBodyInput.value = String(state.cameraSubjectBodyId);
+      } else if (hasBodies) {
+        ui.cameraSubjectBodyInput.value = String(ids[0]);
+      } else {
+        ui.cameraSubjectBodyInput.value = '1';
+      }
+    }
+
+    function updateSelectedBodyUI() {
+      const selected = getSelectedBody();
+      const hasSelected = Boolean(selected);
+      ui.selectedBodySection.style.opacity = hasSelected ? '1' : '0.62';
+      ui.deleteBodyBtn.disabled = !hasSelected;
+      ui.selectedMass.disabled = !hasSelected;
+      ui.selectedVx.disabled = !hasSelected;
+      ui.selectedVy.disabled = !hasSelected;
+      ui.selectedSingularity.disabled = !hasSelected || state.running;
+
+      if (selected) {
+        ui.selectedMass.value = String(clamp(selected.mass, 5, 1000));
+        ui.selectedMassValue.textContent = selected.mass.toFixed(1);
+        ui.velocityReadout.textContent = `vx ${selected.vel.x.toFixed(3)}, vy ${selected.vel.y.toFixed(3)}`;
+        ui.selectedSingularity.checked = normalizeSingularityFlag(selected.isSingularity);
+        if (document.activeElement !== ui.selectedVx) {
+          ui.selectedVx.value = selected.vel.x.toFixed(3);
+        }
+        if (document.activeElement !== ui.selectedVy) {
+          ui.selectedVy.value = selected.vel.y.toFixed(3);
+        }
+      } else {
+        ui.selectedMassValue.textContent = '0';
+        ui.velocityReadout.textContent = 'vx 0.000, vy 0.000';
+        ui.selectedVx.value = '0.000';
+        ui.selectedVy.value = '0.000';
+        ui.selectedSingularity.checked = false;
+      }
+    }
+
+    function tryParseVelocityInput(value) {
+      const trimmed = value.trim();
+      if (
+        trimmed === '' ||
+        trimmed === '-' ||
+        trimmed === '+' ||
+        trimmed === '.' ||
+        trimmed === '-.' ||
+        trimmed === '+.'
+      ) {
+        return null;
+      }
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function commitVelocityInput(axis, inputEl) {
+      const selected = getSelectedBody();
+      if (!selected) return;
+      const parsed = tryParseVelocityInput(inputEl.value);
+      if (parsed == null) return;
+      if (axis === 'x') selected.vel.x = parsed;
+      else selected.vel.y = parsed;
+      invalidateLeads();
+      updateSelectedBodyUI();
+    }
+
+    function cloneBodyForSetup(body) {
+      return {
+        id: body.id,
+        pos: { x: body.pos.x, y: body.pos.y },
+        vel: { x: body.vel.x, y: body.vel.y },
+        mass: body.mass,
+        radius: body.radius,
+        color: { r: body.color.r, g: body.color.g, b: body.color.b },
+        isSingularity: normalizeSingularityFlag(body.isSingularity)
+      };
+    }
+
+    function snapshotUserSetupBaseline() {
+      state.userSetupBaseline = {
+        bodies: state.bodies.map(cloneBodyForSetup),
+        nextBodyId: state.nextBodyId
+      };
+    }
+
+    function snapshotScreensaverSetupBaseline() {
+      state.screensaverSetupBaseline = {
+        bodies: state.bodies.map(cloneBodyForSetup),
+        nextBodyId: state.nextBodyId
+      };
+    }
+
+    function restoreUserSetupBaseline() {
+      if (!state.userSetupBaseline) return false;
+      state.bodies = state.userSetupBaseline.bodies.map((b) => ({
+        id: b.id,
+        pos: { x: b.pos.x, y: b.pos.y },
+        vel: { x: b.vel.x, y: b.vel.y },
+        mass: b.mass,
+        radius: massToRadius(b.mass, normalizeSingularityFlag(b.isSingularity)),
+        color: { r: b.color.r, g: b.color.g, b: b.color.b },
+        isSingularity: normalizeSingularityFlag(b.isSingularity),
+        trail: []
+      }));
+      syncNextBodyIdFromBodies();
+      state.selectedBodyId = null;
+      state.running = false;
+      state.userRunMinCameraSpan = 0;
+      state.simTime = 0;
+      clearTrails();
+      clearMergeEffects();
+      invalidateLeads(true);
+      enforceValidCameraSubject();
+      snapCameraToCurrentBounds(true, resetSetupMinSpan());
+      updateSelectedBodyUI();
+      return true;
+    }
+
+    function cloneUserBodiesFromCurrent() {
+      return state.bodies.map(cloneBodyForSetup);
+    }
+
+    function setupBodiesForPersistence(mode = state.mode) {
+      if (mode === 'screensaver') {
+        if (
+          state.screensaverSetupBaseline &&
+          Array.isArray(state.screensaverSetupBaseline.bodies) &&
+          state.screensaverSetupBaseline.bodies.length > 0
+        ) {
+          return state.screensaverSetupBaseline.bodies.map(cloneBodyForSetup);
+        }
+        return cloneUserBodiesFromCurrent();
+      }
+      // In user setup while paused, the on-screen bodies are the editable setup source of truth.
+      if (mode === 'user' && !state.running && state.bodies.length > 0) {
+        return cloneUserBodiesFromCurrent();
+      }
+      if (
+        state.userSetupBaseline &&
+        Array.isArray(state.userSetupBaseline.bodies) &&
+        state.userSetupBaseline.bodies.length > 0
+      ) {
+        return state.userSetupBaseline.bodies.map(cloneBodyForSetup);
+      }
+      return cloneUserBodiesFromCurrent();
+    }
+
+    function toSafeColor(c) {
+      return {
+        r: clamp(Math.round(Number(c?.r) || 0), 0, 255),
+        g: clamp(Math.round(Number(c?.g) || 0), 0, 255),
+        b: clamp(Math.round(Number(c?.b) || 0), 0, 255)
+      };
+    }
+
+    function timestampForFilename() {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      return `${y}${m}${day}-${hh}${mm}${ss}`;
+    }
+
+    function captureSidebarSettings() {
+      return {
+        timeSpeed: state.timeSpeed,
+        timeMultiplier: state.timeMultiplier,
+        screensaverN: state.screensaverN,
+        screensaverSingularityChance: state.screensaverSingularityChance,
+        screensaverSingularityMax: state.screensaverSingularityMax,
+        G: state.G,
+        epsilon: state.epsilon,
+        trailsEnabled: state.trailsEnabled,
+        trailLength: state.trailLength,
+        leadsEnabled: state.leadsEnabled,
+        leadsLength: state.leadsLength,
+        showBodyIds: state.showBodyIds,
+        autoAssignOnStart: state.autoAssignOnStart,
+        autoVelFactor: state.autoVelFactor,
+        autoCameraSetup: state.autoCameraSetup,
+        cameraSubjectMode: state.cameraSubjectMode,
+        cameraSubjectBodyId: state.cameraSubjectBodyId
+      };
+    }
+
+    function applySidebarSettings(settings) {
+      if (!settings || typeof settings !== 'object') return;
+      const s = settings;
+      const toFiniteOr = (value, fallback) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : fallback;
+      };
+      state.timeSpeed = clamp(toFiniteOr(s.timeSpeed, state.timeSpeed), 0.1, 10);
+      state.timeMultiplier = clamp(toFiniteOr(s.timeMultiplier, state.timeMultiplier), 0.1, 20);
+      state.screensaverN = clamp(
+        Math.round(toFiniteOr(s.screensaverN, state.screensaverN)),
+        2,
+        cfg.maxBodiesHard
+      );
+      state.screensaverSingularityChance = clamp(
+        Math.round(toFiniteOr(s.screensaverSingularityChance, state.screensaverSingularityChance)),
+        0,
+        100
+      );
+      state.screensaverSingularityMax = clamp(
+        Math.round(toFiniteOr(s.screensaverSingularityMax, state.screensaverSingularityMax)),
+        1,
+        cfg.maxBodiesHard
+      );
+      state.G = clamp(toFiniteOr(s.G, state.G), 0.1, 5);
+      state.epsilon = clamp(toFiniteOr(s.epsilon, state.epsilon), 0, 30);
+      state.trailsEnabled = Boolean(s.trailsEnabled);
+      state.trailLength = clamp(Math.round(toFiniteOr(s.trailLength, state.trailLength)), 0, 300);
+      state.leadsEnabled = Boolean(s.leadsEnabled);
+      state.leadsLength = clamp(Math.round(toFiniteOr(s.leadsLength, state.leadsLength)), 20, 300);
+      state.showBodyIds = s.showBodyIds == null ? state.showBodyIds : Boolean(s.showBodyIds);
+      state.autoAssignOnStart = Boolean(s.autoAssignOnStart);
+      state.autoVelFactor = clamp(toFiniteOr(s.autoVelFactor, state.autoVelFactor), 0, 2);
+      state.autoCameraSetup = Boolean(s.autoCameraSetup);
+      state.cameraSubjectMode = normalizeCameraSubjectMode(s.cameraSubjectMode);
+      const loadedCameraSubjectBodyId = Number(s.cameraSubjectBodyId);
+      state.cameraSubjectBodyId = Number.isFinite(loadedCameraSubjectBodyId)
+        ? loadedCameraSubjectBodyId
+        : null;
+      enforceValidCameraSubject();
+    }
+
+    function buildSetupPayload(mode = state.mode) {
+      const setupBodies = setupBodiesForPersistence(mode);
+      let maxId = 0;
+      for (const b of setupBodies) maxId = Math.max(maxId, b.id);
+      const baselineNext =
+        mode === 'screensaver'
+          ? Number(state.screensaverSetupBaseline?.nextBodyId)
+          : Number(state.userSetupBaseline?.nextBodyId);
+      const setupNextBodyId = Math.max(
+        maxId + 1,
+        Number.isFinite(baselineNext) ? baselineNext : state.nextBodyId
+      );
+      const selectedId = mode === 'user' ? Number(state.selectedBodyId) : NaN;
+      const selectedBodyId =
+        Number.isFinite(selectedId) && setupBodies.some((b) => b.id === selectedId)
+          ? selectedId
+          : null;
+      const baseline = {
+        bodies: setupBodies.map(cloneBodyForSetup),
+        nextBodyId: setupNextBodyId
+      };
+      return {
+        type: 'multibody-user-setup',
+        version: 3,
+        sourceMode: mode,
+        savedAt: new Date().toISOString(),
+        bodies: setupBodies,
+        nextBodyId: setupNextBodyId,
+        selectedBodyId,
+        settings: captureSidebarSettings(),
+        userSetupBaseline: baseline
+      };
+    }
+
+    async function saveSetupToJsonFile(mode = state.mode) {
+      if (mode !== 'user' && mode !== 'screensaver') return;
+      const payload = buildSetupPayload(mode);
+      const json = `${JSON.stringify(payload, null, 2)}\n`;
+      const filename = `multibody-setup-${timestampForFilename()}.json`;
+
+      if (typeof window.showSaveFilePicker === 'function') {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: [
+              {
+                description: 'JSON Files',
+                accept: { 'application/json': ['.json'] }
+              }
+            ]
+          });
+          const writable = await handle.createWritable();
+          await writable.write(json);
+          await writable.close();
+          state.warningText =
+            mode === 'screensaver'
+              ? 'Screensaver start saved to JSON file.'
+              : 'Setup saved to JSON file.';
+          updateUI();
+          return;
+        } catch (err) {
+          if (err && typeof err === 'object' && err.name === 'AbortError') {
+            state.warningText = 'Save canceled.';
+            updateUI();
+            return;
+          }
+        }
+      }
+
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      state.warningText =
+        mode === 'screensaver'
+          ? 'Save dialog unavailable; downloaded screensaver start JSON file.'
+          : 'Save dialog unavailable; downloaded JSON file.';
+      updateUI();
+    }
+
+    function normalizeLoadedBodies(rawBodies) {
+      if (!Array.isArray(rawBodies)) return [];
+      const out = [];
+      for (let i = 0; i < rawBodies.length; i += 1) {
+        const b = rawBodies[i];
+        if (!b || typeof b !== 'object') continue;
+        const mass = Math.max(0.001, Number(b.mass));
+        const isSingularity = normalizeSingularityFlag(b.isSingularity);
+        const x = Number(b.pos?.x);
+        const y = Number(b.pos?.y);
+        const vx = Number(b.vel?.x);
+        const vy = Number(b.vel?.y);
+        if (!Number.isFinite(mass) || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+        const hasColor = b.color && typeof b.color === 'object';
+        out.push({
+          id: Number.isFinite(Number(b.id)) ? Number(b.id) : i + 1,
+          mass,
+          radius: massToRadius(mass, isSingularity),
+          pos: { x, y },
+          vel: {
+            x: Number.isFinite(vx) ? vx : 0,
+            y: Number.isFinite(vy) ? vy : 0
+          },
+          color: hasColor ? toSafeColor(b.color) : isSingularity ? randomSingularityColor() : randomColor(),
+          isSingularity,
+          trail: []
+        });
+      }
+      return out;
+    }
+
+    function loadSetupFromPayload(payload) {
+      const rawBodies =
+        Array.isArray(payload) ? payload : Array.isArray(payload?.bodies) ? payload.bodies : null;
+      if (!rawBodies) {
+        throw new Error('JSON must include a bodies array.');
+      }
+      const loadedBodies = normalizeLoadedBodies(rawBodies);
+      if (loadedBodies.length === 0) {
+        throw new Error('No valid bodies found in JSON.');
+      }
+      const baselineBodies = normalizeLoadedBodies(payload?.userSetupBaseline?.bodies || []);
+      const currentBodies = baselineBodies.length > 0 ? baselineBodies : loadedBodies;
+      if (currentBodies.length === 0) {
+        throw new Error('No valid baseline/setup bodies found in JSON.');
+      }
+
+      state.mode = 'user';
+      state.running = false;
+      state.simTime = 0;
+      state.userRunMinCameraSpan = 0;
+      state.warningText = '';
+      state.bodies = currentBodies;
+      syncNextBodyIdFromBodies();
+      state.selectedBodyId = null;
+      state.velocityDrag = null;
+      state.massDrag = null;
+      state.moveDrag = null;
+
+      applySidebarSettings(payload?.settings);
+
+      state.userSetupBaseline = {
+        bodies: currentBodies.map(cloneBodyForSetup),
+        nextBodyId: state.nextBodyId
+      };
+
+      const loadedSelectedId = Number(payload?.selectedBodyId);
+      if (
+        Number.isFinite(loadedSelectedId) &&
+        state.bodies.some((b) => b.id === loadedSelectedId)
+      ) {
+        state.selectedBodyId = loadedSelectedId;
+      }
+
+      clearTrails();
+      clearMergeEffects();
+      invalidateLeads(true);
+      snapCameraToCurrentBounds(true, resetSetupMinSpan());
+      updateSelectedBodyUI();
+      updateUI();
+    }
+
+    function deleteSelectedBody() {
+      if (state.mode !== 'user') return false;
+      if (state.selectedBodyId == null) {
+        state.warningText = 'Select a body first, then delete.';
+        updateUI();
+        return false;
+      }
+      const idx = state.bodies.findIndex((b) => b.id === state.selectedBodyId);
+      const removedBodyId = state.selectedBodyId;
+      if (idx >= 0) {
+        state.bodies.splice(idx, 1);
+      } else {
+        state.warningText = 'Selected body no longer exists.';
+        updateUI();
+        return false;
+      }
+      state.selectedBodyId = null;
+      if (state.cameraSubjectMode === 'object' && state.cameraSubjectBodyId === removedBodyId) {
+        state.warningText = `Body ${removedBodyId} no longer exists; camera set to Auto.`;
+        state.cameraSubjectMode = 'auto';
+        state.cameraSubjectBodyId = null;
+      }
+      syncNextBodyIdFromBodies();
+      updateSelectedBodyUI();
+      invalidateLeads();
+      updateUI();
+      return true;
+    }
+
+    function resetCurrentMode() {
+      state.warningText = '';
+      if (state.mode === 'screensaver') {
+        generateScreensaverBodies(state.screensaverN);
+      } else {
+        const restored = restoreUserSetupBaseline();
+        if (!restored) {
+          state.warningText = 'No saved setup yet. Press Start once to create a reset baseline.';
+        }
+      }
+      updateUI();
+    }
+
+    function clearCurrentUserSetup() {
+      if (state.mode !== 'user') return;
+      state.warningText = '';
+      state.running = false;
+      state.userRunMinCameraSpan = 0;
+      state.bodies = [];
+      state.selectedBodyId = null;
+      state.velocityDrag = null;
+      state.massDrag = null;
+      state.moveDrag = null;
+      state.nextBodyId = 1;
+      state.simTime = 0;
+      state.userSetupBaseline = null;
+      enforceValidCameraSubject();
+      clearTrails();
+      clearMergeEffects();
+      invalidateLeads(true);
+      updateSelectedBodyUI();
+      updateUI();
+    }
+
+    function startSimulation() {
+      if (state.mode === 'user') {
+        if (state.bodies.length < 2) {
+          state.warningText = 'Need at least 2 bodies to start simulation.';
+          updateUI();
+          return;
+        }
+        state.warningText = '';
+        if (state.autoAssignOnStart) {
+          assignOrbitishVelocities(state.autoVelFactor);
+        }
+        state.userRunMinCameraSpan = resetSetupMinSpan();
+        snapCameraToCurrentBounds(true, state.userRunMinCameraSpan);
+        snapshotUserSetupBaseline();
+      } else {
+        state.userRunMinCameraSpan = 0;
+      }
+      state.running = true;
+      invalidateLeads();
+      updateUI();
+    }
+
+    function pauseSimulation() {
+      state.running = false;
+      updateUI();
+    }
+
+    function tryHandleSafety() {
+      if (!hasInvalidBodyState()) return;
+      if (state.mode === 'screensaver') {
+        generateScreensaverBodies(state.screensaverN);
+      } else {
+        pauseSimulation();
+        state.warningText = 'Invalid numeric state detected. Simulation paused.';
+        updateUI();
+      }
+    }
+
+    function updateUI() {
+      ui.modeSelect.value = state.mode;
+      ui.startPauseBtn.textContent = state.running ? 'Pause' : 'Start';
+      ui.resetBtn.textContent = 'Reset';
+
+      ui.timeSpeed.value = String(state.timeSpeed);
+      ui.timeSpeedValue.textContent = `${state.timeSpeed.toFixed(2)}x`;
+      ui.timeMultiplier.value = String(state.timeMultiplier);
+      ui.timeMultiplierValue.textContent = `${state.timeMultiplier.toFixed(2)}x`;
+
+      ui.screensaverNInput.value = String(state.screensaverN);
+      ui.screensaverBodyRow.classList.toggle('hidden', state.mode !== 'screensaver');
+      ui.screensaverSingularityChanceInput.value = String(state.screensaverSingularityChance);
+      const singularityMaxLimit = Math.max(1, state.screensaverN);
+      const singularityMaxClamped = clamp(state.screensaverSingularityMax, 1, singularityMaxLimit);
+      state.screensaverSingularityMax = singularityMaxClamped;
+      ui.screensaverSingularityMaxInput.value = String(singularityMaxClamped);
+      ui.screensaverSingularityMaxInput.max = String(singularityMaxLimit);
+      ui.screensaverSingularityChanceRow.classList.toggle('hidden', state.mode !== 'screensaver');
+      ui.screensaverSingularityMaxRow.classList.toggle('hidden', state.mode !== 'screensaver');
+      const singularityEnabled = state.screensaverSingularityChance > 0;
+      ui.screensaverSingularityMaxInput.disabled = !singularityEnabled;
+
+      ui.gravity.value = String(state.G);
+      ui.gravityValue.textContent = state.G.toFixed(2);
+      ui.epsilon.value = String(state.epsilon);
+      ui.epsilonValue.textContent = state.epsilon.toFixed(2);
+      ui.trailsToggle.checked = state.trailsEnabled;
+      ui.trailLength.value = String(state.trailLength);
+      ui.trailLengthValue.textContent = String(effectiveTrailLength());
+      ui.leadsToggle.checked = state.leadsEnabled;
+      ui.leadsLength.value = String(state.leadsLength);
+      ui.leadsLengthValue.textContent = String(effectiveLeadLength());
+      ui.leadsLength.disabled = !state.leadsEnabled;
+      ui.showBodyIdsToggle.checked = state.showBodyIds;
+
+      const userMode = state.mode === 'user';
+      const screensaverMode = state.mode === 'screensaver';
+      ui.controlsGrid.classList.toggle('screensaver-mode', screensaverMode);
+      ui.userSection.classList.toggle('hidden', !userMode);
+      ui.screensaverSaveBtn.classList.toggle('hidden', !screensaverMode);
+      ui.clearBtn.classList.toggle('hidden', !userMode);
+      ui.autoVelocityNowBtn.classList.toggle('hidden', !userMode);
+      ui.loadBtn.classList.toggle('hidden', !userMode);
+      ui.saveBtn.classList.toggle('hidden', !userMode);
+      ui.autoAssignOnStart.checked = state.autoAssignOnStart;
+      ui.autoVelFactor.value = String(state.autoVelFactor);
+      ui.autoVelFactorValue.textContent = state.autoVelFactor.toFixed(2);
+      ui.autoCameraSetup.checked = state.autoCameraSetup;
+      ui.warningText.textContent = state.warningText;
+      if (userMode) {
+        ui.resetBtn.disabled = !state.userSetupBaseline;
+      } else {
+        ui.resetBtn.disabled = false;
+      }
+
+      const canStart = state.mode === 'screensaver' || state.bodies.length >= 2;
+      ui.startPauseBtn.disabled = !state.running && !canStart;
+      ui.loadBtn.disabled = !userMode;
+      ui.saveBtn.disabled = !userMode || state.bodies.length === 0;
+      ui.screensaverSaveBtn.disabled = !screensaverMode || state.bodies.length === 0;
+
+      const quietReady = state.timeSinceCollision >= cfg.restartQuietTime;
+      const quietRemaining = quietReady ? 0 : cfg.restartQuietTime - state.timeSinceCollision;
+      const nearInteractionActive = hasNearInteractionException(cfg.nearPairLockMultiplier);
+      const zoomReady =
+        state.referenceZoomCaptured &&
+        camera.zoom <= state.screensaverReferenceZoom / cfg.restartZoomOutFactor;
+      const quietText = quietReady ? 'Ready' : `${quietRemaining.toFixed(1)}s`;
+      ui.debugReadout.textContent =
+        `FPS: ${state.fps.toFixed(1)} | Bodies: ${state.bodies.length} | Sim Time: ${state.simTime.toFixed(1)}s\n` +
+        `Quiet: ${quietText} | Zoom gate: ${zoomReady ? 'Ready' : 'Waiting'} | Near-pair lock: ${nearInteractionActive ? 'On' : 'Off'}`;
+      updateCameraSubjectUI();
+      syncPanelOverlayClearance();
+      updateSelectedBodyUI();
+    }
+
+    function pickBodyAt(world) {
+      for (let i = state.bodies.length - 1; i >= 0; i -= 1) {
+        const body = state.bodies[i];
+        const d = Math.hypot(world.x - body.pos.x, world.y - body.pos.y);
+        if (d <= body.radius) return body;
+      }
+      return null;
+    }
+
+    function onPointerDown(event) {
+      const world = screenToWorld(event.clientX, event.clientY);
+      state.pointerWorld = world;
+      state.pointerScreen = { x: event.clientX, y: event.clientY };
+
+      if (state.mode !== 'user' || state.running) return;
+
+      const picked = pickBodyAt(world);
+      const isRight = event.button === 2;
+      const isMiddle = event.button === 1;
+      if (isMiddle && picked) {
+        event.preventDefault();
+        setSelectedBody(picked.id);
+        state.moveDrag = null;
+        state.massDrag = null;
+        state.velocityDrag = { bodyId: picked.id };
+        return;
+      }
+      if (isRight && picked) {
+        event.preventDefault();
+        setSelectedBody(picked.id);
+        state.moveDrag = null;
+        state.velocityDrag = null;
+        state.massDrag = { bodyId: picked.id };
+        applyMassDrag(picked);
+        invalidateLeads();
+        updateSelectedBodyUI();
+        return;
+      }
+
+      if (event.button !== 0) return;
+
+      if (picked) {
+        setSelectedBody(picked.id);
+        state.moveDrag = {
+          bodyId: picked.id,
+          offset: {
+            x: picked.pos.x - world.x,
+            y: picked.pos.y - world.y
+          }
+        };
+      } else {
+        const bodyId = nextUserCreatedBodyId();
+        const body = newBody(world, 120, false, bodyId);
+        state.bodies.push(body);
+        syncNextBodyIdFromBodies();
+        invalidateLeads();
+        setSelectedBody(body.id);
+        updateUI();
+      }
+    }
+
+    function onPointerMove(event) {
+      const world = screenToWorld(event.clientX, event.clientY);
+      state.pointerWorld = world;
+      state.pointerScreen = { x: event.clientX, y: event.clientY };
+
+      if (state.mode !== 'user' || state.running) return;
+
+      if (state.massDrag) {
+        const body = state.bodies.find((b) => b.id === state.massDrag.bodyId);
+        if (body) {
+          applyMassDrag(body);
+          invalidateLeads();
+          updateSelectedBodyUI();
+        }
+        return;
+      }
+
+      if (state.velocityDrag) {
+        const body = state.bodies.find((b) => b.id === state.velocityDrag.bodyId);
+        if (body) {
+          applyVelocityDrag(body);
+          invalidateLeads();
+          updateSelectedBodyUI();
+        }
+        return;
+      }
+
+      if (state.moveDrag) {
+        const body = state.bodies.find((b) => b.id === state.moveDrag.bodyId);
+        if (body) {
+          body.pos.x = world.x + state.moveDrag.offset.x;
+          body.pos.y = world.y + state.moveDrag.offset.y;
+          body.trail.length = 0;
+          invalidateLeads();
+        }
+      }
+    }
+
+    function onPointerUp(event) {
+      const world = screenToWorld(event.clientX, event.clientY);
+      state.pointerWorld = world;
+      state.pointerScreen = { x: event.clientX, y: event.clientY };
+
+      if (state.mode === 'user' && !state.running && state.velocityDrag) {
+        const body = state.bodies.find((b) => b.id === state.velocityDrag.bodyId);
+        if (body) {
+          applyVelocityDrag(body);
+          invalidateLeads();
+          updateSelectedBodyUI();
+        }
+      }
+      if (state.mode === 'user' && !state.running && state.massDrag) {
+        const body = state.bodies.find((b) => b.id === state.massDrag.bodyId);
+        if (body) {
+          applyMassDrag(body);
+          invalidateLeads();
+          updateSelectedBodyUI();
+        }
+      }
+
+      state.moveDrag = null;
+      state.velocityDrag = null;
+      state.massDrag = null;
+    }
+
+    function onWheel(event) {
+      if (state.mode !== 'user' || state.running) return;
+      const world = screenToWorld(event.clientX, event.clientY);
+      const body = pickBodyAt(world);
+      if (!body) return;
+      event.preventDefault();
+      const step = event.deltaY < 0 ? 10 : -10;
+      body.mass = clamp(body.mass + step, 5, 1000);
+      syncBodyRadius(body);
+      invalidateLeads();
+      setSelectedBody(body.id);
+    }
+
+    canvas.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+    window.addEventListener('keydown', (event) => {
+      // Camera shortcuts are global and intentionally override focused form fields.
+      if (event.code === 'BracketLeft') {
+        event.preventDefault();
+        const changed = cycleCameraSubject(-1);
+        if (changed) updateUI();
+        return;
+      }
+      if (event.code === 'BracketRight') {
+        event.preventDefault();
+        const changed = cycleCameraSubject(1);
+        if (changed) updateUI();
+        return;
+      }
+      if (event.code === 'Backslash') {
+        event.preventDefault();
+        setCameraSubjectMode('auto');
+        updateUI();
+        return;
+      }
+
+      const active = document.activeElement;
+      const typingTarget =
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement ||
+        (active && active.isContentEditable);
+      if (!typingTarget) {
+        // Keep room for non-camera global shortcuts here if needed.
+      }
+
+      const key = event.key;
+      const isDeleteKey = key === 'Delete' || key === 'Backspace';
+      if (!isDeleteKey || state.mode !== 'user' || state.running || typingTarget) return;
+
+      event.preventDefault();
+      const deleted = deleteSelectedBody();
+      if (!deleted) {
+        state.warningText = 'Select a body first, then press Delete.';
+        updateUI();
+      }
+    });
+
+    document.querySelectorAll('.section h3').forEach((heading) => {
+      heading.addEventListener('click', () => {
+        const section = heading.parentElement;
+        if (section && section.classList.contains('section')) {
+          section.classList.toggle('collapsed');
+        }
+      });
+    });
+
+    ui.modeSelect.addEventListener('change', () => {
+      switchMode(ui.modeSelect.value === 'user' ? 'user' : 'screensaver');
+    });
+
+    ui.startPauseBtn.addEventListener('click', () => {
+      if (state.running) pauseSimulation();
+      else startSimulation();
+    });
+
+    ui.resetBtn.addEventListener('click', () => {
+      resetCurrentMode();
+    });
+
+    ui.clearBtn.addEventListener('click', () => {
+      clearCurrentUserSetup();
+    });
+
+    ui.loadBtn.addEventListener('click', () => {
+      if (state.mode !== 'user') return;
+      ui.loadFileInput.value = '';
+      ui.loadFileInput.click();
+    });
+
+    ui.saveBtn.addEventListener('click', () => {
+      saveSetupToJsonFile('user');
+    });
+
+    ui.screensaverSaveBtn.addEventListener('click', () => {
+      saveSetupToJsonFile('screensaver');
+    });
+
+    ui.loadFileInput.addEventListener('change', async () => {
+      const file = ui.loadFileInput.files && ui.loadFileInput.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const payload = JSON.parse(text);
+        loadSetupFromPayload(payload);
+        state.warningText = `Loaded setup from ${file.name}.`;
+      } catch (err) {
+        state.warningText = `Load failed: ${err instanceof Error ? err.message : 'Invalid JSON file.'}`;
+      }
+      updateUI();
+    });
+
+    ui.autoVelocityNowBtn.addEventListener('click', () => {
+      if (state.mode !== 'user') return;
+      assignOrbitishVelocities(state.autoVelFactor);
+      invalidateLeads();
+      updateSelectedBodyUI();
+    });
+
+    ui.timeSpeed.addEventListener('input', () => {
+      state.timeSpeed = clamp(Number(ui.timeSpeed.value), 0.1, 10);
+      updateUI();
+    });
+    ui.timeMultiplier.addEventListener('input', () => {
+      state.timeMultiplier = clamp(Number(ui.timeMultiplier.value) || 1, 0.1, 20);
+      updateUI();
+    });
+
+    const screensaverSingularityMaxLimit = () => Math.max(1, state.screensaverN);
+    const applyScreensaverSingularityChance = (raw) => {
+      state.screensaverSingularityChance = clamp(Math.round(Number(raw) || 0), 0, 100);
+      if (state.screensaverSingularityChance > 0) {
+        state.screensaverSingularityMax = clamp(
+          state.screensaverSingularityMax,
+          1,
+          screensaverSingularityMaxLimit()
+        );
+      }
+      if (state.mode === 'screensaver') {
+        generateScreensaverBodies(state.screensaverN);
+      }
+      updateUI();
+    };
+    const applyScreensaverSingularityMax = (raw) => {
+      state.screensaverSingularityMax = clamp(
+        Math.round(Number(raw) || 1),
+        1,
+        screensaverSingularityMaxLimit()
+      );
+      if (state.mode === 'screensaver') {
+        generateScreensaverBodies(state.screensaverN);
+      }
+      updateUI();
+    };
+
+    ui.screensaverNInput.addEventListener('input', () => {
+      const value = clamp(Math.round(Number(ui.screensaverNInput.value) || 5), 2, cfg.maxBodiesHard);
+      state.screensaverN = value;
+      state.screensaverSingularityMax = clamp(
+        state.screensaverSingularityMax,
+        1,
+        screensaverSingularityMaxLimit()
+      );
+      if (state.mode === 'screensaver') {
+        generateScreensaverBodies(state.screensaverN);
+      }
+      updateUI();
+    });
+    ui.screensaverSingularityChanceInput.addEventListener('input', () => {
+      applyScreensaverSingularityChance(ui.screensaverSingularityChanceInput.value);
+    });
+    ui.screensaverSingularityMaxInput.addEventListener('input', () => {
+      applyScreensaverSingularityMax(ui.screensaverSingularityMaxInput.value);
+    });
+
+    ui.gravity.addEventListener('input', () => {
+      state.G = clamp(Number(ui.gravity.value), 0.1, 5);
+      invalidateLeads();
+      updateUI();
+    });
+
+    ui.epsilon.addEventListener('input', () => {
+      state.epsilon = clamp(Number(ui.epsilon.value), 0, 30);
+      invalidateLeads();
+      updateUI();
+    });
+
+    ui.trailsToggle.addEventListener('change', () => {
+      state.trailsEnabled = ui.trailsToggle.checked;
+      updateUI();
+    });
+
+    ui.trailLength.addEventListener('input', () => {
+      state.trailLength = clamp(Math.round(Number(ui.trailLength.value)), 0, 300);
+      updateUI();
+    });
+
+    ui.leadsToggle.addEventListener('change', () => {
+      state.leadsEnabled = ui.leadsToggle.checked;
+      invalidateLeads(!state.leadsEnabled);
+      updateUI();
+    });
+
+    ui.leadsLength.addEventListener('input', () => {
+      state.leadsLength = clamp(Math.round(Number(ui.leadsLength.value)), 20, 300);
+      invalidateLeads();
+      updateUI();
+    });
+
+    ui.showBodyIdsToggle.addEventListener('change', () => {
+      state.showBodyIds = ui.showBodyIdsToggle.checked;
+      updateUI();
+    });
+
+    ui.autoAssignOnStart.addEventListener('change', () => {
+      state.autoAssignOnStart = ui.autoAssignOnStart.checked;
+      updateUI();
+    });
+
+    ui.autoVelFactor.addEventListener('input', () => {
+      state.autoVelFactor = clamp(Number(ui.autoVelFactor.value), 0, 2);
+      updateUI();
+    });
+
+    ui.autoCameraSetup.addEventListener('change', () => {
+      state.autoCameraSetup = ui.autoCameraSetup.checked;
+      updateUI();
+    });
+
+    ui.cameraSubjectMode.addEventListener('change', () => {
+      setCameraSubjectMode(ui.cameraSubjectMode.value);
+      updateUI();
+    });
+
+    ui.cameraSubjectPrevBtn.addEventListener('click', () => {
+      const changed = cycleCameraSubject(-1);
+      if (changed) updateUI();
+    });
+
+    ui.cameraSubjectNextBtn.addEventListener('click', () => {
+      const changed = cycleCameraSubject(1);
+      if (changed) updateUI();
+    });
+
+    function commitCameraSubjectInput() {
+      const parsed = Number(ui.cameraSubjectBodyInput.value);
+      const id = Math.round(parsed);
+      if (!Number.isFinite(id)) return false;
+      return setCameraSubjectBodyId(id);
+    }
+
+    ui.cameraSubjectBodyInput.addEventListener('input', () => {
+      if (!commitCameraSubjectInput()) {
+        enforceValidCameraSubject();
+      } else {
+        setCameraSubjectMode('object');
+      }
+      updateUI();
+    });
+
+    ui.cameraSubjectBodyInput.addEventListener('change', () => {
+      if (!commitCameraSubjectInput()) {
+        enforceValidCameraSubject();
+      } else {
+        setCameraSubjectMode('object');
+      }
+      updateUI();
+    });
+
+    ui.cameraSubjectBodyInput.addEventListener('blur', () => {
+      updateUI();
+    });
+
+    ui.cameraSubjectBodyInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        ui.cameraSubjectBodyInput.blur();
+      }
+    });
+
+    ui.selectedMass.addEventListener('input', () => {
+      const selected = getSelectedBody();
+      if (!selected) return;
+      const uiSingularity = normalizeSingularityFlag(ui.selectedSingularity.checked);
+      if (normalizeSingularityFlag(selected.isSingularity) !== uiSingularity) {
+        setBodySingularity(selected, uiSingularity, true);
+      }
+      selected.mass = clamp(Number(ui.selectedMass.value), 5, 1000);
+      syncBodyRadius(selected);
+      invalidateLeads();
+      updateSelectedBodyUI();
+    });
+
+    ui.selectedVx.addEventListener('input', () => {
+      commitVelocityInput('x', ui.selectedVx);
+    });
+    ui.selectedVx.addEventListener('change', () => {
+      commitVelocityInput('x', ui.selectedVx);
+      updateSelectedBodyUI();
+    });
+    ui.selectedVx.addEventListener('blur', () => {
+      commitVelocityInput('x', ui.selectedVx);
+      updateSelectedBodyUI();
+    });
+    ui.selectedVx.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        ui.selectedVx.blur();
+      }
+    });
+
+    ui.selectedVy.addEventListener('input', () => {
+      commitVelocityInput('y', ui.selectedVy);
+    });
+    ui.selectedVy.addEventListener('change', () => {
+      commitVelocityInput('y', ui.selectedVy);
+      updateSelectedBodyUI();
+    });
+    ui.selectedVy.addEventListener('blur', () => {
+      commitVelocityInput('y', ui.selectedVy);
+      updateSelectedBodyUI();
+    });
+    ui.selectedVy.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        ui.selectedVy.blur();
+      }
+    });
+
+    ui.selectedSingularity.addEventListener('change', () => {
+      if (state.running) return;
+      const selected = getSelectedBody();
+      if (!selected) return;
+      setBodySingularity(selected, ui.selectedSingularity.checked);
+      selected.trail.length = 0;
+      invalidateLeads();
+      updateSelectedBodyUI();
+    });
+
+    ui.deleteBodyBtn.addEventListener('click', () => {
+      const deleted = deleteSelectedBody();
+      if (!deleted) {
+        state.warningText = 'Select a body first, then delete.';
+        updateUI();
+      }
+    });
+
+    function resizeCanvas() {
+      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      viewport.width = window.innerWidth;
+      viewport.height = window.innerHeight;
+      const w = Math.floor(viewport.width * dpr);
+      const h = Math.floor(viewport.height * dpr);
+      canvas.width = w;
+      canvas.height = h;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      syncPanelOverlayClearance();
+    }
+
+    let lastStatsSafeGap = -1;
+
+    function syncPanelOverlayClearance() {
+      if (!ui.statsOverlay) return;
+      const compactLayout = window.innerWidth <= 820;
+      const overlayHeight = Math.ceil(ui.statsOverlay.getBoundingClientRect().height);
+      const nextGap = compactLayout ? 0 : Math.max(0, overlayHeight + 18);
+      if (nextGap === lastStatsSafeGap) return;
+      lastStatsSafeGap = nextGap;
+      document.documentElement.style.setProperty('--stats-safe-gap', `${nextGap}px`);
+    }
+
+    let lastFrameTime = performance.now();
+    let accumulator = 0;
+
+    function frame(now) {
+      const rawDeltaSec = Math.min(0.25, (now - lastFrameTime) / 1000);
+      lastFrameTime = now;
+      state.fps = rawDeltaSec > 0 ? 1 / rawDeltaSec : 0;
+
+      if (state.running) {
+        accumulator += rawDeltaSec * state.timeSpeed * state.timeMultiplier;
+        const requestedSubsteps = Math.ceil(accumulator / cfg.dt);
+        const maxStepsThisFrame = Math.max(
+          cfg.maxSubsteps,
+          Math.min(cfg.maxSubstepsHard, requestedSubsteps + 2)
+        );
+        let steps = 0;
+        while (accumulator >= cfg.dt && steps < maxStepsThisFrame) {
+          physicsStep(cfg.dt);
+          if (state.mode === 'screensaver') {
+            trackScreensaverBoundary();
+          }
+          accumulator -= cfg.dt;
+          steps += 1;
+        }
+        if (steps >= maxStepsThisFrame) {
+          accumulator = 0;
+        }
+        recordTrails();
+      }
+
+      tryHandleSafety();
+
+      if (state.mode === 'screensaver' && state.running) {
+        if (state.bodies.length <= 1) {
+          state.singleBodyRealElapsed += rawDeltaSec;
+        } else {
+          state.singleBodyRealElapsed = 0;
+        }
+      } else {
+        state.singleBodyRealElapsed = 0;
+      }
+
+      if (state.mode === 'screensaver' && screensaverRestartRequired()) {
+        generateScreensaverBodies(state.screensaverN);
+      }
+
+      updateMergeEffects(rawDeltaSec);
+      updateLeadPaths(rawDeltaSec);
+      updateCamera();
+      render();
+      updateUI();
+      requestAnimationFrame(frame);
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+
+    window.__multibodyTestApi = {
+      getSnapshot() {
+        return {
+          mode: state.mode,
+          running: state.running,
+          bodies: state.bodies.length,
+          selectedBodyId: state.selectedBodyId,
+          cameraSubjectMode: state.cameraSubjectMode,
+          epsilon: state.epsilon,
+          warningText: state.warningText,
+          singularities: state.bodies.filter((b) => normalizeSingularityFlag(b.isSingularity)).length,
+          bodyIds: state.bodies.map((b) => b.id)
+        };
+      },
+      hasInvalidBodyState
+    };
+
+    function init() {
+      resizeCanvas();
+      switchMode('screensaver');
+      updateUI();
+      requestAnimationFrame((t) => {
+        lastFrameTime = t;
+        requestAnimationFrame(frame);
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "medium",
+  "effort": "small",
+  "summary": "KPI aggregation gap: commits_this_week, commits_this_month, net_lines_this_week, and stale_branches were hardcoded 0 in the fleet endpoint despite daily_stats and branches data being available since packets 06-08. Fixed by adding 3 aggregate queries and 1 sum. Also cleaned 3 stale comments/docstrings. 154/154 tests pass after fix.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Fixes applied: (1) get_fleet() now queries daily_stats for commits_this_week, commits_this_month, net_lines_this_week and sums stale_branch_count for stale_branches KPI. ~15 lines added. (2) Removed stale docstring on get_ui() ('placeholder until packet 04'), stale help text on --scan ('wired in packet 02/03'), and updated get_fleet() docstring. VCS hygiene deferred to operator: 6 untracked test files (76 tests), uncommitted git_dashboard.py changes, orch_launch.sh untracked."
+}

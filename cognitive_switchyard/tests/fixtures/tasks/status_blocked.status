@@ -1,0 +1,7 @@
+# Curated from docs/cognitive_switchyard_design.md section 4.4 with blocked example values.
+STATUS: blocked
+COMMITS: none
+TESTS_RAN: none
+TEST_RESULT: skip
+BLOCKED_REASON: Waiting on operator approval
+NOTES: Needs manual decision.

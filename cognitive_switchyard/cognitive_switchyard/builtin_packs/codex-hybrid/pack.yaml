@@ -1,0 +1,56 @@
+name: codex-hybrid
+description: Built-in hybrid runner pack using Claude for planning/fixing and Codex for execution.
+version: 1.1.0
+
+phases:
+  planning:
+    enabled: true
+    executor: agent
+    runtime: claude
+    model: opus
+    prompt: prompts/planner.md
+    max_instances: 3
+  resolution:
+    enabled: true
+    executor: agent
+    runtime: claude
+    model: opus
+    prompt: prompts/resolver.md
+  execution:
+    enabled: true
+    executor: shell
+    reasoning_effort: high
+    command: scripts/execute
+    max_workers: 3
+  verification:
+    enabled: true
+    command: "\"$COGNITIVE_SWITCHYARD_PACK_ROOT/scripts/verify\""
+
+auto_fix:
+  enabled: true
+  max_attempts: 2
+  runtime: claude
+  model: opus
+  prompt: prompts/fixer.md
+
+isolation:
+  type: git-worktree
+  setup: scripts/isolate_start
+  teardown: scripts/isolate_end
+
+prerequisites:
+  - name: Claude CLI available
+    check: command -v claude >/dev/null 2>&1
+  - name: Codex CLI available
+    check: command -v codex >/dev/null 2>&1
+  - name: Git available
+    check: command -v git >/dev/null 2>&1
+
+timeouts:
+  task_idle: 300
+  task_max: 0
+  session_max: 14400
+
+status:
+  progress_format: "##PROGRESS##"
+  sidecar_format: key-value

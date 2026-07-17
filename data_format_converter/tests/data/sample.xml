@@ -1,0 +1,8 @@
+<root>
+    <a>hello</a>
+    <nested>
+        <x>3.14</x>
+        <y>true</y>
+    </nested>
+    <z>1</z>
+</root>

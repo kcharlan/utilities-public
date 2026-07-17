@@ -1,0 +1,11 @@
+# Curated from docs/cognitive_switchyard_design.md sections 4.1-4.3, 5.1-5.2.
+name: valid-shell-pack
+description: Valid shell executor pack for packet 01.
+version: 1.2.3
+
+phases:
+  execution:
+    enabled: true
+    executor: shell
+    command: scripts/execute
+

@@ -1,0 +1,1 @@
+{"id": "cal_02_year_rollover","category": "calendar_edges","weight": 1,"input": {"expr": "0 0 1 1 *","after": "2026-12-31T23:00:00+00:00","n": 3,"tz": "UTC"},"expected": {"kind": "fires","value": ["2027-01-01T00:00:00+00:00","2028-01-01T00:00:00+00:00","2029-01-01T00:00:00+00:00"]}}

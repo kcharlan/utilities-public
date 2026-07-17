@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "low",
+  "effort": "small",
+  "summary": "README status prose and drift-audit scheduler state still pointed at the packet-13 frontier even though packet 14 is validated and complete.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Updated README.md to reflect the validated packet-14 handoff surface and advanced audits/drift_audit_state.json to the packet-14 audit. plans/packet_status.md still has stale historical prose, but its canonical ladder/highest-valid packet fields and plans/packet_status.json remain correct and were left unchanged per the audit instructions."
+}

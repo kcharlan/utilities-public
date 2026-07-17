@@ -1,0 +1,99 @@
+You are building a small first version of a Python CLI utility for benefits policy mapping.
+
+Build the full project in the current directory.
+
+Goal
+Create a straightforward policy engine that reads:
+1. a policy file in YAML
+2. extracted benefits in JSON or YAML
+
+It must produce:
+- a human-readable table printed to stdout
+- a machine-readable JSON result file written to disk
+
+Policy input structure
+The policy YAML contains:
+- policy_name
+- default_action
+- default_risk_holder
+- aliases
+- rules[]
+
+Each rule contains:
+- match.service_category
+- risk_holder
+- action
+
+Benefits input structure
+The benefits file contains:
+- plan_name
+- benefits[]
+
+Each benefit may contain:
+- service_category
+- coverage_status
+- member_cost
+
+Required matching behavior
+- Match benefits primarily on service_category
+- Normalize case, whitespace, and punctuation before matching
+- Support an alias map from the policy YAML
+- Preserve the original input service_category
+- Output the canonical service category used for matching when a rule matches
+- Apply default_action and default_risk_holder when no rule matches
+- Mark each output row as matched or unmatched
+
+Robustness expectations
+- Handle blank or missing values safely when reasonable
+- In particular, blank or missing service_category and null coverage_status should not crash the program
+- Prefer safe unmatched behavior over crashing or silently dropping rows
+
+Required CLI contract
+The CLI may be invoked as:
+
+python policy_engine.py --policy <path> --benefits <path> [--output <path>]
+
+Please provide that entry point.
+Additional entry points are fine, but this one must work.
+
+CLI behavior
+- --policy and --benefits are required
+- --output is optional
+- Read YAML or JSON benefits input
+- Print a readable table to stdout
+- Write JSON output to disk
+
+Required output fields for each result row
+- original_service_category
+- canonical_service_category
+- coverage_status
+- member_cost
+- policy_name
+- risk_holder
+- system_configuration_action
+- match_status
+
+Notes on unmatched rows
+- Preserve original_service_category
+- Use a consistent representation for canonical_service_category when no canonical match exists
+- Set match_status to unmatched
+- Use default_action and default_risk_holder
+
+Project expectations
+- Keep scope modest and implementation clear
+- Do not build a framework, platform, service, or generic rule engine
+- Straightforward defensive handling is desirable and in scope
+- Use Python
+- Standard library preferred; PyYAML is allowed
+- No database
+- No web UI
+- No LLM calls
+- Include a README with setup and usage instructions
+- Include a small but meaningful automated verification suite
+- Reuse provided sample input files if they already exist; add only what you need
+- Do not hardcode the visible sample outputs; the solution should generalize to similar unseen inputs
+
+Implementation freedom
+- Internal structure is up to you
+- A few helper modules/functions are fine if they keep the project simple
+- Extra output fields are fine as long as the required fields are present and correct

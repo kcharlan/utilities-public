@@ -1,0 +1,12 @@
+year: 2025
+jurisdiction: GA
+filing_statuses: [single, married_joint]
+standard_deduction:
+  single: 15750
+  married_joint: 31500
+brackets:
+  single:
+    - { up_to: null, rate: 0.0519 }
+  married_joint:
+    - { up_to: null, rate: 0.0519 }
+credits: []

@@ -1,0 +1,9 @@
+# Runtime dependencies required when tests import the launcher in-process.
+fastapi
+uvicorn[standard]
+aiosqlite
+python-multipart
+
+# Test-only dependencies.
+pytest>=8.0
+httpx

@@ -1,0 +1,1 @@
+{"id": "lw_06_w_first_sunday","category": "l_and_w","weight": 2,"input": {"expr": "0 9 1W 2 *","after": "2026-01-01T00:00:00+00:00","n": 2,"tz": "UTC"},"expected": {"kind": "fires","value": ["2026-02-02T09:00:00+00:00","2027-02-01T09:00:00+00:00"]}}

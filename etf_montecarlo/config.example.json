@@ -1,0 +1,24 @@
+{
+  "_notice": "PUBLIC EXAMPLE ONLY: replace both synthetic symbols and every zero or blank value only in your private local config.",
+  "schema_version": 1,
+  "holdings": [
+    {
+      "symbol": "SYNTH1",
+      "shares": 0
+    },
+    {
+      "symbol": "SYNTH2",
+      "shares": 0
+    }
+  ],
+  "history": {
+    "years": 0
+  },
+  "simulation": {
+    "trials": 0,
+    "seed": null
+  },
+  "output": {
+    "results_csv": ""
+  }
+}

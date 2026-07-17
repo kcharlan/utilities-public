@@ -1,0 +1,1 @@
+{"id": "err_13_dow_seven_rejected","category": "errors","weight": 0.2,"input": {"expr": "0 0 * * 7","after": "2026-01-15T00:00:00+00:00","n": 1,"tz": "UTC"},"expected": {"kind": "raises","value": "InvalidCronExpr"}}

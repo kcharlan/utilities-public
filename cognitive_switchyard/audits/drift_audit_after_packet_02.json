@@ -1,0 +1,9 @@
+{
+  "status": "warn",
+  "severity": "medium",
+  "effort": "medium",
+  "summary": "Validated packet 02 stays within boundary, but pack/task contracts drift from the design on resolution defaults and configurable progress parsing.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "notes": "README.md was corrected during the audit so it no longer advertises unsupported bootstrap, serve, or RELEASE_NOTES behavior and now reflects validated packet 02."
+}

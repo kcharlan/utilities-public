@@ -1,0 +1,14 @@
+{
+  "command": ".venv/bin/python -m pytest tests -v",
+  "ended_at_epoch": 1773155866,
+  "ended_at_local": "2026-03-10 11:17:46",
+  "exit_code": 0,
+  "highest_validated_packet": "14",
+  "is_final": true,
+  "label": "final full suite verification after packet 14",
+  "log_file": "automation_logs/20260310_105551/final_full_suite_verification_after_packet_14.log",
+  "started_at_epoch": 1773155841,
+  "started_at_local": "2026-03-10 11:17:21",
+  "validated_count": 20,
+  "wall_seconds": 25
+}

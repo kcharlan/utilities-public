@@ -1,0 +1,31 @@
+services:
+  llm-collector:
+    build:
+      context: ..
+      dockerfile: llm_collector_container/Dockerfile
+    container_name: llm-collector
+    ports:
+      - "9000:9000"             # host:container
+    environment:
+      # Must match the extension's API key
+      - API_KEY=${API_KEY:?Run ../setup.sh first}
+      # Optional: tune Flask/Gunicorn if your app reads these
+      - PYTHONUNBUFFERED=1
+      - STATE_PATH=/var/lib/llm_collector/state.json
+      - SNAP_DIR=/var/lib/llm_collector/snapshots
+      - LOG_PATH=/var/lib/llm_collector/collector.log
+      - BUCKET_TIMEZONE=${BUCKET_TIMEZONE:-America/New_York}
+    volumes:
+      # Bind-mount your local repo into the container so logs/state/snapshots live on your disk.
+      - ..:/workspace/llm_collector:rw
+      - ${LLM_COLLECTOR_DATA_DIR:?Run ../setup.sh first}:/var/lib/llm_collector:rw
+    # Make sure the working directory is your repo root inside the container
+    working_dir: /workspace/llm_collector
+    # Healthcheck (simple): hit /counters so Compose shows healthy once live
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped

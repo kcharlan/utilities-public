@@ -1,0 +1,17 @@
+{
+  "tax_table": "/SYNTHETIC/PRIVATE/md-autotax/tax-table.csv",
+  "qif": {
+    "federal": {
+      "payee": "SYNTHETIC Federal Tax Payee",
+      "memo": "SYNTHETIC Federal Tax Memo",
+      "expense_category": "SYNTHETIC:Federal Tax Category",
+      "transfer_account": "SYNTHETIC Federal Tax Account"
+    },
+    "state": {
+      "payee": "SYNTHETIC State Tax Payee",
+      "memo": "SYNTHETIC State Tax Memo",
+      "expense_category": "SYNTHETIC:State Tax Category",
+      "transfer_account": "SYNTHETIC State Tax Account"
+    }
+  }
+}

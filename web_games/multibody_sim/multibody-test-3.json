@@ -1,0 +1,125 @@
+{
+  "type": "multibody-user-setup",
+  "version": 3,
+  "savedAt": "2026-02-09T17:20:53.530Z",
+  "bodies": [
+    {
+      "id": 14,
+      "pos": {
+        "x": 221.9873782238274,
+        "y": 503.9693715592301
+      },
+      "vel": {
+        "x": 0.6583897497195321,
+        "y": 0.8981435143043235
+      },
+      "mass": 1656.8,
+      "radius": 13.618661299036958,
+      "color": {
+        "r": 233,
+        "g": 156,
+        "b": 33
+      },
+      "isSingularity": true
+    }
+  ],
+  "nextBodyId": 15,
+  "selectedBodyId": 14,
+  "settings": {
+    "timeSpeed": 8,
+    "timeMultiplier": 8,
+    "screensaverN": 3,
+    "screensaverSingularityChance": 0,
+    "screensaverSingularityMax": 1,
+    "G": 1,
+    "epsilon": 8,
+    "trailsEnabled": true,
+    "trailLength": 60,
+    "leadsEnabled": true,
+    "leadsLength": 80,
+    "autoAssignOnStart": false,
+    "autoVelFactor": 0.9,
+    "autoCameraSetup": false
+  },
+  "userSetupBaseline": {
+    "bodies": [
+      {
+        "id": 1,
+        "pos": {
+          "x": -1041.9198397777545,
+          "y": 463.8868423211095
+        },
+        "vel": {
+          "x": 1.9893789694103086,
+          "y": 2.247180760148502
+        },
+        "mass": 760,
+        "radius": 46.86576575710675,
+        "color": {
+          "r": 245,
+          "g": 123,
+          "b": 76
+        },
+        "isSingularity": false
+      },
+      {
+        "id": 2,
+        "pos": {
+          "x": -14.340617508907727,
+          "y": -389.07652965832415
+        },
+        "vel": {
+          "x": 0.08815527851573764,
+          "y": 0.18734338224625244
+        },
+        "mass": 400,
+        "radius": 11.419375289580847,
+        "color": {
+          "r": 241,
+          "g": 163,
+          "b": 27
+        },
+        "isSingularity": true
+      },
+      {
+        "id": 3,
+        "pos": {
+          "x": -1510.9318375011749,
+          "y": 507.1969196176533
+        },
+        "vel": {
+          "x": 0.5118481571507857,
+          "y": 0.12640719045936255
+        },
+        "mass": 1000,
+        "radius": 12.83394490247211,
+        "color": {
+          "r": 230,
+          "g": 157,
+          "b": 33
+        },
+        "isSingularity": true
+      },
+      {
+        "id": 5,
+        "pos": {
+          "x": -1512.6726249194082,
+          "y": -522.4512098879676
+        },
+        "vel": {
+          "x": 1.1868648254882506,
+          "y": 0.008282568950876623
+        },
+        "mass": 120,
+        "radius": 9.606328761583018,
+        "color": {
+          "r": 229,
+          "g": 144,
+          "b": 38
+        },
+        "isSingularity": true
+      }
+    ],
+    "nextBodyId": 12
+  }
+}

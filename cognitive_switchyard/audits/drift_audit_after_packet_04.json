@@ -1,0 +1,9 @@
+{
+  "status": "warn",
+  "severity": "medium",
+  "effort": "medium",
+  "summary": "Packet 04 stayed within boundary, but the prior medium pack-contract drifts around resolution defaults and configurable progress markers remain unresolved.",
+  "fixes_applied": true,
+  "validation_rerun": "broader",
+  "notes": "README.md was corrected during the audit to reflect the packet-04 validated frontier and hook/preflight helpers, and audits/drift_audit_state.json was updated to record the new warn result."
+}

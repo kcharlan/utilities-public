@@ -1,0 +1,5 @@
+pytest>=8.0
+playwright>=1.40
+pytest-playwright>=0.4
+fastapi
+uvicorn[standard]

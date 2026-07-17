@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "medium",
+  "effort": "small",
+  "summary": "Startup retention purge was missing, leaving the history/settings retention contract cosmetic until repaired.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Added expired-session purge support in the state layer and wired it into the validated `start` and `serve` startup paths. Reran `.venv/bin/python -m pytest tests/test_state_store.py tests/test_cli.py -q` with 19 passing tests."
+}

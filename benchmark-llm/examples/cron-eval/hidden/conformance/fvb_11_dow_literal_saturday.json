@@ -1,0 +1,1 @@
+{"id": "fvb_11_dow_literal_saturday","category": "field_validity_basic","weight": 1,"input": {"expr": "0 9 * * 6","after": "2026-01-01T00:00:00+00:00","n": 3,"tz": "UTC"},"expected": {"kind": "fires","value": ["2026-01-03T09:00:00+00:00","2026-01-10T09:00:00+00:00","2026-01-17T09:00:00+00:00"]}}

@@ -1,0 +1,15 @@
+{
+    "user": "test_user_2",
+    "permissions": [
+        "read",
+        "write"
+    ],
+    "config": {
+        "theme": "dark",
+        "notifications": {
+            "email": true,
+            "sms": false
+        }
+    },
+    "status": null
+}

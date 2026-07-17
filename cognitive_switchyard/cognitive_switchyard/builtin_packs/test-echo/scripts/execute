@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+# test-echo execute hook: echoes task info, simulates work, writes sidecar.
+# No external dependencies required.
+
+PLAN_PATH="${1:?plan path required}"
+WORKSPACE_PATH="${2:?workspace path required}"
+TASK_FILE="$(basename "$PLAN_PATH")"
+TASK_ID="${TASK_FILE%.plan.md}"
+STATUS_PATH="$(dirname "$PLAN_PATH")/$TASK_ID.status"
+
+# Phase 1: reading
+echo "##PROGRESS## $TASK_ID | Phase: reading | 1/3"
+echo "Task $TASK_ID: reading plan from $PLAN_PATH"
+echo "Workspace: $WORKSPACE_PATH"
+cat "$PLAN_PATH"
+sleep 1
+
+# Phase 2: executing
+echo "##PROGRESS## $TASK_ID | Phase: executing | 2/3"
+echo "##PROGRESS## $TASK_ID | Detail: Processing task $TASK_ID"
+echo "Task $TASK_ID: simulating work..."
+sleep 2
+echo "Task $TASK_ID: work complete."
+
+# Phase 3: finalizing
+echo "##PROGRESS## $TASK_ID | Phase: finalizing | 3/3"
+
+cat >"$STATUS_PATH" <<EOF
+STATUS: done
+COMMITS: none
+TESTS_RAN: none
+TEST_RESULT: skip
+NOTES: test-echo completed for $TASK_ID
+EOF
+
+echo "Task $TASK_ID: status sidecar written."
+exit 0

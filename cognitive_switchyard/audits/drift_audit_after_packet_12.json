@@ -1,0 +1,11 @@
+{
+  "status": "repair_packet",
+  "severity": "high",
+  "effort": "medium",
+  "summary": "Successful sessions still do not emit summary.json or trim to the design's retained artifact set, so the packet-12 History flow is built on an accidental dependency on untrimmed live task/session trees.",
+  "fixes_applied": false,
+  "validation_rerun": "none",
+  "repair_packet_id": "12A",
+  "repair_packet_doc": "plans/packet_12a_history_summary_and_successful_session_trim_repair.md",
+  "notes": "Trackers were updated to insert repair packet 12A immediately after packet 12, packet 13 was updated to depend on that repair, and audits/drift_audit_state.json was advanced to make the next drift audit due after a validated 12A."
+}

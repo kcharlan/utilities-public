@@ -1,0 +1,8 @@
+openrouter/z-ai/glm-5.1
+openrouter/z-ai/glm-5
+openrouter/qwen/qwen3.6-plus
+openrouter/moonshotai/kimi-k2.5
+openrouter/minimax/minimax-m2.5
+openrouter/minimax/minimax-m2.7
+openrouter/nvidia/nemotron-3-super-120b-a12b
+openrouter/openai/gpt-oss-120b

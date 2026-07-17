@@ -1,0 +1,19 @@
+# Curated from docs/cognitive_switchyard_design.md sections 4.1-4.2.
+name: test-pack
+description: Minimal pack manifest fixture for packet 00.
+version: 0.1.0
+
+phases:
+  planning:
+    enabled: false
+  resolution:
+    enabled: true
+    executor: passthrough
+  execution:
+    enabled: true
+    executor: shell
+    command: scripts/execute
+
+status:
+  progress_format: "##PROGRESS##"
+  sidecar_format: key-value

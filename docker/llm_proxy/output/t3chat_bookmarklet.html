@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><title>T3.chat Credential Extractor</title></head>
+<body>
+<h1>T3.chat Credential Extractor Bookmarklet</h1>
+<h2>Instructions</h2>
+<ol>
+  <li>Drag the link below to your bookmarks bar</li>
+  <li>Go to <a href="https://t3.chat">t3.chat</a> and log in</li>
+  <li>Click the bookmarklet — you'll see "Bookmarklet armed!"</li>
+  <li>Send any message in T3.chat</li>
+  <li>When prompted, paste your Cookie header from DevTools</li>
+  <li>The export command is copied to your clipboard</li>
+</ol>
+<h2>Bookmarklet</h2>
+<p>Drag this to your bookmarks bar:</p>
+<p><a href="javascript:void((function(){var origFetch=window.fetch;window.fetch=function(){var args=arguments;var url=typeof args[0]==='string'?args[0]:(args[0]&&args[0].url)||'';if(url.indexOf('/api/chat')!==-1&&args[1]&&args[1].method==='POST'){window.fetch=origFetch;try{var body=JSON.parse(args[1].body);var sid=body.convexSessionId||'';var cookies=prompt('Paste your Cookie header from DevTools (Network tab > chat request > Headers > Cookie):');if(cookies&&sid){var creds=btoa(JSON.stringify({cookies:cookies,convex_session_id:sid}));navigator.clipboard.writeText('export T3_CHAT_CREDS=\''+creds+'\'');alert('Copied to clipboard!\n\nAdd to ~/.zshrc:\nexport T3_CHAT_CREDS=\''+creds.substring(0,40)+'...\'');}else{alert('Missing cookies or session ID');}}catch(e){alert('Error: '+e.message);}}return origFetch.apply(this,args);};alert('Bookmarklet armed! Now send any message in T3.chat.');})())">Extract T3 Creds</a></p>
+</body>
+</html>

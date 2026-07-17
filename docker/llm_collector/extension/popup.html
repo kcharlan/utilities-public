@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>LLM Usage Counter</title>
+  <style>
+    body { font: 13px/1.4 -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif; margin: 10px; width: 360px; }
+    #status { margin-bottom: 8px; color: #333; }
+    .row { display: flex; justify-content: space-between; gap: 8px; }
+    .row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px; }
+    .btns { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+    button { padding: 4px 8px; }
+    textarea { width: 100%; height: 160px; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    small { color: #666; }
+  </style>
+</head>
+<body>
+  <div id="status">Loading…</div>
+
+  <div class="btns">
+    <button id="reload"    type="button">Reload</button>
+    <button id="forcePush" type="button">Force Push</button>
+    <button id="reset"     type="button">Clear Pending (local)</button>
+    <button id="export"    type="button">Export JSON</button>
+  </div>
+
+  <div id="list"></div>
+
+  <textarea id="out" placeholder="Exported JSON appears here…"></textarea>
+
+  <!-- important: defer so DOM is ready before popup.js runs -->
+  <script src="popup.js" defer></script>
+</body>
+</html>

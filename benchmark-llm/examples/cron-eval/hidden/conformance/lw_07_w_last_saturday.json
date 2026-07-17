@@ -1,0 +1,1 @@
+{"id": "lw_07_w_last_saturday","category": "l_and_w","weight": 2,"input": {"expr": "0 9 31W 1 *","after": "2025-12-01T00:00:00+00:00","n": 2,"tz": "UTC"},"expected": {"kind": "fires","value": ["2026-01-30T09:00:00+00:00","2027-01-29T09:00:00+00:00"]}}

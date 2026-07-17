@@ -1,0 +1,11 @@
+{
+  "status": "repair_packet",
+  "severity": "high",
+  "effort": "medium",
+  "summary": "Packet 12 is still not UI-only because session setup/runtime do not yet support planner-count overrides or real multi-planner execution, so a repair packet is required before the SPA packet.",
+  "fixes_applied": false,
+  "validation_rerun": "none",
+  "repair_packet_id": "11D",
+  "repair_packet_doc": "plans/packet_11d_planner_parallelism_and_setup_planner_count_repair.md",
+  "notes": "Trackers were updated to insert repair packet 11D immediately after 11C and to make packet 12 depend on that repair. Secondary low-severity drift remains in README status prose, which still advertises the repo as only validated through packet 10."
+}
