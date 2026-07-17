@@ -1,0 +1,141 @@
+#!/usr/bin/env zsh
+set -u
+set -o pipefail
+
+suffix="_trim"
+force=0
+copy_mode=0
+script_name="${0:t}"
+
+usage() {
+  print "Usage: $script_name [-s suffix] [-f] [--copy] seconds video_file [...]"
+  print ""
+  print "Examples:"
+  print "  $script_name 90 *.mp4"
+  print "  $script_name -s _last90 90 *.mov *.mp4"
+  print ""
+  print "Options:"
+  print "  -s, --suffix   Text to append before the extension. Default: _trim"
+  print "  -f, --force    Overwrite output files if they already exist"
+  print "  --copy         Fast stream copy. Less exact unless the trim starts on a keyframe"
+  print "  -h, --help     Show this help"
+}
+
+die() {
+  print -u2 "Error: $*"
+  exit 1
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    -s|--suffix)
+      (( $# >= 2 )) || die "$1 requires a value"
+      suffix="$2"
+      shift 2
+      ;;
+    -f|--force)
+      force=1
+      shift
+      ;;
+    --copy)
+      copy_mode=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+(( $# >= 2 )) || {
+  usage
+  exit 1
+}
+
+keep_seconds="$1"
+shift
+
+[[ "$keep_seconds" == <->(|.<->) ]] || die "seconds must be a positive number"
+(( keep_seconds > 0 )) || die "seconds must be greater than zero"
+
+command -v ffmpeg >/dev/null 2>&1 || die "ffmpeg was not found in PATH"
+command -v ffprobe >/dev/null 2>&1 || die "ffprobe was not found in PATH"
+
+ffmpeg_overwrite="-n"
+(( force )) && ffmpeg_overwrite="-y"
+
+for input in "$@"; do
+  if [[ ! -f "$input" ]]; then
+    print -u2 "Skipping missing file: $input"
+    continue
+  fi
+
+  dir="${input:h}"
+  base="${input:t}"
+  name="${base:r}"
+  ext="${base:e}"
+
+  if [[ -n "$ext" && "$base" == *.* ]]; then
+    output="${dir}/${name}${suffix}.${ext}"
+  else
+    output="${dir}/${base}${suffix}"
+  fi
+
+  if [[ "$input" == "$output" ]]; then
+    print -u2 "Skipping $input: output would overwrite the input"
+    continue
+  fi
+
+  if [[ -e "$output" && "$force" -eq 0 ]]; then
+    print -u2 "Skipping $input: output already exists: $output"
+    continue
+  fi
+
+  duration="$(
+    ffprobe -v error \
+      -show_entries format=duration \
+      -of default=noprint_wrappers=1:nokey=1 \
+      "$input"
+  )"
+
+  if [[ -z "$duration" || "$duration" == "N/A" ]]; then
+    print -u2 "Skipping $input: could not read duration"
+    continue
+  fi
+
+  start_seconds=$(( duration > keep_seconds ? duration - keep_seconds : 0 ))
+  start_arg="$(printf "%.3f" "$start_seconds")"
+
+  if (( copy_mode )); then
+    codec_args=(-c copy -avoid_negative_ts make_zero)
+  else
+    codec_args=(-c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k -c:s copy -dn)
+  fi
+
+  print "Trimming: $input -> $output"
+  ffmpeg "$ffmpeg_overwrite" -hide_banner -loglevel error \
+    -ss "$start_arg" \
+    -i "$input" \
+    -map 0 \
+    -t "$keep_seconds" \
+    -map_metadata 0 \
+    "${codec_args[@]}" \
+    "$output"
+
+  if (( $? == 0 )); then
+    print "Created: $output"
+  else
+    print -u2 "Failed: $input"
+  fi
+done

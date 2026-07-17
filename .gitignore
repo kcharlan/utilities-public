@@ -238,6 +238,13 @@ abacus usage/abacus_usage_*.csv
 abacus usage/abacus_usage_*.json
 docker/llm_collector/MY_API_KEY.txt
 docker/llm_collector/state.json
+docker/n8n-poc/config
+docker/n8n-poc/database.sqlite*
+docker/n8n-poc/n8nEventLog*.log
+docker/n8n-poc/binaryData/
+docker/n8n-poc/git/
+docker/n8n-poc/nodes/
+docker/n8n-poc/ssh/
 docker/llm_collector/reset_launchd.*
 docker/llm_collector/snapshots/*.csv
 docker/llm_collector/snapshots/*.json
@@ -251,6 +258,9 @@ docker/llm_collector/secret.env
 docker/llm_collector/extension/config.local.js
 docker/webserver/.env
 docker/llm_proxy/uv.lock
+docker/llm_proxy/output/opencode_provider_*.json
+docker/llm_proxy/output/t3chat_bookmarklet.html
+docker/llm_proxy/output/update_opencode_config.sh
 benchmark-llm/uv.lock
 
 # Portable-wrapper local project paths and sensitive generated data.

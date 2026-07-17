@@ -15,7 +15,7 @@ The following helper scripts are available to manage the container:
 
 ## Access
 
-Once running, the application is accessible at: **[http://localhost:5006](http://localhost:5006)**
+Once running, the application is accessible at: **[http://127.0.0.1:5006](http://127.0.0.1:5006)**. The helper scripts bind the service to loopback only; financial data is not intentionally exposed to the local network.
 
 ## Directory Structure
 
