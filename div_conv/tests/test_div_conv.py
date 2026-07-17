@@ -39,6 +39,21 @@ def write_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
         writer.writerows(rows)
 
 
+def write_fidelity_history_csv(
+    path: Path, rows: list[list[str]], *, include_notices: bool = True
+) -> None:
+    """Write the public shape of a Fidelity History export using fake data."""
+    path.write_text("\ufeff\n\n", encoding="utf-8")
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(APP["FIDELITY_HISTORY_HEADERS"])
+        writer.writerows(rows)
+        if include_notices:
+            writer.writerow([])
+            writer.writerow(["SYNTHETIC FIDELITY EXPORT NOTICE"])
+            writer.writerow(["SYNTHETIC FIDELITY LEGAL NOTICE"])
+
+
 def configured_section(account: str, security: str, *, brokerage: str = "fidelity") -> dict:
     securities = {security: "SYNTHETIC INCOME FUND"}
     if brokerage == "vanguard":
@@ -333,6 +348,103 @@ def test_explicit_brokerage_resolves_union_header_ambiguity(tmp_path: Path) -> N
     assert (tmp_path / "synthetic-union.qif").is_file()
 
 
+def test_fidelity_history_export_is_detected_and_converted(tmp_path: Path) -> None:
+    home = tmp_path / "runtime"
+    write_config(
+        home,
+        {"fidelity": configured_section("SYNTHETIC FIDELITY ACCOUNT", "SYNTH1")},
+    )
+    source = tmp_path / "synthetic-fidelity-history.csv"
+    common = [
+        "01/02/2030",
+        "Dividend Received Synthetic Income Distribution (Cash)",
+        "SYNTH1",
+        "SYNTHETIC INCOME FUND",
+        "SYNTHETIC CASH TYPE",
+        "",
+        "2.000",
+        "",
+        "",
+        "",
+        "10.00",
+        "100.00",
+        "01/05/2030",
+    ]
+    reinvestment = [
+        *common[:1],
+        "Reinvestment Synthetic Income Distribution",
+        *common[2:],
+    ]
+    write_fidelity_history_csv(source, [common, reinvestment])
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 0, result.stderr
+    cooked_path = tmp_path / "synthetic-fidelity-history.cooked.csv"
+    assert cooked_path.read_bytes().splitlines(keepends=True)[0].endswith(b"\r\n")
+    cooked = list(csv.DictReader(cooked_path.open(encoding="utf-8")))
+    assert len(cooked) == 2
+    assert list(cooked[0]) == APP["FIDELITY_HISTORY_HEADERS"]
+    assert cooked[0]["Run Date"] == "1/2/30"
+    assert cooked[0]["Quantity"] == "2"
+    assert cooked[1]["Run Date"] == "1/2/30"
+    assert cooked[1]["Action"].startswith("Reinvestment")
+    qif = (tmp_path / "synthetic-fidelity-history.qif").read_text(encoding="utf-8")
+    assert qif.startswith("!Type:Invst\n")
+    assert "!Account" not in qif
+    assert qif.count("^\n") == 1
+    assert "D1/2'30\n" in qif
+    assert "NMiscInc\n" in qif
+    assert "T10.00\nMDividend SYNTH1\nLSynthetic:Dividends\n" in qif
+    assert "Skipped action 'REINVESTMENT'" in result.stderr
+    assert "1 transaction(s)" in result.stdout
+    assert (
+        "synthetic-fidelity-history.csv: row 4 | 2030-01-02 | dividend | "
+        "SYNTHETIC INCOME FUND | 10.00"
+    ) in result.stdout
+
+
+def test_accountless_fidelity_history_rejects_multiple_configured_accounts(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "runtime"
+    section = configured_section("SYNTHETIC FIDELITY ACCOUNT", "SYNTH1")
+    section["accounts"]["SYNTHETIC SECOND FIDELITY ACCOUNT"] = "SYNTHETIC SAVINGS"
+    write_config(home, {"fidelity": section})
+    source = tmp_path / "synthetic-fidelity-history.csv"
+    write_fidelity_history_csv(source, [], include_notices=False)
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 2
+    assert "without an Account column" in result.stderr
+    assert "Exactly one mapping is required" in result.stderr
+    assert not (tmp_path / "synthetic-fidelity-history.qif").exists()
+
+
+def test_fidelity_history_rejects_short_tabular_row_before_trailer(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "runtime"
+    write_config(
+        home,
+        {"fidelity": configured_section("SYNTHETIC FIDELITY ACCOUNT", "SYNTH1")},
+    )
+    source = tmp_path / "synthetic-fidelity-history.csv"
+    write_fidelity_history_csv(
+        source,
+        [["01/02/2030", "Dividend Received"]],
+        include_notices=False,
+    )
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 2
+    assert "missing" in result.stderr
+    assert "row 4" in result.stderr
+    assert not (tmp_path / "synthetic-fidelity-history.qif").exists()
+
+
 def test_glob_multi_file_conversion_writes_cooked_csv_qif_and_summary(
     tmp_path: Path,
 ) -> None:
@@ -372,12 +484,18 @@ def test_glob_multi_file_conversion_writes_cooked_csv_qif_and_summary(
         assert cooked.is_file()
         assert qif.is_file()
         rows = list(csv.DictReader(cooked.open(encoding="utf-8")))
-        assert rows[0]["Brokerage"] == "fidelity"
-        assert rows[0]["Account"] == "SYNTHETIC CHECKING"
+        assert list(rows[0]) == APP["FIDELITY_HEADERS"]
+        assert rows[0]["Account"] == "SYNTHETIC FIDELITY ACCOUNT"
+        assert rows[0]["Run Date"] == f"1/{index + 1}/30"
         qif_text = qif.read_text(encoding="utf-8")
-        assert qif_text.startswith("!Account\n")
+        assert qif_text.startswith("!Type:Invst\n")
+        assert "!Account" not in qif_text
         assert "NMiscInc\n" in qif_text
         assert "LSynthetic:Dividends\n" in qif_text
+        assert (
+            f"synthetic-{index}.csv: row 2 | 2030-01-0{index + 1} | dividend | "
+            f"SYNTHETIC INCOME FUND | {index}0.00"
+        ) in result.stdout
 
 
 def test_unknown_account_fails_before_any_outputs_are_committed(tmp_path: Path) -> None:
@@ -795,20 +913,44 @@ def test_vanguard_processes_dividend_and_withdrawal_and_visibly_skips_legacy_row
     result = run_cli(home, str(source))
 
     assert result.returncode == 0, result.stderr
+    cooked = list(
+        csv.DictReader(
+            (tmp_path / "synthetic-vanguard.cooked.csv").open(encoding="utf-8")
+        )
+    )
+    assert len(cooked) == 5
+    assert list(cooked[0]) == APP["VANGUARD_HEADERS"]
+    assert [row["Transaction Type"] for row in cooked] == [
+        "Dividend",
+        "Withdrawal",
+        "Withdrawal",
+        "Reinvestment",
+        "Sweep out",
+    ]
     qif = (tmp_path / "synthetic-vanguard.qif").read_text(encoding="utf-8")
+    assert qif.startswith("!Type:Invst\n")
+    assert "!Account" not in qif
+    assert qif.count("^\n") == 3
     assert "NMiscInc\n" in qif
     assert "NXOut\n" in qif
     assert "NMiscInc\nYSYNTHETIC INCOME FUND\n" in qif
     assert "MDividend SYNTH2\n" in qif
     assert "NXOut\nYSYNTHETIC CASH\n" in qif
-    assert "L[SYNTHETIC CASH]\n" in qif
-    assert "MSYNTHETIC WITHDRAWAL MEMO\n" in qif
+    assert "MSYNTHETIC WITHDRAWAL MEMO\nL[SYNTHETIC CASH]\n" in qif
     assert "MWithdrawal\n" in qif
     assert "D1/3'30\n" in qif
     assert "T15.00\n" in qif
     assert "Skipped action 'Reinvestment'" in result.stderr
     assert "Skipped action 'Sweep out'" in result.stderr
     assert "3 transaction(s)" in result.stdout
+    assert (
+        "synthetic-vanguard.csv: row 2 | 2030-01-03 | dividend | "
+        "SYNTHETIC INCOME FUND | 40.00"
+    ) in result.stdout
+    assert (
+        "synthetic-vanguard.csv: row 3 | 2030-01-03 | withdrawal | "
+        "SYNTHETIC CASH | 15.00"
+    ) in result.stdout
 
 
 def test_vanguard_withdrawal_memo_rejects_qif_record_injection(
@@ -895,7 +1037,11 @@ def test_adapter_registry_owns_contracts_and_keeps_extractors_separate() -> None
     assert "Commissions and Fees" in APP["VANGUARD_HEADERS"]
     assert "Commission Fees" not in APP["VANGUARD_HEADERS"]
     assert adapters["fidelity"].required_headers == tuple(APP["FIDELITY_HEADERS"])
+    assert adapters["fidelity"].alternate_required_headers == (
+        tuple(APP["FIDELITY_HISTORY_HEADERS"]),
+    )
     assert adapters["vanguard"].required_headers == tuple(APP["VANGUARD_HEADERS"])
+    assert adapters["vanguard"].alternate_required_headers == ()
     assert adapters["fidelity"].actions == {
         "DIVIDEND RECEIVED": "dividend",
     }
@@ -907,6 +1053,8 @@ def test_adapter_registry_owns_contracts_and_keeps_extractors_separate() -> None
     assert adapters["vanguard"].skipped_actions == ("Reinvestment", "Sweep out")
     assert adapters["fidelity"].required_security_keys == ()
     assert adapters["vanguard"].required_security_keys == ("@withdrawal",)
+    assert adapters["fidelity"].allows_trailing_notices is True
+    assert adapters["vanguard"].allows_trailing_notices is False
     assert adapters["fidelity"].extractor is not adapters["vanguard"].extractor
 
 

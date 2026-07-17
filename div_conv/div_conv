@@ -47,6 +47,21 @@ FIDELITY_HEADERS = [
     "Amount ($)",
     "Settlement Date",
 ]
+FIDELITY_HISTORY_HEADERS = [
+    "Run Date",
+    "Action",
+    "Symbol",
+    "Description",
+    "Type",
+    "Price ($)",
+    "Quantity",
+    "Commission ($)",
+    "Fees ($)",
+    "Accrued Interest ($)",
+    "Amount ($)",
+    "Cash Balance ($)",
+    "Settlement Date",
+]
 VANGUARD_HEADERS = [
     "Account Number",
     "Trade Date",
@@ -61,16 +76,21 @@ VANGUARD_HEADERS = [
     "Commissions and Fees",
     "Net Amount",
 ]
-COOKED_HEADERS = [
-    "Brokerage",
-    "Account",
-    "Date",
-    "Action",
-    "Security",
-    "Amount",
-    "Source File",
-    "Source Row",
-]
+SOURCE_NUMERIC_HEADERS = {
+    "Quantity",
+    "Price ($)",
+    "Commission ($)",
+    "Fees ($)",
+    "Accrued Interest ($)",
+    "Amount ($)",
+    "Cash Balance ($)",
+    "Shares",
+    "Share Price",
+    "Principal Amount",
+    "Commissions and Fees",
+    "Net Amount",
+}
+SOURCE_DATE_HEADERS = {"Run Date", "Trade Date", "Settlement Date"}
 
 
 class UserError(Exception):
@@ -96,19 +116,30 @@ class BrokerageAdapter:
     """Brokerage-owned raw CSV contract and row extraction behavior."""
 
     required_headers: tuple[str, ...]
+    alternate_required_headers: tuple[tuple[str, ...], ...]
     actions: Mapping[str, str]
     skipped_actions: tuple[str, ...]
     category_actions: tuple[str, ...]
     transfer_actions: tuple[str, ...]
     required_security_keys: tuple[str, ...]
     extractor: Callable[[dict[str, str]], ExtractedRow]
+    allows_trailing_notices: bool = False
+
+
+def canonical_fidelity_action(value: str) -> str:
+    """Collapse Fidelity's detail-bearing action labels to supported actions."""
+    normalized = " ".join(value.split()).upper()
+    for action in ("DIVIDEND RECEIVED", "REINVESTMENT"):
+        if normalized == action or normalized.startswith(f"{action} "):
+            return action
+    return value
 
 
 def extract_fidelity_row(row: dict[str, str]) -> ExtractedRow:
     return ExtractedRow(
         account=row["Account"],
         date=row["Run Date"],
-        source_action=row["Action"],
+        source_action=canonical_fidelity_action(row["Action"]),
         security=row["Symbol"] or row["Description"],
         amount=row["Amount ($)"],
         description=row["Description"],
@@ -129,6 +160,7 @@ def extract_vanguard_row(row: dict[str, str]) -> ExtractedRow:
 ADAPTERS = {
     "fidelity": BrokerageAdapter(
         required_headers=tuple(FIDELITY_HEADERS),
+        alternate_required_headers=(tuple(FIDELITY_HISTORY_HEADERS),),
         actions={
             "DIVIDEND RECEIVED": "dividend",
         },
@@ -137,9 +169,11 @@ ADAPTERS = {
         transfer_actions=(),
         required_security_keys=(),
         extractor=extract_fidelity_row,
+        allows_trailing_notices=True,
     ),
     "vanguard": BrokerageAdapter(
         required_headers=tuple(VANGUARD_HEADERS),
+        alternate_required_headers=(),
         actions={"Dividend": "dividend", "Withdrawal": "withdrawal"},
         skipped_actions=("Reinvestment", "Sweep out"),
         category_actions=("dividend",),
@@ -161,6 +195,13 @@ class RawTransaction:
     memo: str
     source_file: str
     source_row: int
+
+
+@dataclass(frozen=True)
+class ParsedSource:
+    transactions: tuple[RawTransaction, ...]
+    cooked_headers: tuple[str, ...]
+    cooked_rows: tuple[tuple[str, ...], ...]
 
 
 @dataclass(frozen=True)
@@ -675,19 +716,36 @@ def selected_section(config: dict[str, object], brokerage: str, path: Path) -> d
     return section
 
 
+def next_declared_header(
+    reader: Iterable[list[str]], path: Path
+) -> tuple[int, list[str]]:
+    """Return the first non-blank CSV record and its physical line number."""
+    for row in reader:
+        line_number = getattr(reader, "line_num", 1)
+        headers = [cell.strip() for cell in row]
+        if any(headers):
+            return line_number, headers
+    raise UserError(f"CSV is empty: {path}")
+
+
 def normalized_headers(path: Path) -> list[str]:
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
-            row = next(csv.reader(handle), None)
+            _line_number, headers = next_declared_header(csv.reader(handle), path)
+            return headers
+    except UserError:
+        raise
     except (OSError, UnicodeError, csv.Error) as exc:
         raise UserError(f"Could not read CSV header from {path}: {exc}") from exc
-    if row is None:
-        raise UserError(f"CSV is empty: {path}")
-    return [cell.strip() for cell in row]
 
 
 def header_matches(actual: Sequence[str], required: Sequence[str]) -> bool:
     return set(required).issubset(actual) and len(actual) == len(set(actual))
+
+
+def adapter_header_matches(actual: Sequence[str], adapter: BrokerageAdapter) -> bool:
+    contracts = (adapter.required_headers, *adapter.alternate_required_headers)
+    return any(header_matches(actual, required) for required in contracts)
 
 
 def detect_brokerage(path: Path) -> str:
@@ -695,7 +753,7 @@ def detect_brokerage(path: Path) -> str:
     matches = [
         name
         for name, adapter in ADAPTERS.items()
-        if header_matches(headers, adapter.required_headers)
+        if adapter_header_matches(headers, adapter)
     ]
     if len(matches) == 1:
         return matches[0]
@@ -712,8 +770,24 @@ def detect_brokerage(path: Path) -> str:
 def validate_brokerage_contract(path: Path, brokerage: str) -> None:
     """Validate only an explicitly selected adapter, resolving union headers."""
     headers = normalized_headers(path)
-    if not header_matches(headers, ADAPTERS[brokerage].required_headers):
+    if not adapter_header_matches(headers, ADAPTERS[brokerage]):
         raise UserError(f"{path} does not match the {brokerage} CSV contract.")
+
+
+def source_account_for(
+    path: Path, brokerage: str, section: dict, config: Path
+) -> str | None:
+    """Resolve account-less Fidelity exports without guessing among mappings."""
+    if brokerage != "fidelity" or "Account" in normalized_headers(path):
+        return None
+    accounts = section["accounts"]
+    if len(accounts) != 1:
+        raise UserError(
+            f"{path} is a Fidelity History export without an Account column, but "
+            f"brokerages.fidelity.accounts in {config} contains {len(accounts)} mappings. "
+            "Exactly one mapping is required to identify this single-account export."
+        )
+    return next(iter(accounts))
 
 
 def expand_inputs(patterns: Sequence[str]) -> list[Path]:
@@ -735,14 +809,40 @@ def expand_inputs(patterns: Sequence[str]) -> list[Path]:
 
 
 def parse_date(value: str, path: Path, row_number: int) -> str:
-    try:
-        parsed = dt.date.fromisoformat(value)
-    except ValueError as exc:
+    parsed: dt.date | None = None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        try:
+            parsed = dt.date.fromisoformat(value)
+        except ValueError:
+            pass
+    elif re.fullmatch(r"\d{2}/\d{2}/\d{4}", value):
+        try:
+            parsed = dt.datetime.strptime(value, "%m/%d/%Y").date()
+        except ValueError:
+            pass
+    if parsed is None:
         raise UserError(
-            f"{path}: row {row_number} has invalid ISO date {value!r}."
-        ) from exc
-    if parsed.isoformat() != value:
-        raise UserError(f"{path}: row {row_number} date must use YYYY-MM-DD.")
+            f"{path}: row {row_number} has invalid date {value!r}; expected "
+            "YYYY-MM-DD or MM/DD/YYYY."
+        )
+    return parsed.isoformat()
+
+
+def fidelity_cooked_date(iso_date: str) -> str:
+    parsed = dt.date.fromisoformat(iso_date)
+    return f"{parsed.month}/{parsed.day}/{parsed.year % 100:02d}"
+
+
+def fidelity_cooked_quantity(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return text
+    try:
+        quantity = Decimal(text.replace(",", ""))
+    except InvalidOperation:
+        return value
+    if quantity == quantity.to_integral_value():
+        return str(int(quantity))
     return value
 
 
@@ -799,30 +899,107 @@ def cleaned_row(row: dict[str | None, str | list[str] | None]) -> dict[str, str]
     return result
 
 
-def read_raw_transactions(path: Path, brokerage: str) -> list[RawTransaction]:
+def cooked_source_row(
+    headers: Sequence[str],
+    source_row: Sequence[str],
+    brokerage: str,
+    iso_date: str,
+) -> tuple[str, ...]:
+    """Preserve the brokerage schema used by Actual's CSV import."""
+    cooked = list(source_row)
+    if brokerage == "fidelity":
+        cooked[headers.index("Run Date")] = fidelity_cooked_date(iso_date)
+        if "Quantity" in headers:
+            quantity_index = headers.index("Quantity")
+            cooked[quantity_index] = fidelity_cooked_quantity(cooked[quantity_index])
+    return tuple(cooked)
+
+
+def validate_cooked_source_row(
+    headers: Sequence[str],
+    cooked: Sequence[str],
+    path: Path,
+    row_number: int,
+) -> None:
+    for header, value in zip(headers, cooked, strict=True):
+        validate_output_text(
+            value,
+            location=f"{path}: row {row_number} cooked CSV field {header!r}",
+            cooked_csv=(
+                header not in SOURCE_NUMERIC_HEADERS
+                and header not in SOURCE_DATE_HEADERS
+            ),
+            formula_guidance="Correct the source export before retrying.",
+        )
+
+
+def read_source(
+    path: Path, brokerage: str, *, source_account: str | None = None
+) -> ParsedSource:
     adapter = ADAPTERS[brokerage]
     try:
         handle = path.open("r", encoding="utf-8-sig", newline="")
     except (OSError, UnicodeError) as exc:
         raise UserError(f"Could not open CSV {path}: {exc}") from exc
     transactions: list[RawTransaction] = []
+    cooked_rows: list[tuple[str, ...]] = []
     try:
         with handle:
-            reader = csv.DictReader(handle)
-            for row_number, source_row in enumerate(reader, start=2):
-                if None in source_row:
-                    extra_values = source_row[None]
-                    extra_count = len(extra_values) if isinstance(extra_values, list) else 1
+            reader = csv.reader(handle)
+            _header_line, headers = next_declared_header(reader, path)
+            blank_before_row = False
+            in_trailer = False
+            for source_row in reader:
+                row_number = reader.line_num
+                cells = [value.strip() for value in source_row]
+                if not any(cells):
+                    blank_before_row = True
+                    continue
+                if in_trailer:
+                    if len(source_row) != 1:
+                        raise UserError(
+                            f"{path}: row {row_number} contains tabular data after "
+                            "the Fidelity trailing notices began."
+                        )
+                    continue
+                if (
+                    adapter.allows_trailing_notices
+                    and blank_before_row
+                    and len(source_row) == 1
+                ):
+                    in_trailer = True
+                    continue
+                blank_before_row = False
+                if len(source_row) > len(headers):
+                    extra_count = len(source_row) - len(headers)
                     noun = "cell" if extra_count == 1 else "cells"
                     raise UserError(
                         f"{path}: row {row_number} has {extra_count} extra {noun} beyond "
                         "the declared CSV header. Remove the extra delimiter or cell."
                     )
-                row = cleaned_row(source_row)
-                if not any(row.values()):
-                    continue
+                if len(source_row) < len(headers):
+                    missing_count = len(headers) - len(source_row)
+                    noun = "cell" if missing_count == 1 else "cells"
+                    raise UserError(
+                        f"{path}: row {row_number} has {missing_count} missing {noun} "
+                        "relative to the declared CSV header."
+                    )
+                row = cleaned_row(dict(zip(headers, source_row, strict=True)))
+                if "Account" not in row:
+                    row["Account"] = source_account or ""
                 extracted = adapter.extractor(row)
+                iso_date = parse_date(extracted.date, path, row_number)
+                cooked_row = cooked_source_row(
+                    headers,
+                    source_row,
+                    brokerage,
+                    iso_date,
+                )
                 if extracted.source_action in adapter.skipped_actions:
+                    validate_cooked_source_row(
+                        headers, cooked_row, path, row_number
+                    )
+                    cooked_rows.append(cooked_row)
                     print(
                         f"WARNING: {path}: row {row_number}: Skipped action "
                         f"{extracted.source_action!r}; it does not produce an output transaction.",
@@ -859,13 +1036,16 @@ def read_raw_transactions(path: Path, brokerage: str) -> list[RawTransaction]:
                         location=f"{path}: row {row_number} withdrawal description",
                         cooked_csv=False,
                     )
+                amount = parse_amount(extracted.amount, path, row_number)
+                validate_cooked_source_row(headers, cooked_row, path, row_number)
+                cooked_rows.append(cooked_row)
                 transactions.append(
                     RawTransaction(
                         account=extracted.account,
-                        date=parse_date(extracted.date, path, row_number),
+                        date=iso_date,
                         action=action,
                         security=extracted.security,
-                        amount=parse_amount(extracted.amount, path, row_number),
+                        amount=amount,
                         memo=memo,
                         source_file=path.name,
                         source_row=row_number,
@@ -873,7 +1053,20 @@ def read_raw_transactions(path: Path, brokerage: str) -> list[RawTransaction]:
                 )
     except (csv.Error, KeyError) as exc:
         raise UserError(f"Could not parse {path} using the {brokerage} CSV contract: {exc}") from exc
-    return transactions
+    return ParsedSource(
+        transactions=tuple(transactions),
+        cooked_headers=tuple(headers),
+        cooked_rows=tuple(cooked_rows),
+    )
+
+
+def read_raw_transactions(
+    path: Path, brokerage: str, *, source_account: str | None = None
+) -> list[RawTransaction]:
+    """Compatibility wrapper for callers that only need QIF transactions."""
+    return list(
+        read_source(path, brokerage, source_account=source_account).transactions
+    )
 
 
 def cook_transactions(
@@ -935,44 +1128,13 @@ def decimal_text(value: Decimal, *, location: str = "amount") -> str:
         raise UserError(f"{location} could not be rendered safely: {exc}") from exc
 
 
-def render_cooked_csv(transactions: Sequence[CookedTransaction]) -> str:
+def render_cooked_csv(parsed: ParsedSource) -> str:
     from io import StringIO
 
     output = StringIO(newline="")
-    writer = csv.DictWriter(output, fieldnames=COOKED_HEADERS, lineterminator="\n")
-    writer.writeheader()
-    for item in transactions:
-        for field_name, value in (
-            ("Brokerage", item.brokerage),
-            ("Account", item.account),
-            ("Date", item.date),
-            ("Action", item.action),
-            ("Security", item.security),
-            ("Source File", item.source_file),
-        ):
-            guidance = (
-                "Rename the source file before retrying."
-                if field_name == "Source File"
-                else "Change the configured value before retrying."
-            )
-            validate_output_text(
-                value,
-                location=f"Cooked CSV field {field_name!r}",
-                cooked_csv=True,
-                formula_guidance=guidance,
-            )
-        writer.writerow(
-            {
-                "Brokerage": item.brokerage,
-                "Account": item.account,
-                "Date": item.date,
-                "Action": item.action,
-                "Security": item.security,
-                "Amount": decimal_text(item.amount),
-                "Source File": item.source_file,
-                "Source Row": item.source_row,
-            }
-        )
+    writer = csv.writer(output)
+    writer.writerow(parsed.cooked_headers)
+    writer.writerows(parsed.cooked_rows)
     return output.getvalue()
 
 
@@ -982,11 +1144,9 @@ def qif_date(iso_date: str) -> str:
 
 
 def render_qif(transactions: Sequence[CookedTransaction]) -> str:
-    chunks: list[str] = []
-    current_account: str | None = None
+    chunks: list[str] = ["!Type:Invst"] if transactions else []
     for item in transactions:
         for field_name, value in (
-            ("account", item.account),
             ("security", item.security),
             ("category or transfer", item.category_or_transfer),
             ("memo", item.memo),
@@ -996,9 +1156,6 @@ def render_qif(transactions: Sequence[CookedTransaction]) -> str:
                 location=f"QIF {field_name}",
                 cooked_csv=False,
             )
-        if item.account != current_account:
-            chunks.extend(("!Account", f"N{item.account}", "TInvst", "^", "!Type:Invst"))
-            current_account = item.account
         action = "MiscInc" if item.action == "dividend" else "XOut"
         chunks.extend(
             (
@@ -1006,16 +1163,23 @@ def render_qif(transactions: Sequence[CookedTransaction]) -> str:
                 f"N{action}",
                 f"Y{item.security}",
                 f"T{decimal_text(item.amount)}",
+                f"M{item.memo}",
                 (
                     f"L{item.category_or_transfer}"
                     if item.action == "dividend"
                     else f"L[{item.category_or_transfer}]"
                 ),
-                f"M{item.memo}",
                 "^",
             )
         )
     return "\n".join(chunks) + ("\n" if chunks else "")
+
+
+def transaction_detail(item: CookedTransaction) -> str:
+    return (
+        f"{item.source_file}: row {item.source_row} | {item.date} | "
+        f"{item.action} | {item.security} | {decimal_text(item.amount)}"
+    )
 
 
 def output_paths(source: Path, output_dir: Path | None) -> tuple[Path, Path]:
@@ -1120,26 +1284,40 @@ def run(args: argparse.Namespace) -> int:
         brokerage = brokerages.pop()
 
     section = selected_section(config, brokerage, path)
+    source_accounts = {
+        source: source_account_for(source, brokerage, section, path)
+        for source in inputs
+    }
     output_plan = plan_output_paths(inputs, args.output_dir, overwrite=args.overwrite)
-    prepared: list[tuple[Path, list[CookedTransaction], Path, Path]] = []
+    prepared: list[
+        tuple[Path, ParsedSource, list[CookedTransaction], Path, Path]
+    ] = []
     for source, cooked_path, qif_path in output_plan:
-        raw = read_raw_transactions(source, brokerage)
-        cooked = cook_transactions(raw, brokerage, section, path)
-        prepared.append((source, cooked, cooked_path, qif_path))
+        parsed = read_source(
+            source, brokerage, source_account=source_accounts[source]
+        )
+        cooked = cook_transactions(parsed.transactions, brokerage, section, path)
+        prepared.append((source, parsed, cooked, cooked_path, qif_path))
 
-    total_transactions = sum(len(items) for _source, items, _csv, _qif in prepared)
+    total_transactions = sum(
+        len(items) for _source, _parsed, items, _csv, _qif in prepared
+    )
     with localcontext() as context:
         context.prec = MAX_AMOUNT_SIGNIFICANT_DIGITS * 2 + 20
         total_amount = sum(
-            (item.amount for _source, items, _csv, _qif in prepared for item in items),
+            (
+                item.amount
+                for _source, _parsed, items, _csv, _qif in prepared
+                for item in items
+            ),
             Decimal("0"),
         )
     total_amount_text = decimal_text(total_amount, location="batch total amount")
     artifacts = [
         artifact
-        for _source, items, cooked_path, qif_path in prepared
+        for _source, parsed, items, cooked_path, qif_path in prepared
         for artifact in (
-            (cooked_path, render_cooked_csv(items).encode("utf-8")),
+            (cooked_path, render_cooked_csv(parsed).encode("utf-8")),
             (qif_path, render_qif(items).encode("utf-8")),
         )
     ]
@@ -1147,7 +1325,14 @@ def run(args: argparse.Namespace) -> int:
         commit_output_transaction(artifacts, overwrite=args.overwrite)
     except OSError as exc:
         raise UserError(f"Could not commit output transaction: {exc}") from exc
-    for _source, _items, cooked_path, qif_path in prepared:
+    print("Transactions:")
+    if total_transactions:
+        for _source, _parsed, items, _cooked_path, _qif_path in prepared:
+            for item in items:
+                print(f"  {transaction_detail(item)}")
+    else:
+        print("  none")
+    for _source, _parsed, _items, cooked_path, qif_path in prepared:
         print(f"Wrote {cooked_path}")
         print(f"Wrote {qif_path}")
     print(
