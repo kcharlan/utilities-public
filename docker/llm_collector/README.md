@@ -57,7 +57,7 @@ From the repo project directory:
 
 The script:
 
-*   Runs the collector and snapshot tests in the project virtual environment.
+*   Runs the collector, snapshot, shell-config, and browser-extension tests.
 *   Backs up the deployed tree, `~/.config/llm_collector/secret.env`, and the external data directory before making changes.
 *   Checks live counters and, when they are non-empty, runs the deployed `reset_collector.sh` first so current totals are snapshotted and rolled into `snapshots.csv`.
 *   Copies source with `rsync --delete` while preserving local-only secrets, generated extension config, logs, legacy state files, and snapshot data.
@@ -76,6 +76,7 @@ After a successful migration, reload the unpacked browser extension so it picks 
 
 Once the collector and extension are running, the extension will automatically track your LLM usage in the browser.
 
+*   Opening the extension popup performs an authenticated collector check. Green means the extension can reach and authenticate to the collector; red includes a specific failure reason. The check repeats only while the popup is open.
 *   The `reset_collector.sh` script (configured via `launchd` on macOS as per the installation guide) resets usage counters daily and triggers a snapshot.
 *   The collector stores per-date usage buckets using the `/add` event timestamp and `BUCKET_TIMEZONE` (default `America/New_York`), so usage sent before midnight and after midnight can roll up to separate days even if reset runs later.
 *   The `snapshots/rollup_snapshots.py` script processes these daily snapshots into `snapshots.csv` for easier analysis. The `.bak` files in the `snapshots` directory are backups of the snapshots and can be ignored.

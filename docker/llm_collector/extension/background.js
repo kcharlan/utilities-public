@@ -1,6 +1,8 @@
 // ===== LLM Usage Counter — Server SOT + Idempotent Adds + Seq Handshake =====
 
 // --- Config ---
+importScripts("collector_status.js");
+
 let CONFIG_LOAD_ERROR = null;
 try {
   importScripts("config.local.js");
@@ -323,19 +325,29 @@ chrome.runtime.onStartup?.addListener(() => schedulePush());
 chrome.runtime.onMessage.addListener((m, s, send) => {
   if (m && m.cmd === "get_status") {
     Promise.all([getPending(), getSeq(), getClientId()]).then(async ([pending, seq, client_id]) => {
-      // Fetch server totals for display
-      let serverCounters = {};
       const configError = getConfigError();
-      try {
-        if (!configError) {
-          const r = await fetch(`${COLLECTOR}/counters`, { headers: { "X-API-KEY": API_KEY } });
-          if (r.ok) {
-            const j = await r.json();
-            serverCounters = j.counters || {};
+      const collectorStatus = configError
+        ? {
+            state: "configuration_error",
+            message: configError,
+            checkedAt: Date.now(),
+            latencyMs: 0
           }
-        }
-      } catch {}
-      send({ client_id, seq, pending, serverCounters, debug: debugBuf, configError });
+        : await globalThis.LLMCollectorStatus.checkCollectorConnection({
+            collectorUrl: COLLECTOR,
+            apiKey: API_KEY
+          });
+
+      send({
+        client_id,
+        seq,
+        pending,
+        serverCounters: collectorStatus.serverCounters || {},
+        collectorStatus,
+        collectorUrl: COLLECTOR,
+        debug: debugBuf,
+        configError
+      });
     });
     return true;
   } else if (m && m.cmd === "get_config_status") {

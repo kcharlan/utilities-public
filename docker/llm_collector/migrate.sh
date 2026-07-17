@@ -18,7 +18,7 @@ Usage: ./migrate.sh [--dry-run] [--deploy-dir PATH] [--backup-root PATH]
 Safely migrates this source tree to the deployed llm_collector directory.
 
 Steps:
-  1. Run source tests in a project virtual environment.
+  1. Run collector, snapshot, shell-config, and extension source tests.
   2. Back up deployed code, external secrets, and external runtime state.
   3. If live counters are non-empty, call reset_collector.sh to snapshot and roll them up.
   4. Copy source with rsync while preserving secrets, state, snapshots, and logs.
@@ -88,10 +88,10 @@ load_config_from_dir() {
 }
 
 source_test() {
-  log "Running source tests in a project virtual environment."
+  log "Running collector, snapshot, shell-config, and extension source tests."
 
   if [ "$DRY_RUN" = "1" ]; then
-    log "DRY RUN: would create/use $SOURCE_DIR/.venv and run pytest."
+    log "DRY RUN: would create/use $SOURCE_DIR/.venv, run pytest, and run shell/extension tests."
     return 0
   fi
 
@@ -102,6 +102,8 @@ source_test() {
   "$SOURCE_DIR/.venv/bin/python" -m pip install --upgrade pip
   "$SOURCE_DIR/.venv/bin/python" -m pip install -r "$SOURCE_DIR/collector/requirements.txt" pytest
   "$SOURCE_DIR/.venv/bin/python" -m pytest "$SOURCE_DIR/collector" "$SOURCE_DIR/snapshots"
+  "$SOURCE_DIR/tests/test_local_config.zsh"
+  node --test "$SOURCE_DIR"/extension/test_*.js
 }
 
 backup_path() {
@@ -328,6 +330,7 @@ main() {
   require_cmd docker
   require_cmd shasum
   require_cmd awk
+  require_cmd node
 
   [ -f "$SOURCE_DIR/collector/collector.py" ] || die "Source dir does not look like llm_collector: $SOURCE_DIR"
 

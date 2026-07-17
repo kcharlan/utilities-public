@@ -3,8 +3,75 @@
 function $(id){ return document.getElementById(id); }
 function fmt(ts){ if(!ts) return "—"; const d=new Date(ts); return d.toLocaleString(); }
 
+function setNotice(message = "", tone = "neutral") {
+  const notice = $("notice");
+  if (!notice) return;
+  notice.textContent = message;
+  notice.dataset.tone = tone;
+}
+
+function renderConnectionStatus(status, configError = null) {
+  const panel = $("status");
+  const label = $("statusLabel");
+  const detail = $("statusDetail");
+  if (!panel || !label || !detail) return;
+
+  const state = status?.state || "unreachable";
+  const checkedAt = status?.checkedAt ? new Date(status.checkedAt).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  }) : null;
+
+  if (state === "connected") {
+    panel.dataset.state = "connected";
+    label.textContent = "Collector connected";
+    const latency = Number.isFinite(status.latencyMs) ? `${status.latencyMs} ms` : "authenticated";
+    detail.textContent = `${latency}${checkedAt ? ` · checked ${checkedAt}` : ""}`;
+    return;
+  }
+
+  panel.dataset.state = "error";
+  if (state === "configuration_error" || configError) {
+    label.textContent = "Configuration required";
+    detail.textContent = configError || status.message || "Run setup and reload the extension.";
+  } else if (state === "authentication_error") {
+    label.textContent = "Authentication failed";
+    detail.textContent = `Collector rejected the API key${status.httpStatus ? ` · HTTP ${status.httpStatus}` : ""}`;
+  } else if (state === "timeout") {
+    label.textContent = "Collector timed out";
+    detail.textContent = status.message || "The collector did not respond in time.";
+  } else if (state === "server_error") {
+    label.textContent = "Collector error";
+    detail.textContent = status.message || "The collector returned an error.";
+  } else if (state === "invalid_response") {
+    label.textContent = "Invalid collector response";
+    detail.textContent = status.message || "The response format was not recognized.";
+  } else {
+    label.textContent = "Collector unreachable";
+    detail.textContent = status?.message || "Check that the local container is running.";
+  }
+}
+
+function showCheckingStatus() {
+  const panel = $("status");
+  const label = $("statusLabel");
+  const detail = $("statusDetail");
+  if (panel) panel.dataset.state = "checking";
+  if (label) label.textContent = "Checking…";
+  if (detail) detail.textContent = "Contacting the local collector";
+}
+
 function renderStatus(data){
-  const { serverCounters = {}, pending = {}, seq = 0, client_id = "—", debug = [], configError = null } = data || {};
+  const {
+    serverCounters = {},
+    pending = {},
+    seq = 0,
+    client_id = "—",
+    debug = [],
+    configError = null,
+    collectorStatus = null
+  } = data || {};
   const list = $("list"); if (!list) return;
   const frag = document.createDocumentFragment();
 
@@ -24,7 +91,12 @@ function renderStatus(data){
   const serverTitle = document.createElement("div");
   serverTitle.innerHTML = "<b>Server totals</b>";
   frag.appendChild(serverTitle);
-  if (totalsEntries.length === 0){
+  if (collectorStatus?.state !== "connected") {
+    const row = document.createElement("div");
+    row.textContent = "(unavailable while disconnected)";
+    row.style.color = "#64716b";
+    frag.appendChild(row);
+  } else if (totalsEntries.length === 0){
     const row = document.createElement("div"); row.textContent = "(none yet)";
     frag.appendChild(row);
   } else {
@@ -85,6 +157,8 @@ function renderStatus(data){
   list.appendChild(frag);
 }
 
+let refreshGeneration = 0;
+
 function sendMessageWithTimeout(msg, timeoutMs = 2000){
   return new Promise((resolve, reject) => {
     let done = false;
@@ -105,14 +179,17 @@ function sendMessageWithTimeout(msg, timeoutMs = 2000){
   });
 }
 
-async function refresh(){
-  const statusEl = $("status"); if (statusEl) statusEl.textContent = "Loading…";
+async function refresh({ showChecking = true } = {}){
+  const generation = ++refreshGeneration;
+  if (showChecking) showCheckingStatus();
   try {
     const resp = await sendMessageWithTimeout({ cmd: "get_status" }, 3000);
-    if (statusEl) statusEl.textContent = resp.configError ? "Configuration required" : "OK";
+    if (generation !== refreshGeneration) return;
+    renderConnectionStatus(resp.collectorStatus, resp.configError);
     renderStatus(resp);
   } catch (e){
-    if (statusEl) statusEl.textContent = `Error: ${e.message}`;
+    if (generation !== refreshGeneration) return;
+    renderConnectionStatus({ state: "unreachable", message: `Extension status check failed: ${e.message}` });
     const list = $("list");
     if (list) {
       list.innerHTML = `
@@ -133,16 +210,23 @@ function bind(id, event, fn){
 
 document.addEventListener("DOMContentLoaded", () => {
   bind("reset", "click", async () => {
-    const st = $("status"); if (st) st.textContent = "Clearing pending…";
-    try { await sendMessageWithTimeout({ cmd: "clear_pending" }, 2000); } catch {}
-    refresh();
+    setNotice("Clearing pending data…");
+    try {
+      await sendMessageWithTimeout({ cmd: "clear_pending" }, 2000);
+      setNotice("Pending data cleared.", "success");
+    } catch (e) {
+      setNotice(`Clear failed: ${e.message}`, "error");
+    }
+    refresh({ showChecking: false });
   });
 
   bind("export", "click", async () => {
-    const st = $("status"); if (st) st.textContent = "Exporting…";
+    setNotice("Exporting diagnostics…");
     try {
       const resp = await sendMessageWithTimeout({ cmd: "get_status" }, 3000);
       const data = {
+        collectorStatus: resp.collectorStatus || null,
+        collectorUrl: resp.collectorUrl || null,
         serverCounters: resp.serverCounters || {},
         pending: resp.pending || {},
         seq: resp.seq,
@@ -173,24 +257,34 @@ document.addEventListener("DOMContentLoaded", () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      if (st) st.textContent = "Exported & copied to clipboard.";
+      renderConnectionStatus(resp.collectorStatus, resp.configError);
+      setNotice("Exported and copied to clipboard.", "success");
     } catch (e){
-      if (st) st.textContent = `Export failed: ${e.message}`;
+      setNotice(`Export failed: ${e.message}`, "error");
     }
   });
 
   bind("forcePush", "click", async () => {
-    const st = $("status"); if (st) st.textContent = "Pushing…";
+    setNotice("Requesting pending-data push…");
     try {
-      await sendMessageWithTimeout({ cmd: "force_push" }, 2000);
-      setTimeout(refresh, 300); // allow background to POST, then refresh
+      const resp = await sendMessageWithTimeout({ cmd: "force_push" }, 2000);
+      if (resp.ok === false) throw new Error(resp.error || "push rejected");
+      setNotice("Push requested.", "success");
+      setTimeout(() => refresh({ showChecking: false }), 300); // allow background to POST, then refresh
     } catch (e){
-      if (st) st.textContent = `Push failed: ${e.message}`;
+      setNotice(`Push failed: ${e.message}`, "error");
     }
   });
 
-  bind("reload", "click", () => refresh());
+  bind("reload", "click", () => {
+    setNotice();
+    refresh({ showChecking: true });
+  });
 
   // initial load
-  refresh();
+  refresh({ showChecking: true });
+
+  // The popup is destroyed when it closes, so this only polls while visible.
+  const pollHandle = setInterval(() => refresh({ showChecking: false }), 10000);
+  window.addEventListener("unload", () => clearInterval(pollHandle), { once: true });
 });

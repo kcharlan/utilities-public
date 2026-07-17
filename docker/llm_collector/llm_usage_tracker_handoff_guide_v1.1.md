@@ -157,7 +157,7 @@ Startup routine aligns local `seq` to `/client_status`.
 ## 9. Testing and Validation
 
 1. Start collector container.
-2. Open extension popup → confirm connectivity.
+2. Open extension popup → confirm the authenticated collector indicator turns green.
 3. Generate some AI queries.
 4. Check `/counters` and popup values match.
 5. Restart browser → counters persist.

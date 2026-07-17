@@ -8,6 +8,8 @@ The extension is a simple browser extension that monitors your browsing activity
 
 The extension is designed to be lightweight and unobtrusive. It only activates on specific websites (e.g., `chat.openai.com`) and only sends the minimum amount of data necessary to track usage.
 
+The popup also shows the current collector connection state. A green indicator means the extension received a valid response from the authenticated `/counters` endpoint. A red indicator distinguishes an unreachable collector, timeout, API-key rejection, server error, invalid response, or missing extension configuration.
+
 ## Supported Providers
 
 The extension currently supports tracking usage on the following platforms:
@@ -45,6 +47,18 @@ The extension's `background.js` script is the core of the extension. It performs
 4.  **Data Buffering:** The extension buffers the collected usage data locally and sends it to the collector server in batches. This is to minimize the number of requests sent to the server.
 
 5.  **Idempotent Submissions:** The extension uses a sequence number to ensure that usage data is not counted more than once, even if the request to the collector server is retried.
+
+6.  **Connection Diagnostics:** Opening the popup immediately probes the authenticated `/counters` endpoint with a two-second timeout. The popup checks again every ten seconds while it remains open, and the **Reload** button triggers an immediate retry. No connection polling runs while the popup is closed.
+
+## Validation
+
+Run the dependency-free connection-status tests with Node.js:
+
+```bash
+node --test test_*.js
+```
+
+For a manual failure-path check, open the popup with the collector running, stop the collector, and use **Reload**. The indicator should change from green to red within two seconds. Start the collector and reload again to verify recovery.
 
 ## Customization
 
