@@ -1,6 +1,6 @@
 # Output Directory
 
-This directory is volume-mounted from the Docker container (`./output:/output`). The proxy regenerates these files at every container startup based on the providers and models it discovers.
+This directory is volume-mounted from the Docker container (`./output:/output`). The proxy regenerates its files at every container startup based on the providers and models it discovers. Generated files are intentionally ignored by Git so running the service never modifies tracked source; this README is the only tracked file in the directory.
 
 ## Files
 

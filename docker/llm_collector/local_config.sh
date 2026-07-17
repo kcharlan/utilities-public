@@ -1,6 +1,14 @@
 #!/bin/bash
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${BASH_VERSION:-}" ]; then
+  LOCAL_CONFIG_SOURCE="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+  LOCAL_CONFIG_SOURCE="${(%):-%N}"
+else
+  LOCAL_CONFIG_SOURCE="$0"
+fi
+PROJECT_ROOT="$(cd "$(dirname "$LOCAL_CONFIG_SOURCE")" && pwd)"
+unset LOCAL_CONFIG_SOURCE
 LLM_COLLECTOR_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/llm_collector"
 LLM_COLLECTOR_SECRET_ENV="${LLM_COLLECTOR_SECRET_ENV:-$LLM_COLLECTOR_CONFIG_DIR/secret.env}"
 LLM_COLLECTOR_DEFAULT_DATA_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/llm_collector"

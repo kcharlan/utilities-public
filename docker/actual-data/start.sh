@@ -10,7 +10,7 @@ docker run --pull=always \
   --health-retries=3 \
   --health-start-period=10s \
   -d \
-  -p 5006:5006 \
+  -p 127.0.0.1:5006:5006 \
   -v "${DATA_DIR}:/data" \
   --name actual \
   actualbudget/actual-server:latest

@@ -118,6 +118,8 @@ For any standalone utility installed outside the repository:
 
 The destination is user- and platform-specific. Common choices include `~/.local/bin`, `~/bin`, a user scripts directory, or an administrator-managed executable directory. Project READMEs may show a platform-specific example, but must not treat that example as the only valid installation location.
 
+For the maintained macOS deployment layout, tracked-file synchronization rules, Docker lifecycle checks, rollback procedure, and the read-only drift audit, see [docs/local_deployment_sync.md](docs/local_deployment_sync.md).
+
 Copy-based installs are preferred when the utility must keep working if the repository is moved or removed. Symlinks remain useful during active development, but maintainers must not assume that committing a repository update also deploys it to existing runtime locations.
 
 For Python utilities that a user runs directly, the default question is not "single file or not?" It is:

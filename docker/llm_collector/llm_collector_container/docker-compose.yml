@@ -5,7 +5,7 @@ services:
       dockerfile: llm_collector_container/Dockerfile
     container_name: llm-collector
     ports:
-      - "9000:9000"             # host:container
+      - "127.0.0.1:9000:9000"   # local browser extension only
     environment:
       # Must match the extension's API key
       - API_KEY=${API_KEY:?Run ../setup.sh first}

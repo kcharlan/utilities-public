@@ -10,6 +10,7 @@ This directory now groups all Docker-focused projects that previously lived at t
 - `llm_collector/` - LLM usage collector service, browser extension, and container runtime files.
 - `llm_proxy/` - Modular, stateless proxy that makes non-standard LLM provider APIs speak the OpenAI `/v1/chat/completions` protocol. Bridges T3.chat and ChatJimmy with streaming SSE translation, tool-calling format conversion, dynamic model discovery, and BYOK auto-retry.
 - `mermaid/` - Shell scripts for running the Mermaid Live Editor container.
+- `n8n-poc/` - Local n8n proof-of-concept with its encryption key and mutable state kept outside the public source tree.
 - `webserver/` - Multi-service local web stack (Nginx + FastAPI + Express + index/config UI).
 
 ## Structure Change

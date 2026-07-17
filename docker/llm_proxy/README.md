@@ -36,6 +36,7 @@ OpenCode provider configs:
 - **Streaming-first**: Translates provider-specific SSE formats into OpenAI-compatible SSE in real time.
 - **Dynamic model discovery**: The T3 and ChatJimmy adapters discover available models at startup and each has a hardcoded fallback list.
 - **Docker-only**: `docker compose up` is the primary interface. No bare-metal run.
+- **Local-only publishing**: Compose binds the proxy to `127.0.0.1:4141`; it is not exposed to the LAN.
 
 ## Authentication Setup
 
