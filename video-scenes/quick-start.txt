@@ -1,0 +1,14 @@
+
+Split input video on each fast cut using ffmpeg:
+
+scenedetect -i video.mp4 split-video
+
+Save some frames from each cut:
+
+scenedetect -i video.mp4 save-images
+
+Skip the first 10 seconds of the input video:
+
+scenedetect -i video.mp4 time -s 10s
+
+scenedetect -i video.mp4 detect-hash -t 0.16 split-video

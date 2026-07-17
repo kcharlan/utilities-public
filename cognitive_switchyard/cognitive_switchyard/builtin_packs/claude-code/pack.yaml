@@ -1,0 +1,52 @@
+name: claude-code
+description: Built-in reference pack for Claude CLI driven software delivery.
+version: 1.2.3
+
+phases:
+  planning:
+    enabled: true
+    executor: agent
+    model: opus
+    prompt: prompts/planner.md
+    max_instances: 4
+  resolution:
+    enabled: true
+    executor: agent
+    model: opus
+    prompt: prompts/resolver.md
+  execution:
+    enabled: true
+    executor: shell
+    command: scripts/execute
+    max_workers: 4
+  verification:
+    enabled: true
+    command: "\"$COGNITIVE_SWITCHYARD_PACK_ROOT/scripts/verify\""
+
+auto_fix:
+  enabled: true
+  max_attempts: 2
+  model: opus
+  prompt: prompts/fixer.md
+
+isolation:
+  type: git-worktree
+  setup: scripts/isolate_start
+  teardown: scripts/isolate_end
+
+prerequisites:
+  - name: Claude CLI available
+    check: command -v claude >/dev/null 2>&1
+  - name: Git available
+    check: command -v git >/dev/null 2>&1
+  - name: jq available
+    check: command -v jq >/dev/null 2>&1
+
+timeouts:
+  task_idle: 900
+  task_max: 0
+  session_max: 14400
+
+status:
+  progress_format: "##PROGRESS##"
+  sidecar_format: key-value

@@ -1,0 +1,2655 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>launchmaster — launchd Control Center</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+<style>
+  :root {
+    /* CRT-inspired dark palette */
+    --bg-void: #06070b;
+    --bg-base: #0a0b10;
+    --bg-surface: #101118;
+    --bg-elevated: #16171f;
+    --bg-hover: #1c1d27;
+    --bg-active: #22232f;
+
+    --border-subtle: #1e1f2a;
+    --border-default: #282938;
+    --border-strong: #3a3b4a;
+
+    --text-primary: #d8d9e4;
+    --text-secondary: #8a8b9a;
+    --text-tertiary: #5a5b6a;
+    --text-inverse: #0a0b10;
+
+    /* Status palette — high saturation, CRT glow */
+    --status-running: #00e676;
+    --status-running-bg: rgba(0,230,118,0.08);
+    --status-running-border: rgba(0,230,118,0.25);
+
+    --status-idle: #448aff;
+    --status-idle-bg: rgba(68,138,255,0.08);
+    --status-idle-border: rgba(68,138,255,0.25);
+
+    --status-failed: #ff1744;
+    --status-failed-bg: rgba(255,23,68,0.06);
+    --status-failed-border: rgba(255,23,68,0.30);
+    --status-failed-glow: rgba(255,23,68,0.15);
+
+    --status-disabled: #616171;
+    --status-disabled-bg: rgba(97,97,113,0.08);
+    --status-disabled-border: rgba(97,97,113,0.20);
+
+    --status-unloaded: #3a3b4a;
+    --status-unloaded-bg: rgba(58,59,74,0.08);
+
+    /* Accent */
+    --accent: #ffab00;
+    --accent-hover: #ffc107;
+    --accent-bg: rgba(255,171,0,0.08);
+    --accent-border: rgba(255,171,0,0.30);
+
+    /* Danger */
+    --danger: #ff1744;
+    --danger-hover: #ff5252;
+    --danger-bg: rgba(255,23,68,0.10);
+
+    /* Fonts */
+    --font-display: 'Chakra Petch', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+
+    /* Scanline effect */
+    --scanline-opacity: 0.03;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-void);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+
+  /* Subtle CRT scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,var(--scanline-opacity)) 2px,
+      rgba(0,0,0,var(--scanline-opacity)) 4px
+    );
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-base); }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+  /* Selection */
+  ::selection { background: rgba(255,171,0,0.25); color: var(--text-primary); }
+
+  /* Animations */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slideInRight {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes slideInUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-red {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  @keyframes glow-red {
+    0%, 100% { box-shadow: 0 0 8px var(--status-failed-glow); }
+    50% { box-shadow: 0 0 16px var(--status-failed-glow), 0 0 32px rgba(255,23,68,0.08); }
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateX(100%); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes toast-out {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(100%); }
+  }
+
+  .animate-fade { animation: fadeIn 0.2s ease-out both; }
+  .animate-slide-right { animation: slideInRight 0.25s ease-out both; }
+  .animate-slide-up { animation: slideInUp 0.2s ease-out both; }
+
+  /* ---- Layout ---- */
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: relative;
+  }
+
+  /* Top bar */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    height: 48px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-default);
+    flex-shrink: 0;
+    z-index: 100;
+  }
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .topbar-brand {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .topbar-subtitle {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.5px;
+  }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .topbar-ws-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+  .ws-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--status-running);
+    box-shadow: 0 0 6px var(--status-running);
+  }
+  .ws-dot.disconnected { background: var(--status-failed); box-shadow: 0 0 6px var(--status-failed); }
+
+  /* Icon buttons */
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-default);
+  }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  /* Action buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+  .btn svg { width: 14px; height: 14px; }
+
+  .btn-accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-inverse);
+    font-weight: 500;
+  }
+  .btn-accent:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+  .btn-danger {
+    border-color: var(--status-failed-border);
+    color: var(--status-failed);
+  }
+  .btn-danger:hover { background: var(--danger-bg); border-color: var(--danger); }
+
+  .btn-sm { padding: 3px 8px; font-size: 11px; }
+  .btn-sm svg { width: 12px; height: 12px; }
+
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+  }
+  .btn-ghost:hover { background: var(--bg-hover); border-color: var(--border-default); }
+
+  /* Main content */
+  .main-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ---- Status Summary Cards ---- */
+  .status-cards {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .status-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    min-width: 140px;
+  }
+  .status-card:hover { border-color: var(--border-strong); background: var(--bg-elevated); }
+  .status-card.active { border-color: var(--accent-border); background: var(--accent-bg); }
+  .status-card-count {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .status-card-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .status-card.running .status-card-count { color: var(--status-running); }
+  .status-card.idle .status-card-count { color: var(--status-idle); }
+  .status-card.failed .status-card-count { color: var(--status-failed); }
+  .status-card.disabled .status-card-count { color: var(--status-disabled); }
+  .status-card.unloaded .status-card-count { color: var(--status-unloaded); }
+
+  /* ---- Failed Jobs Alert Panel ---- */
+  .failed-panel {
+    background: var(--status-failed-bg);
+    border: 1px solid var(--status-failed-border);
+    border-radius: 6px;
+    animation: glow-red 3s ease-in-out infinite;
+    overflow: hidden;
+  }
+  .failed-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .failed-panel-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--status-failed);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .failed-pulse {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--status-failed);
+    animation: pulse-red 1.5s ease-in-out infinite;
+    box-shadow: 0 0 8px var(--status-failed);
+  }
+  .failed-panel-body { padding: 0 16px 12px; }
+  .failed-job-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: rgba(255,23,68,0.04);
+    border: 1px solid rgba(255,23,68,0.12);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    animation: fadeIn 0.2s ease-out both;
+  }
+  .failed-job-row:last-child { margin-bottom: 0; }
+  .failed-job-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+  .failed-job-label {
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .failed-job-exit {
+    font-size: 11px;
+    padding: 2px 6px;
+    background: rgba(255,23,68,0.15);
+    border: 1px solid rgba(255,23,68,0.25);
+    border-radius: 3px;
+    color: var(--status-failed);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .failed-job-blame {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+  }
+  .failed-job-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  /* ---- Filter Bar ---- */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+  }
+  .filter-search {
+    padding: 6px 10px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .filter-search:focus { border-color: var(--accent-border); }
+  .filter-search::placeholder { color: var(--text-tertiary); }
+
+  .filter-select {
+    padding: 6px 10px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    outline: none;
+  }
+  .filter-select:focus { border-color: var(--accent-border); }
+
+  .filter-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    background: var(--bg-base);
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .filter-toggle:hover { border-color: var(--border-strong); color: var(--text-primary); }
+  .filter-toggle.active { border-color: var(--accent-border); color: var(--accent); background: var(--accent-bg); }
+  .filter-toggle svg { width: 14px; height: 14px; }
+
+  .filter-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: 3px;
+    color: var(--accent);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .filter-chip:hover { background: rgba(255,171,0,0.15); }
+
+  /* ---- Job Table ---- */
+  .job-table-container {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    overflow: hidden;
+    flex: 1;
+  }
+  .job-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .job-table thead th {
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-tertiary);
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-default);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .job-table thead th:hover { color: var(--text-secondary); }
+  .job-table thead th.sorted { color: var(--accent); }
+  .job-table thead th .sort-arrow {
+    display: inline-block;
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .job-table thead th:hover .sort-arrow { opacity: 0.5; }
+  .job-table thead th.sorted .sort-arrow { opacity: 1; }
+
+  .job-table tbody tr {
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background 0.1s;
+    cursor: pointer;
+  }
+  .job-table tbody tr:hover { background: var(--bg-hover); }
+  .job-table tbody tr.selected { background: var(--accent-bg); }
+  .job-table tbody tr.status-failed { background: rgba(255,23,68,0.03); }
+  .job-table tbody tr.status-failed:hover { background: rgba(255,23,68,0.06); }
+
+  .job-table td {
+    padding: 7px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  /* Status dot */
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.running {
+    background: var(--status-running);
+    box-shadow: 0 0 6px var(--status-running);
+  }
+  .status-dot.idle { background: var(--status-idle); box-shadow: 0 0 4px rgba(68,138,255,0.4); }
+  .status-dot.failed {
+    background: var(--status-failed);
+    box-shadow: 0 0 6px var(--status-failed);
+    animation: pulse-red 2s ease-in-out infinite;
+  }
+  .status-dot.disabled { background: var(--status-disabled); }
+  .status-dot.unloaded {
+    background: transparent;
+    border: 1.5px solid var(--status-unloaded);
+  }
+
+  .job-label-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .job-label-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 400;
+  }
+
+  .domain-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+  }
+  .domain-badge.user-agent { color: var(--status-idle); border-color: var(--status-idle-border); background: var(--status-idle-bg); }
+  .domain-badge.global-agent { color: var(--accent); border-color: var(--accent-border); background: var(--accent-bg); }
+  .domain-badge.system-daemon { color: #e040fb; border-color: rgba(224,64,251,0.25); background: rgba(224,64,251,0.08); }
+  .domain-badge.apple {
+    color: #e8a030;
+    border-color: rgba(232,160,48,0.45);
+    background: rgba(232,160,48,0.12);
+    font-weight: 600;
+    position: relative;
+    padding-left: 20px;
+  }
+  .domain-badge.apple .apple-badge-icon {
+    position: absolute;
+    left: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 10px;
+    height: 12px;
+  }
+
+  /* Apple job row distinction — STRONG visual separation */
+  .job-table tbody tr.apple-row {
+    background: rgba(232,160,48,0.05);
+    border-left: 3px solid rgba(232,160,48,0.60);
+  }
+  .job-table tbody tr.apple-row:hover {
+    background: rgba(232,160,48,0.10);
+  }
+  .job-table tbody tr.apple-row td:first-child {
+    padding-left: 9px;
+  }
+  .job-table tbody tr.apple-row .job-label-text {
+    color: #d0a050;
+    font-style: italic;
+  }
+  .job-table tbody tr.apple-row .schedule-text,
+  .job-table tbody tr.apple-row .pid-text {
+    color: rgba(208,160,80,0.6);
+  }
+  .apple-row-icon {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+  .apple-row-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .exit-code {
+    font-weight: 500;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .exit-code.zero { color: var(--status-running); }
+  .exit-code.nonzero { color: var(--status-failed); background: rgba(255,23,68,0.10); }
+
+  .pid-text { color: var(--text-secondary); font-size: 11px; }
+  .schedule-text { color: var(--text-secondary); font-size: 11px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
+  .row-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .job-table tbody tr:hover .row-actions { opacity: 1; }
+
+  .row-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px; height: 26px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .row-action-btn:hover { background: var(--bg-active); color: var(--text-primary); }
+  .row-action-btn.danger:hover { color: var(--status-failed); background: var(--danger-bg); }
+  .row-action-btn svg { width: 13px; height: 13px; }
+
+  /* Checkbox */
+  .checkbox {
+    width: 14px; height: 14px;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .checkbox:hover { border-color: var(--accent); }
+  .checkbox.checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .checkbox.checked::after {
+    content: '';
+    width: 4px; height: 7px;
+    border: solid var(--text-inverse);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+
+  /* ---- Slide-out Detail Panel ---- */
+  .panel-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 200;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .panel-overlay.visible { opacity: 1; }
+
+  .detail-panel {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 680px;
+    max-width: 90vw;
+    background: var(--bg-base);
+    border-left: 1px solid var(--border-default);
+    z-index: 201;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.25s ease-out;
+    box-shadow: -8px 0 32px rgba(0,0,0,0.4);
+  }
+  .detail-panel.open { transform: translateX(0); }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+  .panel-header-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .panel-header-actions {
+    display: flex;
+    gap: 4px;
+  }
+
+  .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+  .panel-tab {
+    padding: 8px 16px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .panel-tab:hover { color: var(--text-secondary); }
+  .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+  }
+
+  /* Panel info grid */
+  .info-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 6px 12px;
+    margin-bottom: 16px;
+  }
+  .info-label {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .info-value {
+    font-size: 12px;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+
+  /* Plist editor */
+  .plist-editor {
+    background: var(--bg-void);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .plist-editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .plist-editor-header span {
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+  .plist-editor textarea {
+    width: 100%;
+    min-height: 300px;
+    padding: 12px;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    resize: vertical;
+    outline: none;
+    tab-size: 4;
+  }
+
+  /* Log viewer */
+  .log-viewer {
+    background: var(--bg-void);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .log-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .log-toolbar-left {
+    display: flex;
+    gap: 4px;
+  }
+  .log-tab {
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    transition: all 0.15s;
+  }
+  .log-tab:hover { color: var(--text-secondary); }
+  .log-tab.active { color: var(--accent); background: var(--accent-bg); }
+  .log-content {
+    padding: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+  .log-line { white-space: pre-wrap; word-break: break-all; }
+  .log-line .timestamp { color: var(--text-tertiary); }
+  .log-line .error { color: var(--status-failed); }
+  .log-line .warn { color: var(--accent); }
+
+  /* ---- Create Job Modal ---- */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    width: 640px;
+    max-width: 90vw;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 64px rgba(0,0,0,0.5);
+    animation: slideInUp 0.2s ease-out;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .modal-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+  }
+  .modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-default);
+  }
+
+  /* Form fields */
+  .form-group { margin-bottom: 14px; }
+  .form-label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .form-input {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .form-input:focus { border-color: var(--accent-border); }
+  .form-input::placeholder { color: var(--text-tertiary); }
+  .form-row {
+    display: flex;
+    gap: 12px;
+  }
+  .form-row .form-group { flex: 1; }
+
+  .form-hint {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin-top: 3px;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .toggle-row-label { font-size: 12px; color: var(--text-secondary); }
+  .toggle-switch {
+    width: 36px; height: 20px;
+    border-radius: 10px;
+    background: var(--border-strong);
+    cursor: pointer;
+    position: relative;
+    transition: background 0.2s;
+  }
+  .toggle-switch.on { background: var(--accent); }
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    transition: transform 0.2s;
+  }
+  .toggle-switch.on::after { transform: translateX(16px); }
+
+  /* ---- Toast Notifications ---- */
+  .toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 500;
+  }
+  .toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    font-size: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    animation: toast-in 0.25s ease-out;
+    min-width: 280px;
+  }
+  .toast.success { border-color: var(--status-running-border); }
+  .toast.success .toast-icon { color: var(--status-running); }
+  .toast.error { border-color: var(--status-failed-border); }
+  .toast.error .toast-icon { color: var(--status-failed); }
+  .toast.warning { border-color: var(--accent-border); }
+  .toast.warning .toast-icon { color: var(--accent); }
+  .toast svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .toast-message { flex: 1; }
+  .toast-close {
+    color: var(--text-tertiary);
+    cursor: pointer;
+    background: none;
+    border: none;
+    display: flex;
+    padding: 2px;
+  }
+  .toast-close:hover { color: var(--text-secondary); }
+
+  /* ---- Confirm Dialog ---- */
+  .confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .confirm-dialog {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    padding: 20px;
+    width: 420px;
+    max-width: 90vw;
+    box-shadow: 0 16px 64px rgba(0,0,0,0.5);
+    animation: slideInUp 0.15s ease-out;
+  }
+  .confirm-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .confirm-message {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    line-height: 1.6;
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  /* ---- Keyboard shortcut hints ---- */
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: 3px;
+    color: var(--text-tertiary);
+    min-width: 18px;
+  }
+
+  /* ---- Settings Panel ---- */
+  .settings-section {
+    margin-bottom: 20px;
+  }
+  .settings-section-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  /* ---- Bulk action bar ---- */
+  .bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    animation: fadeIn 0.15s ease-out;
+  }
+  .bulk-bar-count {
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .bulk-bar-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--accent-border);
+  }
+
+  /* ---- Preview plist in Create modal ---- */
+  .plist-preview {
+    background: var(--bg-void);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre;
+  }
+  .plist-preview .xml-tag { color: var(--status-idle); }
+  .plist-preview .xml-key { color: var(--accent); }
+  .plist-preview .xml-value { color: var(--status-running); }
+  .plist-preview .xml-comment { color: var(--text-tertiary); font-style: italic; }
+
+  /* ---- Light mode (toggle) ---- */
+  html:not(.dark) {
+    --bg-void: #f5f5f7;
+    --bg-base: #ffffff;
+    --bg-surface: #fafafa;
+    --bg-elevated: #f0f0f2;
+    --bg-hover: #eaeaee;
+    --bg-active: #e0e0e6;
+    --border-subtle: #e8e8ec;
+    --border-default: #d8d8de;
+    --border-strong: #c0c0c8;
+    --text-primary: #1a1a24;
+    --text-secondary: #6a6a7a;
+    --text-tertiary: #9a9aaa;
+    --text-inverse: #ffffff;
+    --scanline-opacity: 0;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ---- Mock Data ----
+const MOCK_JOBS = [
+  {
+    label: 'com.example.llm-collector',
+    domain: 'user-agent',
+    plistPath: '~/Library/LaunchAgents/com.example.llm-collector.plist',
+    loaded: true, running: true, pid: 12847,
+    enabled: true, lastExit: 0,
+    schedule: 'StartInterval: 300',
+    scheduleHuman: 'Every 5 minutes',
+    blame: null,
+    stdoutPath: '/tmp/llm-collector.stdout.log',
+    stderrPath: '/tmp/llm-collector.stderr.log',
+  },
+  {
+    label: 'com.example.routerview',
+    domain: 'user-agent',
+    plistPath: '~/Library/LaunchAgents/com.example.routerview.plist',
+    loaded: true, running: true, pid: 8421,
+    enabled: true, lastExit: 0,
+    schedule: 'RunAtLoad + KeepAlive',
+    scheduleHuman: 'Always running (KeepAlive)',
+    blame: null,
+    stdoutPath: '~/.routerview/stdout.log',
+    stderrPath: '~/.routerview/stderr.log',
+  },
+  {
+    label: 'com.example.backup-rotation',
+    domain: 'user-agent',
+    plistPath: '~/Library/LaunchAgents/com.example.backup-rotation.plist',
+    loaded: true, running: false, pid: null,
+    enabled: true, lastExit: 78,
+    schedule: 'CalendarInterval: Hour=2',
+    scheduleHuman: 'Daily at 2:00 AM',
+    blame: 'exit code 78: configuration file missing',
+    stdoutPath: '/tmp/backup-rotation.log',
+    stderrPath: '/tmp/backup-rotation.err',
+  },
+  {
+    label: 'com.example.media-dater',
+    domain: 'user-agent',
+    plistPath: '~/Library/LaunchAgents/com.example.media-dater.plist',
+    loaded: true, running: false, pid: null,
+    enabled: true, lastExit: 1,
+    schedule: 'WatchPaths: ~/Downloads',
+    scheduleHuman: 'Watching ~/Downloads',
+    blame: 'exit code 1: python3 not found in PATH',
+    stdoutPath: '/tmp/media-dater.log',
+    stderrPath: '/tmp/media-dater.err',
+  },
+  {
+    label: 'com.example.expense-dock-sync',
+    domain: 'user-agent',
+    plistPath: '~/Library/LaunchAgents/com.example.expense-dock-sync.plist',
+    loaded: true, running: false, pid: null,
+    enabled: false, lastExit: 0,
+    schedule: 'StartInterval: 3600',
+    scheduleHuman: 'Every 1 hour (disabled)',
+    blame: null,
+    stdoutPath: null,
+    stderrPath: null,
+  },
+  {
+    label: 'com.example.toggle-wifi',
+    domain: 'user-agent',
+    plistPath: '~/Library/LaunchAgents/com.example.toggle-wifi.plist',
+    loaded: false, running: false, pid: null,
+    enabled: false, lastExit: null,
+    schedule: 'RunAtLoad',
+    scheduleHuman: 'Run at load',
+    blame: null,
+    stdoutPath: null,
+    stderrPath: null,
+  },
+  {
+    label: 'com.example.cognitive-switchyard',
+    domain: 'user-agent',
+    plistPath: '~/Library/LaunchAgents/com.example.cognitive-switchyard.plist',
+    loaded: true, running: true, pid: 6633,
+    enabled: true, lastExit: 0,
+    schedule: 'RunAtLoad + KeepAlive',
+    scheduleHuman: 'Always running (KeepAlive)',
+    blame: null,
+    stdoutPath: '~/.cognitive_switchyard/stdout.log',
+    stderrPath: '~/.cognitive_switchyard/stderr.log',
+  },
+  {
+    label: 'com.example.health-export',
+    domain: 'user-agent',
+    plistPath: '~/Library/LaunchAgents/com.example.health-export.plist',
+    loaded: true, running: false, pid: null,
+    enabled: true, lastExit: 0,
+    schedule: 'CalendarInterval: Weekday=0, Hour=6',
+    scheduleHuman: 'Sundays at 6:00 AM',
+    blame: null,
+    stdoutPath: '/tmp/health-export.log',
+    stderrPath: null,
+  },
+  {
+    label: 'com.apple.metadata.mds',
+    domain: 'apple-daemon',
+    plistPath: '/System/Library/LaunchDaemons/com.apple.metadata.mds.plist',
+    loaded: true, running: true, pid: 114,
+    enabled: true, lastExit: 0,
+    schedule: 'KeepAlive',
+    scheduleHuman: 'System daemon (always)',
+    blame: null, stdoutPath: null, stderrPath: null,
+  },
+  {
+    label: 'com.apple.WindowServer',
+    domain: 'apple-daemon',
+    plistPath: '/System/Library/LaunchDaemons/com.apple.WindowServer.plist',
+    loaded: true, running: true, pid: 210,
+    enabled: true, lastExit: 0,
+    schedule: 'KeepAlive',
+    scheduleHuman: 'System daemon (always)',
+    blame: null, stdoutPath: null, stderrPath: null,
+  },
+  {
+    label: 'org.homebrew.updater',
+    domain: 'global-agent',
+    plistPath: '/Library/LaunchAgents/org.homebrew.updater.plist',
+    loaded: true, running: false, pid: null,
+    enabled: true, lastExit: 0,
+    schedule: 'StartInterval: 86400',
+    scheduleHuman: 'Every 24 hours',
+    blame: null,
+    stdoutPath: '/tmp/homebrew-updater.log',
+    stderrPath: null,
+  },
+];
+
+// Generate additional mock jobs to surface pagination
+const EXTRA_APPLE = [
+  'com.apple.bird', 'com.apple.cloudd', 'com.apple.assistantd',
+  'com.apple.siriknowledged', 'com.apple.photoanalysisd', 'com.apple.photolibraryd',
+  'com.apple.callservicesd', 'com.apple.contactsd', 'com.apple.CalendarAgent',
+  'com.apple.reminders.agent', 'com.apple.Safari.SafeBrowsing',
+  'com.apple.wifi.WiFiAgent', 'com.apple.bluetoothd', 'com.apple.locationd',
+  'com.apple.coreaudiod', 'com.apple.audio.coreaudiod', 'com.apple.mediaremoted',
+  'com.apple.nsurlsessiond', 'com.apple.cfprefsd', 'com.apple.distnoted',
+  'com.apple.trustd', 'com.apple.securityd', 'com.apple.fontd',
+  'com.apple.coreservicesd', 'com.apple.launchservicesd', 'com.apple.notifyd',
+].map((label, i) => ({
+  label,
+  domain: i % 3 === 0 ? 'apple-daemon' : 'apple-agent',
+  plistPath: (i % 3 === 0 ? '/System/Library/LaunchDaemons/' : '/System/Library/LaunchAgents/') + label + '.plist',
+  loaded: true, running: i % 4 !== 3, pid: i % 4 !== 3 ? 300 + i * 7 : null,
+  enabled: true, lastExit: 0,
+  schedule: 'KeepAlive',
+  scheduleHuman: 'System (always)',
+  blame: null, stdoutPath: null, stderrPath: null,
+}));
+
+const EXTRA_USER = [
+  'com.example.docpipe', 'com.example.editdb', 'com.example.etf-monitor',
+  'com.example.pdf-index', 'com.example.git-dashboard', 'com.example.harscope',
+  'com.example.jtree-watcher', 'com.example.md-json-sync', 'com.example.tax-updater',
+  'com.example.mls-scraper', 'com.example.dloc-updater', 'com.example.transcription-svc',
+  'com.example.model-sentinel',
+].map((label, i) => ({
+  label,
+  domain: 'user-agent',
+  plistPath: '~/Library/LaunchAgents/' + label + '.plist',
+  loaded: i < 10, running: i < 6, pid: i < 6 ? 5000 + i * 13 : null,
+  enabled: i < 11, lastExit: i === 8 ? 2 : 0,
+  schedule: i % 3 === 0 ? 'KeepAlive' : i % 3 === 1 ? 'StartInterval: ' + (300 * (i + 1)) : 'CalendarInterval',
+  scheduleHuman: i % 3 === 0 ? 'Always running (KeepAlive)' : i % 3 === 1 ? `Every ${(i + 1) * 5} minutes` : 'Daily at 3:00 AM',
+  blame: i === 8 ? 'exit code 2: permission denied' : null,
+  stdoutPath: '/tmp/' + label.split('.').pop() + '.log',
+  stderrPath: '/tmp/' + label.split('.').pop() + '.err',
+}));
+
+const ALL_MOCK_JOBS = [...MOCK_JOBS, ...EXTRA_USER, ...EXTRA_APPLE];
+
+const MOCK_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.backup-rotation</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/python3</string>
+        <string>/Users/example/source/utilities/moneydance backup rotation/rotate.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/backup-rotation.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/backup-rotation.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>`;
+
+const MOCK_LOG_LINES = [
+  { time: '2026-03-13 14:32:01', level: 'info', text: 'Starting backup rotation check...' },
+  { time: '2026-03-13 14:32:01', level: 'info', text: 'Reading configuration from ~/.backup-rotation/config.json' },
+  { time: '2026-03-13 14:32:02', level: 'error', text: 'FileNotFoundError: No such file or directory: \'/Users/example/.backup-rotation/config.json\'' },
+  { time: '2026-03-13 14:32:02', level: 'error', text: 'Traceback (most recent call last):' },
+  { time: '2026-03-13 14:32:02', level: 'error', text: '  File "/Users/example/source/utilities/moneydance backup rotation/rotate.py", line 47, in main' },
+  { time: '2026-03-13 14:32:02', level: 'error', text: '    config = json.load(open(config_path))' },
+  { time: '2026-03-13 14:32:02', level: 'error', text: 'Process exited with status 78' },
+  { time: '2026-03-13 02:00:01', level: 'info', text: 'Starting backup rotation check...' },
+  { time: '2026-03-13 02:00:01', level: 'info', text: 'Reading configuration from ~/.backup-rotation/config.json' },
+  { time: '2026-03-13 02:00:02', level: 'error', text: 'FileNotFoundError: No such file or directory: \'/Users/example/.backup-rotation/config.json\'' },
+  { time: '2026-03-13 02:00:02', level: 'error', text: 'Process exited with status 78' },
+];
+
+// ---- Icon components (using inline SVGs for the prototype) ----
+function Icon({ name, size = 16, className = '' }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current && lucide.icons[name]) {
+      ref.current.innerHTML = '';
+      const svg = lucide.createElement(lucide.icons[name]);
+      svg.setAttribute('width', size);
+      svg.setAttribute('height', size);
+      ref.current.appendChild(svg);
+    }
+  }, [name, size]);
+  return <span ref={ref} className={className} style={{ display: 'inline-flex', alignItems: 'center' }} />;
+}
+
+// ---- Apple logo SVG (inline, no font dependency) ----
+function AppleLogo({ size = 14, color = 'currentColor', className = '' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} className={className} style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+      <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+    </svg>
+  );
+}
+
+// ---- Helper functions ----
+function getJobStatus(job) {
+  if (!job.loaded) return 'unloaded';
+  if (!job.enabled) return 'disabled';
+  if (job.running) return 'running';
+  if (job.lastExit !== 0 && job.lastExit !== null) return 'failed';
+  return 'idle';
+}
+
+function statusLabel(s) {
+  return { running: 'Running', idle: 'Idle', failed: 'Failed', disabled: 'Disabled', unloaded: 'Unloaded' }[s] || s;
+}
+
+// ---- Toast system ----
+function ToastContainer({ toasts, removeToast }) {
+  return (
+    <div className="toast-container">
+      {toasts.map(t => (
+        <div key={t.id} className={`toast ${t.type}`}>
+          <span className="toast-icon">
+            <Icon name={t.type === 'success' ? 'check-circle' : t.type === 'error' ? 'x-circle' : 'alert-triangle'} size={16} />
+          </span>
+          <span className="toast-message">{t.message}</span>
+          <button className="toast-close" onClick={() => removeToast(t.id)}>
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---- Confirm Dialog ----
+function ConfirmDialog({ title, message, onConfirm, onCancel, danger = false }) {
+  return (
+    <div className="confirm-overlay" onClick={onCancel}>
+      <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
+        <div className="confirm-title">{title}</div>
+        <div className="confirm-message">{message}</div>
+        <div className="confirm-actions">
+          <button className="btn" onClick={onCancel}>Cancel</button>
+          <button className={`btn ${danger ? 'btn-danger' : 'btn-accent'}`} onClick={onConfirm}>
+            {danger ? 'Delete' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Status Cards ----
+function StatusCards({ jobs, activeFilter, setActiveFilter }) {
+  const counts = useMemo(() => {
+    const c = { running: 0, idle: 0, failed: 0, disabled: 0, unloaded: 0 };
+    jobs.forEach(j => { c[getJobStatus(j)]++; });
+    return c;
+  }, [jobs]);
+
+  return (
+    <div className="status-cards">
+      {['running', 'idle', 'failed', 'disabled', 'unloaded'].map(s => (
+        <div
+          key={s}
+          className={`status-card ${s} ${activeFilter === s ? 'active' : ''}`}
+          onClick={() => setActiveFilter(activeFilter === s ? null : s)}
+        >
+          <div className="status-card-count">{counts[s]}</div>
+          <div className="status-card-label">{statusLabel(s)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---- Failed Jobs Panel ----
+function FailedPanel({ jobs, onOpenDetail, onOpenLogs, onOpenEdit, onReload }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const failedJobs = jobs.filter(j => getJobStatus(j) === 'failed');
+
+  if (failedJobs.length === 0) return null;
+
+  return (
+    <div className="failed-panel">
+      <div className="failed-panel-header" onClick={() => setCollapsed(!collapsed)}>
+        <div className="failed-panel-title">
+          <div className="failed-pulse" />
+          {failedJobs.length} Failed Job{failedJobs.length > 1 ? 's' : ''} — Attention Required
+        </div>
+        <Icon name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} />
+      </div>
+      {!collapsed && (
+        <div className="failed-panel-body">
+          {failedJobs.map((j, i) => (
+            <div key={j.label} className="failed-job-row" style={{ animationDelay: `${i * 50}ms`, cursor: 'pointer' }} onClick={() => onOpenDetail(j)}>
+              <div className="failed-job-info">
+                <span className="failed-job-label">{j.label}</span>
+                <span className="failed-job-exit">exit {j.lastExit}</span>
+                {j.blame && <span className="failed-job-blame" title={j.blame}>{j.blame}</span>}
+              </div>
+              <div className="failed-job-actions">
+                <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onOpenLogs(j); }}>
+                  <Icon name="file-text" size={12} /> Logs
+                </button>
+                <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onOpenEdit(j); }}>
+                  <Icon name="pencil" size={12} /> Edit
+                </button>
+                <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onReload(j); }}>
+                  <Icon name="refresh-cw" size={12} /> Reload
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Filter Bar ----
+function FilterBar({ search, setSearch, domainFilter, setDomainFilter, showApple, setShowApple, activeFilter, setActiveFilter }) {
+  const searchRef = useRef(null);
+  const appleForced = domainFilter === 'apple';
+
+  // Esc clears search when focused
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      if (search) {
+        e.preventDefault();
+        e.stopPropagation();
+        setSearch('');
+      } else {
+        searchRef.current?.blur();
+      }
+    }
+  };
+
+  return (
+    <div className="filter-bar">
+      <Icon name="search" size={14} />
+      <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
+        <input
+          ref={searchRef}
+          className="filter-search"
+          style={{ width: '100%', paddingRight: search ? 60 : 10 }}
+          placeholder="Search jobs by label...  (/ to focus, Esc to clear)"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={handleSearchKeyDown}
+        />
+        {search && (
+          <button
+            onClick={() => { setSearch(''); searchRef.current?.focus(); }}
+            style={{
+              position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+              background: 'var(--bg-hover)', border: '1px solid var(--border-strong)',
+              borderRadius: 4, color: 'var(--text-primary)', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 3,
+              padding: '2px 8px', lineHeight: 1, zIndex: 2,
+              fontSize: 11, fontFamily: 'var(--font-mono)',
+            }}
+            title="Clear search (Esc)"
+          >
+            <Icon name="x" size={11} /> clear
+          </button>
+        )}
+      </div>
+      <select className="filter-select" value={domainFilter} onChange={e => {
+        const val = e.target.value;
+        setDomainFilter(val);
+        // If selecting Apple domain, auto-enable apple visibility
+        if (val === 'apple') setShowApple(true);
+      }}>
+        <option value="all">All Domains</option>
+        <option value="user-agent">User Agents</option>
+        <option value="global-agent">Global Agents</option>
+        <option value="system-daemon">System Daemons</option>
+        {showApple && <option value="apple">Apple</option>}
+      </select>
+      <div
+        className={`filter-toggle ${showApple ? 'active' : ''} ${appleForced ? 'forced' : ''}`}
+        onClick={() => {
+          if (appleForced) return; // Can't toggle off while filtering to Apple
+          setShowApple(!showApple);
+        }}
+        style={appleForced ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+        title={appleForced ? 'Cannot hide Apple jobs while filtering by Apple domain' : 'Toggle Apple system jobs'}
+      >
+        <Icon name="shield" size={14} />
+        Apple Jobs
+      </div>
+      {activeFilter && (
+        <div className="filter-chip" onClick={() => setActiveFilter(null)}>
+          {statusLabel(activeFilter)} <Icon name="x" size={10} />
+        </div>
+      )}
+      <div style={{ flex: 1 }} />
+      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+        <kbd className="kbd">?</kbd> shortcuts
+      </span>
+    </div>
+  );
+}
+
+// ---- Job Table ----
+// ---- Pagination ----
+function Pagination({ currentPage, totalPages, onPageChange }) {
+  const [editingPage, setEditingPage] = useState(false);
+  const [pageInput, setPageInput] = useState('');
+
+  if (totalPages <= 1) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const p = parseInt(pageInput, 10);
+    if (p >= 1 && p <= totalPages) onPageChange(p);
+    setEditingPage(false);
+    setPageInput('');
+  };
+
+  const PgBtn = ({ onClick, disabled, children, title }) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        minWidth: 32, height: 28, padding: '0 8px',
+        background: disabled ? 'transparent' : 'var(--bg-surface)',
+        border: `1px solid ${disabled ? 'var(--border-subtle)' : 'var(--border-default)'}`,
+        borderRadius: 4,
+        color: disabled ? 'var(--text-tertiary)' : 'var(--text-primary)',
+        cursor: disabled ? 'default' : 'pointer',
+        fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500,
+        opacity: disabled ? 0.4 : 1,
+        transition: 'all 0.15s',
+      }}
+      onMouseEnter={e => { if (!disabled) { e.target.style.background = 'var(--bg-hover)'; e.target.style.borderColor = 'var(--border-strong)'; }}}
+      onMouseLeave={e => { if (!disabled) { e.target.style.background = 'var(--bg-surface)'; e.target.style.borderColor = 'var(--border-default)'; }}}
+    >
+      {children}
+    </button>
+  );
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+      fontSize: 12,
+    }}>
+      <PgBtn onClick={() => onPageChange(1)} disabled={currentPage === 1} title="First page">
+        &laquo; First
+      </PgBtn>
+      <PgBtn onClick={() => onPageChange(currentPage - 1)} disabled={currentPage === 1} title="Previous page">
+        &lsaquo; Prev
+      </PgBtn>
+
+      {editingPage ? (
+        <form onSubmit={handleSubmit} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <input
+            autoFocus
+            className="form-input"
+            style={{ width: 48, height: 28, padding: '2px 6px', textAlign: 'center', fontSize: 12 }}
+            value={pageInput}
+            onChange={e => setPageInput(e.target.value)}
+            onBlur={() => { setEditingPage(false); setPageInput(''); }}
+            placeholder={String(currentPage)}
+          />
+          <span style={{ color: 'var(--text-tertiary)' }}>/ {totalPages}</span>
+        </form>
+      ) : (
+        <span
+          style={{
+            padding: '4px 12px', cursor: 'pointer', color: 'var(--text-secondary)',
+            userSelect: 'none', border: '1px solid var(--border-default)',
+            borderRadius: 4, background: 'var(--bg-surface)',
+          }}
+          onClick={() => { setEditingPage(true); setPageInput(String(currentPage)); }}
+          title="Click to jump to page"
+        >
+          Page <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{currentPage}</span> of {totalPages}
+        </span>
+      )}
+
+      <PgBtn onClick={() => onPageChange(currentPage + 1)} disabled={currentPage === totalPages} title="Next page">
+        Next &rsaquo;
+      </PgBtn>
+      <PgBtn onClick={() => onPageChange(totalPages)} disabled={currentPage === totalPages} title="Last page">
+        Last &raquo;
+      </PgBtn>
+    </div>
+  );
+}
+
+// ---- Job Table ----
+const PAGE_SIZE = 25;
+
+function JobTable({ jobs, selected, setSelected, onRowClick, showApple }) {
+  const [sortCol, setSortCol] = useState('status');
+  const [sortAsc, setSortAsc] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortAsc(!sortAsc);
+    else { setSortCol(col); setSortAsc(true); }
+  };
+
+  const toggleSelect = (label, e) => {
+    e.stopPropagation();
+    setSelected(prev =>
+      prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]
+    );
+  };
+
+  const toggleAll = () => {
+    if (selected.length === jobs.length) setSelected([]);
+    else setSelected(jobs.map(j => j.label));
+  };
+
+  // Reset to page 1 when filters/jobs change
+  useEffect(() => { setCurrentPage(1); }, [jobs.length]);
+
+  const sorted = useMemo(() => {
+    const order = { failed: 0, running: 1, idle: 2, disabled: 3, unloaded: 4 };
+    return [...jobs].sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === 'status') cmp = order[getJobStatus(a)] - order[getJobStatus(b)];
+      else if (sortCol === 'label') cmp = a.label.localeCompare(b.label);
+      else if (sortCol === 'domain') cmp = a.domain.localeCompare(b.domain);
+      else if (sortCol === 'exit') cmp = (a.lastExit || 0) - (b.lastExit || 0);
+      return sortAsc ? cmp : -cmp;
+    });
+  }, [jobs, sortCol, sortAsc]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const page = Math.min(currentPage, totalPages);
+  const paginatedJobs = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const SortHeader = ({ col, children, style }) => (
+    <th
+      className={sortCol === col ? 'sorted' : ''}
+      onClick={() => handleSort(col)}
+      style={style}
+    >
+      {children}
+      <span className="sort-arrow">{sortCol === col ? (sortAsc ? '▲' : '▼') : '▲'}</span>
+    </th>
+  );
+
+  return (
+    <div className="job-table-container" style={{ overflow: 'auto' }}>
+      <table className="job-table">
+        <thead>
+          <tr>
+            <th style={{ width: 36 }}>
+              <div
+                className={`checkbox ${selected.length === jobs.length && jobs.length > 0 ? 'checked' : ''}`}
+                onClick={toggleAll}
+              />
+            </th>
+            <SortHeader col="status" style={{ width: 60 }}>Status</SortHeader>
+            <SortHeader col="label">Label</SortHeader>
+            <SortHeader col="domain" style={{ width: 120 }}>Domain</SortHeader>
+            <th style={{ width: 180 }}>Schedule</th>
+            <th style={{ width: 70 }}>PID</th>
+            <SortHeader col="exit" style={{ width: 80 }}>Last Exit</SortHeader>
+            <th style={{ width: 180, textAlign: 'right' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paginatedJobs.map((job, i) => {
+            const status = getJobStatus(job);
+            return (
+              <tr
+                key={job.label}
+                className={`${selected.includes(job.label) ? 'selected' : ''} status-${status} ${job.domain.startsWith('apple') ? 'apple-row' : ''}`}
+                onClick={() => onRowClick(job)}
+                style={{ animationDelay: `${i * 20}ms` }}
+              >
+                <td>
+                  <div
+                    className={`checkbox ${selected.includes(job.label) ? 'checked' : ''}`}
+                    onClick={e => toggleSelect(job.label, e)}
+                  />
+                </td>
+                <td>
+                  <div className={`status-dot ${status}`} title={statusLabel(status)} />
+                </td>
+                <td>
+                  <div className="job-label-cell">
+                    {job.domain.startsWith('apple') && <span className="apple-row-icon" title="Apple system job"><AppleLogo size={14} color="#d0a050" /></span>}
+                    <span className="job-label-text">{job.label}</span>
+                  </div>
+                </td>
+                <td>
+                  <span className={`domain-badge ${job.domain.startsWith('apple') ? 'apple' : job.domain}`}>
+                    {job.domain.startsWith('apple') && <AppleLogo size={10} color="#e8a030" className="apple-badge-icon" />}
+                    {job.domain.replace('-', ' ')}
+                  </span>
+                </td>
+                <td><span className="schedule-text" title={job.schedule}>{job.scheduleHuman}</span></td>
+                <td><span className="pid-text">{job.pid || '—'}</span></td>
+                <td>
+                  {job.lastExit !== null ? (
+                    <span className={`exit-code ${job.lastExit === 0 ? 'zero' : 'nonzero'}`}>
+                      {job.lastExit}
+                    </span>
+                  ) : '—'}
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  <div className="row-actions">
+                    <button className="row-action-btn" title="Start (s)" onClick={e => e.stopPropagation()}>
+                      <Icon name="play" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Stop (x)" onClick={e => e.stopPropagation()}>
+                      <Icon name="square" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Run Now (one-shot)" onClick={e => e.stopPropagation()}>
+                      <Icon name="zap" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Reload (r)" onClick={e => e.stopPropagation()}>
+                      <Icon name="refresh-cw" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Edit (e)" onClick={e => e.stopPropagation()}>
+                      <Icon name="pencil" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Logs (l)" onClick={e => e.stopPropagation()}>
+                      <Icon name="file-text" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Export" onClick={e => e.stopPropagation()}>
+                      <Icon name="download" size={13} />
+                    </button>
+                    <button className="row-action-btn danger" title="Delete" onClick={e => e.stopPropagation()}>
+                      <Icon name="trash-2" size={13} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '6px 12px', borderTop: '1px solid var(--border-subtle)',
+        background: 'var(--bg-elevated)', fontSize: 11, color: 'var(--text-tertiary)',
+      }}>
+        <span>{sorted.length} job{sorted.length !== 1 ? 's' : ''}{sorted.length !== jobs.length ? ` (filtered from ${jobs.length})` : ''}</span>
+        <Pagination currentPage={page} totalPages={totalPages} onPageChange={setCurrentPage} />
+        <span>{PAGE_SIZE} per page</span>
+      </div>
+    </div>
+  );
+}
+
+// ---- Bulk Action Bar ----
+function BulkBar({ count, onClear }) {
+  if (count === 0) return null;
+  return (
+    <div className="bulk-bar">
+      <span className="bulk-bar-count">{count} selected</span>
+      <div className="bulk-bar-divider" />
+      <button className="btn btn-sm"><Icon name="play" size={12} /> Start All</button>
+      <button className="btn btn-sm"><Icon name="square" size={12} /> Stop All</button>
+      <button className="btn btn-sm"><Icon name="refresh-cw" size={12} /> Reload All</button>
+      <button className="btn btn-sm"><Icon name="toggle-left" size={12} /> Enable</button>
+      <button className="btn btn-sm"><Icon name="toggle-right" size={12} /> Disable</button>
+      <button className="btn btn-sm btn-danger"><Icon name="trash-2" size={12} /> Delete</button>
+      <div style={{ flex: 1 }} />
+      <button className="btn btn-sm btn-ghost" onClick={onClear}>Clear Selection</button>
+    </div>
+  );
+}
+
+// ---- Detail Panel ----
+function DetailPanel({ job, initialTab, onClose, addToast }) {
+  const [activeTab, setActiveTab] = useState(initialTab || 'info');
+  const [logTab, setLogTab] = useState('stderr');
+  const [plistContent, setPlistContent] = useState(MOCK_PLIST);
+  const [modified, setModified] = useState(false);
+
+  // Reset tab when job or initialTab changes
+  useEffect(() => {
+    setActiveTab(initialTab || 'info');
+  }, [job?.label, initialTab]);
+
+  if (!job) return null;
+  const status = getJobStatus(job);
+
+  return (
+    <>
+      <div className={`panel-overlay ${job ? 'visible' : ''}`} onClick={onClose} />
+      <div className={`detail-panel ${job ? 'open' : ''}`}>
+        <div className="panel-header">
+          <div className="panel-header-title">
+            <div className={`status-dot ${status}`} />
+            {job.label}
+          </div>
+          <div className="panel-header-actions">
+            <button className="btn btn-sm" onClick={() => addToast('success', `Started ${job.label}`)}>
+              <Icon name="play" size={12} /> Start
+            </button>
+            <button className="btn btn-sm" onClick={() => addToast('success', `Stopped ${job.label}`)}>
+              <Icon name="square" size={12} /> Stop
+            </button>
+            <button className="btn btn-sm" onClick={() => addToast('success', `Running ${job.label} (one-shot)...`)} title="One-shot execution via kickstart">
+              <Icon name="zap" size={12} /> Run Now
+            </button>
+            <button className="btn btn-sm btn-accent" onClick={() => addToast('success', `Reloading ${job.label}...`)}>
+              <Icon name="refresh-cw" size={12} /> Reload
+            </button>
+            <button className="icon-btn" onClick={onClose}>
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+        </div>
+
+        <div className="panel-tabs">
+          {['info', 'logs', 'edit'].map(t => (
+            <div
+              key={t}
+              className={`panel-tab ${activeTab === t ? 'active' : ''}`}
+              onClick={() => setActiveTab(t)}
+            >
+              {t === 'info' ? 'Info' : t === 'logs' ? 'Logs' : 'Edit Plist'}
+            </div>
+          ))}
+        </div>
+
+        <div className="panel-body">
+          {activeTab === 'info' && (
+            <div className="animate-fade">
+              <div className="info-grid">
+                <span className="info-label">Label</span>
+                <span className="info-value">{job.label}</span>
+                <span className="info-label">Status</span>
+                <span className="info-value">
+                  <span className={`status-dot ${status}`} style={{ marginRight: 8 }} />
+                  {statusLabel(status)}
+                  {job.pid && ` (PID ${job.pid})`}
+                </span>
+                <span className="info-label">Domain</span>
+                <span className="info-value">{job.domain}</span>
+                <span className="info-label">Plist</span>
+                <span className="info-value">{job.plistPath}</span>
+                <span className="info-label">Schedule</span>
+                <span className="info-value">{job.scheduleHuman}</span>
+                <span className="info-label">Loaded</span>
+                <span className="info-value">{job.loaded ? 'Yes' : 'No'}</span>
+                <span className="info-label">Enabled</span>
+                <span className="info-value">{job.enabled ? 'Yes' : 'No'}</span>
+                <span className="info-label">Last Exit</span>
+                <span className="info-value">
+                  {job.lastExit !== null ? (
+                    <span className={`exit-code ${job.lastExit === 0 ? 'zero' : 'nonzero'}`}>{job.lastExit}</span>
+                  ) : '—'}
+                </span>
+                {job.blame && (
+                  <>
+                    <span className="info-label">Blame</span>
+                    <span className="info-value" style={{ color: 'var(--status-failed)' }}>{job.blame}</span>
+                  </>
+                )}
+                <span className="info-label">Stdout</span>
+                <span className="info-value">{job.stdoutPath || '—'}</span>
+                <span className="info-label">Stderr</span>
+                <span className="info-value">{job.stderrPath || '—'}</span>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                <button className="btn"><Icon name="toggle-left" size={14} /> {job.enabled ? 'Disable' : 'Enable'}</button>
+                <button className="btn"><Icon name={job.loaded ? 'log-out' : 'log-in'} size={14} /> {job.loaded ? 'Unload' : 'Load'}</button>
+                <button className="btn" onClick={() => addToast('success', `Exported ${job.label}.plist`)}>
+                  <Icon name="download" size={14} /> Export Plist
+                </button>
+                <button className="btn btn-danger"><Icon name="trash-2" size={14} /> Delete Job</button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'edit' && (
+            <div className="animate-fade">
+              <div className="plist-editor">
+                <div className="plist-editor-header">
+                  <span>{job.plistPath}</span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {modified && <span style={{ color: 'var(--accent)', fontSize: 11 }}>● Modified</span>}
+                    <button
+                      className="btn btn-sm btn-accent"
+                      onClick={() => {
+                        setModified(false);
+                        addToast('success', 'Plist saved. Reload to apply changes.');
+                      }}
+                      disabled={!modified}
+                      style={{ opacity: modified ? 1 : 0.5 }}
+                    >
+                      <Icon name="save" size={12} /> Save
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => addToast('success', `Reloading ${job.label}...`)}
+                    >
+                      <Icon name="refresh-cw" size={12} /> Save & Reload
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  value={plistContent}
+                  onChange={e => { setPlistContent(e.target.value); setModified(true); }}
+                  spellCheck={false}
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'logs' && (
+            <div className="animate-fade">
+              <div className="log-viewer">
+                <div className="log-toolbar">
+                  <div className="log-toolbar-left">
+                    {['stderr', 'stdout', 'unified'].map(t => (
+                      <div
+                        key={t}
+                        className={`log-tab ${logTab === t ? 'active' : ''}`}
+                        onClick={() => setLogTab(t)}
+                      >
+                        {t}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button className="btn btn-sm btn-ghost">
+                      <Icon name="search" size={12} /> Search
+                    </button>
+                    <button className="btn btn-sm btn-ghost">
+                      <Icon name="arrow-down-to-line" size={12} /> Follow
+                    </button>
+                  </div>
+                </div>
+                <div className="log-content">
+                  {MOCK_LOG_LINES.map((line, i) => (
+                    <div key={i} className="log-line">
+                      <span className="timestamp">{line.time} </span>
+                      <span className={line.level === 'error' ? 'error' : line.level === 'warn' ? 'warn' : ''}>
+                        {line.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---- Create Job Modal ----
+function CreateJobModal({ onClose, addToast }) {
+  const [step, setStep] = useState('form'); // form | preview
+  const [formData, setFormData] = useState({
+    label: '',
+    program: '',
+    args: '',
+    domain: 'user-agent',
+    runAtLoad: true,
+    keepAlive: false,
+    scheduleType: 'none',
+    startInterval: '',
+    calendarHour: '',
+    calendarMinute: '0',
+    calendarWeekdays: [],
+    calendarDay: '',
+    watchPaths: '',
+    stdoutPath: '',
+    stderrPath: '',
+    workingDir: '',
+  });
+
+  const update = (k, v) => setFormData(prev => ({ ...prev, [k]: v }));
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">
+            <Icon name="plus-circle" size={18} /> Create New Job
+          </div>
+          <button className="icon-btn" onClick={onClose}>
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+
+        <div className="modal-body">
+          {step === 'form' ? (
+            <div className="animate-fade">
+              <div className="form-group">
+                <label className="form-label">Label (reverse-DNS)</label>
+                <input
+                  className="form-input"
+                  placeholder="com.example.my-tool"
+                  value={formData.label}
+                  onChange={e => update('label', e.target.value)}
+                />
+                <div className="form-hint">Unique identifier, e.g. com.example.tool-name</div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Program / Command</label>
+                <input
+                  className="form-input"
+                  placeholder="/usr/local/bin/python3"
+                  value={formData.program}
+                  onChange={e => update('program', e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Arguments (one per line)</label>
+                <textarea
+                  className="form-input"
+                  rows={3}
+                  placeholder="/path/to/script.py&#10;--flag&#10;value"
+                  value={formData.args}
+                  onChange={e => update('args', e.target.value)}
+                  style={{ fontFamily: 'var(--font-mono)', resize: 'vertical' }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Domain</label>
+                <select className="form-input" value={formData.domain} onChange={e => update('domain', e.target.value)}>
+                  <option value="user-agent">User Agent (~/Library/LaunchAgents)</option>
+                  <option value="global-agent">Global Agent (/Library/LaunchAgents)</option>
+                  <option value="system-daemon">System Daemon (/Library/LaunchDaemons)</option>
+                </select>
+              </div>
+
+              {/* Schedule Section */}
+              <div style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', borderRadius: 6, padding: 14, marginBottom: 14 }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                  Schedule
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Schedule Type</label>
+                  <select className="form-input" value={formData.scheduleType} onChange={e => update('scheduleType', e.target.value)}>
+                    <option value="none">None (manual start only)</option>
+                    <option value="interval">Interval (every N seconds)</option>
+                    <option value="calendar">Calendar (cron-like schedule)</option>
+                    <option value="watch">Watch Paths (run when files change)</option>
+                  </select>
+                  <div className="form-hint">
+                    {formData.scheduleType === 'none' && 'Job will only run when started manually or via RunAtLoad/KeepAlive.'}
+                    {formData.scheduleType === 'interval' && 'Job repeats at a fixed interval.'}
+                    {formData.scheduleType === 'calendar' && 'Job runs at specific times (like cron). Leave fields blank for "any".'}
+                    {formData.scheduleType === 'watch' && 'Job runs whenever the specified paths are modified.'}
+                  </div>
+                </div>
+
+                {formData.scheduleType === 'interval' && (
+                  <div className="form-group animate-fade">
+                    <label className="form-label">Interval (seconds)</label>
+                    <div className="form-row">
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <input
+                          className="form-input"
+                          type="number"
+                          placeholder="e.g. 300"
+                          value={formData.startInterval}
+                          onChange={e => update('startInterval', e.target.value)}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', color: 'var(--text-tertiary)', fontSize: 11 }}>
+                        {formData.startInterval && `= ${formData.startInterval >= 3600 ? Math.floor(formData.startInterval / 3600) + 'h ' + Math.floor((formData.startInterval % 3600) / 60) + 'm' : formData.startInterval >= 60 ? Math.floor(formData.startInterval / 60) + 'm ' + (formData.startInterval % 60) + 's' : formData.startInterval + 's'}`}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {formData.scheduleType === 'calendar' && (
+                  <div className="animate-fade">
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label className="form-label">Hour (0-23)</label>
+                        <input className="form-input" type="number" min="0" max="23" placeholder="any" value={formData.calendarHour} onChange={e => update('calendarHour', e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Minute (0-59)</label>
+                        <input className="form-input" type="number" min="0" max="59" placeholder="0" value={formData.calendarMinute} onChange={e => update('calendarMinute', e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Weekdays (click to select, leave empty for every day)</label>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day, idx) => {
+                          const isSelected = formData.calendarWeekdays.includes(idx);
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                const next = isSelected
+                                  ? formData.calendarWeekdays.filter(d => d !== idx)
+                                  : [...formData.calendarWeekdays, idx].sort();
+                                update('calendarWeekdays', next);
+                              }}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: 4,
+                                fontSize: 11,
+                                fontFamily: 'var(--font-mono)',
+                                cursor: 'pointer',
+                                userSelect: 'none',
+                                transition: 'all 0.15s',
+                                background: isSelected ? 'var(--accent)' : 'var(--bg-elevated)',
+                                color: isSelected ? 'var(--text-inverse)' : 'var(--text-secondary)',
+                                border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border-default)'}`,
+                                fontWeight: isSelected ? 600 : 400,
+                              }}
+                            >
+                              {day}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="form-hint" style={{ marginTop: 4 }}>
+                        {formData.calendarWeekdays.length === 0
+                          ? 'Every day'
+                          : formData.calendarWeekdays.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Day of Month</label>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input
+                          className="form-input"
+                          style={{ width: 80 }}
+                          type="number"
+                          min="1"
+                          max="31"
+                          placeholder="any"
+                          value={formData.calendarDay}
+                          onChange={e => {
+                            let v = e.target.value;
+                            if (v !== '') {
+                              const n = parseInt(v, 10);
+                              if (isNaN(n)) v = '';
+                              else if (n > 31) v = '31';
+                              else if (n < 1 && v !== '') v = '1';
+                            }
+                            update('calendarDay', v);
+                          }}
+                        />
+                        {formData.calendarDay && (
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => update('calendarDay', '')}
+                            title="Clear to 'any day'"
+                          >
+                            <Icon name="x" size={12} /> Any
+                          </button>
+                        )}
+                        {!formData.calendarDay && (
+                          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>any day of month</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="form-hint" style={{ marginTop: -8, marginBottom: 8 }}>
+                      Preview: {(() => {
+                        const parts = [];
+                        const wd = formData.calendarWeekdays;
+                        if (wd.length > 0) parts.push(wd.map(d => ['Sundays','Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays'][d]).join(', '));
+                        if (formData.calendarDay) parts.push(`day ${formData.calendarDay} of month`);
+                        if (wd.length === 0 && !formData.calendarDay) parts.push('Daily');
+                        parts.push(`at ${formData.calendarHour || '*'}:${(formData.calendarMinute || '0').padStart(2, '0')}`);
+                        return parts.join(' ');
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {formData.scheduleType === 'watch' && (
+                  <div className="form-group animate-fade">
+                    <label className="form-label">Watch Paths (one per line)</label>
+                    <textarea
+                      className="form-input"
+                      rows={3}
+                      placeholder="~/Downloads&#10;/tmp/trigger-file"
+                      value={formData.watchPaths}
+                      onChange={e => update('watchPaths', e.target.value)}
+                      style={{ fontFamily: 'var(--font-mono)', resize: 'vertical' }}
+                    />
+                    <div className="form-hint">Job runs whenever any of these paths are modified.</div>
+                  </div>
+                )}
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Stdout Path</label>
+                  <input className="form-input" placeholder="/tmp/my-tool.log" value={formData.stdoutPath} onChange={e => update('stdoutPath', e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Stderr Path</label>
+                  <input className="form-input" placeholder="/tmp/my-tool.err" value={formData.stderrPath} onChange={e => update('stderrPath', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Working Directory</label>
+                <input className="form-input" placeholder="(optional)" value={formData.workingDir} onChange={e => update('workingDir', e.target.value)} />
+              </div>
+
+              <div style={{ marginTop: 8 }}>
+                <div className="toggle-row">
+                  <span className="toggle-row-label">Run at Load</span>
+                  <div className={`toggle-switch ${formData.runAtLoad ? 'on' : ''}`} onClick={() => update('runAtLoad', !formData.runAtLoad)} />
+                </div>
+                <div className="toggle-row">
+                  <span className="toggle-row-label">Keep Alive</span>
+                  <div className={`toggle-switch ${formData.keepAlive ? 'on' : ''}`} onClick={() => update('keepAlive', !formData.keepAlive)} />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="animate-fade">
+              <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                Preview the generated plist before creating:
+              </div>
+              <div className="plist-preview">
+{`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${formData.label || 'com.example.my-tool'}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${formData.program || '/usr/local/bin/python3'}</string>${formData.args ? formData.args.split('\n').map(a => `
+        <string>${a}</string>`).join('') : ''}
+    </array>${formData.scheduleType === 'interval' && formData.startInterval ? `
+    <key>StartInterval</key>
+    <integer>${formData.startInterval}</integer>` : ''}${formData.scheduleType === 'calendar' ? (
+  formData.calendarWeekdays.length > 1
+    ? `
+    <key>StartCalendarInterval</key>
+    <array>${formData.calendarWeekdays.map(wd => `
+        <dict>${formData.calendarHour ? `
+            <key>Hour</key>
+            <integer>${formData.calendarHour}</integer>` : ''}${formData.calendarMinute ? `
+            <key>Minute</key>
+            <integer>${formData.calendarMinute}</integer>` : ''}
+            <key>Weekday</key>
+            <integer>${wd}</integer>${formData.calendarDay ? `
+            <key>Day</key>
+            <integer>${formData.calendarDay}</integer>` : ''}
+        </dict>`).join('')}
+    </array>`
+    : `
+    <key>StartCalendarInterval</key>
+    <dict>${formData.calendarHour ? `
+        <key>Hour</key>
+        <integer>${formData.calendarHour}</integer>` : ''}${formData.calendarMinute ? `
+        <key>Minute</key>
+        <integer>${formData.calendarMinute}</integer>` : ''}${formData.calendarWeekdays.length === 1 ? `
+        <key>Weekday</key>
+        <integer>${formData.calendarWeekdays[0]}</integer>` : ''}${formData.calendarDay ? `
+        <key>Day</key>
+        <integer>${formData.calendarDay}</integer>` : ''}
+    </dict>`
+) : ''}${formData.scheduleType === 'watch' && formData.watchPaths ? `
+    <key>WatchPaths</key>
+    <array>${formData.watchPaths.split('\n').filter(Boolean).map(p => `
+        <string>${p}</string>`).join('')}
+    </array>` : ''}${formData.runAtLoad ? `
+    <key>RunAtLoad</key>
+    <true/>` : ''}${formData.keepAlive ? `
+    <key>KeepAlive</key>
+    <true/>` : ''}${formData.stdoutPath ? `
+    <key>StandardOutPath</key>
+    <string>${formData.stdoutPath}</string>` : ''}${formData.stderrPath ? `
+    <key>StandardErrorPath</key>
+    <string>${formData.stderrPath}</string>` : ''}${formData.workingDir ? `
+    <key>WorkingDirectory</key>
+    <string>${formData.workingDir}</string>` : ''}
+</dict>
+</plist>`}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          {step === 'preview' && (
+            <button className="btn" onClick={() => setStep('form')} style={{ marginRight: 'auto' }}>
+              <Icon name="arrow-left" size={14} /> Back
+            </button>
+          )}
+          <button className="btn" onClick={onClose}>Cancel</button>
+          {step === 'form' ? (
+            <button className="btn btn-accent" onClick={() => setStep('preview')}>
+              Preview Plist <Icon name="arrow-right" size={14} />
+            </button>
+          ) : (
+            <button
+              className="btn btn-accent"
+              onClick={() => {
+                addToast('success', `Created and loaded ${formData.label || 'new job'}`);
+                onClose();
+              }}
+            >
+              <Icon name="plus" size={14} /> Create & Load
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Settings Modal ----
+function SettingsModal({ onClose, settings, setSettings }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 480 }}>
+        <div className="modal-header">
+          <div className="modal-title"><Icon name="settings" size={18} /> Settings</div>
+          <button className="icon-btn" onClick={onClose}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="modal-body">
+          <div className="settings-section">
+            <div className="settings-section-title">Refresh</div>
+            <div className="form-group">
+              <label className="form-label">Poll Interval (seconds)</label>
+              <input
+                className="form-input"
+                type="number"
+                value={settings.pollInterval}
+                onChange={e => setSettings(s => ({ ...s, pollInterval: e.target.value }))}
+                style={{ width: 120 }}
+              />
+              <div className="form-hint">How often to refresh job status via WebSocket</div>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Display</div>
+            <div className="toggle-row">
+              <span className="toggle-row-label">Show Apple System Jobs</span>
+              <div
+                className={`toggle-switch ${settings.showApple ? 'on' : ''}`}
+                onClick={() => setSettings(s => ({ ...s, showApple: !s.showApple }))}
+              />
+            </div>
+            <div className="toggle-row">
+              <span className="toggle-row-label">Dark Mode</span>
+              <div
+                className={`toggle-switch ${settings.darkMode ? 'on' : ''}`}
+                onClick={() => setSettings(s => ({ ...s, darkMode: !s.darkMode }))}
+              />
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Safety</div>
+            <div className="toggle-row">
+              <span className="toggle-row-label">Confirm before destructive actions</span>
+              <div
+                className={`toggle-switch ${settings.confirmDestructive ? 'on' : ''}`}
+                onClick={() => setSettings(s => ({ ...s, confirmDestructive: !s.confirmDestructive }))}
+              />
+            </div>
+            <div className="toggle-row">
+              <span className="toggle-row-label">Confirm before modifying Apple jobs</span>
+              <div
+                className={`toggle-switch ${settings.confirmApple ? 'on' : ''}`}
+                onClick={() => setSettings(s => ({ ...s, confirmApple: !s.confirmApple }))}
+              />
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Keyboard Shortcuts</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: '6px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
+              <kbd className="kbd">s</kbd> <span>Start selected job</span>
+              <kbd className="kbd">x</kbd> <span>Stop selected job</span>
+              <kbd className="kbd">r</kbd> <span>Reload selected job</span>
+              <kbd className="kbd">e</kbd> <span>Edit selected job</span>
+              <kbd className="kbd">l</kbd> <span>View logs</span>
+              <kbd className="kbd">n</kbd> <span>Create new job</span>
+              <kbd className="kbd">Esc</kbd> <span>Close panel / deselect</span>
+              <kbd className="kbd">/</kbd> <span>Focus search</span>
+              <kbd className="kbd">?</kbd> <span>Toggle shortcuts help</span>
+            </div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-accent" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Main App ----
+function App() {
+  const [jobs] = useState(ALL_MOCK_JOBS);
+  const [search, setSearch] = useState('');
+  const [domainFilter, setDomainFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(null);
+  const [showApple, setShowApple] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [detailJob, setDetailJob] = useState(null);
+  const [detailInitialTab, setDetailInitialTab] = useState('info');
+  const [showCreate, setShowCreate] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  const [settings, setSettings] = useState({
+    pollInterval: 5,
+    showApple: false,
+    darkMode: true,
+    confirmDestructive: true,
+    confirmApple: true,
+  });
+
+  const toastId = useRef(0);
+
+  const addToast = useCallback((type, message) => {
+    const id = ++toastId.current;
+    setToasts(prev => [...prev, { id, type, message }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
+  }, []);
+
+  const removeToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // Apply theme
+  useEffect(() => {
+    if (settings.darkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+  }, [settings.darkMode]);
+
+  // Filter jobs
+  const filteredJobs = useMemo(() => {
+    return jobs.filter(j => {
+      if (!showApple && (j.domain === 'apple-agent' || j.domain === 'apple-daemon')) return false;
+      if (domainFilter !== 'all') {
+        if (domainFilter === 'apple') {
+          if (!j.domain.startsWith('apple')) return false;
+        } else if (j.domain !== domainFilter) return false;
+      }
+      if (statusFilter && getJobStatus(j) !== statusFilter) return false;
+      if (search && !j.label.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+  }, [jobs, search, domainFilter, statusFilter, showApple]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e) => {
+      // Allow Esc from input fields to clear/blur
+      if (e.key === 'Escape') {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+          // Let the FilterBar's own Esc handler run first for search
+          return;
+        }
+        setDetailJob(null); setShowCreate(false); setShowSettings(false);
+        return;
+      }
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+      if (e.key === 'n') { e.preventDefault(); setShowCreate(true); }
+      if (e.key === '/') { e.preventDefault(); document.querySelector('.filter-search')?.focus(); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  return (
+    <div className="app-shell">
+      {/* Top Bar */}
+      <div className="topbar">
+        <div className="topbar-left">
+          <span className="topbar-brand">launchmaster</span>
+          <span className="topbar-subtitle">launchd control center</span>
+        </div>
+        <div className="topbar-right">
+          <div className="topbar-ws-status">
+            <div className="ws-dot" />
+            <span>Live</span>
+          </div>
+          <button className="btn btn-sm" onClick={() => addToast('success', 'Select a .plist file to import...')}>
+            <Icon name="upload" size={13} /> Import
+          </button>
+          <button className="btn btn-sm btn-accent" onClick={() => setShowCreate(true)}>
+            <Icon name="plus" size={13} /> New Job
+          </button>
+          <button className="icon-btn" onClick={() => addToast('success', 'Status refreshed')}>
+            <Icon name="refresh-cw" size={16} />
+          </button>
+          <button className="icon-btn" onClick={() => setShowSettings(true)}>
+            <Icon name="settings" size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="main-content">
+        <StatusCards jobs={filteredJobs} activeFilter={statusFilter} setActiveFilter={setStatusFilter} />
+
+        <FailedPanel
+          jobs={filteredJobs}
+          onOpenDetail={(j) => { setDetailInitialTab('info'); setDetailJob(j); }}
+          onOpenLogs={(j) => { setDetailInitialTab('logs'); setDetailJob(j); }}
+          onOpenEdit={(j) => { setDetailInitialTab('edit'); setDetailJob(j); }}
+          onReload={(j) => addToast('success', `Reloading ${j.label}...`)}
+        />
+
+        <FilterBar
+          search={search} setSearch={setSearch}
+          domainFilter={domainFilter} setDomainFilter={setDomainFilter}
+          showApple={showApple} setShowApple={setShowApple}
+          activeFilter={statusFilter} setActiveFilter={setStatusFilter}
+        />
+
+        <BulkBar count={selected.length} onClear={() => setSelected([])} />
+
+        <JobTable
+          jobs={filteredJobs}
+          selected={selected}
+          setSelected={setSelected}
+          onRowClick={(j) => { setDetailInitialTab('info'); setDetailJob(j); }}
+          showApple={showApple}
+        />
+      </div>
+
+      {/* Detail Panel */}
+      {detailJob && (
+        <DetailPanel
+          job={detailJob}
+          initialTab={detailInitialTab}
+          onClose={() => setDetailJob(null)}
+          addToast={addToast}
+        />
+      )}
+
+      {/* Create Modal */}
+      {showCreate && (
+        <CreateJobModal onClose={() => setShowCreate(false)} addToast={addToast} />
+      )}
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          settings={settings}
+          setSettings={setSettings}
+        />
+      )}
+
+      {/* Confirm Dialog (demo) */}
+      {showConfirm && (
+        <ConfirmDialog
+          title={showConfirm.title}
+          message={showConfirm.message}
+          danger={showConfirm.danger}
+          onConfirm={() => { showConfirm.onConfirm(); setShowConfirm(null); }}
+          onCancel={() => setShowConfirm(null)}
+        />
+      )}
+
+      {/* Toasts */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

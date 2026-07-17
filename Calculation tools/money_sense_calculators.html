@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Money Sense Calculators — Debt & Savings</title>
+<style>
+  :root{
+    --bg: #0b0c10;
+    --panel: #151821;
+    --muted: #8a93a6;
+    --text: #e9edf3;
+    --accent: #6ee7b7;
+    --accent-2: #60a5fa;
+    --danger: #f87171;
+    --warning: #fbbf24;
+    --card-border: rgba(255,255,255,0.06);
+    --ring: rgba(102, 204, 255, 0.45);
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --muted: #5b647a;
+      --text: #111827;
+      --accent: #059669;
+      --accent-2: #2563eb;
+      --danger: #dc2626;
+      --warning: #ca8a04;
+      --card-border: rgba(15,23,42,0.08);
+      --ring: rgba(37,99,235,0.25);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:linear-gradient(180deg,var(--bg) 0%, #0f172a 100%);
+    color:var(--text);
+    font: 16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu,Cantarell,Noto Sans,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji";
+  }
+  header{
+    max-width:1200px;margin:36px auto 24px;padding:0 16px;
+  }
+  .title{font-weight:800;letter-spacing:.2px;font-size:28px;margin:0 0 8px}
+  .subtitle{color:var(--muted);margin:0;font-size:15px}
+  .grid{
+    max-width:1200px;margin:0 auto;padding:0 16px 60px;
+    display:grid;grid-template-columns:1fr;gap:18px;
+  }
+  @media (min-width: 1000px){
+    .grid{grid-template-columns:1fr 1fr;}
+  }
+  .card{
+    background: radial-gradient(1800px 500px at 0% 0%, rgba(96,165,250,0.06), transparent 40%),
+                radial-gradient(1200px 400px at 100% 100%, rgba(110,231,183,0.07), transparent 45%),
+                var(--panel);
+    border:1px solid var(--card-border);
+    border-radius:18px;
+    padding:18px 18px 20px;
+    box-shadow: 0 10px 30px rgba(2,8,23,0.35);
+  }
+  .card h2{
+    margin:4px 0 12px;
+    font-size:20px;line-height:1.2;
+  }
+  .pill{
+    display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;
+    background: rgba(99, 102, 241, 0.15); color:#c7d2fe; border:1px solid rgba(99,102,241,0.25);
+    vertical-align: middle;
+  }
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  .row-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  @media (max-width: 720px){
+    .row,.row-3,.row-4{grid-template-columns:1fr}
+  }
+  label{display:block;font-weight:600;font-size:13px;margin:8px 0 6px;color:var(--muted)}
+  input, select, button{
+    width:100%;padding:12px 12px;border-radius:12px;border:1px solid var(--card-border);
+    background: rgba(255,255,255,0.02); color:var(--text);
+    outline:none; transition:.18s ease;
+  }
+  input:focus, select:focus{box-shadow:0 0 0 4px var(--ring);border-color:transparent}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  .btn{
+    background: linear-gradient(180deg, var(--accent-2), #1d4ed8);
+    border: none; color:white; font-weight:700; letter-spacing:.2px;
+    cursor:pointer;
+  }
+  .btn.secondary{background: linear-gradient(180deg,#64748b,#334155);}
+  .btn.ghost{background:transparent;border:1px dashed var(--card-border);color:var(--muted)}
+  .btn.danger{background: linear-gradient(180deg, #ef4444,#b91c1c);}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+  .summary{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px;margin-bottom:6px
+  }
+  .summary .stat{
+    background: rgba(255,255,255,0.03); border:1px solid var(--card-border); border-radius:14px; padding:10px 12px;
+  }
+  .stat .label{font-size:12px;color:var(--muted)}
+  .stat .value{font-weight:800;font-size:18px;margin-top:4px}
+  .flex{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .divider{height:1px;background:var(--card-border);margin:14px 0}
+  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--card-border);text-align:right}
+  th:first-child, td:first-child{text-align:left}
+  .muted{color:var(--muted)}
+  .tag{font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid var(--card-border);color:var(--muted)}
+  .bars{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}
+  .barwrap{background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:12px;padding:12px}
+  .bar{height:14px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,0.08);position:relative}
+  .bar .seg{height:100%;position:absolute;left:0;top:0}
+  .bar .seg.principal{background:linear-gradient(90deg, var(--accent), #22c55e)}
+  .bar .seg.interest{background:linear-gradient(90deg, #fca5a5, var(--danger));}
+  .legend{display:flex;gap:10px;align-items:center;margin-top:8px;font-size:12px;color:var(--muted)}
+  .dot{width:10px;height:10px;border-radius:999px;display:inline-block}
+  .dot.p{background:linear-gradient(90deg, var(--accent), #22c55e)}
+  .dot.i{background:linear-gradient(90deg, #fca5a5, var(--danger))}
+  .footer{max-width:1200px;margin:0 auto 48px;padding:0 16px;color:var(--muted);font-size:12px;text-align:center}
+  .note{font-size:12px;color:var(--muted);margin-top:6px}
+  .right{margin-left:auto}
+  .section-title{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:6px}
+  .mono{font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+</style>
+</head>
+<body>
+<header>
+  <div class="pill">Offline • Single-page</div>
+  <h1 class="title">Money Sense Calculators</h1>
+  <p class="subtitle">Side-by-side tools for <b>Debt (Amortization)</b> and <b>Savings (Growth)</b>. Accurate monthly compounding. Visual breakdowns of principal vs interest.</p>
+</header>
+
+<main class="grid">
+  <!-- Debt Calculator Card -->
+  <section class="card" id="debt-card">
+    <div class="section-title">
+      <h2>Debt / Credit Card Calculator</h2>
+      <span class="tag">Amortization + CSV</span>
+    </div>
+    <div class="row-3">
+      <div>
+        <label for="debtPrincipal">Starting Balance ($)</label>
+        <input id="debtPrincipal" type="number" min="0" step="0.01" value="2000">
+      </div>
+      <div>
+        <label for="debtAPR">APR (% per year)</label>
+        <input id="debtAPR" type="number" min="0" step="0.01" value="20">
+      </div>
+      <div>
+        <label for="debtMode">Payment Mode</label>
+        <select id="debtMode">
+          <option value="fixed">Fixed Payment (amount)</option>
+          <option value="term">Amortized by Term (months)</option>
+          <option value="min">Credit Card Minimum (percent & floor)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row" id="debtFixedRow">
+      <div>
+        <label for="debtFixedPayment">Monthly Payment ($)</label>
+        <input id="debtFixedPayment" type="number" min="0" step="0.01" value="50">
+        <div class="hint">Must exceed monthly interest to reduce balance.</div>
+      </div>
+      <div>
+        <label for="debtExtra">Extra Payment ($/mo, optional)</label>
+        <input id="debtExtra" type="number" min="0" step="0.01" value="0">
+      </div>
+    </div>
+
+    <div class="row" id="debtTermRow" style="display:none">
+      <div>
+        <label for="debtTermMonths">Term (months)</label>
+        <input id="debtTermMonths" type="number" min="1" step="1" value="60">
+      </div>
+      <div>
+        <label for="debtExtra2">Extra Payment ($/mo, optional)</label>
+        <input id="debtExtra2" type="number" min="0" step="0.01" value="0">
+      </div>
+    </div>
+
+    <div class="row" id="debtMinRow" style="display:none">
+      <div>
+        <label for="debtMinPct">Minimum Payment (% of balance)</label>
+        <input id="debtMinPct" type="number" min="0" step="0.01" value="2">
+      </div>
+      <div>
+        <label for="debtMinFloor">Minimum Floor ($)</label>
+        <input id="debtMinFloor" type="number" min="0" step="0.01" value="50">
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn" onclick="calcDebt()">Calculate</button>
+      <button class="btn secondary" onclick="loadDebtExample()">Load $2,000 @ 20% → $50/mo</button>
+      <button class="btn ghost" onclick="resetDebt()">Reset</button>
+      <button class="btn right" id="exportDebtBtn" onclick="exportDebtCSV()" disabled>Export Amortization CSV</button>
+    </div>
+
+    <div class="summary" id="debtSummary" style="display:none">
+      <div class="stat">
+        <div class="label">Months to Payoff</div>
+        <div class="value" id="debtMonths">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total Paid</div>
+        <div class="value" id="debtTotalPaid">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total Interest</div>
+        <div class="value" id="debtTotalInterest">—</div>
+      </div>
+    </div>
+
+    <div class="bars" id="debtBars" style="display:none">
+      <div class="barwrap">
+        <div class="flex"><span class="tag">Breakdown</span></div>
+        <div class="bar" aria-label="Debt principal vs interest bar">
+          <div class="seg principal" id="debtBarPrincipal" style="width:50%"></div>
+          <div class="seg interest" id="debtBarInterest" style="width:30%; left:50%"></div>
+        </div>
+        <div class="legend">
+          <span class="dot p"></span> Principal
+          <span class="dot i"></span> Interest
+        </div>
+        <div class="note">Final month’s payment is adjusted to exactly clear the balance.</div>
+      </div>
+      <div class="barwrap">
+        <div class="flex"><span class="tag">Effective APR (monthly)</span></div>
+        <div class="hint" id="debtRateHint">APR/12 monthly compounding model</div>
+      </div>
+    </div>
+
+    <div id="debtTableWrap"></div>
+    <div class="note">Note: This calculator uses monthly compounding (APR/12). Credit cards typically accrue interest on the average daily balance, so real-world statements may differ slightly.</div>
+  </section>
+
+  <!-- Savings Calculator Card -->
+  <section class="card" id="save-card">
+    <div class="section-title">
+      <h2>Savings / Investment Calculator</h2>
+      <span class="tag">Growth + CSV</span>
+    </div>
+    <div class="row-3">
+      <div>
+        <label for="saveInitial">Starting Amount ($)</label>
+        <input id="saveInitial" type="number" min="0" step="0.01" value="2000">
+      </div>
+      <div>
+        <label for="saveAPR">Rate (% per year)</label>
+        <input id="saveAPR" type="number" min="0" step="0.01" value="6">
+      </div>
+      <div>
+        <label for="saveYears">Duration</label>
+        <div class="row">
+          <input id="saveYears" type="number" min="0" step="1" value="5" aria-label="Years">
+          <input id="saveMonths" type="number" min="0" step="1" value="6" aria-label="Months">
+        </div>
+        <div class="hint">Years & months (monthly compounding)</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="saveMonthly">Monthly Contribution ($)</label>
+        <input id="saveMonthly" type="number" min="0" step="0.01" value="0">
+      </div>
+      <div>
+        <label for="contribTiming">Contribution Timing</label>
+        <select id="contribTiming">
+          <option value="end">End of Month (default)</option>
+          <option value="begin">Beginning of Month</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn" onclick="calcSavings()">Calculate</button>
+      <button class="btn secondary" onclick="loadSavingsExample()">Load $2,000 @ 6% • 5.5 yrs</button>
+      <button class="btn ghost" onclick="resetSavings()">Reset</button>
+      <button class="btn right" id="exportSaveBtn" onclick="exportSavingsCSV()" disabled>Export Growth CSV</button>
+    </div>
+
+    <div class="summary" id="saveSummary" style="display:none">
+      <div class="stat">
+        <div class="label">Ending Balance</div>
+        <div class="value" id="saveEnd">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total Contributions</div>
+        <div class="value" id="saveContrib">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total Interest</div>
+        <div class="value" id="saveInterest">—</div>
+      </div>
+    </div>
+
+    <div class="bars" id="saveBars" style="display:none">
+      <div class="barwrap">
+        <div class="flex"><span class="tag">Breakdown</span></div>
+        <div class="bar" aria-label="Savings contributions vs interest bar">
+          <div class="seg principal" id="saveBarPrincipal" style="width:60%"></div>
+          <div class="seg interest" id="saveBarInterest" style="width:40%; left:60%"></div>
+        </div>
+        <div class="legend">
+          <span class="dot p"></span> Contributions
+          <span class="dot i"></span> Interest
+        </div>
+      </div>
+      <div class="barwrap">
+        <div class="flex"><span class="tag">Sparkline</span></div>
+        <canvas id="spark" width="480" height="120" style="width:100%;height:120px;background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:12px"></canvas>
+        <div class="note">Simple sparkline of balance over time (scaled).</div>
+      </div>
+    </div>
+
+    <div id="saveTableWrap"></div>
+    <div class="note">Note: Uses monthly compounding (APR/12). Results are estimates for planning/education.</div>
+  </section>
+</main>
+
+<footer class="footer">
+  Built for offline demos • No external libraries • © 2025
+</footer>
+
+<script>
+  // Helpers
+  const $ = (id)=>document.getElementById(id);
+  const fmt = (n)=> n.toLocaleString(undefined,{style:'currency',currency:'USD'});
+  const clamp = (x,min,max)=>Math.min(Math.max(x,min),max);
+
+  // Toggle rows in debt mode
+  $('debtMode').addEventListener('change',()=>{
+    const mode = $('debtMode').value;
+    $('debtFixedRow').style.display = (mode==='fixed')?'grid':'none';
+    $('debtTermRow').style.display = (mode==='term')?'grid':'none';
+    $('debtMinRow').style.display = (mode==='min')?'grid':'none';
+  });
+
+  function loadDebtExample(){
+    $('debtPrincipal').value = 2000;
+    $('debtAPR').value = 20;
+    $('debtMode').value = 'fixed';
+    $('debtFixedPayment').value = 50;
+    $('debtExtra').value = 0;
+    $('debtFixedRow').style.display = 'grid';
+    $('debtTermRow').style.display = 'none';
+    $('debtMinRow').style.display = 'none';
+  }
+  function resetDebt(){
+    $('debtPrincipal').value = 2000;
+    $('debtAPR').value = 20;
+    $('debtMode').value = 'fixed';
+    $('debtFixedPayment').value = 50;
+    $('debtExtra').value = 0;
+    $('debtTermMonths').value = 60;
+    $('debtExtra2').value = 0;
+    $('debtMinPct').value = 2;
+    $('debtMinFloor').value = 50;
+    $('debtSummary').style.display = 'none';
+    $('debtBars').style.display = 'none';
+    $('debtTableWrap').innerHTML = '';
+    $('exportDebtBtn').disabled = true;
+    $('debtFixedRow').style.display = 'grid';
+    $('debtTermRow').style.display = 'none';
+    $('debtMinRow').style.display = 'none';
+  }
+
+  function calcDebt(){
+    let principal = parseFloat($('debtPrincipal').value||0);
+    const apr = parseFloat($('debtAPR').value||0)/100;
+    const mode = $('debtMode').value;
+    if (principal <= 0 || apr < 0) { alert('Please enter valid principal and APR.'); return; }
+    const r = apr/12; // monthly rate
+
+    let paymentRule;
+    if (mode==='fixed'){
+      const pay = parseFloat($('debtFixedPayment').value||0) + parseFloat($('debtExtra').value||0);
+      if (pay <= 0){ alert('Payment must be greater than 0.'); return; }
+      paymentRule = (bal,interest)=> Math.max(pay, interest + 0.01); // ensure at least some principal
+    } else if (mode==='term'){
+      const n = Math.max(1, Math.floor(parseFloat($('debtTermMonths').value||0)));
+      const extra = parseFloat($('debtExtra2').value||0);
+      let p;
+      if (r === 0){
+        p = principal / n;
+      } else {
+        p = principal * (r) / (1 - Math.pow(1+r, -n));
+      }
+      const pay = Math.round((p+extra)*100)/100;
+      paymentRule = (bal,interest)=> Math.max(pay, interest + 0.01);
+    } else {
+      const pct = Math.max(0, parseFloat($('debtMinPct').value||0))/100;
+      const floor = Math.max(0, parseFloat($('debtMinFloor').value||0));
+      paymentRule = (bal,interest)=> {
+        const base = Math.max(floor, Math.round(bal*pct*100)/100);
+        return Math.max(base, interest + 0.01);
+      };
+    }
+
+    // Amortization loop
+    let month=0, totalInterest=0, totalPaid=0;
+    const rows = [];
+    let balance = Math.round(principal*100)/100;
+    const maxMonths = 1200; // safety
+
+    while(balance > 0.005 && month < maxMonths){
+      const startBal = balance;
+      const interest = Math.round(startBal * r * 100)/100;
+      let payment = paymentRule(startBal,interest);
+      if (payment <= interest){
+        alert('Payment is not sufficient to cover monthly interest. Increase payment.');
+        return;
+      }
+      // Final payment adjust
+      let principalPaid = Math.round((payment - interest)*100)/100;
+      if (principalPaid > startBal){
+        principalPaid = startBal;
+        payment = Math.round((interest + principalPaid)*100)/100;
+      }
+      balance = Math.round((startBal - principalPaid)*100)/100;
+      totalInterest = Math.round((totalInterest + interest)*100)/100;
+      totalPaid = Math.round((totalPaid + payment)*100)/100;
+      month++;
+      rows.push({month,startBal,interest,principal:principalPaid,payment,endBal:balance});
+      if (month>=maxMonths){ alert('Exceeded iteration limit; check inputs.'); return; }
+    }
+
+    // Summary
+    $('debtMonths').textContent = month + (month===1?' month':' months');
+    $('debtTotalPaid').textContent = fmt(totalPaid);
+    $('debtTotalInterest').textContent = fmt(totalInterest);
+    $('debtSummary').style.display = 'grid';
+
+    // Bars
+    const principalTotal = parseFloat($('debtPrincipal').value||0);
+    const interestTotal = totalInterest;
+    const total = principalTotal + interestTotal;
+    const pPct = total>0 ? (principalTotal/total*100) : 0;
+    const iPct = total>0 ? (interestTotal/total*100) : 0;
+    $('debtBarPrincipal').style.width = pPct+'%';
+    $('debtBarInterest').style.width = iPct+'%';
+    $('debtBarInterest').style.left = pPct+'%';
+    $('debtBars').style.display = 'grid';
+
+    // Table
+    const tbl = document.createElement('table');
+    const thead = document.createElement('thead');
+    thead.innerHTML = `<tr>
+      <th>Month</th><th>Start Balance</th><th>Interest</th>
+      <th>Principal</th><th>Payment</th><th>End Balance</th>
+    </tr>`;
+    tbl.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    rows.forEach(rw=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="mono">${rw.month}</td>
+        <td>${fmt(rw.startBal)}</td>
+        <td style="color:var(--danger)">${fmt(rw.interest)}</td>
+        <td style="color:var(--accent)">${fmt(rw.principal)}</td>
+        <td>${fmt(rw.payment)}</td>
+        <td>${fmt(rw.endBal)}</td>`;
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    $('debtTableWrap').innerHTML='';
+    $('debtTableWrap').appendChild(tbl);
+
+    // Enable CSV export
+    $('exportDebtBtn').disabled = rows.length===0;
+    $('exportDebtBtn').dataset.csv = encodeURIComponent(toCSV(rows, ['month','startBal','interest','principal','payment','endBal']));
+  }
+
+  function toCSV(rows, cols){
+    const header = cols.join(',');
+    const lines = rows.map(r=> cols.map(c=> String(r[c]).replace(/,/g,'')).join(','));
+    return [header, ...lines].join('\n');
+  }
+  function exportDebtCSV(){
+    const csv = decodeURIComponent($('exportDebtBtn').dataset.csv||'');
+    if(!csv){return;}
+    const blob = new Blob([csv], {type:'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'debt_amortization.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // Savings
+  function loadSavingsExample(){
+    $('saveInitial').value = 2000;
+    $('saveAPR').value = 6;
+    $('saveYears').value = 5;
+    $('saveMonths').value = 6;
+    $('saveMonthly').value = 0;
+    $('contribTiming').value = 'end';
+  }
+  function resetSavings(){
+    $('saveInitial').value = 2000;
+    $('saveAPR').value = 6;
+    $('saveYears').value = 5;
+    $('saveMonths').value = 6;
+    $('saveMonthly').value = 0;
+    $('contribTiming').value = 'end';
+    $('saveSummary').style.display = 'none';
+    $('saveBars').style.display = 'none';
+    $('saveTableWrap').innerHTML = '';
+    $('exportSaveBtn').disabled = true;
+    const ctx = $('spark').getContext('2d');
+    ctx.clearRect(0,0,$('spark').width,$('spark').height);
+  }
+
+  function calcSavings(){
+    const initial = parseFloat($('saveInitial').value||0);
+    const apr = parseFloat($('saveAPR').value||0)/100;
+    const years = Math.max(0, Math.floor(parseFloat($('saveYears').value||0)));
+    const months = Math.max(0, Math.floor(parseFloat($('saveMonths').value||0)));
+    const n = years*12 + months;
+    const contrib = parseFloat($('saveMonthly').value||0);
+    const when = $('contribTiming').value; // 'end' or 'begin'
+    if (apr<0 || n<0 || initial<0 || contrib<0){ alert('Please enter valid values.'); return; }
+    const r = apr/12;
+
+    let bal = Math.round(initial*100)/100;
+    let totalContrib = Math.round(initial*100)/100;
+    let totalInterest = 0;
+    const rows = [];
+    for (let m=1;m<=n;m++){
+      if (when==='begin'){
+        bal = Math.round((bal + contrib)*100)/100;
+        totalContrib = Math.round((totalContrib + contrib)*100)/100;
+      }
+      const interest = Math.round(bal * r * 100)/100;
+      bal = Math.round((bal + interest)*100)/100;
+      totalInterest = Math.round((totalInterest + interest)*100)/100;
+      if (when==='end'){
+        bal = Math.round((bal + contrib)*100)/100;
+        totalContrib = Math.round((totalContrib + contrib)*100)/100;
+      }
+      rows.push({month:m, interest, endBal:bal, contrib:(when==='begin' || when==='end')?contrib:0});
+    }
+
+    $('saveEnd').textContent = fmt(bal);
+    $('saveContrib').textContent = fmt(totalContrib - 0); // includes initial
+    $('saveInterest').textContent = fmt(totalInterest);
+    $('saveSummary').style.display = 'grid';
+
+    // Bars
+    const p = totalContrib;
+    const i = totalInterest;
+    const total = p + i;
+    const pPct = total>0? (p/total*100):0;
+    const iPct = total>0? (i/total*100):0;
+    $('saveBarPrincipal').style.width = pPct+'%';
+    $('saveBarInterest').style.width = iPct+'%';
+    $('saveBarInterest').style.left = pPct+'%';
+    $('saveBars').style.display = 'grid';
+
+    // Table
+    const tbl = document.createElement('table');
+    const thead = document.createElement('thead');
+    thead.innerHTML = `<tr>
+      <th>Month</th><th>Interest</th><th>Contribution</th><th>End Balance</th>
+    </tr>`;
+    tbl.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    rows.forEach(rw=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="mono">${rw.month}</td>
+        <td style="color:var(--accent)">${fmt(rw.interest)}</td>
+        <td>${fmt(rw.contrib)}</td>
+        <td>${fmt(rw.endBal)}</td>`;
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    $('saveTableWrap').innerHTML='';
+    $('saveTableWrap').appendChild(tbl);
+
+    // Sparkline
+    drawSpark(rows.map(r=>r.endBal));
+
+    // Enable CSV
+    $('exportSaveBtn').disabled = rows.length===0;
+    $('exportSaveBtn').dataset.csv = encodeURIComponent(toCSV(rows, ['month','interest','contrib','endBal']));
+  }
+
+  function exportSavingsCSV(){
+    const csv = decodeURIComponent($('exportSaveBtn').dataset.csv||'');
+    if(!csv){return;}
+    const blob = new Blob([csv], {type:'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'savings_growth.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function drawSpark(data){
+    const c = $('spark');
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0,0,c.width,c.height);
+    if (!data || data.length===0) return;
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+    const pad = 10;
+    const W = c.width - pad*2;
+    const H = c.height - pad*2;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent-2').trim() || '#60a5fa';
+    ctx.beginPath();
+    data.forEach((v,i)=>{
+      const x = pad + (i/(data.length-1))*W;
+      const y = pad + (1 - ((v-min)/(max-min||1))) * H;
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  }
+
+  // Initialize defaults
+  loadDebtExample();
+  loadSavingsExample();
+</script>
+</body>
+</html>

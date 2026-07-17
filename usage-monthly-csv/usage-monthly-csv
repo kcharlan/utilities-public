@@ -1,0 +1,310 @@
+#!/usr/bin/env zsh
+
+emulate -L zsh
+setopt errexit nounset pipefail
+
+readonly DEFAULT_OUTPUT_DIR="$HOME/Downloads"
+readonly DEFAULT_BOUNDARY_DAYS=2
+readonly PRIMARY_PACKAGE="ccusage@latest"
+readonly SECONDARY_PACKAGE="ccusage@latest"
+readonly PRIMARY_SUBCOMMAND="claude"
+readonly SECONDARY_SUBCOMMAND="codex"
+readonly PRIMARY_FALLBACK_COMMAND="ccusage_csv"
+readonly SECONDARY_FALLBACK_COMMAND="cusage_csv"
+readonly PRIMARY_PREFIX="ccusage"
+readonly SECONDARY_PREFIX="cusage"
+readonly PRIMARY_COLUMNS='["date","inputTokens","outputTokens","cacheCreationTokens","cacheReadTokens","totalTokens","totalCost"]'
+readonly SECONDARY_COLUMNS='["date","inputTokens","cachedInputTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"]'
+
+usage() {
+  cat <<EOF
+usage-monthly-csv
+
+Generate monthly CSV reports from:
+  - npx ${PRIMARY_PACKAGE} ${PRIMARY_SUBCOMMAND} daily
+  - npx ${SECONDARY_PACKAGE} ${SECONDARY_SUBCOMMAND} daily
+
+Usage:
+  usage-monthly-csv [options]
+
+Options:
+  -o, --output-dir DIR   Write CSV files to DIR instead of the default output directory.
+  -p, --prior-month      Run only the prior month's reports.
+      --boundary-days N  During the first N days of a month, run both the current and prior month.
+                         Default: ${DEFAULT_BOUNDARY_DAYS}
+      --date DATE        Use DATE instead of today's date. Accepts YYYY-MM-DD or YYYYMMDD.
+  -h, --help             Show this help text and exit.
+
+Defaults:
+  - Output directory: ${DEFAULT_OUTPUT_DIR}
+  - Filename pattern: ccusage-MMYY.csv and cusage-MMYY.csv
+  - Normal behavior: run the current month based on today's date
+  - Boundary behavior: during the first ${DEFAULT_BOUNDARY_DAYS} days of a month, run both current and prior month
+  - Prior month override: --prior-month runs only the prior month, even outside the boundary window
+
+Examples:
+  usage-monthly-csv
+  usage-monthly-csv --output-dir ~/Downloads
+  usage-monthly-csv --prior-month
+  usage-monthly-csv --date 2026-01-02
+  usage-monthly-csv --boundary-days 3
+EOF
+}
+
+die() {
+  print -u2 -- "Error: $*"
+  exit 1
+}
+
+command_available() {
+  local command_name=$1
+
+  command -v "$command_name" >/dev/null 2>&1 && return 0
+  zsh -ic "command -v ${(q)command_name} >/dev/null 2>&1"
+}
+
+run_fallback_command() {
+  local command_name=$1
+  local since_value=$2
+  local until_value=$3
+
+  if command -v "$command_name" >/dev/null 2>&1; then
+    "$command_name" --since "$since_value" --until "$until_value"
+  else
+    zsh -ic "${(q)command_name} --since ${(q)since_value} --until ${(q)until_value}"
+  fi
+}
+
+json_to_csv() {
+  local columns_json=$1
+
+  jq -r --argjson cols "$columns_json" '
+    def rows:
+      if type == "array" then
+        .
+      elif type == "object" and (.daily | type) == "array" then
+        .daily
+      else
+        error("Expected a top-level array or an object with a daily array")
+      end;
+
+    $cols,
+    (rows[] | [ $cols[] as $c | if $c == "date" then (.date // .period) else .[$c] end ])
+    | @csv
+  '
+}
+
+run_upstream_json_as_csv() {
+  local package_name=$1
+  local subcommand=$2
+  local columns_json=$3
+  local since_value=$4
+  local until_value=$5
+
+  npx --yes "$package_name" "$subcommand" daily --json --since "$since_value" --until "$until_value" | json_to_csv "$columns_json"
+}
+
+run_report_command() {
+  local package_name=$1
+  local subcommand=$2
+  local fallback_command=$3
+  local columns_json=$4
+  local since_value=$5
+  local until_value=$6
+
+  if command -v npx >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    run_upstream_json_as_csv "$package_name" "$subcommand" "$columns_json" "$since_value" "$until_value"
+  else
+    run_fallback_command "$fallback_command" "$since_value" "$until_value"
+  fi
+}
+
+normalize_csv_date_field() {
+  local raw_date=$1
+  local normalized_date
+
+  normalized_date=$(LC_ALL=C date -j -f "%Y-%m-%d" "$raw_date" "+%Y-%m-%d" 2>/dev/null) && {
+    print -- "$normalized_date"
+    return 0
+  }
+
+  normalized_date=$(LC_ALL=C date -j -f "%b %d, %Y" "$raw_date" "+%Y-%m-%d" 2>/dev/null) && {
+    print -- "$normalized_date"
+    return 0
+  }
+
+  normalized_date=$(LC_ALL=C date -j -f "%B %d, %Y" "$raw_date" "+%Y-%m-%d" 2>/dev/null) && {
+    print -- "$normalized_date"
+    return 0
+  }
+
+  print -- "$raw_date"
+}
+
+normalize_csv_stream() {
+  local line first_field rest normalized_date
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == '"date",'* ]]; then
+      print -- "$line"
+      continue
+    fi
+
+    if [[ "$line" == \"* ]]; then
+      first_field=${line#\"}
+      first_field=${first_field%%\"*}
+
+      if [[ "$line" == "\"$first_field\","* ]]; then
+        rest=${line#\"$first_field\",}
+        normalized_date=$(normalize_csv_date_field "$first_field")
+        print -- "\"$normalized_date\",$rest"
+        continue
+      fi
+    fi
+
+    print -- "$line"
+  done
+}
+
+normalize_date() {
+  local input=$1
+  local format
+
+  if [[ "$input" =~ '^[0-9]{8}$' ]]; then
+    format="%Y%m%d"
+  elif [[ "$input" =~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' ]]; then
+    format="%Y-%m-%d"
+  else
+    die "Invalid date '$input'. Use YYYY-MM-DD or YYYYMMDD."
+  fi
+
+  date -j -f "$format" "$input" "+%Y-%m-%d" 2>/dev/null || die "Invalid calendar date '$input'."
+}
+
+month_anchor() {
+  local base_date=$1
+  date -j -v1d -f "%Y-%m-%d" "$base_date" "+%Y-%m-%d"
+}
+
+prior_month_anchor() {
+  local base_date=$1
+  date -j -v1d -v-1m -f "%Y-%m-%d" "$base_date" "+%Y-%m-%d"
+}
+
+month_suffix() {
+  local anchor_date=$1
+  date -j -f "%Y-%m-%d" "$anchor_date" "+%m%y"
+}
+
+month_since() {
+  local anchor_date=$1
+  date -j -f "%Y-%m-%d" "$anchor_date" "+%Y%m01"
+}
+
+month_until() {
+  local anchor_date=$1
+  date -j -v+1m -v-1d -f "%Y-%m-%d" "$anchor_date" "+%Y%m%d"
+}
+
+run_report() {
+  local package_name=$1
+  local subcommand=$2
+  local fallback_command=$3
+  local prefix=$4
+  local columns_json=$5
+  local anchor_date=$6
+  local output_dir=$7
+  local since_value until_value suffix output_file temp_file
+
+  since_value=$(month_since "$anchor_date")
+  until_value=$(month_until "$anchor_date")
+  suffix=$(month_suffix "$anchor_date")
+  output_file="${output_dir}/${prefix}-${suffix}.csv"
+  temp_file="${output_file}.tmp.$$"
+
+  if run_report_command "$package_name" "$subcommand" "$fallback_command" "$columns_json" "$since_value" "$until_value" | normalize_csv_stream > "$temp_file"; then
+    mv "$temp_file" "$output_file"
+  else
+    rm -f "$temp_file"
+    return 1
+  fi
+
+  print -- "Wrote $output_file"
+}
+
+main() {
+  local output_dir="$DEFAULT_OUTPUT_DIR"
+  local boundary_days="$DEFAULT_BOUNDARY_DAYS"
+  local reference_date
+  local prior_month_only=0
+  local day_of_month
+  local current_anchor prior_anchor
+  typeset -a month_anchors=()
+  typeset -A seen_months=()
+
+  reference_date=$(date "+%Y-%m-%d")
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -o|--output-dir)
+        (( $# >= 2 )) || die "Missing value for $1."
+        output_dir="${2/#\~/$HOME}"
+        shift 2
+        ;;
+      -p|--prior-month)
+        prior_month_only=1
+        shift
+        ;;
+      --boundary-days)
+        (( $# >= 2 )) || die "Missing value for $1."
+        [[ "$2" =~ '^[0-9]+$' ]] || die "Boundary days must be a non-negative integer."
+        boundary_days="$2"
+        shift 2
+        ;;
+      --date)
+        (( $# >= 2 )) || die "Missing value for $1."
+        reference_date=$(normalize_date "$2")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unknown option: $1. Use --help for usage."
+        ;;
+    esac
+  done
+
+  if ! { command -v npx >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; }; then
+    command_available "$PRIMARY_FALLBACK_COMMAND" || die "Required command 'npx' with 'jq', or fallback command '$PRIMARY_FALLBACK_COMMAND', was not found."
+    command_available "$SECONDARY_FALLBACK_COMMAND" || die "Required command 'npx' with 'jq', or fallback command '$SECONDARY_FALLBACK_COMMAND', was not found."
+  fi
+
+  mkdir -p "$output_dir"
+
+  current_anchor=$(month_anchor "$reference_date")
+  prior_anchor=$(prior_month_anchor "$reference_date")
+  day_of_month=$(date -j -f "%Y-%m-%d" "$reference_date" "+%d")
+  day_of_month=${day_of_month#0}
+
+  if (( prior_month_only )); then
+    month_anchors+=("$prior_anchor")
+  else
+    month_anchors+=("$current_anchor")
+    if (( day_of_month <= boundary_days )); then
+      month_anchors+=("$prior_anchor")
+    fi
+  fi
+
+  for anchor in "${month_anchors[@]}"; do
+    if (( ${+seen_months[$anchor]} )); then
+      continue
+    fi
+    seen_months[$anchor]=1
+    run_report "$PRIMARY_PACKAGE" "$PRIMARY_SUBCOMMAND" "$PRIMARY_FALLBACK_COMMAND" "$PRIMARY_PREFIX" "$PRIMARY_COLUMNS" "$anchor" "$output_dir"
+    run_report "$SECONDARY_PACKAGE" "$SECONDARY_SUBCOMMAND" "$SECONDARY_FALLBACK_COMMAND" "$SECONDARY_PREFIX" "$SECONDARY_COLUMNS" "$anchor" "$output_dir"
+  done
+}
+
+main "$@"

@@ -1,0 +1,2 @@
+provider: cron-eval deterministic validator
+max_score: 100

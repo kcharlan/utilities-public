@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "brokerages": {
+    "fidelity": {
+      "accounts": {
+        "SYNTHETIC FIDELITY ACCOUNT": "SYNTHETIC CHECKING"
+      },
+      "securities": {
+        "SYNTH1": "SYNTHETIC INCOME FUND"
+      },
+      "categories": {
+        "dividend": "Synthetic:Dividends"
+      },
+      "transfers": {}
+    },
+    "vanguard": {
+      "accounts": {
+        "SYNTHETIC VANGUARD ACCOUNT": "SYNTHETIC CHECKING"
+      },
+      "securities": {
+        "SYNTH2": "SYNTHETIC SETTLEMENT FUND",
+        "@withdrawal": "SYNTHETIC CASH"
+      },
+      "categories": {
+        "dividend": "Synthetic:Dividends"
+      },
+      "transfers": {
+        "withdrawal": "SYNTHETIC CASH"
+      }
+    }
+  }
+}

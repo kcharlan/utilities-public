@@ -1,0 +1,51 @@
+{
+  "resolved_at": "2026-03-05T14:16:45Z",
+  "tasks": [
+    {
+      "task_id": "021d",
+      "depends_on": [],
+      "anti_affinity": [],
+      "exec_order": 4
+    },
+    {
+      "task_id": "022",
+      "depends_on": [],
+      "anti_affinity": [],
+      "exec_order": 5
+    },
+    {
+      "task_id": "039",
+      "depends_on": [
+        "021d",
+        "022"
+      ],
+      "anti_affinity": [
+        "043"
+      ],
+      "exec_order": 7
+    },
+    {
+      "task_id": "043",
+      "depends_on": [],
+      "anti_affinity": [
+        "039"
+      ],
+      "exec_order": 1
+    }
+  ],
+  "groups": [
+    {
+      "name": "extraction-pipeline",
+      "type": "anti_affinity",
+      "members": [
+        "039",
+        "043"
+      ],
+      "shared_resources": [
+        "src/backend/workers/doc_processing.py"
+      ]
+    }
+  ],
+  "conflicts": [],
+  "notes": "Maximum parallelism: 2 workers"
+}

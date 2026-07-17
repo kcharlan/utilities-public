@@ -1,0 +1,1841 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn",
+#     "pydantic",
+#     "pyyaml",
+#     "pandas",
+#     "python-dateutil",
+#     "pyarrow",
+# ]
+# ///
+import argparse
+import io
+import logging
+import math
+import os
+import threading
+import time
+import webbrowser
+from datetime import date
+from typing import Optional, Dict, Any, List
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel, Field
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Tax2: Rules-based tax calculator with QIF export",
+        epilog="Launches a local web server and opens the browser interface."
+    )
+    parser.add_argument(
+        "--port", "-p",
+        type=int,
+        default=8000,
+        help="Port to run the server on (default: 8000)."
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Don't auto-open browser"
+    )
+    parser.add_argument(
+        "rules_dir",
+        nargs="?",
+        help="Optional custom rules directory"
+    )
+    return parser.parse_args()
+
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('tax2')
+
+# --- FastAPI App ---
+app = FastAPI(title="Tax2 API")
+
+# Global state
+current_rules_dir = None
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return HTMLResponse(content="", status_code=204)
+
+@app.get("/", response_class=HTMLResponse)
+async def get_ui():
+    return HTML_TEMPLATE  # Will be defined later
+
+@app.get("/api/status")
+async def status():
+    return {
+        "rules_dir": current_rules_dir or "default",
+        "version": "2.0"
+    }
+
+# --- Models ---
+class StateSelection(BaseModel):
+    code: str
+    allocation_pct: float = Field(100.0, ge=0, le=100)
+
+class TaxRequest(BaseModel):
+    monthly_earned: float = Field(0.0, ge=0)
+    monthly_unearned: float = Field(0.0, ge=0)
+    filing_status: str
+    year: int
+    mode: str  # "rules" or "table"
+    states: List[StateSelection]
+
+class StateTaxResponse(BaseModel):
+    code: str
+    display_name: str
+    monthly: float
+    annual: float
+    allocation_pct: float
+
+class TaxResponse(BaseModel):
+    federal_monthly: float
+    federal_annual: float
+    states: List[StateTaxResponse]
+    total_monthly: float
+    total_annual: float
+    effective_rate: float
+    brackets: Optional[List[Dict[str, Any]]] = None
+
+class QIFStateRequest(BaseModel):
+    code: str
+    amount: float
+    expense: str
+    transfer: str
+
+class QIFRequest(BaseModel):
+    tx_date: date
+    federal_tax: float
+    payee: str
+    federal_expense: str
+    federal_transfer: str
+    states: List[QIFStateRequest]
+
+class GenerateTableRequest(BaseModel):
+    year: int
+    state: str = "GA"
+    filing_status: str = "single"
+    inc_max: int = Field(500000, ge=0)
+    step: int = Field(50, gt=0)
+
+# --- API Endpoints ---
+
+def _base_dir() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _states_root() -> str:
+    return os.path.join(_base_dir(), "rules", "states")
+
+
+def _round_money(value: float) -> float:
+    return round(value, 2) if math.isfinite(value) else 0.0
+
+
+def _discover_states() -> list[dict[str, Any]]:
+    from taxkit.rules_loader import load_rules
+    from taxkit.utils import get_available_years, get_rule_path
+
+    root = _states_root()
+    discovered = []
+    if not os.path.isdir(root):
+        return discovered
+
+    for entry in sorted(os.listdir(root)):
+        state_dir = os.path.join(root, entry)
+        if not os.path.isdir(state_dir):
+            continue
+        years = get_available_years(state_dir)
+        display_name = entry
+        qif = None
+        if years:
+            try:
+                rules = load_rules(get_rule_path(state_dir, max(years)))
+                display_name = rules.display_name or entry
+                if rules.qif:
+                    qif = rules.qif.model_dump()
+            except Exception as exc:
+                logger.warning("Failed to inspect state %s: %s", entry, exc)
+        discovered.append(
+            {
+                "code": entry.upper(),
+                "display_name": display_name,
+                "years": years,
+                "qif": qif,
+            }
+        )
+    return discovered
+
+
+def _state_info_by_code() -> dict[str, dict[str, Any]]:
+    return {state["code"]: state for state in _discover_states()}
+
+
+def _validate_state_selections(selections: list[StateSelection]) -> list[StateSelection]:
+    if not selections:
+        raise HTTPException(status_code=422, detail="At least one state must be selected")
+    known = _state_info_by_code()
+    normalized = []
+    for selection in selections:
+        code = selection.code.upper()
+        if code not in known:
+            raise HTTPException(status_code=422, detail=f"Unknown state code: {code}")
+        normalized.append(StateSelection(code=code, allocation_pct=selection.allocation_pct))
+    return normalized
+
+
+def _lookup_monthly_tax(table_path: str, monthly_income: float, column: str) -> float:
+    import pandas as pd
+
+    if not os.path.exists(table_path):
+        raise HTTPException(status_code=404, detail=f"Table not found: {os.path.basename(table_path)}")
+    df = pd.read_csv(table_path)
+    if df.empty:
+        raise HTTPException(status_code=500, detail=f"Tax table is empty: {os.path.basename(table_path)}")
+    idx = (df["MonthlyIncome"] - monthly_income).abs().idxmin()
+    return float(df.loc[idx][column])
+
+
+@app.get("/api/states")
+async def get_states():
+    return {"states": _discover_states()}
+
+
+@app.get("/api/config")
+async def get_config():
+    from taxkit.config import load_config
+
+    cfg = load_config()
+    return {"default_states": cfg["default_states"], "qif_overrides": cfg["qif_overrides"]}
+
+
+class ConfigRequest(BaseModel):
+    default_states: List[str]
+
+
+@app.post("/api/config")
+async def update_config(request: ConfigRequest):
+    from taxkit.config import load_config, save_config
+
+    known = _state_info_by_code()
+    normalized = [state.upper() for state in request.default_states]
+    if not normalized:
+        raise HTTPException(status_code=422, detail="At least one default state is required")
+    unknown = [state for state in normalized if state not in known]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown state code: {', '.join(unknown)}")
+
+    cfg = load_config()
+    cfg["default_states"] = normalized
+    saved = save_config(cfg)
+    return {"default_states": saved["default_states"], "qif_overrides": saved["qif_overrides"]}
+
+@app.post("/api/compute", response_model=TaxResponse)
+async def compute_taxes(request: TaxRequest):
+    """Compute taxes using rules engine or table lookup"""
+    try:
+        from taxkit.rules_loader import load_rules
+        from taxkit.engine import compute_tax
+        from taxkit.models import TaxInput, FilingStatus
+        from taxkit.utils import get_rule_path
+        from taxkit.config import load_config
+
+        base_dir = _base_dir()
+        selections = _validate_state_selections(request.states)
+        known_states = _state_info_by_code()
+        cfg = load_config()
+        fs = FilingStatus(request.filing_status)
+        monthly_total = request.monthly_earned + request.monthly_unearned
+
+        if request.mode == "rules":
+            fed_base = os.path.join(base_dir, "rules", "federal")
+            fed_path = get_rule_path(fed_base, request.year)
+            if not os.path.exists(fed_path):
+                raise HTTPException(status_code=404, detail=f"Federal rules for {request.year} not found")
+            fed_rules = load_rules(fed_path)
+            federal_annual = compute_tax(
+                TaxInput(
+                    earned_income=request.monthly_earned * 12.0,
+                    unearned_income=request.monthly_unearned * 12.0,
+                    filing_status=fs,
+                ),
+                fed_rules,
+            )
+            federal_monthly = _round_money(federal_annual / 12.0)
+
+            state_results = []
+            for selection in selections:
+                state_dir = os.path.join(base_dir, "rules", "states", selection.code)
+                state_path = get_rule_path(state_dir, request.year)
+                if not os.path.exists(state_path):
+                    available_years = known_states[selection.code]["years"]
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"State {selection.code} has no rules for {request.year}. "
+                            f"Available years: {available_years or 'none'}"
+                        ),
+                    )
+                state_rules = load_rules(state_path)
+                factor = selection.allocation_pct / 100.0
+                state_annual = compute_tax(
+                    TaxInput(
+                        earned_income=request.monthly_earned * 12.0 * factor,
+                        unearned_income=request.monthly_unearned * 12.0 * factor,
+                        filing_status=fs,
+                    ),
+                    state_rules,
+                )
+                state_results.append(
+                    StateTaxResponse(
+                        code=selection.code,
+                        display_name=state_rules.display_name or selection.code,
+                        monthly=_round_money(state_annual / 12.0),
+                        annual=state_annual,
+                        allocation_pct=selection.allocation_pct,
+                    )
+                )
+
+        elif request.mode == "table":
+            default_alias = cfg["legacy_combined_alias"].upper()
+            first_code = selections[0].code
+            first_table = os.path.join(base_dir, "tables", f"combined_{request.year}_{first_code}.csv")
+            if not os.path.exists(first_table) and first_code == default_alias:
+                first_table = os.path.join(base_dir, "tables", f"combined_{request.year}.csv")
+            federal_monthly = _lookup_monthly_tax(first_table, monthly_total, "FederalMonthlyTax")
+            federal_annual = federal_monthly * 12
+            state_results = []
+            for selection in selections:
+                table_path = os.path.join(base_dir, "tables", f"combined_{request.year}_{selection.code}.csv")
+                if not os.path.exists(table_path) and selection.code == default_alias:
+                    table_path = os.path.join(base_dir, "tables", f"combined_{request.year}.csv")
+                allocated_monthly = monthly_total * (selection.allocation_pct / 100.0)
+                state_monthly = _lookup_monthly_tax(table_path, allocated_monthly, "StateMonthlyTax")
+                state_results.append(
+                    StateTaxResponse(
+                        code=selection.code,
+                        display_name=known_states[selection.code]["display_name"],
+                        monthly=_round_money(state_monthly),
+                        annual=state_monthly * 12,
+                        allocation_pct=selection.allocation_pct,
+                    )
+                )
+
+        else:
+            raise HTTPException(status_code=400, detail="Invalid mode")
+
+        total_monthly = federal_monthly + sum(state.monthly for state in state_results)
+        total_annual = federal_annual + sum(state.annual for state in state_results)
+        
+        if monthly_total > 0:
+            raw_rate = (total_annual / (monthly_total * 12)) * 100
+            if math.isfinite(raw_rate):
+                effective_rate = round(raw_rate, 2)
+            else:
+                effective_rate = 0.0
+        else:
+            effective_rate = 0.0
+
+        return TaxResponse(
+            federal_monthly=federal_monthly,
+            federal_annual=federal_annual,
+            states=state_results,
+            total_monthly=_round_money(total_monthly),
+            total_annual=total_annual,
+            effective_rate=effective_rate
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Computation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/years")
+async def get_available_years():
+    """Return list of available tax years"""
+    try:
+        from taxkit.utils import get_available_years as get_years
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        fed_dir = os.path.join(base_dir, "rules", "federal")
+
+        years = get_years(fed_dir)
+
+        # Get current year as default
+        import datetime
+        current_year = datetime.datetime.now().year
+
+        return {
+            "years": sorted(years, reverse=True),
+            "default": current_year if current_year in years else max(years) if years else current_year
+        }
+    except Exception as e:
+        logger.error(f"Failed to get years: {e}")
+        return {"years": [2025, 2024], "default": 2025}
+
+@app.post("/api/export/qif")
+async def export_qif(request: QIFRequest):
+    """Generate QIF file for download"""
+    try:
+        from taxkit.qif import build_qif_entries, QIFConfig, StateQIFItem
+
+        cfg = QIFConfig(
+            payee=request.payee,
+            federal_expense=request.federal_expense,
+            federal_transfer=request.federal_transfer,
+        )
+
+        states = [
+            StateQIFItem(
+                code=state.code.upper(),
+                amount=state.amount,
+                expense=state.expense,
+                transfer=state.transfer,
+            )
+            for state in request.states
+        ]
+        qif_text = build_qif_entries(request.tx_date, request.federal_tax, states, cfg)
+
+        # Return as downloadable file
+        return StreamingResponse(
+            io.BytesIO(qif_text.encode('utf-8')),
+            media_type="application/qif",
+            headers={"Content-Disposition": "attachment; filename=tax_transactions.qif"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"QIF export failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/generate-tables")
+async def generate_tables(request: GenerateTableRequest):
+    """Generate combined tax tables (async background task)"""
+    try:
+        from taxkit.tablegen import generate_table
+        from taxkit.utils import get_rule_path
+        import pandas as pd
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        fed_dir = os.path.join(base_dir, "rules", "federal")
+        state_dir = os.path.join(base_dir, "rules", "states", request.state)
+
+        fed_path = get_rule_path(fed_dir, request.year)
+        state_path = get_rule_path(state_dir, request.year)
+
+        # Generate tables
+        df_fed = generate_table(fed_path, request.filing_status, 0, request.inc_max, request.step, "monthly")
+        df_state = generate_table(state_path, request.filing_status, 0, request.inc_max, request.step, "monthly")
+
+        # Save individual files
+        out_dir = os.path.join(base_dir, "tables")
+        os.makedirs(out_dir, exist_ok=True)
+
+        fed_out = os.path.join(out_dir, f"federal_{request.year}.parquet")
+        state_out = os.path.join(out_dir, f"{request.state.lower()}_{request.year}.parquet")
+
+        df_fed.to_parquet(fed_out, index=False)
+        df_state.to_parquet(state_out, index=False)
+
+        # Merge
+        rf = df_fed.rename(columns={"MonthlyTax": "FederalMonthlyTax"})[["MonthlyIncome", "FederalMonthlyTax"]]
+        rs = df_state.rename(columns={"MonthlyTax": "StateMonthlyTax"})[["MonthlyIncome", "StateMonthlyTax"]]
+
+        combined = pd.merge(rf, rs, on="MonthlyIncome", how="outer").sort_values("MonthlyIncome")
+
+        combined_out = os.path.join(out_dir, f"combined_{request.year}.csv")
+        combined.to_csv(combined_out, index=False)
+
+        return {
+            "status": "success",
+            "rows": len(combined),
+            "files": [fed_out, state_out, combined_out]
+        }
+
+    except Exception as e:
+        logger.error(f"Table generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- HTML Template ---
+HTML_TEMPLATE = r"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tax2 - Professional Tax Calculator</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Epilogue:wght@400;500;600;700;800&family=Public+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        display: ['Epilogue', 'sans-serif'],
+                        mono: ['IBM Plex Mono', 'monospace'],
+                        body: ['Public Sans', 'sans-serif']
+                    }
+                }
+            }
+        };
+    </script>
+
+    <!-- React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.321.0/dist/umd/lucide.min.js"></script>
+
+    <style>
+        :root {
+            /* Light theme - Ledger aesthetic */
+            --bg-primary: #fafaf9;
+            --bg-secondary: #f5f5f4;
+            --bg-tertiary: #ffffff;
+            --bg-input: #ffffff;
+
+            --text-primary: #1c1917;
+            --text-secondary: #57534e;
+            --text-tertiary: #78716c;
+
+            --border-subtle: #e7e5e4;
+            --border-medium: #d6d3d1;
+            --border-strong: #a8a29e;
+
+            --accent-income: #059669;
+            --accent-income-light: #d1fae5;
+            --accent-tax: #ea580c;
+            --accent-tax-light: #fed7aa;
+            --accent-state: #7c3aed;
+            --accent-state-light: #ddd6fe;
+
+            --ledger-line: rgba(120, 113, 108, 0.15);
+            --number-highlight: #fef3c7;
+
+            /* Typography */
+            --font-display: 'Epilogue', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+            --font-body: 'Public Sans', sans-serif;
+        }
+
+        .dark {
+            /* Dark theme - Terminal aesthetic */
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #171717;
+            --bg-tertiary: #262626;
+            --bg-input: #1a1a1a;
+
+            --text-primary: #fafafa;
+            --text-secondary: #a3a3a3;
+            --text-tertiary: #737373;
+
+            --border-subtle: #262626;
+            --border-medium: #404040;
+            --border-strong: #525252;
+
+            --accent-income: #10b981;
+            --accent-income-light: rgba(16, 185, 129, 0.15);
+            --accent-tax: #fb923c;
+            --accent-tax-light: rgba(251, 146, 60, 0.15);
+            --accent-state: #a78bfa;
+            --accent-state-light: rgba(167, 139, 250, 0.15);
+
+            --ledger-line: rgba(163, 163, 163, 0.1);
+            --number-highlight: rgba(234, 179, 8, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .app-container {
+            display: grid;
+            grid-template-columns: 280px 1fr 320px;
+            height: 100vh;
+            gap: 0;
+        }
+
+        /* Left Sidebar - Controls */
+        .sidebar {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-subtle);
+            padding: 2rem 1.5rem;
+            overflow-y: auto;
+        }
+
+        .sidebar-header {
+            margin-bottom: 2rem;
+        }
+
+        .app-title {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.25rem;
+        }
+
+        .app-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+
+        .control-section {
+            margin-bottom: 2rem;
+        }
+
+        .control-label {
+            font-family: var(--font-display);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+            display: block;
+        }
+
+        .select-wrapper {
+            position: relative;
+        }
+
+        select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border-medium);
+            border-radius: 6px;
+            font-family: var(--font-body);
+            font-size: 0.875rem;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+            appearance: none;
+        }
+
+        select:hover {
+            border-color: var(--border-strong);
+        }
+
+        select:focus {
+            outline: none;
+            border-color: var(--accent-income);
+            box-shadow: 0 0 0 3px var(--accent-income-light);
+        }
+
+        .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            padding: 0.625rem 0.875rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border-medium);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .radio-option:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--border-strong);
+        }
+
+        .radio-option input[type="radio"] {
+            margin-right: 0.625rem;
+        }
+
+        .radio-option label {
+            font-size: 0.875rem;
+            cursor: pointer;
+        }
+
+        .file-upload {
+            margin-top: 0.75rem;
+        }
+
+        .file-upload-btn {
+            width: 100%;
+            padding: 0.625rem 1rem;
+            background: var(--bg-tertiary);
+            border: 1px dashed var(--border-medium);
+            border-radius: 6px;
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .file-upload-btn:hover {
+            border-color: var(--border-strong);
+            color: var(--text-primary);
+        }
+
+        /* Main Panel */
+        .main-panel {
+            padding: 2rem;
+            overflow-y: auto;
+            background: var(--bg-primary);
+        }
+
+        .header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .year-badge {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.375rem 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-medium);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        .theme-toggle {
+            padding: 0.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-medium);
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+        }
+
+        /* Income Input Section */
+        .income-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            background-image:
+                repeating-linear-gradient(
+                    0deg,
+                    transparent,
+                    transparent 2.4rem,
+                    var(--ledger-line) 2.4rem,
+                    var(--ledger-line) calc(2.4rem + 1px)
+                );
+        }
+
+        .income-label {
+            font-family: var(--font-display);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .income-display {
+            display: flex;
+            align-items: baseline;
+            margin-bottom: 1.5rem;
+        }
+
+        .currency-symbol {
+            font-family: var(--font-mono);
+            font-size: 2.5rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-right: 0.5rem;
+        }
+
+        .income-input {
+            font-family: var(--font-mono);
+            font-size: 4rem;
+            font-weight: 700;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            width: 100%;
+            letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .income-input:focus {
+            outline: none;
+            background: var(--number-highlight);
+        }
+
+        .income-sublabel {
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+            color: var(--text-tertiary);
+            letter-spacing: 0.02em;
+        }
+
+        /* Results Dashboard */
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .result-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .result-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+        }
+
+        .result-card.federal::before {
+            background: var(--accent-tax);
+        }
+
+        .result-card.state::before {
+            background: var(--accent-state);
+        }
+
+        .result-card.total::before {
+            background: var(--text-primary);
+        }
+
+        .result-label {
+            font-family: var(--font-display);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+        }
+
+        .result-amount {
+            font-family: var(--font-mono);
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            font-variant-numeric: tabular-nums;
+            margin-bottom: 0.5rem;
+        }
+
+        .result-sublabel {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Tax Breakdown Chart */
+        .chart-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .chart-title {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+
+        .chart-legend {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+
+        /* Stacked Bar Chart */
+        .bracket-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .bracket-row {
+            display: grid;
+            grid-template-columns: 100px 1fr 120px;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .bracket-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .bracket-bar-container {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            height: 32px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .bracket-bar {
+            height: 100%;
+            transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 0.5rem;
+        }
+
+        .bracket-bar.federal {
+            background: linear-gradient(90deg, var(--accent-tax), color-mix(in srgb, var(--accent-tax) 80%, white));
+        }
+
+        .bracket-bar.state {
+            background: linear-gradient(90deg, var(--accent-state), color-mix(in srgb, var(--accent-state) 80%, white));
+        }
+
+        .bracket-amount {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Right Panel - QIF Export */
+        .export-panel {
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-subtle);
+            padding: 2rem 1.5rem;
+            overflow-y: auto;
+        }
+
+        .export-header {
+            margin-bottom: 2rem;
+        }
+
+        .export-title {
+            font-family: var(--font-display);
+            font-size: 1.125rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            margin-bottom: 0.5rem;
+        }
+
+        .export-description {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        .export-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .export-label {
+            font-family: var(--font-display);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+            display: block;
+        }
+
+        input[type="text"],
+        input[type="date"],
+        input[type="number"] {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border-medium);
+            border-radius: 6px;
+            font-family: var(--font-body);
+            font-size: 0.875rem;
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+
+        input[type="text"]:focus,
+        input[type="date"]:focus,
+        input[type="number"]:focus {
+            outline: none;
+            border-color: var(--accent-income);
+            box-shadow: 0 0 0 3px var(--accent-income-light);
+        }
+
+        .category-input {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+        }
+
+        .export-button {
+            width: 100%;
+            padding: 1rem;
+            background: var(--accent-income);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-family: var(--font-display);
+            font-size: 0.875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 2rem;
+        }
+
+        .export-button:hover:not(:disabled) {
+            background: color-mix(in srgb, var(--accent-income) 85%, black);
+            transform: translateY(-1px);
+        }
+
+        .export-button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .export-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-strong);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-tertiary);
+        }
+
+        /* Animations */
+        @keyframes countUp {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result-amount {
+            animation: countUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .bracket-bar {
+            animation: slideIn 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes slideIn {
+            from {
+                width: 0;
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .app-container {
+                grid-template-columns: 260px 1fr;
+            }
+
+            .export-panel {
+                display: none;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .app-container {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                border-right: none;
+                border-bottom: 1px solid var(--border-subtle);
+            }
+
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .income-input {
+                font-size: 2.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Icon component (utility for Lucide icons)
+        const Icon = ({ name, size = 18, className = "" }) => {
+            const toPascalCase = (value) => value.replace(/(\w)(\w*)(_|-|\s*)/g, (_, first, rest) =>
+                first.toUpperCase() + rest.toLowerCase()
+            );
+            const iconDef = window.lucide?.icons?.[toPascalCase(name)];
+            if (!iconDef) return null;
+            
+            const [tag, baseAttrs, children] = iconDef;
+
+            return (
+                <svg xmlns="http://www.w3.org/2000/svg" {...baseAttrs} width={size} height={size}
+                     className={`inline-block ${className}`.trim()}>
+                    {children.map(([childTag, attrs], i) =>
+                        React.createElement(childTag, { ...attrs, key: `${name}-${i}` })
+                    )}
+                </svg>
+            );
+        };
+
+        const Sidebar = ({
+            selectedYear,
+            setSelectedYear,
+            availableYears,
+            filingStatus,
+            setFilingStatus,
+            computeMode,
+            setComputeMode,
+            availableStates,
+            selectedStates,
+            toggleState,
+            allocations,
+            setAllocation
+        }) => {
+            return (
+                <div className="sidebar">
+                    <div className="sidebar-header">
+                        <h1 className="app-title">Tax2</h1>
+                        <div className="app-subtitle">Professional Edition</div>
+                    </div>
+
+                    <div className="control-section">
+                        <label className="control-label">Tax Year</label>
+                        <div className="select-wrapper">
+                            <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
+                                {availableYears.map(year => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="control-section">
+                        <label className="control-label">Filing Status</label>
+                        <div className="radio-group">
+                            <div className="radio-option">
+                                <input
+                                    type="radio"
+                                    name="filing"
+                                    id="single"
+                                    checked={filingStatus === 'single'}
+                                    onChange={() => setFilingStatus('single')}
+                                />
+                                <label htmlFor="single">Single</label>
+                            </div>
+                            <div className="radio-option">
+                                <input
+                                    type="radio"
+                                    name="filing"
+                                    id="married"
+                                    checked={filingStatus === 'married_joint'}
+                                    onChange={() => setFilingStatus('married_joint')}
+                                />
+                                <label htmlFor="married">Married Filing Jointly</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="control-section">
+                        <label className="control-label">Computation Mode</label>
+                        <div className="radio-group">
+                            <div className="radio-option">
+                                <input
+                                    type="radio"
+                                    name="mode"
+                                    id="rules"
+                                    checked={computeMode === 'rules'}
+                                    onChange={() => setComputeMode('rules')}
+                                />
+                                <label htmlFor="rules">Rules Engine</label>
+                            </div>
+                            <div className="radio-option">
+                                <input
+                                    type="radio"
+                                    name="mode"
+                                    id="table"
+                                    checked={computeMode === 'table'}
+                                    onChange={() => setComputeMode('table')}
+                                />
+                                <label htmlFor="table">Lookup Table</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="control-section">
+                        <label className="control-label">States</label>
+                        <div className="radio-group">
+                            {availableStates.map(state => {
+                                const checked = selectedStates.includes(state.code);
+                                const disableUncheck = checked && selectedStates.length === 1;
+                                return (
+                                    <div className="radio-option" key={state.code}>
+                                        <input
+                                            type="checkbox"
+                                            id={`state-${state.code}`}
+                                            checked={checked}
+                                            disabled={disableUncheck}
+                                            onChange={() => toggleState(state.code)}
+                                        />
+                                        <label htmlFor={`state-${state.code}`}>{state.display_name}</label>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {selectedStates.length >= 2 && (
+                        <div className="control-section">
+                            <label className="control-label">Allocation %</label>
+                            <div className="radio-group">
+                                {selectedStates.map(code => {
+                                    const state = availableStates.find(item => item.code === code);
+                                    return (
+                                        <div key={code}>
+                                            <div className="export-label">{state?.display_name || code}</div>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                max="100"
+                                                step="1"
+                                                value={allocations[code] ?? 100}
+                                                onChange={(e) => setAllocation(code, e.target.value)}
+                                            />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const MoneyInput = ({ label, value, setValue, primary = false }) => {
+            const [localValue, setLocalValue] = useState(value.toString());
+            const [isFocused, setIsFocused] = useState(false);
+
+            const formatCurrency = (value, decimals = 2) => {
+                return value.toLocaleString('en-US', { 
+                    minimumFractionDigits: decimals, 
+                    maximumFractionDigits: decimals 
+                });
+            };
+
+            const handleIncomeChange = (e) => {
+                const val = e.target.value.replace(/,/g, '');
+                // Allow digits and a single decimal point
+                if (val === '' || val === '.' || !isNaN(val)) {
+                        setLocalValue(e.target.value);
+                    const num = parseFloat(val);
+                    if (!isNaN(num)) {
+                        setValue(num);
+                    } else if (val === '') {
+                        setValue(0);
+                    }
+                }
+            };
+
+            const handleFocus = () => {
+                setIsFocused(true);
+                // Show raw number for easier editing
+                setLocalValue(value === 0 ? '' : value.toString());
+            };
+
+            const handleBlur = () => {
+                setIsFocused(false);
+                setLocalValue(formatCurrency(value));
+            };
+
+            // Sync with parent state when not focused
+            useEffect(() => {
+                if (!isFocused) {
+                    setLocalValue(formatCurrency(value));
+                }
+            }, [value, isFocused]);
+
+            return (
+                <div style={{ marginBottom: primary ? "1.5rem" : "0" }}>
+                    <div className="income-label">{label}</div>
+                    <div className="income-display">
+                        <span className="currency-symbol">$</span>
+                        <input
+                            type="text"
+                            className="income-input"
+                            value={localValue}
+                            onFocus={handleFocus}
+                            onBlur={handleBlur}
+                            onChange={handleIncomeChange}
+                            placeholder="0.00"
+                        />
+                    </div>
+                </div>
+            );
+        };
+
+        const MainPanel = ({
+            selectedYear,
+            monthlyUnearned,
+            setMonthlyUnearned,
+            monthlyEarned,
+            setMonthlyEarned,
+            taxResults,
+            loading,
+            error,
+            darkMode,
+            setDarkMode
+        }) => {
+            const formatCurrency = (value, decimals = 2) => {
+                return value.toLocaleString('en-US', {
+                    minimumFractionDigits: decimals,
+                    maximumFractionDigits: decimals
+                });
+            };
+            const monthlyTotal = monthlyUnearned + monthlyEarned;
+
+            return (
+                <div className="main-panel">
+                    <div className="header-bar">
+                        <div className="year-badge">FY {selectedYear}</div>
+                        <button className="theme-toggle" onClick={() => setDarkMode(!darkMode)}>
+                            ◐ Toggle Theme
+                        </button>
+                    </div>
+
+                    {/* Income Input */}
+                    <div className="income-section">
+                        <MoneyInput
+                            label="Monthly Unearned Income"
+                            value={monthlyUnearned}
+                            setValue={setMonthlyUnearned}
+                            primary={true}
+                        />
+                        <MoneyInput
+                            label="Monthly Earned Income"
+                            value={monthlyEarned}
+                            setValue={setMonthlyEarned}
+                        />
+                        <div className="income-sublabel">
+                            Total ${formatCurrency(monthlyTotal)} monthly = ${formatCurrency(monthlyTotal * 12)} annually
+                        </div>
+                    </div>
+
+                    {/* Error Display */}
+                    {error && (
+                        <div className="mb-8 p-4 bg-orange-100 dark:bg-orange-900/30 border border-orange-200 dark:border-orange-800 rounded-lg text-orange-800 dark:text-orange-200">
+                            <strong>Error:</strong> {error}
+                        </div>
+                    )}
+
+                    {/* Results */}
+                    {loading ? (
+                        <div className="text-center py-12 text-stone-500">
+                            Calculating...
+                        </div>
+                    ) : taxResults ? (
+                        <div className="results-grid">
+                            <div className="result-card federal">
+                                <div className="result-label">Federal Tax</div>
+                                <div className="result-amount">${formatCurrency(taxResults.federal_monthly)}</div>
+                                <div className="result-sublabel">
+                                    {monthlyTotal > 0 ? ((taxResults.federal_monthly / monthlyTotal) * 100).toFixed(1) : "0.0"}% effective
+                                </div>
+                            </div>
+
+                            {taxResults.states.map(state => (
+                                <div className="result-card state" key={state.code}>
+                                    <div className="result-label">
+                                        {state.display_name}{state.allocation_pct !== 100 ? ` (${state.allocation_pct}%)` : ''}
+                                    </div>
+                                    <div className="result-amount">${formatCurrency(state.monthly)}</div>
+                                    <div className="result-sublabel">
+                                        {monthlyTotal > 0 ? ((state.monthly / monthlyTotal) * 100).toFixed(1) : "0.0"}% effective
+                                    </div>
+                                </div>
+                            ))}
+
+                            <div className="result-card total">
+                                <div className="result-label">Total Monthly</div>
+                                <div className="result-amount">${formatCurrency(taxResults.total_monthly)}</div>
+                                <div className="result-sublabel">{taxResults.effective_rate}% combined</div>
+                            </div>
+                        </div>
+                    ) : null}
+                </div>
+            );
+        };
+
+        const ExportPanel = ({ qifConfig, setQifConfig, qifStates, setQifStates, selectedStates, availableStates, downloadQIF, taxResults }) => {
+            const updateConfig = (key, value) => {
+                setQifConfig(prev => ({ ...prev, [key]: value }));
+            };
+            const updateStateConfig = (code, key, value) => {
+                setQifStates(prev => ({
+                    ...prev,
+                    [code]: {
+                        ...prev[code],
+                        [key]: value
+                    }
+                }));
+            };
+
+            return (
+                <div className="export-panel">
+                    <div className="export-header">
+                        <h2 className="export-title">QIF Export</h2>
+                        <p className="export-description">
+                            Configure transaction details for Quicken/Moneydance import
+                        </p>
+                    </div>
+
+                    <div className="export-section">
+                        <label className="export-label">Transaction Date</label>
+                        <input
+                            type="date"
+                            value={qifConfig.txDate}
+                            onChange={(e) => updateConfig('txDate', e.target.value)}
+                        />
+                    </div>
+
+                    <div className="export-section">
+                        <label className="export-label">Payee Name</label>
+                        <input
+                            type="text"
+                            value={qifConfig.payee}
+                            onChange={(e) => updateConfig('payee', e.target.value)}
+                        />
+                    </div>
+
+                    <div className="export-section">
+                        <label className="export-label">Federal Expense Category</label>
+                        <input
+                            type="text"
+                            className="category-input"
+                            value={qifConfig.federalExpense}
+                            onChange={(e) => updateConfig('federalExpense', e.target.value)}
+                        />
+                    </div>
+
+                    <div className="export-section">
+                        <label className="export-label">Federal Transfer Account</label>
+                        <input
+                            type="text"
+                            className="category-input"
+                            value={qifConfig.federalTransfer}
+                            onChange={(e) => updateConfig('federalTransfer', e.target.value)}
+                        />
+                    </div>
+
+                    {selectedStates.map(code => {
+                        const state = availableStates.find(item => item.code === code);
+                        const stateConfig = qifStates[code] || {};
+                        return (
+                            <div key={code}>
+                                <div className="export-section">
+                                    <label className="export-label">{state?.display_name || code} Expense Category</label>
+                                    <input
+                                        type="text"
+                                        className="category-input"
+                                        value={stateConfig.expense || ''}
+                                        onChange={(e) => updateStateConfig(code, 'expense', e.target.value)}
+                                    />
+                                </div>
+                                <div className="export-section">
+                                    <label className="export-label">{state?.display_name || code} Transfer Account</label>
+                                    <input
+                                        type="text"
+                                        className="category-input"
+                                        value={stateConfig.transfer || ''}
+                                        onChange={(e) => updateStateConfig(code, 'transfer', e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                        );
+                    })}
+
+                    <button
+                        className="export-button"
+                        onClick={downloadQIF}
+                        disabled={!taxResults}
+                    >
+                        ↓ Download QIF
+                    </button>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [darkMode, setDarkMode] = useState(false);
+            const [availableYears, setAvailableYears] = useState([]);
+            const [selectedYear, setSelectedYear] = useState(2025);
+            const [filingStatus, setFilingStatus] = useState('single');
+            const [computeMode, setComputeMode] = useState('rules');
+            const [monthlyUnearned, setMonthlyUnearned] = useState(12500);
+            const [monthlyEarned, setMonthlyEarned] = useState(0);
+            const [availableStates, setAvailableStates] = useState([]);
+            const [selectedStates, setSelectedStates] = useState([]);
+            const [allocations, setAllocations] = useState({});
+            const [taxResults, setTaxResults] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState(null);
+
+            const [qifConfig, setQifConfig] = useState({
+                txDate: new Date().toISOString().split('T')[0],
+                payee: 'Estimated Taxes Withholding',
+                federalExpense: 'Tax:Federal Income Tax Estimated Paid',
+                federalTransfer: '[Federal Income Taxes]'
+            });
+            const [qifStates, setQifStates] = useState({});
+
+            useEffect(() => {
+                fetch('/api/years')
+                    .then(r => r.json())
+                    .then(data => {
+                        setAvailableYears(data.years);
+                        setSelectedYear(data.default);
+                    })
+                    .catch(err => console.error('Failed to load years:', err));
+
+                Promise.all([
+                    fetch('/api/states').then(r => r.json()),
+                    fetch('/api/config').then(r => r.json())
+                ]).then(([statesData, configData]) => {
+                    const states = statesData.states || [];
+                    setAvailableStates(states);
+                    const validCodes = new Set(states.map(state => state.code));
+                    const defaults = (configData.default_states || []).filter(code => validCodes.has(code));
+                    const initialStates = defaults.length ? defaults : (states[0] ? [states[0].code] : []);
+                    setSelectedStates(initialStates);
+                    setAllocations(Object.fromEntries(initialStates.map(code => [code, 100])));
+                    setQifStates(buildQifStateConfig(states, configData.qif_overrides || {}, initialStates));
+                }).catch(err => console.error('Failed to load states/config:', err));
+            }, []);
+
+            useEffect(() => {
+                const timer = setTimeout(() => {
+                    computeTaxes();
+                }, 300);
+                return () => clearTimeout(timer);
+            }, [monthlyUnearned, monthlyEarned, filingStatus, selectedYear, computeMode, selectedStates, allocations]);
+
+            useEffect(() => {
+                const saved = localStorage.getItem('tax2-dark-mode');
+                if (saved !== null) {
+                    setDarkMode(saved === 'true');
+                }
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('tax2-dark-mode', darkMode);
+                document.documentElement.classList.toggle('dark', darkMode);
+            }, [darkMode]);
+
+            const buildQifStateConfig = (states, overrides, selectedCodes) => {
+                const byCode = Object.fromEntries(states.map(state => [state.code, state]));
+                return Object.fromEntries(selectedCodes.map(code => {
+                    const qif = byCode[code]?.qif || {};
+                    const override = overrides?.[code] || {};
+                    return [code, {
+                        expense: override.state_expense || qif.state_expense || 'Tax:State Income Tax Estimated Paid',
+                        transfer: override.state_transfer || qif.state_transfer || `[${code} State Income Taxes]`
+                    }];
+                }));
+            };
+
+            const persistDefaultStates = (codes) => {
+                fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ default_states: codes })
+                }).catch(err => console.error('Failed to save config:', err));
+            };
+
+            const toggleState = (code) => {
+                setSelectedStates(prev => {
+                    let next;
+                    if (prev.includes(code)) {
+                        if (prev.length === 1) return prev;
+                        next = prev.filter(item => item !== code);
+                    } else {
+                        next = [...prev, code];
+                    }
+                    persistDefaultStates(next);
+                    setAllocations(current => ({ ...current, [code]: current[code] ?? 100 }));
+                    setQifStates(current => ({
+                        ...buildQifStateConfig(availableStates, {}, next),
+                        ...current
+                    }));
+                    return next;
+                });
+            };
+
+            const setAllocation = (code, value) => {
+                const numeric = Math.max(0, Math.min(100, Number(value) || 0));
+                setAllocations(prev => ({ ...prev, [code]: numeric }));
+            };
+
+            const computeTaxes = async () => {
+                if (!selectedStates.length) return;
+                setLoading(true);
+                setError(null);
+
+                try {
+                    const response = await fetch('/api/compute', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            monthly_earned: monthlyEarned,
+                            monthly_unearned: monthlyUnearned,
+                            filing_status: filingStatus,
+                            year: selectedYear,
+                            mode: computeMode,
+                            states: selectedStates.map(code => ({
+                                code,
+                                allocation_pct: allocations[code] ?? 100
+                            }))
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const err = await response.json();
+                        throw new Error(err.detail || 'Computation failed');
+                    }
+
+                    const data = await response.json();
+                    setTaxResults(data);
+                } catch (err) {
+                    setError(err.message);
+                    console.error('Computation error:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const downloadQIF = async () => {
+                if (!taxResults) return;
+
+                try {
+                    const response = await fetch('/api/export/qif', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            tx_date: qifConfig.txDate,
+                            federal_tax: taxResults.federal_monthly,
+                            payee: qifConfig.payee,
+                            federal_expense: qifConfig.federalExpense,
+                            federal_transfer: qifConfig.federalTransfer,
+                            states: taxResults.states.map(state => ({
+                                code: state.code,
+                                amount: state.monthly,
+                                expense: qifStates[state.code]?.expense || 'Tax:State Income Tax Estimated Paid',
+                                transfer: qifStates[state.code]?.transfer || `[${state.code} State Income Taxes]`
+                            }))
+                        })
+                    });
+
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'tax_transactions.qif';
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                } catch (err) {
+                    console.error('QIF export failed:', err);
+                    alert('Failed to export QIF: ' + err.message);
+                }
+            };
+
+            return (
+                <div className="app-container">
+                    <Sidebar
+                        selectedYear={selectedYear}
+                        setSelectedYear={setSelectedYear}
+                        availableYears={availableYears}
+                        filingStatus={filingStatus}
+                        setFilingStatus={setFilingStatus}
+                        computeMode={computeMode}
+                        setComputeMode={setComputeMode}
+                        availableStates={availableStates}
+                        selectedStates={selectedStates}
+                        toggleState={toggleState}
+                        allocations={allocations}
+                        setAllocation={setAllocation}
+                    />
+
+                    <MainPanel
+                        selectedYear={selectedYear}
+                        monthlyUnearned={monthlyUnearned}
+                        setMonthlyUnearned={setMonthlyUnearned}
+                        monthlyEarned={monthlyEarned}
+                        setMonthlyEarned={setMonthlyEarned}
+                        taxResults={taxResults}
+                        loading={loading}
+                        error={error}
+                        darkMode={darkMode}
+                        setDarkMode={setDarkMode}
+                    />
+
+                    <ExportPanel
+                        qifConfig={qifConfig}
+                        setQifConfig={setQifConfig}
+                        qifStates={qifStates}
+                        setQifStates={setQifStates}
+                        selectedStates={selectedStates}
+                        availableStates={availableStates}
+                        downloadQIF={downloadQIF}
+                        taxResults={taxResults}
+                    />
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+"""
+
+# --- Server Startup ---
+def open_browser(port: int, delay: float = 1.5):
+    """Open browser after short delay to let server start"""
+    time.sleep(delay)
+    webbrowser.open(f"http://127.0.0.1:{port}")
+
+
+def testing_mode_enabled() -> bool:
+    value = os.environ.get("UTILITIES_TESTING", "")
+    return value.lower() not in {"", "0", "false", "no"}
+
+
+def main():
+    args = parse_args()
+
+    # Set global rules directory if provided
+    global current_rules_dir
+    if args.rules_dir:
+        current_rules_dir = os.path.abspath(args.rules_dir)
+        logger.info(f"Using custom rules directory: {current_rules_dir}")
+
+    # Launch browser in background thread
+    if not args.no_browser and not testing_mode_enabled():
+        threading.Thread(target=open_browser, args=(args.port,), daemon=True).start()
+
+    # Start server
+    logger.info(f"Starting Tax2 server on http://127.0.0.1:{args.port}")
+    logger.info("Press Ctrl+C to stop")
+
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=args.port,
+        log_level="info"
+    )
+
+if __name__ == "__main__":
+    main()

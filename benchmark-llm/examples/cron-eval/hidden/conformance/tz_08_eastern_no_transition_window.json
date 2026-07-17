@@ -1,0 +1,1 @@
+{"id": "tz_08_eastern_no_transition_window","category": "timezone_dst","weight": 1.0,"input": {"expr": "0 12 * * *","after": "2026-06-01T00:00:00+00:00","n": 3,"tz": "America/New_York"},"expected": {"kind": "fires","value": ["2026-06-01T12:00:00-04:00","2026-06-02T12:00:00-04:00","2026-06-03T12:00:00-04:00"]}}

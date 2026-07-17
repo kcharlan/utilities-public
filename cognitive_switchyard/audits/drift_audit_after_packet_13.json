@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "medium",
+  "effort": "small",
+  "summary": "Completed-session history was still partially recomputed from the current pack manifest instead of being fully pinned in summary.json.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Patched summary generation to snapshot effective_runtime_config and added regressions proving trimmed history stays stable after runtime-pack changes. README and packet_status prose still have minor frontier-description drift, but the canonical ladder/json tracker remain correct."
+}

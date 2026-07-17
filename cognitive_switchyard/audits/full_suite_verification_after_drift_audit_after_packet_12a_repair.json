@@ -1,0 +1,14 @@
+{
+  "command": ".venv/bin/python -m pytest tests -v",
+  "ended_at_epoch": 1773151737,
+  "ended_at_local": "2026-03-10 10:08:57",
+  "exit_code": 1,
+  "highest_validated_packet": "12A",
+  "is_final": false,
+  "label": "full suite verification after drift_audit_after_packet_12a repair",
+  "log_file": "automation_logs/20260310_094353/full_suite_verification_after_drift_audit_after_packet_12a_repair.log",
+  "started_at_epoch": 1773151713,
+  "started_at_local": "2026-03-10 10:08:33",
+  "validated_count": 18,
+  "wall_seconds": 24
+}

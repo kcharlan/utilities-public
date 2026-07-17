@@ -1,0 +1,1177 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+"""Convert supported brokerage activity CSV exports to cooked CSV and QIF."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import datetime as dt
+import glob
+import json
+import os
+import re
+import stat
+import sys
+import tempfile
+from dataclasses import dataclass
+from decimal import Decimal, DecimalException, InvalidOperation, localcontext
+from pathlib import Path
+from typing import Callable, Iterable, Mapping, Sequence
+
+
+SCHEMA_VERSION = 1
+MAX_AMOUNT_SIGNIFICANT_DIGITS = 100
+MAX_AMOUNT_INTEGER_DIGITS = 100
+WITHDRAWAL_SECURITY_KEY = "@withdrawal"
+FINANCIAL_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+"
+FINANCIAL_AMOUNT_PATTERN = re.compile(
+    rf"^(?:\(\$?(?P<parenthesized>{FINANCIAL_NUMBER})\)|"
+    rf"(?P<sign_before>[+-]?)(?P<currency>\$?)(?P<sign_after>[+-]?)"
+    rf"(?P<number>{FINANCIAL_NUMBER}))$"
+)
+FIDELITY_HEADERS = [
+    "Account",
+    "Run Date",
+    "Action",
+    "Symbol",
+    "Description",
+    "Quantity",
+    "Price ($)",
+    "Commission ($)",
+    "Fees ($)",
+    "Accrued Interest ($)",
+    "Amount ($)",
+    "Settlement Date",
+]
+VANGUARD_HEADERS = [
+    "Account Number",
+    "Trade Date",
+    "Settlement Date",
+    "Transaction Type",
+    "Transaction Description",
+    "Investment Name",
+    "Symbol",
+    "Shares",
+    "Share Price",
+    "Principal Amount",
+    "Commissions and Fees",
+    "Net Amount",
+]
+COOKED_HEADERS = [
+    "Brokerage",
+    "Account",
+    "Date",
+    "Action",
+    "Security",
+    "Amount",
+    "Source File",
+    "Source Row",
+]
+
+
+class UserError(Exception):
+    """An actionable input or configuration error."""
+
+
+class ConfigurationCreated(UserError):
+    """Raised after an incomplete first-run configuration is written."""
+
+
+@dataclass(frozen=True)
+class ExtractedRow:
+    account: str
+    date: str
+    source_action: str
+    security: str
+    amount: str
+    description: str
+
+
+@dataclass(frozen=True)
+class BrokerageAdapter:
+    """Brokerage-owned raw CSV contract and row extraction behavior."""
+
+    required_headers: tuple[str, ...]
+    actions: Mapping[str, str]
+    skipped_actions: tuple[str, ...]
+    category_actions: tuple[str, ...]
+    transfer_actions: tuple[str, ...]
+    required_security_keys: tuple[str, ...]
+    extractor: Callable[[dict[str, str]], ExtractedRow]
+
+
+def extract_fidelity_row(row: dict[str, str]) -> ExtractedRow:
+    return ExtractedRow(
+        account=row["Account"],
+        date=row["Run Date"],
+        source_action=row["Action"],
+        security=row["Symbol"] or row["Description"],
+        amount=row["Amount ($)"],
+        description=row["Description"],
+    )
+
+
+def extract_vanguard_row(row: dict[str, str]) -> ExtractedRow:
+    return ExtractedRow(
+        account=row["Account Number"],
+        date=row["Trade Date"],
+        source_action=row["Transaction Type"],
+        security=row["Symbol"] or row["Investment Name"] or row["Transaction Description"],
+        amount=row["Net Amount"],
+        description=row["Transaction Description"],
+    )
+
+
+ADAPTERS = {
+    "fidelity": BrokerageAdapter(
+        required_headers=tuple(FIDELITY_HEADERS),
+        actions={
+            "DIVIDEND RECEIVED": "dividend",
+        },
+        skipped_actions=("REINVESTMENT",),
+        category_actions=("dividend",),
+        transfer_actions=(),
+        required_security_keys=(),
+        extractor=extract_fidelity_row,
+    ),
+    "vanguard": BrokerageAdapter(
+        required_headers=tuple(VANGUARD_HEADERS),
+        actions={"Dividend": "dividend", "Withdrawal": "withdrawal"},
+        skipped_actions=("Reinvestment", "Sweep out"),
+        category_actions=("dividend",),
+        transfer_actions=("withdrawal",),
+        required_security_keys=(WITHDRAWAL_SECURITY_KEY,),
+        extractor=extract_vanguard_row,
+    ),
+}
+REGISTERED_BROKERAGES = tuple(ADAPTERS)
+
+
+@dataclass(frozen=True)
+class RawTransaction:
+    account: str
+    date: str
+    action: str
+    security: str
+    amount: Decimal
+    memo: str
+    source_file: str
+    source_row: int
+
+
+@dataclass(frozen=True)
+class CookedTransaction:
+    brokerage: str
+    account: str
+    date: str
+    action: str
+    security: str
+    amount: Decimal
+    category_or_transfer: str
+    memo: str
+    source_file: str
+    source_row: int
+
+
+def empty_brokerage_section() -> dict[str, dict[str, str]]:
+    """Return a new, intentionally unusable registered-section skeleton."""
+    return {"accounts": {}, "securities": {}, "categories": {}, "transfers": {}}
+
+
+def empty_config() -> dict[str, object]:
+    """Return the first-run configuration skeleton."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "brokerages": {
+            name: empty_brokerage_section() for name in REGISTERED_BROKERAGES
+        },
+    }
+
+
+def runtime_home() -> Path:
+    override = os.environ.get("DIV_CONV_HOME")
+    return Path(override).expanduser() if override else Path.home() / ".div_conv"
+
+
+def config_path() -> Path:
+    return runtime_home() / "config.json"
+
+
+def secure_runtime_directory(path: Path) -> None:
+    """Create or harden the runtime directory without following a symlink."""
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        try:
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+            metadata = path.lstat()
+        except OSError as exc:
+            raise UserError(f"Could not prepare runtime directory {path}: {exc}") from exc
+    except OSError as exc:
+        raise UserError(f"Could not prepare runtime directory {path}: {exc}") from exc
+    if stat.S_ISLNK(metadata.st_mode):
+        raise UserError(
+            f"Refusing runtime directory {path}: symbolic links are not allowed."
+        )
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise UserError(f"Runtime directory path is not a directory: {path}")
+
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISDIR(opened.st_mode):
+                raise OSError("opened path is not a directory")
+            if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
+                raise OSError("runtime directory changed while it was being secured")
+            os.fchmod(descriptor, 0o700)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise UserError(f"Could not secure runtime directory {path} to mode 0700: {exc}") from exc
+
+
+def config_file_exists(path: Path) -> bool:
+    """Report config existence while rejecting symlinks and non-files."""
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise UserError(f"Could not inspect configuration file {path}: {exc}") from exc
+    if stat.S_ISLNK(metadata.st_mode):
+        raise UserError(
+            f"Refusing configuration file {path}: symbolic links are not allowed."
+        )
+    if not stat.S_ISREG(metadata.st_mode):
+        raise UserError(f"Configuration path is not a regular file: {path}")
+    return True
+
+
+def read_private_config(path: Path) -> object:
+    """Read and chmod an existing regular config through a no-follow descriptor."""
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise UserError(f"Could not inspect configuration file {path}: {exc}") from exc
+    if stat.S_ISLNK(metadata.st_mode):
+        raise UserError(
+            f"Refusing configuration file {path}: symbolic links are not allowed."
+        )
+    if not stat.S_ISREG(metadata.st_mode):
+        raise UserError(f"Configuration path is not a regular file: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise OSError("opened path is not a regular file")
+            if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
+                raise OSError("configuration changed while it was being secured")
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = -1
+                return json.load(handle)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+    except json.JSONDecodeError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise UserError(f"Could not securely read configuration {path}: {exc}") from exc
+
+
+def atomic_write_bytes(path: Path, content: bytes, *, mode: int = 0o600) -> None:
+    """Atomically replace *path* from a flushed same-directory temporary file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def atomic_write_json(path: Path, payload: object) -> None:
+    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    atomic_write_bytes(path, encoded)
+
+
+def sync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def stage_artifact(target: Path, content: bytes) -> Path:
+    """Write and fsync one transaction stage beside its final target."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.div-conv-stage-",
+        suffix=".tmp",
+        dir=target.parent,
+    )
+    staged = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return staged
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def transaction_replace(source: Path, target: Path) -> None:
+    """Replace hook kept explicit so transaction failures can be tested."""
+    os.replace(source, target)
+
+
+def transaction_link_no_replace(source: Path, target: Path) -> None:
+    """Atomically install a staged file only when no target directory entry exists."""
+    os.link(source, target, follow_symlinks=False)
+
+
+def path_entry_exists(path: Path) -> bool:
+    """Return whether a directory entry exists, including a dangling symlink."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def validate_output_target(path: Path) -> bool:
+    """Return whether an existing output is a regular file; reject other entries."""
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(metadata.st_mode):
+        raise UserError(f"Refusing symbolic-link output path: {path}")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise UserError(f"Refusing output path that is not a regular file: {path}")
+    return True
+
+
+def reserve_backup_path(target: Path) -> Path:
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{target.name}.div-conv-backup-",
+        suffix=".tmp",
+        dir=target.parent,
+    )
+    os.close(descriptor)
+    backup = Path(name)
+    backup.unlink()
+    return backup
+
+
+def remove_if_present(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def cleanup_path(path: Path, errors: list[str]) -> None:
+    """Best-effort cleanup that records errors without changing transaction outcome."""
+    try:
+        remove_if_present(path)
+    except OSError as exc:
+        errors.append(f"remove {path}: {exc}")
+
+
+def cleanup_sync_directory(path: Path, errors: list[str]) -> None:
+    """Best-effort directory sync used only after the transaction outcome is known."""
+    try:
+        sync_directory(path)
+    except OSError as exc:
+        errors.append(f"sync {path}: {exc}")
+
+
+def add_cleanup_note(error: BaseException, cleanup_errors: Sequence[str]) -> None:
+    if cleanup_errors:
+        error.add_note("cleanup also failed: " + "; ".join(cleanup_errors))
+
+
+def commit_output_transaction(
+    artifacts: Sequence[tuple[Path, bytes]], *, overwrite: bool
+) -> None:
+    """Stage and commit every invocation artifact, rolling back as one unit."""
+    targets = [target for target, _content in artifacts]
+    if len(set(targets)) != len(targets):
+        raise OSError("output transaction contains duplicate targets")
+    for target in targets:
+        validate_output_target(target)
+    if not overwrite:
+        existing = [target for target in targets if path_entry_exists(target)]
+        if existing:
+            raise FileExistsError(f"output already exists: {existing[0]}")
+
+    staged: dict[Path, Path] = {}
+    try:
+        for target, content in artifacts:
+            staged[target] = stage_artifact(target, content)
+    except BaseException as original_error:
+        cleanup_errors: list[str] = []
+        for temporary in staged.values():
+            cleanup_path(temporary, cleanup_errors)
+        for directory in {target.parent for target in targets}:
+            cleanup_sync_directory(directory, cleanup_errors)
+        add_cleanup_note(original_error, cleanup_errors)
+        raise
+
+    backups: dict[Path, Path] = {}
+    installed: list[Path] = []
+    cleanup_errors: list[str] = []
+    try:
+        for target in targets:
+            target_exists = validate_output_target(target)
+            if overwrite and target_exists:
+                backup = reserve_backup_path(target)
+                transaction_replace(target, backup)
+                backups[target] = backup
+                sync_directory(target.parent)
+        for target in targets:
+            # Linking is an atomic no-replace install. This remains mandatory after
+            # overwrite backups have moved because another writer (or a
+            # case-insensitive target alias) may have claimed the empty name.
+            transaction_link_no_replace(staged[target], target)
+            installed.append(target)
+            cleanup_path(staged[target], cleanup_errors)
+            sync_directory(target.parent)
+    except BaseException as original_error:
+        rollback_errors: list[str] = []
+        for target in reversed(installed):
+            try:
+                remove_if_present(target)
+                sync_directory(target.parent)
+            except OSError as exc:
+                rollback_errors.append(f"remove {target}: {exc}")
+        for target, backup in reversed(list(backups.items())):
+            if path_entry_exists(backup):
+                try:
+                    # Restore without replacing a target created by another writer.
+                    transaction_link_no_replace(backup, target)
+                    sync_directory(target.parent)
+                except OSError as exc:
+                    rollback_errors.append(f"restore {target} from {backup}: {exc}")
+                else:
+                    cleanup_path(backup, cleanup_errors)
+        for temporary in staged.values():
+            cleanup_path(temporary, cleanup_errors)
+        if rollback_errors:
+            detail = "; ".join(rollback_errors)
+            combined_error = OSError(
+                f"{original_error}; rollback also failed: {detail}"
+            )
+            add_cleanup_note(combined_error, cleanup_errors)
+            raise combined_error from original_error
+        add_cleanup_note(original_error, cleanup_errors)
+        raise
+    else:
+        for backup in backups.values():
+            cleanup_path(backup, cleanup_errors)
+        for temporary in staged.values():
+            cleanup_path(temporary, cleanup_errors)
+        for directory in {target.parent for target in targets}:
+            cleanup_sync_directory(directory, cleanup_errors)
+
+
+def warning_banner(title: str, lines: Iterable[str]) -> str:
+    rule = "!" * 78
+    body = "\n".join(f"!!! {line}" for line in lines)
+    return f"\n{rule}\n!!! {title}\n{body}\n{rule}\n"
+
+
+def create_first_run_config(path: Path) -> None:
+    atomic_write_json(path, empty_config())
+
+
+def load_config(
+    path: Path, *, warn: Callable[[str], None] = lambda message: print(message, file=sys.stderr)
+) -> tuple[dict[str, object], list[str]]:
+    """Load config and atomically backfill absent registered brokerage sections."""
+    try:
+        raw = read_private_config(path)
+    except json.JSONDecodeError as exc:
+        raise UserError(
+            f"Configuration is not valid JSON: {path} (line {exc.lineno}, column {exc.colno})."
+        ) from exc
+    if not isinstance(raw, dict):
+        raise UserError(f"Configuration root must be a JSON object: {path}")
+    schema_version = raw.get("schema_version")
+    if type(schema_version) is not int or schema_version != SCHEMA_VERSION:
+        raise UserError(
+            f"Configuration {path} must have schema_version {SCHEMA_VERSION}."
+        )
+    brokerages = raw.get("brokerages")
+    if brokerages is None:
+        brokerages = {}
+        raw["brokerages"] = brokerages
+    if not isinstance(brokerages, dict):
+        raise UserError(f"Configuration key 'brokerages' must be an object: {path}")
+
+    added: list[str] = []
+    for brokerage in REGISTERED_BROKERAGES:
+        if brokerage not in brokerages:
+            brokerages[brokerage] = empty_brokerage_section()
+            added.append(brokerage)
+    if added:
+        try:
+            atomic_write_json(path, raw)
+        except OSError as exc:
+            raise UserError(f"Could not backfill configuration {path}: {exc}") from exc
+        for brokerage in added:
+            warn(
+                warning_banner(
+                    "CONFIG SECTION BACKFILLED",
+                    (
+                        f"Missing section: brokerages.{brokerage}",
+                        f"Configuration: {path}",
+                        "An empty section was added. Defaults are not operational.",
+                        f"Configure that section before processing {brokerage} input.",
+                    ),
+                )
+            )
+    return raw, added
+
+
+def contains_control_character(value: str) -> bool:
+    return any(
+        ord(character) < 32 or 0x7F <= ord(character) <= 0x9F
+        for character in value
+    )
+
+
+def validate_output_text(
+    value: str,
+    *,
+    location: str,
+    cooked_csv: bool,
+    formula_guidance: str = "Change the configured value before retrying.",
+) -> None:
+    """Reject record and spreadsheet injection in generated text fields."""
+    if contains_control_character(value):
+        raise UserError(
+            f"{location} contains a control character; CR, LF, and other control "
+            "characters are not allowed in generated output fields."
+        )
+    if cooked_csv and value.lstrip().startswith(("=", "+", "-", "@")):
+        raise UserError(
+            f"{location} could be interpreted as a spreadsheet formula in the cooked CSV. "
+            f"{formula_guidance}"
+        )
+
+
+def selected_section(config: dict[str, object], brokerage: str, path: Path) -> dict:
+    brokerages = config["brokerages"]
+    if not isinstance(brokerages, dict):  # load_config already checks this.
+        raise UserError(f"Configuration key 'brokerages' must be an object: {path}")
+    section = brokerages.get(brokerage)
+    if not isinstance(section, dict):
+        raise UserError(
+            f"INCOMPLETE CONFIGURATION: brokerages.{brokerage} must be an object in {path}."
+        )
+
+    adapter = ADAPTERS[brokerage]
+    missing: list[str] = []
+    for key in ("accounts", "securities", "categories", "transfers"):
+        value = section.get(key)
+        if not isinstance(value, dict):
+            missing.append(key)
+            continue
+        if key in ("accounts", "securities") and not value:
+            missing.append(key)
+        for source_value, output_value in value.items():
+            if (
+                not isinstance(source_value, str)
+                or not isinstance(output_value, str)
+                or not source_value.strip()
+                or not output_value.strip()
+            ):
+                raise UserError(
+                    f"INCOMPLETE CONFIGURATION: brokerages.{brokerage}.{key} in {path} "
+                    "must map non-empty strings to non-empty strings."
+                )
+            validate_output_text(
+                output_value,
+                location=f"brokerages.{brokerage}.{key} value in {path}",
+                cooked_csv=key in ("accounts", "securities"),
+            )
+            if key == "categories" and ("[" in output_value or "]" in output_value):
+                raise UserError(
+                    f"brokerages.{brokerage}.categories value in {path} contains a QIF "
+                    "transfer bracket; category mappings cannot contain '[' or ']'."
+                )
+            if key == "transfers" and ("[" in output_value or "]" in output_value):
+                raise UserError(
+                    f"brokerages.{brokerage}.transfers value in {path} contains a QIF "
+                    "transfer bracket; provide the account name without '[' or ']'."
+                )
+    categories = section.get("categories")
+    transfers = section.get("transfers")
+    securities = section.get("securities")
+    if isinstance(securities, dict):
+        for reserved_key in adapter.required_security_keys:
+            if not securities.get(reserved_key):
+                missing.append(f"securities.{reserved_key}")
+    if isinstance(categories, dict):
+        for action in adapter.category_actions:
+            if not categories.get(action):
+                missing.append(f"categories.{action}")
+    if isinstance(transfers, dict):
+        for action in adapter.transfer_actions:
+            if not transfers.get(action):
+                missing.append(f"transfers.{action}")
+    if missing:
+        fields = ", ".join(missing)
+        raise UserError(
+            f"INCOMPLETE CONFIGURATION for brokerage '{brokerage}' in {path}: "
+            f"configure {fields}. See config.example.json for the synthetic schema."
+        )
+    return section
+
+
+def normalized_headers(path: Path) -> list[str]:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            row = next(csv.reader(handle), None)
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise UserError(f"Could not read CSV header from {path}: {exc}") from exc
+    if row is None:
+        raise UserError(f"CSV is empty: {path}")
+    return [cell.strip() for cell in row]
+
+
+def header_matches(actual: Sequence[str], required: Sequence[str]) -> bool:
+    return set(required).issubset(actual) and len(actual) == len(set(actual))
+
+
+def detect_brokerage(path: Path) -> str:
+    headers = normalized_headers(path)
+    matches = [
+        name
+        for name, adapter in ADAPTERS.items()
+        if header_matches(headers, adapter.required_headers)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise UserError(
+            f"AMBIGUOUS CSV CONTRACT: {path} matches multiple brokerage contracts."
+        )
+    raise UserError(
+        f"UNKNOWN CSV CONTRACT: {path} matches neither the Fidelity nor Vanguard "
+        "required headers. See div_conv/README.md."
+    )
+
+
+def validate_brokerage_contract(path: Path, brokerage: str) -> None:
+    """Validate only an explicitly selected adapter, resolving union headers."""
+    headers = normalized_headers(path)
+    if not header_matches(headers, ADAPTERS[brokerage].required_headers):
+        raise UserError(f"{path} does not match the {brokerage} CSV contract.")
+
+
+def expand_inputs(patterns: Sequence[str]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in patterns:
+        matches = glob.glob(os.path.expanduser(pattern)) if glob.has_magic(pattern) else [os.path.expanduser(pattern)]
+        if not matches:
+            raise UserError(f"Input pattern matched no files: {pattern}")
+        for match in sorted(matches):
+            path = Path(match)
+            if not path.is_file():
+                raise UserError(f"Input is not a file: {path}")
+            resolved = path.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                paths.append(path)
+    return paths
+
+
+def parse_date(value: str, path: Path, row_number: int) -> str:
+    try:
+        parsed = dt.date.fromisoformat(value)
+    except ValueError as exc:
+        raise UserError(
+            f"{path}: row {row_number} has invalid ISO date {value!r}."
+        ) from exc
+    if parsed.isoformat() != value:
+        raise UserError(f"{path}: row {row_number} date must use YYYY-MM-DD.")
+    return value
+
+
+def parse_amount(value: str, path: Path, row_number: int) -> Decimal:
+    text = value.strip()
+    match = FINANCIAL_AMOUNT_PATTERN.fullmatch(text)
+    if match is None:
+        raise UserError(f"{path}: row {row_number} has invalid amount {value!r}.")
+    parenthesized = match.group("parenthesized")
+    if parenthesized is not None:
+        cleaned = f"-{parenthesized.replace(',', '')}"
+    else:
+        sign_before = match.group("sign_before")
+        sign_after = match.group("sign_after")
+        if sign_before and sign_after:
+            raise UserError(f"{path}: row {row_number} has invalid amount {value!r}.")
+        sign = sign_before or sign_after
+        cleaned = f"{sign}{match.group('number').replace(',', '')}"
+    try:
+        amount = Decimal(cleaned)
+    except InvalidOperation as exc:
+        raise UserError(f"{path}: row {row_number} has invalid amount {value!r}.") from exc
+    if not amount.is_finite():
+        raise UserError(f"{path}: row {row_number} amount must be finite.")
+    validate_amount_bounds(amount, location=f"{path}: row {row_number} amount")
+    return amount
+
+
+def validate_amount_bounds(value: Decimal, *, location: str) -> None:
+    if not value.is_finite():
+        raise UserError(f"{location} must be finite.")
+    digits = len(value.as_tuple().digits)
+    integer_digits = max(value.adjusted() + 1, 1)
+    if (
+        digits > MAX_AMOUNT_SIGNIFICANT_DIGITS
+        or integer_digits > MAX_AMOUNT_INTEGER_DIGITS
+    ):
+        raise UserError(
+            f"{location} is too large to render safely; amounts are limited to "
+            f"{MAX_AMOUNT_SIGNIFICANT_DIGITS} significant digits and "
+            f"{MAX_AMOUNT_INTEGER_DIGITS} integer digits."
+        )
+
+
+def cleaned_row(row: dict[str | None, str | list[str] | None]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for key, value in row.items():
+        if key is None:
+            continue
+        if isinstance(value, list):
+            result[key.strip()] = ",".join(value).strip()
+        else:
+            result[key.strip()] = (value or "").strip()
+    return result
+
+
+def read_raw_transactions(path: Path, brokerage: str) -> list[RawTransaction]:
+    adapter = ADAPTERS[brokerage]
+    try:
+        handle = path.open("r", encoding="utf-8-sig", newline="")
+    except (OSError, UnicodeError) as exc:
+        raise UserError(f"Could not open CSV {path}: {exc}") from exc
+    transactions: list[RawTransaction] = []
+    try:
+        with handle:
+            reader = csv.DictReader(handle)
+            for row_number, source_row in enumerate(reader, start=2):
+                if None in source_row:
+                    extra_values = source_row[None]
+                    extra_count = len(extra_values) if isinstance(extra_values, list) else 1
+                    noun = "cell" if extra_count == 1 else "cells"
+                    raise UserError(
+                        f"{path}: row {row_number} has {extra_count} extra {noun} beyond "
+                        "the declared CSV header. Remove the extra delimiter or cell."
+                    )
+                row = cleaned_row(source_row)
+                if not any(row.values()):
+                    continue
+                extracted = adapter.extractor(row)
+                if extracted.source_action in adapter.skipped_actions:
+                    print(
+                        f"WARNING: {path}: row {row_number}: Skipped action "
+                        f"{extracted.source_action!r}; it does not produce an output transaction.",
+                        file=sys.stderr,
+                    )
+                    continue
+                action = adapter.actions.get(extracted.source_action)
+                if action is None:
+                    supported = ", ".join(repr(item) for item in adapter.actions)
+                    raise UserError(
+                        f"{path}: row {row_number} has unsupported action "
+                        f"{extracted.source_action!r}; supported actions are {supported}."
+                    )
+                if not extracted.account:
+                    raise UserError(f"{path}: row {row_number} has a blank account.")
+                if action == "dividend" and not extracted.security:
+                    raise UserError(f"{path}: row {row_number} has a blank security.")
+                validate_output_text(
+                    extracted.account,
+                    location=f"{path}: row {row_number} source account",
+                    cooked_csv=False,
+                )
+                if action == "dividend":
+                    validate_output_text(
+                        extracted.security,
+                        location=f"{path}: row {row_number} source security",
+                        cooked_csv=False,
+                    )
+                    memo = f"Dividend {extracted.security}"
+                else:
+                    memo = extracted.description or "Withdrawal"
+                    validate_output_text(
+                        memo,
+                        location=f"{path}: row {row_number} withdrawal description",
+                        cooked_csv=False,
+                    )
+                transactions.append(
+                    RawTransaction(
+                        account=extracted.account,
+                        date=parse_date(extracted.date, path, row_number),
+                        action=action,
+                        security=extracted.security,
+                        amount=parse_amount(extracted.amount, path, row_number),
+                        memo=memo,
+                        source_file=path.name,
+                        source_row=row_number,
+                    )
+                )
+    except (csv.Error, KeyError) as exc:
+        raise UserError(f"Could not parse {path} using the {brokerage} CSV contract: {exc}") from exc
+    return transactions
+
+
+def cook_transactions(
+    raw: Sequence[RawTransaction], brokerage: str, section: dict, config: Path
+) -> list[CookedTransaction]:
+    accounts = section["accounts"]
+    securities = section["securities"]
+    categories = section["categories"]
+    transfers = section["transfers"]
+    cooked: list[CookedTransaction] = []
+    for transaction in raw:
+        if transaction.account not in accounts:
+            raise UserError(
+                f"{transaction.source_file}: row {transaction.source_row} has unmapped account "
+                f"{transaction.account!r}; add it to brokerages.{brokerage}.accounts in {config}."
+            )
+        if transaction.action == "dividend" and transaction.security not in securities:
+            raise UserError(
+                f"{transaction.source_file}: row {transaction.source_row} has unmapped security "
+                f"{transaction.security!r}; add it to brokerages.{brokerage}.securities in {config}."
+            )
+        target_map = categories if transaction.action == "dividend" else transfers
+        if transaction.action not in target_map:
+            target_name = "categories" if transaction.action == "dividend" else "transfers"
+            raise UserError(
+                f"{transaction.source_file}: row {transaction.source_row} requires "
+                f"brokerages.{brokerage}.{target_name}.{transaction.action} in {config}."
+            )
+        cooked.append(
+            CookedTransaction(
+                brokerage=brokerage,
+                account=accounts[transaction.account],
+                date=transaction.date,
+                action=transaction.action,
+                security=(
+                    securities[transaction.security]
+                    if transaction.action == "dividend"
+                    else securities[WITHDRAWAL_SECURITY_KEY]
+                ),
+                amount=(
+                    abs(transaction.amount)
+                    if transaction.action == "withdrawal"
+                    else transaction.amount
+                ),
+                category_or_transfer=target_map[transaction.action],
+                memo=transaction.memo,
+                source_file=transaction.source_file,
+                source_row=transaction.source_row,
+            )
+        )
+    return cooked
+
+
+def decimal_text(value: Decimal, *, location: str = "amount") -> str:
+    validate_amount_bounds(value, location=location)
+    try:
+        return format(value, ".2f")
+    except (DecimalException, MemoryError, ValueError) as exc:
+        raise UserError(f"{location} could not be rendered safely: {exc}") from exc
+
+
+def render_cooked_csv(transactions: Sequence[CookedTransaction]) -> str:
+    from io import StringIO
+
+    output = StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=COOKED_HEADERS, lineterminator="\n")
+    writer.writeheader()
+    for item in transactions:
+        for field_name, value in (
+            ("Brokerage", item.brokerage),
+            ("Account", item.account),
+            ("Date", item.date),
+            ("Action", item.action),
+            ("Security", item.security),
+            ("Source File", item.source_file),
+        ):
+            guidance = (
+                "Rename the source file before retrying."
+                if field_name == "Source File"
+                else "Change the configured value before retrying."
+            )
+            validate_output_text(
+                value,
+                location=f"Cooked CSV field {field_name!r}",
+                cooked_csv=True,
+                formula_guidance=guidance,
+            )
+        writer.writerow(
+            {
+                "Brokerage": item.brokerage,
+                "Account": item.account,
+                "Date": item.date,
+                "Action": item.action,
+                "Security": item.security,
+                "Amount": decimal_text(item.amount),
+                "Source File": item.source_file,
+                "Source Row": item.source_row,
+            }
+        )
+    return output.getvalue()
+
+
+def qif_date(iso_date: str) -> str:
+    parsed = dt.date.fromisoformat(iso_date)
+    return f"{parsed.month}/{parsed.day}'{parsed.year % 100:02d}"
+
+
+def render_qif(transactions: Sequence[CookedTransaction]) -> str:
+    chunks: list[str] = []
+    current_account: str | None = None
+    for item in transactions:
+        for field_name, value in (
+            ("account", item.account),
+            ("security", item.security),
+            ("category or transfer", item.category_or_transfer),
+            ("memo", item.memo),
+        ):
+            validate_output_text(
+                value,
+                location=f"QIF {field_name}",
+                cooked_csv=False,
+            )
+        if item.account != current_account:
+            chunks.extend(("!Account", f"N{item.account}", "TInvst", "^", "!Type:Invst"))
+            current_account = item.account
+        action = "MiscInc" if item.action == "dividend" else "XOut"
+        chunks.extend(
+            (
+                f"D{qif_date(item.date)}",
+                f"N{action}",
+                f"Y{item.security}",
+                f"T{decimal_text(item.amount)}",
+                (
+                    f"L{item.category_or_transfer}"
+                    if item.action == "dividend"
+                    else f"L[{item.category_or_transfer}]"
+                ),
+                f"M{item.memo}",
+                "^",
+            )
+        )
+    return "\n".join(chunks) + ("\n" if chunks else "")
+
+
+def output_paths(source: Path, output_dir: Path | None) -> tuple[Path, Path]:
+    directory = output_dir if output_dir is not None else source.parent
+    return directory / f"{source.stem}.cooked.csv", directory / f"{source.stem}.qif"
+
+
+def plan_output_paths(
+    inputs: Sequence[Path], output_dir: Path | None, *, overwrite: bool
+) -> list[tuple[Path, Path, Path]]:
+    """Resolve every source/target relationship before processing or staging."""
+    resolved_inputs = {source.resolve(): source for source in inputs}
+    target_resolutions: dict[Path, Path] = {}
+    planned: list[tuple[Path, Path, Path]] = []
+    for source in inputs:
+        validate_output_text(
+            source.name,
+            location=f"Source filename {source.name!r}",
+            cooked_csv=True,
+            formula_guidance="Rename the source file before retrying.",
+        )
+        cooked_path, qif_path = output_paths(source, output_dir)
+        for target in (cooked_path, qif_path):
+            entry_exists = validate_output_target(target)
+            resolved = target.resolve()
+            colliding_source = resolved_inputs.get(resolved)
+            if colliding_source is None and entry_exists:
+                for input_path in inputs:
+                    try:
+                        if os.path.samefile(target, input_path):
+                            colliding_source = input_path
+                            break
+                    except OSError:
+                        continue
+            if colliding_source is not None:
+                raise UserError(
+                    f"Refusing output path {target}: output path collides with an input "
+                    f"{colliding_source}. --overwrite never permits replacing an input."
+                )
+            previous = target_resolutions.get(resolved)
+            if previous is not None:
+                raise UserError(
+                    f"Multiple inputs resolve to the same output: {previous} and {target}"
+                )
+            target_resolutions[resolved] = target
+            if entry_exists and not overwrite:
+                raise UserError(
+                    f"Output already exists: {target}. Use --overwrite to replace it."
+                )
+        planned.append((source, cooked_path, qif_path))
+    return planned
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Convert supported Fidelity and Vanguard activity CSV exports."
+    )
+    parser.add_argument("inputs", nargs="+", help="CSV paths or quoted glob patterns")
+    parser.add_argument(
+        "--brokerage", choices=REGISTERED_BROKERAGES, help="explicit contract override"
+    )
+    parser.add_argument("--output-dir", type=Path, help="local output directory")
+    parser.add_argument("--overwrite", action="store_true", help="replace existing outputs")
+    return parser
+
+
+def run(args: argparse.Namespace) -> int:
+    path = config_path()
+    secure_runtime_directory(path.parent)
+    if not config_file_exists(path):
+        try:
+            create_first_run_config(path)
+        except OSError as exc:
+            raise UserError(f"Could not create first-run configuration {path}: {exc}") from exc
+        raise ConfigurationCreated(
+            warning_banner(
+                "CONFIGURATION REQUIRED",
+                (
+                    f"Created incomplete skeleton: {path}",
+                    "Processing stopped before reading any input.",
+                    "Fill the local mappings, then run the command again.",
+                ),
+            )
+        )
+
+    config, _added = load_config(path)
+    inputs = expand_inputs(args.inputs)
+    if args.brokerage:
+        for source in inputs:
+            validate_brokerage_contract(source, args.brokerage)
+        brokerage = args.brokerage
+    else:
+        detected = {source: detect_brokerage(source) for source in inputs}
+        brokerages = set(detected.values())
+        if len(brokerages) != 1:
+            details = ", ".join(
+                f"{source.name}={name}" for source, name in detected.items()
+            )
+            raise UserError(
+                "MIXED BROKERAGES: one invocation may process only one brokerage. " + details
+            )
+        brokerage = brokerages.pop()
+
+    section = selected_section(config, brokerage, path)
+    output_plan = plan_output_paths(inputs, args.output_dir, overwrite=args.overwrite)
+    prepared: list[tuple[Path, list[CookedTransaction], Path, Path]] = []
+    for source, cooked_path, qif_path in output_plan:
+        raw = read_raw_transactions(source, brokerage)
+        cooked = cook_transactions(raw, brokerage, section, path)
+        prepared.append((source, cooked, cooked_path, qif_path))
+
+    total_transactions = sum(len(items) for _source, items, _csv, _qif in prepared)
+    with localcontext() as context:
+        context.prec = MAX_AMOUNT_SIGNIFICANT_DIGITS * 2 + 20
+        total_amount = sum(
+            (item.amount for _source, items, _csv, _qif in prepared for item in items),
+            Decimal("0"),
+        )
+    total_amount_text = decimal_text(total_amount, location="batch total amount")
+    artifacts = [
+        artifact
+        for _source, items, cooked_path, qif_path in prepared
+        for artifact in (
+            (cooked_path, render_cooked_csv(items).encode("utf-8")),
+            (qif_path, render_qif(items).encode("utf-8")),
+        )
+    ]
+    try:
+        commit_output_transaction(artifacts, overwrite=args.overwrite)
+    except OSError as exc:
+        raise UserError(f"Could not commit output transaction: {exc}") from exc
+    for _source, _items, cooked_path, qif_path in prepared:
+        print(f"Wrote {cooked_path}")
+        print(f"Wrote {qif_path}")
+    print(
+        f"Converted {len(prepared)} file(s), {total_transactions} transaction(s), "
+        f"total amount {total_amount_text}."
+    )
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return run(args)
+    except ConfigurationCreated as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except UserError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print("No further processing was performed. Correct the issue and retry.", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("ERROR: interrupted; retry when ready.", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

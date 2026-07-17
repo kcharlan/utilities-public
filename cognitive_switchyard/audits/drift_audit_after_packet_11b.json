@@ -1,0 +1,11 @@
+{
+  "status": "repair_packet",
+  "severity": "high",
+  "effort": "medium",
+  "summary": "Packet 12 is supposed to stay UI-only, but the packet-11/11A/11B backend still lacks the remaining Setup View contract: session-scoped runtime configuration transport and setup-view-ready intake metadata, so another backend repair packet is required before the SPA can land cleanly.",
+  "fixes_applied": false,
+  "validation_rerun": "none",
+  "repair_packet_id": "11C",
+  "repair_packet_doc": "plans/packet_11c_setup_session_configuration_and_intake_contract_repair.md",
+  "notes": "Trackers were updated to insert repair packet 11C immediately after packet 11B, to make packet 12 depend on that repair, and to correct stale packet-status prose/horizon state."
+}

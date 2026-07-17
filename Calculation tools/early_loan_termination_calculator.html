@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Early Loan Payoff Analyzer</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{
+    --bg: #f7f7fb;
+    --fg: #1e1e1e;
+    --card: #ffffff;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --primary: #2563eb;
+    --primary-contrast: #ffffff;
+    --table-head: #f3f4f6;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1115; --fg:#e5e7eb; --card:#151821; --muted:#9aa3b2; --border:#2a2f3a;
+      --primary:#60a5fa; --primary-contrast:#0b1220; --table-head:#1c2130;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0; padding:24px; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif}
+  h1{margin:0 0 16px; text-align:center; font-size:22px; font-weight:700}
+  .wrap{max-width:1200px; margin:0 auto; display:flex; flex-direction:column; gap:16px}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px}
+  .row{display:grid; grid-template-columns:repeat(6,1fr); gap:12px}
+  .row .field{display:flex; flex-direction:column; gap:6px}
+  label{font-weight:600; font-size:12px; color:var(--muted)}
+  input[type="number"], select{
+    width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:transparent; color:inherit;
+  }
+  .btn{
+    padding:10px 14px; border:1px solid var(--primary); color:var(--primary-contrast);
+    background:var(--primary); border-radius:10px; cursor:pointer; font-weight:600;
+  }
+  .btn.secondary{background:transparent; color:var(--primary); border-color:var(--primary)}
+  .grid-2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media (max-width: 1000px){ .grid-2{grid-template-columns:1fr} .row{grid-template-columns:repeat(2,1fr)} }
+  table{width:100%; border-collapse:collapse; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:transparent}
+  th, td{padding:8px 10px; text-align:right; border-bottom:1px solid var(--border)}
+  th{background:var(--table-head); font-weight:700}
+  td:first-child, th:first-child{text-align:center}
+  tfoot td{font-weight:700; background:var(--table-head)}
+  .chart-head{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px}
+  .table-head{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px}
+  .note{color:var(--muted); font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Early Loan Payoff Analyzer</h1>
+
+  <div class="card">
+    <div class="row">
+      <div class="field">
+        <label for="price">Vendor Price ($)</label>
+        <input type="number" id="price" value="15000" min="0" step="0.01">
+      </div>
+      <div class="field">
+        <label for="down">Down Payment ($)</label>
+        <input type="number" id="down" value="0" min="0" step="0.01">
+      </div>
+      <div class="field">
+        <label for="term">Term (months)</label>
+        <input type="number" id="term" value="24" min="1" step="1">
+      </div>
+      <div class="field">
+        <label for="vendorRate">Vendor Rate (%)</label>
+        <input type="number" id="vendorRate" value="0" step="0.01" min="0">
+      </div>
+      <div class="field">
+        <label for="vendorRateType">Vendor Rate Type</label>
+        <select id="vendorRateType">
+          <option value="APR" selected>APR</option>
+          <option value="APY">APY</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="timing">First Payment Timing</label>
+        <select id="timing">
+          <option value="immediate" selected>Immediate (start)</option>
+          <option value="end">End of first month</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="disc">Your Discount Rate (%)</label>
+        <input type="number" id="disc" value="4" step="0.01" min="0">
+      </div>
+      <div class="field">
+        <label for="discType">Discount Rate Type</label>
+        <select id="discType">
+          <option value="APR" selected>APR</option>
+          <option value="APY">APY</option>
+        </select>
+      </div>
+      <div class="field" style="align-self:end;">
+        <button class="btn" id="calcBtn">Calculate</button>
+      </div>
+      <div class="field" style="align-self:end;">
+        <button class="btn secondary" id="dlChartBtn">Download Chart</button>
+      </div>
+      <div class="field" style="grid-column: span 2;">
+        <span class="note">Savings are computed vs paying the full price today (time 0). % of final savings uses month N as the denominator.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="chart-head">
+      <div class="note">Savings Accumulation</div>
+    </div>
+    <canvas id="chart" height="120"></canvas>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="table-head">
+        <h3 style="margin:0">Vendor Amortization</h3>
+        <button class="btn secondary" id="dlAmortCsvBtn">Download CSV</button>
+      </div>
+      <table id="amortTbl"></table>
+    </div>
+    <div class="card">
+      <div class="table-head">
+        <h3 style="margin:0">Early Payoff Savings</h3>
+        <button class="btn secondary" id="dlSavingsCsvBtn">Download CSV</button>
+      </div>
+      <table id="saveTbl"></table>
+    </div>
+  </div>
+</div>
+
+<script>
+/** Toggle console auditing */
+const DEBUG = false;
+
+// State for CSV exports
+const state = {
+  amortRows: [],     // [ [m, pay, prin, int, bal], ... ]
+  amortTotals: null, // {totalPay, totalPrin, totalInt}
+  savingsRows: []    // [ [m, savings, pct], ... ] (numbers)
+};
+
+/** Utilities */
+const fmtUSD = n => n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+function toMonthly(ratePct, kind){ // kind: 'APR' or 'APY'
+  const r = Math.max(0, Number(ratePct) || 0)/100;
+  return kind === 'APY' ? Math.pow(1+r, 1/12) - 1 : r/12;
+}
+
+/** Payment for standard amortizing loan */
+function paymentPMT(monthlyRate, n, pv){
+  if (n <= 0) return 0;
+  if (monthlyRate === 0) return pv / n;
+  const i = monthlyRate;
+  return pv * (i / (1 - Math.pow(1 + i, -n)));
+}
+
+/** Remaining balance after X payments */
+function remainingBalance(P, i, n, x){
+  if (x >= n) return 0;
+  if (i === 0) return P * (n - x);
+  return P * (1 - Math.pow(1 + i, -(n - x))) / i;
+}
+
+/** Present value of a scenario: down payment at t=0 + payments 1..X + lump at X (immediate) or X+1 (end) */
+function scenarioPV({price, down, term, P, i_v, i_d, X, timing}){
+  let pv = 0;
+  // down payment at time 0
+  pv += down;
+
+  if (timing === 'immediate'){
+    // first payment at t=0 (month index 0), then at t=1..X-1
+    if (X >= 1) pv += P; // t=0
+    for (let m=2; m<=X; m++){
+      pv += P / Math.pow(1 + i_d, m - 1);
+    }
+    if (X < term){
+      const RB = remainingBalance(P, i_v, term, X);
+      pv += RB / Math.pow(1 + i_d, X); // lump at month X
+    }
+  } else {
+    // payments at end of months: t=1..X
+    for (let m=1; m<=X; m++){
+      pv += P / Math.pow(1 + i_d, m);
+    }
+    if (X < term){
+      const RB = remainingBalance(P, i_v, term, X);
+      pv += RB / Math.pow(1 + i_d, X + 1); // lump at month X+1
+    }
+  }
+  if (DEBUG) console.log(`PV(X=${X}) = ${pv.toFixed(6)}`);
+  return pv;
+}
+
+function build(){
+  // inputs
+  const price = Number(document.getElementById('price').value) || 0;
+  const down  = Number(document.getElementById('down').value) || 0;
+  const term  = Math.max(1, parseInt(document.getElementById('term').value) || 1);
+  const vendorRate = toMonthly(document.getElementById('vendorRate').value, document.getElementById('vendorRateType').value);
+  const discRate   = toMonthly(document.getElementById('disc').value, document.getElementById('discType').value);
+  const timing     = document.getElementById('timing').value;
+
+  const financed = Math.max(0, price - down);
+  const P = paymentPMT(vendorRate, term, financed);
+
+  // Amortization table (independent of timing for schedule)
+  const amort = [];
+  let bal = financed, totPay=0, totInt=0, totPrin=0;
+  for (let m=1; m<=term; m++){
+    const int = bal * vendorRate;
+    const prin = P - int;
+    bal = Math.max(0, bal - prin);
+    amort.push([m, P, prin, int, bal]);
+    totPay += P; totPrin += prin; totInt += int;
+  }
+  state.amortRows = amort;
+  state.amortTotals = { totalPay: totPay, totalPrin: totPrin, totalInt: totInt };
+
+  // Savings table relative to paying full price at t=0
+  const pvX = [];
+  for (let X=1; X<=term; X++){
+    pvX.push(scenarioPV({price, down, term, P, i_v:vendorRate, i_d:discRate, X, timing}));
+  }
+  const savings = pvX.map(pv => price - pv); // our chosen definition
+  const finalSavings = savings[term-1];
+  const pct = savings.map(v => (finalSavings>0 ? Math.min(100, Math.max(0, (v / finalSavings) * 100)) : 0));
+  state.savingsRows = savings.map((s,idx)=>[idx+1, Math.max(0, s), pct[idx]]);
+
+  if (DEBUG){
+    console.log({price, down, term, vendorRate, discRate, P});
+    console.table(pvX.map((pv,idx)=>({X:idx+1, PV:pv, Savings:savings[idx], Pct:pct[idx]})));
+  }
+
+  // Render amortization
+  const amortTbl = document.getElementById('amortTbl');
+  amortTbl.innerHTML = `
+    <thead><tr>
+      <th>Month</th><th>Payment</th><th>Principal</th><th>Interest</th><th>Balance</th>
+    </tr></thead>
+    <tbody>
+      ${amort.map(r=>`<tr>
+        <td>${r[0]}</td>
+        <td>${fmtUSD(r[1])}</td>
+        <td>${fmtUSD(r[2])}</td>
+        <td>${fmtUSD(r[3])}</td>
+        <td>${fmtUSD(r[4])}</td>
+      </tr>`).join('')}
+    </tbody>
+    <tfoot>
+      <tr><td>Totals</td><td>${fmtUSD(totPay)}</td><td>${fmtUSD(totPrin)}</td><td>${fmtUSD(totInt)}</td><td>-</td></tr>
+    </tfoot>`;
+
+  // Render savings table
+  const saveTbl = document.getElementById('saveTbl');
+  saveTbl.innerHTML = `
+    <thead><tr>
+      <th>Month</th><th>Savings ($)</th><th>% of Final Savings</th>
+    </tr></thead>
+    <tbody>
+      ${state.savingsRows.map(r=>`<tr>
+        <td>${r[0]}</td>
+        <td>${fmtUSD(r[1])}</td>
+        <td>${r[2].toFixed(2)}</td>
+      </tr>`).join('')}
+    </tbody>`;
+
+  // Chart
+  const labels = state.savingsRows.map(r=>r[0]);
+  const yVals = state.savingsRows.map(r=>r[2]);
+  const ctx = document.getElementById('chart').getContext('2d');
+  if (window._chart) window._chart.destroy();
+  const xStep = Math.max(1, Math.round(term/10));
+  window._chart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ label: '% of Final Savings', data: yVals, borderColor: getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#2563eb', fill: false, pointRadius:3, pointHoverRadius:5, tension:0.2 }] },
+    options: {
+      responsive: true,
+      scales: {
+        x: { ticks: { stepSize: xStep }, min:-1, max:term+1 },
+        y: { min:-5, max:105, ticks:{ stepSize:10, callback:(v)=> v<=100 ? v : '' } }
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const i = ctx.dataIndex;
+              return `${yVals[i].toFixed(2)}% — $${fmtUSD(state.savingsRows[i][1])}`;
+            }
+          }
+        },
+        legend: { display: false }
+      }
+    }
+  });
+}
+
+/** CSV helpers */
+function toCSV(headers, rows){
+  const esc = v => `"${String(v).replace(/"/g,'""')}"`;
+  const lines = [];
+  lines.push(headers.map(esc).join(','));
+  rows.forEach(r => lines.push(r.map(esc).join(',')));
+  return lines.join('\n');
+}
+function download(filename, text){
+  const blob = new Blob([text], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Build CSV from raw numeric data (no $ signs, no commas) */
+function downloadAmortCSV(){
+  const headers = ['Month','Payment','Principal','Interest','Balance'];
+  const rows = state.amortRows.map(r => [
+    r[0],
+    r[1].toFixed(2),
+    r[2].toFixed(2),
+    r[3].toFixed(2),
+    r[4].toFixed(2)
+  ]);
+  // totals row
+  rows.push(['Totals',
+    state.amortTotals.totalPay.toFixed(2),
+    state.amortTotals.totalPrin.toFixed(2),
+    state.amortTotals.totalInt.toFixed(2),
+    ''
+  ]);
+  download('amortization.csv', toCSV(headers, rows));
+}
+function downloadSavingsCSV(){
+  const headers = ['Month','Savings','PercentOfFinal'];
+  const rows = state.savingsRows.map(r => [
+    r[0],
+    r[1].toFixed(2),
+    r[2].toFixed(2)
+  ]);
+  download('savings.csv', toCSV(headers, rows));
+}
+
+document.getElementById('calcBtn').addEventListener('click', build);
+document.getElementById('dlChartBtn').addEventListener('click', ()=>{
+  const link = document.createElement('a');
+  link.download = 'savings_chart.png';
+  link.href = document.getElementById('chart').toDataURL('image/png');
+  link.click();
+});
+document.getElementById('dlAmortCsvBtn').addEventListener('click', downloadAmortCSV);
+document.getElementById('dlSavingsCsvBtn').addEventListener('click', downloadSavingsCSV);
+
+// Auto-run once with defaults
+build();
+</script>
+</body>
+</html>

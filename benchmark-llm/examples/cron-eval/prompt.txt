@@ -1,0 +1,47 @@
+You are implementing a cron expression evaluator in Python.
+
+Build the project in the current directory.
+
+Goal
+Implement a single function that returns the next N times a cron expression will fire after a given datetime, in a specified timezone. The function must follow the dialect spec in spec.md exactly.
+
+Required artifact
+- A Python module `cron_eval.py` at the workspace root.
+- The module must expose a function with this exact signature:
+
+  def next_fires(expr: str, after: datetime, n: int = 1, tz: str = "UTC") -> list[datetime]:
+      ...
+
+- The module must expose an exception class with this exact name and base:
+
+  class InvalidCronExpr(ValueError):
+      """Raised for any malformed expression or invalid argument."""
+
+- `datetime` is `datetime.datetime` from the standard library. `n` is `int`. `tz` is an IANA timezone name (string).
+
+Where the contract lives
+- spec.md is the contract. Read it carefully. It defines the dialect, the DOM/DOW interaction rule, the L and W operators, DST handling, and the error class.
+- examples.md shows worked examples for the most subtle cases. Use them to confirm your understanding.
+- starter_test.py is a small pytest file you can run locally as a sanity check. It is NOT the grading suite. Passing it does not imply your implementation is correct.
+
+Output
+- Return a list of timezone-aware `datetime` objects in the requested `tz`, in ascending order, strictly after `after`. Do not include `after` itself in the result.
+- Do not print anything. Do not write any files. Do not invoke any external commands.
+
+Dependencies
+- Standard library only. The `zoneinfo` module is available (Python 3.9+).
+- No third-party packages.
+
+Scope discipline
+- Implement only the dialect documented in spec.md.
+- Year fields, seconds fields, Jenkins `H`, Quartz `#`, month or day name aliases (JAN, MON, etc.), and `@yearly`/`@daily`/`@reboot` style macros are NOT part of the dialect. Do not implement them. They will not be tested and they increase the surface for accidentally breaking the spec'd behavior.
+
+Internal structure
+- Internal structure of the module is up to you. Helper functions, dataclasses, or splitting into additional modules in the workspace root are all fine, as long as `cron_eval.py` exposes the required `next_fires` function and `InvalidCronExpr` class.
+
+Errors
+- For any malformed expression, out-of-range field, invalid step or range, naive `after` datetime, `n < 1`, unknown timezone, or simultaneous `?` in both DOM and DOW, raise `InvalidCronExpr`.
+- Do not raise `ValueError`, `TypeError`, or any other exception type at the API boundary. `InvalidCronExpr` subclasses `ValueError`, so callers can still catch `ValueError` if they want.
+
+Grading
+- Grading is automated and deterministic. There is no human review of code style or readability. The contract is the contract; clear code is welcome but not graded.

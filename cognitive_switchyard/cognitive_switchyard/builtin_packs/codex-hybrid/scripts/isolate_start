@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+SLOT_NUMBER="${1:?slot required}"
+TASK_ID="${2:?task id required}"
+SESSION_ROOT="${3:?session root required}"
+REPO_ROOT="${COGNITIVE_SWITCHYARD_REPO_ROOT:-}"
+
+if [ -z "$REPO_ROOT" ]; then
+  echo "COGNITIVE_SWITCHYARD_REPO_ROOT must point at the repository root for git-worktree isolation." >&2
+  exit 1
+fi
+
+WORKSPACE_PATH="$SESSION_ROOT/workers/$SLOT_NUMBER/worktree-$TASK_ID"
+BRANCH_NAME="switchyard-$TASK_ID-$SLOT_NUMBER"
+rm -rf "$WORKSPACE_PATH"
+git -C "$REPO_ROOT" worktree add --detach "$WORKSPACE_PATH" >/dev/null
+git -C "$WORKSPACE_PATH" checkout -b "$BRANCH_NAME" >/dev/null 2>&1 || true
+printf '%s\n' "$WORKSPACE_PATH"

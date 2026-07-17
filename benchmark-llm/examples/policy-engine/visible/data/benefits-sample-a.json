@@ -1,0 +1,40 @@
+{
+  "plan_name": "Demo Plan A",
+  "benefits": [
+    {
+      "service_category": "Primary Care Visit",
+      "coverage_status": "covered",
+      "member_cost": "$20 copay"
+    },
+    {
+      "service_category": "Specialist Consultation",
+      "coverage_status": "covered",
+      "member_cost": "$40 copay"
+    },
+    {
+      "service_category": "Inpatient Room & Board",
+      "coverage_status": "covered",
+      "member_cost": "20% after deductible"
+    },
+    {
+      "service_category": "Emergency Room (Facility)",
+      "coverage_status": "covered",
+      "member_cost": "$500 copay"
+    },
+    {
+      "service_category": "ER Physician Fee",
+      "coverage_status": "covered",
+      "member_cost": "included in professional claim"
+    },
+    {
+      "service_category": "Diagnostic Imaging (Tech)",
+      "coverage_status": "covered",
+      "member_cost": "15% after deductible"
+    },
+    {
+      "service_category": "Diagnostic Imaging (Prof)",
+      "coverage_status": "covered",
+      "member_cost": "$75 copay"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"id": "tz_01_la_fallback_duplicate_fires_once","category": "timezone_dst","weight": 1.5,"input": {"expr": "30 * * * *","after": "2026-11-01T05:00:00+00:00","n": 5,"tz": "America/Los_Angeles"},"expected": {"kind": "fires","value": ["2026-10-31T22:30:00-07:00","2026-10-31T23:30:00-07:00","2026-11-01T00:30:00-07:00","2026-11-01T01:30:00-07:00","2026-11-01T02:30:00-08:00"]}}

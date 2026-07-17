@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Token Analyzer & Format Converter</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap');
+
+        :root {
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.6;
+        }
+
+        [data-theme="light"],
+        :root {
+            --bg-gradient: radial-gradient(circle at 10% 20%, rgba(86, 97, 246, 0.28), transparent 45%), linear-gradient(135deg, #f9fafc 0%, #eef2ff 100%);
+            --surface: rgba(255, 255, 255, 0.9);
+            --surface-muted: rgba(255, 255, 255, 0.8);
+            --border-color: rgba(15, 23, 42, 0.08);
+            --text-color: #0f172a;
+            --text-muted: rgba(15, 23, 42, 0.65);
+            --accent: #4f46e5;
+            --accent-strong: #4338ca;
+            --chip-bg: rgba(79, 70, 229, 0.12);
+            --chip-text: #3730a3;
+            --textarea-bg: rgba(247, 249, 255, 0.9);
+            --table-header-bg: rgba(15, 23, 42, 0.04);
+            --table-row-even-bg: rgba(15, 23, 42, 0.02);
+            --table-row-hover-bg: rgba(79, 70, 229, 0.08);
+            --status-api-bg: #16a34a;
+            --status-local-bg: #f59e0b;
+            --error-color: #dc2626;
+            --shadow-lg: 0 40px 80px rgba(15, 23, 42, 0.15);
+            --shadow-sm: 0 20px 35px rgba(15, 23, 42, 0.1);
+        }
+
+        [data-theme="dark"] {
+            --bg-gradient: radial-gradient(circle at 15% 15%, rgba(126, 88, 241, 0.25), transparent 55%), linear-gradient(145deg, #050914 0%, #0b1120 60%, #050914 100%);
+            --surface: rgba(10, 15, 30, 0.92);
+            --surface-muted: rgba(19, 27, 51, 0.85);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-color: #f8fafc;
+            --text-muted: rgba(248, 250, 252, 0.7);
+            --accent: #a78bfa;
+            --accent-strong: #c4b5fd;
+            --chip-bg: rgba(167, 139, 250, 0.16);
+            --chip-text: #d8c8ff;
+            --textarea-bg: rgba(5, 8, 15, 0.65);
+            --table-header-bg: rgba(248, 250, 252, 0.04);
+            --table-row-even-bg: rgba(248, 250, 252, 0.02);
+            --table-row-hover-bg: rgba(167, 139, 250, 0.14);
+            --status-api-bg: #22c55e;
+            --status-local-bg: #facc15;
+            --error-color: #f87171;
+            --shadow-lg: 0 35px 90px rgba(0, 0, 0, 0.6);
+            --shadow-sm: 0 20px 35px rgba(0, 0, 0, 0.45);
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg-gradient);
+            color: var(--text-color);
+            font-family: inherit;
+            transition: background 0.5s ease, color 0.3s ease;
+        }
+
+        .background-glow {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(circle at 30% 20%, rgba(252, 211, 77, 0.15), transparent 45%), radial-gradient(circle at 80% 0%, rgba(59, 130, 246, 0.12), transparent 40%);
+            opacity: 0.9;
+            z-index: 0;
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            width: min(1200px, calc(100% - 3rem));
+            margin: 60px auto 90px;
+            padding: 48px;
+            border-radius: 32px;
+            background: var(--surface);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-lg);
+            backdrop-filter: blur(16px);
+        }
+
+        .hero {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            margin-bottom: 40px;
+        }
+
+        .hero-eyebrow {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+            margin: 0;
+        }
+
+        .hero-headline {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .hero-headline h1 {
+            margin: 0;
+            font-size: clamp(2.2rem, 4vw, 3.1rem);
+            font-weight: 600;
+            font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+            color: var(--text-color);
+        }
+
+        .hero-badge {
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: var(--chip-bg);
+            color: var(--chip-text);
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .hero-description {
+            margin: 0;
+            color: var(--text-muted);
+            max-width: 640px;
+        }
+
+        .hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+        }
+
+        .hero-pill {
+            padding: 10px 18px;
+            border-radius: 999px;
+            background: var(--surface-muted);
+            border: 1px dashed var(--border-color);
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .theme-switcher {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            background: var(--surface-muted);
+            border: 1px solid var(--border-color);
+        }
+
+        .theme-switcher label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .theme-switcher select {
+            border: none;
+            background: transparent;
+            color: var(--text-color);
+            font-weight: 600;
+            font-size: 0.95rem;
+            padding: 6px 8px;
+            border-radius: 999px;
+            cursor: pointer;
+        }
+
+        .theme-switcher select:focus {
+            outline: none;
+        }
+
+        .insight-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 18px;
+            margin-bottom: 36px;
+        }
+
+        .insight-card {
+            position: relative;
+            padding: 20px;
+            border-radius: 18px;
+            background: var(--surface-muted);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .insight-card::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, transparent, rgba(79, 70, 229, 0.12));
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .insight-card:hover::after {
+            opacity: 1;
+        }
+
+        .insight-card .label {
+            margin: 0 0 6px;
+            font-size: 0.85rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .insight-card .stat {
+            font-size: 1.9rem;
+            font-weight: 600;
+            margin: 0;
+            color: var(--text-color);
+        }
+
+        .insight-card .muted {
+            margin: 6px 0 0;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .panel-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+            margin-bottom: 36px;
+        }
+
+        .panel {
+            border-radius: 20px;
+            padding: 24px;
+            background: var(--surface-muted);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .panel-label {
+            margin: 0;
+            font-size: 0.85rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .panel-header h3 {
+            margin: 4px 0 6px;
+            font-size: 1.3rem;
+            color: var(--text-color);
+        }
+
+        .panel-subtitle {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .panel-chip {
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: var(--chip-bg);
+            color: var(--chip-text);
+            white-space: nowrap;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 180px;
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            background: var(--textarea-bg);
+            padding: 14px;
+            font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace;
+            font-size: 0.95rem;
+            color: var(--text-color);
+            resize: vertical;
+            transition: border 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18);
+            background: var(--surface);
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            flex-wrap: wrap;
+        }
+
+        .calculate-btn {
+            background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 999px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+            box-shadow: 0 15px 25px rgba(79, 70, 229, 0.25);
+        }
+
+        .calculate-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 20px 30px rgba(79, 70, 229, 0.35);
+        }
+
+        .calculate-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 10px 20px rgba(79, 70, 229, 0.3);
+        }
+
+        .result {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        .status-chip {
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 0.85rem;
+            color: #fff;
+            min-width: 82px;
+            text-align: center;
+        }
+
+        .status-chip.api { background-color: var(--status-api-bg); }
+        .status-chip.local { background-color: var(--status-local-bg); }
+
+        .error {
+            color: var(--error-color);
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .table-panel {
+            margin-top: 12px;
+            gap: 0;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            margin-top: 12px;
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+        }
+
+        #comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+
+        #comparison-table th,
+        #comparison-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-color);
+            text-align: left;
+        }
+
+        #comparison-table th {
+            background: var(--table-header-bg);
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.08em;
+        }
+
+        #comparison-table tbody tr:nth-child(even) {
+            background: var(--table-row-even-bg);
+        }
+
+        #comparison-table tbody tr:hover {
+            background: var(--table-row-hover-bg);
+            transition: background 0.2s ease;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 32px;
+                margin: 32px auto 60px;
+            }
+            .panel-grid {
+                grid-template-columns: 1fr;
+            }
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .calculate-btn {
+                width: 100%;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="background-glow"></div>
+    <main class="container">
+        <header class="hero">
+            <p class="hero-eyebrow">Utilities Studio</p>
+            <div class="hero-headline">
+                <h1>LLM Token Analyzer & Format Converter</h1>
+                <span class="hero-badge">Revamped UI</span>
+            </div>
+            <p class="hero-description">Compare how each serialization choice impacts token usage, convert across formats, and keep your prompts lean with one focused workspace.</p>
+            <div class="hero-actions">
+                <div class="hero-pill">✨ No API key is required for local estimates</div>
+                <div class="theme-switcher">
+                    <label for="theme-select">Theme</label>
+                    <select id="theme-select">
+                        <option value="system">System</option>
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                    </select>
+                </div>
+            </div>
+        </header>
+
+        <section class="insight-grid">
+            <article class="insight-card">
+                <p class="label">Most efficient format</p>
+                <p class="stat" id="insight-smallest">—</p>
+                <p class="muted" id="insight-smallest-count">Awaiting analysis</p>
+            </article>
+            <article class="insight-card">
+                <p class="label">Most verbose format</p>
+                <p class="stat" id="insight-largest">—</p>
+                <p class="muted" id="insight-largest-count">Awaiting analysis</p>
+            </article>
+            <article class="insight-card">
+                <p class="label">Token spread</p>
+                <p class="stat" id="insight-spread">—</p>
+                <p class="muted">Difference between smallest & largest</p>
+            </article>
+            <article class="insight-card">
+                <p class="label">Last analysis</p>
+                <p class="stat" id="insight-last-run">—</p>
+                <p class="muted">Updates after each conversion</p>
+            </article>
+        </section>
+
+        <section class="panel-grid">
+            <div id="panel-raw" class="panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="panel-label">Freeform</p>
+                        <h3>Raw Text</h3>
+                        <p class="panel-subtitle">Paste any content to quickly inspect its size.</p>
+                    </div>
+                    <span class="panel-chip">Tokens only</span>
+                </div>
+                <textarea id="text-raw" placeholder="Enter raw text..."></textarea>
+                <div class="controls">
+                    <button id="btn-raw" class="calculate-btn">Calculate</button>
+                    <div class="result">Tokens: <span id="tokens-raw">N/A</span> <span id="status-raw" class="status-chip"></span></div>
+                </div>
+                <div id="error-raw" class="error"></div>
+            </div>
+
+            <div id="panel-json-pretty" class="panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="panel-label">Structured</p>
+                        <h3>JSON (Pretty)</h3>
+                        <p class="panel-subtitle">Work with a readable, indented JSON payload.</p>
+                    </div>
+                    <span class="panel-chip">Auto converts</span>
+                </div>
+                <textarea id="text-json-pretty" placeholder="Enter pretty-printed JSON..."></textarea>
+                <div class="controls">
+                    <button id="btn-json-pretty" class="calculate-btn">Calculate & Convert</button>
+                    <div class="result">Tokens: <span id="tokens-json-pretty">N/A</span> <span id="status-json-pretty" class="status-chip"></span></div>
+                </div>
+                <div id="error-json-pretty" class="error"></div>
+            </div>
+
+            <div id="panel-json-compact" class="panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="panel-label">Structured</p>
+                        <h3>JSON (Compact)</h3>
+                        <p class="panel-subtitle">Minify the payload to compare against the pretty version.</p>
+                    </div>
+                    <span class="panel-chip">Space saver</span>
+                </div>
+                <textarea id="text-json-compact" placeholder="Enter compact JSON..."></textarea>
+                <div class="controls">
+                    <button id="btn-json-compact" class="calculate-btn">Calculate & Convert</button>
+                    <div class="result">Tokens: <span id="tokens-json-compact">N/A</span> <span id="status-json-compact" class="status-chip"></span></div>
+                </div>
+                <div id="error-json-compact" class="error"></div>
+            </div>
+
+            <div id="panel-xml" class="panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="panel-label">Markup</p>
+                        <h3>XML</h3>
+                        <p class="panel-subtitle">Translate your structured data into deterministic XML.</p>
+                    </div>
+                    <span class="panel-chip">Schema friendly</span>
+                </div>
+                <textarea id="text-xml" placeholder="Enter XML..."></textarea>
+                <div class="controls">
+                    <button id="btn-xml" class="calculate-btn">Calculate & Convert</button>
+                    <div class="result">Tokens: <span id="tokens-xml">N/A</span> <span id="status-xml" class="status-chip"></span></div>
+                </div>
+                <div id="error-xml" class="error"></div>
+            </div>
+
+            <div id="panel-toon" class="panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="panel-label">Custom</p>
+                        <h3>TOON</h3>
+                        <p class="panel-subtitle">Experiment with the compact TOON representation.</p>
+                    </div>
+                    <span class="panel-chip">Deterministic</span>
+                </div>
+                <textarea id="text-toon" placeholder="Enter TOON..."></textarea>
+                <div class="controls">
+                    <button id="btn-toon" class="calculate-btn">Calculate & Convert</button>
+                    <div class="result">Tokens: <span id="tokens-toon">N/A</span> <span id="status-toon" class="status-chip"></span></div>
+                </div>
+                <div id="error-toon" class="error"></div>
+            </div>
+
+            <div id="panel-yaml" class="panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="panel-label">Configuration</p>
+                        <h3>YAML</h3>
+                        <p class="panel-subtitle">See how indentation-heavy YAML compares.</p>
+                    </div>
+                    <span class="panel-chip">Indent aware</span>
+                </div>
+                <textarea id="text-yaml" placeholder="Enter YAML..."></textarea>
+                <div class="controls">
+                    <button id="btn-yaml" class="calculate-btn">Calculate & Convert</button>
+                    <div class="result">Tokens: <span id="tokens-yaml">N/A</span> <span id="status-yaml" class="status-chip"></span></div>
+                </div>
+                <div id="error-yaml" class="error"></div>
+            </div>
+
+            <div id="panel-toml" class="panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="panel-label">Configuration</p>
+                        <h3>TOML</h3>
+                        <p class="panel-subtitle">Balance readability and strict typing with TOML.</p>
+                    </div>
+                    <span class="panel-chip">Config native</span>
+                </div>
+                <textarea id="text-toml" placeholder="Enter TOML..."></textarea>
+                <div class="controls">
+                    <button id="btn-toml" class="calculate-btn">Calculate & Convert</button>
+                    <div class="result">Tokens: <span id="tokens-toml">N/A</span> <span id="status-toml" class="status-chip"></span></div>
+                </div>
+                <div id="error-toml" class="error"></div>
+            </div>
+        </section>
+
+        <section class="panel table-panel">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-label">Insights</p>
+                    <h3>Token Comparison</h3>
+                    <p class="panel-subtitle">Review how each representation impacts usage.</p>
+                </div>
+            </div>
+            <div class="table-wrapper">
+                <table id="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Format</th>
+                            <th>Token Count</th>
+                            <th>% Difference from Smallest</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script type="module">
+        import { parse as tomlParse, stringify as tomlStringify } from 'https://esm.sh/@iarna/toml@3.0.0';
+        window.TOML = {
+            parse: tomlParse,
+            stringify: tomlStringify,
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+    <script>
+        // --- Theme Switching Logic ---
+        const themeSelect = document.getElementById('theme-select');
+        const htmlElement = document.documentElement; // Use document.documentElement for themes
+
+        function applyTheme(theme) {
+            if (theme === 'system') {
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                htmlElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+            } else {
+                htmlElement.setAttribute('data-theme', theme);
+            }
+        }
+
+        function saveThemePreference(theme) {
+            localStorage.setItem('theme', theme);
+        }
+
+        function loadThemePreference() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) {
+                themeSelect.value = savedTheme;
+                applyTheme(savedTheme);
+            } else {
+                // Default to system if no preference saved
+                themeSelect.value = 'system';
+                applyTheme('system');
+            }
+        }
+
+        // Listen for changes in system theme preference
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+            if (themeSelect.value === 'system') {
+                applyTheme('system');
+            }
+        });
+
+        // Event listener for theme selection
+        themeSelect.addEventListener('change', (event) => {
+            const selectedTheme = event.target.value;
+            applyTheme(selectedTheme);
+            saveThemePreference(selectedTheme);
+        });
+
+        // Load theme on initial page load
+        document.addEventListener('DOMContentLoaded', loadThemePreference);
+
+        // --- DOM Elements ---
+        const textAreas = {
+            raw: document.getElementById('text-raw'),
+            jsonPretty: document.getElementById('text-json-pretty'),
+            jsonCompact: document.getElementById('text-json-compact'),
+            xml: document.getElementById('text-xml'),
+            toon: document.getElementById('text-toon'),
+            yaml: document.getElementById('text-yaml'),
+            toml: document.getElementById('text-toml'),
+        };
+
+        const buttons = {
+            raw: document.getElementById('btn-raw'),
+            jsonPretty: document.getElementById('btn-json-pretty'),
+            jsonCompact: document.getElementById('btn-json-compact'),
+            xml: document.getElementById('btn-xml'),
+            toon: document.getElementById('btn-toon'),
+            yaml: document.getElementById('btn-yaml'),
+            toml: document.getElementById('btn-toml'),
+        };
+
+        const insightElements = {
+            smallest: document.getElementById('insight-smallest'),
+            smallestCount: document.getElementById('insight-smallest-count'),
+            largest: document.getElementById('insight-largest'),
+            largestCount: document.getElementById('insight-largest-count'),
+            spread: document.getElementById('insight-spread'),
+            lastRun: document.getElementById('insight-last-run'),
+        };
+
+        const FORMATS = ['raw', 'jsonPretty', 'jsonCompact', 'xml', 'toon', 'yaml', 'toml'];
+
+        const FORMAT_LABELS = {
+            raw: 'Raw Text',
+            jsonPretty: 'JSON (Pretty)',
+            jsonCompact: 'JSON (Compact)',
+            xml: 'XML',
+            toon: 'TOON',
+            yaml: 'YAML',
+            toml: 'TOML',
+        };
+
+        // --- Converters ---
+
+        // JSON Converters
+        function toJsonPretty(obj) {
+            // Custom replacer to sort keys
+            const replacer = (key, value) =>
+                value && typeof value === 'object' && !Array.isArray(value)
+                    ? Object.keys(value)
+                        .sort()
+                        .reduce((sorted, key) => {
+                            sorted[key] = value[key];
+                            return sorted;
+                        }, {})
+                    : value;
+            return JSON.stringify(obj, replacer, 2);
+        }
+
+        function toJsonCompact(obj) {
+            // Custom replacer to sort keys
+            const replacer = (key, value) =>
+                value && typeof value === 'object' && !Array.isArray(value)
+                    ? Object.keys(value)
+                        .sort()
+                        .reduce((sorted, key) => {
+                            sorted[key] = value[key];
+                            return sorted;
+                        }, {})
+                    : value;
+            return JSON.stringify(obj, replacer);
+        }
+
+        function jsonFromPretty(text) {
+            return JSON.parse(text);
+        }
+
+        function jsonFromCompact(text) {
+            return JSON.parse(text);
+        }
+
+        // XML Converters
+        function xmlFromJson(obj) {
+            if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+                throw new Error("Input must be an object to be converted to XML.");
+            }
+            const rootKey = Object.keys(obj)[0];
+            if (!rootKey) return '';
+
+            const toXmlRecursive = (val) => {
+                if (val === null || val === undefined) return '';
+                if (typeof val !== 'object') {
+                    return String(val);
+                }
+                if (Array.isArray(val)) {
+                    return val.map(item => `<item>${toXmlRecursive(item)}</item>`).join('');
+                }
+                return Object.keys(val).sort().map(key => {
+                    const child = val[key];
+                    if (Array.isArray(child)) {
+                        return child.map(item => `<${key}>${toXmlRecursive(item)}</${key}>`).join('');
+                    }
+                    return `<${key}>${toXmlRecursive(child)}</${key}>`;
+                }).join('');
+            };
+            
+            return `<${rootKey}>${toXmlRecursive(obj[rootKey])}</${rootKey}>`;
+        }
+
+        function jsonFromXml(xmlStr) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlStr, "application/xml");
+
+            if (xmlDoc.getElementsByTagName("parsererror").length) {
+                throw new Error("Invalid XML format");
+            }
+
+            const nodeToJson = (node) => {
+                if (node.nodeType === 3) { // Text node
+                    const text = node.nodeValue.trim();
+                    if (!isNaN(text) && text !== '') return Number(text);
+                    if (text === 'true') return true;
+                    if (text === 'false') return false;
+                    return text;
+                }
+
+                if (node.nodeType === 1) { // Element node
+                    const obj = {};
+                    const children = Array.from(node.childNodes).filter(n => n.nodeType === 1);
+                    if (children.length === 0) {
+                        return nodeToJson(node.firstChild);
+                    }
+
+                    children.forEach(child => {
+                        const childName = child.nodeName;
+                        const childJson = nodeToJson(child);
+                        if (obj[childName]) {
+                            if (!Array.isArray(obj[childName])) {
+                                obj[childName] = [obj[childName]];
+                            }
+                            obj[childName].push(childJson);
+                        } else {
+                            obj[childName] = childJson;
+                        }
+                    });
+                    return obj;
+                }
+                return null;
+            };
+            
+            const rootElement = xmlDoc.documentElement;
+            return { [rootElement.nodeName]: nodeToJson(rootElement) };
+        }
+
+        // TOON Converters
+        function toonFromJson(obj) {
+            if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+                throw new Error("TOON conversion only supports objects as the root.");
+            }
+            const dumpValue = (val) => {
+                if (typeof val === 'string') return `"${val}"`;
+                if (typeof val === 'number' || typeof val === 'boolean' || val === null) return String(val);
+                if (Array.isArray(val)) return `[${val.map(dumpValue).join(', ')}]`;
+                if (typeof val === 'object' && val !== null) return `{ ${toonFromJson(val)} }`;
+                throw new Error(`Unsupported type for TOON conversion: ${typeof val}`);
+            };
+            return Object.keys(obj).sort().map(key => `${key}: ${dumpValue(obj[key])}`).join('\n');
+        }
+
+        function jsonFromToon(toonStr) {
+            const obj = {};
+            const lines = toonStr.split('\n');
+            for (const line of lines) {
+                const trimmedLine = line.trim();
+                if (!trimmedLine) continue;
+                const match = trimmedLine.match(/^([^:]+):\s*(.*)$/);
+                if (match) {
+                    const [, key, valueStr] = match;
+                    obj[key.trim()] = parseToonValue(valueStr.trim());
+                }
+            }
+            return obj;
+        }
+
+        function parseToonValue(valStr) {
+            if (valStr.startsWith('"') && valStr.endsWith('"')) return valStr.slice(1, -1);
+            if (valStr === 'true') return true;
+            if (valStr === 'false') return false;
+            if (valStr === 'null') return null;
+            if (valStr.startsWith('[') && valStr.endsWith(']')) {
+                const items = valStr.slice(1, -1).split(',').map(s => s.trim());
+                return items.map(parseToonValue);
+            }
+            if (valStr.startsWith('{') && valStr.endsWith('}')) {
+                return jsonFromToon(valStr.slice(1, -1));
+            }
+            const num = Number(valStr);
+            return isNaN(num) ? valStr : num;
+        }
+
+        // YAML Converters
+        function yamlFromJson(obj) {
+            return jsyaml.dump(obj, { sortKeys: false, indent: 2 });
+        }
+
+        function jsonFromYaml(text) {
+            const parsed = jsyaml.load(text);
+            if (typeof parsed === 'undefined') {
+                throw new Error('YAML input cannot be empty.');
+            }
+            return parsed;
+        }
+
+        // TOML Converters
+        function getTomlLib() {
+            return window.TOML;
+        }
+
+        function ensureTomlCompatible(value, path = 'root') {
+            if (value === null) {
+                throw new Error(`TOML does not support null values (found at ${path}).`);
+            }
+            if (Array.isArray(value)) {
+                value.forEach((item, idx) => ensureTomlCompatible(item, `${path}[${idx}]`));
+                return;
+            }
+            if (typeof value === 'object') {
+                Object.entries(value).forEach(([key, val]) => ensureTomlCompatible(val, `${path}.${key}`));
+            }
+        }
+
+        function tomlFromJson(obj) {
+            const tomlLib = getTomlLib();
+            if (!tomlLib || typeof tomlLib.stringify !== 'function') {
+                throw new Error('TOML converter unavailable.');
+            }
+            ensureTomlCompatible(obj);
+            return tomlLib.stringify(obj);
+        }
+
+        function jsonFromToml(text) {
+            const tomlLib = getTomlLib();
+            if (!tomlLib || typeof tomlLib.parse !== 'function') {
+                throw new Error('TOML parser unavailable.');
+            }
+            const parsed = tomlLib.parse(text);
+            if (typeof parsed === 'undefined') {
+                throw new Error('TOML input cannot be empty.');
+            }
+            return parsed;
+        }
+
+        // --- Tokenization ---
+        
+        /**
+         * A simple heuristic-based token estimator as a fallback.
+         * Assumes an average of 4 characters per token.
+         */
+        function estimateTokens(text) {
+            return Math.ceil(text.length / 4);
+        }
+
+        async function tokenizeText(text) {
+            const apiKey = window.OPENAI_API_KEY;
+            if (apiKey) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+                    const response = await fetch('https://api.openai.com/v1/completions', { // Using completions as a proxy for tokenization
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${apiKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            model: "gpt-3.5-turbo-instruct", // Using a known model, assuming gpt-5 is not yet available
+                            prompt: text,
+                            max_tokens: 0,
+                        }),
+                        signal: controller.signal
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (response.ok) {
+                        const json = await response.json();
+                        return { tokens: json.usage.prompt_tokens, engine: 'api' };
+                    }
+                } catch (error) {
+                    // Fall through to local estimator on any error
+                }
+            }
+            // Fallback to local estimator
+            return { tokens: estimateTokens(text), engine: 'local' };
+        }
+
+        // --- UI Helpers ---
+
+        function toKebabCase(str) {
+            return str.replace(/([a-z0-9]|(?=[A-Z]))([A-Z])/g, '$1-$2').toLowerCase();
+        }
+
+        function formatDisplayName(format) {
+            return FORMAT_LABELS[format] || format;
+        }
+
+        function resetInsights() {
+            insightElements.smallest.textContent = '—';
+            insightElements.smallestCount.textContent = 'Awaiting analysis';
+            insightElements.largest.textContent = '—';
+            insightElements.largestCount.textContent = 'Awaiting analysis';
+            insightElements.spread.textContent = '—';
+            insightElements.lastRun.textContent = '—';
+        }
+
+        function updateInsights(tokenResults) {
+            if (!tokenResults.length) {
+                resetInsights();
+                return;
+            }
+
+            const sorted = [...tokenResults].sort((a, b) => a.tokens - b.tokens);
+            const smallest = sorted[0];
+            const largest = sorted[sorted.length - 1];
+            const spreadTokens = Math.max(largest.tokens - smallest.tokens, 0);
+            const spreadPercent = smallest.tokens ? (spreadTokens / smallest.tokens) * 100 : 0;
+
+            insightElements.smallest.textContent = formatDisplayName(smallest.format);
+            insightElements.smallestCount.textContent = `${smallest.tokens.toLocaleString()} tokens`;
+            insightElements.largest.textContent = formatDisplayName(largest.format);
+            insightElements.largestCount.textContent = `${largest.tokens.toLocaleString()} tokens`;
+            insightElements.spread.textContent = spreadTokens
+                ? `${spreadTokens.toLocaleString()} (${spreadPercent.toFixed(1)}%)`
+                : 'No difference';
+            insightElements.lastRun.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        resetInsights();
+
+        function updateTokenResult(format, result) {
+            const kebabFormat = toKebabCase(format);
+            const tokenSpan = document.getElementById(`tokens-${kebabFormat}`);
+            const statusSpan = document.getElementById(`status-${kebabFormat}`);
+            
+            tokenSpan.textContent = Number.isFinite(result.tokens) ? result.tokens.toLocaleString() : result.tokens;
+            statusSpan.textContent = result.engine === 'api' ? '✅ API' : '⚙️ Local';
+            statusSpan.className = `status-chip ${result.engine}`;
+        }
+
+        // --- Main Logic ---
+
+        function clearErrors() {
+            FORMATS.forEach(format => {
+                const kebabFormat = toKebabCase(format);
+                document.getElementById(`error-${kebabFormat}`).textContent = '';
+            });
+        }
+
+        function clearResults() {
+            FORMATS.forEach(format => {
+                const kebabFormat = toKebabCase(format);
+                document.getElementById(`tokens-${kebabFormat}`).textContent = 'N/A';
+                const statusSpan = document.getElementById(`status-${kebabFormat}`);
+                statusSpan.className = 'status-chip';
+                statusSpan.textContent = '';
+            });
+            document.getElementById('comparison-table').getElementsByTagName('tbody')[0].innerHTML = '';
+            resetInsights();
+        }
+
+        function validateInput(format, text) {
+            if (text.trim() === '') {
+                throw new Error('Input cannot be empty.');
+            }
+            try {
+                switch (format) {
+                    case 'jsonPretty':
+                    case 'jsonCompact':
+                        JSON.parse(text);
+                        break;
+                    case 'xml':
+                        const parser = new DOMParser();
+                        const xmlDoc = parser.parseFromString(text, "application/xml");
+                        if (xmlDoc.getElementsByTagName("parsererror").length) {
+                            throw new Error("Invalid XML format.");
+                        }
+                        break;
+                    case 'toon':
+                        // Basic validation: must contain a colon
+                        if (!text.includes(':')) throw new Error('Invalid TOON format.');
+                        break;
+                    case 'yaml':
+                        jsonFromYaml(text);
+                        break;
+                    case 'toml':
+                        jsonFromToml(text);
+                        break;
+                }
+            } catch (e) {
+                throw new Error(`Validation failed: ${e.message}`);
+            }
+        }
+
+        async function handleCalculate(sourceFormat) {
+            clearErrors();
+            clearResults();
+
+            const sourceText = textAreas[sourceFormat].value;
+
+            try {
+                validateInput(sourceFormat, sourceText);
+
+                let baseObject;
+                // 1. Get Base Object
+                switch (sourceFormat) {
+                    case 'jsonPretty': baseObject = jsonFromPretty(sourceText); break;
+                    case 'jsonCompact': baseObject = jsonFromCompact(sourceText); break;
+                    case 'xml': baseObject = jsonFromXml(sourceText); break;
+                    case 'toon': baseObject = jsonFromToon(sourceText); break;
+                    case 'yaml': baseObject = jsonFromYaml(sourceText); break;
+                    case 'toml': baseObject = jsonFromToml(sourceText); break;
+                    case 'raw':
+                        // For raw text, we only tokenize it.
+                        const rawResult = await tokenizeText(sourceText);
+                        updateTokenResult('raw', rawResult);
+                        return;
+                }
+            
+            // Enable all text areas if coming from a structured format
+                FORMATS.forEach(f => textAreas[f].disabled = false);
+
+                // 2. Convert to all other formats
+                const converted = {
+                    jsonPretty: toJsonPretty(baseObject),
+                    jsonCompact: toJsonCompact(baseObject),
+                    xml: xmlFromJson({ root: baseObject }),
+                    toon: toonFromJson(baseObject),
+                    yaml: yamlFromJson(baseObject),
+                    toml: tomlFromJson(baseObject),
+                };
+
+                // 3. Update text areas
+                for (const format in converted) {
+                    if (format !== sourceFormat) {
+                        textAreas[format].value = converted[format];
+                    }
+                }
+                textAreas.raw.value = ''; // Clear raw text area
+
+                // 4. Tokenize all formats
+                const tokenPromises = Object.keys(converted).map(async format => {
+                    const result = await tokenizeText(converted[format]);
+                    updateTokenResult(format, result);
+                    return { format, tokens: result.tokens };
+                });
+
+                const tokenResults = await Promise.all(tokenPromises);
+                updateComparisonTable(tokenResults);
+
+            } catch (error) {
+                const kebabFormat = toKebabCase(sourceFormat);
+                document.getElementById(`error-${kebabFormat}`).textContent = error.message;
+            }
+        }
+        
+        function updateComparisonTable(tokenResults) {
+            const tableBody = document.getElementById('comparison-table').getElementsByTagName('tbody')[0];
+            tableBody.innerHTML = ''; // Clear previous results
+
+            if (tokenResults.length === 0) {
+                resetInsights();
+                return;
+            }
+
+            const sortedResults = [...tokenResults].sort((a, b) => a.tokens - b.tokens);
+            const minTokens = sortedResults[0].tokens;
+
+            sortedResults.forEach(result => {
+                const row = tableBody.insertRow();
+                const formatCell = row.insertCell();
+                const tokenCell = row.insertCell();
+                const diffCell = row.insertCell();
+
+                formatCell.textContent = formatDisplayName(result.format);
+                tokenCell.textContent = result.tokens.toLocaleString();
+                
+                const percentageDiff = minTokens > 0 ? ((result.tokens - minTokens) / minTokens) * 100 : 0;
+                diffCell.textContent = percentageDiff === 0 ? 'Baseline' : `+${percentageDiff.toFixed(2)}%`;
+            });
+
+            updateInsights(sortedResults);
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('DOMContentLoaded', () => {
+            for (const format in buttons) {
+                buttons[format].addEventListener('click', () => handleCalculate(format));
+            }
+        });
+    </script>
+</body>
+</html>

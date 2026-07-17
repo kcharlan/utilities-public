@@ -1,0 +1,34 @@
+name: test-echo
+description: Minimal test pack for validating the orchestrator pipeline without external dependencies.
+version: 0.1.0
+
+phases:
+  planning:
+    enabled: false
+  resolution:
+    enabled: true
+    executor: passthrough
+  execution:
+    enabled: true
+    executor: shell
+    command: scripts/execute
+    max_workers: 4
+  verification:
+    enabled: false
+
+auto_fix:
+  enabled: false
+
+isolation:
+  type: none
+
+prerequisites: []
+
+timeouts:
+  task_idle: 30
+  task_max: 60
+  session_max: 300
+
+status:
+  progress_format: "##PROGRESS##"
+  sidecar_format: key-value

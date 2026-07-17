@@ -1,0 +1,19 @@
+{
+  "name": "gorilla",
+  "version": "1.0.0",
+  "description": "A modern, web-based artillery game inspired by the classic QBasic **Gorilla.BAS**. While the core concept of two gorillas throwing explosive bananas across a skyline remains, this project is a complete reimagining rather than a direct port. It features a fluid physics engine, particle effects, simultaneous turn-taking, and arcade progression—all contained within a single HTML file.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.58.1"
+  }
+}

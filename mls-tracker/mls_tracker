@@ -1,0 +1,1187 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn",
+#     "requests",
+# ]
+# ///
+import argparse
+import asyncio
+import logging
+import os
+import threading
+import webbrowser
+import time
+from datetime import datetime
+from typing import Dict, Any, Optional, List
+
+import requests
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="MLS Playoff Tracker")
+    parser.add_argument("--port", "-p", type=int, default=8501, help="Port to serve on (default: 8501)")
+    parser.add_argument("--no-browser", action="store_true", help="Don't open browser automatically")
+    return parser.parse_args()
+
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("mls_tracker")
+
+ESPN_STANDINGS_URL = "https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings"
+ESPN_TEAMS_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/teams"
+ESPN_HEADERS = {"User-Agent": "Mozilla/5.0"}
+SEASON_GAMES = 34
+CACHE_TTL_SECONDS = 300  # 5 minutes
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def safe_int(val, default=0) -> int:
+    if val is None:
+        return default
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return default
+
+
+def process_team_colors(color: str, alt_color: str) -> Dict[str, str]:
+    """Ensure usable contrast: swap black/white primaries to alternateColor."""
+    color = (color or "").strip().lstrip("#")
+    alt_color = (alt_color or "").strip().lstrip("#")
+
+    low_contrast = {"000000", "ffffff", ""}
+    if color.lower() in low_contrast and alt_color.lower() not in low_contrast:
+        primary = f"#{alt_color}"
+        secondary = f"#{color}" if color else "#1f2937"
+    else:
+        primary = f"#{color}" if color else "#6366f1"
+        secondary = f"#{alt_color}" if alt_color else "#1f2937"
+
+    # Compute accent: white if primary is dark, dark if primary is light
+    try:
+        r, g, b = int(primary[1:3], 16), int(primary[3:5], 16), int(primary[5:7], 16)
+        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+        accent = "#1f2937" if luminance > 0.6 else "#ffffff"
+    except (ValueError, IndexError):
+        accent = "#ffffff"
+
+    return {"primary": primary, "secondary": secondary, "accent": accent}
+
+
+# ============================================================
+# Data Cache
+# ============================================================
+
+MAX_CACHED_SEASONS = 3
+
+
+class DataCache:
+    def __init__(self, ttl: int = CACHE_TTL_SECONDS):
+        self._ttl = ttl
+        self._lock = threading.Lock()
+        self._standings: Dict[int, Any] = {}
+        self._standings_ts: Dict[int, float] = {}
+        self._teams: Optional[List[Dict]] = None
+        self._teams_ts: float = 0
+
+    def invalidate(self):
+        with self._lock:
+            self._standings.clear()
+            self._standings_ts.clear()
+            self._teams = None
+            self._teams_ts = 0
+
+    def _expired(self, ts: float) -> bool:
+        return (time.time() - ts) > self._ttl
+
+    # ---------- Teams ----------
+    def get_teams(self) -> List[Dict]:
+        with self._lock:
+            if self._teams is not None and not self._expired(self._teams_ts):
+                return self._teams
+            self._teams = fetch_teams_from_espn()
+            self._teams_ts = time.time()
+            return self._teams
+
+    # ---------- Standings ----------
+    def get_standings(self, season: int) -> Dict[str, List[Dict]]:
+        with self._lock:
+            if season in self._standings and not self._expired(self._standings_ts.get(season, 0)):
+                return self._standings[season]
+            self._standings[season] = fetch_standings_from_espn(season)
+            self._standings_ts[season] = time.time()
+            if len(self._standings) > MAX_CACHED_SEASONS:
+                oldest = min(self._standings_ts, key=self._standings_ts.get)
+                del self._standings[oldest]
+                del self._standings_ts[oldest]
+            return self._standings[season]
+
+
+cache = DataCache()
+
+
+# ============================================================
+# ESPN Data Fetching
+# ============================================================
+
+def fetch_teams_from_espn() -> List[Dict]:
+    """Fetch all MLS teams with colors, logos, abbreviations."""
+    try:
+        resp = requests.get(ESPN_TEAMS_URL, headers=ESPN_HEADERS, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        logger.error("Failed to fetch teams: %s", e)
+        return []
+
+    teams = []
+    for item in data.get("sports", [{}])[0].get("leagues", [{}])[0].get("teams", []):
+        t = item.get("team", {})
+        colors = process_team_colors(t.get("color", ""), t.get("alternateColor", ""))
+        logos = t.get("logos", [])
+        logo = logos[0].get("href", "") if logos else ""
+        teams.append({
+            "id": t.get("id"),
+            "name": t.get("displayName", "Unknown"),
+            "abbreviation": t.get("abbreviation", ""),
+            "shortName": t.get("shortDisplayName", ""),
+            "colors": colors,
+            "logo": logo,
+        })
+    return teams
+
+
+def fetch_standings_from_espn(season: int) -> Dict[str, List[Dict]]:
+    """Fetch standings for a season, returning plain dicts sorted by rank per conference."""
+    url = f"{ESPN_STANDINGS_URL}?season={season}"
+    try:
+        resp = requests.get(url, headers=ESPN_HEADERS, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        logger.error("Failed to fetch standings for season %d: %s", season, e)
+        return {}
+
+    output: Dict[str, List[Dict]] = {}
+    for conf in data.get("children", []):
+        cname = conf.get("name", "Unknown Conference")
+        teams: List[Dict] = []
+        for entry in conf.get("standings", {}).get("entries", []):
+            stats_dict = {s.get("name"): s.get("value") for s in entry.get("stats", [])}
+            tinfo = entry.get("team", {})
+            gp = safe_int(stats_dict.get("gamesPlayed"))
+            pts = safe_int(stats_dict.get("points"))
+            gf = safe_int(stats_dict.get("pointsFor"))
+            ga = safe_int(stats_dict.get("pointsAgainst"))
+            team = {
+                "position": safe_int(stats_dict.get("rank"), 99),
+                "name": tinfo.get("displayName", "N/A"),
+                "id": str(tinfo.get("id", "")),
+                "gp": gp,
+                "w": safe_int(stats_dict.get("wins")),
+                "l": safe_int(stats_dict.get("losses")),
+                "t": safe_int(stats_dict.get("ties")),
+                "pts": pts,
+                "gf": gf,
+                "ga": ga,
+                "gd": gf - ga,
+                "ppg": round(pts / gp, 3) if gp > 0 else 0.0,
+            }
+            teams.append(team)
+        teams.sort(key=lambda t: t["position"])
+        output[cname] = teams
+    return output
+
+
+def merge_team_metadata(standings: Dict[str, List[Dict]], teams_list: List[Dict]) -> Dict[str, List[Dict]]:
+    """Merge colors and logos from the teams endpoint into standings data."""
+    teams_by_name: Dict[str, Dict] = {}
+    teams_by_id: Dict[str, Dict] = {}
+    for t in teams_list:
+        teams_by_name[t["name"]] = t
+        if t.get("id"):
+            teams_by_id[str(t["id"])] = t
+
+    result = {}
+    for conf, team_list in standings.items():
+        merged = []
+        for team in team_list:
+            meta = teams_by_id.get(team.get("id")) or teams_by_name.get(team["name"]) or {}
+            team_copy = dict(team)
+            team_copy["colors"] = meta.get("colors", process_team_colors("", ""))
+            team_copy["logo"] = meta.get("logo", "")
+            team_copy["abbreviation"] = meta.get("abbreviation", "")
+            merged.append(team_copy)
+        result[conf] = merged
+    return result
+
+
+# ============================================================
+# Playoff Computation
+# ============================================================
+
+def compute_scenarios(target: Dict, cutoff_team: Dict, season_games: int = SEASON_GAMES) -> Dict:
+    """Compute playoff scenarios for target team against a cutoff-position team."""
+    pts_target = target["pts"]
+    pts_cutoff = cutoff_team["pts"]
+    gp_target = target["gp"]
+    gp_cutoff = cutoff_team["gp"]
+    gr_target = max(0, season_games - gp_target)
+    gr_cutoff = max(0, season_games - gp_cutoff)
+
+    # Max possible points
+    max_possible_target = pts_target + 3 * gr_target
+    max_possible_cutoff = pts_cutoff + 3 * gr_cutoff
+
+    # Projected finish for cutoff if they continue at current PPG
+    ppg_cutoff = pts_cutoff / gp_cutoff if gp_cutoff > 0 else 0
+    projected_cutoff = pts_cutoff + gr_cutoff * ppg_cutoff
+
+    # Clinch: target already above cutoff's max possible
+    clinched = pts_target > max_possible_cutoff
+
+    # Eliminated: can't reach cutoff's current points even winning out
+    eliminated = max_possible_target < pts_cutoff
+
+    # Need help: can win out but cutoff projected to finish higher
+    need_help = (not eliminated) and (not clinched) and (max_possible_target < projected_cutoff)
+
+    # Points we must beat (projected cutoff + 1)
+    must_beat = int(projected_cutoff) + 1
+
+    worst_case = _compute_worst_case(pts_target, gr_target, must_beat)
+    easiest_path = _compute_easiest_path(pts_target, gr_target, must_beat)
+    need_help_info = _compute_need_help(cutoff_team, season_games, max_possible_target) if need_help else None
+
+    # Determine status
+    if eliminated:
+        status = "eliminated"
+    elif clinched:
+        status = "clinched"
+    elif need_help:
+        status = "need_help"
+    else:
+        status = "contention"
+
+    return {
+        "status": status,
+        "target": {
+            "name": target["name"],
+            "pts": pts_target,
+            "gp": gp_target,
+            "gr": gr_target,
+            "position": target["position"],
+            "max_possible": max_possible_target,
+            "ppg": target["ppg"],
+            "colors": target.get("colors", {}),
+            "logo": target.get("logo", ""),
+        },
+        "cutoff": {
+            "name": cutoff_team["name"],
+            "pts": pts_cutoff,
+            "gp": gp_cutoff,
+            "gr": gr_cutoff,
+            "position": cutoff_team["position"],
+            "projected": round(projected_cutoff, 1),
+            "ppg": round(ppg_cutoff, 3),
+            "max_possible": max_possible_cutoff,
+            "colors": cutoff_team.get("colors", {}),
+            "logo": cutoff_team.get("logo", ""),
+        },
+        "worst_case": worst_case,
+        "easiest_path": easiest_path,
+        "need_help_info": need_help_info,
+        "points_to_safety": max(0, int(projected_cutoff) + 1 - pts_target),
+        "ppg_required": round(max(0, int(projected_cutoff) + 1 - pts_target) / gr_target, 2) if gr_target > 0 else 0,
+    }
+
+
+def _compute_worst_case(pts_target: int, gr_target: int, must_beat: int) -> Dict:
+    """Worst case: wins only, no ties."""
+    points_needed = must_beat - pts_target
+    wins_needed = (points_needed + 2) // 3 if points_needed > 0 else 0
+
+    if gr_target <= 0 or wins_needed > gr_target:
+        possible = False
+        losses = 0
+    else:
+        possible = True
+        losses = gr_target - wins_needed
+
+    return {
+        "wins": wins_needed,
+        "ties": 0,
+        "losses": losses,
+        "final_pts": pts_target + 3 * wins_needed,
+        "possible": possible,
+    }
+
+
+def _compute_easiest_path(pts_target: int, gr_target: int, must_beat: int) -> Dict:
+    """Easiest path: maximize ties (fewest wins needed)."""
+    for ties in range(gr_target, -1, -1):
+        points_needed = must_beat - (pts_target + ties)
+        wins_needed = (points_needed + 2) // 3 if points_needed > 0 else 0
+        losses = gr_target - wins_needed - ties
+        if 0 <= wins_needed <= gr_target and 0 <= losses <= gr_target and wins_needed + ties + losses == gr_target:
+            total_pts = pts_target + 3 * wins_needed + ties
+            if total_pts >= must_beat:
+                return {
+                    "wins": wins_needed,
+                    "ties": ties,
+                    "losses": losses,
+                    "final_pts": total_pts,
+                    "possible": True,
+                }
+
+    # Not achievable
+    points_needed = must_beat - pts_target
+    wins_needed = (points_needed + 2) // 3 if points_needed > 0 else 0
+    losses = max(0, gr_target - wins_needed)
+    return {
+        "wins": wins_needed,
+        "ties": 0,
+        "losses": losses,
+        "final_pts": pts_target + 3 * wins_needed,
+        "possible": False,
+    }
+
+
+def _compute_need_help(cutoff_team: Dict, season_games: int, max_possible_target: int) -> Dict:
+    """What the cutoff team must do for target to qualify."""
+    pts_cutoff = cutoff_team["pts"]
+    gr_cutoff = max(0, season_games - cutoff_team["gp"])
+    limit_pts = max_possible_target - 1
+    delta = limit_pts - pts_cutoff
+
+    if delta <= 0:
+        return {
+            "message": f"{cutoff_team['name']} must lose all remaining {gr_cutoff} games.",
+            "max_wins": 0,
+            "max_ties": 0,
+            "max_additional_pts": 0,
+            "cutoff_gr": gr_cutoff,
+        }
+
+    max_wins = min(delta // 3, gr_cutoff)
+    remaining_after_wins = gr_cutoff - max_wins
+    leftover = delta - max_wins * 3
+    max_ties = min(leftover, remaining_after_wins)
+    return {
+        "message": (f"{cutoff_team['name']} must earn no more than {delta} additional points "
+                    f"in their last {gr_cutoff} games (at most {max_wins} wins and {max_ties} ties)."),
+        "max_wins": max_wins,
+        "max_ties": max_ties,
+        "max_additional_pts": delta,
+        "cutoff_gr": gr_cutoff,
+    }
+
+
+# ============================================================
+# FastAPI App
+# ============================================================
+
+app = FastAPI(title="MLS Playoff Tracker")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return HTMLResponse(content=HTML_TEMPLATE)
+
+
+@app.get("/api/data")
+async def api_data(season: Optional[int] = None):
+    """All standings + team metadata for both conferences."""
+    if season is None:
+        season = datetime.now().year
+    try:
+        standings = await asyncio.to_thread(cache.get_standings, season)
+        teams_list = await asyncio.to_thread(cache.get_teams)
+        merged = merge_team_metadata(standings, teams_list)
+        warnings = []
+        if not merged:
+            warnings.append("Could not load standings data — ESPN may be temporarily unavailable.")
+        return {"season": season, "conferences": merged, "warnings": warnings}
+    except Exception as e:
+        logger.error("Error in /api/data: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/scenarios")
+async def api_scenarios(
+    team: str = "Atlanta United FC",
+    season: Optional[int] = None,
+    cutoff: int = 9,
+):
+    """Playoff scenarios for a specific team against a cutoff position."""
+    if season is None:
+        season = datetime.now().year
+    try:
+        standings = await asyncio.to_thread(cache.get_standings, season)
+        teams_list = await asyncio.to_thread(cache.get_teams)
+        merged = merge_team_metadata(standings, teams_list)
+
+        # Find team and its conference
+        target = None
+        conf_name = None
+        for cname, team_list in merged.items():
+            for t in team_list:
+                if t["name"] == team:
+                    target = t
+                    conf_name = cname
+                    break
+            if target:
+                break
+
+        if not target:
+            raise HTTPException(status_code=404, detail=f"Team '{team}' not found in {season} standings")
+
+        # Get cutoff team (cutoff position is 1-indexed)
+        conf_teams = merged[conf_name]
+        if cutoff < 1 or cutoff > len(conf_teams):
+            raise HTTPException(status_code=400, detail=f"Cutoff position {cutoff} out of range (1-{len(conf_teams)})")
+
+        cutoff_team = conf_teams[cutoff - 1]
+        scenarios = compute_scenarios(target, cutoff_team)
+        scenarios["conference"] = conf_name
+        return scenarios
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error in /api/scenarios: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/refresh")
+async def api_refresh():
+    """Invalidate cache."""
+    cache.invalidate()
+    return {"status": "ok"}
+
+
+# ============================================================
+# HTML Template (placeholder — will be replaced by frontend)
+# ============================================================
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MLS Playoff Tracker</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      fontFamily: {
+        display: ['Oswald', 'sans-serif'],
+        body: ['Source Sans 3', 'sans-serif'],
+      },
+      colors: {
+        team: {
+          primary: 'var(--team-primary)',
+          secondary: 'var(--team-secondary)',
+          accent: 'var(--team-accent)',
+        },
+        surface: {
+          50: 'var(--surface-50)',
+          100: 'var(--surface-100)',
+          200: 'var(--surface-200)',
+          300: 'var(--surface-300)',
+          700: 'var(--surface-700)',
+          800: 'var(--surface-800)',
+          900: 'var(--surface-900)',
+        }
+      }
+    }
+  }
+};
+</script>
+<style>
+  :root {
+    --team-primary: #A2252A;
+    --team-secondary: #000000;
+    --team-accent: #C8A882;
+    --surface-50: #fafafa;
+    --surface-100: #f4f4f5;
+    --surface-200: #e4e4e7;
+    --surface-300: #d4d4d8;
+    --surface-700: #3f3f46;
+    --surface-800: #27272a;
+    --surface-900: #18181b;
+  }
+  html.dark {
+    --surface-50: #18181b;
+    --surface-100: #1f1f23;
+    --surface-200: #27272a;
+    --surface-300: #3f3f46;
+    --surface-700: #d4d4d8;
+    --surface-800: #e4e4e7;
+    --surface-900: #fafafa;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Source Sans 3', sans-serif; background: var(--surface-50); color: var(--surface-900); transition: background 0.3s, color 0.3s; }
+
+  /* Diagonal clip for header */
+  .header-clip { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 30px), 0 100%); }
+  .header-clip-inv { clip-path: polygon(0 30px, 100% 0, 100% 100%, 0 100%); }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--surface-100); }
+  ::-webkit-scrollbar-thumb { background: var(--team-primary); border-radius: 3px; }
+
+  /* Playoff line */
+  .playoff-line td { border-bottom: 3px dashed var(--team-primary) !important; }
+
+  /* Pulse animation for live dot */
+  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+  /* Shimmer for loading */
+  @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+  .shimmer {
+    background: linear-gradient(90deg, var(--surface-100) 25%, var(--surface-200) 50%, var(--surface-100) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  /* Fade in */
+  @keyframes fadeInUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  .fade-in-up { animation: fadeInUp 0.4s ease-out forwards; opacity: 0; }
+
+  /* Table hover */
+  .standings-row { transition: background 0.15s; }
+  .standings-row:hover { background: color-mix(in srgb, var(--team-primary) 8%, transparent); }
+
+  /* Select styling */
+  select, input[type="number"] {
+    font-family: 'Source Sans 3', sans-serif;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  /* Angled accent bar */
+  .accent-bar { position: relative; }
+  .accent-bar::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--team-primary);
+    transform: skewX(-3deg);
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useCallback, useRef } = React;
+
+/* ========== ICONS (Lucide) ========== */
+function Icon({ name, size = 18, className = '', ...props }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current && lucide[name]) {
+      ref.current.innerHTML = '';
+      const svg = lucide.createElement(lucide[name]);
+      svg.setAttribute('width', size);
+      svg.setAttribute('height', size);
+      if (className) svg.setAttribute('class', className);
+      ref.current.appendChild(svg);
+    }
+  }, [name, size, className]);
+  return <span ref={ref} className={`inline-flex items-center ${className}`} {...props} />;
+}
+
+/* ========== ERROR BOUNDARY ========== */
+class ErrorBoundary extends React.Component {
+  state = { hasError: false, error: null };
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-surface-50 p-8">
+          <div className="bg-surface-100 rounded-xl p-8 max-w-lg shadow-lg text-center">
+            <div className="text-red-500 text-5xl mb-4">!</div>
+            <h2 className="font-display text-2xl uppercase tracking-wide mb-2 text-surface-900">Something went wrong</h2>
+            <p className="text-surface-700 mb-4 font-body">{this.state.error?.message}</p>
+            <button onClick={() => window.location.reload()} className="px-6 py-2 bg-team-primary text-white rounded font-display uppercase tracking-wider text-sm hover:opacity-90 transition-opacity">
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* ========== LOADING SKELETON ========== */
+function LoadingSkeleton() {
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="shimmer h-48 rounded-xl mb-6" />
+      <div className="shimmer h-12 rounded-lg mb-6" />
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        {[...Array(4)].map((_, i) => <div key={i} className="shimmer h-28 rounded-xl" />)}
+      </div>
+      <div className="shimmer h-96 rounded-xl" />
+    </div>
+  );
+}
+
+/* ========== SETTINGS BAR ========== */
+function SettingsBar({ conferences, teams, conference, team, season, cutoff, darkMode, onConferenceChange, onTeamChange, onSeasonChange, onCutoffChange, onDarkModeToggle, onRefresh, loading }) {
+  const currentYear = new Date().getFullYear();
+  const years = [currentYear, currentYear - 1, currentYear - 2];
+  const filteredTeams = teams.filter(t => {
+    const confKey = Object.keys(conferences).find(k => k.toLowerCase().includes(conference.toLowerCase()));
+    return confKey && conferences[confKey]?.some(ct => ct.name === t.name);
+  }).sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <div className="bg-surface-100 border-b border-surface-200 sticky top-0 z-40 backdrop-blur-sm bg-opacity-95 dark:bg-opacity-95">
+      <div className="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 mr-2">
+          <div className="w-2 h-2 rounded-full bg-green-500 pulse-dot" />
+          <span className="font-display text-xs uppercase tracking-[0.2em] text-surface-700">Live</span>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-display uppercase tracking-wider text-surface-700">Conf</label>
+          <select value={conference} onChange={e => onConferenceChange(e.target.value)}
+            className="bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}>
+            <option value="eastern">Eastern</option>
+            <option value="western">Western</option>
+          </select>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-display uppercase tracking-wider text-surface-700">Team</label>
+          <select value={team} onChange={e => onTeamChange(e.target.value)}
+            className="bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer max-w-[180px]"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}>
+            {filteredTeams.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-display uppercase tracking-wider text-surface-700">Season</label>
+          <select value={season} onChange={e => onSeasonChange(parseInt(e.target.value))}
+            className="bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-display uppercase tracking-wider text-surface-700">Line</label>
+          <input type="number" min={1} max={15} value={cutoff} onChange={e => onCutoffChange(parseInt(e.target.value) || 9)}
+            className="bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 border border-surface-300 w-14 focus:outline-none focus:border-team-primary text-center" />
+        </div>
+
+        <div className="flex items-center gap-2 ml-auto">
+          <button onClick={onRefresh} disabled={loading}
+            className="p-1.5 rounded bg-surface-200 hover:bg-surface-300 border border-surface-300 text-surface-700 transition-colors disabled:opacity-50"
+            title="Refresh data">
+            <Icon name="RefreshCw" size={15} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button onClick={onDarkModeToggle}
+            className="p-1.5 rounded bg-surface-200 hover:bg-surface-300 border border-surface-300 text-surface-700 transition-colors"
+            title="Toggle dark mode">
+            <Icon name={darkMode ? 'Sun' : 'Moon'} size={15} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========== TEAM HEADER ========== */
+function TeamHeader({ scenarios, season }) {
+  if (!scenarios) return null;
+  const { target } = scenarios;
+  return (
+    <div className="header-clip relative overflow-hidden" style={{ background: `linear-gradient(135deg, var(--team-primary) 0%, var(--team-secondary) 60%, var(--team-primary) 100%)` }}>
+      {/* Geometric pattern overlay */}
+      <div className="absolute inset-0 opacity-10" style={{ backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 20px, rgba(255,255,255,0.1) 20px, rgba(255,255,255,0.1) 22px)` }} />
+      <div className="max-w-6xl mx-auto px-4 py-8 pb-16 flex items-center gap-6 relative z-10">
+        {target.logo && (
+          <img src={target.logo} alt="" className="w-20 h-20 object-contain drop-shadow-lg" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.3))' }} />
+        )}
+        <div>
+          <h1 className="font-display text-4xl md:text-5xl uppercase tracking-wide text-white drop-shadow-sm leading-tight">
+            {target.name}
+          </h1>
+          <p className="font-display text-lg uppercase tracking-[0.3em] mt-1" style={{ color: 'var(--team-accent)' }}>
+            {season} Season &mdash; {scenarios.conference}
+          </p>
+        </div>
+        <div className="ml-auto text-right hidden md:block">
+          <div className="font-display text-6xl text-white opacity-90 leading-none">#{target.position}</div>
+          <div className="font-display text-sm uppercase tracking-[0.2em] text-white opacity-60 mt-1">Conference Rank</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========== STATUS BANNER ========== */
+function StatusBanner({ scenarios }) {
+  if (!scenarios) return null;
+  const { status, target, cutoff, need_help_info } = scenarios;
+
+  const configs = {
+    eliminated: { bg: '#dc2626', icon: 'XCircle', label: 'Mathematically Eliminated', desc: 'Even winning all remaining games cannot overtake the cutoff position.' },
+    need_help: { bg: '#ea580c', icon: 'AlertTriangle', label: 'Need Help From Other Results', desc: need_help_info?.message || 'Must win out and hope other results go our way.' },
+    contention: { bg: 'var(--team-primary)', icon: 'Zap', label: 'In The Hunt', desc: 'Destiny is in our hands. Results on the pitch determine playoff fate.' },
+    clinched: { bg: '#16a34a', icon: 'Trophy', label: 'Playoffs Clinched', desc: 'Cannot be overtaken regardless of remaining results.' },
+  };
+  const cfg = configs[status] || configs.contention;
+
+  return (
+    <div className="header-clip-inv -mt-[30px] relative z-10">
+      <div className="max-w-6xl mx-auto px-4 pt-[38px] pb-4">
+        <div className="rounded-xl overflow-hidden shadow-lg fade-in-up" style={{ animationDelay: '0.1s' }}>
+          <div className="px-5 py-4 flex items-center gap-4" style={{ background: cfg.bg }}>
+            <Icon name={cfg.icon} size={24} className="text-white flex-shrink-0" />
+            <div>
+              <h3 className="font-display text-xl uppercase tracking-wider text-white">{cfg.label}</h3>
+              <p className="text-white text-opacity-90 text-sm font-body mt-0.5">{cfg.desc}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========== METRICS DASHBOARD ========== */
+function MetricsDashboard({ scenarios }) {
+  if (!scenarios) return null;
+  const { target, points_to_safety, worst_case, ppg_required } = scenarios;
+
+  const metrics = [
+    { label: 'Current Points', value: target.pts, sub: `${target.gr} games remaining`, icon: 'Target' },
+    { label: 'Points to Safety', value: points_to_safety, sub: `Projected cutoff: ${scenarios.cutoff.projected}`, icon: 'Shield' },
+    { label: 'Min Wins Needed', value: worst_case.wins, sub: worst_case.possible ? 'Achievable' : 'Not possible with games left', icon: 'TrendingUp' },
+    { label: 'PPG Required', value: ppg_required.toFixed(2), sub: `Current PPG: ${target.ppg.toFixed(2)}`, icon: 'BarChart3' },
+  ];
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {metrics.map((m, i) => (
+          <div key={m.label} className="bg-surface-100 rounded-xl p-4 border border-surface-200 shadow-sm fade-in-up relative overflow-hidden group hover:border-team-primary transition-colors" style={{ animationDelay: `${0.15 + i * 0.05}s` }}>
+            <div className="absolute top-0 left-0 w-full h-0.5" style={{ background: `linear-gradient(90deg, var(--team-primary), transparent)` }} />
+            <div className="flex items-start justify-between mb-2">
+              <span className="font-display text-[10px] uppercase tracking-[0.15em] text-surface-700">{m.label}</span>
+              <Icon name={m.icon} size={14} className="text-team-primary opacity-60" />
+            </div>
+            <div className="font-display text-3xl text-surface-900 tracking-tight">{m.value}</div>
+            <div className="text-xs text-surface-700 mt-1 font-body">{m.sub}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ========== STANDINGS TABLE ========== */
+function StandingsTable({ conferences, conference, team, cutoff }) {
+  const confKey = Object.keys(conferences).find(k => k.toLowerCase().includes(conference.toLowerCase()));
+  const teams = confKey ? conferences[confKey] : [];
+
+  if (!teams.length) return null;
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-4">
+      <div className="flex items-center gap-3 mb-3">
+        <h2 className="font-display text-xl uppercase tracking-wider text-surface-900">Conference Standings</h2>
+        <div className="h-px flex-1 bg-surface-200" />
+      </div>
+      <div className="bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up" style={{ animationDelay: '0.3s' }}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm font-body">
+            <thead>
+              <tr className="text-surface-700 font-display text-[10px] uppercase tracking-[0.15em]" style={{ background: 'var(--surface-200)' }}>
+                <th className="text-left py-2.5 px-3 w-8">#</th>
+                <th className="text-left py-2.5 px-3">Team</th>
+                <th className="text-center py-2.5 px-2 w-10">GP</th>
+                <th className="text-center py-2.5 px-2 w-10">W</th>
+                <th className="text-center py-2.5 px-2 w-10">L</th>
+                <th className="text-center py-2.5 px-2 w-10">T</th>
+                <th className="text-center py-2.5 px-2 w-12 font-bold">PTS</th>
+                <th className="text-center py-2.5 px-2 w-10">GD</th>
+                <th className="text-center py-2.5 px-2 w-14">PPG</th>
+              </tr>
+            </thead>
+            <tbody>
+              {teams.map((t, i) => {
+                const isSelected = t.name === team;
+                const isPlayoffLine = (i + 1) === cutoff;
+                return (
+                  <tr key={t.name}
+                    className={`standings-row border-b border-surface-200 transition-all ${isPlayoffLine ? 'playoff-line' : ''} ${isSelected ? 'font-semibold' : ''}`}
+                    style={isSelected ? { background: 'color-mix(in srgb, var(--team-primary) 12%, transparent)' } : {}}>
+                    <td className="py-2 px-3 text-surface-700 font-display text-xs">{t.position}</td>
+                    <td className="py-2 px-3">
+                      <div className="flex items-center gap-2">
+                        {isSelected && <div className="w-1 h-5 rounded-full" style={{ background: 'var(--team-primary)' }} />}
+                        {t.logo && <img src={t.logo} alt="" className="w-5 h-5 object-contain" />}
+                        <span className={`${isSelected ? 'text-team-primary' : 'text-surface-900'}`}>{t.name}</span>
+                        {t.abbreviation && <span className="text-[10px] text-surface-700 font-display tracking-wider hidden md:inline">({t.abbreviation})</span>}
+                      </div>
+                    </td>
+                    <td className="text-center py-2 px-2 text-surface-700">{t.gp}</td>
+                    <td className="text-center py-2 px-2 text-surface-900">{t.w}</td>
+                    <td className="text-center py-2 px-2 text-surface-700">{t.l}</td>
+                    <td className="text-center py-2 px-2 text-surface-700">{t.t}</td>
+                    <td className="text-center py-2 px-2 font-display font-bold text-surface-900">{t.pts}</td>
+                    <td className={`text-center py-2 px-2 ${t.gd > 0 ? 'text-green-600' : t.gd < 0 ? 'text-red-500' : 'text-surface-700'}`}>{t.gd > 0 ? '+' : ''}{t.gd}</td>
+                    <td className="text-center py-2 px-2 text-surface-700">{t.ppg.toFixed(2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center gap-2 px-4 py-2 bg-surface-200 text-[10px] font-display uppercase tracking-[0.15em] text-surface-700">
+          <div className="w-4 border-b-2 border-dashed" style={{ borderColor: 'var(--team-primary)' }} />
+          <span>Playoff cutoff line (position {cutoff})</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========== SCENARIOS SECTION ========== */
+function ScenariosSection({ scenarios }) {
+  if (!scenarios) return null;
+  const { worst_case, easiest_path } = scenarios;
+
+  function ScenarioCard({ title, icon, data, accent }) {
+    return (
+      <div className="bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up" style={{ animationDelay: '0.35s' }}>
+        <div className="px-4 py-3 flex items-center gap-2" style={{ background: accent, color: 'white' }}>
+          <Icon name={icon} size={18} className="text-white" />
+          <h3 className="font-display text-sm uppercase tracking-[0.15em]">{title}</h3>
+          {!data.possible && <span className="ml-auto text-[10px] font-display uppercase tracking-wider bg-white bg-opacity-20 px-2 py-0.5 rounded">Not Possible</span>}
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="text-[10px] font-display uppercase tracking-[0.12em] text-surface-700">Wins</div>
+              <div className="font-display text-2xl text-surface-900">{data.wins}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-display uppercase tracking-[0.12em] text-surface-700">Ties</div>
+              <div className="font-display text-2xl text-surface-900">{data.ties}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-display uppercase tracking-[0.12em] text-surface-700">Losses</div>
+              <div className="font-display text-2xl text-surface-900">{data.losses}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-display uppercase tracking-[0.12em] text-surface-700">Final Pts</div>
+              <div className="font-display text-2xl text-team-primary">{data.final_pts}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-4">
+      <div className="flex items-center gap-3 mb-3">
+        <h2 className="font-display text-xl uppercase tracking-wider text-surface-900">Playoff Scenarios</h2>
+        <div className="h-px flex-1 bg-surface-200" />
+      </div>
+      <div className="grid md:grid-cols-2 gap-4">
+        <ScenarioCard title="Worst Case" icon="Flame" data={worst_case} accent="var(--team-secondary)" />
+        <ScenarioCard title="Easiest Path" icon="Route" data={easiest_path} accent="var(--team-primary)" />
+      </div>
+    </div>
+  );
+}
+
+/* ========== COMPETITION CARD ========== */
+function CompetitionCard({ scenarios }) {
+  if (!scenarios) return null;
+  const { cutoff } = scenarios;
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-4">
+      <div className="flex items-center gap-3 mb-3">
+        <h2 className="font-display text-xl uppercase tracking-wider text-surface-900">The Competition</h2>
+        <div className="h-px flex-1 bg-surface-200" />
+      </div>
+      <div className="bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up" style={{ animationDelay: '0.4s' }}>
+        <div className="p-5 flex items-center gap-5">
+          {cutoff.logo && (
+            <img src={cutoff.logo} alt="" className="w-16 h-16 object-contain flex-shrink-0" />
+          )}
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="font-display text-lg uppercase tracking-wider text-surface-900">{cutoff.name}</h3>
+              <span className="text-[10px] font-display uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--team-primary) 15%, transparent)', color: 'var(--team-primary)' }}>#{cutoff.position}</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+              <div className="accent-bar pl-3">
+                <div className="text-[10px] font-display uppercase tracking-[0.12em] text-surface-700">Points</div>
+                <div className="font-display text-xl text-surface-900">{cutoff.pts}</div>
+              </div>
+              <div className="accent-bar pl-3">
+                <div className="text-[10px] font-display uppercase tracking-[0.12em] text-surface-700">Projected</div>
+                <div className="font-display text-xl text-surface-900">{cutoff.projected}</div>
+              </div>
+              <div className="accent-bar pl-3">
+                <div className="text-[10px] font-display uppercase tracking-[0.12em] text-surface-700">PPG</div>
+                <div className="font-display text-xl text-surface-900">{cutoff.ppg.toFixed(2)}</div>
+              </div>
+              <div className="accent-bar pl-3">
+                <div className="text-[10px] font-display uppercase tracking-[0.12em] text-surface-700">Games Left</div>
+                <div className="font-display text-xl text-surface-900">{cutoff.gr}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========== FOOTER ========== */
+function Footer({ season }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-6 mt-4">
+      <div className="border-t border-surface-200 pt-4">
+        <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 text-surface-700 hover:text-surface-900 transition-colors text-sm font-body">
+          <Icon name={expanded ? 'ChevronDown' : 'ChevronRight'} size={14} />
+          <span>Technical Details</span>
+        </button>
+        {expanded && (
+          <div className="mt-3 text-xs text-surface-700 font-body space-y-1 bg-surface-100 rounded-lg p-4 border border-surface-200">
+            <p><strong className="text-surface-900">Data Source:</strong> ESPN MLS API</p>
+            <p><strong className="text-surface-900">Standings URL:</strong> <code className="text-team-primary">https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings?season={season}</code></p>
+            <p><strong className="text-surface-900">Teams URL:</strong> <code className="text-team-primary">https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/teams</code></p>
+            <p><strong className="text-surface-900">Cache TTL:</strong> 5 minutes</p>
+            <p><strong className="text-surface-900">Clinch Logic:</strong> target_pts &gt; cutoff_max_possible (3 &times; cutoff_GR + cutoff_pts)</p>
+            <p><strong className="text-surface-900">Last Refresh:</strong> {new Date().toLocaleString()}</p>
+          </div>
+        )}
+        <p className="text-[10px] text-surface-700 mt-3 font-display uppercase tracking-[0.1em]">MLS Playoff Tracker &mdash; Data from ESPN. Not affiliated with MLS.</p>
+      </div>
+    </div>
+  );
+}
+
+/* ========== MAIN APP ========== */
+function App() {
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('mls-dark-mode');
+    if (saved !== null) return saved === 'true';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+  const [conference, setConference] = useState('eastern');
+  const [team, setTeam] = useState('Atlanta United FC');
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const [cutoff, setCutoff] = useState(9);
+  const [conferences, setConferences] = useState({});
+  const [scenarios, setScenarios] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Dark mode
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
+    localStorage.setItem('mls-dark-mode', String(darkMode));
+  }, [darkMode]);
+
+  // Team theming
+  useEffect(() => {
+    if (scenarios?.target?.colors) {
+      const { primary, secondary, accent } = scenarios.target.colors;
+      document.documentElement.style.setProperty('--team-primary', primary || '#6366f1');
+      document.documentElement.style.setProperty('--team-secondary', secondary || '#1f2937');
+      document.documentElement.style.setProperty('--team-accent', accent || '#ffffff');
+    }
+  }, [scenarios]);
+
+  // Fetch conference data
+  const fetchData = useCallback(async () => {
+    try {
+      const resp = await fetch(`/api/data?season=${season}`);
+      if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+      const data = await resp.json();
+      setConferences(data.conferences || {});
+      setError(null);
+      return data.conferences || {};
+    } catch (e) {
+      setError(e.message);
+      return {};
+    }
+  }, [season]);
+
+  // Fetch scenarios
+  const fetchScenarios = useCallback(async () => {
+    if (!team) return;
+    try {
+      const resp = await fetch(`/api/scenarios?season=${season}&team=${encodeURIComponent(team)}&cutoff=${cutoff}`);
+      if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+      const data = await resp.json();
+      setScenarios(data);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    }
+  }, [season, team, cutoff]);
+
+  // Load data on mount / season change
+  useEffect(() => {
+    setLoading(true);
+    fetchData().then(confs => {
+      // Verify team is in conference, or auto-select first
+      const confKey = Object.keys(confs).find(k => k.toLowerCase().includes(conference.toLowerCase()));
+      if (confKey && confs[confKey]) {
+        const teamInConf = confs[confKey].some(t => t.name === team);
+        if (!teamInConf && confs[confKey].length > 0) {
+          setTeam(confs[confKey][0].name);
+        }
+      }
+      setLoading(false);
+    });
+  }, [season]);
+
+  // Fetch scenarios when team/cutoff changes
+  useEffect(() => {
+    if (Object.keys(conferences).length > 0 && team) {
+      fetchScenarios();
+    }
+  }, [team, cutoff, conferences]);
+
+  // Conference change
+  const handleConferenceChange = (newConf) => {
+    setConference(newConf);
+    const confKey = Object.keys(conferences).find(k => k.toLowerCase().includes(newConf.toLowerCase()));
+    if (confKey && conferences[confKey]?.length > 0) {
+      const teamInConf = conferences[confKey].some(t => t.name === team);
+      if (!teamInConf) {
+        setTeam(conferences[confKey][0].name);
+      }
+    }
+  };
+
+  // Refresh
+  const handleRefresh = async () => {
+    setLoading(true);
+    await fetch('/api/refresh', { method: 'POST' });
+    const confs = await fetchData();
+    const confKey = Object.keys(confs).find(k => k.toLowerCase().includes(conference.toLowerCase()));
+    if (confKey && confs[confKey]) {
+      const teamInConf = confs[confKey].some(t => t.name === team);
+      if (!teamInConf && confs[confKey].length > 0) {
+        setTeam(confs[confKey][0].name);
+      }
+    }
+    setLoading(false);
+  };
+
+  // Build flat team list for settings bar
+  const allTeams = Object.values(conferences).flat();
+
+  if (loading && !scenarios) return <LoadingSkeleton />;
+
+  return (
+    <div className="min-h-screen bg-surface-50 transition-colors duration-300">
+      <SettingsBar
+        conferences={conferences} teams={allTeams}
+        conference={conference} team={team} season={season} cutoff={cutoff} darkMode={darkMode}
+        onConferenceChange={handleConferenceChange} onTeamChange={setTeam}
+        onSeasonChange={setSeason} onCutoffChange={setCutoff}
+        onDarkModeToggle={() => setDarkMode(d => !d)} onRefresh={handleRefresh}
+        loading={loading}
+      />
+
+      {error && (
+        <div className="max-w-6xl mx-auto px-4 pt-4">
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex items-center gap-2 text-red-700 dark:text-red-400 text-sm">
+            <Icon name="AlertCircle" size={16} />
+            <span>{error}</span>
+            <button onClick={handleRefresh} className="ml-auto text-red-500 hover:text-red-700 font-display text-xs uppercase tracking-wider">Retry</button>
+          </div>
+        </div>
+      )}
+
+      <TeamHeader scenarios={scenarios} season={season} />
+      <StatusBanner scenarios={scenarios} />
+      <MetricsDashboard scenarios={scenarios} />
+      <StandingsTable conferences={conferences} conference={conference} team={team} cutoff={cutoff} />
+      <ScenariosSection scenarios={scenarios} />
+      <CompetitionCard scenarios={scenarios} />
+      <Footer season={season} />
+    </div>
+  );
+}
+
+/* ========== MOUNT ========== */
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<ErrorBoundary><App /></ErrorBoundary>);
+</script>
+</body>
+</html>"""
+
+
+# ============================================================
+# Server Lifecycle
+# ============================================================
+
+def open_browser(port: int):
+    time.sleep(1.5)
+    webbrowser.open(f"http://127.0.0.1:{port}")
+
+
+def testing_mode_enabled() -> bool:
+    value = os.environ.get("UTILITIES_TESTING", "")
+    return value.lower() not in {"", "0", "false", "no"}
+
+
+def main():
+    args = parse_args()
+
+    if not args.no_browser and not testing_mode_enabled():
+        t = threading.Thread(target=open_browser, args=(args.port,), daemon=True)
+        t.start()
+
+    logger.info("Starting MLS Playoff Tracker on http://127.0.0.1:%d", args.port)
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+
+
+if __name__ == "__main__":
+    main()

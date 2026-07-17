@@ -1,0 +1,1 @@
+{"id": "fvb_17_timezone_conversion","category": "field_validity_basic","weight": 1,"input": {"expr": "0 0 * * *","after": "2026-01-01T00:00:00+00:00","n": 2,"tz": "America/Los_Angeles"},"expected": {"kind": "fires","value": ["2026-01-01T00:00:00-08:00","2026-01-02T00:00:00-08:00"]}}

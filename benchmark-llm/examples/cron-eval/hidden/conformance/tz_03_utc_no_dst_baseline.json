@@ -1,0 +1,1 @@
+{"id": "tz_03_utc_no_dst_baseline","category": "timezone_dst","weight": 1.0,"input": {"expr": "0 0 * * *","after": "2026-01-01T00:00:00+00:00","n": 3,"tz": "UTC"},"expected": {"kind": "fires","value": ["2026-01-02T00:00:00+00:00","2026-01-03T00:00:00+00:00","2026-01-04T00:00:00+00:00"]}}

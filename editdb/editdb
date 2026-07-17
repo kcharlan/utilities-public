@@ -1,0 +1,2555 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn",
+#     "python-multipart",
+#     "pydantic",
+# ]
+# ///
+import argparse
+import csv
+import io
+import json
+import logging
+import os
+import re
+import sqlite3
+import sys
+import threading
+import time
+import webbrowser
+from typing import Any, Dict, List, Optional
+
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="EditDB: A World-Class SQLite Management Utility.",
+        epilog="Launches a local web server and opens the browser interface.",
+    )
+    parser.add_argument(
+        "db_path",
+        nargs="?",
+        help="Path to the SQLite database file to open.",
+    )
+    parser.add_argument(
+        "--port", "-p",
+        type=int,
+        default=8000,
+        help="Port to run the server on (default: 8000).",
+    )
+    return parser.parse_args()
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('editdb')
+
+def validate_identifier(name: str):
+    if not name or not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
+        raise HTTPException(status_code=400, detail=f"Invalid identifier: {name}")
+
+def quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+# --- Database Logic ---
+
+class DBManager:
+    def __init__(self, db_path: str):
+        self.db_path = os.path.abspath(db_path)
+        # Ensure directory exists (Finding 4)
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        # Test connection
+        conn = sqlite3.connect(self.db_path)
+        conn.close()
+
+    def get_connection(self):
+        # Finding 5: Add timeout
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
+        return conn
+
+    def get_tables(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+            return [row['name'] for row in cursor.fetchall()]
+
+    def get_indexes(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, tbl_name, sql FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%';")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_schema(self, table_name: str):
+        validate_identifier(table_name)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA table_info({quote_identifier(table_name)});")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_fks(self, table_name: str):
+        validate_identifier(table_name)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA foreign_key_list({quote_identifier(table_name)});")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def execute_migration(self, table_name: str, new_cols_def: List[str], mapping: Dict[str, str]):
+        validate_identifier(table_name)
+        conn = self.get_connection()
+        try:
+            # Finding 7: Validate mapping against existing schema
+            existing_cols = {col['name'] for col in self.get_schema(table_name)}
+            for new_name, old_name in mapping.items():
+                if old_name and old_name not in existing_cols:
+                    return False, f"Column '{old_name}' does not exist in table '{table_name}'"
+
+            conn.execute("PRAGMA foreign_keys = OFF;")
+            cursor = conn.cursor()
+            
+            temp_name = f"_{table_name}_new_{int(time.time())}"
+            cols_sql = ", ".join(new_cols_def)
+            cursor.execute(f"CREATE TABLE {quote_identifier(temp_name)} ({cols_sql});")
+            
+            # Map existing columns
+            new_names = [n for n, o in mapping.items() if o] # Only columns that have an old name
+            old_names = [mapping[n] for n in new_names]
+            
+            if new_names:
+                quoted_new = [quote_identifier(n) for n in new_names]
+                quoted_old = [quote_identifier(o) for o in old_names]
+                insert_sql = f"INSERT INTO {quote_identifier(temp_name)} ({', '.join(quoted_new)}) SELECT {', '.join(quoted_old)} FROM {quote_identifier(table_name)}"
+                cursor.execute(insert_sql)
+            
+            cursor.execute(f"DROP TABLE {quote_identifier(table_name)}")
+            cursor.execute(f"ALTER TABLE {quote_identifier(temp_name)} RENAME TO {quote_identifier(table_name)}")
+            
+            conn.commit()
+            return True, None
+        except Exception as e:
+            logger.error(f"Migration failed for {table_name}: {e}", exc_info=True)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return False, str(e)
+        finally:
+            # Finding 6: Missing Error Handling in Migration Rollback
+            try:
+                conn.execute("PRAGMA foreign_keys = ON;")
+                conn.close()
+            except Exception:
+                pass
+
+# --- API Models ---
+
+class ColumnUpdate(BaseModel):
+    old_name: str
+    new_name: str
+    type: str
+    delete: bool = False
+
+class TableMigration(BaseModel):
+    columns: List[ColumnUpdate]
+
+class NewTable(BaseModel):
+    name: str
+
+class RenameTable(BaseModel):
+    new_name: str
+
+class NewColumn(BaseModel):
+    name: str
+    type: str
+
+class NewIndex(BaseModel):
+    name: str
+    table: str
+    columns: List[str]
+    unique: bool = False
+
+class SQLQuery(BaseModel):
+    query: str
+
+class RowData(BaseModel):
+    data: Dict[str, Any]
+
+# --- Constants ---
+DEFAULT_PAGE_SIZE = 100
+MAX_PAGE_SIZE = 1000
+MAX_QUERY_SIZE = 100_000 # 100KB
+MAX_IMPORT_SIZE = 50 * 1024 * 1024 # 50MB
+MAX_QUERY_RESULTS = 10000
+
+# --- FastAPI App ---
+
+app = FastAPI(title="EditDB API")
+db_manager: Optional[DBManager] = None
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return HTMLResponse(content="", status_code=204)
+
+@app.get("/", response_class=HTMLResponse)
+async def get_ui():
+    db_name = os.path.basename(db_manager.db_path) if db_manager else "Database"
+    return HTML_TEMPLATE.replace("{{DB_NAME}}", db_name)
+
+@app.get("/api/status")
+async def status():
+    if not db_manager:
+        return {"db_path": "", "db_name": "No Database Loaded"}
+    return {"db_path": db_manager.db_path, "db_name": os.path.basename(db_manager.db_path)}
+
+@app.post("/api/query")
+async def execute_query(sql: SQLQuery):
+    # Finding 9: Basic validation
+    if not sql.query or not sql.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    if len(sql.query) > MAX_QUERY_SIZE:
+        raise HTTPException(status_code=400, detail="Query too large")
+
+    with db_manager.get_connection() as conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql.query)
+            # Check if it's a query that returns rows
+            if cursor.description:
+                columns = [description[0] for description in cursor.description]
+                # Limit result size
+                rows = cursor.fetchmany(MAX_QUERY_RESULTS)
+                truncated = False
+                if cursor.fetchone():
+                    truncated = True
+                
+                result = {"columns": columns, "rows": [dict(r) for r in rows]}
+                if truncated:
+                    result["truncated"] = True
+                    result["message"] = f"Results limited to {MAX_QUERY_RESULTS} rows"
+                return result
+            else:
+                conn.commit()
+                return {"status": "success", "rows_affected": cursor.rowcount}
+        except Exception as e:
+            logger.error(f"Query failed: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/tables")
+async def list_tables():
+    return db_manager.get_tables()
+
+@app.post("/api/tables")
+async def create_table(table: NewTable):
+    validate_identifier(table.name)
+    with db_manager.get_connection() as conn:
+        try:
+            conn.execute(f"CREATE TABLE {quote_identifier(table.name)} (id INTEGER PRIMARY KEY AUTOINCREMENT)")
+            conn.commit()
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/tables/{table_name}/rename")
+async def rename_table(table_name: str, payload: RenameTable):
+    validate_identifier(table_name)
+    validate_identifier(payload.new_name)
+    with db_manager.get_connection() as conn:
+        try:
+            conn.execute(f"ALTER TABLE {quote_identifier(table_name)} RENAME TO {quote_identifier(payload.new_name)}")
+            conn.commit()
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/tables/{table_name}")
+async def delete_table(table_name: str):
+    validate_identifier(table_name)
+    with db_manager.get_connection() as conn:
+        try:
+            conn.execute(f"DROP TABLE {quote_identifier(table_name)}")
+            conn.commit()
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/indexes")
+async def list_indexes():
+    return db_manager.get_indexes()
+
+@app.post("/api/indexes")
+async def create_index(payload: NewIndex):
+    validate_identifier(payload.name)
+    validate_identifier(payload.table)
+    for col in payload.columns:
+        validate_identifier(col)
+
+    with db_manager.get_connection() as conn:
+        try:
+            unique = "UNIQUE" if payload.unique else ""
+            cols = ", ".join([quote_identifier(c) for c in payload.columns])
+            sql = f"CREATE {unique} INDEX {quote_identifier(payload.name)} ON {quote_identifier(payload.table)} ({cols})"
+            conn.execute(sql)
+            conn.commit()
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/indexes/{index_name}")
+async def delete_index(index_name: str):
+    validate_identifier(index_name)
+    with db_manager.get_connection() as conn:
+        try:
+            conn.execute(f"DROP INDEX {quote_identifier(index_name)}")
+            conn.commit()
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/schema/{table_name}")
+async def get_schema(table_name: str):
+    return db_manager.get_schema(table_name)
+
+@app.get("/api/fks/{table_name}")
+async def get_fks(table_name: str):
+    return db_manager.get_fks(table_name)
+
+@app.get("/api/row/{table_name}/{pk_value}")
+async def get_row_preview(table_name: str, pk_value: str):
+    validate_identifier(table_name)
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        schema = db_manager.get_schema(table_name)
+        pk_cols = [col for col in schema if col['pk'] == 1]
+        if not pk_cols:
+            raise HTTPException(status_code=400, detail="Table has no primary key")
+        pk_col = pk_cols[0]['name']
+        cursor.execute(
+            f"SELECT * FROM {quote_identifier(table_name)} WHERE {quote_identifier(pk_col)} = ? LIMIT 1",
+            (pk_value,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"row": None, "schema": schema}
+        return {"row": dict(row), "schema": schema}
+
+@app.get("/api/table/{table_name}/full")
+async def get_table_full(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0):
+    validate_identifier(table_name)
+    limit = min(limit, MAX_PAGE_SIZE)
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        # Schema
+        schema = db_manager.get_schema(table_name)
+        # Data
+        cursor.execute(f"SELECT * FROM {quote_identifier(table_name)} LIMIT ? OFFSET ?", (limit, offset))
+        data = [dict(row) for row in cursor.fetchall()]
+        # FKs
+        fks = db_manager.get_fks(table_name)
+        # Count
+        cursor.execute(f"SELECT COUNT(*) as count FROM {quote_identifier(table_name)}")
+        count = dict(cursor.fetchone())['count']
+        
+        return {
+            "schema": schema,
+            "data": data,
+            "fks": fks,
+            "totalRows": count
+        }
+
+@app.get("/api/export/{table_name}/{fmt}")
+async def export_data(table_name: str, fmt: str):
+    validate_identifier(table_name)
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM {quote_identifier(table_name)}")
+        rows = [dict(row) for row in cursor.fetchall()]
+        
+        if fmt == "json":
+            content = json.dumps(rows, indent=2)
+            return StreamingResponse(
+                io.BytesIO(content.encode()),
+                media_type="application/json",
+                headers={"Content-Disposition": f"attachment; filename={table_name}.json"}
+            )
+        elif fmt == "csv":
+            if not rows:
+                return StreamingResponse(io.BytesIO(b""), media_type="text/csv")
+            
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+            writer.writeheader()
+            writer.writerows(rows)
+            
+            return StreamingResponse(
+                io.BytesIO(output.getvalue().encode()),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={table_name}.csv"}
+            )
+        else:
+            raise HTTPException(status_code=400, detail="Invalid format")
+
+@app.post("/api/import/{table_name}")
+async def import_data(table_name: str, file: UploadFile = File(...)):
+    validate_identifier(table_name)
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    
+    # Finding 8: Add size limit
+    content = await file.read()
+    if len(content) > MAX_IMPORT_SIZE:
+        raise HTTPException(status_code=413, detail=f"File too large (max {MAX_IMPORT_SIZE/1024/1024}MB)")
+
+    decoded = content.decode('utf-8')
+    reader = csv.DictReader(io.StringIO(decoded))
+    
+    with db_manager.get_connection() as conn:
+        try:
+            batch_size = 1000
+            count = 0
+            for row in reader:
+                cols = list(row.keys())
+                for c in cols: validate_identifier(c)
+                placeholders = ", ".join([":" + c for c in cols])
+                quoted_cols = ", ".join([quote_identifier(c) for c in cols])
+                sql = f"INSERT INTO {quote_identifier(table_name)} ({quoted_cols}) VALUES ({placeholders})"
+                conn.execute(sql, row)
+                count += 1
+                if count % batch_size == 0:
+                    conn.commit()
+            conn.commit()
+            return {"status": "success", "rows_imported": count}
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Import failed: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/export-schema/{table_name}")
+async def export_schema(table_name: str):
+    validate_identifier(table_name)
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", (table_name,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Table not found")
+        
+        sql = row['sql']
+        # Make it portable: use IF NOT EXISTS if not already present
+        if not re.search(r'(?i)CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS', sql):
+            sql = re.sub(r'(?i)CREATE\s+TABLE', 'CREATE TABLE IF NOT EXISTS', sql, count=1)
+            
+        return StreamingResponse(
+            io.BytesIO(sql.encode()),
+            media_type="text/sql",
+            headers={"Content-Disposition": f"attachment; filename={table_name}_schema.sql"}
+        )
+
+@app.get("/api/data/{table_name}")
+async def get_data(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0):
+    validate_identifier(table_name)
+    limit = min(limit, MAX_PAGE_SIZE)
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM {quote_identifier(table_name)} LIMIT ? OFFSET ?", (limit, offset))
+        return [dict(row) for row in cursor.fetchall()]
+
+@app.get("/api/count/{table_name}")
+async def get_count(table_name: str):
+    validate_identifier(table_name)
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) as count FROM {quote_identifier(table_name)}")
+        return dict(cursor.fetchone())
+
+@app.post("/api/migrate/{table_name}")
+async def migrate_table(table_name: str, migration: TableMigration):
+    validate_identifier(table_name)
+    new_defs = []
+    mapping = {}
+    for col in migration.columns:
+        if col.delete: continue
+        validate_identifier(col.new_name)
+        # Simple definition, could be expanded for PK/Not Null
+        new_defs.append(f"{quote_identifier(col.new_name)} {col.type}")
+        mapping[col.new_name] = col.old_name
+    
+    success, err = db_manager.execute_migration(table_name, new_defs, mapping)
+    if not success:
+        raise HTTPException(status_code=400, detail=err)
+    return {"status": "success"}
+
+@app.post("/api/data/{table_name}")
+async def add_row(table_name: str, row: RowData):
+    validate_identifier(table_name)
+    with db_manager.get_connection() as conn:
+        try:
+            cols = list(row.data.keys())
+            for c in cols: validate_identifier(c)
+            placeholders = ", ".join([":" + c for c in cols])
+            quoted_cols = ", ".join([quote_identifier(c) for c in cols])
+            sql = f"INSERT INTO {quote_identifier(table_name)} ({quoted_cols}) VALUES ({placeholders})"
+            conn.execute(sql, row.data)
+            conn.commit()
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/data/{table_name}")
+async def update_row(table_name: str, payload: Dict[str, Any]):
+    # Expects 'where' and 'values' in payload
+    validate_identifier(table_name)
+    with db_manager.get_connection() as conn:
+        try:
+            where_keys = list(payload['where'].keys())
+            for k in where_keys: validate_identifier(k)
+            set_keys = list(payload['values'].keys())
+            for k in set_keys: validate_identifier(k)
+
+            where_clause = " AND ".join([f"{quote_identifier(k)} = ?" for k in where_keys])
+            set_clause = ", ".join([f"{quote_identifier(k)} = ?" for k in set_keys])
+            sql = f"UPDATE {quote_identifier(table_name)} SET {set_clause} WHERE {where_clause}"
+            params = list(payload['values'].values()) + list(payload['where'].values())
+            conn.execute(sql, params)
+            conn.commit()
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/data/{table_name}/delete")
+async def delete_row(table_name: str, where: Dict[str, Any]):
+    validate_identifier(table_name)
+    with db_manager.get_connection() as conn:
+        try:
+            where_keys = list(where.keys())
+            for k in where_keys: validate_identifier(k)
+            where_clause = " AND ".join([f"{quote_identifier(k)} = ?" for k in where_keys])
+            sql = f"DELETE FROM {quote_identifier(table_name)} WHERE {where_clause}"
+            conn.execute(sql, list(where.values()))
+            conn.commit()
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+# --- HTML TEMPLATE (React/Tailwind SPA) ---
+
+
+
+HTML_TEMPLATE = """
+
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+        <title>EditDB - {{DB_NAME}}</title>
+
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script>
+
+            tailwind.config = {
+
+                    darkMode: 'class',
+
+                    theme: {
+
+                        extend: {
+
+                            colors: {
+
+                                brandDark: {
+
+                                    50: '#f8fafc',
+
+                                    100: '#f1f5f9',
+
+                                    200: '#e2e8f0',
+
+                                    300: '#cbd5e1',
+
+                                    400: '#94a3b8',
+
+                                    500: '#64748b',
+
+                                    600: '#475569',
+
+                                    700: '#334155',
+
+                                    800: '#1e293b',
+
+                                    900: '#0f172a',
+
+                                    950: '#020617',
+
+                                }
+
+                            }
+
+                        }
+
+                    }
+
+                };
+
+        </script>
+
+        <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+
+        <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script src="https://unpkg.com/lucide@0.321.0/dist/umd/lucide.min.js"></script>
+
+    <style>
+
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+                body { font-family: 'Inter', sans-serif; background-color: #f8fafc; color: #0f172a; transition: background-color 0.2s, color 0.2s; }
+
+                .dark body { background-color: #020617; color: #f8fafc; }
+
+                .sidebar-item-active { background-color: #f1f5f9; border-right: 4px solid #3b82f6; }
+
+                .dark .sidebar-item-active { background-color: #1e293b; border-right: 4px solid #3b82f6; color: #3b82f6; }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+
+        .dark .custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        @keyframes slideInRight {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+        }
+
+        .animate-slide-in-right {
+            animation: slideInRight 0.2s ease-out;
+        }
+
+        @keyframes highlightFade {
+            0% { background-color: rgb(191 219 254); }
+            70% { background-color: rgb(191 219 254); }
+            100% { background-color: rgb(239 246 255); }
+        }
+
+        @keyframes highlightFadeDark {
+            0% { background-color: rgba(30, 58, 138, 0.3); }
+            70% { background-color: rgba(30, 58, 138, 0.3); }
+            100% { background-color: rgba(30, 58, 138, 0.15); }
+        }
+
+        .animate-highlight-fade {
+            animation: highlightFade 2s ease-out forwards;
+        }
+
+        .dark .animate-highlight-fade {
+            animation: highlightFadeDark 2s ease-out forwards;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div id="root"></div>
+
+
+
+    <script type="text/babel">
+
+        /**
+         * EditDB Frontend
+         * 
+         * DESIGN RATIONALE:
+         * This is a single-file application for maximum portability and ease of distribution.
+         * The React/Tailwind frontend is embedded directly in the Python script.
+         * 
+         * NAMING CONVENTIONS:
+         * - API responses: *Res, *Response
+         * - Parsed data: *Data
+         * - React components: PascalCase
+         * - Hooks/functions: camelCase
+         * 
+         * SECURITY MODEL:
+         * - Localhost binding only (127.0.0.1)
+         * - Trusted local environment
+         * - Input validation on all SQL identifiers
+         */
+
+        const { useState, useEffect, useMemo } = React;
+
+
+
+        const Icon = ({ name, size = 18, className = "" }) => {
+
+            const toPascalCase = (value) => value.replace(/(\\w)(\\w*)(_|-|\\s*)/g, (_, first, rest) => first.toUpperCase() + rest.toLowerCase());
+
+            const iconDef = window.lucide?.icons?.[toPascalCase(name)];
+
+            const [tag, baseAttrs, children] = Array.isArray(iconDef) ? iconDef : [];
+
+
+
+            if (!iconDef || tag !== 'svg' || !Array.isArray(children)) {
+
+                return (
+
+                    <span
+
+                        className={`inline-flex items-center justify-center ${className}`}
+
+                        style={{ width: size, height: size, minWidth: size }}
+
+                        aria-hidden="true"
+
+                    />
+
+                );
+
+            }
+
+
+
+            return (
+
+                <svg
+
+                    xmlns="http://www.w3.org/2000/svg"
+
+                    {...baseAttrs}
+
+                    width={size}
+
+                    height={size}
+
+                    className={`inline-block ${className}`.trim()}
+
+                    aria-hidden="true"
+
+                >
+
+                    {children.map(([childTag, attrs], i) => React.createElement(childTag, { ...attrs, key: `${name}-${i}` }))}
+
+                </svg>
+
+            );
+
+        };
+
+        const _fkPreviewCache = {};
+
+        const FKTooltip = ({ fkTable, fkTo, fkValue, anchorRect }) => {
+            const [preview, setPreview] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(false);
+
+            useEffect(() => {
+                let cancelled = false;
+                setLoading(true);
+                setError(false);
+
+                const cacheKey = `${fkTable}:${fkValue}`;
+                if (_fkPreviewCache[cacheKey]) {
+                    setPreview(_fkPreviewCache[cacheKey]);
+                    setLoading(false);
+                    return;
+                }
+
+                fetch(`/api/row/${fkTable}/${encodeURIComponent(fkValue)}`)
+                    .then(async (r) => {
+                        if (!r.ok) throw new Error('Preview request failed');
+                        return r.json();
+                    })
+                    .then(data => {
+                        if (!cancelled) {
+                            _fkPreviewCache[cacheKey] = data;
+                            setPreview(data);
+                            setLoading(false);
+                        }
+                    })
+                    .catch(() => {
+                        if (!cancelled) {
+                            setError(true);
+                            setLoading(false);
+                        }
+                    });
+                return () => { cancelled = true; };
+            }, [fkTable, fkValue]);
+
+            const style = useMemo(() => {
+                if (!anchorRect) return { display: 'none' };
+                const top = anchorRect.bottom + 4;
+                const left = anchorRect.left;
+                const fitsBelow = top + 200 < window.innerHeight;
+                return {
+                    position: 'fixed',
+                    left: Math.max(8, Math.min(left, window.innerWidth - 320)),
+                    top: fitsBelow ? top : Math.max(8, anchorRect.top - 204),
+                    zIndex: 50,
+                    width: 300,
+                };
+            }, [anchorRect]);
+
+            if (loading) {
+                return (
+                    <div style={style} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-3">
+                        <div className="flex items-center gap-2 text-sm text-slate-400">
+                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
+                            Loading...
+                        </div>
+                    </div>
+                );
+            }
+
+            if (error || !preview?.row) {
+                return (
+                    <div style={style} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-3">
+                        <div className="text-sm text-slate-400 italic">
+                            {error ? 'Failed to load preview' : 'No matching row found'}
+                        </div>
+                    </div>
+                );
+            }
+
+            const displayCols = preview.schema
+                .filter(col => col.name !== fkTo || preview.schema.length <= 2)
+                .slice(0, 6);
+
+            return (
+                <div style={style} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                    <div className="px-3 py-2 bg-slate-50 dark:bg-slate-700/50 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2">
+                        <Icon name="table" size={12} className="text-blue-500" />
+                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{fkTable}</span>
+                        <span className="text-xs text-slate-400 dark:text-slate-500 ml-auto">{fkTo} = {String(fkValue)}</span>
+                    </div>
+                    <div className="p-3 space-y-1.5">
+                        {displayCols.map(col => (
+                            <div key={col.name} className="flex items-baseline gap-2 text-sm">
+                                <span className="text-slate-400 dark:text-slate-500 text-xs font-medium min-w-[80px] truncate">{col.name}</span>
+                                <span className="text-slate-700 dark:text-slate-200 truncate">
+                                    {preview.row[col.name] === null
+                                        ? <em className="text-slate-300 dark:text-slate-600">NULL</em>
+                                        : String(preview.row[col.name])}
+                                </span>
+                            </div>
+                        ))}
+                        {preview.schema.length > 6 && (
+                            <div className="text-xs text-slate-400 italic pt-1">+ {preview.schema.length - 6} more columns</div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const FKDrawer = ({
+            fkTable,
+            fkTo,
+            fkValue,
+            onClose,
+            onNavigate,
+            breadcrumbs,
+            onBreadcrumbClick
+        }) => {
+            const [data, setData] = useState(null);
+            const [schema, setSchema] = useState([]);
+            const [fks, setFks] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [highlightKey, setHighlightKey] = useState(null);
+
+            useEffect(() => {
+                let cancelled = false;
+                setLoading(true);
+                fetch(`/api/table/${fkTable}/full?limit=100&offset=0`)
+                    .then(async (r) => {
+                        if (!r.ok) throw new Error('Drawer load failed');
+                        return r.json();
+                    })
+                    .then(result => {
+                        if (cancelled) return;
+                        setSchema(result.schema || []);
+                        setFks(result.fks || []);
+                        setData(result.data || []);
+                        setLoading(false);
+
+                        const targetIdx = (result.data || []).findIndex(row => String(row[fkTo]) === String(fkValue));
+                        if (targetIdx >= 0) {
+                            const pkCols = (result.schema || []).filter(s => s.pk === 1).map(s => s.name);
+                            const targetRow = result.data[targetIdx];
+                            setHighlightKey(pkCols.length > 0 ? pkCols.map(c => targetRow[c]).join('|') : JSON.stringify(targetRow));
+                        } else {
+                            setHighlightKey(null);
+                        }
+                    })
+                    .catch(() => {
+                        if (!cancelled) {
+                            setData([]);
+                            setLoading(false);
+                        }
+                    });
+                return () => { cancelled = true; };
+            }, [fkTable, fkTo, fkValue]);
+
+            useEffect(() => {
+                if (!highlightKey) return;
+                const escapedKey = window.CSS?.escape
+                    ? window.CSS.escape(highlightKey)
+                    : String(highlightKey).replace(/"/g, '\\"');
+                const el = document.querySelector(`[data-drawer-row-key="${escapedKey}"]`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, [highlightKey, data]);
+
+            const getRowKey = (row) => {
+                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
+                if (pkCols.length > 0) return pkCols.map(c => row[c]).join('|');
+                return JSON.stringify(row);
+            };
+
+            const getFKInfo = (colName) => fks.find(fk => fk.from === colName);
+
+            return (
+                <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
+                    <div className="absolute inset-0 bg-black/20 dark:bg-black/40" />
+                    <div
+                        className="relative w-[55%] max-w-4xl min-w-[420px] bg-white dark:bg-slate-900 shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-700 animate-slide-in-right"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-800/50">
+                            <div className="flex items-center gap-3">
+                                <Icon name="table" size={18} className="text-blue-500" />
+                                <h2 className="font-bold text-slate-800 dark:text-slate-100">{fkTable}</h2>
+                                <span className="text-sm text-slate-400 dark:text-slate-500">
+                                    {fkTo} = {String(fkValue)}
+                                </span>
+                            </div>
+                            <button
+                                onClick={onClose}
+                                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                            >
+                                <Icon name="x" size={18} />
+                            </button>
+                        </div>
+
+                        {breadcrumbs && breadcrumbs.length > 1 && (
+                            <div className="px-5 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center gap-1 text-xs text-slate-400 bg-slate-50/50 dark:bg-slate-800/30 overflow-x-auto custom-scrollbar">
+                                {breadcrumbs.map((bc, i) => (
+                                    <React.Fragment key={`${bc.fkTable}-${bc.fkTo}-${bc.fkValue}-${i}`}>
+                                        {i > 0 && <Icon name="chevron-right" size={10} className="text-slate-300 shrink-0" />}
+                                        <button
+                                            onClick={() => onBreadcrumbClick(i)}
+                                            className={`hover:text-blue-500 transition-colors whitespace-nowrap ${i === breadcrumbs.length - 1 ? 'text-slate-600 dark:text-slate-300 font-medium' : ''}`}
+                                        >
+                                            {bc.fkTable}({bc.fkTo}={String(bc.fkValue)})
+                                        </button>
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                        )}
+
+                        {loading ? (
+                            <div className="flex-1 flex items-center justify-center">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                            </div>
+                        ) : !data || data.length === 0 ? (
+                            <div className="flex-1 flex items-center justify-center text-slate-400 italic">No data found</div>
+                        ) : (
+                            <div className="flex-1 overflow-auto custom-scrollbar">
+                                <table className="w-full text-left border-collapse min-w-max">
+                                    <thead>
+                                        <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
+                                            {schema.map(col => {
+                                                const fk = getFKInfo(col.name);
+                                                return (
+                                                    <th key={col.name} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50">
+                                                        <div className="flex items-center gap-2">
+                                                            {col.pk === 1 && <Icon name="key" size={12} className="text-amber-500" />}
+                                                            {fk && <Icon name="link" size={12} className="text-blue-500" title={`References ${fk.table}(${fk.to})`} />}
+                                                            {col.name}
+                                                            <span className="text-[10px] font-normal text-slate-400">{col.type}</span>
+                                                        </div>
+                                                    </th>
+                                                );
+                                            })}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                        {data.map(row => {
+                                            const rowKey = getRowKey(row);
+                                            const isHighlighted = rowKey === highlightKey;
+                                            return (
+                                                <tr
+                                                    key={rowKey}
+                                                    data-drawer-row-key={rowKey}
+                                                    className={`transition-colors ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20 ring-2 ring-blue-400/50 ring-inset animate-highlight-fade' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
+                                                >
+                                                    {schema.map(col => {
+                                                        const fk = getFKInfo(col.name);
+                                                        return (
+                                                            <td key={col.name} className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300 truncate max-w-xs">
+                                                                {row[col.name] === null ? (
+                                                                    <em className="text-slate-300 dark:text-slate-600">NULL</em>
+                                                                ) : fk ? (
+                                                                    <button
+                                                                        onClick={() => onNavigate(fk.table, fk.to, row[col.name])}
+                                                                        className="text-blue-600 dark:text-blue-400 hover:underline text-left truncate w-full"
+                                                                    >
+                                                                        {String(row[col.name])}
+                                                                    </button>
+                                                                ) : (
+                                                                    String(row[col.name])
+                                                                )}
+                                                            </td>
+                                                        );
+                                                    })}
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        class ErrorBoundary extends React.Component {
+
+            constructor(props) {
+
+                super(props);
+
+                this.state = { hasError: false, message: "" };
+
+            }
+
+
+
+            static getDerivedStateFromError(error) {
+
+                return { hasError: true, message: error?.message || "Unexpected UI error." };
+
+            }
+
+
+
+            componentDidCatch(error, info) {
+
+                console.error("UI crashed", error, info);
+
+            }
+
+
+
+            render() {
+
+                if (this.state.hasError) {
+
+                    return (
+
+                        <div className="h-screen w-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6">
+
+                            <div className="max-w-xl w-full bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/30 rounded-xl shadow-sm p-6 text-center">
+
+                                <h2 className="text-lg font-bold text-red-700 dark:text-red-400 mb-2">EditDB UI Error</h2>
+
+                                <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+
+                                    A frontend error occurred. The backend is still running.
+
+                                </p>
+
+                                <pre className="text-xs bg-slate-900 text-red-200 rounded-lg p-3 overflow-auto text-left">{this.state.message}</pre>
+
+                                <div className="mt-4 flex justify-center">
+
+                                    <button
+
+                                        onClick={() => window.location.reload()}
+
+                                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+
+                                    >
+
+                                        Reload Page
+
+                                    </button>
+
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                    );
+
+                }
+
+                return this.props.children;
+
+            }
+
+        }
+
+
+
+        const App = () => {
+
+            const [tables, setTables] = useState([]);
+
+            const [indexes, setIndexes] = useState([]);
+
+            const [selectedTable, setSelectedTable] = useState(null);
+
+            const [view, setView] = useState('data'); // 'data', 'schema', 'sql'
+
+            const [data, setData] = useState([]);
+
+            const [schema, setSchema] = useState([]);
+
+            const [fks, setFks] = useState([]);
+
+            const [totalRows, setTotalRows] = useState(0);
+
+            const [page, setPage] = useState(0);
+
+            const [pageSize, setPageSize] = useState(100);
+
+            const [loading, setLoading] = useState(true);
+
+            const [dbInfo, setDbInfo] = useState({});
+
+            const [appReady, setAppReady] = useState(false);
+
+            const [query, setQuery] = useState("SELECT * FROM sqlite_master;");
+            const [drawerStack, setDrawerStack] = useState([]);
+
+            const [darkMode, setDarkMode] = useState(() => {
+                const saved = localStorage.getItem('editdb_theme');
+                if (saved === 'dark') return true;
+                if (saved === 'light') return false;
+                return window.matchMedia('(prefers-color-scheme: dark)').matches;
+            });
+
+
+
+            useEffect(() => {
+
+                const html = document.documentElement;
+
+                if (darkMode) {
+
+                    html.classList.add('dark');
+
+                    localStorage.setItem('editdb_theme', 'dark');
+
+                } else {
+
+                    html.classList.remove('dark');
+
+                    localStorage.setItem('editdb_theme', 'light');
+
+                }
+
+            }, [darkMode]);
+
+
+
+            useEffect(() => {
+
+                const init = async () => {
+
+                    try {
+
+                        const status = await fetch('/api/status').then(r => r.json());
+
+                        setDbInfo(status);
+
+                        const [tRes, iRes] = await Promise.all([
+
+                            fetch('/api/tables'),
+
+                            fetch('/api/indexes')
+
+                        ]);
+
+                        const tData = await tRes.json();
+
+                        const iData = await iRes.json();
+
+                        setTables(tData);
+
+                        setIndexes(iData);
+
+                        if (tData.length > 0) {
+
+                            await handleSelectTable(tData[0]);
+
+                        }
+
+                        setAppReady(true);
+
+                        setLoading(false);
+
+                    } catch (e) {
+
+                        console.error("Init failed", e);
+
+                    }
+
+                };
+
+                init();
+
+            }, []);
+
+
+
+            const handleSelectTable = async (name, newPage = 0) => {
+
+                if (!name) return;
+
+                // If the table changed, reset pagination
+                if (name !== selectedTable) {
+                    setPage(0);
+                    newPage = 0;
+                } else {
+                    setPage(newPage);
+                }
+
+                setSelectedTable(name);
+                setView('data');
+                setLoading(true);
+                try {
+                    const offset = newPage * pageSize;
+                    const res = await fetch(`/api/table/${name}/full?limit=${pageSize}&offset=${offset}`);
+                    const data = await res.json();
+
+                    setSchema(data.schema);
+                    setData(data.data);
+                    setFks(data.fks);
+                    setTotalRows(data.totalRows);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleFKNavigate = (fkTable, fkTo, fkValue) => {
+                setDrawerStack(prev => [...prev, { fkTable, fkTo, fkValue }]);
+            };
+
+            const handleDrawerClose = () => {
+                setDrawerStack(prev => prev.slice(0, -1));
+            };
+
+            const handleDrawerNavigate = (fkTable, fkTo, fkValue) => {
+                setDrawerStack(prev => [...prev, { fkTable, fkTo, fkValue }]);
+            };
+
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                    if (e.key === 'Escape' && drawerStack.length > 0) {
+                        handleDrawerClose();
+                    }
+                };
+                document.addEventListener('keydown', handleKeyDown);
+                return () => document.removeEventListener('keydown', handleKeyDown);
+            }, [drawerStack.length]);
+
+
+
+                                    const refresh = async (tableOverride) => {
+
+
+
+                                        const [tRes, iRes] = await Promise.all([
+
+
+
+                                            fetch('/api/tables'),
+
+
+
+                                            fetch('/api/indexes')
+
+
+
+                                        ]);
+
+
+
+                                        const tData = await tRes.json();
+
+
+
+                                        const iData = await iRes.json();
+
+
+
+                                        setTables(tData);
+
+
+
+                                        setIndexes(iData);
+
+
+
+                                        
+
+
+
+                                        if (tableOverride === null) {
+
+
+
+                                            setSelectedTable(null);
+
+
+
+                                        } else {
+
+
+
+                                            const targetTable = tableOverride !== undefined ? tableOverride : selectedTable;
+
+
+
+                                            if (targetTable) {
+
+
+
+                                                await handleSelectTable(targetTable, page);
+
+
+
+                                            }
+
+
+
+                                        }
+
+
+
+                                    };
+
+
+
+                        const createTable = async () => {
+
+
+
+                            const name = prompt("Table Name:");
+
+
+
+                            if (!name) return;
+
+
+
+                            const res = await fetch('/api/tables', {
+
+
+
+                                method: 'POST',
+
+
+
+                                headers: {'Content-Type': 'application/json'},
+
+
+
+                                body: JSON.stringify({ name })
+
+
+
+                            });
+
+
+
+                            if (res.ok) {
+
+                                await refresh(name);
+
+                            } else {
+
+                                alert("Create failed: " + await res.text());
+
+                            }
+
+
+
+                        };
+
+
+
+            
+
+
+
+                        const deleteTable = async () => {
+
+
+
+                            if (!confirm(`Delete table ${selectedTable}?`)) return;
+
+
+
+                            const res = await fetch(`/api/tables/${selectedTable}`, { method: 'DELETE' });
+
+
+
+                            if (res.ok) {
+
+                                const nextTable = tables.find(t => t !== selectedTable);
+
+                                await refresh(nextTable || null);
+
+                            } else {
+
+
+
+                                alert("Delete failed: " + await res.text());
+
+
+
+                            }
+
+
+
+                        };
+
+
+
+            const cloneTable = async () => {
+                const res = await fetch(`/api/export-schema/${selectedTable}`);
+                if (res.ok) {
+                    let sql = await res.text();
+                    const newName = prompt("Enter new table name for clone:", `${selectedTable}_copy`);
+                    if (!newName) return;
+                    
+                    // Replace the table name in the CREATE TABLE statement
+                    const regex = new RegExp(`CREATE TABLE (IF NOT EXISTS )?["'\\`]?${selectedTable}["'\\`]?(\\\\s|\\\\()`, 'i');
+                    sql = sql.replace(regex, `CREATE TABLE "${newName}"$2`);
+                    
+                    setQuery(sql);
+                    setView('sql');
+                    setSelectedTable(null);
+                    alert(`Schema for ${selectedTable} loaded into SQL console as "${newName}". Review and Run to create.`);
+                }
+            };
+
+            const renameTable = async () => {
+
+                const oldName = selectedTable;
+
+                const newName = prompt("New Table Name:", oldName);
+
+                if (!newName || newName === oldName) return;
+
+                const res = await fetch(`/api/tables/${oldName}/rename`, {
+
+                    method: 'POST',
+
+                    headers: {'Content-Type': 'application/json'},
+
+                    body: JSON.stringify({ new_name: newName })
+
+                });
+
+                                if (res.ok) {
+
+                                    await refresh(newName);
+
+                                } else {
+
+                    alert("Rename failed: " + await res.text());
+
+                }
+
+            };
+
+
+
+            const createIndex = async () => {
+
+                const name = prompt("Index Name:");
+
+                if (!name) return;
+
+                const cols = prompt("Columns (comma-separated):");
+
+                if (!cols) return;
+
+                const unique = confirm("Unique index?");
+
+                
+
+                const res = await fetch('/api/indexes', {
+
+                    method: 'POST',
+
+                    headers: {'Content-Type': 'application/json'},
+
+                    body: JSON.stringify({
+
+                        name,
+
+                        table: selectedTable || tables[0],
+
+                        columns: cols.split(',').map(s => s.trim()),
+
+                        unique
+
+                    })
+
+                });
+
+                if (res.ok) await refresh();
+
+                else alert("Failed to create index: " + await res.text());
+
+            };
+
+
+
+            const deleteIndex = async (name) => {
+
+                if (!confirm(`Delete index ${name}?`)) return;
+
+                await fetch(`/api/indexes/${name}`, { method: 'DELETE' });
+
+                await refresh();
+
+            };
+
+
+
+            const editIndexInConsole = (idx) => {
+
+                const sql = `-- Edit Index: ${idx.name}\\nDROP INDEX IF EXISTS ${idx.name};\\n${idx.sql};`;
+
+                setQuery(sql);
+
+                setView('sql');
+
+                setSelectedTable(null);
+
+            };
+
+
+
+            if (!appReady && loading) {
+
+                return (
+
+                    <div className="flex items-center justify-center h-screen bg-slate-50 dark:bg-slate-950 text-slate-400">
+
+                        <div className="flex flex-col items-center gap-4">
+
+                            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+
+                            <div className="text-lg font-medium">Initializing EditDB...</div>
+
+                        </div>
+
+                    </div>
+
+                );
+
+            }
+
+
+
+            return (
+
+                <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-200">
+
+                    {/* Sidebar */}
+
+                    <div className="w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col shadow-sm">
+
+                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+
+                            <div className="flex items-center gap-2">
+
+                                <div className="bg-blue-600 p-1.5 rounded-lg text-white">
+
+                                    <Icon name="database" size={20} />
+
+                                </div>
+
+                                <h1 className="font-bold text-slate-800 dark:text-slate-100 truncate">{dbInfo.db_name}</h1>
+
+                            </div>
+
+                            <button 
+
+                                onClick={() => setDarkMode(!darkMode)}
+
+                                className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition-colors"
+
+                                title="Toggle Theme"
+
+                            >
+
+                                <Icon name={darkMode ? "sun" : "moon"} size={16} />
+
+                            </button>
+
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto custom-scrollbar py-4">
+
+                            <button 
+
+                                onClick={() => { setView('sql'); setSelectedTable(null); }}
+
+                                className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors mb-4 ${view === 'sql' ? 'sidebar-item-active text-blue-700 font-medium' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+
+                            >
+
+                                <Icon name="terminal" size={16} className={view === 'sql' ? "text-blue-600" : "text-slate-400"} />
+
+                                <span className="font-semibold">SQL Console</span>
+
+                            </button>
+
+
+
+                            <div className="px-4 mb-2 flex items-center justify-between">
+
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Tables</span>
+
+                                <button onClick={createTable} className="text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 p-1 rounded">
+
+                                    <Icon name="plus" size={14} />
+
+                                </button>
+
+                            </div>
+
+                            {tables.map(t => (
+
+                                <button 
+
+                                    key={t}
+
+                                    onClick={() => handleSelectTable(t)}
+
+                                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors ${selectedTable === t && view !== 'sql' ? 'sidebar-item-active text-blue-700 font-medium' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+
+                                >
+
+                                    <Icon name="table" size={16} className={selectedTable === t && view !== 'sql' ? "text-blue-600" : "text-slate-400"} />
+
+                                    <span className="truncate">{t}</span>
+
+                                </button>
+
+                            ))}
+
+
+
+                            {indexes.length > 0 && (
+
+                                <React.Fragment>
+
+                                    <div className="px-4 mt-6 mb-2 flex items-center justify-between">
+
+                                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Indexes</span>
+
+                                        <button onClick={createIndex} className="text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 p-1 rounded" title="Create Index">
+
+                                            <Icon name="plus" size={14} />
+
+                                        </button>
+
+                                    </div>
+
+                                    {indexes.map(idx => (
+
+                                        <div 
+
+                                            key={idx.name}
+
+                                            className="px-4 py-1.5 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between group"
+
+                                            title={`Table: ${idx.tbl_name}\\n${idx.sql}`}
+
+                                        >
+
+                                            <div className="flex items-center gap-3 truncate">
+
+                                                <Icon name="zap" size={12} className="text-amber-400 shrink-0" />
+
+                                                <span className="truncate">{idx.name}</span>
+
+                                            </div>
+
+                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+
+                                                <button 
+
+                                                    onClick={(e) => { e.stopPropagation(); editIndexInConsole(idx); }}
+
+                                                    className="text-slate-300 hover:text-blue-500 p-1"
+
+                                                    title="Edit in Console"
+
+                                                >
+
+                                                    <Icon name="edit-2" size={12} />
+
+                                                </button>
+
+                                                <button 
+
+                                                    onClick={(e) => { e.stopPropagation(); deleteIndex(idx.name); }}
+
+                                                    className="text-slate-300 hover:text-red-500 p-1"
+
+                                                    title="Delete Index"
+
+                                                >
+
+                                                    <Icon name="x" size={12} />
+
+                                                </button>
+
+                                            </div>
+
+                                        </div>
+
+                                    ))}
+
+                                </React.Fragment>
+
+                            )}
+
+                        </div>
+
+                    </div>
+
+
+
+                    {/* Main Content */}
+
+                    <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden">
+
+                        {view === 'sql' ? (
+
+                            <SQLConsole query={query} setQuery={setQuery} />
+
+                        ) : selectedTable ? (
+
+                            <React.Fragment>
+
+                                {/* Header */}
+
+                                <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex items-center justify-between shadow-sm">
+
+                                    <div className="flex items-center gap-4">
+
+                                        <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">{selectedTable}</h2>
+
+                                        <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
+
+                                            <button 
+
+                                                onClick={() => setView('data')}
+
+                                                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === 'data' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+
+                                            >
+
+                                                Data
+
+                                            </button>
+
+                                            <button 
+
+                                                onClick={() => setView('schema')}
+
+                                                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === 'schema' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+
+                                            >
+
+                                                Schema
+
+                                            </button>
+
+                                        </div>
+
+                                    </div>
+
+                                                                        <div className="flex items-center gap-2">
+
+                                                                            <button onClick={cloneTable} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg" title="Clone Table Schema">
+
+                                                                                <Icon name="copy" size={18} />
+
+                                                                            </button>
+
+                                                                            <button onClick={renameTable} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg" title="Rename Table">
+
+                                            <Icon name="edit-2" size={18} />
+
+                                        </button>
+
+                                        <button onClick={refresh} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg" title="Refresh">
+
+                                            <Icon name="refresh-cw" size={18} />
+
+                                        </button>
+
+                                        <button onClick={deleteTable} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg" title="Delete Table">
+
+                                            <Icon name="trash-2" size={18} />
+
+                                        </button>
+
+                                    </div>
+
+                                </div>
+
+
+
+                                {/* Table Area */}
+
+                                <div className="flex-1 overflow-auto custom-scrollbar p-6">
+
+                                    {loading ? (
+
+                                        <div className="flex items-center justify-center h-full">
+
+                                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+
+                                        </div>
+
+                                    ) : view === 'data' ? (
+
+                                        <DataGrid 
+
+                                            data={data} 
+
+                                            schema={schema} 
+
+                                            fks={fks} 
+
+                                            table={selectedTable} 
+
+                                            refresh={refresh} 
+
+                                            onNavigate={handleFKNavigate} 
+
+                                            page={page}
+
+                                            pageSize={pageSize}
+
+                                            totalRows={totalRows}
+
+                                            onPageChange={(p) => handleSelectTable(selectedTable, p)}
+
+                                        />
+
+                                    ) : (
+
+                                        <SchemaEditor schema={schema} table={selectedTable} refresh={refresh} />
+
+                                    )}
+
+                                </div>
+
+                            </React.Fragment>
+
+                        ) : (
+
+                            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600">
+
+                                <Icon name="database" size={48} className="mb-4 opacity-20" />
+
+                                <p className="text-lg">Select a table or open SQL Console</p>
+
+                            </div>
+
+                        )}
+
+                    </div>
+
+                    {drawerStack.length > 0 && (() => {
+                        const current = drawerStack[drawerStack.length - 1];
+                        return (
+                            <FKDrawer
+                                key={`${current.fkTable}-${current.fkTo}-${current.fkValue}-${drawerStack.length}`}
+                                fkTable={current.fkTable}
+                                fkTo={current.fkTo}
+                                fkValue={current.fkValue}
+                                onClose={handleDrawerClose}
+                                onNavigate={handleDrawerNavigate}
+                                breadcrumbs={drawerStack}
+                                onBreadcrumbClick={(index) => setDrawerStack(prev => prev.slice(0, index + 1))}
+                            />
+                        );
+                    })()}
+
+                </div>
+
+            );
+
+        };
+
+        const SQLConsole = ({ query, setQuery }) => {
+            const [results, setResults] = useState(null);
+            const [error, setError] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [history, setHistory] = useState(() => {
+                try {
+                    return JSON.parse(localStorage.getItem('editdb_query_history') || '[]');
+                } catch (e) { return []; }
+            });
+
+            const runQuery = async () => {
+                if (!query.trim()) return;
+                setLoading(true);
+                setError(null);
+                setResults(null);
+                try {
+                    const res = await fetch('/api/query', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ query })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        setResults(data);
+                        // Save to history
+                        const newHistory = [query, ...history.filter(q => q !== query)].slice(0, 50);
+                        setHistory(newHistory);
+                        localStorage.setItem('editdb_query_history', JSON.stringify(newHistory));
+                    } else {
+                        setError(data.detail || "Query failed");
+                    }
+                } catch (e) {
+                    setError(e.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const clearHistory = () => {
+                setHistory([]);
+                localStorage.removeItem('editdb_query_history');
+            };
+
+            return (
+                <div className="flex flex-col h-full p-6 gap-6 overflow-hidden">
+                    <div className="flex gap-6 h-1/2 min-h-[300px]">
+                        <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col gap-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                    <Icon name="terminal" size={18} className="text-blue-600" />
+                                    Raw SQL Query
+                                </h3>
+                                <button 
+                                    onClick={runQuery} 
+                                    disabled={loading}
+                                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm"
+                                >
+                                    {loading ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : <Icon name="play" size={16} />}
+                                    Run Query
+                                </button>
+                            </div>
+                            <textarea 
+                                value={query || ""}
+                                onChange={e => setQuery(e.target.value)}
+                                className="w-full flex-1 p-4 font-mono text-sm bg-slate-900 text-blue-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"
+                                placeholder="Enter SQL query here..."
+                            />
+                        </div>
+
+                        {/* History Sidebar */}
+                        <div className="w-80 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+                            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">History</h4>
+                                <button onClick={clearHistory} className="text-slate-400 hover:text-red-500 p-1" title="Clear History">
+                                    <Icon name="trash-2" size={14} />
+                                </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                {history.length === 0 ? (
+                                    <div className="p-8 text-center text-slate-300 text-sm italic">No recent queries</div>
+                                ) : (
+                                    history.map((q, i) => (
+                                        <button 
+                                            key={i}
+                                            onClick={() => setQuery(q)}
+                                            className="w-full text-left p-3 text-xs font-mono text-slate-600 border-b border-slate-50 hover:bg-slate-50 transition-colors truncate"
+                                            title={q}
+                                        >
+                                            {q}
+                                        </button>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {error && (
+                        <div className="bg-red-50 border border-red-200 text-red-600 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+                            <Icon name="alert-circle" size={18} className="shrink-0" />
+                            <div className="text-sm font-mono whitespace-pre-wrap">{error}</div>
+                        </div>
+                    )}
+
+                    {results && (
+                        <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                            <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                                <span className="text-sm font-medium text-slate-500">
+                                    {results.rows ? `${results.rows.length} Rows Returned` : `Command executed successfully. ${results.rows_affected ?? 0} rows affected.`}
+                                </span>
+                            </div>
+                            {results.columns && results.columns.length > 0 && (
+                                <div className="flex-1 overflow-auto custom-scrollbar">
+                                    <table className="w-full text-left border-collapse min-w-max">
+                                        <thead>
+                                            <tr className="bg-slate-50 border-b border-slate-200 sticky top-0">
+                                                {results.columns.map((c, idx) => (
+                                                    <th key={`${c}-${idx}`} className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {(results.rows || []).map((row, i) => (
+                                                <tr key={i} className="hover:bg-slate-50 transition-colors">
+                                                    {results.columns.map((c, idx) => (
+                                                        <td key={`${c}-${idx}`} className="px-4 py-3 text-sm text-slate-600 truncate max-w-xs">
+                                                            {row && row[c] !== undefined && row[c] !== null ? String(row[c]) : <em className="text-slate-300">NULL</em>}
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const DataGrid = ({ data, schema, fks, table, refresh, onNavigate, page, pageSize, totalRows, onPageChange }) => {
+            const [filter, setFilter] = useState("");
+            const [editingCell, setEditingCell] = useState(null); // { rowKey, colName }
+            const [editingRowKey, setEditingRowKey] = useState(null);
+            const [editBuffer, setEditBuffer] = useState({});
+            const [tooltipInfo, setTooltipInfo] = useState(null); // { fkTable, fkTo, fkValue, anchorRect }
+            const tooltipTimeout = React.useRef(null);
+
+            const getRowKey = (row) => {
+                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
+                if (pkCols.length > 0) return pkCols.map(c => row[c]).join('|');
+                return JSON.stringify(row); // Fallback
+            };
+
+            const filteredData = useMemo(() => {
+                if (!filter) return data;
+                const lowerFilter = filter.toLowerCase();
+                return data.filter(row => 
+                    schema.some(col => String(row[col.name] || "").toLowerCase().includes(lowerFilter))
+                );
+            }, [data, filter, schema]);
+
+            const getFKInfo = (colName) => {
+                return fks.find(fk => fk.from === colName);
+            };
+
+            const handleFKMouseEnter = (e, fk, value) => {
+                clearTimeout(tooltipTimeout.current);
+                const rect = e.currentTarget.getBoundingClientRect();
+                tooltipTimeout.current = setTimeout(() => {
+                    setTooltipInfo({
+                        fkTable: fk.table,
+                        fkTo: fk.to,
+                        fkValue: value,
+                        anchorRect: rect
+                    });
+                }, 400);
+            };
+
+            const handleFKMouseLeave = () => {
+                clearTimeout(tooltipTimeout.current);
+                setTooltipInfo(null);
+            };
+
+            useEffect(() => {
+                return () => clearTimeout(tooltipTimeout.current);
+            }, []);
+
+            const addRow = async () => {
+                const newData = {};
+                schema.forEach(col => {
+                    if (col.pk === 0) newData[col.name] = "";
+                });
+                await fetch(`/api/data/${table}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ data: newData })
+                });
+                refresh();
+            };
+
+            const handleImport = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const res = await fetch(`/api/import/${table}`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (res.ok) {
+                    refresh();
+                    alert("Import successful");
+                } else {
+                    alert("Import failed: " + await res.text());
+                }
+            };
+
+            const deleteRow = async (row) => {
+                if (!confirm("Delete this row?")) return;
+                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
+                const where = {};
+                pkCols.forEach(c => where[c] = row[c]);
+                
+                await fetch(`/api/data/${table}/delete`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(where)
+                });
+                refresh();
+            };
+
+            const startRowEdit = (row) => {
+                const key = getRowKey(row);
+                setEditingRowKey(key);
+                setEditBuffer({...row});
+            };
+
+            const saveRowEdit = async (row) => {
+                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
+                if (pkCols.length === 0) {
+                    alert("Updating requires a Primary Key.");
+                    return;
+                }
+                const where = {};
+                pkCols.forEach(c => where[c] = row[c]);
+                
+                const values = {};
+                schema.forEach(col => {
+                    if (col.pk === 0) values[col.name] = editBuffer[col.name];
+                });
+
+                const res = await fetch(`/api/data/${table}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ where, values })
+                });
+                if (res.ok) refresh();
+                setEditingRowKey(null);
+            };
+
+            const updateCell = async (row, colName, newValue) => {
+                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
+                if (pkCols.length === 0) {
+                    alert("Updating requires a Primary Key.");
+                    return;
+                }
+                const where = {};
+                pkCols.forEach(c => where[c] = row[c]);
+                
+                const res = await fetch(`/api/data/${table}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        where,
+                        values: { [colName]: newValue }
+                    })
+                });
+                if (res.ok) refresh();
+                setEditingCell(null);
+            };
+
+            const totalPages = Math.ceil(totalRows / pageSize);
+
+            return (
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col h-full">
+                    <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50 gap-4">
+                        <div className="relative flex-1 max-w-md">
+                            <Icon name="search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input 
+                                type="text"
+                                placeholder="Filter columns..."
+                                value={filter}
+                                onChange={e => setFilter(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"
+                            />
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <span className="text-sm font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                {totalRows > 0 ? `${(page * pageSize) + 1}-${Math.min((page + 1) * pageSize, totalRows)} of ${totalRows}` : '0 of 0'}
+                            </span>
+                            
+                            <div className="flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm">
+                                <button 
+                                    onClick={() => onPageChange(page - 1)}
+                                    disabled={page === 0}
+                                    className="p-1 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 disabled:opacity-30 rounded-md"
+                                >
+                                    <Icon name="chevron-left" size={16} />
+                                </button>
+                                <div className="px-2 flex items-center text-xs font-bold text-slate-600 dark:text-slate-400">
+                                    {page + 1} / {totalPages || 1}
+                                </div>
+                                <button 
+                                    onClick={() => onPageChange(page + 1)}
+                                    disabled={page >= totalPages - 1}
+                                    className="p-1 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 disabled:opacity-30 rounded-md"
+                                >
+                                    <Icon name="chevron-right" size={16} />
+                                </button>
+                            </div>
+
+                            <div className="flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm">
+                                <button 
+                                    onClick={() => window.open(`/api/export/${table}/csv`)}
+                                    className="p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"
+                                    title="Export CSV"
+                                >
+                                    <Icon name="download" size={14} />
+                                    <span className="text-[10px] font-bold ml-1 uppercase">CSV</span>
+                                </button>
+                                <div className="w-px bg-slate-200 dark:bg-slate-700 my-1 mx-0.5"></div>
+                                <button 
+                                    onClick={() => window.open(`/api/export/${table}/json`)}
+                                    className="p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"
+                                    title="Export JSON"
+                                >
+                                    <Icon name="download" size={14} />
+                                    <span className="text-[10px] font-bold ml-1 uppercase">JSON</span>
+                                </button>
+                                <div className="w-px bg-slate-200 dark:bg-slate-700 my-1 mx-0.5"></div>
+                                <button 
+                                    onClick={() => window.open(`/api/export-schema/${table}`)}
+                                    className="p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"
+                                    title="Export Schema (SQL)"
+                                >
+                                    <Icon name="file-code" size={14} />
+                                    <span className="text-[10px] font-bold ml-1 uppercase">SQL</span>
+                                </button>
+                            </div>
+                            <div className="flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm">
+                                <label className="p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md cursor-pointer flex items-center" title="Import Data (CSV)">
+                                    <Icon name="upload" size={14} />
+                                    <span className="text-[10px] font-bold ml-1 uppercase">Data</span>
+                                    <input type="file" accept=".csv" onChange={handleImport} className="hidden" />
+                                </label>
+                            </div>
+                            <button onClick={addRow} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm">
+                                <Icon name="plus" size={16} /> Add Row
+                            </button>
+                        </div>
+                    </div>
+                    <div className="overflow-auto flex-1 custom-scrollbar">
+                        <table className="w-full text-left border-collapse min-w-max">
+                            <thead>
+                                <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
+                                    <th className="px-4 py-3 w-12 bg-slate-50 dark:bg-slate-800/50"></th>
+                                    {schema.map(col => {
+                                        const fk = getFKInfo(col.name);
+                                        return (
+                                            <th key={col.name} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50">
+                                                <div className="flex items-center gap-2">
+                                                    {col.pk === 1 && <Icon name="key" size={12} className="text-amber-500" />}
+                                                    {fk && <Icon name="link" size={12} className="text-blue-500" title={`References ${fk.table}(${fk.to})`} />}
+                                                    {col.name}
+                                                    <span className="text-[10px] font-normal text-slate-400">{col.type}</span>
+                                                </div>
+                                            </th>
+                                        );
+                                    })}
+                                    <th className="px-4 py-3 w-16 bg-slate-50 dark:bg-slate-800/50"></th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {filteredData.map((row) => {
+                                    const rowKey = getRowKey(row);
+                                    const isRowEditing = editingRowKey === rowKey;
+                                    return (
+                                        <tr key={rowKey} className={`transition-colors group ${isRowEditing ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>
+                                            <td className="px-4 py-3">
+                                                {isRowEditing ? (
+                                                    <button onClick={() => saveRowEdit(row)} className="text-green-600 dark:text-green-400 hover:text-green-700">
+                                                        <Icon name="check" size={16} />
+                                                    </button>
+                                                ) : (
+                                                    <button onClick={() => startRowEdit(row)} className="text-slate-300 dark:text-slate-600 hover:text-blue-600 group-hover:opacity-100 opacity-0 transition-opacity">
+                                                        <Icon name="edit-3" size={16} />
+                                                    </button>
+                                                )}
+                                            </td>
+                                            {schema.map(col => {
+                                                const isCellEditing = editingCell?.rowKey === rowKey && editingCell?.colName === col.name;
+                                                const fk = getFKInfo(col.name);
+                                                return (
+                                                    <td 
+                                                        key={col.name} 
+                                                        className={`px-4 py-3 text-sm text-slate-600 dark:text-slate-300 truncate max-w-xs ${isCellEditing || isRowEditing ? 'p-0' : 'cursor-text'}`}
+                                                        onDoubleClick={() => !isRowEditing && setEditingCell({ rowKey, colName: col.name })}
+                                                    >
+                                                        {isRowEditing ? (
+                                                            <input 
+                                                                value={editBuffer[col.name] || ""}
+                                                                disabled={col.pk === 1}
+                                                                onChange={(e) => setEditBuffer({...editBuffer, [col.name]: e.target.value})}
+                                                                className={`w-full h-full px-4 py-3 focus:outline-none ${col.pk === 1 ? 'bg-slate-100/50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500' : 'bg-white dark:bg-slate-800 focus:ring-1 focus:ring-blue-400'}`}
+                                                            />
+                                                        ) : isCellEditing ? (
+                                                            <input 
+                                                                autoFocus
+                                                                defaultValue={row[col.name]}
+                                                                onBlur={(e) => updateCell(row, col.name, e.target.value)}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter') updateCell(row, col.name, e.target.value);
+                                                                    if (e.key === 'Escape') setEditingCell(null);
+                                                                }}
+                                                                className="w-full h-full px-4 py-3 bg-white dark:bg-slate-800 shadow-inner focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                                            />
+                                                        ) : (
+                                                            row[col.name] === null ? (
+                                                                <em className="text-slate-300 dark:text-slate-600">NULL</em>
+                                                            ) : fk ? (
+                                                                <button 
+                                                                    onClick={() => onNavigate(fk.table, fk.to, row[col.name])}
+                                                                    onMouseEnter={(e) => handleFKMouseEnter(e, fk, row[col.name])}
+                                                                    onMouseLeave={handleFKMouseLeave}
+                                                                    className="text-blue-600 dark:text-blue-400 hover:underline text-left truncate w-full"
+                                                                >
+                                                                    {String(row[col.name])}
+                                                                </button>
+                                                            ) : (
+                                                                String(row[col.name])
+                                                            )
+                                                        )}
+                                                    </td>
+                                                );
+                                            })}
+                                            <td className="px-4 py-3 text-right">
+                                                {isRowEditing ? (
+                                                    <button onClick={() => setEditingRowKey(null)} className="text-slate-400 dark:text-slate-500 hover:text-slate-600">
+                                                        <Icon name="x" size={16} />
+                                                    </button>
+                                                ) : (
+                                                    <button onClick={() => deleteRow(row)} className="text-slate-300 dark:text-slate-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <Icon name="trash-2" size={14} />
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    {tooltipInfo && (
+                        <FKTooltip
+                            fkTable={tooltipInfo.fkTable}
+                            fkTo={tooltipInfo.fkTo}
+                            fkValue={tooltipInfo.fkValue}
+                            anchorRect={tooltipInfo.anchorRect}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        const SchemaEditor = ({ schema, table, refresh }) => {
+            const [cols, setCols] = useState([]);
+
+            useEffect(() => {
+                setCols(schema.map(s => ({ ...s, newName: s.name, delete: false, isNew: false })));
+            }, [schema]);
+
+            const addColumn = () => {
+                setCols([...cols, { name: '', newName: '', type: 'TEXT', delete: false, isNew: true, pk: 0 }]);
+            };
+
+            const apply = async () => {
+                const migration = {
+                    columns: cols.map(c => ({
+                        old_name: c.isNew ? "" : c.name,
+                        new_name: c.newName,
+                        type: c.type,
+                        delete: c.delete
+                    }))
+                };
+                if (!confirm("This will migrate the table structure. Continue?")) return;
+                const res = await fetch(`/api/migrate/${table}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(migration)
+                });
+                if (res.ok) refresh();
+                else alert(await res.text());
+            };
+
+            return (
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 max-w-4xl mx-auto">
+                    <div className="flex items-center justify-between mb-8">
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">Structure Design</h3>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">Edit columns, types, or add new fields.</p>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={addColumn} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2">
+                                <Icon name="plus" size={18} /> Add Column
+                            </button>
+                            <button onClick={apply} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2">
+                                <Icon name="check-circle-2" size={18} /> Apply Changes
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div className="space-y-4">
+                        {cols.map((col, idx) => (
+                            <div key={idx} className={`flex items-center gap-4 p-4 rounded-xl border ${col.delete ? 'bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/20 opacity-60' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-all'}`}>
+                                <div className="flex-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Column Name</label>
+                                    <input 
+                                        type="text" 
+                                        value={col.newName}
+                                        onChange={e => {
+                                            const next = [...cols];
+                                            next[idx].newName = e.target.value;
+                                            setCols(next);
+                                        }}
+                                        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"
+                                    />
+                                </div>
+                                <div className="w-48">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Type</label>
+                                    <select 
+                                        value={col.type}
+                                        onChange={e => {
+                                            const next = [...cols];
+                                            next[idx].type = e.target.value;
+                                            setCols(next);
+                                        }}
+                                        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"
+                                    >
+                                        <option>TEXT</option>
+                                        <option>INTEGER</option>
+                                        <option>REAL</option>
+                                        <option>BLOB</option>
+                                    </select>
+                                </div>
+                                <div className="pt-5">
+                                    <button 
+                                        onClick={() => {
+                                            const next = [...cols];
+                                            if (col.isNew) {
+                                                next.splice(idx, 1);
+                                            } else {
+                                                next[idx].delete = !next[idx].delete;
+                                            }
+                                            setCols(next);
+                                        }}
+                                        className={`p-2 rounded-lg transition-colors ${col.delete ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500'}`}
+                                    >
+                                        <Icon name={col.delete ? "rotate-ccw" : "trash-2"} size={18} />
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(
+            <ErrorBoundary>
+                <App />
+            </ErrorBoundary>
+        );
+    </script>
+</body>
+</html>
+"""
+
+# --- Server Lifecycle ---
+
+def open_browser(port):
+    time.sleep(1.5)
+    webbrowser.open(f"http://127.0.0.1:{port}")
+
+
+def testing_mode_enabled():
+    value = os.environ.get("UTILITIES_TESTING", "")
+    return value.lower() not in {"", "0", "false", "no"}
+
+
+def main():
+    global db_manager
+    args = parse_args()
+    
+    if not args.db_path:
+        logger.error("❌ Error: No database path provided.")
+        logger.info("Usage: ./editdb <path_to_db> [-p <port>]")
+        sys.exit(1)
+        
+    db_manager = DBManager(args.db_path)
+    
+    logger.info(f"🚀 EditDB starting for: {args.db_path}")
+    logger.info(f"📡 API available at http://127.0.0.1:{args.port}/api")
+    
+    if not testing_mode_enabled():
+        threading.Thread(target=open_browser, args=(args.port,), daemon=True).start()
+    
+    # Security: Bind to 127.0.0.1 only (not 0.0.0.0) to prevent network access
+    # No CORS headers needed since we only serve localhost requests
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+
+if __name__ == "__main__":
+    main()

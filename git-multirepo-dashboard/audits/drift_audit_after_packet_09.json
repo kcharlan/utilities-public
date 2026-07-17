@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "medium",
+  "effort": "small",
+  "summary": "Header Full Scan button referenced handleFullScan (defined in App scope, inaccessible from Header scope) instead of the onFullScan prop. Would cause ReferenceError at runtime, making Full Scan non-functional. Fixed by changing onClick={handleFullScan} to onClick={onFullScan}. Regression test added. 165/165 tests pass.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Fix: git_dashboard.py line 1338 changed handleFullScan → onFullScan (1 identifier). Test: test_full_scan_button_uses_prop_not_closure added to test_sparklines_progress.py. VCS hygiene deferred to operator: 7 untracked test files (87 tests), uncommitted git_dashboard.py changes, orch_launch.sh untracked."
+}

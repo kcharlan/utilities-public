@@ -1,0 +1,6 @@
+a = "hello"
+z = 1
+
+[nested]
+x = 3.14
+y = true

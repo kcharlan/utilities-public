@@ -1,0 +1,246 @@
+{
+  "project_complete": true,
+  "highest_validated_packet": "14",
+  "packets": [
+    {
+      "id": "00",
+      "name": "Canonical Contracts and Scaffold",
+      "slug": "canonical_contracts_and_scaffold",
+      "status": "validated",
+      "depends_on": [],
+      "doc": "plans/packet_00_canonical_contracts_and_scaffold.md",
+      "notes": "Canonical package/launcher/path contracts are validated in code and smoke tests, with a minimal curated fixture corpus for packets 01 and 02."
+    },
+    {
+      "id": "01",
+      "name": "Pack and Session Contract Parsing",
+      "slug": "pack_and_session_contract_parsing",
+      "status": "validated",
+      "depends_on": [
+        "00"
+      ],
+      "doc": "plans/packet_01_pack_and_session_contract_parsing.md",
+      "notes": "Validated as pure YAML/config parsing, path resolution, and session directory helpers with nested phases.verification parsing, stronger schema validation, and passing packet-00 regressions."
+    },
+    {
+      "id": "02",
+      "name": "Task Artifact Parsing and Scheduler Core",
+      "slug": "task_artifact_parsing_and_scheduler_core",
+      "status": "validated",
+      "depends_on": [
+        "00",
+        "01"
+      ],
+      "doc": "plans/packet_02_task_artifact_parsing_and_scheduler_core.md",
+      "notes": "Validated as pure plan/status/progress/resolution parsing plus deterministic scheduler-core logic, with repaired phase-count validation, corrected plan-artifact error typing, and passing packet-local plus adjacent regression tests."
+    },
+    {
+      "id": "03",
+      "name": "SQLite State Store and Filesystem Projection",
+      "slug": "sqlite_state_store_and_filesystem_projection",
+      "status": "validated",
+      "depends_on": [
+        "00",
+        "01",
+        "02"
+      ],
+      "doc": "plans/packet_03_sqlite_state_store_and_filesystem_projection.md",
+      "notes": "Validated with idempotent SQLite initialization, canonical session-path helpers, task projection between ready/workers<slot>/done/blocked, ordered session events, and repaired safeguards against orphan/overwritten plan files and invalid non-active worker-slot projections."
+    },
+    {
+      "id": "04",
+      "name": "Pack Hook Runner and Preflight",
+      "slug": "pack_hook_runner_and_preflight",
+      "status": "validated",
+      "depends_on": [
+        "01"
+      ],
+      "doc": "plans/packet_04_pack_hook_runner_and_preflight.md",
+      "notes": "Validated with deterministic script permission scanning, structured prerequisite/preflight results, direct short-lived hook execution, repaired pack-root containment for conventional hooks, and explicit typed missing-hook coverage."
+    },
+    {
+      "id": "05",
+      "name": "Worker Slot Lifecycle and Timeout Monitoring",
+      "slug": "worker_slot_lifecycle_and_timeout_monitoring",
+      "status": "validated",
+      "depends_on": [
+        "02",
+        "04"
+      ],
+      "doc": "plans/packet_05_worker_slot_lifecycle_and_timeout_monitoring.md",
+      "notes": "Validated as the isolated long-running worker boundary: slot dispatch, per-slot raw log capture, task-scoped phase/detail progress parsing, canonical .status sidecar collection, typed status-sidecar collection errors, and task-level timeout enforcement without SQLite or orchestrator-loop coupling."
+    },
+    {
+      "id": "06",
+      "name": "Execution Orchestrator Loop",
+      "slug": "execution_orchestrator_loop",
+      "status": "validated",
+      "depends_on": [
+        "03",
+        "05"
+      ],
+      "doc": "plans/packet_06_execution_orchestrator_loop.md",
+      "notes": "Validated as the first execution-only session loop over already-ready tasks, with repaired isolate_end workspace handoff across success/failure/abort paths, stronger malformed-sidecar coverage, and passing packet-03/04/05 regressions."
+    },
+    {
+      "id": "07",
+      "name": "Crash Recovery and Reconciliation",
+      "slug": "crash_recovery_and_reconciliation",
+      "status": "validated",
+      "depends_on": [
+        "03",
+        "05",
+        "06"
+      ],
+      "doc": "plans/packet_07_crash_recovery_and_reconciliation.md",
+      "notes": "Validated with persisted per-slot recovery metadata, orphaned worker cleanup, done-vs-incomplete recovery classification, filesystem-to-SQLite reconciliation, restart handling for sessions already marked running or paused, and a repaired TERM/KILL path for reparented orphan worker PIDs after crash recovery."
+    },
+    {
+      "id": "08",
+      "name": "Planning and Resolution Runtime",
+      "slug": "planning_and_resolution_runtime",
+      "status": "validated",
+      "depends_on": [
+        "03",
+        "04",
+        "06",
+        "07"
+      ],
+      "doc": "plans/packet_08_planning_and_resolution_runtime.md",
+      "notes": "Validated with intake claiming/recovery, planning-disabled .plan promotion, passthrough/script/agent resolution, canonical resolution.json generation, ready-task registration, execution handoff, and repaired rerun safety that clears stale ready outputs before halting on new conflicts."
+    },
+    {
+      "id": "09",
+      "name": "Verification and Auto-Fix Loop",
+      "slug": "verification_and_auto_fix_loop",
+      "status": "validated",
+      "depends_on": [
+        "06",
+        "08"
+      ],
+      "doc": "plans/packet_09_verification_and_auto_fix_loop.md",
+      "notes": "Validated on 2026-03-10 with interval and FULL_TEST_AFTER-triggered verification, canonical verify-log capture, injectable task/global auto-fix retries, persisted verify/auto-fix session state, and a repaired restart path that preserves task-specific auto-fix context after interrupted retries."
+    },
+    {
+      "id": "10",
+      "name": "CLI, Bootstrap, and Built-In Pack Sync",
+      "slug": "cli_bootstrap_and_built_in_pack_sync",
+      "status": "validated",
+      "depends_on": [
+        "01",
+        "04",
+        "06",
+        "08"
+      ],
+      "doc": "plans/packet_10_cli_bootstrap_and_built_in_pack_sync.md",
+      "notes": "Validated on 2026-03-10 with a stdlib-first bootstrap module, default config creation, bundled built-in pack sync/reset flows, runtime pack listing, a headless CLI start/resume surface over the validated runtime, and a repaired root-launcher exit-code propagation bug."
+    },
+    {
+      "id": "11",
+      "name": "FastAPI REST and WebSocket Backend",
+      "slug": "fastapi_rest_and_websocket_backend",
+      "status": "validated",
+      "depends_on": [
+        "03",
+        "06",
+        "08",
+        "09"
+      ],
+      "doc": "plans/packet_11_fastapi_rest_and_websocket_backend.md",
+      "notes": "Validated on 2026-03-10 with packet-local serve/bootstrap wiring, FastAPI REST endpoints, WebSocket broadcasting, safe session-root path enforcement for file-manager helpers, and a repaired background-control path so pause/abort now affect live execution; packet-local plus adjacent orchestrator/CLI/state regressions pass."
+    },
+    {
+      "id": "11A",
+      "name": "Live Backend Event Streaming Repair",
+      "slug": "live_backend_event_streaming_repair",
+      "status": "validated",
+      "depends_on": [
+        "11"
+      ],
+      "doc": "plans/packet_11a_live_backend_event_streaming_repair.md",
+      "notes": "Validated on 2026-03-10 with a runtime event sink from the existing orchestrator into the packet-11 backend controller, thread-safe scheduling onto the FastAPI/WebSocket event loop, live task/log/progress/alert streaming coverage, and adjacent server/orchestrator/worker regressions passing."
+    },
+    {
+      "id": "11B",
+      "name": "Backend Setup and Monitor Contract Repair",
+      "slug": "backend_setup_and_monitor_contract_repair",
+      "status": "validated",
+      "depends_on": [
+        "11A"
+      ],
+      "doc": "plans/packet_11b_backend_setup_and_monitor_contract_repair.md",
+      "notes": "Validated on 2026-03-10 with a session-scoped preflight route, enriched dashboard/state snapshots, explicit idle worker slots, reconnect-safe worker-card runtime caching, and passing packet-local server/orchestrator regressions."
+    },
+    {
+      "id": "11C",
+      "name": "Setup Session Configuration and Intake Contract Repair",
+      "slug": "setup_session_configuration_and_intake_contract_repair",
+      "status": "validated",
+      "depends_on": [
+        "11B"
+      ],
+      "doc": "plans/packet_11c_setup_session_configuration_and_intake_contract_repair.md",
+      "notes": "Validated on 2026-03-10 with typed session runtime overrides persisted in sessions.config_json, effective runtime-config serialization and orchestrator consumption, setup-view-ready intake metadata, and a repaired intake snapshot contract so only post-start files are flagged outside the current session."
+    },
+    {
+      "id": "11D",
+      "name": "Planner Parallelism and Setup Planner-Count Repair",
+      "slug": "planner_parallelism_and_setup_planner_count_repair",
+      "status": "validated",
+      "depends_on": [
+        "11C"
+      ],
+      "doc": "plans/packet_11d_planner_parallelism_and_setup_planner_count_repair.md",
+      "notes": "Validated on 2026-03-10 with typed planner-count overrides in sessions.config_json, clamped effective planner-count serialization for planning-enabled packs, orchestrator handoff into planning, bounded parallel planner workers, preserved claimed-item recovery semantics, and passing packet-local server/planning/orchestrator tests."
+    },
+    {
+      "id": "12",
+      "name": "Embedded React SPA Monitor",
+      "slug": "embedded_react_spa_monitor",
+      "status": "validated",
+      "depends_on": [
+        "11D"
+      ],
+      "doc": "plans/packet_12_embedded_react_spa_monitor.md",
+      "notes": "Validated on 2026-03-10 with a repaired single-file React 18 SPA template, pinned React/Tailwind/Lucide/React Flow CDNs, exact design-token CSS injection, setup/preflight/intake/task-log/session-control flows over the packet-11 REST/WS contract, safe history-only bootstrap behavior, and stronger packet-local root/template coverage."
+    },
+    {
+      "id": "12A",
+      "name": "History Summary and Successful-Session Trim Repair",
+      "slug": "history_summary_and_successful_session_trim_repair",
+      "status": "validated",
+      "depends_on": [
+        "12"
+      ],
+      "doc": "plans/packet_12a_history_summary_and_successful_session_trim_repair.md",
+      "notes": "Validated on 2026-03-10 with persisted summary.json emission before trimming, success-only retention of summary.json/resolution.json/logs/session.log, summary-backed history/detail serialization after trim, and passing packet-local state/orchestrator/server/template tests."
+    },
+    {
+      "id": "13",
+      "name": "Claude CLI Agent Runtime and Built-In Claude Code Pack",
+      "slug": "claude_cli_agent_runtime_and_builtin_claude_code_pack",
+      "status": "validated",
+      "depends_on": [
+        "08",
+        "09",
+        "10",
+        "11D"
+      ],
+      "doc": "plans/packet_13_claude_cli_agent_runtime_and_builtin_claude_code_pack.md",
+      "notes": "Validated on 2026-03-10 with repaired shared system-prompt bundling for planner/resolver/fixer runs, repo-root-aware built-in preflight for git-worktree starts, default Claude runtime wiring from start paths, and passing packet-local plus adjacent regressions."
+    },
+    {
+      "id": "14",
+      "name": "Pack Tooling, Release Notes, and Operator Docs",
+      "slug": "pack_tooling_release_notes_and_operator_docs",
+      "status": "validated",
+      "depends_on": [
+        "10",
+        "12A",
+        "13"
+      ],
+      "doc": "plans/packet_14_pack_tooling_release_notes_and_operator_docs.md",
+      "notes": "Validated on 2026-03-10 with repaired malformed-YAML validator diagnostics, executable-only shebang validation, init-pack and validate-pack CLI commands, successful-session RELEASE_NOTES.md generation/retention, History release-notes serialization/UI wiring, the missing pack/operator guides, and a passing project-completion full suite."
+    }
+  ]
+}

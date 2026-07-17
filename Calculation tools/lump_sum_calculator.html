@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lump Sum vs Annuity Comparator</title>
+<style>
+  :root{
+    --bg: #0f1115; /* default dark to match your screenshots */
+    --fg: #e5e7eb;
+    --card: #151821;
+    --muted: #9aa3b2;
+    --border: #2a2f3a;
+    --primary: #60a5fa;
+    --primary-contrast: #0b1220;
+    --table-head: #1c2130;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg: #f7f7fb; --fg:#1e1e1e; --card:#ffffff; --muted:#6b7280; --border:#e5e7eb; --primary:#2563eb; --primary-contrast:#ffffff; --table-head:#f3f4f6;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0; padding:24px; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif}
+  h1{margin:0 0 16px; text-align:center; font-size:22px; font-weight:700}
+  .wrap{max-width:1200px; margin:0 auto; display:flex; flex-direction:column; gap:16px}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px}
+  .row{display:grid; grid-template-columns:repeat(6,1fr); gap:12px}
+  .row .field{display:flex; flex-direction:column; gap:6px}
+  label{font-weight:600; font-size:12px; color:var(--muted)}
+  input[type="number"], input[type="text"], select{
+    width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:transparent; color:inherit;
+  }
+  input[readonly]{opacity:.9; background:transparent}
+  .btn{padding:10px 14px; border:1px solid var(--primary); color:var(--primary-contrast); background:var(--primary); border-radius:10px; cursor:pointer; font-weight:600}
+  .btn.secondary{background:transparent; color:var(--primary); border-color:var(--primary)}
+  .grid-2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media (max-width: 1000px){ .grid-2{grid-template-columns:1fr} .row{grid-template-columns:repeat(2,1fr)} }
+  table{width:100%; border-collapse:collapse; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:transparent}
+  th, td{padding:8px 10px; text-align:right; border-bottom:1px solid var(--border)}
+  th{background:var(--table-head); font-weight:700}
+  td:first-child, th:first-child{text-align:center}
+  .table-head{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px}
+  .note{color:var(--muted); font-size:12px}
+  .status{margin-top:8px; font-size:12px; color:var(--muted)}
+</style>
+</head>
+<body onload="calculate()">
+<div class="wrap">
+  <h1>Lump Sum vs Annuity Comparator</h1>
+
+  <!-- Inputs -->
+  <div class="card">
+    <div class="row">
+      <div class="field">
+        <label for="lump">Lump Sum ($)</label>
+        <input type="number" id="lump" value="100000" min="0" step="0.01">
+      </div>
+      <div class="field">
+        <label for="pay">Periodic Payment ($)</label>
+        <input type="number" id="pay" value="2000" min="0" step="0.01">
+      </div>
+      <div class="field">
+        <label for="term">Term (months)</label>
+        <input type="number" id="term" value="120" min="1" step="1">
+      </div>
+      <div class="field">
+        <label for="timing">Payment Timing</label>
+        <select id="timing">
+          <option value="end" selected>End of month</option>
+          <option value="begin">Beginning of month</option>
+        </select>
+      </div>
+      <div class="field" style="align-self:end;">
+        <button type="button" class="btn" id="calcBtn" onclick="calculate()">Calculate</button>
+      </div>
+      <div class="field" style="grid-column: span 2;">
+        <span class="note">For <em>Beginning of month</em>, the first payment is assumed at time 0, so the starting balance is <strong>(lump sum - first payment)</strong>, Month 1 accrues interest only. At Month 2 and onward, the payment is deducted at the start of the month, then interest accrues. For <em>End of month</em>, each month accrues interest first, then the payment is deducted at month-end.</span>
+      </div>
+    </div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <!-- Outputs -->
+  <div class="card">
+    <div class="row">
+      <div class="field">
+        <label for="mirr">Monthly IRR (%)</label>
+        <input type="text" id="mirr" value="" readonly>
+      </div>
+      <div class="field">
+        <label for="airr">Annualized (×12) IRR (%)</label>
+        <input type="text" id="airr" value="" readonly>
+      </div>
+      <div class="field">
+        <label for="aeff">Effective Annualized IRR (%)</label>
+        <input type="text" id="aeff" value="" readonly>
+      </div>
+      <div class="field">
+        <label for="customIrr">Custom Monthly IRR (%)</label>
+        <input type="number" id="customIrr" step="0.0001" />
+      </div>
+      <div class="field">
+        <label for="aeff2">Effective Annualized (Custom) IRR (%)</label>
+        <input type="text" id="aeff2" value="" readonly>
+      </div>
+      <div class="field" style="align-self:end;">
+        <button type="button" class="btn secondary" id="recalcBtn" onclick="recalcWithCustom()">Recalculate Table 2 with Custom IRR</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tables -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="table-head">
+        <h3 style="margin:0">Amortization — Using Calculated IRR</h3>
+        <button type="button" class="btn secondary" id="export1" onclick="exportCSV('amort1','amortization_calculated')">Export CSV</button>
+      </div>
+      <table id="amort1"></table>
+    </div>
+    <div class="card">
+      <div class="table-head">
+        <h3 style="margin:0">Amortization — Using Custom IRR</h3>
+        <button type="button" class="btn secondary" id="export2" onclick="exportCSV('amort2','amortization_custom')">Export CSV</button>
+      </div>
+      <table id="amort2"></table>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ===== Helpers (display only; internal math remains full precision) =====
+  function fmtUSD(n){ return Number.isFinite(n) ? n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '—'; }
+  function fmtPct(n){ return Number.isFinite(n) ? n.toLocaleString(undefined,{minimumFractionDigits:4,maximumFractionDigits:4}) : '—'; }
+  function setStatus(msg){ var s=document.getElementById('status'); if(s) s.textContent=msg||''; }
+
+  // ===== Math =====
+  function pvAnnuity(r, n){
+    if (n <= 0) return 0;
+    if (Math.abs(r) < 1e-12) return n; // near-zero rate
+    return (1 - Math.pow(1 + r, -n)) / r;
+  }
+  // Solve monthly IRR r where: S = P * PV(r, nEff)
+  function solveMonthlyIRR(S, P, nEff){
+    if (nEff <= 0 || P <= 0 || S <= 0) return null;
+    function f(r){ return P * pvAnnuity(r, nEff) - S; }
+    var lo=-0.9999, hi=5.0; // bracket
+    var fLo=f(lo), fHi=f(hi), guard=0;
+    while (fHi>0 && hi<1e6 && guard<60){ hi*=2; fHi=f(hi); guard++; }
+    if (!(fLo>0 && fHi<0)){
+      var best=null, bestErr=Infinity; // coarse fallback
+      for (var r=-0.9; r<=2.0; r+=0.0005){ var val=f(r), err=Math.abs(val); if (err<bestErr){ best=r; bestErr=err; } }
+      return best;
+    }
+    for (var it=0; it<200; it++){
+      var mid=(lo+hi)/2, fm=f(mid);
+      if (Math.abs(fm) < 1e-12) return mid;
+      if (fLo*fm < 0){ hi=mid; fHi=fm; } else { lo=mid; fLo=fm; }
+    }
+    return (lo+hi)/2;
+  }
+
+  // Build table honoring timing rules described by user
+  function buildAmortTable(el, S, r, P, T, nEff, timing){
+    var rows=[], bal=S;
+    for (var m=1; m<=T; m++){
+      var payment=0, interest=0, endBal=bal;
+      if (timing==='end'){
+        interest = bal * r; // accrue first
+        payment = (m <= nEff) ? P : 0; // then pay
+        endBal = bal + interest - payment;
+      } else { // beginning
+        if (m===1){
+          payment = 0; // t=0 payment already netted
+          interest = bal * r; // interest only in month 1
+          endBal = bal + interest;
+        } else {
+          payment = ((m-1) <= nEff) ? P : 0; // start-of-month payment for months 2..T
+          var afterPay = bal - payment;
+          interest = afterPay * r;
+          endBal = afterPay + interest;
+        }
+      }
+      rows.push([m, bal, interest, payment, endBal]);
+      bal = endBal;
+    }
+    el.innerHTML = '<thead><tr>'+
+      '<th>Month</th>'+
+      '<th style="text-align:right">Starting Balance</th>'+
+      '<th style="text-align:right">Interest</th>'+
+      '<th style="text-align:right">Payment</th>'+
+      '<th style="text-align:right">Ending Balance</th>'+
+      '</tr></thead><tbody>'+
+      rows.map(function(rw){return '<tr>'+
+        '<td>'+rw[0]+'</td>'+
+        '<td>'+fmtUSD(rw[1])+'</td>'+
+        '<td>'+fmtUSD(rw[2])+'</td>'+
+        '<td>'+fmtUSD(rw[3])+'</td>'+
+        '<td>'+fmtUSD(rw[4])+'</td>'+
+      '</tr>';}).join('')+
+      '</tbody>';
+  }
+
+  // ===== UI Actions =====
+  function calculate(){
+    try{
+      setStatus('');
+      var lump = Math.max(0, Number(document.getElementById('lump').value) || 0);
+      var pay  = Math.max(0, Number(document.getElementById('pay').value) || 0);
+      var term = Math.max(1, parseInt(document.getElementById('term').value,10) || 1);
+      var timing = document.getElementById('timing').value;
+
+      // starting balance & effective # of payments per timing
+      var startBal = (timing==='begin') ? Math.max(0, lump - pay) : lump;
+      var nEff = (timing==='begin') ? Math.max(0, term - 1) : term;
+
+      var r = solveMonthlyIRR(startBal, pay, nEff);
+
+      var mirrEl = document.getElementById('mirr');
+      var airrEl = document.getElementById('airr');
+      var aeffEl = document.getElementById('aeff');
+      var aeff2El = document.getElementById('aeff2');
+      var customEl = document.getElementById('customIrr');
+
+      if (!Number.isFinite(r)){
+        mirrEl.value = ''; airrEl.value=''; aeffEl.value=''; aeff2El.value=''; customEl.value='';
+      } else {
+        mirrEl.value = fmtPct(r*100);
+        airrEl.value = fmtPct(r*100*12);
+        aeffEl.value = fmtPct((Math.pow(1+r,12)-1)*100);
+        customEl.value = (r*100).toFixed(4);
+        aeff2El.value = fmtPct((Math.pow(1+r,12)-1)*100);
+      }
+
+      buildAmortTable(document.getElementById('amort1'), startBal, r||0, pay, term, nEff, timing);
+      var r2 = Number(customEl.value)/100 || 0;
+      buildAmortTable(document.getElementById('amort2'), startBal, r2, pay, term, nEff, timing);
+    } catch(err){
+      console.error(err); setStatus('Error: '+ (err && err.message ? err.message : err));
+    }
+  }
+
+  function recalcWithCustom(){
+    try{
+      var lump = Math.max(0, Number(document.getElementById('lump').value) || 0);
+      var pay  = Math.max(0, Number(document.getElementById('pay').value) || 0);
+      var term = Math.max(1, parseInt(document.getElementById('term').value,10) || 1);
+      var timing = document.getElementById('timing').value;
+      var startBal = (timing==='begin') ? Math.max(0, lump - pay) : lump;
+      var nEff = (timing==='begin') ? Math.max(0, term - 1) : term;
+
+      var customPct = Number(document.getElementById('customIrr').value);
+      var r2 = Number.isFinite(customPct) ? (customPct/100) : 0;
+      var aeff2El = document.getElementById('aeff2');
+      aeff2El.value = Number.isFinite(r2) ? fmtPct((Math.pow(1+r2,12)-1)*100) : '';
+
+      buildAmortTable(document.getElementById('amort2'), startBal, r2||0, pay, term, nEff, timing);
+    } catch(err){ console.error(err); setStatus('Error: '+(err && err.message ? err.message : err)); }
+  }
+
+  // ===== CSV Export =====
+  function tableToCSV(table){
+    var rows = Array.prototype.slice.call(table.querySelectorAll('tr'));
+    return rows.map(function(tr){
+      return Array.prototype.slice.call(tr.children).map(function(td){
+        var txt = td.textContent.replace(/\n/g,' ').trim();
+        return '"'+txt.replace(/"/g,'""')+'"';
+      }).join(',');
+    }).join('\n');
+  }
+  function exportCSV(tableId, prefix){
+    try{
+      var table = document.getElementById(tableId);
+      var csv = tableToCSV(table);
+      var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = prefix+'_'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.csv';
+      document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 0);
+    } catch(err){ console.error(err); setStatus('Export error: '+(err && err.message ? err.message : err)); }
+  }
+
+  // Also attach listeners just in case inline handlers are blocked in a future environment
+  (function safeBind(){
+    var btn = document.getElementById('calcBtn'); if (btn && !btn._bound){ btn.addEventListener('click', calculate); btn._bound=true; }
+    var rb = document.getElementById('recalcBtn'); if (rb && !rb._bound){ rb.addEventListener('click', recalcWithCustom); rb._bound=true; }
+  })();
+</script>
+</body>
+</html>

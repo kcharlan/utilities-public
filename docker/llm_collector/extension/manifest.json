@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "LLM Usage Counter",
+  "version": "0.3.2",
+  "description": "Counts browser POSTs to common LLM endpoints; includes diagnostics; syncs to local collector.",
+  "permissions": [
+    "storage",
+    "webRequest",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "*://api.openai.com/*",
+    "*://chat.openai.com/*",
+    "*://*.chatgpt.com/*",
+    "*://*.perplexity.ai/*",
+    "*://generativelanguage.googleapis.com/*",
+    "*://*.googleapis.com/*",
+    "*://*.google.com/*",
+    "*://api.anthropic.com/*",
+    "*://*.anthropic.com/*",
+    "*://api.mistral.ai/*",
+    "*://*.mistral.ai/*",
+    "*://gateway.ai.cloudflare.com/*",
+    "*://*.abacus.ai/*",
+    "*://t3.chat/*",
+    "*://*.t3.chat/*",
+    "ws://*/*",
+    "wss://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "LLM Usage Counter",
+    "default_popup": "popup.html"
+  }
+}

@@ -1,0 +1,34 @@
+plan_name: Hidden Plan C
+
+benefits:
+  - service_category: " PCP Visit "
+    coverage_status: covered
+    member_cost: "$15 copay"
+
+  - service_category: "Specialist Consult"
+    coverage_status: covered
+    member_cost: "$55 copay"
+
+  - service_category: "Emergency Room Facility"
+    coverage_status: covered
+    member_cost: "$400 copay"
+
+  - service_category: "E.R. Physician Fee"
+    coverage_status: covered
+    member_cost: "included in professional claim"
+
+  - service_category: "Imaging Technical Component"
+    coverage_status: covered
+    member_cost: "10% after deductible"
+
+  - service_category: "Imaging Professional Component"
+    coverage_status: covered
+    member_cost: "$65 copay"
+
+  - service_category: "Inpatient Room and Board"
+    coverage_status: covered
+    member_cost: "25% after deductible"
+
+  - service_category: "Skilled Nursing Facility"
+    coverage_status: covered
+    member_cost: "30% coinsurance"

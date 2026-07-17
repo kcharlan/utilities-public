@@ -1,0 +1,4147 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn[standard]",
+# ]
+# ///
+"""launchmaster -- macOS launchd Control Center"""
+
+import argparse
+import asyncio
+import datetime
+import json
+import logging
+import os
+import plistlib
+import socket
+import subprocess
+import threading
+import webbrowser
+from contextlib import asynccontextmanager
+from typing import Any, Dict, List, Optional, Set
+from urllib.parse import unquote
+
+import uvicorn
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+
+DATA_DIR = os.path.expanduser(os.environ.get("LAUNCHMASTER_HOME", "~/.launchmaster"))
+BACKUP_DIR = os.path.join(DATA_DIR, "backups")
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+VERSION = "1.0.0"
+DEFAULT_PORT = 8200
+
+logger = logging.getLogger("launchmaster")
+
+# === PLACEHOLDER SPA ===
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>launchmaster — launchd Control Center</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+<style>
+  :root {
+    /* CRT-inspired dark palette */
+    --bg-void: #06070b;
+    --bg-base: #0a0b10;
+    --bg-surface: #101118;
+    --bg-elevated: #16171f;
+    --bg-hover: #1c1d27;
+    --bg-active: #22232f;
+
+    --border-subtle: #1e1f2a;
+    --border-default: #282938;
+    --border-strong: #3a3b4a;
+
+    --text-primary: #d8d9e4;
+    --text-secondary: #8a8b9a;
+    --text-tertiary: #5a5b6a;
+    --text-inverse: #0a0b10;
+
+    /* Status palette — high saturation, CRT glow */
+    --status-running: #00e676;
+    --status-running-bg: rgba(0,230,118,0.08);
+    --status-running-border: rgba(0,230,118,0.25);
+
+    --status-idle: #448aff;
+    --status-idle-bg: rgba(68,138,255,0.08);
+    --status-idle-border: rgba(68,138,255,0.25);
+
+    --status-failed: #ff1744;
+    --status-failed-bg: rgba(255,23,68,0.06);
+    --status-failed-border: rgba(255,23,68,0.30);
+    --status-failed-glow: rgba(255,23,68,0.15);
+
+    --status-disabled: #616171;
+    --status-disabled-bg: rgba(97,97,113,0.08);
+    --status-disabled-border: rgba(97,97,113,0.20);
+
+    --status-unloaded: #3a3b4a;
+    --status-unloaded-bg: rgba(58,59,74,0.08);
+
+    /* Accent */
+    --accent: #ffab00;
+    --accent-hover: #ffc107;
+    --accent-bg: rgba(255,171,0,0.08);
+    --accent-border: rgba(255,171,0,0.30);
+
+    /* Danger */
+    --danger: #ff1744;
+    --danger-hover: #ff5252;
+    --danger-bg: rgba(255,23,68,0.10);
+
+    /* Fonts */
+    --font-display: 'Chakra Petch', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+
+    /* Scanline effect */
+    --scanline-opacity: 0.03;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-void);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+
+  /* Subtle CRT scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,var(--scanline-opacity)) 2px,
+      rgba(0,0,0,var(--scanline-opacity)) 4px
+    );
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-base); }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+  /* Selection */
+  ::selection { background: rgba(255,171,0,0.25); color: var(--text-primary); }
+
+  /* Animations */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slideInRight {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes slideInUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-red {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  @keyframes glow-red {
+    0%, 100% { box-shadow: 0 0 8px var(--status-failed-glow); }
+    50% { box-shadow: 0 0 16px var(--status-failed-glow), 0 0 32px rgba(255,23,68,0.08); }
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateX(100%); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes toast-out {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(100%); }
+  }
+
+  .animate-fade { animation: fadeIn 0.2s ease-out both; }
+  .animate-slide-right { animation: slideInRight 0.25s ease-out both; }
+  .animate-slide-up { animation: slideInUp 0.2s ease-out both; }
+
+  /* ---- Layout ---- */
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: relative;
+  }
+
+  /* Top bar */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    height: 48px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-default);
+    flex-shrink: 0;
+    z-index: 100;
+  }
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .topbar-brand {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .topbar-subtitle {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.5px;
+  }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .topbar-ws-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+  .ws-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--status-running);
+    box-shadow: 0 0 6px var(--status-running);
+  }
+  .ws-dot.disconnected { background: var(--status-failed); box-shadow: 0 0 6px var(--status-failed); }
+
+  /* Icon buttons */
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-default);
+  }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  /* Action buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+  .btn svg { width: 14px; height: 14px; }
+
+  .btn-accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-inverse);
+    font-weight: 500;
+  }
+  .btn-accent:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+  .btn-danger {
+    border-color: var(--status-failed-border);
+    color: var(--status-failed);
+  }
+  .btn-danger:hover { background: var(--danger-bg); border-color: var(--danger); }
+
+  .btn-sm { padding: 3px 8px; font-size: 11px; }
+  .btn-sm svg { width: 12px; height: 12px; }
+
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+  }
+  .btn-ghost:hover { background: var(--bg-hover); border-color: var(--border-default); }
+
+  /* Main content */
+  .main-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ---- Status Summary Cards ---- */
+  .status-cards {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .status-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    min-width: 140px;
+  }
+  .status-card:hover { border-color: var(--border-strong); background: var(--bg-elevated); }
+  .status-card.active { border-color: var(--accent-border); background: var(--accent-bg); }
+  .status-card-count {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .status-card-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .status-card.running .status-card-count { color: var(--status-running); }
+  .status-card.idle .status-card-count { color: var(--status-idle); }
+  .status-card.failed .status-card-count { color: var(--status-failed); }
+  .status-card.disabled .status-card-count { color: var(--status-disabled); }
+  .status-card.unloaded .status-card-count { color: var(--status-unloaded); }
+
+  /* ---- Failed Jobs Alert Panel ---- */
+  .failed-panel {
+    background: var(--status-failed-bg);
+    border: 1px solid var(--status-failed-border);
+    border-radius: 6px;
+    animation: glow-red 3s ease-in-out infinite;
+    overflow: hidden;
+  }
+  .failed-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .failed-panel-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--status-failed);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .failed-pulse {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--status-failed);
+    animation: pulse-red 1.5s ease-in-out infinite;
+    box-shadow: 0 0 8px var(--status-failed);
+  }
+  .failed-panel-body { padding: 0 16px 12px; }
+  .failed-job-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: rgba(255,23,68,0.04);
+    border: 1px solid rgba(255,23,68,0.12);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    animation: fadeIn 0.2s ease-out both;
+  }
+  .failed-job-row:last-child { margin-bottom: 0; }
+  .failed-job-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+  .failed-job-label {
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .failed-job-exit {
+    font-size: 11px;
+    padding: 2px 6px;
+    background: rgba(255,23,68,0.15);
+    border: 1px solid rgba(255,23,68,0.25);
+    border-radius: 3px;
+    color: var(--status-failed);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .failed-job-blame {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+  }
+  .failed-job-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  /* ---- Filter Bar ---- */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+  }
+  .filter-search {
+    padding: 6px 10px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .filter-search:focus { border-color: var(--accent-border); }
+  .filter-search::placeholder { color: var(--text-tertiary); }
+
+  .filter-select {
+    padding: 6px 10px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    outline: none;
+  }
+  .filter-select:focus { border-color: var(--accent-border); }
+
+  .filter-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    background: var(--bg-base);
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .filter-toggle:hover { border-color: var(--border-strong); color: var(--text-primary); }
+  .filter-toggle.active { border-color: var(--accent-border); color: var(--accent); background: var(--accent-bg); }
+  .filter-toggle svg { width: 14px; height: 14px; }
+
+  .filter-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: 3px;
+    color: var(--accent);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .filter-chip:hover { background: rgba(255,171,0,0.15); }
+
+  /* ---- Job Table ---- */
+  .job-table-container {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    overflow: hidden;
+    flex: 1;
+  }
+  .job-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .job-table thead th {
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-tertiary);
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-default);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .job-table thead th:hover { color: var(--text-secondary); }
+  .job-table thead th.sorted { color: var(--accent); }
+  .job-table thead th .sort-arrow {
+    display: inline-block;
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .job-table thead th:hover .sort-arrow { opacity: 0.5; }
+  .job-table thead th.sorted .sort-arrow { opacity: 1; }
+
+  .job-table tbody tr {
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background 0.1s;
+    cursor: pointer;
+  }
+  .job-table tbody tr:hover { background: var(--bg-hover); }
+  .job-table tbody tr.selected { background: var(--accent-bg); }
+  .job-table tbody tr.status-failed { background: rgba(255,23,68,0.03); }
+  .job-table tbody tr.status-failed:hover { background: rgba(255,23,68,0.06); }
+
+  .job-table td {
+    padding: 7px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  /* Status dot */
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.running {
+    background: var(--status-running);
+    box-shadow: 0 0 6px var(--status-running);
+  }
+  .status-dot.idle { background: var(--status-idle); box-shadow: 0 0 4px rgba(68,138,255,0.4); }
+  .status-dot.failed {
+    background: var(--status-failed);
+    box-shadow: 0 0 6px var(--status-failed);
+    animation: pulse-red 2s ease-in-out infinite;
+  }
+  .status-dot.disabled { background: var(--status-disabled); }
+  .status-dot.unloaded {
+    background: transparent;
+    border: 1.5px solid var(--status-unloaded);
+  }
+
+  .job-label-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .job-label-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 400;
+  }
+
+  .domain-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+  }
+  .domain-badge.user-agent { color: var(--status-idle); border-color: var(--status-idle-border); background: var(--status-idle-bg); }
+  .domain-badge.global-agent { color: var(--accent); border-color: var(--accent-border); background: var(--accent-bg); }
+  .domain-badge.system-daemon { color: #e040fb; border-color: rgba(224,64,251,0.25); background: rgba(224,64,251,0.08); }
+  .domain-badge.apple {
+    color: #e8a030;
+    border-color: rgba(232,160,48,0.45);
+    background: rgba(232,160,48,0.12);
+    font-weight: 600;
+    position: relative;
+    padding-left: 20px;
+  }
+  .domain-badge.apple .apple-badge-icon {
+    position: absolute;
+    left: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 10px;
+    height: 12px;
+  }
+
+  /* Apple job row distinction — STRONG visual separation */
+  .job-table tbody tr.apple-row {
+    background: rgba(232,160,48,0.05);
+    border-left: 3px solid rgba(232,160,48,0.60);
+  }
+  .job-table tbody tr.apple-row:hover {
+    background: rgba(232,160,48,0.10);
+  }
+  .job-table tbody tr.apple-row td:first-child {
+    padding-left: 9px;
+  }
+  .job-table tbody tr.apple-row .job-label-text {
+    color: #d0a050;
+    font-style: italic;
+  }
+  .job-table tbody tr.apple-row .schedule-text,
+  .job-table tbody tr.apple-row .pid-text {
+    color: rgba(208,160,80,0.6);
+  }
+  .apple-row-icon {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+  .apple-row-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .exit-code {
+    font-weight: 500;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .exit-code.zero { color: var(--status-running); }
+  .exit-code.nonzero { color: var(--status-failed); background: rgba(255,23,68,0.10); }
+
+  .pid-text { color: var(--text-secondary); font-size: 11px; }
+  .schedule-text { color: var(--text-secondary); font-size: 11px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
+  .row-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .job-table tbody tr:hover .row-actions { opacity: 1; }
+
+  .row-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px; height: 26px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .row-action-btn:hover { background: var(--bg-active); color: var(--text-primary); }
+  .row-action-btn.danger:hover { color: var(--status-failed); background: var(--danger-bg); }
+  .row-action-btn svg { width: 13px; height: 13px; }
+
+  /* Checkbox */
+  .checkbox {
+    width: 14px; height: 14px;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .checkbox:hover { border-color: var(--accent); }
+  .checkbox.checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .checkbox.checked::after {
+    content: '';
+    width: 4px; height: 7px;
+    border: solid var(--text-inverse);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+
+  /* ---- Slide-out Detail Panel ---- */
+  .panel-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 200;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .panel-overlay.visible { opacity: 1; }
+
+  .detail-panel {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 680px;
+    max-width: 90vw;
+    background: var(--bg-base);
+    border-left: 1px solid var(--border-default);
+    z-index: 201;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.25s ease-out;
+    box-shadow: -8px 0 32px rgba(0,0,0,0.4);
+  }
+  .detail-panel.open { transform: translateX(0); }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+  .panel-header-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .panel-header-actions {
+    display: flex;
+    gap: 4px;
+  }
+
+  .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+  .panel-tab {
+    padding: 8px 16px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .panel-tab:hover { color: var(--text-secondary); }
+  .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+  }
+
+  /* Panel info grid */
+  .info-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 6px 12px;
+    margin-bottom: 16px;
+  }
+  .info-label {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .info-value {
+    font-size: 12px;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+
+  /* Plist editor */
+  .plist-editor {
+    background: var(--bg-void);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .plist-editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .plist-editor-header span {
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+  .plist-editor textarea {
+    width: 100%;
+    min-height: 300px;
+    padding: 12px;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    resize: vertical;
+    outline: none;
+    tab-size: 4;
+  }
+
+  /* Log viewer */
+  .log-viewer {
+    background: var(--bg-void);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .log-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .log-toolbar-left {
+    display: flex;
+    gap: 4px;
+  }
+  .log-tab {
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    transition: all 0.15s;
+  }
+  .log-tab:hover { color: var(--text-secondary); }
+  .log-tab.active { color: var(--accent); background: var(--accent-bg); }
+  .log-content {
+    padding: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+  .log-line { white-space: pre-wrap; word-break: break-all; }
+  .log-line .timestamp { color: var(--text-tertiary); }
+  .log-line .error { color: var(--status-failed); }
+  .log-line .warn { color: var(--accent); }
+
+  /* ---- Create Job Modal ---- */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    width: 640px;
+    max-width: 90vw;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 64px rgba(0,0,0,0.5);
+    animation: slideInUp 0.2s ease-out;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .modal-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+  }
+  .modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-default);
+  }
+
+  /* Form fields */
+  .form-group { margin-bottom: 14px; }
+  .form-label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .form-input {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .form-input:focus { border-color: var(--accent-border); }
+  .form-input::placeholder { color: var(--text-tertiary); }
+  .form-row {
+    display: flex;
+    gap: 12px;
+  }
+  .form-row .form-group { flex: 1; }
+
+  .form-hint {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin-top: 3px;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .toggle-row-label { font-size: 12px; color: var(--text-secondary); }
+  .toggle-switch {
+    width: 36px; height: 20px;
+    border-radius: 10px;
+    background: var(--border-strong);
+    cursor: pointer;
+    position: relative;
+    transition: background 0.2s;
+  }
+  .toggle-switch.on { background: var(--accent); }
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    transition: transform 0.2s;
+  }
+  .toggle-switch.on::after { transform: translateX(16px); }
+
+  /* ---- Toast Notifications ---- */
+  .toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 500;
+  }
+  .toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    font-size: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    animation: toast-in 0.25s ease-out;
+    min-width: 280px;
+  }
+  .toast.success { border-color: var(--status-running-border); }
+  .toast.success .toast-icon { color: var(--status-running); }
+  .toast.error { border-color: var(--status-failed-border); }
+  .toast.error .toast-icon { color: var(--status-failed); }
+  .toast.warning { border-color: var(--accent-border); }
+  .toast.warning .toast-icon { color: var(--accent); }
+  .toast svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .toast-message { flex: 1; }
+  .toast-close {
+    color: var(--text-tertiary);
+    cursor: pointer;
+    background: none;
+    border: none;
+    display: flex;
+    padding: 2px;
+  }
+  .toast-close:hover { color: var(--text-secondary); }
+
+  /* ---- Confirm Dialog ---- */
+  .confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .confirm-dialog {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    padding: 20px;
+    width: 420px;
+    max-width: 90vw;
+    box-shadow: 0 16px 64px rgba(0,0,0,0.5);
+    animation: slideInUp 0.15s ease-out;
+  }
+  .confirm-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .confirm-message {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    line-height: 1.6;
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  /* ---- Keyboard shortcut hints ---- */
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: 3px;
+    color: var(--text-tertiary);
+    min-width: 18px;
+  }
+
+  /* ---- Settings Panel ---- */
+  .settings-section {
+    margin-bottom: 20px;
+  }
+  .settings-section-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  /* ---- Bulk action bar ---- */
+  .bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    animation: fadeIn 0.15s ease-out;
+  }
+  .bulk-bar-count {
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .bulk-bar-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--accent-border);
+  }
+
+  /* ---- Preview plist in Create modal ---- */
+  .plist-preview {
+    background: var(--bg-void);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre;
+  }
+  .plist-preview .xml-tag { color: var(--status-idle); }
+  .plist-preview .xml-key { color: var(--accent); }
+  .plist-preview .xml-value { color: var(--status-running); }
+  .plist-preview .xml-comment { color: var(--text-tertiary); font-style: italic; }
+
+  /* ---- Light mode (toggle) ---- */
+  html:not(.dark) {
+    --bg-void: #f5f5f7;
+    --bg-base: #ffffff;
+    --bg-surface: #fafafa;
+    --bg-elevated: #f0f0f2;
+    --bg-hover: #eaeaee;
+    --bg-active: #e0e0e6;
+    --border-subtle: #e8e8ec;
+    --border-default: #d8d8de;
+    --border-strong: #c0c0c8;
+    --text-primary: #1a1a24;
+    --text-secondary: #6a6a7a;
+    --text-tertiary: #9a9aaa;
+    --text-inverse: #ffffff;
+    --scanline-opacity: 0;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ---- API helper ----
+async function api(path, options = {}) {
+  const resp = await fetch('/api' + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || resp.statusText);
+  }
+  return resp.json();
+}
+
+// ---- WebSocket hook for live data ----
+function useWebSocket() {
+  const [jobs, setJobs] = useState([]);
+  const [connected, setConnected] = useState(false);
+  const wsRef = useRef(null);
+
+  useEffect(() => {
+    const connect = () => {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(protocol + '//' + location.host + '/ws');
+      wsRef.current = ws;
+      ws.onopen = () => setConnected(true);
+      ws.onclose = () => { setConnected(false); setTimeout(connect, 3000); };
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'jobs') setJobs(msg.data);
+      };
+    };
+    connect();
+    return () => wsRef.current && wsRef.current.close();
+  }, []);
+
+  const refresh = () => wsRef.current && wsRef.current.send(JSON.stringify({type: 'refresh'}));
+  return { jobs, connected, refresh };
+}
+
+// ---- Icon components (using inline SVGs for the prototype) ----
+function Icon({ name, size = 16, className = '' }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current && lucide.icons[name]) {
+      ref.current.innerHTML = '';
+      const svg = lucide.createElement(lucide.icons[name]);
+      svg.setAttribute('width', size);
+      svg.setAttribute('height', size);
+      ref.current.appendChild(svg);
+    }
+  }, [name, size]);
+  return <span ref={ref} className={className} style={{ display: 'inline-flex', alignItems: 'center' }} />;
+}
+
+// ---- Apple logo SVG (inline, no font dependency) ----
+function AppleLogo({ size = 14, color = 'currentColor', className = '' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} className={className} style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+      <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+    </svg>
+  );
+}
+
+// ---- Helper functions ----
+function getJobStatus(job) {
+  if (!job.loaded) return 'unloaded';
+  if (!job.enabled) return 'disabled';
+  if (job.pid != null && job.pid > 0) return 'running';
+  if (job.last_exit !== 0 && job.last_exit !== null) return 'failed';
+  return 'idle';
+}
+
+function statusLabel(s) {
+  return { running: 'Running', idle: 'Idle', failed: 'Failed', disabled: 'Disabled', unloaded: 'Unloaded' }[s] || s;
+}
+
+function isAppleDomain(domain) {
+  return domain === 'apple-agent' || domain === 'apple-daemon' || (domain && domain.startsWith('apple'));
+}
+
+// ---- Toast system ----
+function ToastContainer({ toasts, removeToast }) {
+  return (
+    <div className="toast-container">
+      {toasts.map(t => (
+        <div key={t.id} className={'toast ' + t.type}>
+          <span className="toast-icon">
+            <Icon name={t.type === 'success' ? 'check-circle' : t.type === 'error' ? 'x-circle' : 'alert-triangle'} size={16} />
+          </span>
+          <span className="toast-message">{t.message}</span>
+          <button className="toast-close" onClick={() => removeToast(t.id)}>
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---- Confirm Dialog ----
+function ConfirmDialog({ title, message, onConfirm, onCancel, danger = false }) {
+  return (
+    <div className="confirm-overlay" onClick={onCancel}>
+      <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
+        <div className="confirm-title">{title}</div>
+        <div className="confirm-message">{message}</div>
+        <div className="confirm-actions">
+          <button className="btn" onClick={onCancel}>Cancel</button>
+          <button className={'btn ' + (danger ? 'btn-danger' : 'btn-accent')} onClick={onConfirm}>
+            {danger ? 'Delete' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Status Cards ----
+function StatusCards({ jobs, activeFilter, setActiveFilter }) {
+  const counts = useMemo(() => {
+    const c = { running: 0, idle: 0, failed: 0, disabled: 0, unloaded: 0 };
+    jobs.forEach(j => { c[getJobStatus(j)]++; });
+    return c;
+  }, [jobs]);
+
+  return (
+    <div className="status-cards">
+      {['running', 'idle', 'failed', 'disabled', 'unloaded'].map(s => (
+        <div
+          key={s}
+          className={'status-card ' + s + (activeFilter === s ? ' active' : '')}
+          onClick={() => setActiveFilter(activeFilter === s ? null : s)}
+        >
+          <div className="status-card-count">{counts[s]}</div>
+          <div className="status-card-label">{statusLabel(s)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---- Failed Jobs Panel ----
+function FailedPanel({ jobs, onOpenDetail, onOpenLogs, onOpenEdit, onReload }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const failedJobs = jobs.filter(j => getJobStatus(j) === 'failed');
+
+  if (failedJobs.length === 0) return null;
+
+  return (
+    <div className="failed-panel">
+      <div className="failed-panel-header" onClick={() => setCollapsed(!collapsed)}>
+        <div className="failed-panel-title">
+          <div className="failed-pulse" />
+          {failedJobs.length} Failed Job{failedJobs.length > 1 ? 's' : ''} — Attention Required
+        </div>
+        <Icon name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} />
+      </div>
+      {!collapsed && (
+        <div className="failed-panel-body">
+          {failedJobs.map((j, i) => (
+            <div key={j.label} className="failed-job-row" style={{ animationDelay: (i * 50) + 'ms', cursor: 'pointer' }} onClick={() => onOpenDetail(j)}>
+              <div className="failed-job-info">
+                <span className="failed-job-label">{j.label}</span>
+                <span className="failed-job-exit">exit {j.last_exit}</span>
+                {j.blame && <span className="failed-job-blame" title={j.blame}>{j.blame}</span>}
+              </div>
+              <div className="failed-job-actions">
+                <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onOpenLogs(j); }}>
+                  <Icon name="file-text" size={12} /> Logs
+                </button>
+                <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onOpenEdit(j); }}>
+                  <Icon name="pencil" size={12} /> Edit
+                </button>
+                <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onReload(j); }}>
+                  <Icon name="refresh-cw" size={12} /> Reload
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Filter Bar ----
+function FilterBar({ search, setSearch, domainFilter, setDomainFilter, showApple, setShowApple, activeFilter, setActiveFilter }) {
+  const searchRef = useRef(null);
+  const appleForced = domainFilter === 'apple';
+
+  // Esc clears search when focused
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      if (search) {
+        e.preventDefault();
+        e.stopPropagation();
+        setSearch('');
+      } else {
+        searchRef.current && searchRef.current.blur();
+      }
+    }
+  };
+
+  return (
+    <div className="filter-bar">
+      <Icon name="search" size={14} />
+      <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
+        <input
+          ref={searchRef}
+          className="filter-search"
+          style={{ width: '100%', paddingRight: search ? 60 : 10 }}
+          placeholder="Search jobs by label...  (/ to focus, Esc to clear)"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={handleSearchKeyDown}
+        />
+        {search && (
+          <button
+            onClick={() => { setSearch(''); searchRef.current && searchRef.current.focus(); }}
+            style={{
+              position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+              background: 'var(--bg-hover)', border: '1px solid var(--border-strong)',
+              borderRadius: 4, color: 'var(--text-primary)', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 3,
+              padding: '2px 8px', lineHeight: 1, zIndex: 2,
+              fontSize: 11, fontFamily: 'var(--font-mono)',
+            }}
+            title="Clear search (Esc)"
+          >
+            <Icon name="x" size={11} /> clear
+          </button>
+        )}
+      </div>
+      <select className="filter-select" value={domainFilter} onChange={e => {
+        const val = e.target.value;
+        setDomainFilter(val);
+        // If selecting Apple domain, auto-enable apple visibility
+        if (val === 'apple') setShowApple(true);
+      }}>
+        <option value="all">All Domains</option>
+        <option value="user-agent">User Agents</option>
+        <option value="global-agent">Global Agents</option>
+        <option value="system-daemon">System Daemons</option>
+        {showApple && <option value="apple">Apple</option>}
+      </select>
+      <div
+        className={'filter-toggle' + (showApple ? ' active' : '') + (appleForced ? ' forced' : '')}
+        onClick={() => {
+          if (appleForced) return; // Can't toggle off while filtering to Apple
+          setShowApple(!showApple);
+        }}
+        style={appleForced ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+        title={appleForced ? 'Cannot hide Apple jobs while filtering by Apple domain' : 'Toggle Apple system jobs'}
+      >
+        <Icon name="shield" size={14} />
+        Apple Jobs
+      </div>
+      {activeFilter && (
+        <div className="filter-chip" onClick={() => setActiveFilter(null)}>
+          {statusLabel(activeFilter)} <Icon name="x" size={10} />
+        </div>
+      )}
+      <div style={{ flex: 1 }} />
+      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+        <kbd className="kbd">?</kbd> shortcuts
+      </span>
+    </div>
+  );
+}
+
+// ---- Pagination ----
+function Pagination({ currentPage, totalPages, onPageChange }) {
+  const [editingPage, setEditingPage] = useState(false);
+  const [pageInput, setPageInput] = useState('');
+
+  if (totalPages <= 1) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const p = parseInt(pageInput, 10);
+    if (p >= 1 && p <= totalPages) onPageChange(p);
+    setEditingPage(false);
+    setPageInput('');
+  };
+
+  const PgBtn = ({ onClick, disabled, children, title }) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        minWidth: 32, height: 28, padding: '0 8px',
+        background: disabled ? 'transparent' : 'var(--bg-surface)',
+        border: '1px solid ' + (disabled ? 'var(--border-subtle)' : 'var(--border-default)'),
+        borderRadius: 4,
+        color: disabled ? 'var(--text-tertiary)' : 'var(--text-primary)',
+        cursor: disabled ? 'default' : 'pointer',
+        fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500,
+        opacity: disabled ? 0.4 : 1,
+        transition: 'all 0.15s',
+      }}
+      onMouseEnter={e => { if (!disabled) { e.target.style.background = 'var(--bg-hover)'; e.target.style.borderColor = 'var(--border-strong)'; }}}
+      onMouseLeave={e => { if (!disabled) { e.target.style.background = 'var(--bg-surface)'; e.target.style.borderColor = 'var(--border-default)'; }}}
+    >
+      {children}
+    </button>
+  );
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+      fontSize: 12,
+    }}>
+      <PgBtn onClick={() => onPageChange(1)} disabled={currentPage === 1} title="First page">
+        &laquo; First
+      </PgBtn>
+      <PgBtn onClick={() => onPageChange(currentPage - 1)} disabled={currentPage === 1} title="Previous page">
+        &lsaquo; Prev
+      </PgBtn>
+
+      {editingPage ? (
+        <form onSubmit={handleSubmit} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <input
+            autoFocus
+            className="form-input"
+            style={{ width: 48, height: 28, padding: '2px 6px', textAlign: 'center', fontSize: 12 }}
+            value={pageInput}
+            onChange={e => setPageInput(e.target.value)}
+            onBlur={() => { setEditingPage(false); setPageInput(''); }}
+            placeholder={String(currentPage)}
+          />
+          <span style={{ color: 'var(--text-tertiary)' }}>/ {totalPages}</span>
+        </form>
+      ) : (
+        <span
+          style={{
+            padding: '4px 12px', cursor: 'pointer', color: 'var(--text-secondary)',
+            userSelect: 'none', border: '1px solid var(--border-default)',
+            borderRadius: 4, background: 'var(--bg-surface)',
+          }}
+          onClick={() => { setEditingPage(true); setPageInput(String(currentPage)); }}
+          title="Click to jump to page"
+        >
+          Page <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{currentPage}</span> of {totalPages}
+        </span>
+      )}
+
+      <PgBtn onClick={() => onPageChange(currentPage + 1)} disabled={currentPage === totalPages} title="Next page">
+        Next &rsaquo;
+      </PgBtn>
+      <PgBtn onClick={() => onPageChange(totalPages)} disabled={currentPage === totalPages} title="Last page">
+        Last &raquo;
+      </PgBtn>
+    </div>
+  );
+}
+
+// ---- Job Table ----
+const PAGE_SIZE = 25;
+
+function JobTable({ jobs, selected, setSelected, onRowClick, showApple, addToast, setShowConfirm }) {
+  const [sortCol, setSortCol] = useState('status');
+  const [sortAsc, setSortAsc] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortAsc(!sortAsc);
+    else { setSortCol(col); setSortAsc(true); }
+  };
+
+  const toggleSelect = (label, e) => {
+    e.stopPropagation();
+    setSelected(prev =>
+      prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]
+    );
+  };
+
+  const toggleAll = () => {
+    if (selected.length === jobs.length) setSelected([]);
+    else setSelected(jobs.map(j => j.label));
+  };
+
+  // Reset to page 1 when filters/jobs change
+  useEffect(() => { setCurrentPage(1); }, [jobs.length]);
+
+  const sorted = useMemo(() => {
+    const order = { failed: 0, running: 1, idle: 2, disabled: 3, unloaded: 4 };
+    return [...jobs].sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === 'status') cmp = order[getJobStatus(a)] - order[getJobStatus(b)];
+      else if (sortCol === 'label') cmp = a.label.localeCompare(b.label);
+      else if (sortCol === 'domain') cmp = a.domain.localeCompare(b.domain);
+      else if (sortCol === 'exit') cmp = (a.last_exit || 0) - (b.last_exit || 0);
+      return sortAsc ? cmp : -cmp;
+    });
+  }, [jobs, sortCol, sortAsc]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const page = Math.min(currentPage, totalPages);
+  const paginatedJobs = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // ---- Row action handlers ----
+  const handleRowAction = async (e, job, action) => {
+    e.stopPropagation();
+    const label = encodeURIComponent(job.label);
+    try {
+      if (action === 'start') {
+        await api('/jobs/' + label + '/start', { method: 'POST' });
+        addToast('success', 'Started ' + job.label);
+      } else if (action === 'stop') {
+        await api('/jobs/' + label + '/stop', { method: 'POST' });
+        addToast('success', 'Stopped ' + job.label);
+      } else if (action === 'run-now') {
+        await api('/jobs/' + label + '/run-now', { method: 'POST' });
+        addToast('success', 'Running ' + job.label + ' (one-shot)...');
+      } else if (action === 'reload') {
+        await api('/jobs/' + label + '/reload', { method: 'POST' });
+        addToast('success', 'Reloading ' + job.label + '...');
+      } else if (action === 'export') {
+        // Trigger file download
+        const a = document.createElement('a');
+        a.href = '/api/jobs/' + label + '/export';
+        a.download = job.label + '.plist';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        addToast('success', 'Exported ' + job.label + '.plist');
+      } else if (action === 'delete') {
+        setShowConfirm({
+          title: 'Delete Job',
+          message: 'Are you sure you want to delete "' + job.label + '"? This will unload and remove the plist file.',
+          danger: true,
+          onConfirm: async () => {
+            try {
+              await api('/jobs/' + label, { method: 'DELETE' });
+              addToast('success', 'Deleted ' + job.label);
+            } catch (err) {
+              addToast('error', 'Failed to delete: ' + err.message);
+            }
+          }
+        });
+      }
+    } catch (err) {
+      addToast('error', action + ' failed: ' + err.message);
+    }
+  };
+
+  const SortHeader = ({ col, children, style }) => (
+    <th
+      className={sortCol === col ? 'sorted' : ''}
+      onClick={() => handleSort(col)}
+      style={style}
+    >
+      {children}
+      <span className="sort-arrow">{sortCol === col ? (sortAsc ? '\u25B2' : '\u25BC') : '\u25B2'}</span>
+    </th>
+  );
+
+  return (
+    <div className="job-table-container" style={{ overflow: 'auto' }}>
+      <table className="job-table">
+        <thead>
+          <tr>
+            <th style={{ width: 36 }}>
+              <div
+                className={'checkbox' + (selected.length === jobs.length && jobs.length > 0 ? ' checked' : '')}
+                onClick={toggleAll}
+              />
+            </th>
+            <SortHeader col="status" style={{ width: 60 }}>Status</SortHeader>
+            <SortHeader col="label">Label</SortHeader>
+            <SortHeader col="domain" style={{ width: 120 }}>Domain</SortHeader>
+            <th style={{ width: 180 }}>Schedule</th>
+            <th style={{ width: 70 }}>PID</th>
+            <SortHeader col="exit" style={{ width: 80 }}>Last Exit</SortHeader>
+            <th style={{ width: 180, textAlign: 'right' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paginatedJobs.map((job, i) => {
+            const status = getJobStatus(job);
+            const apple = isAppleDomain(job.domain);
+            return (
+              <tr
+                key={job.label}
+                className={(selected.includes(job.label) ? 'selected ' : '') + 'status-' + status + (apple ? ' apple-row' : '')}
+                onClick={() => onRowClick(job)}
+                style={{ animationDelay: (i * 20) + 'ms' }}
+              >
+                <td>
+                  <div
+                    className={'checkbox' + (selected.includes(job.label) ? ' checked' : '')}
+                    onClick={e => toggleSelect(job.label, e)}
+                  />
+                </td>
+                <td>
+                  <div className={'status-dot ' + status} title={statusLabel(status)} />
+                </td>
+                <td>
+                  <div className="job-label-cell">
+                    {apple && <span className="apple-row-icon" title="Apple system job"><AppleLogo size={14} color="#d0a050" /></span>}
+                    <span className="job-label-text">{job.label}</span>
+                  </div>
+                </td>
+                <td>
+                  <span className={'domain-badge ' + (apple ? 'apple' : job.domain)}>
+                    {apple && <AppleLogo size={10} color="#e8a030" className="apple-badge-icon" />}
+                    {job.domain.replace('-', ' ')}
+                  </span>
+                </td>
+                <td><span className="schedule-text" title={job.schedule}>{job.schedule_human}</span></td>
+                <td><span className="pid-text">{job.pid || '\u2014'}</span></td>
+                <td>
+                  {job.last_exit !== null ? (
+                    <span className={'exit-code ' + (job.last_exit === 0 ? 'zero' : 'nonzero')}>
+                      {job.last_exit}
+                    </span>
+                  ) : '\u2014'}
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  <div className="row-actions">
+                    <button className="row-action-btn" title="Start (s)" onClick={e => handleRowAction(e, job, 'start')}>
+                      <Icon name="play" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Stop (x)" onClick={e => handleRowAction(e, job, 'stop')}>
+                      <Icon name="square" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Run Now (one-shot)" onClick={e => handleRowAction(e, job, 'run-now')}>
+                      <Icon name="zap" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Reload (r)" onClick={e => handleRowAction(e, job, 'reload')}>
+                      <Icon name="refresh-cw" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Edit (e)" onClick={e => { e.stopPropagation(); onRowClick(job, 'edit'); }}>
+                      <Icon name="pencil" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Logs (l)" onClick={e => { e.stopPropagation(); onRowClick(job, 'logs'); }}>
+                      <Icon name="file-text" size={13} />
+                    </button>
+                    <button className="row-action-btn" title="Export" onClick={e => handleRowAction(e, job, 'export')}>
+                      <Icon name="download" size={13} />
+                    </button>
+                    <button className="row-action-btn danger" title="Delete" onClick={e => handleRowAction(e, job, 'delete')}>
+                      <Icon name="trash-2" size={13} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '6px 12px', borderTop: '1px solid var(--border-subtle)',
+        background: 'var(--bg-elevated)', fontSize: 11, color: 'var(--text-tertiary)',
+      }}>
+        <span>{sorted.length} job{sorted.length !== 1 ? 's' : ''}{sorted.length !== jobs.length ? ' (filtered from ' + jobs.length + ')' : ''}</span>
+        <Pagination currentPage={page} totalPages={totalPages} onPageChange={setCurrentPage} />
+        <span>{PAGE_SIZE} per page</span>
+      </div>
+    </div>
+  );
+}
+
+// ---- Bulk Action Bar ----
+function BulkBar({ count, onClear, selectedLabels, addToast, setShowConfirm }) {
+
+  const bulkAction = async (action, label) => {
+    let successes = 0;
+    let failures = 0;
+    for (const jobLabel of selectedLabels) {
+      try {
+        const encoded = encodeURIComponent(jobLabel);
+        if (action === 'delete') {
+          await api('/jobs/' + encoded, { method: 'DELETE' });
+        } else {
+          await api('/jobs/' + encoded + '/' + action, { method: 'POST' });
+        }
+        successes++;
+      } catch (err) {
+        failures++;
+      }
+    }
+    if (failures === 0) {
+      addToast('success', label + ' ' + successes + ' job' + (successes !== 1 ? 's' : ''));
+    } else {
+      addToast('warning', label + ': ' + successes + ' succeeded, ' + failures + ' failed');
+    }
+    onClear();
+  };
+
+  if (count === 0) return null;
+  return (
+    <div className="bulk-bar">
+      <span className="bulk-bar-count">{count} selected</span>
+      <div className="bulk-bar-divider" />
+      <button className="btn btn-sm" onClick={() => bulkAction('start', 'Started')}><Icon name="play" size={12} /> Start All</button>
+      <button className="btn btn-sm" onClick={() => bulkAction('stop', 'Stopped')}><Icon name="square" size={12} /> Stop All</button>
+      <button className="btn btn-sm" onClick={() => bulkAction('reload', 'Reloaded')}><Icon name="refresh-cw" size={12} /> Reload All</button>
+      <button className="btn btn-sm" onClick={() => bulkAction('enable', 'Enabled')}><Icon name="toggle-left" size={12} /> Enable</button>
+      <button className="btn btn-sm" onClick={() => bulkAction('disable', 'Disabled')}><Icon name="toggle-right" size={12} /> Disable</button>
+      <button className="btn btn-sm btn-danger" onClick={() => {
+        setShowConfirm({
+          title: 'Delete ' + count + ' Jobs',
+          message: 'Are you sure you want to delete ' + count + ' selected job' + (count !== 1 ? 's' : '') + '? This will unload and remove the plist files.',
+          danger: true,
+          onConfirm: () => bulkAction('delete', 'Deleted'),
+        });
+      }}><Icon name="trash-2" size={12} /> Delete</button>
+      <div style={{ flex: 1 }} />
+      <button className="btn btn-sm btn-ghost" onClick={onClear}>Clear Selection</button>
+    </div>
+  );
+}
+
+// ---- Detail Panel ----
+function DetailPanel({ job, initialTab, onClose, addToast, setShowConfirm }) {
+  const [activeTab, setActiveTab] = useState(initialTab || 'info');
+  const [logTab, setLogTab] = useState('stderr');
+  const [logContent, setLogContent] = useState('');
+  const [logLoading, setLogLoading] = useState(false);
+  const [plistContent, setPlistContent] = useState('');
+  const [plistLoading, setPlistLoading] = useState(false);
+  const [modified, setModified] = useState(false);
+
+  // Reset tab when job or initialTab changes
+  useEffect(() => {
+    setActiveTab(initialTab || 'info');
+  }, [job && job.label, initialTab]);
+
+  // Fetch logs when logs tab is active or logTab changes
+  useEffect(() => {
+    if (!job || activeTab !== 'logs') return;
+    let cancelled = false;
+    setLogLoading(true);
+    const encoded = encodeURIComponent(job.label);
+    api('/jobs/' + encoded + '/logs/' + logTab)
+      .then(data => {
+        if (!cancelled) {
+          setLogContent(data.content || data.lines || '');
+          setLogLoading(false);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setLogContent('Error loading logs: ' + err.message);
+          setLogLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [job && job.label, activeTab, logTab]);
+
+  // Fetch plist when edit tab is active
+  useEffect(() => {
+    if (!job || activeTab !== 'edit') return;
+    let cancelled = false;
+    setPlistLoading(true);
+    setModified(false);
+    const encoded = encodeURIComponent(job.label);
+    api('/jobs/' + encoded + '/plist')
+      .then(data => {
+        if (!cancelled) {
+          setPlistContent(data.content || '');
+          setPlistLoading(false);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setPlistContent('Error loading plist: ' + err.message);
+          setPlistLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [job && job.label, activeTab]);
+
+  if (!job) return null;
+  const status = getJobStatus(job);
+  const encoded = encodeURIComponent(job.label);
+
+  const handleAction = async (action) => {
+    try {
+      await api('/jobs/' + encoded + '/' + action, { method: 'POST' });
+      addToast('success', (action === 'start' ? 'Started ' : action === 'stop' ? 'Stopped ' : action === 'run-now' ? 'Running ' : action === 'reload' ? 'Reloading ' : action === 'enable' ? 'Enabled ' : action === 'disable' ? 'Disabled ' : action === 'load' ? 'Loaded ' : 'Unloaded ') + job.label);
+    } catch (err) {
+      addToast('error', action + ' failed: ' + err.message);
+    }
+  };
+
+  const handleSavePlist = async () => {
+    try {
+      await api('/jobs/' + encoded + '/plist', {
+        method: 'PUT',
+        body: JSON.stringify({ content: plistContent }),
+      });
+      setModified(false);
+      addToast('success', 'Plist saved. Reload to apply changes.');
+    } catch (err) {
+      addToast('error', 'Save failed: ' + err.message);
+    }
+  };
+
+  const handleSaveAndReload = async () => {
+    try {
+      await api('/jobs/' + encoded + '/plist', {
+        method: 'PUT',
+        body: JSON.stringify({ content: plistContent }),
+      });
+      setModified(false);
+      await api('/jobs/' + encoded + '/reload', { method: 'POST' });
+      addToast('success', 'Saved and reloading ' + job.label + '...');
+    } catch (err) {
+      addToast('error', 'Save & reload failed: ' + err.message);
+    }
+  };
+
+  const handleExport = () => {
+    const a = document.createElement('a');
+    a.href = '/api/jobs/' + encoded + '/export';
+    a.download = job.label + '.plist';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    addToast('success', 'Exported ' + job.label + '.plist');
+  };
+
+  const handleDelete = () => {
+    setShowConfirm({
+      title: 'Delete Job',
+      message: 'Are you sure you want to delete "' + job.label + '"? This will unload and remove the plist file.',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await api('/jobs/' + encoded, { method: 'DELETE' });
+          addToast('success', 'Deleted ' + job.label);
+          onClose();
+        } catch (err) {
+          addToast('error', 'Delete failed: ' + err.message);
+        }
+      }
+    });
+  };
+
+  return (
+    <>
+      <div className={'panel-overlay' + (job ? ' visible' : '')} onClick={onClose} />
+      <div className={'detail-panel' + (job ? ' open' : '')}>
+        <div className="panel-header">
+          <div className="panel-header-title">
+            <div className={'status-dot ' + status} />
+            {job.label}
+          </div>
+          <div className="panel-header-actions">
+            <button className="btn btn-sm" onClick={() => handleAction('start')}>
+              <Icon name="play" size={12} /> Start
+            </button>
+            <button className="btn btn-sm" onClick={() => handleAction('stop')}>
+              <Icon name="square" size={12} /> Stop
+            </button>
+            <button className="btn btn-sm" onClick={() => handleAction('run-now')} title="One-shot execution via kickstart">
+              <Icon name="zap" size={12} /> Run Now
+            </button>
+            <button className="btn btn-sm btn-accent" onClick={() => handleAction('reload')}>
+              <Icon name="refresh-cw" size={12} /> Reload
+            </button>
+            <button className="icon-btn" onClick={onClose}>
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+        </div>
+
+        <div className="panel-tabs">
+          {['info', 'logs', 'edit'].map(t => (
+            <div
+              key={t}
+              className={'panel-tab' + (activeTab === t ? ' active' : '')}
+              onClick={() => setActiveTab(t)}
+            >
+              {t === 'info' ? 'Info' : t === 'logs' ? 'Logs' : 'Edit Plist'}
+            </div>
+          ))}
+        </div>
+
+        <div className="panel-body">
+          {activeTab === 'info' && (
+            <div className="animate-fade">
+              <div className="info-grid">
+                <span className="info-label">Label</span>
+                <span className="info-value">{job.label}</span>
+                <span className="info-label">Status</span>
+                <span className="info-value">
+                  <span className={'status-dot ' + status} style={{ marginRight: 8 }} />
+                  {statusLabel(status)}
+                  {job.pid && ' (PID ' + job.pid + ')'}
+                </span>
+                <span className="info-label">Domain</span>
+                <span className="info-value">{job.domain}</span>
+                <span className="info-label">Plist</span>
+                <span className="info-value">{job.plist_path}</span>
+                <span className="info-label">Schedule</span>
+                <span className="info-value">{job.schedule_human}</span>
+                <span className="info-label">Loaded</span>
+                <span className="info-value">{job.loaded ? 'Yes' : 'No'}</span>
+                <span className="info-label">Enabled</span>
+                <span className="info-value">{job.enabled ? 'Yes' : 'No'}</span>
+                <span className="info-label">Last Exit</span>
+                <span className="info-value">
+                  {job.last_exit !== null ? (
+                    <span className={'exit-code ' + (job.last_exit === 0 ? 'zero' : 'nonzero')}>{job.last_exit}</span>
+                  ) : '\u2014'}
+                </span>
+                {job.blame && (
+                  <>
+                    <span className="info-label">Blame</span>
+                    <span className="info-value" style={{ color: 'var(--status-failed)' }}>{job.blame}</span>
+                  </>
+                )}
+                {job.program && (
+                  <>
+                    <span className="info-label">Program</span>
+                    <span className="info-value">{job.program}</span>
+                  </>
+                )}
+                {job.program_arguments && job.program_arguments.length > 0 && (
+                  <>
+                    <span className="info-label">Arguments</span>
+                    <span className="info-value">{job.program_arguments.join(' ')}</span>
+                  </>
+                )}
+                {job.working_directory && (
+                  <>
+                    <span className="info-label">Working Dir</span>
+                    <span className="info-value">{job.working_directory}</span>
+                  </>
+                )}
+                <span className="info-label">Stdout</span>
+                <span className="info-value">{job.stdout_path || '\u2014'}</span>
+                <span className="info-label">Stderr</span>
+                <span className="info-value">{job.stderr_path || '\u2014'}</span>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                <button className="btn" onClick={() => handleAction(job.enabled ? 'disable' : 'enable')}>
+                  <Icon name="toggle-left" size={14} /> {job.enabled ? 'Disable' : 'Enable'}
+                </button>
+                <button className="btn" onClick={() => handleAction(job.loaded ? 'unload' : 'load')}>
+                  <Icon name={job.loaded ? 'log-out' : 'log-in'} size={14} /> {job.loaded ? 'Unload' : 'Load'}
+                </button>
+                <button className="btn" onClick={handleExport}>
+                  <Icon name="download" size={14} /> Export Plist
+                </button>
+                <button className="btn btn-danger" onClick={handleDelete}><Icon name="trash-2" size={14} /> Delete Job</button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'edit' && (
+            <div className="animate-fade">
+              <div className="plist-editor">
+                <div className="plist-editor-header">
+                  <span>{job.plist_path}</span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {modified && <span style={{ color: 'var(--accent)', fontSize: 11 }}>{'\u25CF'} Modified</span>}
+                    <button
+                      className="btn btn-sm btn-accent"
+                      onClick={handleSavePlist}
+                      disabled={!modified}
+                      style={{ opacity: modified ? 1 : 0.5 }}
+                    >
+                      <Icon name="save" size={12} /> Save
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      onClick={handleSaveAndReload}
+                    >
+                      <Icon name="refresh-cw" size={12} /> Save & Reload
+                    </button>
+                  </div>
+                </div>
+                {plistLoading ? (
+                  <div style={{ padding: 20, color: 'var(--text-tertiary)' }}>Loading plist...</div>
+                ) : (
+                  <textarea
+                    value={plistContent}
+                    onChange={e => { setPlistContent(e.target.value); setModified(true); }}
+                    spellCheck={false}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'logs' && (
+            <div className="animate-fade">
+              <div className="log-viewer">
+                <div className="log-toolbar">
+                  <div className="log-toolbar-left">
+                    {['stderr', 'stdout', 'unified'].map(t => (
+                      <div
+                        key={t}
+                        className={'log-tab' + (logTab === t ? ' active' : '')}
+                        onClick={() => setLogTab(t)}
+                      >
+                        {t}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button className="btn btn-sm btn-ghost" onClick={() => {
+                      // Refresh logs
+                      setLogLoading(true);
+                      api('/jobs/' + encoded + '/logs/' + logTab)
+                        .then(data => { setLogContent(data.content || data.lines || ''); setLogLoading(false); })
+                        .catch(err => { setLogContent('Error: ' + err.message); setLogLoading(false); });
+                    }}>
+                      <Icon name="refresh-cw" size={12} /> Refresh
+                    </button>
+                  </div>
+                </div>
+                <div className="log-content">
+                  {logLoading ? (
+                    <div style={{ color: 'var(--text-tertiary)' }}>Loading logs...</div>
+                  ) : (
+                    typeof logContent === 'string' ? (
+                      logContent.split('\\n').map((line, i) => (
+                        <div key={i} className="log-line">
+                          <span className={line.toLowerCase().includes('error') || line.toLowerCase().includes('traceback') ? 'error' : line.toLowerCase().includes('warn') ? 'warn' : ''}>
+                            {line}
+                          </span>
+                        </div>
+                      ))
+                    ) : Array.isArray(logContent) ? (
+                      logContent.map((line, i) => (
+                        <div key={i} className="log-line">
+                          {line.time && <span className="timestamp">{line.time} </span>}
+                          <span className={line.level === 'error' ? 'error' : line.level === 'warn' ? 'warn' : ''}>
+                            {line.text || line}
+                          </span>
+                        </div>
+                      ))
+                    ) : null
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---- Create Job Modal ----
+function CreateJobModal({ onClose, addToast }) {
+  const [step, setStep] = useState('form'); // form | preview
+  const [creating, setCreating] = useState(false);
+  const [formData, setFormData] = useState({
+    label: '',
+    program: '',
+    args: '',
+    domain: 'user-agent',
+    runAtLoad: true,
+    keepAlive: false,
+    scheduleType: 'none',
+    startInterval: '',
+    calendarHour: '',
+    calendarMinute: '0',
+    calendarWeekdays: [],
+    calendarDay: '',
+    watchPaths: '',
+    stdoutPath: '',
+    stderrPath: '',
+    workingDir: '',
+  });
+
+  const update = (k, v) => setFormData(prev => ({ ...prev, [k]: v }));
+
+  const buildPlistData = () => {
+    const data = {
+      Label: formData.label || 'com.example.my-tool',
+      ProgramArguments: [formData.program || '/usr/local/bin/python3'].concat(
+        formData.args ? formData.args.split('\\n').filter(Boolean) : []
+      ),
+    };
+    if (formData.scheduleType === 'interval' && formData.startInterval) {
+      data.StartInterval = parseInt(formData.startInterval, 10);
+    }
+    if (formData.scheduleType === 'calendar') {
+      if (formData.calendarWeekdays.length > 1) {
+        data.StartCalendarInterval = formData.calendarWeekdays.map(wd => {
+          const entry = {};
+          if (formData.calendarHour) entry.Hour = parseInt(formData.calendarHour, 10);
+          if (formData.calendarMinute) entry.Minute = parseInt(formData.calendarMinute, 10);
+          entry.Weekday = wd;
+          if (formData.calendarDay) entry.Day = parseInt(formData.calendarDay, 10);
+          return entry;
+        });
+      } else {
+        const entry = {};
+        if (formData.calendarHour) entry.Hour = parseInt(formData.calendarHour, 10);
+        if (formData.calendarMinute) entry.Minute = parseInt(formData.calendarMinute, 10);
+        if (formData.calendarWeekdays.length === 1) entry.Weekday = formData.calendarWeekdays[0];
+        if (formData.calendarDay) entry.Day = parseInt(formData.calendarDay, 10);
+        data.StartCalendarInterval = entry;
+      }
+    }
+    if (formData.scheduleType === 'watch' && formData.watchPaths) {
+      data.WatchPaths = formData.watchPaths.split('\\n').filter(Boolean);
+    }
+    if (formData.runAtLoad) data.RunAtLoad = true;
+    if (formData.keepAlive) data.KeepAlive = true;
+    if (formData.stdoutPath) data.StandardOutPath = formData.stdoutPath;
+    if (formData.stderrPath) data.StandardErrorPath = formData.stderrPath;
+    if (formData.workingDir) data.WorkingDirectory = formData.workingDir;
+    return data;
+  };
+
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      await api('/jobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          plist_data: buildPlistData(),
+          domain: formData.domain,
+        }),
+      });
+      addToast('success', 'Created and loaded ' + (formData.label || 'new job'));
+      onClose();
+    } catch (err) {
+      addToast('error', 'Create failed: ' + err.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // Generate preview XML for display
+  const previewXml = useMemo(() => {
+    const label = formData.label || 'com.example.my-tool';
+    const prog = formData.program || '/usr/local/bin/python3';
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\\n';
+    xml += '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"\\n';
+    xml += '  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\\n';
+    xml += '<plist version="1.0">\\n<dict>\\n';
+    xml += '    <key>Label</key>\\n    <string>' + label + '</string>\\n';
+    xml += '    <key>ProgramArguments</key>\\n    <array>\\n';
+    xml += '        <string>' + prog + '</string>\\n';
+    if (formData.args) {
+      formData.args.split('\\n').filter(Boolean).forEach(a => {
+        xml += '        <string>' + a + '</string>\\n';
+      });
+    }
+    xml += '    </array>\\n';
+    if (formData.scheduleType === 'interval' && formData.startInterval) {
+      xml += '    <key>StartInterval</key>\\n    <integer>' + formData.startInterval + '</integer>\\n';
+    }
+    if (formData.scheduleType === 'calendar') {
+      if (formData.calendarWeekdays.length > 1) {
+        xml += '    <key>StartCalendarInterval</key>\\n    <array>\\n';
+        formData.calendarWeekdays.forEach(wd => {
+          xml += '        <dict>\\n';
+          if (formData.calendarHour) xml += '            <key>Hour</key>\\n            <integer>' + formData.calendarHour + '</integer>\\n';
+          if (formData.calendarMinute) xml += '            <key>Minute</key>\\n            <integer>' + formData.calendarMinute + '</integer>\\n';
+          xml += '            <key>Weekday</key>\\n            <integer>' + wd + '</integer>\\n';
+          if (formData.calendarDay) xml += '            <key>Day</key>\\n            <integer>' + formData.calendarDay + '</integer>\\n';
+          xml += '        </dict>\\n';
+        });
+        xml += '    </array>\\n';
+      } else {
+        xml += '    <key>StartCalendarInterval</key>\\n    <dict>\\n';
+        if (formData.calendarHour) xml += '        <key>Hour</key>\\n        <integer>' + formData.calendarHour + '</integer>\\n';
+        if (formData.calendarMinute) xml += '        <key>Minute</key>\\n        <integer>' + formData.calendarMinute + '</integer>\\n';
+        if (formData.calendarWeekdays.length === 1) xml += '        <key>Weekday</key>\\n        <integer>' + formData.calendarWeekdays[0] + '</integer>\\n';
+        if (formData.calendarDay) xml += '        <key>Day</key>\\n        <integer>' + formData.calendarDay + '</integer>\\n';
+        xml += '    </dict>\\n';
+      }
+    }
+    if (formData.scheduleType === 'watch' && formData.watchPaths) {
+      xml += '    <key>WatchPaths</key>\\n    <array>\\n';
+      formData.watchPaths.split('\\n').filter(Boolean).forEach(p => {
+        xml += '        <string>' + p + '</string>\\n';
+      });
+      xml += '    </array>\\n';
+    }
+    if (formData.runAtLoad) xml += '    <key>RunAtLoad</key>\\n    <true/>\\n';
+    if (formData.keepAlive) xml += '    <key>KeepAlive</key>\\n    <true/>\\n';
+    if (formData.stdoutPath) xml += '    <key>StandardOutPath</key>\\n    <string>' + formData.stdoutPath + '</string>\\n';
+    if (formData.stderrPath) xml += '    <key>StandardErrorPath</key>\\n    <string>' + formData.stderrPath + '</string>\\n';
+    if (formData.workingDir) xml += '    <key>WorkingDirectory</key>\\n    <string>' + formData.workingDir + '</string>\\n';
+    xml += '</dict>\\n</plist>';
+    return xml;
+  }, [formData]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">
+            <Icon name="plus-circle" size={18} /> Create New Job
+          </div>
+          <button className="icon-btn" onClick={onClose}>
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+
+        <div className="modal-body">
+          {step === 'form' ? (
+            <div className="animate-fade">
+              <div className="form-group">
+                <label className="form-label">Label (reverse-DNS)</label>
+                <input
+                  className="form-input"
+                  placeholder="com.example.my-tool"
+                  value={formData.label}
+                  onChange={e => update('label', e.target.value)}
+                />
+                <div className="form-hint">Unique identifier, e.g. com.example.tool-name</div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Program / Command</label>
+                <input
+                  className="form-input"
+                  placeholder="/usr/local/bin/python3"
+                  value={formData.program}
+                  onChange={e => update('program', e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Arguments (one per line)</label>
+                <textarea
+                  className="form-input"
+                  rows={3}
+                  placeholder={"/path/to/script.py\\n--flag\\nvalue"}
+                  value={formData.args}
+                  onChange={e => update('args', e.target.value)}
+                  style={{ fontFamily: 'var(--font-mono)', resize: 'vertical' }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Domain</label>
+                <select className="form-input" value={formData.domain} onChange={e => update('domain', e.target.value)}>
+                  <option value="user-agent">User Agent (~/Library/LaunchAgents)</option>
+                  <option value="global-agent">Global Agent (/Library/LaunchAgents)</option>
+                  <option value="system-daemon">System Daemon (/Library/LaunchDaemons)</option>
+                </select>
+              </div>
+
+              {/* Schedule Section */}
+              <div style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', borderRadius: 6, padding: 14, marginBottom: 14 }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                  Schedule
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Schedule Type</label>
+                  <select className="form-input" value={formData.scheduleType} onChange={e => update('scheduleType', e.target.value)}>
+                    <option value="none">None (manual start only)</option>
+                    <option value="interval">Interval (every N seconds)</option>
+                    <option value="calendar">Calendar (cron-like schedule)</option>
+                    <option value="watch">Watch Paths (run when files change)</option>
+                  </select>
+                  <div className="form-hint">
+                    {formData.scheduleType === 'none' && 'Job will only run when started manually or via RunAtLoad/KeepAlive.'}
+                    {formData.scheduleType === 'interval' && 'Job repeats at a fixed interval.'}
+                    {formData.scheduleType === 'calendar' && 'Job runs at specific times (like cron). Leave fields blank for "any".'}
+                    {formData.scheduleType === 'watch' && 'Job runs whenever the specified paths are modified.'}
+                  </div>
+                </div>
+
+                {formData.scheduleType === 'interval' && (
+                  <div className="form-group animate-fade">
+                    <label className="form-label">Interval (seconds)</label>
+                    <div className="form-row">
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <input
+                          className="form-input"
+                          type="number"
+                          placeholder="e.g. 300"
+                          value={formData.startInterval}
+                          onChange={e => update('startInterval', e.target.value)}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', color: 'var(--text-tertiary)', fontSize: 11 }}>
+                        {formData.startInterval && ('= ' + (formData.startInterval >= 3600 ? Math.floor(formData.startInterval / 3600) + 'h ' + Math.floor((formData.startInterval % 3600) / 60) + 'm' : formData.startInterval >= 60 ? Math.floor(formData.startInterval / 60) + 'm ' + (formData.startInterval % 60) + 's' : formData.startInterval + 's'))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {formData.scheduleType === 'calendar' && (
+                  <div className="animate-fade">
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label className="form-label">Hour (0-23)</label>
+                        <input className="form-input" type="number" min="0" max="23" placeholder="any" value={formData.calendarHour} onChange={e => update('calendarHour', e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Minute (0-59)</label>
+                        <input className="form-input" type="number" min="0" max="59" placeholder="0" value={formData.calendarMinute} onChange={e => update('calendarMinute', e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Weekdays (click to select, leave empty for every day)</label>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day, idx) => {
+                          const isSelected = formData.calendarWeekdays.includes(idx);
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                const next = isSelected
+                                  ? formData.calendarWeekdays.filter(d => d !== idx)
+                                  : [...formData.calendarWeekdays, idx].sort();
+                                update('calendarWeekdays', next);
+                              }}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: 4,
+                                fontSize: 11,
+                                fontFamily: 'var(--font-mono)',
+                                cursor: 'pointer',
+                                userSelect: 'none',
+                                transition: 'all 0.15s',
+                                background: isSelected ? 'var(--accent)' : 'var(--bg-elevated)',
+                                color: isSelected ? 'var(--text-inverse)' : 'var(--text-secondary)',
+                                border: '1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border-default)'),
+                                fontWeight: isSelected ? 600 : 400,
+                              }}
+                            >
+                              {day}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="form-hint" style={{ marginTop: 4 }}>
+                        {formData.calendarWeekdays.length === 0
+                          ? 'Every day'
+                          : formData.calendarWeekdays.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Day of Month</label>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input
+                          className="form-input"
+                          style={{ width: 80 }}
+                          type="number"
+                          min="1"
+                          max="31"
+                          placeholder="any"
+                          value={formData.calendarDay}
+                          onChange={e => {
+                            let v = e.target.value;
+                            if (v !== '') {
+                              const n = parseInt(v, 10);
+                              if (isNaN(n)) v = '';
+                              else if (n > 31) v = '31';
+                              else if (n < 1 && v !== '') v = '1';
+                            }
+                            update('calendarDay', v);
+                          }}
+                        />
+                        {formData.calendarDay && (
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => update('calendarDay', '')}
+                            title="Clear to 'any day'"
+                          >
+                            <Icon name="x" size={12} /> Any
+                          </button>
+                        )}
+                        {!formData.calendarDay && (
+                          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>any day of month</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="form-hint" style={{ marginTop: -8, marginBottom: 8 }}>
+                      Preview: {(() => {
+                        const parts = [];
+                        const wd = formData.calendarWeekdays;
+                        if (wd.length > 0) parts.push(wd.map(d => ['Sundays','Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays'][d]).join(', '));
+                        if (formData.calendarDay) parts.push('day ' + formData.calendarDay + ' of month');
+                        if (wd.length === 0 && !formData.calendarDay) parts.push('Daily');
+                        parts.push('at ' + (formData.calendarHour || '*') + ':' + (formData.calendarMinute || '0').padStart(2, '0'));
+                        return parts.join(' ');
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {formData.scheduleType === 'watch' && (
+                  <div className="form-group animate-fade">
+                    <label className="form-label">Watch Paths (one per line)</label>
+                    <textarea
+                      className="form-input"
+                      rows={3}
+                      placeholder={"~/Downloads\\n/tmp/trigger-file"}
+                      value={formData.watchPaths}
+                      onChange={e => update('watchPaths', e.target.value)}
+                      style={{ fontFamily: 'var(--font-mono)', resize: 'vertical' }}
+                    />
+                    <div className="form-hint">Job runs whenever any of these paths are modified.</div>
+                  </div>
+                )}
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Stdout Path</label>
+                  <input className="form-input" placeholder="/tmp/my-tool.log" value={formData.stdoutPath} onChange={e => update('stdoutPath', e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Stderr Path</label>
+                  <input className="form-input" placeholder="/tmp/my-tool.err" value={formData.stderrPath} onChange={e => update('stderrPath', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Working Directory</label>
+                <input className="form-input" placeholder="(optional)" value={formData.workingDir} onChange={e => update('workingDir', e.target.value)} />
+              </div>
+
+              <div style={{ marginTop: 8 }}>
+                <div className="toggle-row">
+                  <span className="toggle-row-label">Run at Load</span>
+                  <div className={'toggle-switch' + (formData.runAtLoad ? ' on' : '')} onClick={() => update('runAtLoad', !formData.runAtLoad)} />
+                </div>
+                <div className="toggle-row">
+                  <span className="toggle-row-label">Keep Alive</span>
+                  <div className={'toggle-switch' + (formData.keepAlive ? ' on' : '')} onClick={() => update('keepAlive', !formData.keepAlive)} />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="animate-fade">
+              <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                Preview the generated plist before creating:
+              </div>
+              <div className="plist-preview">{previewXml}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          {step === 'preview' && (
+            <button className="btn" onClick={() => setStep('form')} style={{ marginRight: 'auto' }}>
+              <Icon name="arrow-left" size={14} /> Back
+            </button>
+          )}
+          <button className="btn" onClick={onClose}>Cancel</button>
+          {step === 'form' ? (
+            <button className="btn btn-accent" onClick={() => setStep('preview')}>
+              Preview Plist <Icon name="arrow-right" size={14} />
+            </button>
+          ) : (
+            <button
+              className="btn btn-accent"
+              onClick={handleCreate}
+              disabled={creating}
+              style={{ opacity: creating ? 0.6 : 1 }}
+            >
+              <Icon name="plus" size={14} /> {creating ? 'Creating...' : 'Create & Load'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Settings Modal ----
+function SettingsModal({ onClose, settings, setSettings, addToast }) {
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api('/settings', {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      });
+      addToast('success', 'Settings saved');
+      onClose();
+    } catch (err) {
+      addToast('error', 'Failed to save settings: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 480 }}>
+        <div className="modal-header">
+          <div className="modal-title"><Icon name="settings" size={18} /> Settings</div>
+          <button className="icon-btn" onClick={onClose}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="modal-body">
+          <div className="settings-section">
+            <div className="settings-section-title">Refresh</div>
+            <div className="form-group">
+              <label className="form-label">Poll Interval (seconds)</label>
+              <input
+                className="form-input"
+                type="number"
+                value={settings.pollInterval}
+                onChange={e => setSettings(s => ({ ...s, pollInterval: e.target.value }))}
+                style={{ width: 120 }}
+              />
+              <div className="form-hint">How often to refresh job status via WebSocket</div>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Display</div>
+            <div className="toggle-row">
+              <span className="toggle-row-label">Show Apple System Jobs</span>
+              <div
+                className={'toggle-switch' + (settings.showApple ? ' on' : '')}
+                onClick={() => setSettings(s => ({ ...s, showApple: !s.showApple }))}
+              />
+            </div>
+            <div className="toggle-row">
+              <span className="toggle-row-label">Dark Mode</span>
+              <div
+                className={'toggle-switch' + (settings.darkMode ? ' on' : '')}
+                onClick={() => setSettings(s => ({ ...s, darkMode: !s.darkMode }))}
+              />
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Safety</div>
+            <div className="toggle-row">
+              <span className="toggle-row-label">Confirm before destructive actions</span>
+              <div
+                className={'toggle-switch' + (settings.confirmDestructive ? ' on' : '')}
+                onClick={() => setSettings(s => ({ ...s, confirmDestructive: !s.confirmDestructive }))}
+              />
+            </div>
+            <div className="toggle-row">
+              <span className="toggle-row-label">Confirm before modifying Apple jobs</span>
+              <div
+                className={'toggle-switch' + (settings.confirmApple ? ' on' : '')}
+                onClick={() => setSettings(s => ({ ...s, confirmApple: !s.confirmApple }))}
+              />
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Keyboard Shortcuts</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: '6px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
+              <kbd className="kbd">s</kbd> <span>Start selected job</span>
+              <kbd className="kbd">x</kbd> <span>Stop selected job</span>
+              <kbd className="kbd">r</kbd> <span>Reload selected job</span>
+              <kbd className="kbd">e</kbd> <span>Edit selected job</span>
+              <kbd className="kbd">l</kbd> <span>View logs</span>
+              <kbd className="kbd">n</kbd> <span>Create new job</span>
+              <kbd className="kbd">Esc</kbd> <span>Close panel / deselect</span>
+              <kbd className="kbd">/</kbd> <span>Focus search</span>
+              <kbd className="kbd">?</kbd> <span>Toggle shortcuts help</span>
+            </div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-accent" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save & Close'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Main App ----
+function App() {
+  const { jobs, connected, refresh } = useWebSocket();
+  const [search, setSearch] = useState('');
+  const [domainFilter, setDomainFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(null);
+  const [showApple, setShowApple] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [detailJob, setDetailJob] = useState(null);
+  const [detailInitialTab, setDetailInitialTab] = useState('info');
+  const [showCreate, setShowCreate] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  const [settings, setSettings] = useState({
+    pollInterval: 5,
+    showApple: false,
+    darkMode: true,
+    confirmDestructive: true,
+    confirmApple: true,
+  });
+
+  const toastId = useRef(0);
+
+  const addToast = useCallback((type, message) => {
+    const id = ++toastId.current;
+    setToasts(prev => [...prev, { id, type, message }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
+  }, []);
+
+  const removeToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // Load settings from backend on mount
+  useEffect(() => {
+    api('/settings')
+      .then(data => {
+        if (data) setSettings(prev => ({ ...prev, ...data }));
+      })
+      .catch(() => {}); // Use defaults if settings endpoint not available
+  }, []);
+
+  // Apply theme
+  useEffect(() => {
+    if (settings.darkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+  }, [settings.darkMode]);
+
+  // Keep detail panel job data fresh from WS updates
+  useEffect(() => {
+    if (detailJob && jobs.length > 0) {
+      const updated = jobs.find(j => j.label === detailJob.label);
+      if (updated && updated !== detailJob) {
+        setDetailJob(updated);
+      }
+    }
+  }, [jobs]);
+
+  // Filter jobs
+  const filteredJobs = useMemo(() => {
+    return jobs.filter(j => {
+      if (!showApple && isAppleDomain(j.domain)) return false;
+      if (domainFilter !== 'all') {
+        if (domainFilter === 'apple') {
+          if (!isAppleDomain(j.domain)) return false;
+        } else if (j.domain !== domainFilter) return false;
+      }
+      if (statusFilter && getJobStatus(j) !== statusFilter) return false;
+      if (search && !j.label.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+  }, [jobs, search, domainFilter, statusFilter, showApple]);
+
+  // Import handler
+  const fileInputRef = useRef(null);
+  const handleImport = () => {
+    fileInputRef.current && fileInputRef.current.click();
+  };
+  const handleFileSelected = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      await api('/jobs/import', {
+        method: 'POST',
+        body: JSON.stringify({ content: content, domain: 'user-agent' }),
+      });
+      addToast('success', 'Imported ' + file.name);
+      refresh();
+    } catch (err) {
+      addToast('error', 'Import failed: ' + err.message);
+    }
+    // Reset file input so the same file can be re-imported
+    e.target.value = '';
+  };
+
+  // Row click handler that supports optional tab
+  const handleRowClick = (job, tab) => {
+    setDetailInitialTab(tab || 'info');
+    setDetailJob(job);
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e) => {
+      // Allow Esc from input fields to clear/blur
+      if (e.key === 'Escape') {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+          // Let the FilterBar's own Esc handler run first for search
+          return;
+        }
+        setDetailJob(null); setShowCreate(false); setShowSettings(false);
+        return;
+      }
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+      if (e.key === 'n') { e.preventDefault(); setShowCreate(true); }
+      if (e.key === '/') { e.preventDefault(); document.querySelector('.filter-search') && document.querySelector('.filter-search').focus(); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  return (
+    <div className="app-shell">
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".plist"
+        style={{ display: 'none' }}
+        onChange={handleFileSelected}
+      />
+
+      {/* Top Bar */}
+      <div className="topbar">
+        <div className="topbar-left">
+          <span className="topbar-brand">launchmaster</span>
+          <span className="topbar-subtitle">launchd control center</span>
+        </div>
+        <div className="topbar-right">
+          <div className="topbar-ws-status">
+            <div className={'ws-dot' + (connected ? '' : ' disconnected')} />
+            <span>{connected ? 'Live' : 'Disconnected'}</span>
+          </div>
+          <button className="btn btn-sm" onClick={handleImport}>
+            <Icon name="upload" size={13} /> Import
+          </button>
+          <button className="btn btn-sm btn-accent" onClick={() => setShowCreate(true)}>
+            <Icon name="plus" size={13} /> New Job
+          </button>
+          <button className="icon-btn" onClick={() => { refresh(); addToast('success', 'Status refreshed'); }}>
+            <Icon name="refresh-cw" size={16} />
+          </button>
+          <button className="icon-btn" onClick={() => setShowSettings(true)}>
+            <Icon name="settings" size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="main-content">
+        <StatusCards jobs={filteredJobs} activeFilter={statusFilter} setActiveFilter={setStatusFilter} />
+
+        <FailedPanel
+          jobs={filteredJobs}
+          onOpenDetail={(j) => { setDetailInitialTab('info'); setDetailJob(j); }}
+          onOpenLogs={(j) => { setDetailInitialTab('logs'); setDetailJob(j); }}
+          onOpenEdit={(j) => { setDetailInitialTab('edit'); setDetailJob(j); }}
+          onReload={async (j) => {
+            try {
+              await api('/jobs/' + encodeURIComponent(j.label) + '/reload', { method: 'POST' });
+              addToast('success', 'Reloading ' + j.label + '...');
+            } catch (err) {
+              addToast('error', 'Reload failed: ' + err.message);
+            }
+          }}
+        />
+
+        <FilterBar
+          search={search} setSearch={setSearch}
+          domainFilter={domainFilter} setDomainFilter={setDomainFilter}
+          showApple={showApple} setShowApple={setShowApple}
+          activeFilter={statusFilter} setActiveFilter={setStatusFilter}
+        />
+
+        <BulkBar
+          count={selected.length}
+          onClear={() => setSelected([])}
+          selectedLabels={selected}
+          addToast={addToast}
+          setShowConfirm={setShowConfirm}
+        />
+
+        <JobTable
+          jobs={filteredJobs}
+          selected={selected}
+          setSelected={setSelected}
+          onRowClick={handleRowClick}
+          showApple={showApple}
+          addToast={addToast}
+          setShowConfirm={setShowConfirm}
+        />
+      </div>
+
+      {/* Detail Panel */}
+      {detailJob && (
+        <DetailPanel
+          job={detailJob}
+          initialTab={detailInitialTab}
+          onClose={() => setDetailJob(null)}
+          addToast={addToast}
+          setShowConfirm={setShowConfirm}
+        />
+      )}
+
+      {/* Create Modal */}
+      {showCreate && (
+        <CreateJobModal onClose={() => setShowCreate(false)} addToast={addToast} />
+      )}
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          settings={settings}
+          setSettings={setSettings}
+          addToast={addToast}
+        />
+      )}
+
+      {/* Confirm Dialog */}
+      {showConfirm && (
+        <ConfirmDialog
+          title={showConfirm.title}
+          message={showConfirm.message}
+          danger={showConfirm.danger}
+          onConfirm={() => { showConfirm.onConfirm(); setShowConfirm(null); }}
+          onCancel={() => setShowConfirm(null)}
+        />
+      )}
+
+      {/* Toasts */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>"""
+
+# === GLOBALS ===
+_cached_jobs: List[Dict[str, Any]] = []
+_ws_clients: Set[WebSocket] = set()
+_config: Dict[str, Any] = {}
+_poll_task: Optional[asyncio.Task] = None
+
+# === PLIST DIRECTORIES ===
+PLIST_DIRS = {
+    "user-agent": os.path.expanduser("~/Library/LaunchAgents"),
+    "global-agent": "/Library/LaunchAgents",
+    "system-daemon": "/Library/LaunchDaemons",
+    "apple-agent": "/System/Library/LaunchAgents",
+    "apple-daemon": "/System/Library/LaunchDaemons",
+}
+
+WEEKDAY_NAMES = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat"}
+
+
+# ============================================================
+# Step 2: launchd Discovery Engine
+# ============================================================
+
+def discover_plists() -> List[Dict[str, Any]]:
+    """Scan all plist directories and parse each .plist file."""
+    results = []
+    for domain, directory in PLIST_DIRS.items():
+        if not os.path.isdir(directory):
+            continue
+        try:
+            entries = os.listdir(directory)
+        except PermissionError:
+            logger.warning("Permission denied scanning %s", directory)
+            continue
+        except OSError as exc:
+            logger.warning("Error scanning %s: %s", directory, exc)
+            continue
+
+        for filename in entries:
+            if not filename.endswith(".plist"):
+                continue
+            filepath = os.path.join(directory, filename)
+            entry: Dict[str, Any] = {
+                "plist_path": filepath,
+                "domain": domain,
+                "is_apple": domain.startswith("apple"),
+                "parse_error": None,
+            }
+            try:
+                with open(filepath, "rb") as f:
+                    plist_data = plistlib.load(f)
+                entry["label"] = plist_data.get("Label", filename.replace(".plist", ""))
+                entry["program_arguments"] = plist_data.get("ProgramArguments")
+                entry["program"] = plist_data.get("Program")
+                entry["run_at_load"] = plist_data.get("RunAtLoad", False)
+                entry["keep_alive"] = plist_data.get("KeepAlive", False)
+                entry["start_interval"] = plist_data.get("StartInterval")
+                entry["start_calendar_interval"] = plist_data.get("StartCalendarInterval")
+                entry["watch_paths"] = plist_data.get("WatchPaths")
+                entry["stdout_path"] = plist_data.get("StandardOutPath")
+                entry["stderr_path"] = plist_data.get("StandardErrorPath")
+                entry["working_directory"] = plist_data.get("WorkingDirectory")
+                entry["environment_variables"] = plist_data.get("EnvironmentVariables")
+                entry["disabled"] = plist_data.get("Disabled", False)
+                entry["plist_data"] = plist_data
+            except PermissionError:
+                entry["label"] = filename.replace(".plist", "")
+                entry["parse_error"] = "Permission denied"
+                entry["plist_data"] = {}
+            except (plistlib.InvalidFileException, Exception) as exc:
+                entry["label"] = filename.replace(".plist", "")
+                entry["parse_error"] = str(exc)
+                entry["plist_data"] = {}
+            results.append(entry)
+    return results
+
+
+def get_launchctl_state() -> Dict[str, Dict[str, Any]]:
+    """Parse 'launchctl list' output and return state keyed by label."""
+    state: Dict[str, Dict[str, Any]] = {}
+    try:
+        result = subprocess.run(
+            ["launchctl", "list"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            logger.warning("launchctl list returned %d", result.returncode)
+            return state
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("Failed to run launchctl list: %s", exc)
+        return state
+
+    for line in result.stdout.strip().splitlines()[1:]:  # skip header
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        pid_str, status_str, label = parts[0], parts[1], parts[2]
+        pid = None if pid_str == "-" else _safe_int(pid_str)
+        last_exit = None if status_str == "-" else _safe_int(status_str)
+        state[label] = {"pid": pid, "last_exit": last_exit}
+    return state
+
+
+def _safe_int(value: str) -> Optional[int]:
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def get_job_blame(label: str, domain: str) -> Optional[str]:
+    """Run launchctl blame for a job and return the blame string."""
+    target = _domain_target(label, domain)
+    try:
+        result = subprocess.run(
+            ["launchctl", "blame", target],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        return None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def get_job_detail(label: str, domain: str) -> Dict[str, Any]:
+    """Run launchctl print for detailed job state."""
+    target = _domain_target(label, domain)
+    detail: Dict[str, Any] = {"raw_output": None}
+    try:
+        result = subprocess.run(
+            ["launchctl", "print", target],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            detail["raw_output"] = result.stdout
+            # Parse key fields from the output
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("state ="):
+                    detail["state"] = line.split("=", 1)[1].strip()
+                elif line.startswith("pid ="):
+                    detail["print_pid"] = _safe_int(line.split("=", 1)[1].strip())
+                elif line.startswith("last exit code ="):
+                    detail["last_exit_code"] = _safe_int(line.split("=", 1)[1].strip())
+                elif line.startswith("path ="):
+                    detail["print_path"] = line.split("=", 1)[1].strip()
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return detail
+
+
+def get_disabled_labels() -> Set[str]:
+    """Query launchctl print-disabled for the user domain to find explicitly disabled jobs."""
+    disabled = set()
+    uid = os.getuid()
+    try:
+        result = subprocess.run(
+            ["launchctl", "print-disabled", f"gui/{uid}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if "=>" in line:
+                label_part, state_part = line.split("=>", 1)
+                label = label_part.strip().strip('"')
+                if "disabled" in state_part.lower():
+                    disabled.add(label)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return disabled
+
+
+def build_job_list(include_apple: bool = False) -> List[Dict[str, Any]]:
+    """Merge plist discovery with runtime state from launchctl."""
+    plists = discover_plists()
+    runtime_state = get_launchctl_state()
+    disabled_labels = get_disabled_labels()
+
+    # Build lookup by label from plists
+    jobs_by_label: Dict[str, Dict[str, Any]] = {}
+    for plist_entry in plists:
+        label = plist_entry.get("label", "")
+        if not label:
+            continue
+        if plist_entry.get("is_apple", False) and not include_apple:
+            continue
+        job = dict(plist_entry)
+        # Merge runtime state
+        rt = runtime_state.pop(label, {})
+        job["pid"] = rt.get("pid")
+        job["last_exit"] = rt.get("last_exit")
+        job["loaded"] = rt != {} or job["pid"] is not None
+        # Enabled: not in plist Disabled AND not in launchctl print-disabled
+        job["enabled"] = not job.get("disabled", False) and label not in disabled_labels
+        job["status"] = get_job_status(job)
+        job["schedule_human"] = humanize_schedule(job.get("plist_data", {}))
+        # Remove plist_data from the response to keep payloads small
+        job.pop("plist_data", None)
+        jobs_by_label[label] = job
+
+    # Detect orphan jobs (loaded but no plist on disk)
+    for label, rt in runtime_state.items():
+        # Skip Apple-like labels when not including Apple jobs
+        if not include_apple and (
+            label.startswith("com.apple.") or label.startswith("com.openssh.")
+        ):
+            continue
+        if label in jobs_by_label:
+            continue
+        orphan: Dict[str, Any] = {
+            "label": label,
+            "plist_path": None,
+            "domain": "unknown",
+            "is_apple": label.startswith("com.apple."),
+            "parse_error": None,
+            "pid": rt.get("pid"),
+            "last_exit": rt.get("last_exit"),
+            "loaded": True,
+            "disabled": label in disabled_labels,
+            "enabled": label not in disabled_labels,
+            "program": None,
+            "program_arguments": None,
+            "run_at_load": False,
+            "keep_alive": False,
+            "start_interval": None,
+            "start_calendar_interval": None,
+            "watch_paths": None,
+            "stdout_path": None,
+            "stderr_path": None,
+            "working_directory": None,
+            "environment_variables": None,
+            "schedule_human": "Unknown (no plist)",
+        }
+        orphan["status"] = get_job_status(orphan)
+        if not include_apple and orphan["is_apple"]:
+            continue
+        jobs_by_label[label] = orphan
+
+    return list(jobs_by_label.values())
+
+
+def get_job_status(job: Dict[str, Any]) -> str:
+    """Derive a status string from job state."""
+    if not job.get("enabled", True):
+        return "disabled"
+    pid = job.get("pid")
+    last_exit = job.get("last_exit")
+    loaded = job.get("loaded", False)
+
+    if pid is not None and pid > 0:
+        return "running"
+    if not loaded and job.get("plist_path") is not None:
+        # Has plist but not in launchctl list
+        return "unloaded"
+    if last_exit is not None and last_exit != 0:
+        return "failed"
+    return "idle"
+
+
+def humanize_schedule(plist_data: Dict[str, Any]) -> str:
+    """Convert plist schedule keys to a human-readable string."""
+    if not plist_data:
+        return "Manual"
+
+    keep_alive = plist_data.get("KeepAlive", False)
+    if keep_alive:
+        return "Always running (KeepAlive)"
+
+    start_interval = plist_data.get("StartInterval")
+    if start_interval is not None:
+        try:
+            seconds = int(start_interval)
+        except (ValueError, TypeError):
+            return f"Every {start_interval}s"
+        if seconds >= 3600 and seconds % 3600 == 0:
+            hours = seconds // 3600
+            return f"Every {hours} hour{'s' if hours != 1 else ''}"
+        elif seconds >= 60 and seconds % 60 == 0:
+            minutes = seconds // 60
+            return f"Every {minutes} minute{'s' if minutes != 1 else ''}"
+        else:
+            return f"Every {seconds} second{'s' if seconds != 1 else ''}"
+
+    sci = plist_data.get("StartCalendarInterval")
+    if sci is not None:
+        return _humanize_calendar_interval(sci)
+
+    watch_paths = plist_data.get("WatchPaths")
+    if watch_paths:
+        if isinstance(watch_paths, list):
+            paths_str = ", ".join(str(p) for p in watch_paths)
+        else:
+            paths_str = str(watch_paths)
+        return f"Watching: {paths_str}"
+
+    if plist_data.get("RunAtLoad", False):
+        return "Run at load"
+
+    return "Manual"
+
+
+def _humanize_calendar_interval(sci: Any) -> str:
+    """Convert StartCalendarInterval (dict or list of dicts) to readable string."""
+    if isinstance(sci, dict):
+        entries = [sci]
+    elif isinstance(sci, list):
+        entries = sci
+    else:
+        return "Calendar schedule"
+
+    if not entries:
+        return "Calendar schedule"
+
+    # Collect all weekdays mentioned
+    weekdays: List[str] = []
+    hour = None
+    minute = None
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        wd = entry.get("Weekday")
+        if wd is not None:
+            weekdays.append(WEEKDAY_NAMES.get(wd, str(wd)))
+        h = entry.get("Hour")
+        m = entry.get("Minute")
+        if h is not None:
+            hour = h
+        if m is not None:
+            minute = m
+
+    # Build time string
+    if hour is not None:
+        minute_val = minute if minute is not None else 0
+        h_int = int(hour)
+        m_int = int(minute_val)
+        ampm = "AM" if h_int < 12 else "PM"
+        h_display = h_int % 12
+        if h_display == 0:
+            h_display = 12
+        time_str = f"{h_display}:{m_int:02d} {ampm}"
+    elif minute is not None:
+        time_str = f":{int(minute):02d} past every hour"
+    else:
+        time_str = None
+
+    # Build day string
+    if weekdays:
+        day_str = ", ".join(weekdays)
+    elif any(isinstance(e, dict) and "Day" in e for e in entries):
+        days = [str(e["Day"]) for e in entries if isinstance(e, dict) and "Day" in e]
+        day_str = "Day " + ", ".join(days) + " of month"
+    else:
+        day_str = None
+
+    parts = []
+    if day_str:
+        parts.append(day_str)
+    if time_str:
+        parts.append(f"at {time_str}")
+
+    if parts:
+        return " ".join(parts)
+    return "Calendar schedule"
+
+
+# ============================================================
+# Step 3: Job Control Operations
+# ============================================================
+
+def _domain_target(label: str, domain: str) -> str:
+    """Return the launchctl domain target path for a job."""
+    uid = os.getuid()
+    if domain in ("system-daemon",):
+        return f"system/{label}"
+    return f"gui/{uid}/{label}"
+
+
+def _domain_prefix(domain: str) -> str:
+    """Return the domain prefix (without label) for bootstrap/bootout."""
+    uid = os.getuid()
+    if domain in ("system-daemon",):
+        return "system"
+    return f"gui/{uid}"
+
+
+def _run_launchctl(args: List[str], timeout: int = 10) -> Dict[str, Any]:
+    """Run a launchctl command and return structured result."""
+    try:
+        result = subprocess.run(
+            ["launchctl"] + args,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return {
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    except subprocess.TimeoutExpired:
+        return {"returncode": -1, "stdout": "", "stderr": "Command timed out"}
+    except OSError as exc:
+        return {"returncode": -1, "stdout": "", "stderr": str(exc)}
+
+
+async def start_job(label: str, domain: str) -> Dict[str, Any]:
+    """Start (kickstart) a job."""
+    target = _domain_target(label, domain)
+    result = await asyncio.to_thread(_run_launchctl, ["kickstart", "-p", target])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Started {label}. {result['stdout']}".strip()}
+    return {"success": False, "message": f"Failed to start {label}: {result['stderr']}"}
+
+
+async def stop_job(label: str, domain: str) -> Dict[str, Any]:
+    """Stop a job by sending SIGTERM, then SIGKILL if needed."""
+    target = _domain_target(label, domain)
+    result = await asyncio.to_thread(_run_launchctl, ["kill", "SIGTERM", target])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Stopped {label}"}
+    # Try SIGKILL as fallback
+    result = await asyncio.to_thread(_run_launchctl, ["kill", "SIGKILL", target])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Force-stopped {label} (SIGKILL)"}
+    return {"success": False, "message": f"Failed to stop {label}: {result['stderr']}"}
+
+
+async def reload_job(label: str, domain: str, plist_path: str) -> Dict[str, Any]:
+    """Reload a job by unloading then loading."""
+    target = _domain_target(label, domain)
+    prefix = _domain_prefix(domain)
+
+    # Bootout (unload)
+    unload_result = await asyncio.to_thread(_run_launchctl, ["bootout", target])
+    await asyncio.sleep(0.5)
+
+    # Bootstrap (load)
+    load_result = await asyncio.to_thread(_run_launchctl, ["bootstrap", prefix, plist_path])
+
+    if load_result["returncode"] == 0:
+        msg = f"Reloaded {label}"
+        if unload_result["returncode"] != 0:
+            msg += f" (unload warning: {unload_result['stderr']})"
+        return {"success": True, "message": msg}
+    return {
+        "success": False,
+        "message": f"Reload failed for {label}: unload={'ok' if unload_result['returncode'] == 0 else unload_result['stderr']}, load={load_result['stderr']}",
+    }
+
+
+async def enable_job(label: str, domain: str) -> Dict[str, Any]:
+    """Enable a job."""
+    target = _domain_target(label, domain)
+    result = await asyncio.to_thread(_run_launchctl, ["enable", target])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Enabled {label}"}
+    return {"success": False, "message": f"Failed to enable {label}: {result['stderr']}"}
+
+
+async def disable_job(label: str, domain: str) -> Dict[str, Any]:
+    """Disable a job."""
+    target = _domain_target(label, domain)
+    result = await asyncio.to_thread(_run_launchctl, ["disable", target])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Disabled {label}"}
+    return {"success": False, "message": f"Failed to disable {label}: {result['stderr']}"}
+
+
+async def load_job(plist_path: str, domain: str) -> Dict[str, Any]:
+    """Load (bootstrap) a job from its plist."""
+    prefix = _domain_prefix(domain)
+    result = await asyncio.to_thread(_run_launchctl, ["bootstrap", prefix, plist_path])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Loaded {plist_path}"}
+    # Fallback to legacy load
+    result = await asyncio.to_thread(_run_launchctl, ["load", plist_path])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Loaded {plist_path} (legacy)"}
+    return {"success": False, "message": f"Failed to load {plist_path}: {result['stderr']}"}
+
+
+async def unload_job(label: str, domain: str, plist_path: str) -> Dict[str, Any]:
+    """Unload (bootout) a job."""
+    target = _domain_target(label, domain)
+    result = await asyncio.to_thread(_run_launchctl, ["bootout", target])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Unloaded {label}"}
+    # Fallback to legacy unload
+    if plist_path:
+        result = await asyncio.to_thread(_run_launchctl, ["unload", plist_path])
+        if result["returncode"] == 0:
+            return {"success": True, "message": f"Unloaded {label} (legacy)"}
+    return {"success": False, "message": f"Failed to unload {label}: {result['stderr']}"}
+
+
+async def run_now_job(label: str, domain: str) -> Dict[str, Any]:
+    """Run a job immediately via kickstart."""
+    target = _domain_target(label, domain)
+    result = await asyncio.to_thread(_run_launchctl, ["kickstart", target])
+    if result["returncode"] == 0:
+        return {"success": True, "message": f"Kicked off {label}. {result['stdout']}".strip()}
+    return {"success": False, "message": f"Failed to run {label}: {result['stderr']}"}
+
+
+async def save_plist(plist_path: str, content: str) -> Dict[str, Any]:
+    """Validate and save plist content to disk."""
+    # Validate plist XML
+    try:
+        plistlib.loads(content.encode("utf-8"))
+    except Exception as exc:
+        return {"success": False, "message": f"Invalid plist XML: {exc}"}
+
+    try:
+        with open(plist_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return {"success": True, "message": f"Saved {plist_path}"}
+    except PermissionError:
+        return {"success": False, "message": f"Permission denied writing {plist_path}"}
+    except OSError as exc:
+        return {"success": False, "message": f"Error writing {plist_path}: {exc}"}
+
+
+async def create_job(plist_data: Dict[str, Any], domain: str) -> Dict[str, Any]:
+    """Create a new job from plist data dict."""
+    label = plist_data.get("Label")
+    if not label:
+        return {"success": False, "message": "Plist data must contain a 'Label' key"}
+
+    # Determine target directory
+    domain_dir = PLIST_DIRS.get(domain)
+    if not domain_dir:
+        return {"success": False, "message": f"Unknown domain: {domain}"}
+
+    target_path = os.path.join(domain_dir, f"{label}.plist")
+    if os.path.exists(target_path):
+        return {"success": False, "message": f"Plist already exists: {target_path}"}
+
+    # Write plist
+    try:
+        plist_bytes = plistlib.dumps(plist_data, fmt=plistlib.FMT_XML)
+        with open(target_path, "wb") as f:
+            f.write(plist_bytes)
+    except PermissionError:
+        return {"success": False, "message": f"Permission denied writing {target_path}"}
+    except OSError as exc:
+        return {"success": False, "message": f"Error writing plist: {exc}"}
+
+    # Auto-load
+    load_result = await load_job(target_path, domain)
+    if load_result["success"]:
+        return {"success": True, "message": f"Created and loaded {label} at {target_path}"}
+    return {
+        "success": True,
+        "message": f"Created {label} at {target_path}, but load failed: {load_result['message']}",
+    }
+
+
+async def delete_job(label: str, domain: str, plist_path: str) -> Dict[str, Any]:
+    """Backup, unload, and delete a job."""
+    if not plist_path or not os.path.isfile(plist_path):
+        return {"success": False, "message": f"Plist file not found: {plist_path}"}
+
+    # Backup first
+    backup_path = backup_plist(plist_path)
+
+    # Unload if loaded
+    await unload_job(label, domain, plist_path)
+
+    # Delete
+    try:
+        os.remove(plist_path)
+        return {
+            "success": True,
+            "message": f"Deleted {label}. Backup saved to {backup_path}",
+        }
+    except PermissionError:
+        return {"success": False, "message": f"Permission denied deleting {plist_path}"}
+    except OSError as exc:
+        return {"success": False, "message": f"Error deleting {plist_path}: {exc}"}
+
+
+async def export_job(plist_path: str) -> str:
+    """Read and return plist file contents as string."""
+    try:
+        with open(plist_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except UnicodeDecodeError:
+        # Binary plist -- convert to XML
+        with open(plist_path, "rb") as f:
+            data = plistlib.load(f)
+        return plistlib.dumps(data, fmt=plistlib.FMT_XML).decode("utf-8")
+
+
+async def import_job(content: str, domain: str) -> Dict[str, Any]:
+    """Validate plist XML, extract label, write to disk, and auto-load."""
+    try:
+        plist_data = plistlib.loads(content.encode("utf-8"))
+    except Exception as exc:
+        return {"success": False, "message": f"Invalid plist XML: {exc}"}
+
+    label = plist_data.get("Label")
+    if not label:
+        return {"success": False, "message": "Plist must contain a 'Label' key"}
+
+    domain_dir = PLIST_DIRS.get(domain)
+    if not domain_dir:
+        return {"success": False, "message": f"Unknown domain: {domain}"}
+
+    target_path = os.path.join(domain_dir, f"{label}.plist")
+    try:
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except PermissionError:
+        return {"success": False, "message": f"Permission denied writing {target_path}"}
+    except OSError as exc:
+        return {"success": False, "message": f"Error writing {target_path}: {exc}"}
+
+    load_result = await load_job(target_path, domain)
+    if load_result["success"]:
+        return {"success": True, "message": f"Imported and loaded {label}"}
+    return {
+        "success": True,
+        "message": f"Imported {label}, but load failed: {load_result['message']}",
+    }
+
+
+def backup_plist(plist_path: str) -> str:
+    """Copy plist to backup directory with timestamp."""
+    import shutil
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    label = os.path.basename(plist_path).replace(".plist", "")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"{label}.{timestamp}.plist"
+    backup_path = os.path.join(BACKUP_DIR, backup_name)
+    shutil.copy2(plist_path, backup_path)
+    return backup_path
+
+
+def list_backups() -> List[Dict[str, Any]]:
+    """Scan backup directory and return list of backup info dicts."""
+    backups = []
+    if not os.path.isdir(BACKUP_DIR):
+        return backups
+    for filename in sorted(os.listdir(BACKUP_DIR)):
+        if not filename.endswith(".plist"):
+            continue
+        filepath = os.path.join(BACKUP_DIR, filename)
+        # Parse label and timestamp from filename: label.YYYYMMDD_HHMMSS.plist
+        parts = filename.rsplit(".", 2)
+        if len(parts) >= 3:
+            label = parts[0]
+            timestamp_str = parts[1]
+        else:
+            label = filename.replace(".plist", "")
+            timestamp_str = ""
+        backups.append({
+            "filename": filename,
+            "label": label,
+            "timestamp": timestamp_str,
+            "path": filepath,
+        })
+    return backups
+
+
+# ============================================================
+# Step 4: Log Reader
+# ============================================================
+
+async def read_log_file(path: str, tail_lines: int = 200) -> List[str]:
+    """Read last N lines of a log file."""
+    if not path:
+        return []
+    if not os.path.isfile(path):
+        return [f"[Log file not found: {path}]"]
+    try:
+        def _read():
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            return [line.rstrip("\n") for line in lines[-tail_lines:]]
+        return await asyncio.to_thread(_read)
+    except PermissionError:
+        return [f"[Permission denied: {path}]"]
+    except OSError as exc:
+        return [f"[Error reading {path}: {exc}]"]
+
+
+async def read_unified_log(label: str, limit: int = 100) -> List[str]:
+    """Query macOS unified log for entries matching a label."""
+    try:
+        def _query():
+            result = subprocess.run(
+                [
+                    "log", "show",
+                    "--predicate", f'process == "{label}"',
+                    "--last", "1h",
+                    "--style", "compact",
+                    "--info",
+                ],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return [f"[Unified log query failed: {result.stderr.strip()}]"]
+            lines = result.stdout.strip().splitlines()
+            # Return last N lines (skip header line if present)
+            if lines and lines[0].startswith("Filtering"):
+                lines = lines[1:]
+            return lines[-limit:]
+        return await asyncio.to_thread(_query)
+    except Exception as exc:
+        return [f"[Unified log error: {exc}]"]
+
+
+# ============================================================
+# Step 5: FastAPI REST API
+# ============================================================
+
+def _load_config() -> Dict[str, Any]:
+    """Load config from disk, returning defaults if missing."""
+    defaults = {
+        "poll_interval": 5,
+        "show_apple_jobs": False,
+        "dark_mode": True,
+        "confirm_destructive": True,
+        "confirm_apple_modify": True,
+    }
+    if not os.path.isfile(CONFIG_FILE):
+        return dict(defaults)
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            merged = dict(defaults)
+            merged.update(data)
+            return merged
+        return dict(defaults)
+    except (json.JSONDecodeError, OSError):
+        return dict(defaults)
+
+
+def _save_config(config: Dict[str, Any]) -> None:
+    """Write config to disk."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+
+
+def _find_job(label: str) -> Optional[Dict[str, Any]]:
+    """Find a job by label in the cached job list."""
+    for job in _cached_jobs:
+        if job.get("label") == label:
+            return job
+    return None
+
+
+async def _refresh_jobs() -> None:
+    """Rebuild cached job list and broadcast to WebSocket clients."""
+    global _cached_jobs
+    _cached_jobs = await asyncio.to_thread(build_job_list, True)
+    await _broadcast_jobs()
+
+
+async def _broadcast_jobs() -> None:
+    """Push current job list to all connected WebSocket clients."""
+    global _ws_clients
+    data = json.dumps({"type": "jobs", "data": _cached_jobs}, default=str)
+    dead: Set[WebSocket] = set()
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(data)
+        except Exception:
+            dead.add(ws)
+    _ws_clients -= dead
+
+
+async def _poll_loop() -> None:
+    """Periodically re-scan job state and push to WebSocket clients."""
+    global _cached_jobs
+    while True:
+        interval = _config.get("poll_interval", 5)
+        await asyncio.sleep(interval)
+        try:
+            new_jobs = await asyncio.to_thread(build_job_list, True)
+            if new_jobs != _cached_jobs:
+                _cached_jobs = new_jobs
+                await _broadcast_jobs()
+        except Exception as exc:
+            logger.warning("Poll loop error: %s", exc)
+
+
+@asynccontextmanager
+async def lifespan(application):
+    """FastAPI lifespan handler -- startup and shutdown."""
+    global _cached_jobs, _config, _poll_task
+    _config = _load_config()
+    _cached_jobs = await asyncio.to_thread(build_job_list, True)
+    _poll_task = asyncio.create_task(_poll_loop())
+    yield
+    if _poll_task:
+        _poll_task.cancel()
+
+
+app = FastAPI(title="launchmaster", version=VERSION, lifespan=lifespan)
+
+
+# --- SPA ---
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_spa():
+    return HTMLResponse(
+        content=HTML_TEMPLATE,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+# --- Health ---
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "version": VERSION, "job_count": len(_cached_jobs)}
+
+
+# --- Job listing ---
+
+@app.get("/api/jobs")
+async def list_jobs(include_apple: bool = Query(default=True)):
+    if not include_apple:
+        return [j for j in _cached_jobs if not j.get("is_apple", False)]
+    return _cached_jobs
+
+
+# --- Job detail ---
+
+# --- Job control ---
+
+@app.post("/api/jobs/{label:path}/start")
+async def api_start_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    result = await start_job(label, job.get("domain", "user-agent"))
+    await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/stop")
+async def api_stop_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    result = await stop_job(label, job.get("domain", "user-agent"))
+    await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/restart")
+async def api_restart_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    plist_path = job.get("plist_path", "")
+    if not plist_path:
+        return {"success": False, "message": f"No plist path for {label}"}
+    result = await reload_job(label, job.get("domain", "user-agent"), plist_path)
+    await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/reload")
+async def api_reload_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    plist_path = job.get("plist_path", "")
+    if not plist_path:
+        return {"success": False, "message": f"No plist path for {label}"}
+    result = await reload_job(label, job.get("domain", "user-agent"), plist_path)
+    await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/enable")
+async def api_enable_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    result = await enable_job(label, job.get("domain", "user-agent"))
+    await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/disable")
+async def api_disable_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    result = await disable_job(label, job.get("domain", "user-agent"))
+    await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/load")
+async def api_load_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    plist_path = job.get("plist_path", "")
+    if not plist_path:
+        return {"success": False, "message": f"No plist path for {label}"}
+    result = await load_job(plist_path, job.get("domain", "user-agent"))
+    await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/unload")
+async def api_unload_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    result = await unload_job(label, job.get("domain", "user-agent"), job.get("plist_path", ""))
+    await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/run-now")
+async def api_run_now(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    result = await run_now_job(label, job.get("domain", "user-agent"))
+    await _refresh_jobs()
+    return result
+
+
+# --- Plist operations ---
+
+@app.get("/api/jobs/{label:path}/plist")
+async def api_get_plist(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": f"Job not found: {label}"})
+    plist_path = job.get("plist_path")
+    if not plist_path or not os.path.isfile(plist_path):
+        return JSONResponse(status_code=404, content={"error": f"Plist file not found for {label}"})
+    content = await export_job(plist_path)
+    return {"content": content, "path": plist_path}
+
+
+@app.put("/api/jobs/{label:path}/plist")
+async def api_save_plist(label: str, request: Request):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    body = await request.json()
+    content = body.get("content", "")
+    plist_path = job.get("plist_path")
+    if not plist_path:
+        return {"success": False, "message": f"No plist path for {label}"}
+    # Backup before saving
+    if os.path.isfile(plist_path):
+        backup_plist(plist_path)
+    result = await save_plist(plist_path, content)
+    if result["success"]:
+        await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/{label:path}/export")
+async def api_export_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": f"Job not found: {label}"})
+    plist_path = job.get("plist_path")
+    if not plist_path or not os.path.isfile(plist_path):
+        return JSONResponse(status_code=404, content={"error": f"Plist file not found for {label}"})
+    content = await export_job(plist_path)
+    return Response(
+        content=content,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{label}.plist"'},
+    )
+
+
+@app.delete("/api/jobs/{label:path}")
+async def api_delete_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
+    plist_path = job.get("plist_path")
+    if not plist_path:
+        return {"success": False, "message": f"No plist path for {label}"}
+    result = await delete_job(label, job.get("domain", "user-agent"), plist_path)
+    if result["success"]:
+        await _refresh_jobs()
+    return result
+
+
+# --- Create / Import ---
+
+@app.post("/api/jobs")
+async def api_create_job(request: Request):
+    body = await request.json()
+    plist_data = body.get("plist_data", {})
+    domain = body.get("domain", "user-agent")
+    result = await create_job(plist_data, domain)
+    if result["success"]:
+        await _refresh_jobs()
+    return result
+
+
+@app.post("/api/jobs/import")
+async def api_import_job(request: Request):
+    body = await request.json()
+    content = body.get("content", "")
+    domain = body.get("domain", "user-agent")
+    result = await import_job(content, domain)
+    if result["success"]:
+        await _refresh_jobs()
+    return result
+
+
+# --- Logs ---
+
+@app.get("/api/jobs/{label:path}/logs/stdout")
+async def api_logs_stdout(label: str, lines: int = Query(default=200)):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": f"Job not found: {label}"})
+    log_lines = await read_log_file(job.get("stdout_path", ""), tail_lines=lines)
+    return {"lines": log_lines}
+
+
+@app.get("/api/jobs/{label:path}/logs/stderr")
+async def api_logs_stderr(label: str, lines: int = Query(default=200)):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": f"Job not found: {label}"})
+    log_lines = await read_log_file(job.get("stderr_path", ""), tail_lines=lines)
+    return {"lines": log_lines}
+
+
+@app.get("/api/jobs/{label:path}/logs/unified")
+async def api_logs_unified(label: str, lines: int = Query(default=100)):
+    label = unquote(label)
+    log_lines = await read_unified_log(label, limit=lines)
+    return {"lines": log_lines}
+
+
+# --- Single job detail (MUST come after all specific /api/jobs/{label}/... routes) ---
+
+@app.get("/api/jobs/{label:path}")
+async def get_job(label: str):
+    label = unquote(label)
+    job = _find_job(label)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": f"Job not found: {label}"})
+    domain = job.get("domain", "user-agent")
+    detail = await asyncio.to_thread(get_job_detail, label, domain)
+    blame = await asyncio.to_thread(get_job_blame, label, domain)
+    enriched = dict(job)
+    enriched["detail"] = detail
+    enriched["blame"] = blame
+    return enriched
+
+
+# --- Backups ---
+
+@app.get("/api/backups")
+async def api_list_backups():
+    return await asyncio.to_thread(list_backups)
+
+
+@app.post("/api/backups/{filename}/restore")
+async def api_restore_backup(filename: str):
+    import shutil
+    backup_path = os.path.join(BACKUP_DIR, filename)
+    if not os.path.isfile(backup_path):
+        return JSONResponse(
+            status_code=404,
+            content={"success": False, "message": f"Backup not found: {filename}"},
+        )
+    # Parse label from filename
+    parts = filename.rsplit(".", 2)
+    label = parts[0] if len(parts) >= 3 else filename.replace(".plist", "")
+
+    # Try to find original domain from label
+    try:
+        with open(backup_path, "rb") as f:
+            plist_data = plistlib.load(f)
+        plist_label = plist_data.get("Label", label)
+    except Exception:
+        plist_label = label
+
+    # Default restore to user-agent domain
+    target_dir = PLIST_DIRS["user-agent"]
+    target_path = os.path.join(target_dir, f"{plist_label}.plist")
+    try:
+        shutil.copy2(backup_path, target_path)
+    except PermissionError:
+        return {"success": False, "message": f"Permission denied writing {target_path}"}
+    except OSError as exc:
+        return {"success": False, "message": f"Error restoring backup: {exc}"}
+
+    load_result = await load_job(target_path, "user-agent")
+    await _refresh_jobs()
+    return {
+        "success": True,
+        "message": f"Restored {plist_label} to {target_path}. Load: {load_result['message']}",
+    }
+
+
+# --- Settings ---
+
+@app.get("/api/settings")
+async def api_get_settings():
+    return _config
+
+
+@app.put("/api/settings")
+async def api_put_settings(request: Request):
+    body = await request.json()
+    _config.update(body)
+    await asyncio.to_thread(_save_config, _config)
+    return {"success": True, "message": "Settings saved"}
+
+
+# --- WebSocket ---
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+    _ws_clients.add(ws)
+    try:
+        # Send initial state
+        await ws.send_text(json.dumps({"type": "jobs", "data": _cached_jobs}, default=str))
+        # Keep alive, receive commands
+        while True:
+            data = await ws.receive_text()
+            try:
+                msg = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("type") == "refresh":
+                await _refresh_jobs()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _ws_clients.discard(ws)
+
+
+# ============================================================
+# Main
+# ============================================================
+
+def find_free_port(preferred: int, max_attempts: int = 20) -> int:
+    """Scan for a free port starting from the preferred port."""
+    for port in range(preferred, preferred + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+                return port
+        except OSError:
+            continue
+    raise RuntimeError(
+        f"No free port found in range {preferred}-{preferred + max_attempts - 1}"
+    )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="launchmaster",
+        description="launchmaster -- macOS launchd Control Center",
+    )
+    parser.add_argument(
+        "-p", "--port", type=int, default=DEFAULT_PORT,
+        help=f"Preferred port (default: {DEFAULT_PORT})",
+    )
+    parser.add_argument(
+        "--host", type=str, default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--no-browser", action="store_true",
+        help="Don't open browser on startup",
+    )
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="Enable debug logging",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.WARNING)
+
+    port = find_free_port(args.port)
+    if port != args.port:
+        logger.warning("Port %d is in use; using port %d instead.", args.port, port)
+
+    url = f"http://{args.host}:{port}"
+    print(f"launchmaster v{VERSION} starting at {url}")
+
+    if not args.no_browser and not os.environ.get("UTILITIES_TESTING"):
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=port,
+        log_level="debug" if args.debug else "warning",
+    )
+
+
+if __name__ == "__main__":
+    main()

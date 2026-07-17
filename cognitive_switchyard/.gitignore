@@ -1,0 +1,10 @@
+reference/
+__pycache__/
+.pytest_cache/
+.cognitive_switchyard/
+.cognitive_switchyard_venv/
+.venv/
+automation_logs/
+audits/drift_audit_state.json
+audits/full_suite_state.json
+audits/stage_retry_state.json

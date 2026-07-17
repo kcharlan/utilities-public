@@ -1,0 +1,8 @@
+FROM node:24-alpine
+WORKDIR /srv
+COPY app_node/package.json ./
+RUN npm install --omit=dev --no-package-lock
+COPY app_node/api.js ./
+RUN rm -rf /usr/local/lib/node_modules/npm \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx
+CMD ["node", "api.js"]

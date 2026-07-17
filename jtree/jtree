@@ -1,0 +1,3812 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn",
+#     "pydantic",
+# ]
+# ///
+import argparse
+import copy
+import html
+import json
+import os
+import socket
+import sys
+import webbrowser
+import threading
+import time
+import logging
+from collections import deque
+from typing import Any, Optional
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="jtree: Interactive JSON Viewer & Editor",
+        epilog="Launches a local web server and opens the browser interface."
+    )
+    parser.add_argument(
+        "file_path",
+        nargs="?",
+        default=None,
+        help="Path to the JSON file to open (optional; opens empty if omitted)."
+    )
+    parser.add_argument(
+        "--port", "-p",
+        type=int,
+        default=8100,
+        help="Port to run the server on (default: 8100)."
+    )
+    parser.add_argument(
+        "--readonly",
+        action="store_true",
+        help="Open in read-only mode (no editing)."
+    )
+    return parser.parse_args()
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('jtree')
+
+# --- JSON Manager ---
+
+class JSONManager:
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+    def __init__(self, file_path: str, readonly: bool = False):
+        self.file_path = os.path.abspath(file_path)
+        self.display_name = None
+        self.readonly = readonly
+        self.dirty = False
+        self.max_undo = 50
+        self.undo_stack = deque(maxlen=self.max_undo)
+        self.redo_stack: deque = deque(maxlen=50)
+
+        if not os.path.exists(self.file_path):
+            raise FileNotFoundError(f"File not found: {self.file_path}")
+
+        file_size = os.path.getsize(self.file_path)
+        if file_size > self.MAX_FILE_SIZE:
+            raise ValueError(f"File too large: {file_size / 1024 / 1024:.1f}MB (max 50MB)")
+
+        with open(self.file_path, 'r', encoding='utf-8') as f:
+            self.data = json.load(f)
+
+    @classmethod
+    def from_content(cls, content: str, file_name: str):
+        """Create a JSONManager from raw JSON content (no file on disk)."""
+        if len(content) > cls.MAX_FILE_SIZE:
+            raise ValueError(f"Content too large: {len(content) / 1024 / 1024:.1f}MB (max 50MB)")
+        instance = object.__new__(cls)
+        instance.file_path = None
+        instance.display_name = file_name
+        instance.readonly = False
+        instance.dirty = False
+        instance.max_undo = 50
+        instance.undo_stack = deque(maxlen=instance.max_undo)
+        instance.redo_stack = deque(maxlen=50)
+        instance.data = json.loads(content)
+        return instance
+
+    def _resolve_path(self, path: str):
+        """Resolve a dot-separated path to (parent, key, target_value).
+        Returns (None, None, self.data) for root path ''.
+
+        LIMITATION: Uses '.' as the path separator, so dictionary keys that
+        contain literal dots will be misinterpreted as nested paths. Changing
+        the separator would break the entire frontend path model.
+        """
+        if path == '' or path is None:
+            return None, None, self.data
+
+        parts = path.split('.')
+        current = self.data
+        parent = None
+        key = None
+
+        for part in parts:
+            parent = current
+            if isinstance(current, list):
+                try:
+                    idx = int(part)
+                except ValueError:
+                    raise KeyError(f"Invalid array index: {part}")
+                if idx < 0 or idx >= len(current):
+                    raise IndexError(f"Array index out of bounds: {idx} (length {len(current)})")
+                key = idx
+                current = current[idx]
+            elif isinstance(current, dict):
+                if part not in current:
+                    raise KeyError(f"Key not found: {part}")
+                key = part
+                current = current[part]
+            else:
+                raise KeyError(f"Cannot traverse into {type(current).__name__} at '{part}'")
+
+        return parent, key, current
+
+    def _node_info(self, value: Any, path: str) -> dict:
+        """Return metadata about a node."""
+        if isinstance(value, dict):
+            return {
+                "type": "object",
+                "value": None,
+                "childCount": len(value),
+                "summary": f"{{{len(value)} key{'s' if len(value) != 1 else ''}}}",
+                "path": path,
+            }
+        elif isinstance(value, list):
+            return {
+                "type": "array",
+                "value": None,
+                "childCount": len(value),
+                "summary": f"[{len(value)} item{'s' if len(value) != 1 else ''}]",
+                "path": path,
+            }
+        else:
+            t = "null"
+            if isinstance(value, bool):
+                t = "boolean"
+            elif isinstance(value, int):
+                t = "number"
+            elif isinstance(value, float):
+                t = "number"
+            elif isinstance(value, str):
+                t = "string"
+            return {
+                "type": t,
+                "value": value,
+                "childCount": 0,
+                "summary": json.dumps(value) if not isinstance(value, str) else value,
+                "path": path,
+            }
+
+    def get_node(self, path: str) -> dict:
+        _, _, value = self._resolve_path(path)
+        return self._node_info(value, path)
+
+    def get_children(self, path: str, offset: int = 0, limit: int = 50) -> dict:
+        _, _, value = self._resolve_path(path)
+        children = []
+        has_more = False
+
+        if isinstance(value, dict):
+            keys = list(value.keys())
+            total = len(keys)
+            subset = keys[offset:offset + limit]
+            has_more = (offset + limit) < total
+            for k in subset:
+                child_path = f"{path}.{k}" if path else k
+                children.append(self._node_info(value[k], child_path))
+        elif isinstance(value, list):
+            total = len(value)
+            subset = list(range(offset, min(offset + limit, total)))
+            has_more = (offset + limit) < total
+            for i in subset:
+                child_path = f"{path}.{i}" if path else str(i)
+                children.append(self._node_info(value[i], child_path))
+        else:
+            total = 0
+
+        return {"children": children, "hasMore": has_more, "total": total}
+
+    def get_subtree(self, path: str, depth: int = 2) -> dict:
+        _, _, value = self._resolve_path(path)
+        return self._build_subtree(value, path, depth)
+
+    def _build_subtree(self, value: Any, path: str, depth: int, max_children: int = 1000) -> dict:
+        info = self._node_info(value, path)
+        if depth <= 0 or info["childCount"] == 0:
+            return info
+
+        info["children"] = []
+        if isinstance(value, dict):
+            for idx, (k, v) in enumerate(value.items()):
+                if idx >= max_children:
+                    info["children"].append({"key": "...", "path": path, "type": "string",
+                        "value": f"[truncated: showing {max_children} of {len(value)} children]",
+                        "childCount": 0, "summary": "truncated"})
+                    break
+                child_path = f"{path}.{k}" if path else k
+                info["children"].append(self._build_subtree(v, child_path, depth - 1, max_children))
+        elif isinstance(value, list):
+            for i, v in enumerate(value):
+                if i >= max_children:
+                    info["children"].append({"key": "...", "path": path, "type": "string",
+                        "value": f"[truncated: showing {max_children} of {len(value)} children]",
+                        "childCount": 0, "summary": "truncated"})
+                    break
+                child_path = f"{path}.{i}" if path else str(i)
+                info["children"].append(self._build_subtree(v, child_path, depth - 1, max_children))
+
+        return info
+
+    def search(self, query: str, search_type: str = "both", limit: int = 100) -> list:
+        results = []
+        query_lower = query.lower()
+        self._search_recursive(self.data, "", query_lower, search_type, results, limit)
+        return results
+
+    _MAX_SEARCH_DEPTH = 500
+
+    def _search_recursive(self, value: Any, path: str, query: str, search_type: str, results: list, limit: int, depth: int = 0):
+        if len(results) >= limit or depth > self._MAX_SEARCH_DEPTH:
+            return
+
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if len(results) >= limit:
+                    return
+                child_path = f"{path}.{k}" if path else k
+                if search_type in ("key", "both") and query in k.lower():
+                    results.append({"path": child_path, "matchType": "key", "key": k, "preview": self._preview(v)})
+                if search_type in ("value", "both") and not isinstance(v, (dict, list)):
+                    if query in str(v).lower():
+                        results.append({"path": child_path, "matchType": "value", "key": k, "preview": str(v)})
+                self._search_recursive(v, child_path, query, search_type, results, limit, depth + 1)
+        elif isinstance(value, list):
+            for i, v in enumerate(value):
+                if len(results) >= limit:
+                    return
+                child_path = f"{path}.{i}" if path else str(i)
+                if search_type in ("value", "both") and not isinstance(v, (dict, list)):
+                    if query in str(v).lower():
+                        results.append({"path": child_path, "matchType": "value", "key": str(i), "preview": str(v)})
+                self._search_recursive(v, child_path, query, search_type, results, limit, depth + 1)
+
+    def _preview(self, value: Any) -> str:
+        if isinstance(value, dict):
+            return f"{{{len(value)} keys}}"
+        elif isinstance(value, list):
+            return f"[{len(value)} items]"
+        return str(value)
+
+    def _push_undo(self, op_type: str, path: str, old_value: Any):
+        self.undo_stack.append({"op": op_type, "path": path, "old_value": copy.deepcopy(old_value)})
+        self.redo_stack.clear()  # new mutation invalidates redo history
+
+    def set_value(self, path: str, new_value: Any):
+        if self.readonly:
+            raise PermissionError("File is open in read-only mode")
+        parent, key, old_value = self._resolve_path(path)
+        if parent is None:
+            self._push_undo("set_root", "", copy.deepcopy(self.data))
+            self.data = new_value
+        else:
+            self._push_undo("set_value", path, copy.deepcopy(old_value))
+            parent[key] = new_value
+        self.dirty = True
+
+    def add_child(self, path: str, key: Optional[str], value: Any):
+        if self.readonly:
+            raise PermissionError("File is open in read-only mode")
+        _, _, target = self._resolve_path(path)
+
+        if isinstance(target, dict):
+            if key is None:
+                raise ValueError("Key is required when adding to an object")
+            if key in target:
+                raise ValueError(f"Key '{key}' already exists")
+            self._push_undo("add_child", path, {"key": key})
+            target[key] = value
+        elif isinstance(target, list):
+            self._push_undo("add_child", path, {"index": len(target)})
+            target.append(value)
+        else:
+            raise ValueError("Can only add children to objects or arrays")
+        self.dirty = True
+
+    def delete_node(self, path: str):
+        if self.readonly:
+            raise PermissionError("File is open in read-only mode")
+        if path == '' or path is None:
+            raise ValueError("Cannot delete root node")
+        parent, key, old_value = self._resolve_path(path)
+        undo_entry = {"op": "delete", "path": path, "old_value": copy.deepcopy(old_value)}
+        # Store the numeric index for arrays so undo can insert at the correct position
+        if isinstance(parent, list):
+            undo_entry["array_index"] = key
+        self.undo_stack.append(undo_entry)
+        self.redo_stack.clear()  # new mutation invalidates redo history
+        if isinstance(parent, dict):
+            del parent[key]
+        elif isinstance(parent, list):
+            parent.pop(key)
+        self.dirty = True
+
+    def rename_key(self, path: str, new_key: str):
+        if self.readonly:
+            raise PermissionError("File is open in read-only mode")
+        if path == '' or path is None:
+            raise ValueError("Cannot rename root node")
+        parent, old_key, value = self._resolve_path(path)
+        if not isinstance(parent, dict):
+            raise ValueError("Can only rename keys in objects")
+        if new_key in parent:
+            raise ValueError(f"Key '{new_key}' already exists")
+        self._push_undo("rename", path, {"old_key": old_key, "new_key": new_key})
+        # Preserve insertion order
+        new_dict = {}
+        for k, v in parent.items():
+            if k == old_key:
+                new_dict[new_key] = v
+            else:
+                new_dict[k] = v
+        parent.clear()
+        parent.update(new_dict)
+        self.dirty = True
+
+    def move_child(self, parent_path: str, from_index: int, to_index: int):
+        if self.readonly:
+            raise PermissionError("File is open in read-only mode")
+        _, _, target = self._resolve_path(parent_path)
+        if not isinstance(target, list):
+            raise ValueError("Can only reorder items in arrays")
+        if from_index < 0 or from_index >= len(target):
+            raise IndexError(f"From index {from_index} out of range")
+        if to_index < 0 or to_index >= len(target):
+            raise IndexError(f"To index {to_index} out of range")
+        if from_index == to_index:
+            return
+        self._push_undo("move_child", parent_path, {"from": from_index, "to": to_index})
+        item = target.pop(from_index)
+        target.insert(to_index, item)
+        self.dirty = True
+
+    def redo(self) -> bool:
+        if not self.redo_stack:
+            return False
+        entry = self.redo_stack.pop()
+        # Re-apply the operation by replaying the forward action
+        op = entry["op"]
+        path = entry["path"]
+        fwd = entry["forward"]
+        if op == "set_root":
+            self.undo_stack.append({"op": "set_root", "path": "", "old_value": copy.deepcopy(self.data)})
+            self.data = fwd
+        elif op == "set_value":
+            parent, key, old = self._resolve_path(path)
+            if parent is None:
+                self.undo_stack.append({"op": "set_root", "path": "", "old_value": copy.deepcopy(self.data)})
+                self.data = fwd
+            else:
+                self.undo_stack.append({"op": "set_value", "path": path, "old_value": copy.deepcopy(old)})
+                parent[key] = fwd
+        elif op == "add_child":
+            _, _, target = self._resolve_path(path)
+            if isinstance(target, dict):
+                self.undo_stack.append({"op": "add_child", "path": path, "old_value": {"key": fwd["key"]}})
+                target[fwd["key"]] = fwd["value"]
+            elif isinstance(target, list):
+                self.undo_stack.append({"op": "add_child", "path": path, "old_value": {"index": len(target)}})
+                target.append(fwd["value"])
+        elif op == "delete":
+            parent, key, old = self._resolve_path(path)
+            # Verify the value matches the expected value from redo entry to prevent wrong-node deletion
+            if fwd is not None and old != fwd:
+                return False  # Data has changed; skip this redo to avoid data loss
+            undo_entry = {"op": "delete", "path": path, "old_value": copy.deepcopy(old)}
+            # Store the numeric index for arrays so undo can insert at the correct position
+            if isinstance(parent, list):
+                undo_entry["array_index"] = key
+            self.undo_stack.append(undo_entry)
+            if isinstance(parent, dict):
+                del parent[key]
+            elif isinstance(parent, list):
+                parent.pop(key)
+        elif op == "rename":
+            parts = path.split('.')
+            parent_path_str = '.'.join(parts[:-1])
+            _, _, parent_val = self._resolve_path(parent_path_str)
+            if isinstance(parent_val, dict):
+                old_key = fwd["old_key"]
+                new_key = fwd["new_key"]
+                self.undo_stack.append({"op": "rename", "path": path, "old_value": {"old_key": old_key, "new_key": new_key}})
+                new_dict = {}
+                for k, v in parent_val.items():
+                    if k == old_key:
+                        new_dict[new_key] = v
+                    else:
+                        new_dict[k] = v
+                parent_val.clear()
+                parent_val.update(new_dict)
+        elif op == "move_child":
+            _, _, target = self._resolve_path(path)
+            if isinstance(target, list):
+                fr, to = fwd["from"], fwd["to"]
+                self.undo_stack.append({"op": "move_child", "path": path, "old_value": {"from": fr, "to": to}})
+                item = target.pop(fr)
+                target.insert(to, item)
+        self.dirty = True
+        return True
+
+    def undo(self) -> bool:
+        if not self.undo_stack:
+            return False
+        entry = self.undo_stack.pop()
+        op = entry["op"]
+        path = entry["path"]
+        old = entry["old_value"]
+
+        # Build redo entry before performing undo
+        redo_entry = {"op": op, "path": path}
+
+        if op == "set_root":
+            redo_entry["forward"] = copy.deepcopy(self.data)
+            self.data = old
+        elif op == "set_value":
+            parent, key, cur = self._resolve_path(path)
+            if parent is None:
+                redo_entry["forward"] = copy.deepcopy(self.data)
+                self.data = old
+            else:
+                redo_entry["forward"] = copy.deepcopy(cur)
+                parent[key] = old
+        elif op == "add_child":
+            _, _, target = self._resolve_path(path)
+            if isinstance(target, dict) and "key" in old:
+                k = old["key"]
+                redo_entry["forward"] = {"key": k, "value": copy.deepcopy(target.get(k))}
+                del target[k]
+            elif isinstance(target, list) and "index" in old:
+                idx = old["index"]
+                redo_entry["forward"] = {"value": copy.deepcopy(target[idx]) if idx < len(target) else None}
+                if idx < len(target):
+                    target.pop(idx)
+        elif op == "delete":
+            parts = path.split('.')
+            parent_path = '.'.join(parts[:-1])
+            key_part = parts[-1]
+            _, _, parent_val = self._resolve_path(parent_path)
+            redo_entry["forward"] = copy.deepcopy(old)  # store value for redo verification
+            if isinstance(parent_val, dict):
+                parent_val[key_part] = old
+            elif isinstance(parent_val, list):
+                # Use stored array_index if available for correct restore position
+                idx = entry.get("array_index", int(key_part))
+                parent_val.insert(idx, old)
+        elif op == "rename":
+            old_key = old["old_key"]
+            new_key = old["new_key"]
+            parts = path.split('.')
+            parent_path = '.'.join(parts[:-1])
+            _, _, parent_val = self._resolve_path(parent_path)
+            redo_entry["forward"] = {"old_key": old_key, "new_key": new_key}
+            if isinstance(parent_val, dict) and new_key in parent_val:
+                new_dict = {}
+                for k, v in parent_val.items():
+                    if k == new_key:
+                        new_dict[old_key] = v
+                    else:
+                        new_dict[k] = v
+                parent_val.clear()
+                parent_val.update(new_dict)
+        elif op == "move_child":
+            # Undo move: reverse the from/to
+            fr = old["from"]
+            to = old["to"]
+            _, _, target = self._resolve_path(path)
+            redo_entry["forward"] = {"from": fr, "to": to}
+            if isinstance(target, list):
+                item = target.pop(to)
+                target.insert(fr, item)
+
+        self.redo_stack.append(redo_entry)
+        self.dirty = True
+        return True
+
+    def save(self, path: Optional[str] = None):
+        if self.readonly and path is None:
+            raise PermissionError("File is open in read-only mode")
+        target = path or self.file_path
+        if target is None:
+            raise PermissionError("No file path set. Use Save As to choose a location.")
+        target = os.path.abspath(target)
+        with open(target, 'w', encoding='utf-8') as f:
+            json.dump(self.data, f, indent=2, ensure_ascii=False)
+            f.write('\n')
+        if self.file_path is None:
+            # First save of a browser-uploaded file: adopt this path
+            self.file_path = target
+            self.display_name = os.path.basename(target)
+        if target == self.file_path:
+            self.dirty = False
+
+
+
+# --- FastAPI App ---
+
+app = FastAPI(title="jtree")
+json_manager: Optional[JSONManager] = None
+_manager_lock = threading.Lock()
+
+
+def _require_file():
+    """Raise 409 if no file is loaded."""
+    if json_manager is None:
+        raise HTTPException(status_code=409, detail="No file loaded")
+
+
+@app.get("/", response_class=HTMLResponse)
+def serve_spa():
+    if json_manager:
+        fname = getattr(json_manager, 'display_name', None) or (
+            os.path.basename(json_manager.file_path) if json_manager.file_path else "jtree"
+        )
+    else:
+        fname = "jtree"
+    safe_fname = html.escape(fname, quote=True)
+    return HTML_TEMPLATE.replace("{{FILE_NAME}}", safe_fname)
+
+
+@app.get("/api/status")
+def api_status():
+    if json_manager is None:
+        return {
+            "file": None,
+            "fileName": None,
+            "dirty": False,
+            "readonly": False,
+            "canUndo": False,
+            "canRedo": False,
+            "loaded": False,
+        }
+    fname = getattr(json_manager, 'display_name', None) or (
+        os.path.basename(json_manager.file_path) if json_manager.file_path else None
+    )
+    return {
+        "file": json_manager.file_path,
+        "fileName": fname,
+        "dirty": json_manager.dirty,
+        "readonly": json_manager.readonly,
+        "canUndo": len(json_manager.undo_stack) > 0,
+        "canRedo": len(json_manager.redo_stack) > 0,
+        "loaded": True,
+        "hasFilePath": json_manager.file_path is not None,
+    }
+
+
+class OpenBody(BaseModel):
+    path: str
+    readonly: bool = False
+
+@app.post("/api/open")
+def api_open(body: OpenBody):
+    global json_manager
+    file_path = os.path.expanduser(body.path)
+    # Path traversal protection: reject '..' in raw input before resolution
+    if '..' in file_path.split(os.sep) or '..' in body.path.split('/'):
+        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+    if not os.path.isabs(file_path):
+        file_path = os.path.abspath(file_path)
+    file_path = os.path.realpath(file_path)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    with _manager_lock:
+        try:
+            json_manager = JSONManager(file_path, readonly=body.readonly)
+            return {"ok": True, "fileName": os.path.basename(file_path)}
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+class OpenContentBody(BaseModel):
+    content: str
+    fileName: str
+
+@app.post("/api/open-content")
+def api_open_content(body: OpenContentBody):
+    global json_manager
+    try:
+        json_manager = JSONManager.from_content(body.content, body.fileName)
+        return {"ok": True, "fileName": body.fileName}
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/node")
+def api_get_node(path: str = ""):
+    _require_file()
+    try:
+        return json_manager.get_node(path)
+    except (KeyError, IndexError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/children")
+def api_get_children(path: str = "", offset: int = 0, limit: int = 50):
+    _require_file()
+    if limit < 1 or limit > 500:
+        limit = 50
+    if offset < 0:
+        offset = 0
+    try:
+        return json_manager.get_children(path, offset, limit)
+    except (KeyError, IndexError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/subtree")
+def api_get_subtree(path: str = "", depth: int = 2):
+    _require_file()
+    if depth < 1:
+        depth = 1
+    if depth > 10:
+        depth = 10
+    try:
+        return json_manager.get_subtree(path, depth)
+    except (KeyError, IndexError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/search")
+def api_search(q: str = "", type: str = "both", limit: int = 100):
+    _require_file()
+    if not q:
+        return []
+    if type not in ("key", "value", "both"):
+        type = "both"
+    if limit < 1 or limit > 500:
+        limit = 100
+    return json_manager.search(q, type, limit)
+
+
+class SetValueBody(BaseModel):
+    value: Any
+
+@app.put("/api/node")
+def api_set_value(path: str, body: SetValueBody):
+    _require_file()
+    with _manager_lock:
+        try:
+            json_manager.set_value(path, body.value)
+            return {"ok": True}
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except (KeyError, IndexError) as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+
+class AddChildBody(BaseModel):
+    key: Optional[str] = None
+    value: Any = None
+    type: str = "string"
+
+@app.post("/api/node")
+def api_add_child(path: str, body: AddChildBody):
+    _require_file()
+    # Construct default value based on type
+    value = body.value
+    if value is None and body.type != "null":
+        defaults = {"string": "", "number": 0, "boolean": False, "object": {}, "array": []}
+        value = defaults.get(body.type, "")
+    with _manager_lock:
+        try:
+            json_manager.add_child(path, body.key, value)
+            return {"ok": True}
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except (KeyError, IndexError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/node")
+def api_delete_node(path: str):
+    _require_file()
+    with _manager_lock:
+        try:
+            json_manager.delete_node(path)
+            return {"ok": True}
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except (KeyError, IndexError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+class RenameBody(BaseModel):
+    newKey: str
+
+@app.post("/api/rename")
+def api_rename(path: str, body: RenameBody):
+    _require_file()
+    with _manager_lock:
+        try:
+            json_manager.rename_key(path, body.newKey)
+            return {"ok": True}
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except (KeyError, IndexError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/save")
+def api_save():
+    _require_file()
+    with _manager_lock:
+        try:
+            json_manager.save()
+            return {"ok": True}
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+class SaveAsBody(BaseModel):
+    path: str
+    force: bool = False
+
+@app.post("/api/save-as")
+def api_save_as(body: SaveAsBody):
+    _require_file()
+    resolved = os.path.expanduser(body.path)
+    # Path traversal protection: reject '..' in raw input before resolution
+    if '..' in resolved.split(os.sep) or '..' in body.path.split('/'):
+        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+    resolved = os.path.abspath(resolved)
+    resolved = os.path.realpath(resolved)
+    if not resolved.endswith('.json'):
+        raise HTTPException(status_code=400, detail="Save path must end with .json")
+    # Validate parent directory exists
+    parent_dir = os.path.dirname(resolved)
+    if not os.path.isdir(parent_dir):
+        raise HTTPException(status_code=500, detail=f"Parent directory does not exist: {parent_dir}")
+    # Overwrite confirmation: warn if file exists and force flag not set
+    if os.path.exists(resolved) and not body.force:
+        return {"ok": False, "warning": "File already exists. Set force=true to overwrite.", "exists": True}
+    with _manager_lock:
+        try:
+            json_manager.save(resolved)
+            return {"ok": True}
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/download")
+def api_download():
+    """Return the full JSON content for browser-side Save As downloads."""
+    _require_file()
+    from fastapi.responses import Response
+    content = json.dumps(json_manager.data, indent=2, ensure_ascii=False)
+    return Response(content=content, media_type="application/json")
+
+
+@app.post("/api/undo")
+def api_undo():
+    _require_file()
+    with _manager_lock:
+        if json_manager.undo():
+            return {"ok": True}
+        raise HTTPException(status_code=400, detail="Nothing to undo")
+
+
+@app.post("/api/redo")
+def api_redo():
+    _require_file()
+    with _manager_lock:
+        if json_manager.redo():
+            return {"ok": True}
+        raise HTTPException(status_code=400, detail="Nothing to redo")
+
+
+class MoveChildBody(BaseModel):
+    fromIndex: int
+    toIndex: int
+
+@app.post("/api/move")
+def api_move_child(path: str, body: MoveChildBody):
+    _require_file()
+    with _manager_lock:
+        try:
+            json_manager.move_child(path, body.fromIndex, body.toIndex)
+            return {"ok": True}
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except (KeyError, IndexError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/copy")
+def api_copy(path: str = ""):
+    """Return a deep copy of the value at the given path, plus its key name."""
+    _require_file()
+    try:
+        _, key, value = json_manager._resolve_path(path)
+        key_name = path.split('.')[-1] if path else 'root'
+        return {
+            "key": key_name,
+            "value": copy.deepcopy(value),
+            "type": type(value).__name__,
+        }
+    except (KeyError, IndexError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class PasteBody(BaseModel):
+    key: Optional[str] = None
+    value: Any
+
+@app.post("/api/paste")
+def api_paste(path: str, body: PasteBody):
+    """Paste a value into a container. Auto-generates unique key for objects."""
+    _require_file()
+    if json_manager.readonly:
+        raise HTTPException(status_code=403, detail="File is open in read-only mode")
+    try:
+        _, _, target = json_manager._resolve_path(path)
+        if isinstance(target, dict):
+            # Generate unique key
+            base_key = body.key or "pasted"
+            key = base_key
+            counter = 1
+            while key in target:
+                key = f"{base_key}_copy{counter}"
+                counter += 1
+            json_manager._push_undo("add_child", path, {"key": key})
+            target[key] = copy.deepcopy(body.value)
+        elif isinstance(target, list):
+            json_manager._push_undo("add_child", path, {"index": len(target)})
+            target.append(copy.deepcopy(body.value))
+        else:
+            raise ValueError("Can only paste into objects or arrays")
+        json_manager.dirty = True
+        return {"ok": True, "key": key if isinstance(target, dict) else str(len(target) - 1)}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except (KeyError, IndexError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- HTML Template ---
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>jtree - {{FILE_NAME}}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+    darkMode: 'class',
+    theme: {
+        extend: {
+            colors: {
+                blueprint: {
+                    bg: '#0a1628',
+                    card: '#0f1f3a',
+                    cardLight: '#f8fafc',
+                    border: '#1a3a5c',
+                    grid: '#0e2240',
+                    text: '#c8d6e5',
+                    textLight: '#1e293b',
+                },
+                nodeType: {
+                    object: '#4fc3f7',
+                    array: '#ab47bc',
+                    string: '#66bb6a',
+                    number: '#ffa726',
+                    boolean: '#ef5350',
+                    null: '#78909c',
+                }
+            },
+            fontFamily: {
+                sans: ['DM Sans', 'sans-serif'],
+                mono: ['JetBrains Mono', 'monospace'],
+            }
+        }
+    }
+};
+</script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide@0.321.0/dist/umd/lucide.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', sans-serif; overflow: hidden; }
+    .dark body, html.dark body { background: #0a1628; color: #c8d6e5; }
+    html:not(.dark) body { background: #f1f5f9; color: #1e293b; }
+
+    /* Blueprint grid background */
+    .blueprint-grid {
+        background-image:
+            linear-gradient(rgba(14,34,64,0.5) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(14,34,64,0.5) 1px, transparent 1px);
+        background-size: 40px 40px;
+    }
+    html:not(.dark) .blueprint-grid {
+        background-image:
+            linear-gradient(rgba(203,213,225,0.5) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(203,213,225,0.5) 1px, transparent 1px);
+        background-size: 40px 40px;
+    }
+
+    /* Node styles */
+    .graph-node {
+        position: absolute;
+        width: 220px;
+        border-radius: 10px;
+        padding: 0;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        user-select: none;
+        font-size: 13px;
+    }
+    .dark .graph-node {
+        background: #0f1f3a;
+        color: #c8d6e5;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    html:not(.dark) .graph-node {
+        background: #ffffff;
+        color: #1e293b;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .graph-node:hover {
+        transform: scale(1.03);
+    }
+    .dark .graph-node:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+    html:not(.dark) .graph-node:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    .graph-node.selected {
+        outline: 2px solid #3b82f6;
+        outline-offset: 2px;
+    }
+    .graph-node.search-match {
+        animation: pulseGold 1.5s ease-in-out 3;
+    }
+
+    @keyframes pulseGold {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(255,193,7,0); }
+        50% { box-shadow: 0 0 16px 4px rgba(255,193,7,0.5); }
+    }
+
+    @keyframes nodeAppear {
+        from { opacity: 0; transform: scale(0.85); }
+        to { opacity: 1; transform: scale(1); }
+    }
+    .node-appear {
+        animation: nodeAppear 0.2s ease-out forwards;
+    }
+
+    /* Type badges */
+    .type-badge {
+        display: inline-block;
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        opacity: 0.8;
+    }
+
+    /* Minimap */
+    .minimap {
+        position: fixed;
+        bottom: 16px;
+        right: 16px;
+        width: 200px;
+        height: 150px;
+        border-radius: 8px;
+        overflow: hidden;
+        z-index: 30;
+    }
+    .dark .minimap {
+        background: #081020;
+        border: 1px solid #1a3a5c;
+    }
+    html:not(.dark) .minimap {
+        background: #e2e8f0;
+        border: 1px solid #cbd5e1;
+    }
+    .minimap-viewport {
+        position: absolute;
+        border: 2px solid #3b82f6;
+        background: rgba(59,130,246,0.1);
+        border-radius: 2px;
+        cursor: move;
+    }
+
+    /* Context menu */
+    .context-menu {
+        position: fixed;
+        z-index: 100;
+        min-width: 180px;
+        border-radius: 8px;
+        overflow: hidden;
+        font-size: 13px;
+    }
+    .dark .context-menu {
+        background: #142240;
+        border: 1px solid #1a3a5c;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    html:not(.dark) .context-menu {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+    .context-menu-item {
+        padding: 8px 14px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .dark .context-menu-item:hover { background: #1a3a5c; }
+    html:not(.dark) .context-menu-item:hover { background: #f1f5f9; }
+    .context-menu-separator {
+        height: 1px;
+        margin: 4px 0;
+    }
+    .dark .context-menu-separator { background: #1a3a5c; }
+    html:not(.dark) .context-menu-separator { background: #e2e8f0; }
+
+    /* Modal overlay */
+    .modal-overlay {
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .modal-box {
+        border-radius: 12px;
+        padding: 24px;
+        min-width: 360px;
+        max-width: 480px;
+    }
+    .dark .modal-box {
+        background: #0f1f3a;
+        border: 1px solid #1a3a5c;
+        box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+    }
+    html:not(.dark) .modal-box {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 16px 48px rgba(0,0,0,0.12);
+    }
+
+    /* Breadcrumb */
+    .breadcrumb-item {
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+    }
+    .dark .breadcrumb-item:hover { background: #1a3a5c; }
+    html:not(.dark) .breadcrumb-item:hover { background: #e2e8f0; }
+
+    /* Toast */
+    .toast {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 200;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        animation: toastIn 0.3s ease-out;
+    }
+    .dark .toast { background: #1a3a5c; color: #c8d6e5; border: 1px solid #2a5a8c; }
+    html:not(.dark) .toast { background: #1e293b; color: #f8fafc; }
+    @keyframes toastIn {
+        from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+        to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    .dark ::-webkit-scrollbar-track { background: #0a1628; }
+    html:not(.dark) ::-webkit-scrollbar-track { background: #f1f5f9; }
+    .dark ::-webkit-scrollbar-thumb { background: #1a3a5c; border-radius: 10px; }
+    html:not(.dark) ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+    /* Navigator sidebar */
+    .nav-sidebar {
+        position: relative;
+        flex-shrink: 0;
+        height: 100%;
+        overflow: hidden;
+        transition: width 0.2s ease;
+        z-index: 20;
+        display: flex;
+        flex-direction: row;
+    }
+    .dark .nav-sidebar {
+        background: #0b1726;
+        border-right: 1px solid #1a3a5c;
+    }
+    html:not(.dark) .nav-sidebar {
+        background: #f8fafc;
+        border-right: 1px solid #e2e8f0;
+    }
+    /* Thin rail shown when sidebar is collapsed */
+    .nav-rail {
+        width: 28px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-top: 10px;
+        gap: 8px;
+        cursor: pointer;
+    }
+    .nav-rail-icon {
+        opacity: 0.35;
+        transition: opacity 0.15s;
+    }
+    .nav-rail:hover .nav-rail-icon { opacity: 0.7; }
+    .nav-rail-label {
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        font-size: 10px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        opacity: 0.25;
+        font-weight: 600;
+        user-select: none;
+    }
+    .nav-rail:hover .nav-rail-label { opacity: 0.45; }
+    .nav-tree-item {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        padding: 4px 8px 4px 0;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 14px;
+        line-height: 1.4;
+        white-space: nowrap;
+        transition: background 0.1s;
+    }
+    .dark .nav-tree-item:hover { background: rgba(26,58,92,0.5); }
+    html:not(.dark) .nav-tree-item:hover { background: rgba(226,232,240,0.7); }
+    .nav-tree-item.active {
+        font-weight: 600;
+    }
+    .dark .nav-tree-item.active { background: rgba(59,130,246,0.15); color: #93c5fd; }
+    html:not(.dark) .nav-tree-item.active { background: rgba(59,130,246,0.1); color: #2563eb; }
+    .nav-twisty {
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        cursor: pointer;
+        opacity: 0.5;
+        transition: transform 0.15s ease, opacity 0.15s;
+    }
+    .nav-twisty:hover { opacity: 0.9; }
+    .nav-twisty.open { transform: rotate(90deg); }
+    .nav-type-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+
+    /* Inputs */
+    .input-field {
+        width: 100%;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        outline: none;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .dark .input-field {
+        background: #081020;
+        border: 1px solid #1a3a5c;
+        color: #c8d6e5;
+    }
+    html:not(.dark) .input-field {
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        color: #1e293b;
+    }
+    .input-field:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+    }
+
+    .btn {
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: background 0.15s;
+    }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-ghost {
+        background: transparent;
+    }
+    .dark .btn-ghost { color: #94a3b8; }
+    html:not(.dark) .btn-ghost { color: #64748b; }
+    .dark .btn-ghost:hover { background: #1a3a5c; }
+    html:not(.dark) .btn-ghost:hover { background: #e2e8f0; }
+
+    /* Search panel */
+    .search-panel {
+        position: fixed;
+        top: 56px;
+        right: 16px;
+        width: 320px;
+        max-height: 400px;
+        border-radius: 10px;
+        z-index: 40;
+        display: flex;
+        flex-direction: column;
+    }
+    .dark .search-panel {
+        background: #0f1f3a;
+        border: 1px solid #1a3a5c;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    html:not(.dark) .search-panel {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+    }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// --- Utilities ---
+
+const Icon = ({ name, size = 18, className = "" }) => {
+    const toPascalCase = (value) => value.replace(/(\\w)(\\w*)(_|-|\\s*)/g, (_, first, rest) => first.toUpperCase() + rest.toLowerCase());
+    const iconDef = window.lucide?.icons?.[toPascalCase(name)];
+    const [tag, baseAttrs, children] = Array.isArray(iconDef) ? iconDef : [];
+    if (!iconDef || tag !== 'svg' || !Array.isArray(children)) {
+        return <span className={`inline-flex items-center justify-center ${className}`} style={{ width: size, height: size, minWidth: size }} aria-hidden="true" />;
+    }
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" {...baseAttrs} width={size} height={size} className={`inline-block ${className}`.trim()} aria-hidden="true">
+            {children.map(([childTag, attrs], i) => React.createElement(childTag, { ...attrs, key: `${name}-${i}` }))}
+        </svg>
+    );
+};
+
+class ErrorBoundary extends React.Component {
+    constructor(props) { super(props); this.state = { hasError: false, message: "" }; }
+    static getDerivedStateFromError(error) { return { hasError: true, message: error?.message || "Unexpected UI error." }; }
+    componentDidCatch(error, info) { console.error("UI crashed", error, info); }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="h-screen w-screen flex items-center justify-center p-6" style={{background:'#0a1628'}}>
+                    <div className="max-w-xl w-full rounded-xl border border-red-900/30 p-6 text-center" style={{background:'#0f1f3a'}}>
+                        <h2 className="text-lg font-bold text-red-400 mb-2">jtree UI Error</h2>
+                        <p className="text-sm text-slate-400 mb-4">A frontend error occurred. The backend is still running.</p>
+                        <pre className="text-xs bg-slate-900 text-red-200 rounded-lg p-3 overflow-auto text-left">{this.state.message}</pre>
+                        <div className="mt-4 flex justify-center">
+                            <button onClick={() => window.location.reload()} className="btn btn-primary">Reload Page</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+async function api(path, options = {}) {
+    const headers = { ...options.headers };
+    if (options.body) {
+        headers['Content-Type'] = 'application/json';
+    }
+    const res = await fetch(path, {
+        headers,
+        ...options,
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'API error');
+    }
+    return res.json();
+}
+
+const TYPE_COLORS = {
+    object: { border: '#4fc3f7', bg: 'rgba(79,195,247,0.08)', badgeBg: 'rgba(79,195,247,0.15)', text: '#4fc3f7' },
+    array: { border: '#ab47bc', bg: 'rgba(171,71,188,0.08)', badgeBg: 'rgba(171,71,188,0.15)', text: '#ab47bc' },
+    string: { border: '#66bb6a', bg: 'rgba(102,187,106,0.08)', badgeBg: 'rgba(102,187,106,0.15)', text: '#66bb6a' },
+    number: { border: '#ffa726', bg: 'rgba(255,167,38,0.08)', badgeBg: 'rgba(255,167,38,0.15)', text: '#ffa726' },
+    boolean: { border: '#ef5350', bg: 'rgba(239,83,80,0.08)', badgeBg: 'rgba(239,83,80,0.15)', text: '#ef5350' },
+    null: { border: '#78909c', bg: 'rgba(120,144,156,0.08)', badgeBg: 'rgba(120,144,156,0.15)', text: '#78909c' },
+};
+
+const TYPE_COLORS_LIGHT = {
+    object: { border: '#0288d1', bg: 'rgba(2,136,209,0.06)', badgeBg: 'rgba(2,136,209,0.12)', text: '#0277bd' },
+    array: { border: '#7b1fa2', bg: 'rgba(123,31,162,0.06)', badgeBg: 'rgba(123,31,162,0.12)', text: '#6a1b9a' },
+    string: { border: '#2e7d32', bg: 'rgba(46,125,50,0.06)', badgeBg: 'rgba(46,125,50,0.12)', text: '#1b5e20' },
+    number: { border: '#e65100', bg: 'rgba(230,81,0,0.06)', badgeBg: 'rgba(230,81,0,0.12)', text: '#e65100' },
+    boolean: { border: '#c62828', bg: 'rgba(198,40,40,0.06)', badgeBg: 'rgba(198,40,40,0.12)', text: '#b71c1c' },
+    null: { border: '#546e7a', bg: 'rgba(84,110,122,0.06)', badgeBg: 'rgba(84,110,122,0.12)', text: '#37474f' },
+};
+
+function typeColor(type, isDark) {
+    return (isDark ? TYPE_COLORS : TYPE_COLORS_LIGHT)[type] || TYPE_COLORS.null;
+}
+
+// Group colors: visually distinct palette for parent-child lineage
+// Each level assigns siblings distinct colors; nodes accumulate ancestor colors as stripes
+const GROUP_PALETTE_DARK = [
+    '#4fc3f7', '#ab47bc', '#66bb6a', '#ffa726', '#ef5350',
+    '#26c6da', '#ec407a', '#9ccc65', '#ffca28', '#7e57c2',
+    '#29b6f6', '#d4e157', '#ff7043', '#78909c', '#5c6bc0',
+];
+const GROUP_PALETTE_LIGHT = [
+    '#0288d1', '#7b1fa2', '#2e7d32', '#e65100', '#c62828',
+    '#00838f', '#ad1457', '#558b2f', '#f9a825', '#512da8',
+    '#0277bd', '#9e9d24', '#d84315', '#546e7a', '#283593',
+];
+
+function getGroupColor(index, isDark) {
+    const palette = isDark ? GROUP_PALETTE_DARK : GROUP_PALETTE_LIGHT;
+    return palette[index % palette.length];
+}
+
+function computeGroupColors(rootNode, expandedSet, childrenCache, isDark) {
+    // Returns Map<path, string[]> - each value is an array of ancestor colors
+    // from outermost to this node's own color.
+    const colors = new Map();
+    colors.set('', []);  // root has no ancestry stripes
+
+    const palette = isDark ? GROUP_PALETTE_DARK : GROUP_PALETTE_LIGHT;
+    const walk = (path, ancestorColors, parentColorIdx) => {
+        if (!expandedSet.has(path)) return;
+        const children = childrenCache.get(path) || [];
+        let offset = 0;
+        children.forEach((child, i) => {
+            // Pick color, but skip parent's color index to avoid same color adjacent
+            let idx = (i + offset) % palette.length;
+            if (idx === parentColorIdx) {
+                offset++;
+                idx = (i + offset) % palette.length;
+            }
+            const ownColor = palette[idx];
+            const chain = [...ancestorColors, ownColor];
+            colors.set(child.path, chain);
+            if (child.type === 'object' || child.type === 'array') {
+                walk(child.path, chain, idx);
+            }
+        });
+    };
+
+    walk('', [], -1);
+    return colors;
+}
+
+function formatValue(value, type) {
+    if (type === 'null') return 'null';
+    if (type === 'boolean') return value ? 'true' : 'false';
+    if (type === 'number') return String(value);
+    if (type === 'string') {
+        if (value.length > 60) return JSON.stringify(value.slice(0, 57) + '...');
+        return JSON.stringify(value);
+    }
+    return String(value);
+}
+
+function pathSegments(path) {
+    if (!path) return [{ label: 'root', path: '' }];
+    const parts = path.split('.');
+    const segs = [{ label: 'root', path: '' }];
+    for (let i = 0; i < parts.length; i++) {
+        const p = parts.slice(0, i + 1).join('.');
+        const label = /^\\d+$/.test(parts[i]) ? `[${parts[i]}]` : parts[i];
+        segs.push({ label, path: p });
+    }
+    return segs;
+}
+
+// --- Layout Algorithm ---
+
+const NODE_WIDTH = 220;
+const H_GAP = 80;
+const V_GAP = 28;
+const GROUP_GAP = 40;
+const NODE_HEIGHT_BASE = 62;
+const NODE_HEIGHT_LEAF = 62;
+
+function computeLayout(nodes, expandedSet, childrenCache) {
+    // nodes: array of {path, type, childCount, ...} that are visible
+    // Returns: Map<path, {x, y, width, height}>
+    const positions = new Map();
+    if (!nodes || nodes.length === 0) return positions;
+
+    // Build tree structure from flat list
+    const root = nodes.find(n => n.path === '');
+    if (!root) return positions;
+
+    layoutSubtree(root, 0, positions, expandedSet, childrenCache);
+    return positions;
+}
+
+function layoutSubtree(node, depth, positions, expandedSet, childrenCache) {
+    const isLeaf = node.childCount === 0;
+    const h = isLeaf ? NODE_HEIGHT_LEAF : NODE_HEIGHT_BASE;
+    const x = depth * (NODE_WIDTH + H_GAP);
+    const isExpanded = expandedSet.has(node.path);
+    const children = isExpanded ? (childrenCache.get(node.path) || []) : [];
+
+    if (children.length === 0) {
+        const y = positions._nextY || 0;
+        positions.set(node.path, { x, y, width: NODE_WIDTH, height: h });
+        positions._nextY = y + h + V_GAP;
+        return h;
+    }
+
+    // Reserve top lane padding before first child
+    const lanePad = LANE_PAD_BASE + LANE_PAD_PER_DEPTH * 2;
+    positions._nextY = (positions._nextY || 0) + lanePad;
+
+    // Layout children first
+    let totalChildHeight = lanePad;
+    for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        const childIsExpanded = expandedSet.has(child.path);
+        const ch = layoutSubtree(child, depth + 1, positions, expandedSet, childrenCache);
+        totalChildHeight += ch + V_GAP;
+        // Add extra group gap after expanded children to visually separate groups
+        if (childIsExpanded && i < children.length - 1) {
+            positions._nextY = (positions._nextY || 0) + GROUP_GAP;
+            totalChildHeight += GROUP_GAP;
+        }
+    }
+    totalChildHeight -= V_GAP; // remove last gap
+
+    // Reserve bottom lane padding after last child
+    positions._nextY = (positions._nextY || 0) + lanePad;
+    totalChildHeight += lanePad;
+
+    // Center parent among children
+    const firstChild = positions.get(children[0].path);
+    const lastChild = positions.get(children[children.length - 1].path);
+    const centerY = firstChild.y + (lastChild.y + lastChild.height - firstChild.y) / 2 - h / 2;
+
+    positions.set(node.path, { x, y: centerY, width: NODE_WIDTH, height: h });
+    // Add group gap after this entire subtree so next sibling group is separated
+    positions._nextY = (positions._nextY || 0) + GROUP_GAP;
+    return Math.max(h, totalChildHeight) + GROUP_GAP;
+}
+
+function computeEdges(positions, expandedSet, childrenCache) {
+    const edges = [];
+    for (const [path, pos] of positions) {
+        if (path === '_nextY') continue;
+        if (!expandedSet.has(path)) continue;
+        const children = childrenCache.get(path) || [];
+        for (const child of children) {
+            const childPos = positions.get(child.path);
+            if (!childPos) continue;
+            edges.push({
+                from: { x: pos.x + pos.width, y: pos.y + pos.height / 2 },
+                to: { x: childPos.x, y: childPos.y + childPos.height / 2 },
+                parentPath: path,
+                childPath: child.path,
+                childType: child.type,
+            });
+        }
+    }
+    return edges;
+}
+
+function bezierPath(from, to) {
+    const dx = (to.x - from.x) * 0.5;
+    return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`;
+}
+
+// --- Lanes: dashed-border containment regions for expanded nodes ---
+
+const LANE_PAD_BASE = 20;
+const LANE_PAD_PER_DEPTH = 8;
+
+function computeLanes(positions, expandedSet, childrenCache, groupColors) {
+    // For each expanded node, compute a bounding rect around ALL descendants.
+    // Outer (shallower) lanes get more padding so nested lanes don't overlap.
+    const lanes = [];
+
+    // First pass: find max depth so we can invert padding (deeper = less padding)
+    let maxDepth = 0;
+
+    function getDescendantBounds(path) {
+        const children = childrenCache.get(path) || [];
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const child of children) {
+            const cp = positions.get(child.path);
+            if (!cp) continue;
+            minX = Math.min(minX, cp.x);
+            minY = Math.min(minY, cp.y);
+            maxX = Math.max(maxX, cp.x + cp.width);
+            maxY = Math.max(maxY, cp.y + cp.height);
+            if (expandedSet.has(child.path)) {
+                const sub = getDescendantBounds(child.path);
+                if (sub) {
+                    minX = Math.min(minX, sub.minX);
+                    minY = Math.min(minY, sub.minY);
+                    maxX = Math.max(maxX, sub.maxX);
+                    maxY = Math.max(maxY, sub.maxY);
+                }
+            }
+        }
+        if (minX === Infinity) return null;
+        return { minX, minY, maxX, maxY };
+    }
+
+    // Collect raw lane data
+    const rawLanes = [];
+    for (const [path] of positions) {
+        if (path === '_nextY') continue;
+        if (!expandedSet.has(path)) continue;
+        const children = childrenCache.get(path) || [];
+        if (children.length === 0) continue;
+
+        const bounds = getDescendantBounds(path);
+        if (!bounds) continue;
+
+        const chain = groupColors?.get(path);
+        const color = (chain && chain.length > 0) ? chain[chain.length - 1] : null;
+        const depth = path === '' ? 0 : path.split('.').length;
+        if (depth > maxDepth) maxDepth = depth;
+
+        rawLanes.push({ path, depth, bounds, color });
+    }
+
+    // Second pass: compute rects with depth-aware padding
+    // Shallower lanes get more padding so they wrap outside deeper lanes
+    for (const lane of rawLanes) {
+        const depthInversion = maxDepth - lane.depth;
+        const pad = LANE_PAD_BASE + depthInversion * LANE_PAD_PER_DEPTH;
+        lanes.push({
+            path: lane.path,
+            depth: lane.depth,
+            x: lane.bounds.minX - pad,
+            y: lane.bounds.minY - pad,
+            width: lane.bounds.maxX - lane.bounds.minX + pad * 2,
+            height: lane.bounds.maxY - lane.bounds.minY + pad * 2,
+            color: lane.color,
+        });
+    }
+
+    // Sort by depth so outer lanes render behind inner lanes
+    lanes.sort((a, b) => a.depth - b.depth);
+    return lanes;
+}
+
+const LaneLayer = ({ lanes, isDark }) => {
+    if (!lanes || lanes.length === 0) return null;
+    return (
+        <React.Fragment>
+            {lanes.map((lane) => (
+                <div
+                    key={`lane-${lane.path}`}
+                    style={{
+                        position: 'absolute',
+                        left: lane.x,
+                        top: lane.y,
+                        width: lane.width,
+                        height: lane.height,
+                        border: `1.5px dashed ${lane.color || (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)')}`,
+                        borderRadius: 12,
+                        background: lane.color
+                            ? (isDark ? `${lane.color}08` : `${lane.color}06`)
+                            : 'transparent',
+                        pointerEvents: 'none',
+                    }}
+                />
+            ))}
+        </React.Fragment>
+    );
+};
+
+// --- Components ---
+
+const Toast = ({ message, onClose }) => {
+    useEffect(() => {
+        const t = setTimeout(onClose, 3000);
+        return () => clearTimeout(t);
+    }, [onClose]);
+    return <div className="toast">{message}</div>;
+};
+
+const Breadcrumb = ({ path, onNavigate, isDark }) => {
+    const segs = pathSegments(path);
+    return (
+        <div className="flex items-center gap-1 px-3 py-1 overflow-x-auto" style={{minHeight: 28}}>
+            {segs.map((seg, i) => (
+                <React.Fragment key={seg.path}>
+                    {i > 0 && <span className="text-xs opacity-40 mx-0.5">&gt;</span>}
+                    <span
+                        className="breadcrumb-item"
+                        style={{ color: i === segs.length - 1 ? '#3b82f6' : undefined }}
+                        onClick={() => onNavigate(seg.path)}
+                    >
+                        {seg.label}
+                    </span>
+                </React.Fragment>
+            ))}
+        </div>
+    );
+};
+
+const SearchBar = React.memo(({ onSearch, onClose, isDark }) => {
+    const [query, setQuery] = useState('');
+    const [searchType, setSearchType] = useState('both');
+    const [results, setResults] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const inputRef = useRef(null);
+    const debounceRef = useRef(null);
+
+    useEffect(() => {
+        inputRef.current?.focus();
+    }, []);
+
+    useEffect(() => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        if (!query.trim()) { setResults([]); return; }
+        setLoading(true);
+        debounceRef.current = setTimeout(async () => {
+            try {
+                const r = await api(`/api/search?q=${encodeURIComponent(query)}&type=${searchType}&limit=100`);
+                setResults(r);
+            } catch (e) {
+                console.error('Search error', e);
+            } finally {
+                setLoading(false);
+            }
+        }, 300);
+        return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    }, [query, searchType]);
+
+    return (
+        <div className="search-panel">
+            <div className="p-3 flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                    <Icon name="search" size={14} className="opacity-50" />
+                    <input
+                        ref={inputRef}
+                        className="input-field flex-1"
+                        placeholder="Search keys and values..."
+                        value={query}
+                        onChange={e => setQuery(e.target.value)}
+                        onKeyDown={e => e.key === 'Escape' && onClose()}
+                    />
+                    <button className="btn btn-ghost p-1" onClick={onClose}><Icon name="x" size={14} /></button>
+                </div>
+                <div className="flex gap-1">
+                    {['both', 'key', 'value'].map(t => (
+                        <button
+                            key={t}
+                            className={`text-xs px-2 py-1 rounded ${searchType === t ? 'bg-blue-600 text-white' : 'btn-ghost'}`}
+                            onClick={() => setSearchType(t)}
+                        >{t}</button>
+                    ))}
+                </div>
+            </div>
+            {results.length > 0 && (
+                <div className="overflow-y-auto max-h-[280px] border-t" style={{borderColor: isDark ? '#1a3a5c' : '#e2e8f0'}}>
+                    {results.map((r, i) => (
+                        <div
+                            key={i}
+                            className="context-menu-item text-xs"
+                            onClick={() => onSearch(r.path)}
+                        >
+                            <span className="font-mono truncate flex-1" style={{color: r.matchType === 'key' ? '#4fc3f7' : '#66bb6a'}}>
+                                {r.path}
+                            </span>
+                            <span className="truncate opacity-60 max-w-[100px]">{r.preview}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {query && !loading && results.length === 0 && (
+                <div className="p-3 text-xs opacity-50 text-center border-t" style={{borderColor: isDark ? '#1a3a5c' : '#e2e8f0'}}>No results</div>
+            )}
+        </div>
+    );
+});
+
+const ContextMenu = ({ x, y, node, onClose, onAction, readonly, isDark, hasClipboard }) => {
+    const menuRef = useRef(null);
+    useEffect(() => {
+        const handler = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) onClose(); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [onClose]);
+
+    const isContainer = node.type === 'object' || node.type === 'array';
+    const isRoot = node.path === '';
+
+    return (
+        <div ref={menuRef} className="context-menu" style={{ left: x, top: y }}>
+            {isContainer && (
+                <div className="context-menu-item" onClick={() => { onAction('toggleExpand', node); onClose(); }}>
+                    <Icon name="chevrons-right" size={14} /> Expand/Collapse
+                </div>
+            )}
+            {isContainer && (
+                <div className="context-menu-item" onClick={() => { onAction('expandAll', node); onClose(); }}>
+                    <Icon name="maximize-2" size={14} /> Expand All
+                </div>
+            )}
+            {isContainer && (
+                <div className="context-menu-item" onClick={() => { onAction('collapseAll', node); onClose(); }}>
+                    <Icon name="minimize-2" size={14} /> Collapse All
+                </div>
+            )}
+            {isContainer && <div className="context-menu-separator" />}
+            {!readonly && isContainer && (
+                <div className="context-menu-item" onClick={() => { onAction('addChild', node); onClose(); }}>
+                    <Icon name="plus" size={14} /> Add Child
+                </div>
+            )}
+            {!readonly && !isRoot && (
+                <div className="context-menu-item" onClick={() => { onAction('delete', node); onClose(); }}>
+                    <Icon name="trash-2" size={14} className="text-red-400" /> Delete
+                </div>
+            )}
+            {!readonly && !isRoot && node._parentType === 'object' && (
+                <div className="context-menu-item" onClick={() => { onAction('rename', node); onClose(); }}>
+                    <Icon name="pencil" size={14} /> Rename Key
+                </div>
+            )}
+            {!readonly && node.childCount === 0 && node.type !== 'object' && node.type !== 'array' && (
+                <div className="context-menu-item" onClick={() => { onAction('editValue', node); onClose(); }}>
+                    <Icon name="edit" size={14} /> Edit Value
+                </div>
+            )}
+            {!readonly && !isRoot && node._parentType === 'array' && (() => {
+                const idx = parseInt(node.path.split('.').pop(), 10);
+                return (
+                    <React.Fragment>
+                        <div className="context-menu-separator" />
+                        <div className={`context-menu-item ${idx === 0 ? 'opacity-30 pointer-events-none' : ''}`}
+                            onClick={() => { if (idx > 0) { onAction('moveUp', node); onClose(); } }}>
+                            <Icon name="arrow-up" size={14} /> Move Up
+                        </div>
+                        <div className={`context-menu-item ${node._isLastInArray ? 'opacity-30 pointer-events-none' : ''}`}
+                            onClick={() => { if (!node._isLastInArray) { onAction('moveDown', node); onClose(); } }}>
+                            <Icon name="arrow-down" size={14} /> Move Down
+                        </div>
+                        <div className="context-menu-item" onClick={() => { onAction('moveTo', node); onClose(); }}>
+                            <Icon name="arrow-right-left" size={14} /> Move to Position...
+                        </div>
+                    </React.Fragment>
+                );
+            })()}
+            <div className="context-menu-separator" />
+            <div className="context-menu-item" onClick={() => { onAction('copyNode', node); onClose(); }}>
+                <Icon name="copy" size={14} /> Copy Node
+            </div>
+            {!readonly && isContainer && (
+                <div className={`context-menu-item ${!hasClipboard ? 'opacity-30 pointer-events-none' : ''}`}
+                    onClick={() => { if (hasClipboard) { onAction('paste', node); onClose(); } }}>
+                    <Icon name="clipboard-paste" size={14} /> Paste
+                </div>
+            )}
+            <div className="context-menu-separator" />
+            <div className="context-menu-item" onClick={() => { navigator.clipboard.writeText(node.path); onClose(); }}>
+                <Icon name="link" size={14} /> Copy Path
+            </div>
+            {node.childCount === 0 && (
+                <div className="context-menu-item" onClick={() => { navigator.clipboard.writeText(String(node.value)); onClose(); }}>
+                    <Icon name="clipboard" size={14} /> Copy Value
+                </div>
+            )}
+        </div>
+    );
+};
+
+const GraphNode = React.memo(({ node, pos, groupColor, isExpanded, isSelected, isSearchMatch, isDark, onClick, onDoubleClick, onChevronClick, onContextMenu }) => {
+    const tc = typeColor(node.type, isDark);
+    const isLeaf = node.childCount === 0;
+    const keyName = node.path ? node.path.split('.').pop() : 'root';
+    const displayKey = /^\\d+$/.test(keyName) ? `[${keyName}]` : keyName;
+    // groupColor is an array of ancestor colors; use the last one (own color) for left border
+    const chain = groupColor || [];
+    const ownColor = chain.length > 0 ? chain[chain.length - 1] : tc.border;
+
+    return (
+        <div
+            className={`graph-node node-appear ${isSelected ? 'selected' : ''} ${isSearchMatch ? 'search-match' : ''}`}
+            style={{
+                left: pos.x,
+                top: pos.y,
+                width: pos.width,
+                borderLeft: isLeaf ? 'none' : `4px solid ${ownColor}`,
+                background: isDark ? `linear-gradient(135deg, #0f1f3a, ${tc.bg})` : `linear-gradient(135deg, #ffffff, ${tc.bg})`,
+            }}
+            onClick={(e) => { e.stopPropagation(); onClick(node); }}
+            onDoubleClick={(e) => { e.stopPropagation(); onDoubleClick(node); }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, node); }}
+        >
+            <div style={{ flex: 1, padding: '10px 12px', minWidth: 0 }}>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="font-semibold truncate text-sm" title={displayKey}>{displayKey}</span>
+                    <span className="type-badge" style={{ background: tc.badgeBg, color: tc.text }}>{node.type}</span>
+                </div>
+                {isLeaf ? (
+                    <div className="font-mono text-xs truncate opacity-80" title={String(node.value)}>
+                        {formatValue(node.value, node.type)}
+                    </div>
+                ) : (
+                    <div className="text-xs opacity-60">
+                        <span
+                            className="inline-flex items-center gap-1 hover:opacity-90"
+                            onClick={(e) => { e.stopPropagation(); onChevronClick(node); }}
+                            style={{ cursor: 'pointer' }}
+                            title={isExpanded ? 'Collapse' : 'Expand'}
+                        >
+                            <Icon name={isExpanded ? "chevron-down" : "chevron-right"} size={12} />
+                            {node.summary}
+                        </span>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+});
+
+const SVGEdgeLayer = ({ edges, isDark, groupColors }) => {
+    return (
+        <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>
+            {edges.map((edge, i) => {
+                const chain = groupColors?.get(edge.childPath);
+                const edgeColor = (chain && chain.length > 0) ? chain[chain.length - 1] : typeColor(edge.childType, isDark).border;
+                return (
+                    <path
+                        key={i}
+                        d={bezierPath(edge.from, edge.to)}
+                        fill="none"
+                        stroke={edgeColor}
+                        strokeWidth={1.5}
+                        opacity={0.4}
+                    />
+                );
+            })}
+        </svg>
+    );
+};
+
+const Minimap = ({ positions, viewBox, canvasSize, onNavigate, isDark }) => {
+    const minimapRef = useRef(null);
+    const dragRef = useRef({ active: false, startX: 0, startY: 0, startViewX: 0, startViewY: 0 });
+    const allPositions = [...positions.entries()].filter(([k]) => k !== '_nextY');
+    if (allPositions.length === 0) return null;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [, pos] of allPositions) {
+        minX = Math.min(minX, pos.x);
+        minY = Math.min(minY, pos.y);
+        maxX = Math.max(maxX, pos.x + pos.width);
+        maxY = Math.max(maxY, pos.y + pos.height);
+    }
+    const contentW = maxX - minX + 40;
+    const contentH = maxY - minY + 40;
+    const MIN_MINIMAP_SCALE = 0.01;
+    const scale = Math.max(MIN_MINIMAP_SCALE, Math.min(200 / contentW, 150 / contentH, 1));
+
+    const vpLeft = ((viewBox.x - minX + 20) * scale);
+    const vpTop = ((viewBox.y - minY + 20) * scale);
+    const vpW = (canvasSize.width * scale);
+    const vpH = (canvasSize.height * scale);
+
+    const minimapToWorld = useCallback((clientX, clientY) => {
+        const rect = minimapRef.current.getBoundingClientRect();
+        const mx = (clientX - rect.left) / scale + minX - 20;
+        const my = (clientY - rect.top) / scale + minY - 20;
+        return { x: mx, y: my };
+    }, [scale, minX, minY]);
+
+    const handleMouseDown = useCallback((e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const world = minimapToWorld(e.clientX, e.clientY);
+        // Check if click is inside the viewport rectangle
+        const inVP = world.x >= viewBox.x && world.x <= viewBox.x + canvasSize.width
+                  && world.y >= viewBox.y && world.y <= viewBox.y + canvasSize.height;
+        if (inVP) {
+            // Start dragging from current position
+            dragRef.current = { active: true, startX: e.clientX, startY: e.clientY, startViewX: viewBox.x, startViewY: viewBox.y };
+        } else {
+            // Click outside viewport: jump to center on that point, then start drag
+            const newX = world.x - canvasSize.width / 2;
+            const newY = world.y - canvasSize.height / 2;
+            onNavigate(newX, newY);
+            dragRef.current = { active: true, startX: e.clientX, startY: e.clientY, startViewX: newX, startViewY: newY };
+        }
+
+        const handleMouseMove = (me) => {
+            if (!dragRef.current.active) return;
+            const dx = (me.clientX - dragRef.current.startX) / scale;
+            const dy = (me.clientY - dragRef.current.startY) / scale;
+            onNavigate(dragRef.current.startViewX + dx, dragRef.current.startViewY + dy);
+        };
+
+        const handleMouseUp = () => {
+            dragRef.current.active = false;
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+    }, [minimapToWorld, viewBox, canvasSize, onNavigate, scale]);
+
+    return (
+        <div className="minimap" ref={minimapRef} onMouseDown={handleMouseDown} style={{cursor: 'pointer'}}>
+            <svg width={200} height={150}>
+                {allPositions.map(([path, pos]) => (
+                    <rect
+                        key={path}
+                        x={(pos.x - minX + 20) * scale}
+                        y={(pos.y - minY + 20) * scale}
+                        width={pos.width * scale}
+                        height={pos.height * scale}
+                        rx={2}
+                        fill={isDark ? '#1a3a5c' : '#94a3b8'}
+                        opacity={0.6}
+                    />
+                ))}
+                <rect
+                    x={Math.max(0, vpLeft)}
+                    y={Math.max(0, vpTop)}
+                    width={Math.min(vpW, 200)}
+                    height={Math.min(vpH, 150)}
+                    fill="none"
+                    stroke="#3b82f6"
+                    strokeWidth={2}
+                    rx={2}
+                />
+            </svg>
+        </div>
+    );
+};
+
+// --- Modals ---
+
+const EditModal = ({ node, onSave, onClose, isDark }) => {
+    const [value, setValue] = useState(() => {
+        if (node.type === 'string') return node.value || '';
+        if (node.type === 'number') return String(node.value ?? 0);
+        if (node.type === 'boolean') return node.value;
+        if (node.type === 'null') return 'null';
+        return String(node.value);
+    });
+
+    const handleSave = () => {
+        let parsed = value;
+        if (node.type === 'number') {
+            parsed = Number(value);
+            if (isNaN(parsed)) return;
+        } else if (node.type === 'boolean') {
+            parsed = value;
+        } else if (node.type === 'null') {
+            parsed = null;
+        }
+        onSave(node.path, parsed);
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-box" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold mb-3">Edit Value</h3>
+                <div className="text-xs font-mono opacity-60 mb-2 truncate">{node.path || 'root'}</div>
+                {node.type === 'boolean' ? (
+                    <div className="flex gap-2 mb-4">
+                        <button className={`btn ${value === true ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setValue(true)}>true</button>
+                        <button className={`btn ${value === false ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setValue(false)}>false</button>
+                    </div>
+                ) : node.type === 'null' ? (
+                    <div className="text-sm opacity-60 mb-4 italic">Value is null</div>
+                ) : (
+                    <input
+                        className="input-field mb-4"
+                        type={node.type === 'number' ? 'number' : 'text'}
+                        value={value}
+                        onChange={e => setValue(node.type === 'number' ? e.target.value : e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleSave()}
+                        autoFocus
+                    />
+                )}
+                <div className="flex justify-end gap-2">
+                    <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                    {node.type !== 'null' && <button className="btn btn-primary" onClick={handleSave}>Save</button>}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const AddChildModal = ({ parentNode, onSave, onClose }) => {
+    const isObject = parentNode.type === 'object';
+    const [key, setKey] = useState('');
+    const [childType, setChildType] = useState('string');
+    const [value, setDefaultValue] = useState('');
+
+    const handleSave = () => {
+        if (isObject && !key.trim()) return;
+        let parsedValue;
+        if (childType === 'object') parsedValue = {};
+        else if (childType === 'array') parsedValue = [];
+        else if (childType === 'number') parsedValue = Number(value) || 0;
+        else if (childType === 'boolean') parsedValue = value === 'true';
+        else if (childType === 'null') parsedValue = null;
+        else parsedValue = value;
+        onSave(parentNode.path, isObject ? key : null, parsedValue, childType);
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-box" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold mb-3">Add Child</h3>
+                {isObject && (
+                    <div className="mb-3">
+                        <label className="text-xs opacity-60 block mb-1">Key</label>
+                        <input className="input-field" value={key} onChange={e => setKey(e.target.value)} autoFocus placeholder="key name" />
+                    </div>
+                )}
+                <div className="mb-3">
+                    <label className="text-xs opacity-60 block mb-1">Type</label>
+                    <select className="input-field" value={childType} onChange={e => setChildType(e.target.value)}>
+                        {['string', 'number', 'boolean', 'null', 'object', 'array'].map(t => (
+                            <option key={t} value={t}>{t}</option>
+                        ))}
+                    </select>
+                </div>
+                {!['object', 'array', 'null'].includes(childType) && (
+                    <div className="mb-4">
+                        <label className="text-xs opacity-60 block mb-1">Value</label>
+                        {childType === 'boolean' ? (
+                            <select className="input-field" value={value} onChange={e => setDefaultValue(e.target.value)}>
+                                <option value="true">true</option>
+                                <option value="false">false</option>
+                            </select>
+                        ) : (
+                            <input
+                                className="input-field"
+                                type={childType === 'number' ? 'number' : 'text'}
+                                value={value}
+                                onChange={e => setDefaultValue(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleSave()}
+                            />
+                        )}
+                    </div>
+                )}
+                <div className="flex justify-end gap-2">
+                    <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                    <button className="btn btn-primary" onClick={handleSave}>Add</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const DeleteConfirmModal = ({ node, onConfirm, onClose }) => {
+    const isSubtree = node.childCount > 0;
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-box" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold mb-2 text-red-400">Delete Node</h3>
+                <p className="text-sm mb-1">
+                    Delete <span className="font-mono text-xs">{node.path}</span>?
+                </p>
+                {isSubtree && <p className="text-xs opacity-60 mb-4">This will delete the entire subtree ({node.childCount} children).</p>}
+                <div className="flex justify-end gap-2 mt-4">
+                    <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                    <button className="btn btn-danger" onClick={() => onConfirm(node.path)}>Delete</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const RenameKeyModal = ({ node, onSave, onClose }) => {
+    const currentKey = node.path.split('.').pop();
+    const [newKey, setNewKey] = useState(currentKey);
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-box" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold mb-3">Rename Key</h3>
+                <input
+                    className="input-field mb-4"
+                    value={newKey}
+                    onChange={e => setNewKey(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && newKey.trim() && onSave(node.path, newKey.trim())}
+                    autoFocus
+                />
+                <div className="flex justify-end gap-2">
+                    <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                    <button className="btn btn-primary" onClick={() => newKey.trim() && onSave(node.path, newKey.trim())} disabled={!newKey.trim()}>Rename</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const MoveToModal = ({ node, onMove, onClose }) => {
+    const parts = node.path.split('.');
+    const currentIdx = parseInt(parts.pop(), 10);
+    const parentPath = parts.join('.');
+    const [targetIdx, setTargetIdx] = useState(String(currentIdx));
+
+    const handleSave = () => {
+        const to = parseInt(targetIdx, 10);
+        if (isNaN(to) || to < 0 || to === currentIdx) return;
+        onMove(parentPath, currentIdx, to);
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-box" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold mb-3">Move to Position</h3>
+                <div className="text-xs opacity-60 mb-2">Current position: {currentIdx}</div>
+                <label className="text-xs opacity-60 block mb-1">New position (0-based index)</label>
+                <input
+                    className="input-field mb-4"
+                    type="number"
+                    min="0"
+                    value={targetIdx}
+                    onChange={e => setTargetIdx(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleSave()}
+                    autoFocus
+                />
+                <div className="flex justify-end gap-2">
+                    <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                    <button className="btn btn-primary" onClick={handleSave} disabled={targetIdx === '' || parseInt(targetIdx, 10) === currentIdx}>Move</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SaveAsModal = ({ currentFile, onSave, onClose, onBrowserSave }) => {
+    const [showPathInput, setShowPathInput] = useState(false);
+    const [filePath, setFilePath] = useState(currentFile || '');
+    const [saving, setSaving] = useState(false);
+
+    const handleBrowserSave = async () => {
+        setSaving(true);
+        try {
+            // Try File System Access API first (Chrome/Edge)
+            if (window.showSaveFilePicker) {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: currentFile ? currentFile.split('/').pop() : 'data.json',
+                    types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }],
+                });
+                const resp = await fetch('/api/download');
+                const content = await resp.text();
+                const writable = await handle.createWritable();
+                await writable.write(content);
+                await writable.close();
+                onBrowserSave(handle.name);
+                return;
+            }
+            // Fallback: download via blob
+            const resp = await fetch('/api/download');
+            const content = await resp.text();
+            const blob = new Blob([content], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = currentFile ? currentFile.split('/').pop() : 'data.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            onBrowserSave(a.download);
+        } catch (e) {
+            if (e.name !== 'AbortError') {
+                setSaving(false);
+                throw e;
+            }
+        }
+        setSaving(false);
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-box" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold mb-3">Save As</h3>
+                <button
+                    className="btn btn-primary w-full flex items-center justify-center gap-2 py-3 mb-3"
+                    onClick={handleBrowserSave}
+                    disabled={saving}
+                >
+                    <Icon name="download" size={16} />
+                    {saving ? 'Saving...' : 'Choose location...'}
+                </button>
+                {!showPathInput ? (
+                    <button
+                        className="w-full text-center text-xs opacity-50 hover:opacity-80 cursor-pointer py-2 px-3 rounded border border-dashed transition-all"
+                        style={{ borderColor: 'currentColor' }}
+                        onClick={() => setShowPathInput(true)}
+                    >
+                        <Icon name="terminal" size={12} className="inline mr-1" />
+                        or save to a server path
+                    </button>
+                ) : (
+                    <div>
+                        <label className="text-xs opacity-60 block mb-1">Server file path</label>
+                        <input
+                            className="input-field mb-3"
+                            value={filePath}
+                            onChange={e => setFilePath(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && filePath.trim() && onSave(filePath.trim())}
+                            autoFocus
+                            placeholder="/path/to/file.json"
+                        />
+                        <div className="flex justify-end gap-2">
+                            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                            <button className="btn btn-primary" onClick={() => filePath.trim() && onSave(filePath.trim())} disabled={!filePath.trim()}>Save</button>
+                        </div>
+                    </div>
+                )}
+                {!showPathInput && (
+                    <div className="flex justify-end mt-3">
+                        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+const OpenFileModal = ({ onOpenContent, onOpenPath, onClose, error }) => {
+    const [showPathInput, setShowPathInput] = useState(false);
+    const [filePath, setFilePath] = useState('');
+    const [loading, setLoading] = useState(false);
+    const fileInputRef = useRef(null);
+
+    const handleFileSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setLoading(true);
+        try {
+            const text = await file.text();
+            await onOpenContent(text, file.name);
+        } catch (err) {
+            // error is handled by parent via the error prop
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-box" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold mb-4">Open JSON File</h3>
+
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleFileSelect}
+                    style={{display: 'none'}}
+                />
+                <button
+                    className="btn btn-primary flex items-center gap-2 w-full justify-center py-3 mb-3"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={loading}
+                >
+                    <Icon name="folder-open" size={16} />
+                    {loading ? 'Loading...' : 'Choose file...'}
+                </button>
+
+                {error && <div className="text-xs text-red-400 mb-2">{error}</div>}
+
+                {!showPathInput ? (
+                    <div className="text-center mt-3">
+                        <button
+                            className="text-xs opacity-50 hover:opacity-80 flex items-center gap-1.5 mx-auto px-3 py-1.5 rounded border"
+                            style={{ borderColor: 'currentColor', borderStyle: 'dashed' }}
+                            onClick={() => setShowPathInput(true)}
+                        >
+                            <Icon name="terminal" size={12} />
+                            Enter a server path instead
+                        </button>
+                    </div>
+                ) : (
+                    <div className="mt-3">
+                        <label className="text-xs opacity-50 block mb-1">Server path</label>
+                        <div className="flex gap-2">
+                            <input
+                                className="input-field flex-1"
+                                value={filePath}
+                                onChange={e => setFilePath(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && filePath.trim() && onOpenPath(filePath.trim())}
+                                autoFocus
+                                placeholder="/path/to/file.json"
+                            />
+                            <button className="btn btn-primary" onClick={() => filePath.trim() && onOpenPath(filePath.trim())} disabled={!filePath.trim()}>Open</button>
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex justify-end mt-4">
+                    <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Navigator Sidebar ---
+
+const NavSidebarItem = ({ node, depth, activePath, sidebarExpanded, onToggle, onNavigate, isDark }) => {
+    const itemRef = useRef(null);
+    const isOpen = sidebarExpanded.has(node.path);
+    const isActive = activePath === node.path;
+    const keyName = node.path ? node.path.split('.').pop() : 'root';
+    const displayKey = /^\\d+$/.test(keyName) ? `[${keyName}]` : keyName;
+    const isObj = node.type === 'object';
+    const typeColor = isObj ? '#4fc3f7' : '#ab47bc';
+    const hasContainerChildren = node._navChildren && node._navChildren.some(c => c.type === 'object' || c.type === 'array');
+    const hasExpandableChildren = node.childCount > 0;
+
+    // Scroll active item into view
+    useEffect(() => {
+        if (isActive && itemRef.current) {
+            itemRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }, [isActive]);
+
+    return (
+        <div>
+            <div
+                ref={itemRef}
+                className={`nav-tree-item ${isActive ? 'active' : ''}`}
+                style={{ paddingLeft: depth * 14 + 4 }}
+                onClick={(e) => { e.stopPropagation(); onNavigate(node.path); }}
+            >
+                {hasExpandableChildren ? (
+                    <span
+                        className={`nav-twisty ${isOpen ? 'open' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); onToggle(node.path); }}
+                    >
+                        <svg width="8" height="8" viewBox="0 0 8 8">
+                            <path d="M2 1 L6 4 L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                    </span>
+                ) : (
+                    <span style={{ width: 16, flexShrink: 0 }} />
+                )}
+                <span className="nav-type-dot" style={{ background: typeColor }} />
+                <span className="truncate font-mono" style={{ fontSize: 13 }} title={node.path || 'root'}>
+                    {displayKey}
+                </span>
+                <span style={{ fontSize: 12, opacity: 0.35, marginLeft: 'auto', paddingLeft: 6, flexShrink: 0 }}>
+                    {isObj ? `{${node.childCount}}` : `[${node.childCount}]`}
+                </span>
+            </div>
+            {isOpen && node._navChildren && (
+                <div>
+                    {node._navChildren
+                        .filter(c => c.type === 'object' || c.type === 'array')
+                        .map(child => (
+                            <NavSidebarItem
+                                key={child.path}
+                                node={child}
+                                depth={depth + 1}
+                                activePath={activePath}
+                                sidebarExpanded={sidebarExpanded}
+                                onToggle={onToggle}
+                                onNavigate={onNavigate}
+                                isDark={isDark}
+                            />
+                        ))
+                    }
+                </div>
+            )}
+        </div>
+    );
+};
+
+const NavSidebar = ({ rootNode, activePath, onNavigate, isDark, isOpen, onToggleOpen }) => {
+    const [sidebarExpanded, setSidebarExpanded] = useState(new Set());
+    const [navCache, setNavCache] = useState(new Map()); // path -> children array
+    const [navRootNode, setNavRootNode] = useState(null);
+
+    // Fetch root node's container-only children on mount
+    useEffect(() => {
+        if (!rootNode) return;
+        const fetchRoot = async () => {
+            try {
+                const data = await api(`/api/children?path=&offset=0&limit=500`);
+                const enriched = { ...rootNode, _navChildren: data.children || [] };
+                setNavRootNode(enriched);
+                setNavCache(prev => { const n = new Map(prev); n.set('', data.children || []); return n; });
+            } catch (e) { console.error('Nav: failed to fetch root children', e); }
+        };
+        fetchRoot();
+    }, [rootNode]);
+
+    const handleToggle = useCallback(async (path) => {
+        setSidebarExpanded(prev => {
+            const next = new Set(prev);
+            if (next.has(path)) {
+                next.delete(path);
+            } else {
+                next.add(path);
+            }
+            return next;
+        });
+
+        // Fetch children if not cached
+        if (!navCache.has(path)) {
+            try {
+                const data = await api(`/api/children?path=${encodeURIComponent(path)}&offset=0&limit=500`);
+                setNavCache(prev => {
+                    const n = new Map(prev);
+                    n.set(path, data.children || []);
+                    return n;
+                });
+            } catch (e) {
+                console.error('Nav: failed to fetch children for', path, e);
+            }
+        }
+    }, [navCache]);
+
+    // Auto-reveal: when activePath changes, expand sidebar ancestors to show it
+    useEffect(() => {
+        if (!activePath && activePath !== '') return;
+        if (!navRootNode) return;
+
+        // Build ancestor paths (e.g. "a.b.c" -> ["", "a", "a.b", "a.b.c"])
+        const parts = activePath ? activePath.split('.') : [];
+        const ancestors = [''];
+        for (let i = 0; i < parts.length; i++) {
+            ancestors.push(parts.slice(0, i + 1).join('.'));
+        }
+
+        // Fetch any missing ancestors, then expand them all
+        const revealAncestors = async () => {
+            const toFetch = ancestors.filter(p => !navCache.has(p));
+            if (toFetch.length > 0) {
+                const fetched = new Map();
+                for (const p of toFetch) {
+                    try {
+                        const data = await api(`/api/children?path=${encodeURIComponent(p)}&offset=0&limit=500`);
+                        fetched.set(p, data.children || []);
+                    } catch (e) { /* path may not exist or be a leaf */ }
+                }
+                if (fetched.size > 0) {
+                    setNavCache(prev => {
+                        const n = new Map(prev);
+                        for (const [k, v] of fetched) n.set(k, v);
+                        return n;
+                    });
+                }
+            }
+            // Expand all ancestors so the active node is visible
+            setSidebarExpanded(prev => {
+                const next = new Set(prev);
+                for (const p of ancestors) next.add(p);
+                return next;
+            });
+        };
+        revealAncestors();
+    }, [activePath, navRootNode]);
+
+    // Enrich nodes with cached children for rendering
+    const enrichNode = useCallback((node) => {
+        const cached = navCache.get(node.path);
+        if (!cached) return node;
+        return {
+            ...node,
+            _navChildren: cached.map(c => enrichNode(c)),
+        };
+    }, [navCache]);
+
+    const enrichedRoot = useMemo(() => {
+        if (!navRootNode) return null;
+        return enrichNode(navRootNode);
+    }, [navRootNode, enrichNode]);
+
+    if (!enrichedRoot) return null;
+
+    return (
+        <div className="nav-sidebar" style={{ width: isOpen ? 280 : 28 }}>
+            {!isOpen && (
+                <div className="nav-rail" onClick={onToggleOpen} title="Open navigator (Ctrl+B)">
+                    <span className="nav-rail-icon">
+                        <Icon name="list-tree" size={15} />
+                    </span>
+                    <span className="nav-rail-label">Nav</span>
+                </div>
+            )}
+            {isOpen && (
+                <div style={{ width: 280, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div className="px-3 py-2 flex items-center gap-2 flex-shrink-0" style={{
+                        borderBottom: `1px solid ${isDark ? '#1a3a5c' : '#e2e8f0'}`,
+                    }}>
+                        <Icon name="list-tree" size={13} className="opacity-40" />
+                        <span className="text-xs font-semibold opacity-50 uppercase tracking-wider flex-1">Navigator</span>
+                        <button
+                            className="btn btn-ghost p-0.5 opacity-40 hover:opacity-80"
+                            onClick={onToggleOpen}
+                            title="Close navigator (Ctrl+B)"
+                            style={{ lineHeight: 0 }}
+                        >
+                            <Icon name="panel-left-close" size={14} />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto overflow-x-hidden py-1 px-1" style={{ scrollbarGutter: 'stable' }}>
+                        <NavSidebarItem
+                            node={enrichedRoot}
+                            depth={0}
+                            activePath={activePath}
+                            sidebarExpanded={sidebarExpanded}
+                            onToggle={handleToggle}
+                            onNavigate={onNavigate}
+                            isDark={isDark}
+                        />
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// --- App ---
+
+const App = () => {
+    const [isDark, setIsDark] = useState(() => {
+        const saved = localStorage.getItem('jtree-theme');
+        return saved ? saved === 'dark' : true;
+    });
+    const [status, setStatus] = useState(null);
+    const [rootNode, setRootNode] = useState(null);
+    const [expandedSet, setExpandedSet] = useState(new Set(['']));
+    const [childrenCache, setChildrenCache] = useState(new Map());
+    const [selectedPath, setSelectedPath] = useState('');
+    const [searchMatchPath, setSearchMatchPath] = useState(null);
+    const [showSearch, setShowSearch] = useState(false);
+    const [contextMenu, setContextMenu] = useState(null);
+    const [modal, setModal] = useState(null);
+    const [toast, setToast] = useState(null);
+    const [clipboard, setClipboard] = useState(null); // { key, value, type }
+    const [openError, setOpenError] = useState(null);
+    const [showNav, setShowNav] = useState(false);
+    const [pan, setPan] = useState({ x: 40, y: 40 });
+    const [zoom, setZoom] = useState(1);
+    const [isPanning, setIsPanning] = useState(false);
+    const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+    const pendingCenterRef = useRef(null);
+    const canvasRef = useRef(null);
+    const graphContentRef = useRef(null);
+    const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
+
+    // Theme
+    useEffect(() => {
+        document.documentElement.classList.toggle('dark', isDark);
+        localStorage.setItem('jtree-theme', isDark ? 'dark' : 'light');
+    }, [isDark]);
+
+    // Canvas size
+    useEffect(() => {
+        const updateSize = () => {
+            if (canvasRef.current) {
+                setCanvasSize({ width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight });
+            }
+        };
+        updateSize();
+        window.addEventListener('resize', updateSize);
+        return () => window.removeEventListener('resize', updateSize);
+    }, []);
+
+    // Fetch status
+    const fetchStatus = useCallback(async () => {
+        try {
+            const s = await api('/api/status');
+            setStatus(s);
+        } catch (e) {
+            console.error('Failed to fetch status', e);
+        }
+    }, []);
+
+    // Fetch node and children for a path
+    const fetchNodeData = useCallback(async (path) => {
+        try {
+            const node = await api(`/api/node?path=${encodeURIComponent(path)}`);
+            if (path === '') setRootNode(node);
+            return node;
+        } catch (e) {
+            console.error('Failed to fetch node', e);
+            return null;
+        }
+    }, []);
+
+    const fetchChildren = useCallback(async (path) => {
+        try {
+            const data = await api(`/api/children?path=${encodeURIComponent(path)}&offset=0&limit=500`);
+            setChildrenCache(prev => {
+                const next = new Map(prev);
+                // Annotate children with parent type info
+                const parentNode = path === '' ? rootNode : null;
+                const children = data.children.map(c => {
+                    // Determine parent type
+                    const parentPath = c.path.split('.').slice(0, -1).join('.');
+                    return { ...c, _parentType: null }; // Will be set from node info
+                });
+                next.set(path, data.children);
+                return next;
+            });
+            return data;
+        } catch (e) {
+            console.error('Failed to fetch children', e);
+            return null;
+        }
+    }, [rootNode]);
+
+    // Annotate parent types after fetching
+    const annotateParentTypes = useCallback(async () => {
+        const newCache = new Map(childrenCache);
+        for (const [parentPath, children] of newCache) {
+            try {
+                const parentNode = parentPath === '' ? rootNode : await api(`/api/node?path=${encodeURIComponent(parentPath)}`);
+                if (parentNode) {
+                    const annotated = children.map((c, i) => ({ ...c, _parentType: parentNode.type, _isLastInArray: parentNode.type === 'array' && i === children.length - 1 }));
+                    newCache.set(parentPath, annotated);
+                }
+            } catch (e) { /* ignore */ }
+        }
+        setChildrenCache(newCache);
+    }, [childrenCache, rootNode]);
+
+    // Initial load
+    useEffect(() => {
+        fetchStatus();
+        fetchNodeData('').then(node => {
+            if (node && (node.type === 'object' || node.type === 'array')) {
+                fetchChildren('');
+            }
+        });
+    }, []);
+
+    // Expand/collapse
+    const toggleExpand = useCallback(async (path) => {
+        setExpandedSet(prev => {
+            const next = new Set(prev);
+            if (next.has(path)) {
+                next.delete(path);
+            } else {
+                next.add(path);
+            }
+            return next;
+        });
+
+        if (!expandedSet.has(path) && !childrenCache.has(path)) {
+            await fetchChildren(path);
+        }
+        pendingCenterRef.current = path;
+    }, [expandedSet, childrenCache, fetchChildren]);
+
+    // Expand all descendants
+    const expandAll = useCallback(async (path) => {
+        const MAX_EXPAND_NODES = 5000;
+        const toExpand = [path];
+        const visited = new Set();
+        let truncated = false;
+        // Local cache to track freshly fetched children (closure's childrenCache is stale)
+        const localCache = new Map(childrenCache);
+        while (toExpand.length > 0) {
+            if (visited.size >= MAX_EXPAND_NODES) {
+                truncated = true;
+                break;
+            }
+            const p = toExpand.shift();
+            if (visited.has(p)) continue;
+            visited.add(p);
+            if (!localCache.has(p)) {
+                try {
+                    const data = await api(`/api/children?path=${encodeURIComponent(p)}&offset=0&limit=200`);
+                    localCache.set(p, data.children || []);
+                } catch (e) {
+                    continue;
+                }
+            }
+            const children = localCache.get(p) || [];
+            for (const c of children) {
+                if (c.type === 'object' || c.type === 'array') {
+                    toExpand.push(c.path);
+                }
+            }
+        }
+        if (truncated) {
+            alert(`Expand All stopped after ${MAX_EXPAND_NODES} nodes to prevent performance issues.`);
+        }
+        // Batch update: push all fetched children into cache and expand all at once
+        setChildrenCache(prev => {
+            const next = new Map(prev);
+            for (const [k, v] of localCache) next.set(k, v);
+            return next;
+        });
+        setExpandedSet(prev => {
+            const next = new Set(prev);
+            for (const p of visited) next.add(p);
+            return next;
+        });
+        // Schedule view re-centering on the target node after layout recomputes
+        pendingCenterRef.current = path;
+    }, [childrenCache]);
+
+    // Collapse all descendants
+    const collapseAll = useCallback((path) => {
+        setExpandedSet(prev => {
+            const next = new Set(prev);
+            for (const p of prev) {
+                // Root path ('') is ancestor of everything
+                if (path === '' || p === path || p.startsWith(path + '.')) {
+                    next.delete(p);
+                }
+            }
+            return next;
+        });
+        pendingCenterRef.current = path;
+    }, []);
+
+    // Refresh tree from root
+    const refreshTree = useCallback(async () => {
+        const node = await fetchNodeData('');
+        if (!node) return;
+        // Re-fetch children for all expanded paths
+        const expanded = [...expandedSet];
+        const newCache = new Map();
+        for (const p of expanded) {
+            try {
+                const data = await api(`/api/children?path=${encodeURIComponent(p)}&offset=0&limit=500`);
+                // Annotate with parent type
+                const parentNode = await api(`/api/node?path=${encodeURIComponent(p)}`);
+                const children = data.children.map((c, i) => ({ ...c, _parentType: parentNode.type, _isLastInArray: parentNode.type === 'array' && i === data.children.length - 1 }));
+                newCache.set(p, children);
+            } catch (e) {
+                // Path may no longer exist after mutation
+            }
+        }
+        setChildrenCache(newCache);
+        fetchStatus();
+    }, [expandedSet, fetchNodeData, fetchStatus]);
+
+    // Build visible nodes list
+    const visibleNodes = useMemo(() => {
+        if (!rootNode) return [];
+        const nodes = [rootNode];
+        const addChildren = (path) => {
+            if (!expandedSet.has(path)) return;
+            const children = childrenCache.get(path) || [];
+            for (const child of children) {
+                nodes.push(child);
+                if (child.type === 'object' || child.type === 'array') {
+                    addChildren(child.path);
+                }
+            }
+        };
+        addChildren('');
+        return nodes;
+    }, [rootNode, expandedSet, childrenCache]);
+
+    // Compute layout
+    const positions = useMemo(() => {
+        const p = new Map();
+        p._nextY = 0;
+        if (visibleNodes.length === 0) return p;
+        const root = visibleNodes.find(n => n.path === '');
+        if (root) layoutSubtree(root, 0, p, expandedSet, childrenCache);
+        return p;
+    }, [visibleNodes, expandedSet, childrenCache]);
+
+    // Compute group colors for parent-child lineage
+    const groupColors = useMemo(() => {
+        return computeGroupColors(rootNode, expandedSet, childrenCache, isDark);
+    }, [rootNode, expandedSet, childrenCache, isDark]);
+
+    const edges = useMemo(() => computeEdges(positions, expandedSet, childrenCache), [positions, expandedSet, childrenCache]);
+
+    // Compute containment lanes for expanded nodes
+    const lanes = useMemo(() => {
+        return computeLanes(positions, expandedSet, childrenCache, groupColors);
+    }, [positions, expandedSet, childrenCache, groupColors]);
+
+    // Center view on pending path after layout recomputation (e.g., after expandAll/collapseAll)
+    useEffect(() => {
+        if (pendingCenterRef.current !== null) {
+            const path = pendingCenterRef.current;
+            pendingCenterRef.current = null;
+            const pos = positions.get(path);
+            if (pos) {
+                setPan({ x: canvasSize.width / 3 - pos.x * zoom, y: canvasSize.height / 3 - pos.y * zoom });
+            }
+        }
+    }, [positions, canvasSize, zoom]);
+
+    // Pan and zoom handlers
+    const handleWheel = useCallback((e) => {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            setZoom(z => Math.max(0.1, Math.min(3, z * delta)));
+        } else {
+            setPan(p => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+        }
+    }, []);
+
+    const handleMouseDown = useCallback((e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('.graph-node')) return;
+        setIsPanning(true);
+        panStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+    }, [pan]);
+
+    const handleMouseMove = useCallback((e) => {
+        if (!isPanning) return;
+        setPan({
+            x: panStart.current.panX + (e.clientX - panStart.current.x),
+            y: panStart.current.panY + (e.clientY - panStart.current.y),
+        });
+    }, [isPanning]);
+
+    const handleMouseUp = useCallback(() => {
+        setIsPanning(false);
+    }, []);
+
+    // Node click
+    // Single click: select only
+    const handleNodeClick = useCallback((node) => {
+        setSelectedPath(node.path);
+    }, []);
+
+    // Double-click: toggle expand/collapse for containers, edit for leaves
+    const handleNodeDoubleClick = useCallback((node) => {
+        if (node.type === 'object' || node.type === 'array') {
+            toggleExpand(node.path);
+        } else if (!status?.readonly) {
+            setModal({ type: 'edit', node });
+        }
+    }, [toggleExpand, status]);
+
+    // Chevron click: toggle expand/collapse directly
+    const handleChevronClick = useCallback((node) => {
+        toggleExpand(node.path);
+    }, [toggleExpand]);
+
+    // Context menu
+    const handleContextMenu = useCallback((e, node) => {
+        setContextMenu({ x: e.clientX, y: e.clientY, node });
+    }, []);
+
+    // Context menu actions
+    const handleContextAction = useCallback((action, node) => {
+        switch (action) {
+            case 'toggleExpand':
+                toggleExpand(node.path);
+                break;
+            case 'expandAll':
+                expandAll(node.path);
+                break;
+            case 'collapseAll':
+                collapseAll(node.path);
+                break;
+            case 'addChild':
+                setModal({ type: 'addChild', node });
+                break;
+            case 'delete':
+                if (node.childCount > 0) {
+                    setModal({ type: 'delete', node });
+                } else {
+                    handleDelete(node.path);
+                }
+                break;
+            case 'rename':
+                setModal({ type: 'rename', node });
+                break;
+            case 'editValue':
+                setModal({ type: 'edit', node });
+                break;
+            case 'moveUp': {
+                const parts = node.path.split('.');
+                const idx = parseInt(parts.pop(), 10);
+                const parentPath = parts.join('.');
+                if (idx > 0) handleMoveChild(parentPath, idx, idx - 1);
+                break;
+            }
+            case 'moveDown': {
+                const parts = node.path.split('.');
+                const idx = parseInt(parts.pop(), 10);
+                const parentPath = parts.join('.');
+                handleMoveChild(parentPath, idx, idx + 1);
+                break;
+            }
+            case 'moveTo':
+                setModal({ type: 'moveTo', node });
+                break;
+            case 'copyNode':
+                handleCopy(node.path);
+                break;
+            case 'paste':
+                handlePaste(node.path);
+                break;
+        }
+    }, [toggleExpand, expandAll, collapseAll, handleMoveChild, handleCopy, handlePaste]);
+
+    // Mutations
+    const handleEditSave = useCallback(async (path, value) => {
+        try {
+            await api(`/api/node?path=${encodeURIComponent(path)}`, {
+                method: 'PUT',
+                body: JSON.stringify({ value }),
+            });
+            setModal(null);
+            setToast('Value updated');
+            await refreshTree();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [refreshTree]);
+
+    const handleAddChild = useCallback(async (parentPath, key, value, type) => {
+        try {
+            await api(`/api/node?path=${encodeURIComponent(parentPath)}`, {
+                method: 'POST',
+                body: JSON.stringify({ key, value, type }),
+            });
+            setModal(null);
+            // Ensure parent is expanded
+            setExpandedSet(prev => {
+                const next = new Set(prev);
+                next.add(parentPath);
+                return next;
+            });
+            setToast('Child added');
+            await refreshTree();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [refreshTree]);
+
+    const handleDelete = useCallback(async (path) => {
+        try {
+            await api(`/api/node?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+            setModal(null);
+            // Remove from expanded set
+            setExpandedSet(prev => {
+                const next = new Set(prev);
+                for (const p of prev) {
+                    if (p === path || p.startsWith(path + '.')) next.delete(p);
+                }
+                return next;
+            });
+            setToast('Deleted (Ctrl+Z to undo)');
+            await refreshTree();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [refreshTree]);
+
+    const handleRename = useCallback(async (path, newKey) => {
+        try {
+            await api(`/api/rename?path=${encodeURIComponent(path)}`, {
+                method: 'POST',
+                body: JSON.stringify({ newKey }),
+            });
+            setModal(null);
+            setToast('Key renamed');
+            // Update expanded paths
+            setExpandedSet(prev => {
+                const next = new Set();
+                const oldKey = path.split('.').pop();
+                const parentPath = path.split('.').slice(0, -1).join('.');
+                const newPath = parentPath ? `${parentPath}.${newKey}` : newKey;
+                for (const p of prev) {
+                    if (p === path) {
+                        next.add(newPath);
+                    } else if (p.startsWith(path + '.')) {
+                        next.add(newPath + p.slice(path.length));
+                    } else {
+                        next.add(p);
+                    }
+                }
+                return next;
+            });
+            await refreshTree();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [refreshTree]);
+
+    const handleSave = useCallback(async () => {
+        try {
+            await api('/api/save', { method: 'POST' });
+            setToast('Saved');
+            fetchStatus();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [fetchStatus]);
+
+    const handleSaveAs = useCallback(async (filePath) => {
+        try {
+            await api('/api/save-as', {
+                method: 'POST',
+                body: JSON.stringify({ path: filePath }),
+            });
+            setModal(null);
+            setToast(`Saved to ${filePath}`);
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, []);
+
+    const reloadAfterOpen = useCallback(async () => {
+        setModal(null);
+        setExpandedSet(new Set(['']));
+        setChildrenCache(new Map());
+        setSelectedPath('');
+        setSearchMatchPath(null);
+        setPan({ x: 40, y: 40 });
+        setZoom(1);
+        const s = await api('/api/status');
+        setStatus(s);
+        const node = await api('/api/node?path=');
+        setRootNode(node);
+        if (node && (node.type === 'object' || node.type === 'array')) {
+            const data = await api('/api/children?path=&offset=0&limit=500');
+            const annotated = data.children.map((c, i) => ({ ...c, _parentType: node.type, _isLastInArray: node.type === 'array' && i === data.children.length - 1 }));
+            setChildrenCache(new Map([['', annotated]]));
+        }
+        setToast(`Opened ${s.fileName}`);
+    }, []);
+
+    const handleOpenPath = useCallback(async (filePath) => {
+        try {
+            setOpenError(null);
+            await api('/api/open', {
+                method: 'POST',
+                body: JSON.stringify({ path: filePath }),
+            });
+            await reloadAfterOpen();
+        } catch (e) {
+            setOpenError(e.message);
+        }
+    }, [reloadAfterOpen]);
+
+    const handleOpenContent = useCallback(async (content, fileName) => {
+        try {
+            setOpenError(null);
+            await api('/api/open-content', {
+                method: 'POST',
+                body: JSON.stringify({ content, fileName }),
+            });
+            await reloadAfterOpen();
+        } catch (e) {
+            setOpenError(e.message);
+            throw e; // re-throw so the modal knows it failed
+        }
+    }, [reloadAfterOpen]);
+
+    const handleUndo = useCallback(async () => {
+        try {
+            await api('/api/undo', { method: 'POST' });
+            setToast('Undone');
+            await refreshTree();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [refreshTree]);
+
+    const handleRedo = useCallback(async () => {
+        try {
+            await api('/api/redo', { method: 'POST' });
+            setToast('Redone');
+            await refreshTree();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [refreshTree]);
+
+    const handleMoveChild = useCallback(async (parentPath, fromIndex, toIndex) => {
+        try {
+            await api(`/api/move?path=${encodeURIComponent(parentPath)}`, {
+                method: 'POST',
+                body: JSON.stringify({ fromIndex, toIndex }),
+            });
+            await refreshTree();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [refreshTree]);
+
+    const handleCopy = useCallback(async (path) => {
+        try {
+            const data = await api(`/api/copy?path=${encodeURIComponent(path)}`);
+            setClipboard(data);
+            setToast('Copied');
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, []);
+
+    const handlePaste = useCallback(async (targetPath) => {
+        if (!clipboard) {
+            setToast('Nothing to paste');
+            return;
+        }
+        // Find the target node to check if it's a container
+        let pastePath = targetPath;
+        try {
+            const targetNode = await api(`/api/node?path=${encodeURIComponent(targetPath)}`);
+            if (targetNode.type !== 'object' && targetNode.type !== 'array') {
+                // Not a container — paste into parent instead
+                const parts = targetPath.split('.');
+                parts.pop();
+                pastePath = parts.join('.');
+            }
+        } catch (e) {
+            // If we can't resolve, try anyway
+        }
+        try {
+            await api(`/api/paste?path=${encodeURIComponent(pastePath)}`, {
+                method: 'POST',
+                body: JSON.stringify({ key: clipboard.key, value: clipboard.value }),
+            });
+            setToast('Pasted');
+            // Ensure target is expanded
+            setExpandedSet(prev => {
+                const next = new Set(prev);
+                next.add(pastePath);
+                return next;
+            });
+            await refreshTree();
+        } catch (e) {
+            setToast(`Error: ${e.message}`);
+        }
+    }, [clipboard, refreshTree]);
+
+    // Export current view
+    const [showExportMenu, setShowExportMenu] = useState(false);
+
+    const handleExport = useCallback(async (format) => {
+        setShowExportMenu(false);
+        const contentEl = graphContentRef.current;
+        if (!contentEl) return;
+
+        // Compute full bounds of the graph content
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const [path, pos] of positions) {
+            if (path === '_nextY') continue;
+            minX = Math.min(minX, pos.x);
+            minY = Math.min(minY, pos.y);
+            maxX = Math.max(maxX, pos.x + pos.width);
+            maxY = Math.max(maxY, pos.y + (pos.height || 62));
+        }
+        // Include lane padding
+        for (const lane of lanes) {
+            minX = Math.min(minX, lane.x);
+            minY = Math.min(minY, lane.y);
+            maxX = Math.max(maxX, lane.x + lane.width);
+            maxY = Math.max(maxY, lane.y + lane.height);
+        }
+        const padding = 40;
+        const fullWidth = maxX - minX + padding * 2;
+        const fullHeight = maxY - minY + padding * 2;
+
+        // Build SVG string (used for all export formats)
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const bg = isDark ? '#0a1628' : '#f0f4f8';
+        let svg = `<svg xmlns="${svgNS}" width="${fullWidth}" height="${fullHeight}" viewBox="0 0 ${fullWidth} ${fullHeight}">`;
+        svg += `<rect width="100%" height="100%" fill="${bg}"/>`;
+        const ox = -minX + padding;
+        const oy = -minY + padding;
+        svg += `<g transform="translate(${ox}, ${oy})">`;
+        for (const lane of lanes) {
+            const lc = lane.color || (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)');
+            svg += `<rect x="${lane.x}" y="${lane.y}" width="${lane.width}" height="${lane.height}" rx="12" fill="none" stroke="${lc}" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.6"/>`;
+        }
+        for (const edge of edges) {
+            const chain = groupColors?.get(edge.childPath);
+            const ec = (chain && chain.length > 0) ? chain[chain.length - 1] : (isDark ? '#4fc3f7' : '#0288d1');
+            const d = bezierPath(edge.from, edge.to);
+            svg += `<path d="${d}" fill="none" stroke="${ec}" stroke-width="1.5" opacity="0.4"/>`;
+        }
+        svg += '<defs>';
+        visibleNodes.forEach((node, idx) => {
+            const pos = positions.get(node.path);
+            if (!pos) return;
+            const nh = pos.height || 62;
+            svg += `<clipPath id="clip${idx}"><rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${nh}" rx="10"/></clipPath>`;
+        });
+        svg += '</defs>';
+        visibleNodes.forEach((node, idx) => {
+            const pos = positions.get(node.path);
+            if (!pos) return;
+            const tc = typeColor(node.type, isDark);
+            const isLeaf = node.childCount === 0;
+            const keyName = node.path ? node.path.split('.').pop() : 'root';
+            const displayKey = /^\\d+$/.test(keyName) ? `[${keyName}]` : keyName;
+            const chain = groupColors?.get(node.path) || [];
+            const ownColor = chain.length > 0 ? chain[chain.length - 1] : tc.border;
+            const nodeBg = isDark ? '#0f1f3a' : '#ffffff';
+            const textColor = isDark ? '#c8d6e5' : '#1e293b';
+            const subTextColor = isDark ? '#8899aa' : '#64748b';
+            const nh = pos.height || 62;
+            svg += `<g clip-path="url(#clip${idx})">`;
+            svg += `<rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${nh}" rx="10" fill="${nodeBg}"/>`;
+            if (!isLeaf) {
+                svg += `<rect x="${pos.x}" y="${pos.y}" width="4" height="${nh}" fill="${ownColor}"/>`;
+            }
+            const escaped = displayKey.substring(0, 25).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            const textX = isLeaf ? pos.x + 14 : pos.x + 18;
+            svg += `<text x="${textX}" y="${pos.y + 26}" fill="${textColor}" font-family="'DM Sans', Helvetica, sans-serif" font-size="13" font-weight="600">${escaped}</text>`;
+            svg += `<rect x="${pos.x + pos.width - 60}" y="${pos.y + 12}" width="48" height="18" rx="4" fill="${tc.badgeBg}"/>`;
+            svg += `<text x="${pos.x + pos.width - 36}" y="${pos.y + 25}" fill="${tc.text}" font-family="'DM Sans', Helvetica, sans-serif" font-size="9" text-anchor="middle" font-weight="500">${node.type}</text>`;
+            if (isLeaf) {
+                const val = String(node.value ?? 'null').substring(0, 28).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                svg += `<text x="${textX}" y="${pos.y + 48}" fill="${subTextColor}" font-family="'JetBrains Mono', monospace" font-size="11">${val}</text>`;
+            } else {
+                const expanded = expandedSet.has(node.path);
+                const chevron = expanded ? '\u25BE' : '\u25B8';
+                const summ = (node.summary || '').substring(0, 28).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                svg += `<text x="${textX}" y="${pos.y + 48}" fill="${subTextColor}" font-family="'DM Sans', Helvetica, sans-serif" font-size="11">${chevron} ${summ}</text>`;
+            }
+            svg += '</g>';
+        });
+        svg += '</g></svg>';
+
+        if (format === 'svg') {
+            const blob = new Blob([svg], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = (status?.fileName || 'jtree').replace(/\\.json$/, '') + '.svg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            setToast('Exported SVG');
+            return;
+        }
+
+        // PNG or JPEG: render the SVG to a canvas
+        const scale = 2;
+        try {
+            const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+            const svgUrl = URL.createObjectURL(svgBlob);
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = fullWidth * scale;
+                canvas.height = fullHeight * scale;
+                const ctx = canvas.getContext('2d');
+                ctx.scale(scale, scale);
+                ctx.drawImage(img, 0, 0, fullWidth, fullHeight);
+                URL.revokeObjectURL(svgUrl);
+                const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+                const ext = format === 'jpeg' ? '.jpg' : '.png';
+                canvas.toBlob((blob) => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = (status?.fileName || 'jtree').replace(/\\.json$/, '') + ext;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    setToast(`Exported ${format.toUpperCase()}`);
+                }, mimeType, format === 'jpeg' ? 0.92 : undefined);
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(svgUrl);
+                setToast('Export error: failed to render SVG to canvas');
+            };
+            img.src = svgUrl;
+        } catch (e) {
+            setToast(`Export error: ${e.message}`);
+        }
+    }, [positions, lanes, edges, visibleNodes, groupColors, expandedSet, isDark, status]);
+
+    // Search navigation
+    const handleSearchNavigate = useCallback(async (path) => {
+        setShowSearch(false);
+        setSearchMatchPath(path);
+        setTimeout(() => setSearchMatchPath(null), 4500);
+
+        // Expand all ancestors
+        const parts = path.split('.');
+        const toExpand = [];
+        for (let i = 0; i < parts.length - 1; i++) {
+            toExpand.push(parts.slice(0, i + 1).join('.'));
+        }
+        toExpand.unshift('');
+
+        for (const p of toExpand) {
+            if (!expandedSet.has(p)) {
+                await toggleExpand(p);
+            }
+        }
+
+        setSelectedPath(path);
+
+        // Pan to node after layout recalculation via pendingCenterRef
+        pendingCenterRef.current = path;
+    }, [expandedSet, toggleExpand]);
+
+    // Minimap navigation
+    const handleMinimapNavigate = useCallback((x, y) => {
+        setPan({ x: -x, y: -y });
+    }, []);
+
+    // Sidebar navigation: expand ancestors if needed, then pan to node
+    const handleNavSidebarNavigate = useCallback(async (path) => {
+        setSelectedPath(path);
+
+        // Ensure all ancestors are expanded in the main canvas
+        if (path) {
+            const parts = path.split('.');
+            const toExpand = [''];
+            for (let i = 0; i < parts.length; i++) {
+                toExpand.push(parts.slice(0, i + 1).join('.'));
+            }
+            // Only expand the path itself if it's a container that we want to navigate to
+            // The last segment might be the target; expand ancestors up to but not including it
+            for (const p of toExpand.slice(0, -1)) {
+                if (!expandedSet.has(p)) {
+                    await toggleExpand(p);
+                }
+            }
+        }
+
+        // Pan to node after layout settles
+        pendingCenterRef.current = path;
+        // Force a positions recompute by ensuring expandedSet triggers
+        setExpandedSet(prev => new Set(prev));
+    }, [expandedSet, toggleExpand]);
+
+    // Keyboard shortcuts
+    useEffect(() => {
+        const handler = (e) => {
+            const isMod = e.metaKey || e.ctrlKey;
+            if (isMod && e.key === 's') {
+                e.preventDefault();
+                if (status?.hasFilePath) {
+                    handleSave();
+                } else if (status?.loaded) {
+                    setModal({ type: 'saveAs' });
+                }
+            } else if (isMod && e.shiftKey && e.key === 'z') {
+                e.preventDefault();
+                handleRedo();
+            } else if (isMod && e.key === 'z') {
+                e.preventDefault();
+                handleUndo();
+            } else if (isMod && e.key === 'y') {
+                e.preventDefault();
+                handleRedo();
+            } else if (isMod && e.key === 'c' && selectedPath !== null && !window.getSelection()?.toString()) {
+                e.preventDefault();
+                handleCopy(selectedPath);
+            } else if (isMod && e.key === 'v' && selectedPath !== null) {
+                e.preventDefault();
+                handlePaste(selectedPath);
+            } else if (isMod && e.key === 'f') {
+                e.preventDefault();
+                setShowSearch(s => !s);
+            } else if (isMod && e.key === 'o') {
+                e.preventDefault();
+                setOpenError(null);
+                setModal({ type: 'open' });
+            } else if (isMod && e.key === 'b') {
+                e.preventDefault();
+                setShowNav(s => !s);
+            } else if (e.key === 'Escape') {
+                setShowSearch(false);
+                setContextMenu(null);
+                setShowExportMenu(false);
+                setModal(null);
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [handleSave, handleUndo, handleRedo, handleCopy, handlePaste, selectedPath]);
+
+    // Breadcrumb navigation
+    const handleBreadcrumbNavigate = useCallback(async (path) => {
+        setSelectedPath(path);
+        // Ensure path is expanded
+        if (!expandedSet.has(path)) {
+            await toggleExpand(path);
+        }
+        // Pan to node
+        setTimeout(() => {
+            const pos = positions.get(path);
+            if (pos) {
+                setPan({ x: -pos.x + 100, y: -pos.y + canvasSize.height / 3 });
+            }
+        }, 100);
+    }, [expandedSet, toggleExpand, positions, canvasSize]);
+
+    // Fetch children with parent type annotation on expand
+    useEffect(() => {
+        // When children cache updates, annotate parent types
+        const annotate = async () => {
+            let changed = false;
+            const newCache = new Map(childrenCache);
+            for (const [parentPath, children] of newCache) {
+                if (children.length > 0 && children[0]._parentType === null) {
+                    try {
+                        const parentNode = parentPath === '' ? rootNode : await api(`/api/node?path=${encodeURIComponent(parentPath)}`);
+                        if (parentNode) {
+                            newCache.set(parentPath, children.map((c, i) => ({ ...c, _parentType: parentNode.type, _isLastInArray: parentNode.type === 'array' && i === children.length - 1 })));
+                            changed = true;
+                        }
+                    } catch (e) {
+                        // On failure, set _parentType to 'unknown' to prevent infinite re-render loop
+                        newCache.set(parentPath, children.map(c => ({ ...c, _parentType: 'unknown' })));
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) setChildrenCache(newCache);
+        };
+        annotate();
+    }, [childrenCache, rootNode]);
+
+    const noFileLoaded = status && !status.loaded;
+    const stillLoading = !status || (status.loaded && !rootNode);
+
+    if (stillLoading) {
+        return (
+            <div className="h-screen w-screen flex items-center justify-center">
+                <div className="text-sm opacity-50">Loading...</div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="h-screen w-screen flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 h-14 border-b flex-shrink-0"
+                 style={{
+                     background: isDark ? '#0d1b30' : '#ffffff',
+                     borderColor: isDark ? '#1a3a5c' : '#e2e8f0',
+                     position: 'relative',
+                     zIndex: 50,
+                 }}>
+                <div className="flex items-center gap-3">
+                    <span className="text-base font-semibold" style={{color: '#4fc3f7'}}>jtree</span>
+                    <span className="text-xs opacity-40 font-mono">{status?.file || status?.fileName}</span>
+                    {(status?.file || status?.fileName) && (
+                        <button
+                            className="btn btn-ghost p-0.5 opacity-40 hover:opacity-80"
+                            title="Copy path to clipboard"
+                            onClick={() => { const text = status.file || status.fileName; navigator.clipboard.writeText(text); setToast('Copied to clipboard'); }}
+                        >
+                            <Icon name="clipboard-copy" size={12} />
+                        </button>
+                    )}
+                    {status?.dirty && <span className="text-xs text-amber-400 font-medium">unsaved</span>}
+                    {status?.readonly && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400">readonly</span>}
+                </div>
+                <div className="flex items-center gap-1">
+                    <button className="btn btn-ghost flex items-center gap-1" onClick={() => { setOpenError(null); setModal({ type: 'open' }); }} title="Open file (Ctrl+O)">
+                        <Icon name="folder-open" size={14} /> Open
+                    </button>
+                    {status?.loaded && !status?.readonly && (
+                        <>
+                            <button className="btn btn-ghost flex items-center gap-1" onClick={handleUndo} title="Undo (Ctrl+Z)" disabled={!status?.canUndo}>
+                                <Icon name="undo-2" size={14} /> Undo
+                            </button>
+                            <button className="btn btn-ghost flex items-center gap-1" onClick={handleRedo} title="Redo (Ctrl+Shift+Z)" disabled={!status?.canRedo}>
+                                <Icon name="redo-2" size={14} /> Redo
+                            </button>
+                            {status?.hasFilePath ? (
+                                <button className="btn btn-primary flex items-center gap-1" onClick={handleSave} title="Save (Ctrl+S)">
+                                    <Icon name="save" size={14} /> Save
+                                </button>
+                            ) : (
+                                <button className="btn btn-primary flex items-center gap-1" onClick={() => setModal({ type: 'saveAs' })} title="Save As (Ctrl+S)">
+                                    <Icon name="save" size={14} /> Save As
+                                </button>
+                            )}
+                            {status?.hasFilePath && (
+                                <button className="btn btn-ghost flex items-center gap-1" onClick={() => setModal({ type: 'saveAs' })} title="Save As...">
+                                    <Icon name="file-down" size={14} /> Save As
+                                </button>
+                            )}
+                        </>
+                    )}
+                    {status?.loaded && (
+                        <div style={{ position: 'relative', display: 'inline-block' }}>
+                            <button className="btn btn-ghost flex items-center gap-1" onClick={() => setShowExportMenu(s => !s)} title="Export view">
+                                <Icon name="image" size={14} /> Export
+                            </button>
+                            {showExportMenu && (
+                                <div className="context-menu" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, minWidth: 140, zIndex: 100 }}>
+                                    <div className="context-menu-item" onClick={() => handleExport('png')}>
+                                        <Icon name="image" size={14} /> PNG
+                                    </div>
+                                    <div className="context-menu-item" onClick={() => handleExport('svg')}>
+                                        <Icon name="file-code" size={14} /> SVG
+                                    </div>
+                                    <div className="context-menu-item" onClick={() => handleExport('jpeg')}>
+                                        <Icon name="file-image" size={14} /> JPEG
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {status?.loaded && (
+                        <button className={`btn btn-ghost flex items-center gap-1 ${showNav ? 'opacity-100' : ''}`} onClick={() => setShowNav(s => !s)} title="Navigator (Ctrl+B)">
+                            <Icon name="list-tree" size={14} />
+                        </button>
+                    )}
+                    {status?.loaded && (
+                        <button className="btn btn-ghost flex items-center gap-1" onClick={() => setShowSearch(s => !s)} title="Search (Ctrl+F)">
+                            <Icon name="search" size={14} />
+                        </button>
+                    )}
+                    <button className="btn btn-ghost" onClick={() => setIsDark(d => !d)} title="Toggle theme">
+                        <Icon name={isDark ? 'sun' : 'moon'} size={14} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Breadcrumb - only when file loaded */}
+            {!noFileLoaded && (
+                <div className="border-b flex-shrink-0" style={{
+                    background: isDark ? '#0b1726' : '#f8fafc',
+                    borderColor: isDark ? '#1a3a5c' : '#e2e8f0',
+                    position: 'relative',
+                    zIndex: 40,
+                }}>
+                    <Breadcrumb path={selectedPath} onNavigate={handleBreadcrumbNavigate} isDark={isDark} />
+                </div>
+            )}
+
+            {/* Welcome screen when no file loaded */}
+            {noFileLoaded ? (
+                <div className="flex-1 blueprint-grid flex items-center justify-center">
+                    <div className="text-center" style={{maxWidth: 400}}>
+                        <div className="text-4xl font-bold mb-3" style={{color: '#4fc3f7'}}>jtree</div>
+                        <p className="text-sm opacity-50 mb-6">Interactive JSON Viewer & Editor</p>
+                        <button
+                            className="btn btn-primary flex items-center gap-2 mx-auto text-base px-6 py-3"
+                            onClick={() => { setOpenError(null); setModal({ type: 'open' }); }}
+                        >
+                            <Icon name="folder-open" size={18} /> Open a JSON file
+                        </button>
+                        <p className="text-xs opacity-30 mt-4 font-mono">or run: jtree &lt;file.json&gt;</p>
+                    </div>
+                </div>
+            ) : (
+            <div className="flex flex-1 overflow-hidden">
+            {/* Navigator sidebar */}
+            <NavSidebar
+                rootNode={rootNode}
+                activePath={selectedPath}
+                onNavigate={handleNavSidebarNavigate}
+                isDark={isDark}
+                isOpen={showNav}
+                onToggleOpen={() => setShowNav(s => !s)}
+            />
+            {/* Canvas */}
+            <div
+                ref={canvasRef}
+                className="flex-1 relative blueprint-grid"
+                style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+                onWheel={handleWheel}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                onClick={() => { setContextMenu(null); setShowExportMenu(false); }}
+            >
+                <div
+                    ref={graphContentRef}
+                    style={{
+                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                        transformOrigin: '0 0',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                    }}
+                >
+                    <LaneLayer lanes={lanes} isDark={isDark} />
+                    <SVGEdgeLayer edges={edges} isDark={isDark} groupColors={groupColors} />
+                    {visibleNodes.map(node => {
+                        const pos = positions.get(node.path);
+                        if (!pos) return null;
+                        return (
+                            <GraphNode
+                                key={node.path}
+                                node={node}
+                                pos={pos}
+                                groupColor={groupColors.get(node.path)}
+                                isExpanded={expandedSet.has(node.path)}
+                                isSelected={selectedPath === node.path}
+                                isSearchMatch={searchMatchPath === node.path}
+                                isDark={isDark}
+                                onClick={handleNodeClick}
+                                onDoubleClick={handleNodeDoubleClick}
+                                onChevronClick={handleChevronClick}
+                                onContextMenu={handleContextMenu}
+                            />
+                        );
+                    })}
+                </div>
+
+                {/* Zoom indicator */}
+                <div className="absolute bottom-4 left-4 text-xs font-mono opacity-40">
+                    {Math.round(zoom * 100)}%
+                </div>
+            </div>
+            </div>
+            )}
+
+            {/* Overlays */}
+            {showSearch && (
+                <SearchBar
+                    onSearch={handleSearchNavigate}
+                    onClose={() => setShowSearch(false)}
+                    isDark={isDark}
+                />
+            )}
+
+            {contextMenu && (
+                <ContextMenu
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    node={contextMenu.node}
+                    onClose={() => setContextMenu(null)}
+                    onAction={handleContextAction}
+                    readonly={status?.readonly}
+                    isDark={isDark}
+                    hasClipboard={!!clipboard}
+                />
+            )}
+
+            {modal?.type === 'edit' && (
+                <EditModal node={modal.node} onSave={handleEditSave} onClose={() => setModal(null)} isDark={isDark} />
+            )}
+            {modal?.type === 'addChild' && (
+                <AddChildModal parentNode={modal.node} onSave={handleAddChild} onClose={() => setModal(null)} />
+            )}
+            {modal?.type === 'delete' && (
+                <DeleteConfirmModal node={modal.node} onConfirm={handleDelete} onClose={() => setModal(null)} />
+            )}
+            {modal?.type === 'rename' && (
+                <RenameKeyModal node={modal.node} onSave={handleRename} onClose={() => setModal(null)} />
+            )}
+            {modal?.type === 'moveTo' && (
+                <MoveToModal node={modal.node} onMove={(pp, from, to) => { handleMoveChild(pp, from, to); setModal(null); }} onClose={() => setModal(null)} />
+            )}
+            {modal?.type === 'saveAs' && (
+                <SaveAsModal currentFile={status?.file} onSave={handleSaveAs} onBrowserSave={(name) => { setModal(null); setToast(`Saved as ${name}`); fetchStatus(); }} onClose={() => setModal(null)} />
+            )}
+            {modal?.type === 'open' && (
+                <OpenFileModal onOpenContent={handleOpenContent} onOpenPath={handleOpenPath} onClose={() => setModal(null)} error={openError} />
+            )}
+
+            {!noFileLoaded && (
+                <Minimap
+                    positions={positions}
+                    viewBox={{ x: -pan.x / zoom, y: -pan.y / zoom }}
+                    canvasSize={{ width: canvasSize.width / zoom, height: canvasSize.height / zoom }}
+                    onNavigate={handleMinimapNavigate}
+                    isDark={isDark}
+                />
+            )}
+
+            {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+        </div>
+    );
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+    <ErrorBoundary>
+        <App />
+    </ErrorBoundary>
+);
+</script>
+</body>
+</html>"""
+
+
+# --- Server Lifecycle ---
+
+def find_free_port(start_port, max_attempts=20):
+    for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free port found in range {start_port}–{start_port + max_attempts - 1}")
+
+def open_browser(port):
+    time.sleep(1.5)
+    webbrowser.open(f"http://127.0.0.1:{port}")
+
+
+def testing_mode_enabled():
+    value = os.environ.get("UTILITIES_TESTING", "")
+    return value.lower() not in {"", "0", "false", "no"}
+
+
+def main():
+    global json_manager
+    args = parse_args()
+
+    if args.file_path:
+        if not os.path.exists(args.file_path):
+            logger.error(f"Error: File not found: {args.file_path}")
+            sys.exit(1)
+
+        try:
+            json_manager = JSONManager(args.file_path, readonly=args.readonly)
+        except json.JSONDecodeError as e:
+            logger.error(f"Error: Invalid JSON: {e}")
+            sys.exit(1)
+        except ValueError as e:
+            logger.error(f"Error: {e}")
+            sys.exit(1)
+
+        logger.info(f"jtree starting for: {args.file_path}")
+        if args.readonly:
+            logger.info("Read-only mode enabled")
+    else:
+        logger.info("jtree starting with no file (use Open to load one)")
+
+    port = find_free_port(args.port)
+    if port != args.port:
+        logger.warning(f"Port {args.port} is in use; using port {port} instead.")
+
+    logger.info(f"API available at http://127.0.0.1:{port}")
+
+    if not testing_mode_enabled():
+        threading.Thread(target=open_browser, args=(port,), daemon=True).start()
+
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+
+if __name__ == "__main__":
+    main()

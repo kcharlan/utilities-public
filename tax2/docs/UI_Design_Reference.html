@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tax Calculator - Professional UI Design Reference</title>
+
+    <!-- Fonts: Distinctive but professional -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Epilogue:wght@400;500;600;700;800&family=Public+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            /* Light theme - Ledger aesthetic */
+            --bg-primary: #fafaf9;
+            --bg-secondary: #f5f5f4;
+            --bg-tertiary: #ffffff;
+            --bg-input: #ffffff;
+
+            --text-primary: #1c1917;
+            --text-secondary: #57534e;
+            --text-tertiary: #78716c;
+
+            --border-subtle: #e7e5e4;
+            --border-medium: #d6d3d1;
+            --border-strong: #a8a29e;
+
+            --accent-income: #059669;
+            --accent-income-light: #d1fae5;
+            --accent-tax: #ea580c;
+            --accent-tax-light: #fed7aa;
+            --accent-state: #7c3aed;
+            --accent-state-light: #ddd6fe;
+
+            --ledger-line: rgba(120, 113, 108, 0.15);
+            --number-highlight: #fef3c7;
+
+            /* Typography */
+            --font-display: 'Epilogue', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+            --font-body: 'Public Sans', sans-serif;
+        }
+
+        .dark {
+            /* Dark theme - Terminal aesthetic */
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #171717;
+            --bg-tertiary: #262626;
+            --bg-input: #1a1a1a;
+
+            --text-primary: #fafafa;
+            --text-secondary: #a3a3a3;
+            --text-tertiary: #737373;
+
+            --border-subtle: #262626;
+            --border-medium: #404040;
+            --border-strong: #525252;
+
+            --accent-income: #10b981;
+            --accent-income-light: rgba(16, 185, 129, 0.15);
+            --accent-tax: #fb923c;
+            --accent-tax-light: rgba(251, 146, 60, 0.15);
+            --accent-state: #a78bfa;
+            --accent-state-light: rgba(167, 139, 250, 0.15);
+
+            --ledger-line: rgba(163, 163, 163, 0.1);
+            --number-highlight: rgba(234, 179, 8, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .app-container {
+            display: grid;
+            grid-template-columns: 280px 1fr 320px;
+            height: 100vh;
+            gap: 0;
+        }
+
+        /* Left Sidebar - Controls */
+        .sidebar {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-subtle);
+            padding: 2rem 1.5rem;
+            overflow-y: auto;
+        }
+
+        .sidebar-header {
+            margin-bottom: 2rem;
+        }
+
+        .app-title {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.25rem;
+        }
+
+        .app-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+
+        .control-section {
+            margin-bottom: 2rem;
+        }
+
+        .control-label {
+            font-family: var(--font-display);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+            display: block;
+        }
+
+        .select-wrapper {
+            position: relative;
+        }
+
+        select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border-medium);
+            border-radius: 6px;
+            font-family: var(--font-body);
+            font-size: 0.875rem;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+            appearance: none;
+        }
+
+        select:hover {
+            border-color: var(--border-strong);
+        }
+
+        select:focus {
+            outline: none;
+            border-color: var(--accent-income);
+            box-shadow: 0 0 0 3px var(--accent-income-light);
+        }
+
+        .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            padding: 0.625rem 0.875rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border-medium);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .radio-option:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--border-strong);
+        }
+
+        .radio-option input[type="radio"] {
+            margin-right: 0.625rem;
+        }
+
+        .radio-option label {
+            font-size: 0.875rem;
+            cursor: pointer;
+        }
+
+        .file-upload {
+            margin-top: 0.75rem;
+        }
+
+        .file-upload-btn {
+            width: 100%;
+            padding: 0.625rem 1rem;
+            background: var(--bg-tertiary);
+            border: 1px dashed var(--border-medium);
+            border-radius: 6px;
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .file-upload-btn:hover {
+            border-color: var(--border-strong);
+            color: var(--text-primary);
+        }
+
+        /* Main Panel */
+        .main-panel {
+            padding: 2rem;
+            overflow-y: auto;
+            background: var(--bg-primary);
+        }
+
+        .header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .year-badge {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.375rem 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-medium);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        .theme-toggle {
+            padding: 0.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-medium);
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+        }
+
+        /* Income Input Section */
+        .income-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            background-image:
+                repeating-linear-gradient(
+                    0deg,
+                    transparent,
+                    transparent 2.4rem,
+                    var(--ledger-line) 2.4rem,
+                    var(--ledger-line) calc(2.4rem + 1px)
+                );
+        }
+
+        .income-label {
+            font-family: var(--font-display);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .income-display {
+            display: flex;
+            align-items: baseline;
+            margin-bottom: 1.5rem;
+        }
+
+        .currency-symbol {
+            font-family: var(--font-mono);
+            font-size: 2.5rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-right: 0.5rem;
+        }
+
+        .income-input {
+            font-family: var(--font-mono);
+            font-size: 4rem;
+            font-weight: 700;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            width: 100%;
+            letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .income-input:focus {
+            outline: none;
+            background: var(--number-highlight);
+        }
+
+        .income-sublabel {
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+            color: var(--text-tertiary);
+            letter-spacing: 0.02em;
+        }
+
+        /* Results Dashboard */
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .result-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .result-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--card-accent);
+        }
+
+        .result-card.federal::before {
+            background: var(--accent-tax);
+        }
+
+        .result-card.state::before {
+            background: var(--accent-state);
+        }
+
+        .result-card.total::before {
+            background: var(--text-primary);
+        }
+
+        .result-label {
+            font-family: var(--font-display);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+        }
+
+        .result-amount {
+            font-family: var(--font-mono);
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            font-variant-numeric: tabular-nums;
+            margin-bottom: 0.5rem;
+        }
+
+        .result-sublabel {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Tax Breakdown Chart */
+        .chart-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .chart-title {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+
+        .chart-legend {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+
+        /* Stacked Bar Chart */
+        .bracket-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .bracket-row {
+            display: grid;
+            grid-template-columns: 100px 1fr 120px;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .bracket-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .bracket-bar-container {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            height: 32px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .bracket-bar {
+            height: 100%;
+            transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 0.5rem;
+        }
+
+        .bracket-bar.federal {
+            background: linear-gradient(90deg, var(--accent-tax), color-mix(in srgb, var(--accent-tax) 80%, white));
+        }
+
+        .bracket-bar.state {
+            background: linear-gradient(90deg, var(--accent-state), color-mix(in srgb, var(--accent-state) 80%, white));
+        }
+
+        .bracket-amount {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Right Panel - QIF Export */
+        .export-panel {
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-subtle);
+            padding: 2rem 1.5rem;
+            overflow-y: auto;
+        }
+
+        .export-header {
+            margin-bottom: 2rem;
+        }
+
+        .export-title {
+            font-family: var(--font-display);
+            font-size: 1.125rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            margin-bottom: 0.5rem;
+        }
+
+        .export-description {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        .export-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .export-label {
+            font-family: var(--font-display);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+            display: block;
+        }
+
+        input[type="text"],
+        input[type="date"] {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border-medium);
+            border-radius: 6px;
+            font-family: var(--font-body);
+            font-size: 0.875rem;
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+
+        input[type="text"]:focus,
+        input[type="date"]:focus {
+            outline: none;
+            border-color: var(--accent-income);
+            box-shadow: 0 0 0 3px var(--accent-income-light);
+        }
+
+        .category-input {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+        }
+
+        .export-button {
+            width: 100%;
+            padding: 1rem;
+            background: var(--accent-income);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-family: var(--font-display);
+            font-size: 0.875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 2rem;
+        }
+
+        .export-button:hover {
+            background: color-mix(in srgb, var(--accent-income) 85%, black);
+            transform: translateY(-1px);
+        }
+
+        .export-button:active {
+            transform: translateY(0);
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-strong);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-tertiary);
+        }
+
+        /* Animations */
+        @keyframes countUp {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result-amount {
+            animation: countUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .bracket-bar {
+            animation: slideIn 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes slideIn {
+            from {
+                width: 0;
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .app-container {
+                grid-template-columns: 260px 1fr;
+            }
+
+            .export-panel {
+                display: none;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .app-container {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                border-right: none;
+                border-bottom: 1px solid var(--border-subtle);
+            }
+
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .income-input {
+                font-size: 2.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Left Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1 class="app-title">TaxCalc</h1>
+                <div class="app-subtitle">Professional Edition</div>
+            </div>
+
+            <div class="control-section">
+                <label class="control-label">Tax Year</label>
+                <div class="select-wrapper">
+                    <select>
+                        <option selected>2025</option>
+                        <option>2024</option>
+                        <option>2023</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <label class="control-label">Filing Status</label>
+                <div class="radio-group">
+                    <div class="radio-option">
+                        <input type="radio" name="filing" id="single" checked>
+                        <label for="single">Single</label>
+                    </div>
+                    <div class="radio-option">
+                        <input type="radio" name="filing" id="married">
+                        <label for="married">Married Filing Jointly</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <label class="control-label">Computation Mode</label>
+                <div class="radio-group">
+                    <div class="radio-option">
+                        <input type="radio" name="mode" id="rules" checked>
+                        <label for="rules">Rules Engine</label>
+                    </div>
+                    <div class="radio-option">
+                        <input type="radio" name="mode" id="table">
+                        <label for="table">Lookup Table</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <label class="control-label">Custom Rules (Optional)</label>
+                <div class="file-upload">
+                    <div class="file-upload-btn">Upload Federal YAML</div>
+                </div>
+                <div class="file-upload">
+                    <div class="file-upload-btn">Upload State YAML</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Panel -->
+        <div class="main-panel">
+            <div class="header-bar">
+                <div class="year-badge">FY 2025</div>
+                <button class="theme-toggle" onclick="toggleTheme()">◐ Toggle Theme</button>
+            </div>
+
+            <!-- Income Input -->
+            <div class="income-section">
+                <div class="income-label">Monthly Gross Income</div>
+                <div class="income-display">
+                    <span class="currency-symbol">$</span>
+                    <input type="text" class="income-input" value="12,500" />
+                </div>
+                <div class="income-sublabel">= $150,000 annually</div>
+            </div>
+
+            <!-- Results Cards -->
+            <div class="results-grid">
+                <div class="result-card federal">
+                    <div class="result-label">Federal Tax</div>
+                    <div class="result-amount">$2,187.50</div>
+                    <div class="result-sublabel">17.5% effective</div>
+                </div>
+
+                <div class="result-card state">
+                    <div class="result-label">State Tax (GA)</div>
+                    <div class="result-amount">$651.25</div>
+                    <div class="result-sublabel">5.2% effective</div>
+                </div>
+
+                <div class="result-card total">
+                    <div class="result-label">Total Monthly</div>
+                    <div class="result-amount">$2,838.75</div>
+                    <div class="result-sublabel">22.7% combined</div>
+                </div>
+            </div>
+
+            <!-- Tax Breakdown Chart -->
+            <div class="chart-section">
+                <div class="chart-header">
+                    <h2 class="chart-title">Tax Breakdown by Bracket</h2>
+                    <div class="chart-legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--accent-tax);"></div>
+                            <span>Federal</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--accent-state);"></div>
+                            <span>State</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bracket-bars">
+                    <div class="bracket-row">
+                        <div class="bracket-label">10% bracket</div>
+                        <div class="bracket-bar-container">
+                            <div class="bracket-bar federal" style="width: 75%;">
+                                <span class="bracket-amount">$1,100</span>
+                            </div>
+                        </div>
+                        <div class="bracket-amount" style="text-align: right;">$1,100.00</div>
+                    </div>
+
+                    <div class="bracket-row">
+                        <div class="bracket-label">12% bracket</div>
+                        <div class="bracket-bar-container">
+                            <div class="bracket-bar federal" style="width: 85%;">
+                                <span class="bracket-amount">$4,308</span>
+                            </div>
+                        </div>
+                        <div class="bracket-amount" style="text-align: right;">$4,308.00</div>
+                    </div>
+
+                    <div class="bracket-row">
+                        <div class="bracket-label">22% bracket</div>
+                        <div class="bracket-bar-container">
+                            <div class="bracket-bar federal" style="width: 95%;">
+                                <span class="bracket-amount">$9,592</span>
+                            </div>
+                        </div>
+                        <div class="bracket-amount" style="text-align: right;">$9,592.50</div>
+                    </div>
+
+                    <div class="bracket-row">
+                        <div class="bracket-label">GA 5.75%</div>
+                        <div class="bracket-bar-container">
+                            <div class="bracket-bar state" style="width: 65%;">
+                                <span class="bracket-amount">$7,815</span>
+                            </div>
+                        </div>
+                        <div class="bracket-amount" style="text-align: right;">$7,815.00</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel - QIF Export -->
+        <div class="export-panel">
+            <div class="export-header">
+                <h2 class="export-title">QIF Export</h2>
+                <p class="export-description">Configure transaction details for Quicken/Moneydance import</p>
+            </div>
+
+            <div class="export-section">
+                <label class="export-label">Transaction Date</label>
+                <input type="date" value="2025-02-14">
+            </div>
+
+            <div class="export-section">
+                <label class="export-label">Payee Name</label>
+                <input type="text" value="Estimated Taxes Withholding">
+            </div>
+
+            <div class="export-section">
+                <label class="export-label">Federal Expense Category</label>
+                <input type="text" class="category-input" value="Tax:Federal Income Tax Estimated Paid">
+            </div>
+
+            <div class="export-section">
+                <label class="export-label">Federal Transfer Account</label>
+                <input type="text" class="category-input" value="[Federal Income Taxes]">
+            </div>
+
+            <div class="export-section">
+                <label class="export-label">State Expense Category</label>
+                <input type="text" class="category-input" value="Tax:State Income Tax Estimated Paid">
+            </div>
+
+            <div class="export-section">
+                <label class="export-label">State Transfer Account</label>
+                <input type="text" class="category-input" value="[GA State Income Taxes]">
+            </div>
+
+            <button class="export-button">↓ Download QIF</button>
+        </div>
+    </div>
+
+    <script>
+        function toggleTheme() {
+            document.documentElement.classList.toggle('dark');
+        }
+
+        // Format number input with commas
+        const incomeInput = document.querySelector('.income-input');
+        incomeInput.addEventListener('input', (e) => {
+            let value = e.target.value.replace(/,/g, '');
+            if (!isNaN(value) && value !== '') {
+                e.target.value = Number(value).toLocaleString('en-US');
+            }
+        });
+
+        // Simulate calculation animation
+        window.addEventListener('load', () => {
+            const bars = document.querySelectorAll('.bracket-bar');
+            bars.forEach((bar, i) => {
+                bar.style.animationDelay = `${i * 0.1}s`;
+            });
+        });
+    </script>
+</body>
+</html>

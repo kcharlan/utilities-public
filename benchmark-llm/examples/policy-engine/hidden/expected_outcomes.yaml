@@ -1,0 +1,154 @@
+visible:
+  sample_a:
+    output_path: output/sample-a.json
+    rows:
+      - original_service_category: Primary Care Visit
+        canonical_service_category: Primary Care Visit
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: Specialist Consultation
+        canonical_service_category: Specialist Consultation
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: Inpatient Room & Board
+        canonical_service_category: Inpatient Room & Board
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: Emergency Room (Facility)
+        canonical_service_category: Emergency Room (Facility)
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: ER Physician Fee
+        canonical_service_category: ER Physician Fee
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: Diagnostic Imaging (Tech)
+        canonical_service_category: Diagnostic Imaging (Tech)
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: Diagnostic Imaging (Prof)
+        canonical_service_category: Diagnostic Imaging (Prof)
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+  sample_b:
+    output_path: output/sample-b.json
+    rows:
+      - original_service_category: primary care visit
+        canonical_service_category: Primary Care Visit
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: emergency room physician
+        canonical_service_category: ER Physician Fee
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: diagnostic imaging technical
+        canonical_service_category: Diagnostic Imaging (Tech)
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: home health visit
+        canonical_service_category: unmatched
+        risk_holder: unknown
+        system_configuration_action: REVIEW
+        match_status: unmatched
+      - original_service_category: specialist consultation
+        canonical_service_category: Specialist Consultation
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+hidden:
+  hidden_c:
+    output_path: output/hidden-c.json
+    rows:
+      - original_service_category: " PCP Visit "
+        canonical_service_category: Primary Care Visit
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: Specialist Consult
+        canonical_service_category: Specialist Consultation
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: Emergency Room Facility
+        canonical_service_category: Emergency Room (Facility)
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: E.R. Physician Fee
+        canonical_service_category: ER Physician Fee
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: Imaging Technical Component
+        canonical_service_category: Diagnostic Imaging (Tech)
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: Imaging Professional Component
+        canonical_service_category: Diagnostic Imaging (Prof)
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: Inpatient Room and Board
+        canonical_service_category: Inpatient Room & Board
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: Skilled Nursing Facility
+        canonical_service_category: unmatched
+        risk_holder: unknown
+        system_configuration_action: REVIEW
+        match_status: unmatched
+  hidden_d:
+    output_path: output/hidden-d.json
+    rows:
+      - original_service_category: primary care office visit
+        canonical_service_category: Primary Care Visit
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: "  specialist office visit  "
+        canonical_service_category: Specialist Consultation
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: ER PHYS FEE
+        canonical_service_category: ER Physician Fee
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: diagnostic imaging professional component
+        canonical_service_category: Diagnostic Imaging (Prof)
+        risk_holder: professional
+        system_configuration_action: PAY
+        match_status: matched
+      - original_service_category: diagnostic imaging technical component
+        canonical_service_category: Diagnostic Imaging (Tech)
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: emergency room facility
+        canonical_service_category: Emergency Room (Facility)
+        risk_holder: institutional
+        system_configuration_action: DENY_REDIRECT
+        match_status: matched
+      - original_service_category: home infusion therapy
+        canonical_service_category: unmatched
+        risk_holder: unknown
+        system_configuration_action: REVIEW
+        match_status: unmatched
+      - original_service_category: ""
+        match_status: unmatched
+      - original_service_category: inpatient room and board
+        canonical_service_category: Inpatient Room & Board
+        match_status: matched

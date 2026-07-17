@@ -1,0 +1,1 @@
+{"id": "cal_03_leap_day_next","category": "calendar_edges","weight": 1,"input": {"expr": "0 0 29 2 *","after": "2027-01-01T00:00:00+00:00","n": 2,"tz": "UTC"},"expected": {"kind": "fires","value": ["2028-02-29T00:00:00+00:00","2032-02-29T00:00:00+00:00"]}}

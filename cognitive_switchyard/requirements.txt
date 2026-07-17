@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+wsproto
+aiosqlite
+PyYAML

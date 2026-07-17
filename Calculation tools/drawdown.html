@@ -1,0 +1,2130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drawdown — A Solvency Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=Hanken+Grotesk:wght@300..800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F2ECE0;
+    --paper-warm: #EAE3D5;
+    --paper-deep: #E3DAC8;
+    --ink: #1A1814;
+    --ink-soft: #5C544A;
+    --ink-fade: #9A9085;
+    --oxblood: #7A2A1F;
+    --oxblood-soft: #B85D4F;
+    --forest: #2C4A3E;
+    --forest-soft: #6B9080;
+    --ochre: #B8862A;
+    --ochre-soft: #DBB76D;
+    --ochre-pale: rgba(184, 134, 42, 0.08);
+    --umber: #6B4423;
+    --rule: #CDC1AD;
+    --rule-soft: #DCD2C0;
+    --rule-fine: #E6DDC9;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.45;
+    min-height: 100vh;
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(26,24,20,0.035) 1px, transparent 0),
+      radial-gradient(ellipse at top left, rgba(184,134,42,0.04), transparent 50%),
+      radial-gradient(ellipse at bottom right, rgba(44,74,62,0.04), transparent 50%);
+    background-size: 22px 22px, 100% 100%, 100% 100%;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 360px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  /* ============ SIDEBAR ============ */
+  .sidebar {
+    background: var(--paper-warm);
+    border-right: 1px solid var(--rule);
+    padding: 32px 26px 40px;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule) transparent;
+  }
+  .sidebar::-webkit-scrollbar { width: 6px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--rule); }
+
+  .brand {
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 18px;
+  }
+  .brand .mark {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9, "SOFT" 100;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: var(--ink-fade);
+    margin-bottom: 4px;
+  }
+  .brand h1 {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 400;
+    font-size: 36px;
+    line-height: 0.95;
+    letter-spacing: -0.025em;
+    color: var(--ink);
+  }
+  .brand h1 em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--oxblood);
+    font-variation-settings: "opsz" 144, "SOFT" 50;
+  }
+  .brand .tagline {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 6px;
+    letter-spacing: 0.005em;
+  }
+
+  .group { margin-bottom: 20px; }
+  .group:last-of-type { margin-bottom: 16px; }
+
+  .group-label {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--ink-soft);
+    margin-bottom: 11px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .group-label .ordinal {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--ink-fade);
+    letter-spacing: 0.05em;
+  }
+
+  .field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 7px;
+    gap: 12px;
+  }
+  .field label {
+    font-size: 12.5px;
+    color: var(--ink);
+    flex: 1;
+  }
+  .field label .hint {
+    display: block;
+    font-size: 10.5px;
+    color: var(--ink-fade);
+    font-style: italic;
+    font-family: 'Fraunces', serif;
+    margin-top: 1px;
+  }
+
+  /* Adjustments panel — read-only list of pins in the sidebar */
+  .adj-empty {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-fade);
+  }
+  .adj-entry {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rule-fine);
+    cursor: pointer;
+  }
+  .adj-entry:last-child { border-bottom: none; padding-bottom: 2px; }
+  .adj-entry-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 3px;
+  }
+  .adj-entry-when {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ochre);
+  }
+  .adj-remove {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 11px;
+    color: var(--ink-fade);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .adj-remove:hover { color: var(--oxblood); }
+  .adj-field {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 11.5px;
+    padding: 1px 0;
+  }
+  .adj-field-label { color: var(--ink-soft); }
+  .adj-field-val {
+    color: var(--ink);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+
+  .input-wrap {
+    display: inline-flex;
+    align-items: center;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    transition: border-color 0.15s;
+  }
+  .input-wrap:focus-within {
+    border-color: var(--ink);
+  }
+  .input-wrap .prefix,
+  .input-wrap .suffix {
+    color: var(--ink-fade);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 0 4px;
+  }
+  .input-wrap .prefix { padding-left: 7px; }
+  .input-wrap .suffix { padding-right: 7px; }
+  .input-wrap input {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 6px 4px;
+    width: 88px;
+    text-align: right;
+    color: var(--ink);
+    font-feature-settings: "tnum";
+    -moz-appearance: textfield;
+  }
+  .input-wrap input::-webkit-outer-spin-button,
+  .input-wrap input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .toggle {
+    display: flex;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    overflow: hidden;
+  }
+  .toggle button {
+    flex: 1;
+    padding: 7px 10px;
+    background: transparent;
+    border: none;
+    font-family: 'Hanken Grotesk', sans-serif;
+    font-size: 11.5px;
+    cursor: pointer;
+    color: var(--ink-soft);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .toggle button:not(.active):hover {
+    background: var(--paper-warm);
+    color: var(--ink);
+  }
+  .toggle button.active {
+    background: var(--ink);
+    color: var(--paper);
+  }
+
+  .calc-button {
+    width: 100%;
+    padding: 11px;
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 24, "SOFT" 50;
+    font-weight: 400;
+    font-size: 14px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    margin-top: 18px;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .calc-button:hover { background: var(--oxblood); }
+  .calc-button:active { transform: translateY(1px); }
+  .calc-button .arrow {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-weight: 300;
+    margin-left: 6px;
+    display: inline-block;
+    transition: transform 0.2s;
+  }
+  .calc-button:hover .arrow { transform: translateX(3px); }
+
+  /* ============ MAIN ============ */
+  .main {
+    padding: 40px 48px 60px;
+    min-width: 0;
+  }
+
+  .header {
+    margin-bottom: 32px;
+    position: relative;
+  }
+  .header .eyebrow {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.24em;
+    color: var(--oxblood);
+    margin-bottom: 6px;
+  }
+  .header h2 {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 144, "SOFT" 40, "wght" 350;
+    font-weight: 350;
+    font-size: 62px;
+    line-height: 0.96;
+    letter-spacing: -0.035em;
+    color: var(--ink);
+  }
+  .header h2 em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--ink-soft);
+    font-variation-settings: "opsz" 144, "SOFT" 80, "wght" 300;
+  }
+  .header .subtitle {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-variation-settings: "opsz" 24, "SOFT" 50;
+    font-size: 15px;
+    color: var(--ink-soft);
+    margin-top: 10px;
+    letter-spacing: 0.005em;
+    max-width: 540px;
+  }
+  .header .today-stamp {
+    position: absolute;
+    top: 8px;
+    right: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--ink-fade);
+    border-left: 1px solid var(--rule);
+    padding-left: 12px;
+  }
+  .header .today-stamp strong {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0;
+    border-top: 1.5px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 28px;
+  }
+  .stat {
+    padding: 14px 16px 14px;
+    border-right: 1px solid var(--rule);
+    position: relative;
+  }
+  .stat:last-child { border-right: none; }
+  .stat-label {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9;
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--ink-soft);
+    margin-bottom: 7px;
+  }
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 19px;
+    font-weight: 500;
+    color: var(--ink);
+    letter-spacing: -0.015em;
+    font-feature-settings: "tnum";
+    line-height: 1.05;
+  }
+  .stat-value.warning { color: var(--oxblood); }
+  .stat-detail {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 11px;
+    color: var(--ink-fade);
+    margin-top: 4px;
+  }
+
+  /* ============ CHART ============ */
+  .chart-container {
+    margin-bottom: 32px;
+    background: var(--paper-warm);
+    padding: 18px 22px 14px;
+    border: 1px solid var(--rule);
+    position: relative;
+  }
+  .chart-container::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    right: -1px;
+    height: 3px;
+    background: linear-gradient(90deg, var(--forest), var(--ochre), var(--oxblood));
+    opacity: 0.4;
+  }
+  .chart-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .chart-title {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--ink-soft);
+  }
+  .chart-legend {
+    display: flex;
+    gap: 18px;
+    font-size: 11px;
+    color: var(--ink-soft);
+    font-family: 'Hanken Grotesk';
+  }
+  .legend-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    vertical-align: -2px;
+    margin-right: 6px;
+  }
+  .chart-svg {
+    width: 100%;
+    height: 200px;
+    display: block;
+    overflow: visible;
+  }
+  .chart-y-labels {
+    position: absolute;
+    left: 22px;
+    top: 38px;
+    height: 200px;
+    pointer-events: none;
+    width: 60px;
+  }
+  .chart-y-label {
+    position: absolute;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9.5px;
+    color: var(--ink-fade);
+    background: rgba(234,227,213,0.85);
+    padding: 0 4px;
+    letter-spacing: -0.01em;
+  }
+  .chart-x-labels {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-fade);
+  }
+
+  /* ============ TABLE ============ */
+  .table-section { position: relative; }
+  .table-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 14px 0 12px;
+    border-top: 1.5px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 0;
+  }
+  .table-head h3 {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 72, "SOFT" 30;
+    font-weight: 400;
+    font-size: 26px;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+  }
+  .table-head h3 em {
+    font-style: italic;
+    color: var(--ink-soft);
+    font-weight: 300;
+    font-variation-settings: "opsz" 72, "SOFT" 50, "wght" 300;
+  }
+  .table-head-titles { display: flex; flex-direction: column; gap: 3px; }
+  .table-hint {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 11.5px;
+    color: var(--ink-fade);
+    letter-spacing: 0.01em;
+  }
+  .table-hint em { font-style: italic; color: var(--ochre); font-weight: 500; }
+  .table-actions { display: flex; gap: 8px; align-items: center; }
+  .table-actions .pin-count {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ochre);
+    margin-right: 4px;
+  }
+  .table-actions button {
+    padding: 6px 12px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    font-family: 'Hanken Grotesk', sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--ink-soft);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .table-actions button:hover {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+
+  .amort {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    font-feature-settings: "tnum";
+  }
+  .amort thead {
+    position: sticky;
+    top: 0;
+    background: var(--paper);
+    z-index: 5;
+  }
+  .amort th {
+    text-align: right;
+    padding: 11px 10px 9px;
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9, "SOFT" 30;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--ink-soft);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  .amort th:nth-child(2),
+  .amort th:nth-child(3),
+  .amort th:nth-child(11) { text-align: left; }
+  .amort th:first-child { width: 28px; text-align: center; padding: 11px 6px 9px; }
+
+  .amort td {
+    padding: 7px 10px;
+    text-align: right;
+    border-bottom: 1px solid var(--rule-fine);
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .amort td:nth-child(2),
+  .amort td:nth-child(3),
+  .amort td:nth-child(11) { text-align: left; }
+  .amort td:first-child { text-align: center; padding: 7px 6px; }
+
+  .amort tbody tr {
+    position: relative;
+    transition: background 0.1s;
+  }
+  .amort tbody tr:hover {
+    background: linear-gradient(90deg, var(--paper-warm), transparent 90%);
+  }
+  .amort tbody tr:hover .pin-action { opacity: 1; color: var(--ochre); }
+
+  .amort .col-period {
+    color: var(--ink-fade);
+    font-size: 10.5px;
+  }
+  .amort .col-date {
+    color: var(--ink-soft);
+    font-family: 'Fraunces', serif;
+    font-size: 11.5px;
+    font-style: italic;
+    letter-spacing: 0.01em;
+  }
+  .amort .delta-pos { color: var(--forest); }
+  .amort .delta-neg { color: var(--oxblood); }
+  .amort .col-sold {
+    color: var(--umber);
+  }
+  .amort .col-sold-zero { color: var(--ink-fade); }
+  .amort .col-notes {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    letter-spacing: 0.01em;
+    padding-right: 10px;
+  }
+  .amort .marker-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+  .amort .marker-dot.floor { background: var(--oxblood-soft); }
+  .amort .marker-dot.pinned { background: var(--ochre); }
+  .amort .marker-dot.surplus { background: var(--forest-soft); }
+  .amort .marker-dot.insolvency { background: var(--oxblood); box-shadow: 0 0 0 2px rgba(122,42,31,0.2); }
+
+  .amort tr.is-pinned {
+    background: linear-gradient(90deg, var(--ochre-pale), transparent 80%);
+  }
+  .amort tr.is-pinned td {
+    border-top: 1px solid var(--ochre);
+  }
+  .amort tr.is-pinned + tr td {
+    /* avoid double border */
+  }
+  .amort tr.is-pinned td:first-child {
+    position: relative;
+  }
+  .amort tr.is-pinned td:first-child::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: -1px;
+    bottom: 0;
+    width: 3px;
+    background: var(--ochre);
+  }
+  .amort tr.is-insolvent {
+    background: rgba(122,42,31,0.06);
+  }
+  .amort tr.is-insolvent td {
+    color: var(--oxblood);
+  }
+  .amort tr.is-insolvent .col-date,
+  .amort tr.is-insolvent .col-notes {
+    color: var(--oxblood);
+  }
+
+  .pin-action {
+    opacity: 0.35;
+    cursor: pointer;
+    color: var(--ink-fade);
+    font-size: 16px;
+    font-family: 'Fraunces', serif;
+    line-height: 1;
+    transition: all 0.15s;
+    user-select: none;
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    text-align: center;
+    line-height: 18px;
+  }
+  .pin-action:hover {
+    color: var(--ochre);
+    transform: scale(1.2);
+  }
+  tr.is-pinned .pin-action {
+    opacity: 1;
+    color: var(--ochre);
+  }
+
+  /* ============ EDITABLE CELLS ============ */
+  /* Expense, Inv. Income, Buffer, Investments are directly editable in-table. */
+  .amort td.editable-cell { cursor: pointer; position: relative; }
+  .amort td.editable-cell::after {
+    content: '';
+    position: absolute;
+    left: 8px; right: 8px; bottom: 4px;
+    height: 2px;
+    background: var(--ink-fade);
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .amort td.editable-cell:hover::after { opacity: 0.5; }
+  /* Persistent ochre underline marks a cell whose field is overridden by a pin. */
+  .amort td.editable-cell.is-overridden::after { background: var(--ochre); opacity: 1; }
+  .amort input.cell-edit-input {
+    width: 88px;
+    max-width: 100%;
+    font: inherit;
+    text-align: right;
+    padding: 3px 5px;
+    border: 1px solid var(--ochre);
+    background: var(--paper);
+    color: var(--ink);
+    border-radius: 2px;
+  }
+  .amort input.cell-edit-input:focus { outline: none; box-shadow: 0 0 0 2px var(--ochre-pale); }
+
+  /* ============ PIN EDITOR ============ */
+  .pin-editor-row td {
+    padding: 0 !important;
+    background: var(--paper-warm) !important;
+    border-bottom: 1px solid var(--ochre) !important;
+    border-top: 2px solid var(--ochre) !important;
+  }
+  .pin-editor {
+    padding: 20px 24px 18px;
+    background: linear-gradient(180deg, var(--paper-warm) 0%, var(--paper-deep) 100%);
+  }
+  .pin-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .pin-editor-title {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 36, "SOFT" 30;
+    font-weight: 400;
+    font-size: 16px;
+    color: var(--ink);
+    letter-spacing: -0.005em;
+  }
+  .pin-editor-title em {
+    font-style: italic;
+    color: var(--ochre);
+    font-weight: 500;
+  }
+  .pin-editor-sub {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 11.5px;
+    color: var(--ink-fade);
+    margin-top: 2px;
+  }
+  .pin-editor-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px 28px;
+  }
+  .pin-editor-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pin-editor-field label {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9;
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--ink-soft);
+  }
+  .pin-editor-field .baseline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-fade);
+    margin-top: 2px;
+    font-style: italic;
+  }
+  .pin-editor-field .input-wrap {
+    width: 100%;
+  }
+  .pin-editor-field .input-wrap input {
+    flex: 1;
+    width: auto;
+  }
+  .pin-editor-field.changed .input-wrap {
+    border-color: var(--ochre);
+    background: rgba(184,134,42,0.05);
+  }
+  .pin-editor-field.changed label {
+    color: var(--ochre);
+  }
+  .pin-editor-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+    justify-content: flex-end;
+    align-items: center;
+  }
+  .pin-editor-actions .reset {
+    margin-right: auto;
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-fade);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: var(--rule);
+    text-underline-offset: 3px;
+    padding: 6px 4px;
+  }
+  .pin-editor-actions .reset:hover {
+    color: var(--ink);
+  }
+  .pin-editor-actions .pin-btn {
+    padding: 8px 16px;
+    font-family: 'Hanken Grotesk', sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink-soft);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .pin-editor-actions .pin-btn:hover {
+    background: var(--ink-soft);
+    color: var(--paper);
+    border-color: var(--ink-soft);
+  }
+  .pin-editor-actions .save-btn {
+    background: var(--ochre);
+    color: var(--paper);
+    border-color: var(--ochre);
+  }
+  .pin-editor-actions .save-btn:hover {
+    background: var(--oxblood);
+    border-color: var(--oxblood);
+  }
+  .pin-editor-actions .remove-btn {
+    background: var(--paper);
+    color: var(--oxblood);
+    border-color: var(--oxblood-soft);
+  }
+  .pin-editor-actions .remove-btn:hover {
+    background: var(--oxblood);
+    color: var(--paper);
+  }
+
+  .table-footer {
+    padding: 28px 0 16px;
+    text-align: center;
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-variation-settings: "opsz" 24, "SOFT" 50;
+    font-size: 14px;
+    color: var(--ink-soft);
+    border-bottom: 1px solid var(--rule);
+  }
+  .table-footer.depleted { color: var(--oxblood); }
+  .table-footer .footer-stat {
+    font-family: 'JetBrains Mono', monospace;
+    font-style: normal;
+    font-size: 12px;
+    color: var(--ink);
+    margin-left: 6px;
+  }
+
+  .footnote {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-variation-settings: "opsz" 9;
+    font-size: 11.5px;
+    color: var(--ink-fade);
+    margin-top: 28px;
+    max-width: 760px;
+    line-height: 1.7;
+    letter-spacing: 0.005em;
+    column-count: 1;
+  }
+  .footnote strong {
+    font-style: normal;
+    color: var(--ink-soft);
+    font-weight: 500;
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9, "SOFT" 30;
+  }
+  .footnote .sep {
+    margin: 0 8px;
+    color: var(--rule);
+  }
+
+  /* ============ ANIMATIONS ============ */
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .amort tbody tr {
+    animation: fadein 0.2s ease-out backwards;
+  }
+  .pin-editor-row {
+    animation: fadein 0.18s ease-out;
+  }
+
+  /* fine print pull-quote treatment */
+  .pull-quote {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-variation-settings: "opsz" 144, "SOFT" 80, "wght" 300;
+    font-size: 17px;
+    color: var(--ink-soft);
+    line-height: 1.4;
+    padding: 18px 22px;
+    border-left: 2px solid var(--ochre);
+    background: rgba(184,134,42,0.04);
+    margin: 0 0 22px;
+    max-width: 720px;
+    letter-spacing: 0.005em;
+  }
+  .pull-quote .pq-mark {
+    display: block;
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 9, "SOFT" 30;
+    font-style: normal;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: var(--ochre);
+    margin-bottom: 6px;
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark">A Parametric Solvency Study</div>
+      <h1>Draw<em>down</em></h1>
+      <div class="tagline">when the bucket runs dry — and what slows it</div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Buffer Fund</span><span class="ordinal">§ 01</span></div>
+      <div class="field">
+        <label>Starting cash</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="buffer-initial" value="270000" step="1000"></span>
+      </div>
+      <div class="field">
+        <label>Floor</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="floor" value="100000" step="1000"></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>External Income</span><span class="ordinal">§ 02</span></div>
+      <div class="field">
+        <label>Monthly</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="external-income" value="2000" step="100"></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Investments</span><span class="ordinal">§ 03</span></div>
+      <div class="field">
+        <label>Principal</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="investments-initial" value="600000" step="1000"></span>
+      </div>
+      <div class="field">
+        <label>Monthly income</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="investment-income" value="6000" step="100"></span>
+      </div>
+      <div class="field">
+        <label>Income modifier<span class="hint">income drop ÷ principal drop</span></label>
+        <span class="input-wrap"><input type="number" id="modifier" value="1" step="0.1" min="0"></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Expenses</span><span class="ordinal">§ 04</span></div>
+      <div class="field">
+        <label>Monthly</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="expense" value="5000" step="100"></span>
+      </div>
+      <div class="field">
+        <label>Annual inflation</label>
+        <span class="input-wrap"><input type="number" id="inflation" value="3" step="0.1"><span class="suffix">% APY</span></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Tax</span><span class="ordinal">§ 05</span></div>
+      <div class="field">
+        <label>Effective rate<span class="hint">applied to total income</span></label>
+        <span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Horizon</span><span class="ordinal">§ 06</span></div>
+      <div class="toggle" style="margin-bottom: 10px;">
+        <button id="unit-months" class="active">Months</button>
+        <button id="unit-years">Years</button>
+      </div>
+      <div class="field">
+        <label>Periods<span class="hint">0 = run to depletion</span></label>
+        <span class="input-wrap"><input type="number" id="periods" value="120" step="1" min="0"></span>
+      </div>
+    </div>
+
+    <div class="group" id="adjustments-group">
+      <div class="group-label"><span>Adjustments</span><span class="ordinal">§ 07</span></div>
+      <div id="adjustments-list"></div>
+    </div>
+
+    <button class="calc-button" id="calc-button">Recalculate<span class="arrow">→</span></button>
+  </aside>
+
+  <main class="main">
+    <header class="header">
+      <div class="eyebrow">A study in patience &amp; principal</div>
+      <h2>Investment <em>Drawdown</em></h2>
+      <p class="subtitle">A month-by-month projection of buffer, principal, and income, traced until the wells run dry — or until you adjust the headwaters.</p>
+      <div class="today-stamp">From <strong id="today-stamp">May 2026</strong></div>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="chart-container">
+      <div class="chart-head">
+        <div class="chart-title">Trajectory</div>
+        <div class="chart-legend">
+          <span><span class="legend-swatch" style="background:#2C4A3E"></span>Buffer</span>
+          <span><span class="legend-swatch" style="background:#6B4423"></span>Investments</span>
+          <span><span class="legend-swatch" style="background:#B8862A; opacity:0.7"></span>Floor</span>
+        </div>
+      </div>
+      <div style="position: relative;">
+        <svg class="chart-svg" id="chart" viewBox="0 0 1000 200" preserveAspectRatio="none"></svg>
+        <div class="chart-y-labels" id="chart-y-labels"></div>
+      </div>
+      <div class="chart-x-labels" id="chart-x-labels"></div>
+    </div>
+
+    <section class="table-section">
+      <div class="table-head">
+        <div class="table-head-titles">
+          <h3>The <em>Amortization</em></h3>
+          <div class="table-hint">Click <em>+</em> on any row to change assumptions from that month forward.</div>
+        </div>
+        <div class="table-actions">
+          <span class="pin-count" id="pin-count"></span>
+          <button id="clear-pins">Clear pins</button>
+          <button id="export-csv">Export CSV</button>
+        </div>
+      </div>
+
+      <table class="amort">
+        <thead>
+          <tr>
+            <th></th>
+            <th>#</th>
+            <th>Date</th>
+            <th>Expense</th>
+            <th>Inv. Income</th>
+            <th>Net</th>
+            <th>Δ</th>
+            <th>Buffer</th>
+            <th>Investments</th>
+            <th>Sold</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="amort-body"></tbody>
+      </table>
+
+      <div class="table-footer" id="table-footer"></div>
+    </section>
+
+    <p class="footnote">
+      <strong>Method.</strong> Inflation compounds at the user's annual rate, converted to an effective periodic rate (APY).
+      <span class="sep">·</span>
+      <strong>Tax.</strong> The effective rate is applied to the sum of investment and external income before expenses are deducted.
+      <span class="sep">·</span>
+      <strong>Decay.</strong> Investment income reduction is permanent and cumulative; each sale subtracts <em>(modifier × percent of original principal sold)</em> from a running coefficient. The modifier in force at the time of sale is locked in — later modifier changes never re-evaluate past sales.
+      <span class="sep">·</span>
+      <strong>Pins.</strong> Click the <em>+</em> in the left gutter of any row to attach an override. Pins apply forward from the pinned period; past rows are immutable.
+      <span class="sep">·</span>
+      <strong>Termination.</strong> The simulation ends when investments reach zero and the buffer is at or below its floor (or at the period cap, whichever comes first).
+    </p>
+  </main>
+</div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   STATE
+   ============================================================ */
+const TODAY = new Date(2026, 4, 14); // May 14, 2026
+
+const PARAM_DEFS = [
+  // [key, type, label, isAbsoluteState?]
+  { key: 'buffer',          label: 'Buffer (set to)',     fmt: 'money',   absolute: true  },
+  { key: 'investments',     label: 'Investments (set to)', fmt: 'money',   absolute: true  },
+  { key: 'investment_income', label: 'Inv. income baseline', fmt: 'money', absolute: true },
+  { key: 'modifier',        label: 'Modifier',            fmt: 'num'                       },
+  { key: 'floor',           label: 'Floor',               fmt: 'money'                     },
+  { key: 'external_income', label: 'External income',    fmt: 'money'                     },
+  { key: 'expense',         label: 'Expense (base)',      fmt: 'money'                     },
+  { key: 'inflation',       label: 'Annual inflation',    fmt: 'pct'                       },
+  { key: 'tax_rate',        label: 'Tax rate',            fmt: 'pct'                       },
+];
+
+const state = {
+  params: {
+    buffer_initial: 270000,
+    floor: 100000,
+    external_income: 2000,
+    investments_initial: 600000,
+    investment_income: 6000,
+    modifier: 1,
+    expense: 5000,
+    inflation: 0.03,
+    tax_rate: 0.25,
+    unit: 'months',
+    num_periods: 120,
+  },
+  pins: [], // [{ at_month, overrides: { ... } }]
+  editing: null, // month being edited (if any)
+};
+
+const MAX_MONTHS = 1200; // 100 years
+
+/* ============================================================
+   SIMULATION
+   The simulation always runs MONTHLY internally. Year-mode is a display aggregation.
+   ============================================================ */
+
+function simulate() {
+  const p = state.params;
+  const monthlyInflation = Math.pow(1 + p.inflation, 1 / 12) - 1;
+
+  const sim = {
+    buffer: p.buffer_initial,
+    investments: p.investments_initial,
+    cumulative_reduction: 0,
+    baseline_principal: p.investments_initial,
+    baseline_income: p.investment_income,
+    current_expense: p.expense,
+    current_external: p.external_income,
+    current_tax: p.tax_rate,
+    current_modifier: p.modifier,
+    current_floor: p.floor,
+    current_monthly_inflation: monthlyInflation,
+  };
+
+  const monthsRequested = p.unit === 'months'
+    ? p.num_periods
+    : p.num_periods * 12;
+  const monthLimit = monthsRequested > 0
+    ? Math.min(monthsRequested, MAX_MONTHS)
+    : MAX_MONTHS;
+
+  const sortedPins = [...state.pins].sort((a, b) => a.at_month - b.at_month);
+  let pinIdx = 0;
+
+  const rows = [];
+  let terminatedReason = null;
+  let terminatedAtMonth = null;
+
+  for (let m = 1; m <= monthLimit; m++) {
+    // ------- Pin application BEFORE computing this month -------
+    let pinAppliedAtThisMonth = null;
+    let pinOverridesApplied = null;
+
+    // Snapshot the "pre-pin" state at start of this month so the editor can show baselines
+    const preState = snapshotPreState(sim);
+
+    while (pinIdx < sortedPins.length && sortedPins[pinIdx].at_month === m) {
+      const pin = sortedPins[pinIdx];
+      const ov = pin.overrides;
+      pinAppliedAtThisMonth = pin;
+      pinOverridesApplied = ov;
+
+      // ----- ABSOLUTE STATE overrides -----
+      // Track whether investments or investment_income changed (need epoch reset)
+      const investmentsChanged = 'investments' in ov;
+      const incomeChanged = 'investment_income' in ov;
+
+      if ('buffer' in ov) sim.buffer = ov.buffer;
+      if ('investments' in ov) sim.investments = ov.investments;
+
+      // ----- PARAMETER overrides -----
+      if ('modifier' in ov) sim.current_modifier = ov.modifier;
+      if ('floor' in ov) sim.current_floor = ov.floor;
+      if ('external_income' in ov) sim.current_external = ov.external_income;
+      if ('tax_rate' in ov) sim.current_tax = ov.tax_rate;
+      if ('expense' in ov) sim.current_expense = ov.expense;
+      if ('inflation' in ov) {
+        sim.current_monthly_inflation = Math.pow(1 + ov.inflation, 1 / 12) - 1;
+      }
+
+      // ----- EPOCH RESET for investment income relationship -----
+      // If either investments or income baseline is overridden, redefine the epoch:
+      //  - new baseline_principal = current investments (after override)
+      //  - new baseline_income = pin.investment_income (if set), else current effective income
+      //  - cumulative_reduction = 0
+      if (investmentsChanged || incomeChanged) {
+        // Current effective income before reset
+        const currentEffectiveIncome = sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
+        sim.baseline_principal = sim.investments;
+        sim.baseline_income = incomeChanged ? ov.investment_income : currentEffectiveIncome;
+        sim.cumulative_reduction = 0;
+      }
+
+      pinIdx++;
+    }
+
+    // ------- Compute this month -------
+    const investment_income = sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
+    const total_pretax = investment_income + sim.current_external;
+    const net_income = total_pretax * (1 - sim.current_tax);
+    const tax_paid = total_pretax * sim.current_tax;
+    const expense_this_month = sim.current_expense;
+    const delta = net_income - expense_this_month;
+
+    sim.buffer += delta;
+
+    let sold = 0;
+    let hitFloor = false;
+    let insolvency = false;
+
+    if (sim.buffer < sim.current_floor && sim.investments > 0) {
+      hitFloor = true;
+      const deficit = sim.current_floor - sim.buffer;
+      sold = Math.min(deficit, sim.investments);
+      sim.investments -= sold;
+      sim.buffer += sold;
+      if (sim.baseline_principal > 0) {
+        const pct_of_baseline = sold / sim.baseline_principal;
+        sim.cumulative_reduction += sim.current_modifier * pct_of_baseline;
+      }
+      if (sold < deficit) insolvency = true;
+    } else if (sim.buffer < sim.current_floor) {
+      insolvency = true;
+    }
+
+    rows.push({
+      month: m,
+      date: dateForMonth(m),
+      expense: expense_this_month,
+      investment_income,
+      external_income: sim.current_external,
+      tax_paid,
+      net_income,
+      delta,
+      buffer: sim.buffer,
+      investments: sim.investments,
+      sold,
+      hitFloor,
+      insolvency,
+      surplus: delta > 0,
+      pinned_at_this_row: pinAppliedAtThisMonth,
+      overrides_applied: pinOverridesApplied,
+      pre_state: preState, // for pin editor baselines
+      effective_state: snapshotEffectiveState(sim, expense_this_month, investment_income),
+    });
+
+    // Inflate expense for next month
+    sim.current_expense *= (1 + sim.current_monthly_inflation);
+
+    // Termination check
+    if (sim.investments <= 0 && sim.buffer <= sim.current_floor) {
+      terminatedReason = 'depleted';
+      terminatedAtMonth = m;
+      break;
+    }
+  }
+
+  if (!terminatedReason) {
+    if (rows.length === monthLimit) {
+      terminatedReason = monthsRequested === 0
+        ? 'cap'
+        : (rows.length >= monthsRequested ? 'horizon' : 'cap');
+    }
+  }
+
+  return { rows, terminatedReason, terminatedAtMonth };
+}
+
+function snapshotPreState(sim) {
+  return {
+    buffer: sim.buffer,
+    investments: sim.investments,
+    investment_income: sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction),
+    modifier: sim.current_modifier,
+    floor: sim.current_floor,
+    external_income: sim.current_external,
+    expense: sim.current_expense,
+    inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
+    tax_rate: sim.current_tax,
+  };
+}
+
+function snapshotEffectiveState(sim, expense, income) {
+  return {
+    buffer: sim.buffer,
+    investments: sim.investments,
+    investment_income: income,
+    modifier: sim.current_modifier,
+    floor: sim.current_floor,
+    external_income: sim.current_external,
+    expense: expense,
+    inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
+    tax_rate: sim.current_tax,
+  };
+}
+
+/* ============================================================
+   DATE / FORMAT HELPERS
+   ============================================================ */
+
+function dateForMonth(m) {
+  const d = new Date(TODAY);
+  d.setMonth(d.getMonth() + m);
+  return d;
+}
+
+function fmtMoney(v, withSign = false) {
+  if (!isFinite(v)) return '—';
+  const isNeg = v < 0;
+  const abs = Math.abs(v);
+  const s = abs.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  if (withSign) return (isNeg ? '−$' : '+$') + s;
+  return (isNeg ? '−$' : '$') + s;
+}
+
+function fmtMoneyCompact(v) {
+  if (!isFinite(v)) return '—';
+  const abs = Math.abs(v);
+  const neg = v < 0 ? '−' : '';
+  if (abs >= 1e6) return `${neg}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${neg}$${(abs / 1e3).toFixed(0)}K`;
+  return `${neg}$${abs.toFixed(0)}`;
+}
+
+function fmtPct(v, digits = 1) {
+  return (v * 100).toFixed(digits) + '%';
+}
+
+function fmtDate(d, mode) {
+  if (mode === 'years') {
+    return d.getFullYear().toString();
+  }
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+function fmtVal(v, type) {
+  if (type === 'money') return fmtMoney(v);
+  if (type === 'pct') return fmtPct(v, 2);
+  return v.toFixed(2);
+}
+
+// Overridden fields of a pin, in PARAM_DEFS order (deterministic). Shared by the
+// Adjustments panel (formatted display) and CSV export (raw values).
+function orderedOverrides(overrides) {
+  return PARAM_DEFS
+    .filter(def => def.key in overrides)
+    .map(def => ({ def, value: overrides[def.key] }));
+}
+
+/* ============================================================
+   AGGREGATION (for year-view)
+   ============================================================ */
+
+function aggregateForView(rows, unit) {
+  if (unit === 'months') return rows.map(r => ({ ...r, label: fmtDate(r.date, 'months'), period: r.month, source_rows: [r] }));
+
+  // Years: group every 12 months into one row
+  const groups = [];
+  for (let i = 0; i < rows.length; i += 12) {
+    const slice = rows.slice(i, i + 12);
+    if (slice.length === 0) continue;
+    const last = slice[slice.length - 1];
+    const first = slice[0];
+    const yearIdx = Math.floor(i / 12) + 1;
+    groups.push({
+      month: last.month,
+      date: last.date,
+      label: fmtDate(last.date, 'years'),
+      period: yearIdx,
+      expense: slice.reduce((s, r) => s + r.expense, 0),
+      investment_income: slice.reduce((s, r) => s + r.investment_income, 0),
+      external_income: slice.reduce((s, r) => s + r.external_income, 0),
+      tax_paid: slice.reduce((s, r) => s + r.tax_paid, 0),
+      net_income: slice.reduce((s, r) => s + r.net_income, 0),
+      delta: slice.reduce((s, r) => s + r.delta, 0),
+      buffer: last.buffer,
+      investments: last.investments,
+      sold: slice.reduce((s, r) => s + r.sold, 0),
+      hitFloor: slice.some(r => r.hitFloor),
+      insolvency: slice.some(r => r.insolvency),
+      surplus: slice.every(r => r.surplus),
+      pinned_at_this_row: slice.find(r => r.pinned_at_this_row)?.pinned_at_this_row || null,
+      overrides_applied: slice.find(r => r.overrides_applied)?.overrides_applied || null,
+      months_in_period: slice.length,
+      first_month: first.month,
+      last_month: last.month,
+      source_rows: slice,
+      pre_state: first.pre_state, // pre-pin state at start of year
+      effective_state: last.effective_state,
+    });
+  }
+  return groups;
+}
+
+/* ============================================================
+   RENDERING
+   ============================================================ */
+
+function renderStats(rows, result) {
+  const p = state.params;
+  const lastRow = rows[rows.length - 1];
+  const totalSold = p.investments_initial - lastRow.investments;
+  const totalTax = rows.reduce((s, r) => s + r.tax_paid, 0);
+  const months = rows.length;
+
+  const horizonText = result.terminatedReason === 'depleted'
+    ? (p.unit === 'years' ? `${(months / 12).toFixed(1)} yrs` : `${months}`)
+    : (p.unit === 'years' ? `${(months / 12).toFixed(0)}` : `${months}`);
+  const horizonDetail = result.terminatedReason === 'depleted'
+    ? `depleted ${p.unit === 'years' ? `at year ${Math.ceil(months / 12)}` : `at month ${months}`}`
+    : result.terminatedReason === 'cap'
+      ? 'no depletion (capped)'
+      : (p.unit === 'years' ? 'years displayed' : 'months displayed');
+  const horizonClass = result.terminatedReason === 'depleted' ? 'warning' : '';
+
+  const html = `
+    <div class="stat">
+      <div class="stat-label">Horizon</div>
+      <div class="stat-value ${horizonClass}">${horizonText}</div>
+      <div class="stat-detail">${horizonDetail}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Ending buffer</div>
+      <div class="stat-value">${fmtMoneyCompact(lastRow.buffer)}</div>
+      <div class="stat-detail">floor at ${fmtMoneyCompact(p.floor)}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Ending principal</div>
+      <div class="stat-value">${fmtMoneyCompact(lastRow.investments)}</div>
+      <div class="stat-detail">from ${fmtMoneyCompact(p.investments_initial)}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Total liquidated</div>
+      <div class="stat-value">${fmtMoneyCompact(totalSold)}</div>
+      <div class="stat-detail">${p.investments_initial > 0 ? (totalSold / p.investments_initial * 100).toFixed(1) : '0'}% of principal</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Total tax paid</div>
+      <div class="stat-value">${fmtMoneyCompact(totalTax)}</div>
+      <div class="stat-detail">at ${(p.tax_rate * 100).toFixed(1)}% effective</div>
+    </div>
+  `;
+  document.getElementById('stats').innerHTML = html;
+}
+
+function renderChart(rows) {
+  const p = state.params;
+  const svg = document.getElementById('chart');
+  const W = 1000, H = 200;
+  const padL = 0, padR = 0, padT = 8, padB = 8;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  if (rows.length === 0) { svg.innerHTML = ''; return; }
+
+  // Y scale: from 0 to max(initial buffer + investments, ever total)
+  const maxY = Math.max(
+    p.buffer_initial + p.investments_initial,
+    p.floor,
+    ...rows.map(r => r.buffer + r.investments),
+    ...rows.map(r => r.buffer),
+    ...rows.map(r => r.investments),
+  );
+  const safeMax = maxY > 0 ? maxY * 1.05 : 1;
+
+  const n = rows.length;
+  const xOf = (i) => padL + (n > 1 ? i / (n - 1) : 0.5) * innerW;
+  const yOf = (v) => padT + (1 - Math.max(0, v) / safeMax) * innerH;
+
+  // Areas: stacked. Investments occupies 0..investments, buffer stacked on top investments..investments+buffer.
+  // Visually: buffer is the upper band, investments lower band. They sum to total stack.
+
+  // For aesthetic: draw INVESTMENTS area at bottom (0 to investments), BUFFER area stacked (investments to investments+buffer)
+  const invPathTop = rows.map((r, i) => `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(r.investments)}`).join(' ');
+  const invPath = `M ${xOf(0)} ${yOf(0)} ${invPathTop} L ${xOf(n - 1)} ${yOf(0)} Z`;
+
+  const totalPathTop = rows.map((r, i) => `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(r.investments + r.buffer)}`).join(' ');
+  const totalPath = `M ${xOf(0)} ${yOf(0)} ${totalPathTop} L ${xOf(n - 1)} ${yOf(0)} Z`;
+
+  // Pin x positions
+  const pinXs = state.pins
+    .filter(pin => pin.at_month <= rows[rows.length - 1].month)
+    .map(pin => {
+      const idx = rows.findIndex(r => r.month >= pin.at_month);
+      return idx >= 0 ? xOf(idx) : null;
+    })
+    .filter(x => x !== null);
+
+  const floorY = yOf(p.floor);
+
+  // Insolvency marker
+  const insolvencyIdx = rows.findIndex(r => r.insolvency);
+  const insolvencyX = insolvencyIdx >= 0 ? xOf(insolvencyIdx) : null;
+
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="grad-inv" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#6B4423" stop-opacity="0.75"/>
+        <stop offset="100%" stop-color="#6B4423" stop-opacity="0.45"/>
+      </linearGradient>
+      <linearGradient id="grad-buf" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#2C4A3E" stop-opacity="0.85"/>
+        <stop offset="100%" stop-color="#2C4A3E" stop-opacity="0.6"/>
+      </linearGradient>
+    </defs>
+    <path d="${totalPath}" fill="url(#grad-buf)"/>
+    <path d="${invPath}" fill="url(#grad-inv)"/>
+    <line x1="${padL}" y1="${floorY}" x2="${W - padR}" y2="${floorY}" stroke="#B8862A" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.85"/>
+    ${pinXs.map(x => `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" stroke="#B8862A" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.6"/>
+      <circle cx="${x}" cy="${padT + 4}" r="3" fill="#B8862A"/>`).join('')}
+    ${insolvencyX !== null ? `<line x1="${insolvencyX}" y1="${padT}" x2="${insolvencyX}" y2="${H - padB}" stroke="#7A2A1F" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.7"/>
+      <text x="${insolvencyX - 4}" y="${H - padB - 4}" font-family="Fraunces" font-style="italic" font-size="11" fill="#7A2A1F" text-anchor="end">depleted</text>` : ''}
+  `;
+
+  // Y labels (just two: top and floor)
+  const yWrap = document.getElementById('chart-y-labels');
+  yWrap.innerHTML = `
+    <div class="chart-y-label" style="top: ${padT - 5}px; left: 0;">${fmtMoneyCompact(safeMax)}</div>
+    <div class="chart-y-label" style="top: ${floorY - 5}px; left: 0; color: #B8862A;">floor ${fmtMoneyCompact(p.floor)}</div>
+    <div class="chart-y-label" style="top: ${innerH + padT - 8}px; left: 0;">$0</div>
+  `;
+
+  // X labels
+  const xWrap = document.getElementById('chart-x-labels');
+  const firstD = rows[0].date;
+  const lastD = rows[rows.length - 1].date;
+  const midIdx = Math.floor(rows.length / 2);
+  const midD = rows[midIdx].date;
+  xWrap.innerHTML = `
+    <span>${fmtDate(firstD, state.params.unit === 'years' ? 'years' : 'months')}</span>
+    <span>${fmtDate(midD, state.params.unit === 'years' ? 'years' : 'months')}</span>
+    <span>${fmtDate(lastD, state.params.unit === 'years' ? 'years' : 'months')}</span>
+  `;
+}
+
+// Builds one editable value cell. The four editable columns (expense,
+// investment_income, buffer, investments) map to pin fields; clicking a cell
+// opens an inline editor wired via tbody event delegation (see init()).
+function editableCellHtml(displayValue, key, pinMonth, unit, baselineVal, overridden) {
+  const flavor = (key === 'buffer' || key === 'investments')
+    ? 'Sets the balance at this month'
+    : 'Changes this value going forward';
+  const title = unit === 'years'
+    ? `${flavor} · applies at ${fmtDate(dateForMonth(pinMonth), 'months')}`
+    : flavor;
+  const cls = 'editable-cell' + (overridden ? ' is-overridden' : '');
+  return `<td class="${cls}" data-month="${pinMonth}" data-key="${key}" data-baseline="${baselineVal}" title="${title}">${displayValue}</td>`;
+}
+
+function renderTable(viewRows, baseRows, result) {
+  const tbody = document.getElementById('amort-body');
+  const unit = state.params.unit;
+
+  let html = '';
+  for (let idx = 0; idx < viewRows.length; idx++) {
+    const r = viewRows[idx];
+    const isPinned = r.pinned_at_this_row !== null && r.pinned_at_this_row !== undefined;
+    const isInsolvent = r.insolvency;
+    const editing = state.editing && state.editing.month === (unit === 'years' ? r.last_month - 11 : r.month);
+    // Pin period for editor: in months mode, the row's month. In years mode, first month of that year.
+    const pinMonth = unit === 'years' ? r.first_month : r.month;
+    const editorActive = state.editing && state.editing.month === pinMonth;
+
+    // The pin (if any) at this row's target month drives the overridden-cell markers.
+    const pinAtMonth = state.pins.find(pn => pn.at_month === pinMonth);
+    const ovKeys = new Set(pinAtMonth ? Object.keys(pinAtMonth.overrides) : []);
+
+    const trClasses = [
+      isPinned ? 'is-pinned' : '',
+      isInsolvent ? 'is-insolvent' : '',
+    ].filter(Boolean).join(' ');
+
+    const deltaClass = r.delta > 0 ? 'delta-pos' : (r.delta < 0 ? 'delta-neg' : '');
+    const deltaStr = fmtMoney(r.delta, true);
+
+    const notes = [];
+    if (isPinned) {
+      const ov = r.overrides_applied || {};
+      const keys = Object.keys(ov);
+      if (keys.length > 0) {
+        notes.push(`<span class="marker-dot pinned"></span><em>pinned</em> ${keys.length === 1 ? PARAM_DEFS.find(d => d.key === keys[0])?.label.toLowerCase() : `${keys.length} overrides`}`);
+      } else {
+        notes.push(`<span class="marker-dot pinned"></span><em>pinned</em>`);
+      }
+    }
+    if (r.hitFloor) notes.push(`<span class="marker-dot floor"></span>${unit === 'years' ? 'floor reached' : 'sold from principal'}`);
+    if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--oxblood)">depletion</strong>`);
+    if (r.surplus && !isPinned && !r.hitFloor) {
+      // suppress for cleaner table - only show notes when something interesting
+    }
+
+    const periodLabel = unit === 'years' ? `Y ${r.period}` : `${r.month}`;
+    const dateLabel = unit === 'years' ? r.label : fmtDate(r.date, 'months');
+
+    html += `
+      <tr class="${trClasses}" data-month="${pinMonth}" style="animation-delay:${Math.min(idx * 5, 200)}ms">
+        <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="${isPinned ? 'Edit pin' : 'Pin overrides here'}">${isPinned ? '✎' : '+'}</span></td>
+        <td class="col-period">${periodLabel}</td>
+        <td class="col-date">${dateLabel}</td>
+        ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_state.expense, ovKeys.has('expense'))}
+        ${editableCellHtml(fmtMoney(r.investment_income), 'investment_income', pinMonth, unit, r.pre_state.investment_income, ovKeys.has('investment_income'))}
+        <td>${fmtMoney(r.net_income)}</td>
+        <td class="${deltaClass}">${deltaStr}</td>
+        ${editableCellHtml(fmtMoney(r.buffer), 'buffer', pinMonth, unit, r.pre_state.buffer, ovKeys.has('buffer'))}
+        ${editableCellHtml(fmtMoney(r.investments), 'investments', pinMonth, unit, r.pre_state.investments, ovKeys.has('investments'))}
+        <td class="${r.sold > 0 ? 'col-sold' : 'col-sold-zero'}">${r.sold > 0 ? fmtMoney(r.sold) : '—'}</td>
+        <td class="col-notes">${notes.join(' &nbsp; ')}</td>
+      </tr>
+    `;
+
+    // Inject pin editor row right below the active row
+    if (editorActive) {
+      html += renderPinEditor(r, baseRows);
+    }
+  }
+
+  tbody.innerHTML = html;
+
+  // Wire up pin actions
+  tbody.querySelectorAll('.pin-action').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const month = +el.getAttribute('data-month');
+      togglePinEditor(month);
+    });
+  });
+
+  // Footer
+  const footer = document.getElementById('table-footer');
+  if (result.terminatedReason === 'depleted') {
+    const m = result.terminatedAtMonth;
+    const dateStr = fmtDate(dateForMonth(m), 'months');
+    footer.className = 'table-footer depleted';
+    footer.innerHTML = `Funds <em>terminate</em> at month <span class="footer-stat">${m}</span> &mdash; <span class="footer-stat">${dateStr}</span>`;
+  } else if (result.terminatedReason === 'cap') {
+    footer.className = 'table-footer';
+    footer.innerHTML = `<em>No depletion within</em> ${baseRows.length} months — projection capped at the 100-year horizon`;
+  } else {
+    footer.className = 'table-footer';
+    footer.innerHTML = `End of requested horizon — ${baseRows.length} months projected`;
+  }
+
+  // Pin count
+  const pinCount = state.pins.length;
+  document.getElementById('pin-count').textContent = pinCount > 0
+    ? `${pinCount} pin${pinCount === 1 ? '' : 's'} active`
+    : '';
+}
+
+function renderPinEditor(row, baseRows) {
+  // Find the underlying monthly row to use for pre-state
+  // For years view, this is the first month of the year (row.first_month).
+  // For months view, just the row.month.
+  const unit = state.params.unit;
+  const editorMonth = unit === 'years' ? row.first_month : row.month;
+  const sourceRow = baseRows.find(br => br.month === editorMonth);
+  if (!sourceRow) return '';
+
+  const baseline = sourceRow.pre_state;
+  const existingPin = state.pins.find(pn => pn.at_month === editorMonth);
+  const overrides = existingPin ? existingPin.overrides : {};
+
+  // Build fields
+  let fieldsHtml = '';
+  for (const def of PARAM_DEFS) {
+    const baseVal = baseline[def.key];
+    const isOverridden = def.key in overrides;
+    const value = isOverridden ? overrides[def.key] : baseVal;
+
+    let displayValue, baselineDisplay;
+    if (def.fmt === 'money') {
+      displayValue = Math.round(value);
+      baselineDisplay = fmtMoney(baseVal);
+    } else if (def.fmt === 'pct') {
+      displayValue = (value * 100).toFixed(2);
+      baselineDisplay = fmtPct(baseVal, 2);
+    } else {
+      displayValue = value;
+      baselineDisplay = (+baseVal).toFixed(2);
+    }
+
+    const inputAttrs = def.fmt === 'pct'
+      ? `step="0.1" min="-100" max="1000"`
+      : def.fmt === 'money'
+        ? `step="100"`
+        : `step="0.1" min="0"`;
+
+    const prefix = def.fmt === 'money' ? '<span class="prefix">$</span>' : '';
+    const suffix = def.fmt === 'pct' ? '<span class="suffix">%</span>' : '';
+
+    fieldsHtml += `
+      <div class="pin-editor-field ${isOverridden ? 'changed' : ''}" data-key="${def.key}" data-fmt="${def.fmt}" data-baseline="${baseVal}">
+        <label>${def.label}${def.absolute ? ' <em style="color:var(--ochre); font-style:italic;">·</em>' : ''}</label>
+        <span class="input-wrap">${prefix}<input type="number" class="pin-field-input" data-key="${def.key}" value="${displayValue}" ${inputAttrs}>${suffix}</span>
+        <span class="baseline">baseline: ${baselineDisplay}</span>
+      </div>
+    `;
+  }
+
+  const periodLabel = unit === 'years'
+    ? `Year ${Math.ceil(editorMonth / 12)}`
+    : `Month ${editorMonth} &mdash; ${fmtDate(dateForMonth(editorMonth), 'months')}`;
+
+  return `
+    <tr class="pin-editor-row">
+      <td colspan="11">
+        <div class="pin-editor">
+          <div class="pin-editor-header">
+            <div>
+              <div class="pin-editor-title">${existingPin ? 'Editing' : 'Pinning'} <em>${periodLabel}</em></div>
+              <div class="pin-editor-sub">Change any parameter. Past rows are immutable; only this row forward will reflect your edits.</div>
+            </div>
+          </div>
+          <div class="pin-editor-grid">${fieldsHtml}</div>
+          <div class="pin-editor-actions">
+            <button class="reset" id="pin-reset-all">Reset all to baseline</button>
+            ${existingPin ? `<button class="pin-btn remove-btn" id="pin-remove">Remove pin</button>` : ''}
+            <button class="pin-btn" id="pin-cancel">Cancel</button>
+            <button class="pin-btn save-btn" id="pin-save">${existingPin ? 'Update pin' : 'Save pin'}</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function attachPinEditorEvents(viewRows, baseRows) {
+  if (!state.editing) return;
+  const editorMonth = state.editing.month;
+  const sourceRow = baseRows.find(br => br.month === editorMonth);
+  if (!sourceRow) return;
+  const baseline = sourceRow.pre_state;
+
+  // Seed the per-session dirty set: an existing pin's overrides are genuine prior
+  // user choices, so they start dirty; every other field starts clean. This set is
+  // re-derived every time the editor (re)opens and never survives close/cancel.
+  const existingPin = state.pins.find(pn => pn.at_month === editorMonth);
+  state.editing.dirty = new Set(existingPin ? Object.keys(existingPin.overrides) : []);
+
+  // Track input changes: a field becomes dirty the moment the user edits it. The
+  // `changed` highlight follows dirty AND value != baseline, so an untouched field
+  // with a fractional baseline is never highlighted, and a dirty field restored to
+  // its baseline value loses the highlight (but stays dirty, so save drops it).
+  document.querySelectorAll('.pin-field-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const key = inp.getAttribute('data-key');
+      const fieldEl = inp.closest('.pin-editor-field');
+      const fmt = fieldEl.getAttribute('data-fmt');
+      const baseVal = +fieldEl.getAttribute('data-baseline');
+      let value = +inp.value;
+      if (fmt === 'pct') value = value / 100;
+      state.editing.dirty.add(key);
+      fieldEl.classList.toggle('changed', !floatsEqual(value, baseVal));
+    });
+  });
+
+  const saveBtn = document.getElementById('pin-save');
+  if (saveBtn) saveBtn.addEventListener('click', () => savePinFromEditor(editorMonth, baseline));
+
+  const cancelBtn = document.getElementById('pin-cancel');
+  if (cancelBtn) cancelBtn.addEventListener('click', () => { state.editing = null; rerender(); });
+
+  const removeBtn = document.getElementById('pin-remove');
+  if (removeBtn) removeBtn.addEventListener('click', () => {
+    state.pins = state.pins.filter(p => p.at_month !== editorMonth);
+    state.editing = null;
+    rerender();
+  });
+
+  const resetBtn = document.getElementById('pin-reset-all');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    // Reset all inputs to baseline and clear every dirty flag, so a save right
+    // after reset produces zero overrides (and therefore prunes the pin).
+    document.querySelectorAll('.pin-field-input').forEach(inp => {
+      const fieldEl = inp.closest('.pin-editor-field');
+      const fmt = fieldEl.getAttribute('data-fmt');
+      const baseVal = +fieldEl.getAttribute('data-baseline');
+      if (fmt === 'pct') inp.value = (baseVal * 100).toFixed(2);
+      else if (fmt === 'money') inp.value = Math.round(baseVal);
+      else inp.value = (+baseVal).toFixed(2);
+      fieldEl.classList.remove('changed');
+    });
+    if (state.editing) state.editing.dirty = new Set();
+  });
+}
+
+function savePinFromEditor(editorMonth, baseline) {
+  // Persist only fields the user actually touched (dirty) AND that differ from the
+  // baseline. Untouched fields are never saved, even when their displayed baseline
+  // rounds away a fractional value — this is the phantom-override fix.
+  const dirty = (state.editing && state.editing.dirty) || new Set();
+  const overrides = {};
+  document.querySelectorAll('.pin-field-input').forEach(inp => {
+    const key = inp.getAttribute('data-key');
+    if (!dirty.has(key)) return;
+    const fieldEl = inp.closest('.pin-editor-field');
+    const fmt = fieldEl.getAttribute('data-fmt');
+    const baseVal = +fieldEl.getAttribute('data-baseline');
+    let value = +inp.value;
+    if (fmt === 'pct') value = value / 100;
+    if (!floatsEqual(value, baseVal)) {
+      overrides[key] = value;
+    }
+  });
+
+  // Remove any existing pin at this month
+  state.pins = state.pins.filter(p => p.at_month !== editorMonth);
+
+  // Add new pin only if there's at least one override
+  if (Object.keys(overrides).length > 0) {
+    state.pins.push({ at_month: editorMonth, overrides });
+  }
+
+  state.editing = null;
+  rerender();
+}
+
+function floatsEqual(a, b) {
+  return Math.abs(a - b) < 1e-9;
+}
+
+function togglePinEditor(month) {
+  if (state.editing && state.editing.month === month) {
+    state.editing = null;
+  } else {
+    state.editing = { month };
+  }
+  rerender();
+}
+
+/* ---- In-table cell editing (expense, investment_income, buffer, investments) ---- */
+let cellEditor = null; // the currently-open inline cell editor, if any
+
+function openCellEditor(cell, month, key) {
+  closeCellEditor(); // only one inline editor open at a time
+  // Compare and prune against the display-rounded baseline: money cells only
+  // accept whole dollars, so a blur/Enter that leaves the pre-filled baseline
+  // untouched must not manufacture a spurious override.
+  const baselineRounded = Math.round(+cell.dataset.baseline);
+  const pin = state.pins.find(p => p.at_month === month);
+  const overridden = pin && key in pin.overrides;
+  // Pre-fill with the existing override value if present, else the pre-state
+  // baseline (start-of-month for the absolute buffer/investments fields).
+  const prefill = Math.round(overridden ? pin.overrides[key] : baselineRounded);
+  const originalHTML = cell.innerHTML;
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.className = 'cell-edit-input';
+  input.step = '100';
+  input.value = prefill;
+
+  let settled = false;
+  const finish = (commit) => {
+    if (settled) return;
+    settled = true;
+    cellEditor = null;
+    if (!commit) { cell.innerHTML = originalHTML; return; }
+    const raw = input.value.trim();
+    const value = parseFloat(raw);
+    if (raw === '' || !isFinite(value)) { cell.innerHTML = originalHTML; return; } // empty/unparseable = cancel
+    commitCellEdit(month, key, value, baselineRounded); // rerenders, destroying the input
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); } // Escape never commits
+  });
+  input.addEventListener('blur', () => finish(true));
+
+  cell.innerHTML = '';
+  cell.appendChild(input);
+  input.focus();
+  input.select();
+  cellEditor = { finish };
+}
+
+function closeCellEditor() {
+  if (cellEditor) cellEditor.finish(false);
+}
+
+function commitCellEdit(month, key, value, baselineRounded) {
+  const pin = state.pins.find(p => p.at_month === month);
+  if (floatsEqual(value, baselineRounded)) {
+    // Committing the baseline back clears this field's override; prune empty pins.
+    if (pin && key in pin.overrides) {
+      delete pin.overrides[key];
+      if (Object.keys(pin.overrides).length === 0) {
+        state.pins = state.pins.filter(p => p !== pin);
+      }
+    }
+  } else if (pin) {
+    pin.overrides[key] = value;
+  } else {
+    state.pins.push({ at_month: month, overrides: { [key]: value } });
+  }
+  rerender();
+}
+
+/* ---- Adjustments sidebar panel (read-only list of pins) ---- */
+function renderAdjustments() {
+  const container = document.getElementById('adjustments-list');
+  if (!container) return;
+  const pins = [...state.pins].sort((a, b) => a.at_month - b.at_month);
+  if (pins.length === 0) {
+    container.innerHTML = '<div class="adj-empty">none — edit any row</div>';
+    return;
+  }
+  let html = '';
+  for (const pin of pins) {
+    const dateStr = fmtDate(dateForMonth(pin.at_month), 'months');
+    // orderedOverrides gives a stable field order with the display labels + formats.
+    const fieldsHtml = orderedOverrides(pin.overrides)
+      .map(({ def, value }) => `<div class="adj-field"><span class="adj-field-label">${def.label}</span><span class="adj-field-val">${fmtVal(value, def.fmt)}</span></div>`)
+      .join('');
+    html += `
+      <div class="adj-entry" data-month="${pin.at_month}">
+        <div class="adj-entry-head">
+          <span class="adj-entry-when">Month ${pin.at_month} · ${dateStr}</span>
+          <button class="adj-remove" data-month="${pin.at_month}" title="Remove this adjustment">remove</button>
+        </div>
+        ${fieldsHtml}
+      </div>`;
+  }
+  container.innerHTML = html;
+
+  container.querySelectorAll('.adj-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also fire the entry's jump-to-row
+      const m = +btn.getAttribute('data-month');
+      state.pins = state.pins.filter(p => p.at_month !== m);
+      if (state.editing && state.editing.month === m) state.editing = null; // close editor if open on it
+      rerender();
+    });
+  });
+  container.querySelectorAll('.adj-entry').forEach(entry => {
+    entry.addEventListener('click', () => jumpToPin(+entry.getAttribute('data-month')));
+  });
+}
+
+function jumpToPin(month) {
+  // Open the pin's editor and scroll its row into view. In years view the editor
+  // lives on the year's first-month row, so map the pin's month to that row.
+  const editorMonth = state.params.unit === 'years'
+    ? Math.floor((month - 1) / 12) * 12 + 1
+    : month;
+  state.editing = { month: editorMonth };
+  rerender(); // rebuilds the tbody...
+  const row = document.querySelector(`tr[data-month="${editorMonth}"]`);
+  if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' }); // ...so scroll afterwards
+}
+
+/* ============================================================
+   ORCHESTRATION
+   ============================================================ */
+
+function readParams() {
+  const p = state.params;
+  p.buffer_initial = +document.getElementById('buffer-initial').value;
+  p.floor = +document.getElementById('floor').value;
+  p.external_income = +document.getElementById('external-income').value;
+  p.investments_initial = +document.getElementById('investments-initial').value;
+  p.investment_income = +document.getElementById('investment-income').value;
+  p.modifier = +document.getElementById('modifier').value;
+  p.expense = +document.getElementById('expense').value;
+  p.inflation = +document.getElementById('inflation').value / 100;
+  p.tax_rate = +document.getElementById('tax-rate').value / 100;
+  p.num_periods = +document.getElementById('periods').value;
+  // unit is set via toggle handler
+}
+
+function rerender() {
+  const result = simulate();
+  const viewRows = aggregateForView(result.rows, state.params.unit);
+  renderStats(result.rows, result);
+  renderChart(result.rows);
+  renderTable(viewRows, result.rows, result);
+  attachPinEditorEvents(viewRows, result.rows);
+  renderAdjustments();
+}
+
+function recalc() {
+  readParams();
+  rerender();
+}
+
+/* ============================================================
+   CSV EXPORT
+   ============================================================ */
+
+function exportCsv() {
+  const result = simulate();
+  const viewRows = aggregateForView(result.rows, state.params.unit);
+  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides'];
+  const lines = [headers.join(',')];
+  for (const r of viewRows) {
+    // Aggregate every pin whose month falls within this row's span (a single
+    // month in months view, the whole year in years view) as raw key=value pairs.
+    const startM = r.first_month !== undefined ? r.first_month : r.month;
+    const endM = r.last_month !== undefined ? r.last_month : r.month;
+    const pairs = [];
+    state.pins
+      .filter(p => p.at_month >= startM && p.at_month <= endM)
+      .sort((a, b) => a.at_month - b.at_month)
+      .forEach(pin => orderedOverrides(pin.overrides).forEach(({ def, value }) => pairs.push(`${def.key}=${value}`)));
+    const overridesField = pairs.length ? `"${pairs.join('; ')}"` : '';
+    const row = [
+      r.period,
+      `"${state.params.unit === 'years' ? r.label : fmtDate(r.date, 'months')}"`,
+      r.expense.toFixed(2),
+      r.investment_income.toFixed(2),
+      r.external_income.toFixed(2),
+      r.tax_paid.toFixed(2),
+      r.net_income.toFixed(2),
+      r.delta.toFixed(2),
+      r.buffer.toFixed(2),
+      r.investments.toFixed(2),
+      r.sold.toFixed(2),
+      r.hitFloor ? 'yes' : '',
+      r.insolvency ? 'yes' : '',
+      r.pinned_at_this_row ? 'yes' : '',
+      overridesField,
+    ];
+    lines.push(row.join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `drawdown-${state.params.unit}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+
+function init() {
+  // Today stamp
+  document.getElementById('today-stamp').textContent = TODAY.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  // Input listeners
+  const inputs = ['buffer-initial', 'floor', 'external-income', 'investments-initial', 'investment-income', 'modifier', 'expense', 'inflation', 'tax-rate', 'periods'];
+  inputs.forEach(id => {
+    const el = document.getElementById(id);
+    let timer;
+    el.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(recalc, 220);
+    });
+  });
+
+  // Unit toggle
+  document.getElementById('unit-months').addEventListener('click', () => {
+    state.params.unit = 'months';
+    document.getElementById('unit-months').classList.add('active');
+    document.getElementById('unit-years').classList.remove('active');
+    document.getElementById('periods').value = '120';
+    recalc();
+  });
+  document.getElementById('unit-years').addEventListener('click', () => {
+    state.params.unit = 'years';
+    document.getElementById('unit-years').classList.add('active');
+    document.getElementById('unit-months').classList.remove('active');
+    document.getElementById('periods').value = '10';
+    recalc();
+  });
+
+  // Calc button
+  document.getElementById('calc-button').addEventListener('click', recalc);
+
+  // Clear pins
+  document.getElementById('clear-pins').addEventListener('click', () => {
+    if (state.pins.length === 0) return;
+    state.pins = [];
+    state.editing = null;
+    rerender();
+  });
+
+  // Export CSV
+  document.getElementById('export-csv').addEventListener('click', exportCsv);
+
+  // In-table cell editing: one delegated listener on the tbody, which is rebuilt
+  // via innerHTML on every render (per-cell listeners would not survive).
+  document.getElementById('amort-body').addEventListener('click', (e) => {
+    if (e.target.tagName === 'INPUT') return; // click landed inside the open editor
+    const cell = e.target.closest('.editable-cell');
+    if (!cell) return;
+    openCellEditor(cell, +cell.dataset.month, cell.dataset.key);
+  });
+
+  // Initial run
+  recalc();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

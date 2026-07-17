@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rock Paper Scissors Simulator</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/x-icon" href="rock.png">
+</head>
+
+<body>
+    <div class="controls">
+        <div class="control-group">
+            <button id="restartBtn">Restart</button>
+        </div>
+        <div class="control-group">
+            <label for="countInput">Count:</label>
+            <input type="number" id="countInput" value="20" min="2" max="100">
+        </div>
+        <div class="control-group">
+            <label for="speedInput">Speed:</label>
+            <input type="range" id="speedInput" value="5" min="1" max="20">
+            <span id="speedValue">5</span>
+        </div>
+        <div class="control-group">
+            <label for="sizeRange">Size:</label>
+            <input type="range" id="sizeRange" value="4" min="1" max="10">
+            <input type="number" id="sizeInput" value="4" min="1" max="10">
+        </div>
+        <div class="control-group">
+            <label for="themeSelect">Theme:</label>
+            <select id="themeSelect">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label title="Allow same types to pass through each other">Pass Thru</label>
+            <input type="checkbox" id="passThruCheck" checked>
+        </div>
+        <div class="control-group">
+            <label title="Percent chance for a loser to convert the winner instead">Save %</label>
+            <input type="number" id="saveInput" min="0" max="100" value="0" style="width: 50px;">
+        </div>
+        <div class="stats">
+            <span id="rockCount">Rock: 0</span>
+            <span id="paperCount">Paper: 0</span>
+            <span id="scissorsCount">Scissors: 0</span>
+            <span class="separator">|</span>
+            <span id="timer">Time: 00:00</span>
+            <span class="separator">|</span>
+            <span id="handicapIndicator" style="display:none; color: red; margin-right: 15px;">Handicap: NONE</span>
+            <span class="wins-label">Wins:</span>
+            <span id="winsList">
+                <span id="rockWins">Rock: 0</span>
+                <span id="paperWins">Paper: 0</span>
+                <span id="scissorsWins">Scissors: 0</span>
+            </span>
+        </div>
+    </div>
+    <div class="game-container">
+        <canvas id="simCanvas"></canvas>
+    </div>
+    <script src="script.js"></script>
+</body>
+
+</html>

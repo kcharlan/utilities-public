@@ -1,0 +1,20 @@
+{
+  "name": "First Dataset",
+  "type": "test",
+  "data": {
+    "items": [
+      {
+        "id": 101,
+        "value": "A"
+      },
+      {
+        "id": 102,
+        "value": "B"
+      }
+    ],
+    "metadata": {
+      "timestamp": "2025-11-11T10:00:00Z",
+      "source": "test-generator"
+    }
+  }
+}

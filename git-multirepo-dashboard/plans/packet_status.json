@@ -1,0 +1,240 @@
+{
+  "project_complete": true,
+  "highest_validated_packet": "24",
+  "packets": [
+    {
+      "id": "00",
+      "name": "Bootstrap & Schema",
+      "slug": "bootstrap_schema",
+      "status": "validated",
+      "depends_on": [],
+      "doc": "plans/packet_00_bootstrap_schema.md",
+      "notes": "38/38 tests pass. Validated 2026-03-10. Schema matches spec exactly (all 6 tables, all columns, all FKs verified). Column tests added for all tables during validation."
+    },
+    {
+      "id": "01",
+      "name": "Git Quick Scan",
+      "slug": "git_quick_scan",
+      "status": "validated",
+      "depends_on": ["00"],
+      "doc": "plans/packet_01_git_quick_scan.md",
+      "notes": "23/23 tests pass. 61/61 full suite passes. Validated 2026-03-10. All 8 acceptance criteria verified. Porcelain parsing covers MM/AM/D/UU. Empty repo handling confirmed. No scope creep."
+    },
+    {
+      "id": "02",
+      "name": "Repo Discovery & Registration API",
+      "slug": "repo_discovery",
+      "status": "validated",
+      "depends_on": ["00", "01"],
+      "doc": "plans/packet_02_repo_discovery.md",
+      "notes": "17/17 tests pass. 78/78 full suite passes. Validated 2026-03-10. All 11 acceptance criteria verified. discover_repos, detect_runtime, generate_repo_id, get_default_branch, register_repo, get_db dependency, GET/POST /api/repos, DELETE /api/repos/{id}, --scan CLI flag. CASCADE delete tested. Submodule dedup tested. No scope creep."
+    },
+    {
+      "id": "03",
+      "name": "Fleet API & Quick Scan Orchestration",
+      "slug": "fleet_api",
+      "status": "validated",
+      "depends_on": ["01", "02"],
+      "doc": "plans/packet_03_fleet_api.md",
+      "notes": "Validated 2026-03-10. 8/8 packet tests pass, 86/86 full suite passes. All 10 acceptance criteria verified. scan_fleet_quick with asyncio.Semaphore(8), working_state upsert, GET /api/fleet with full response shape. No scope creep, no regressions."
+    },
+    {
+      "id": "04",
+      "name": "HTML Shell & Design System",
+      "slug": "html_shell",
+      "status": "validated",
+      "depends_on": ["00"],
+      "doc": "plans/packet_04_html_shell.md",
+      "notes": "Validated 2026-03-10. 10/10 packet tests pass, 96/96 full suite passes. All 13 acceptance criteria verified. Full CSS design system (46 vars matching §5.2), CDN tags pinned (React 18.2.0, ReactDOM 18.2.0, Babel 7.23.9, Recharts 2.12.7), React shell with ErrorBoundary, hash routing, NavTabs with sliding underline, Header with buttons, ContentArea placeholders. No scope creep, no regressions."
+    },
+    {
+      "id": "05",
+      "name": "Fleet Overview UI",
+      "slug": "fleet_overview_ui",
+      "status": "validated",
+      "depends_on": ["03", "04"],
+      "doc": "plans/packet_05_fleet_overview_ui.md",
+      "notes": "Validated 2026-03-10. 14/14 packet tests pass, 110/110 full suite passes. All 17 acceptance criteria verified. FleetOverview with KpiRow (6 cards, conditional coloring), GridControls (custom SortDropdown + FilterInput), ProjectCard (3-row with RuntimeBadge, StatusPills, DepBadge, SparklineOverlay), EmptyState. Freshness at 7/30/90 days. Filter-then-sort client-side. Null safety confirmed for timeAgo, freshness, dep_summary, empty sparkline. No scope creep, no regressions."
+    },
+    {
+      "id": "06",
+      "name": "Git Full History Scan",
+      "slug": "git_full_history",
+      "status": "validated",
+      "depends_on": ["01"],
+      "doc": "plans/packet_06_git_full_history.md",
+      "notes": "Validated 2026-03-10. 15/15 packet tests pass, 125/125 full suite passes. Critical fix: format string used literal \\x00 (crashes subprocess) → changed to %x00 (git format escape). Regression guard added. All 15 acceptance criteria verified. parse_git_log, aggregate_daily_stats, scan_full_history, upsert_daily_stats, run_full_history_scan all correct. No scope creep."
+    },
+    {
+      "id": "07",
+      "name": "Branch Scan",
+      "slug": "branch_scan",
+      "status": "validated",
+      "depends_on": ["01"],
+      "doc": "plans/packet_07_branch_scan.md",
+      "notes": "Validated 2026-03-10. 13/13 packet tests pass, 138/138 full suite passes. All 13 acceptance criteria verified. STALE_THRESHOLD_DAYS=30, _is_stale, parse_branches, scan_branches, upsert_branches, run_branch_scan. DELETE+INSERT upsert in single transaction. %x00 git format escape (not literal \\x00). Boundary test uses 30d-1s margin. CASCADE test with PRAGMA foreign_keys=ON. No scope creep, no regressions."
+    },
+    {
+      "id": "08",
+      "name": "Full Scan Orchestration & SSE",
+      "slug": "full_scan_sse",
+      "status": "validated",
+      "depends_on": ["06", "07"],
+      "doc": "plans/packet_08_full_scan_sse.md",
+      "notes": "Validated 2026-03-10. 16/16 packet tests pass, 154/154 full suite passes. All 16 acceptance criteria verified. Tests strengthened during validation: added DB guard 409 test (server-restart scenario), empty fleet test (0 repos → completed), and finished_at assertion on failure path. POST /api/fleet/scan with Literal type validation, dual 409 guard (_active_scan_id + DB), asyncio.create_task background launch. SSE endpoint via StreamingResponse + asyncio.Queue bridge. run_fleet_scan sequential loop with continue-on-error. type='deps' no-op. Fleet endpoint branch_count/stale_branch_count from branches table. No scope creep, no regressions."
+    },
+    {
+      "id": "09",
+      "name": "Sparklines & Scan Progress UI",
+      "slug": "sparklines_progress_ui",
+      "status": "validated",
+      "depends_on": ["05", "08"],
+      "doc": "plans/packet_09_sparklines_progress_ui.md",
+      "notes": "Validated 2026-03-10. 10/10 packet tests pass, 164/164 full suite passes. All 14 acceptance criteria verified. compute_sparklines() bulk-queries daily_stats for 91-day window, returns dict of 13-int arrays. Fleet endpoint sets sparkline=[0]*13 default. Frontend: ScanProgressBar (3px, green on completion), ScanToast (slide-in/out, 2s auto-dismiss), handleFullScan() with EventSource lifecycle, refetchKey triggers FleetOverview re-fetch. Button disabled while scanning. No scope creep, no regressions."
+    },
+    {
+      "id": "10",
+      "name": "Project Detail View & Activity Chart",
+      "slug": "project_detail_activity",
+      "status": "validated",
+      "depends_on": ["03", "06"],
+      "doc": "plans/packet_10_project_detail_activity.md",
+      "notes": "Validated 2026-03-10. 13/13 packet tests pass, 178/178 full suite passes. All 18 acceptance criteria verified. Removed unused datetime import from get_repo_detail. Strengthened test_global_table_styles to check all 4 CSS classes. GET /api/repos/{id} + GET /api/repos/{id}/history?days=N. Frontend: ProjectDetail, DetailHeader, SubTabNav, TimeRangeSelector (30/90/180/365/All), ActivityTab with date-gap filling, ActivityChart (AreaChart stackOffset=sign, 3 series: insertions/deletions/net via Area fill=none), PlaceholderTab for Commits/Branches/Dependencies. Global table CSS. No scope creep, no regressions."
+    },
+    {
+      "id": "11",
+      "name": "Commits & Branches Sub-tabs",
+      "slug": "commits_branches_subtabs",
+      "status": "validated",
+      "depends_on": ["07", "10"],
+      "doc": "plans/packet_11_commits_branches_subtabs.md",
+      "notes": "Validated 2026-03-10. 15/15 packet tests pass, 193/193 full suite passes. All 21 acceptance criteria verified. GET /api/repos/{id}/commits (live git log, --skip/--max-count pagination, parse_git_log reuse, subject→message mapping). GET /api/repos/{id}/branches (DB read, ORDER BY is_default DESC, last_commit_date DESC). CommitsTab (25/page, Prev/Next pagination, date/message/+−/files columns). BranchesTab (default=blue badge, stale=orange badge with computed days, active=muted text). parseRoute extended to extract optional sub-tab segment. ProjectDetail accepts initialSubTab prop, key={repoId} forces remount on repo change, handleSubTabChange updates window.location.hash. CSS vars --accent-blue-dim and --status-orange-bg already existed. No scope creep, no regressions."
+    },
+    {
+      "id": "12",
+      "name": "Dependency Detection & Parsing",
+      "slug": "dep_detection_parsing",
+      "status": "validated",
+      "depends_on": ["00"],
+      "doc": "plans/packet_12_dep_detection_parsing.md",
+      "notes": "Validated 2026-03-10. 42/42 packet tests pass (35 specified + 4 parametrize + 3 validation additions). 235/235 full suite passes. All 19 acceptance criteria verified. Strengthened weak Poetry test (concrete version assertions). Added missing-include, tomllib-unavailable tests (pyproject + Cargo). detect_dep_files, parse_requirements_txt (with -r include + circular guard), parse_pyproject_toml (PEP 621 + Poetry), parse_package_json, parse_go_mod, parse_cargo_toml, parse_gemfile, parse_composer_json, parse_deps_for_repo. No scope creep, no regressions."
+    },
+    {
+      "id": "13",
+      "name": "Python Dep Health",
+      "slug": "python_dep_health",
+      "status": "validated",
+      "depends_on": ["12"],
+      "doc": "plans/packet_13_python_dep_health.md",
+      "notes": "Validated 2026-03-10. 26/26 packet tests pass, 261/261 full suite passes. All 16 acceptance criteria verified. Strengthened weak non-pip assertion (explicit per-field absence). Added vuln-overrides-major test (AC 11 coverage). classify_severity, check_python_outdated (PyPI JSON API, urllib stdlib, skip range/unpinned, fail-open), check_python_vulns (pip-audit subprocess, requirements.txt only, fail-open, vuln overrides outdated/major), check_python_deps orchestrator (pip/non-pip split, all 9 required fields stamped). No DB writes. No scope creep, no regressions."
+    },
+    {
+      "id": "14",
+      "name": "Node Dep Health",
+      "slug": "node_dep_health",
+      "status": "validated",
+      "depends_on": ["12"],
+      "doc": "plans/packet_14_node_dep_health.md",
+      "notes": "Validated 2026-03-10. 22/22 packet tests pass, 283/283 full suite passes. Strengthened vacuous assertion in test 1 (or True → explicit field-absence checks). check_node_outdated (npm outdated --json, exit-code-1-safe, classify_severity reuse), check_node_vulns (npm audit --json, exit-code-1-safe, advisory_id=npm:<name>, vuln overrides), check_node_deps orchestrator (npm/non-npm split, all 9 required fields stamped). No DB writes. No scope creep."
+    },
+    {
+      "id": "15",
+      "name": "Go / Rust / Ruby / PHP Dep Health",
+      "slug": "remaining_dep_health",
+      "status": "validated",
+      "depends_on": ["12"],
+      "doc": "plans/packet_15_remaining_dep_health.md",
+      "notes": "Validated 2026-03-10. 46/46 packet tests pass, 329/329 full suite passes. All 24 acceptance criteria verified. 12 functions + 2 helpers (_strip_v, _parse_go_ndjson). NDJSON parser uses JSONDecoder.raw_decode. v-prefix stripped for Go classify_severity calls. Ruby regex handles hyphens in gem names. Tool availability checked independently per tool key. Vuln overrides outdated for all 4 ecosystems (parametrized). All enriched dicts contain 9 required fields (parametrized). Single classify_severity reused (no duplicates). No DB writes. No regressions. No scope creep."
+    },
+    {
+      "id": "16",
+      "name": "Dep Scan Orchestration",
+      "slug": "dep_scan_orchestration",
+      "status": "validated",
+      "depends_on": ["08", "13", "14", "15"],
+      "doc": "plans/packet_16_dep_scan_orchestration.md",
+      "notes": "Validated 2026-03-10. 16/16 packet tests pass, 345/345 full suite passes. All 16 acceptance criteria verified. run_dep_scan_for_repo(): parse_deps_for_repo → route through 6 ecosystem checkers (each in try/except) → INSERT OR REPLACE upsert → delete stale deps. run_fleet_scan type=deps: real implementation replaces no-op placeholder (sequential, SSE progress, scan_log update). run_fleet_scan type=full: now also calls run_dep_scan_for_repo after history+branches. GET /api/fleet: dep_summary computed from DB (total/outdated+major/vulnerable), null when no rows; KPI vulnerable_deps and outdated_deps from DB via COALESCE. Packet 08 test updated legitimately (no-op → real implementation). No scope creep, no regressions."
+    },
+    {
+      "id": "17",
+      "name": "Dependencies Sub-tab UI",
+      "slug": "deps_subtab_ui",
+      "status": "validated",
+      "depends_on": ["10", "16"],
+      "doc": "plans/packet_17_deps_subtab_ui.md",
+      "notes": "Validated 2026-03-10. 11/11 packet tests pass, 356/356 full suite passes. All 15 acceptance criteria verified. GET /api/repos/{id}/deps (groups by manager, sorted vulnerable→major→outdated→ok then alphabetically, MAX checked_at per group). POST /api/repos/{id}/scan/deps (calls run_dep_scan_for_repo, returns updated deps). DepsTab React component: fetch on mount, per-manager table sections, severity color/text mapping (CSS vars correct), 'Last checked: X ago' per group, 'Check Now' button with disabled/loading state. Empty state 'No dependencies detected'. PlaceholderTab for deps fully replaced. Null safety confirmed for checked_at, advisory_id, version fields. No issues found. No scope creep, no regressions."
+    },
+    {
+      "id": "18",
+      "name": "Analytics: Heatmap",
+      "slug": "analytics_heatmap",
+      "status": "validated",
+      "depends_on": ["06"],
+      "doc": "plans/packet_18_analytics_heatmap.md",
+      "notes": "Validated 2026-03-10. 15/15 packet tests pass, 371/371 full suite passes. Fixed missing data-heatmap-root attribute (tooltip always rendered at viewport origin). Added 5 validation tests: root attr regression guard, grid dimensions (52×7), hover outline, day labels, month labels. All 15 acceptance criteria verified. GET /api/analytics/heatmap with SUM aggregation, days filter, sorted ASC. Heatmap component: 52×7 CSS grid, 5-level blue color scale, tooltip with toLocaleDateString. NOT wired into Analytics tab (packet 21). No scope creep, no regressions."
+    },
+    {
+      "id": "19",
+      "name": "Analytics: Time Allocation",
+      "slug": "analytics_time_allocation",
+      "status": "validated",
+      "depends_on": ["06"],
+      "doc": "plans/packet_19_analytics_time_allocation.md",
+      "notes": "Validated 2026-03-10. 11/11 packet tests pass, 382/382 full suite passes. All 15 acceptance criteria verified. GET /api/analytics/allocation?days=90 (per-repo commit series, JOIN daily_stats+repositories, days filter, sorted by repo_id+date). TimeAllocation React component: Recharts AreaChart stackOffset=none, 10-color ALLOC_COLORS palette, weekly aggregation (aggregateWeekly) for days>=90, >10 repos merged into Other (gray), legend toggle via useState Set, TimeRangeSelector wired internally. Component NOT rendered in analytics tab (packet 21). No issues found. No scope creep, no regressions."
+    },
+    {
+      "id": "20",
+      "name": "Analytics: Dep Overlap",
+      "slug": "analytics_dep_overlap",
+      "status": "validated",
+      "depends_on": ["16"],
+      "doc": "plans/packet_20_analytics_dep_overlap.md",
+      "notes": "Validated 2026-03-10. 12/12 packet tests pass, 394/394 full suite passes. All 15 acceptance criteria verified. GET /api/analytics/dep-overlap: single JOIN query grouped in Python (itertools.groupby), 2+ repo threshold, sorted by count desc, version spread = min-max of non-NULL versions (string sort), empty string if all NULL. DepOverlap React component: useState for expanded Set (Set of 'name:manager' keys), ▸/▾ chevron toggle, data-table className, empty state message, 24px indented expand rows. Component NOT wired into Analytics tab (packet 21). No issues found. No scope creep, no regressions."
+    },
+    {
+      "id": "21",
+      "name": "Analytics Tab Wiring",
+      "slug": "analytics_tab_wiring",
+      "status": "validated",
+      "depends_on": ["18", "19", "20"],
+      "doc": "plans/packet_21_analytics_tab_wiring.md",
+      "notes": "Validated 2026-03-10. 8/8 packet tests pass, 402/402 full suite passes. All 14 acceptance criteria verified. AnalyticsTab component renders Heatmap, TimeAllocation, DepOverlap in flex column with 32px gap and 18px section headers. Analytics placeholder replaced. No issues found. No scope creep, no regressions."
+    },
+    {
+      "id": "22",
+      "name": "Error States & Edge Cases",
+      "slug": "error_states",
+      "status": "validated",
+      "depends_on": ["03", "08", "16"],
+      "doc": "plans/packet_22_error_states.md",
+      "notes": "Validated 2026-03-10. 19/19 packet tests pass, 421/421 full suite passes. All 20 acceptance criteria verified. Schema migration idempotent (_SCHEMA_SQL + _MIGRATION_SQL). upsert_working_state uses ON CONFLICT DO UPDATE to preserve scan_error/dep_check_error across quick scans. scan_fleet_quick returns missing-path repos with path_exists=False. get_fleet bulk-reads scan_error+dep_check_error. get_repo_detail adds path_exists dynamic check. run_fleet_scan sets/clears scan_error per-repo. run_dep_scan_for_repo tracks any_error across 6 ecosystem checks. PATCH /api/repos/{id} validates path exists (404/400). ProjectCard: red left border + 'Path not found' + 'scan failed' badge. DetailHeader: Remove + Update Path buttons. DepsTab: offline indicator. Strengthened test_fleet_response_includes_scan_error to also assert dep_check_error key (AC17 coverage). No issues found. No scope creep, no regressions."
+    },
+    {
+      "id": "23",
+      "name": "Visual Polish",
+      "slug": "visual_polish",
+      "status": "validated",
+      "depends_on": ["05", "10", "21"],
+      "doc": "plans/packet_23_visual_polish.md",
+      "notes": "Validated 2026-03-10. 11/11 packet tests pass, 432/432 full suite passes. All 15 acceptance criteria verified. @keyframes pulse (0.4→0.7→0.4 opacity). SkeletonCard: 3 animated bars (60%/80%/50%) using --bg-card and --border-default. FleetOverview shows 3 SkeletonCard components while data===null. WebKit scrollbar (::-webkit-scrollbar, -track, -thumb:hover) + Firefox (scrollbar-color/scrollbar-width on html). All scrollbar styles use design tokens (--bg-primary, --border-default, --border-hover). ToolStatusBanner: fetch /api/status on mount, sessionStorage dismiss, per-tool user-facing messages, no-flash (returns null before fetch resolves). Wired into App between ScanProgressBar and ScanToast. No scope creep, no regressions."
+    },
+    {
+      "id": "23A",
+      "name": "Test Hardening — Important Gaps",
+      "slug": "test_hardening",
+      "status": "validated",
+      "depends_on": ["23"],
+      "doc": "plans/packet_23A_test_hardening.md",
+      "notes": "Validated 2026-03-10. 459/459 tests pass, no regressions. 27 new tests covering all 9 gaps: (1) non-git dir fleet scan graceful, (2) detached HEAD quick scan, (3) merge commits in parse_git_log (x2), (4) run_git timeout sentinel, (5) find_free_port exhaustion RuntimeError, (6) quoted filenames with spaces in porcelain output, (7) days=0/days=-1 for heatmap/allocation/history endpoints (x6), (8) pagination clamping page/per_page (x4). Gap 9 addressed via docstring warning on module-scoped client fixture. run_git gained asyncio.wait_for timeout (30s default). All 4 acceptance criteria verified. Tests are adversarial and assertions prove correctness. No scope creep."
+    },
+    {
+      "id": "24",
+      "name": "Keyboard Accessibility",
+      "slug": "keyboard_accessibility",
+      "status": "validated",
+      "depends_on": ["23"],
+      "doc": "plans/packet_24_keyboard_accessibility.md",
+      "notes": "Validated 2026-03-10. 17/17 packet tests pass, 476/476 full suite passes. All 11 acceptance criteria verified. Global catch-all (button/[role=button]/a/input):focus-visible with 2px solid var(--accent-blue). .project-card:focus-visible with outline + bg/border hover treatment. ProjectCard: className='project-card', tabIndex={0}, role='button', aria-label, onKeyDown (Enter/Space → #/repo/{id}), focused state mirrors hover. ProjectDetail: Escape → #/fleet with e.defaultPrevented guard, removeEventListener cleanup. All 3 pre-existing focus rules preserved. No issues found. No scope creep, no regressions. FINAL PACKET — project complete."
+    }
+  ]
+}

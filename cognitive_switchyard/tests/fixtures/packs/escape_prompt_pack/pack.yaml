@@ -1,0 +1,15 @@
+# Curated from docs/cognitive_switchyard_design.md sections 4.1-4.3, 5.1-5.2.
+name: escape-prompt-pack
+description: Invalid pack whose prompt escapes the pack root.
+version: 1.2.3
+
+phases:
+  planning:
+    enabled: true
+    executor: agent
+    model: opus
+    prompt: ../outside.md
+  execution:
+    enabled: true
+    executor: shell
+    command: scripts/execute

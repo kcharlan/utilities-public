@@ -1,0 +1,11 @@
+# Runtime dependencies required when tests import the launcher in-process.
+fastapi
+uvicorn
+python-multipart
+pydantic
+
+# Test-only dependencies.
+pytest>=7.0
+httpx>=0.24
+pytest-cov>=4.0
+anyio>=4.0

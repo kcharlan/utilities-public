@@ -1,0 +1,47 @@
+policy_name: Professional Risk Only
+default_action: REVIEW
+default_risk_holder: unknown
+
+aliases:
+  emergency room physician: ER Physician Fee
+  er physician: ER Physician Fee
+  diagnostic imaging prof: Diagnostic Imaging (Prof)
+  diagnostic imaging professional: Diagnostic Imaging (Prof)
+  diagnostic imaging tech: Diagnostic Imaging (Tech)
+  diagnostic imaging technical: Diagnostic Imaging (Tech)
+
+rules:
+  - match:
+      service_category: Primary Care Visit
+    risk_holder: professional
+    action: PAY
+
+  - match:
+      service_category: Specialist Consultation
+    risk_holder: professional
+    action: PAY
+
+  - match:
+      service_category: ER Physician Fee
+    risk_holder: professional
+    action: PAY
+
+  - match:
+      service_category: Diagnostic Imaging (Prof)
+    risk_holder: professional
+    action: PAY
+
+  - match:
+      service_category: Inpatient Room & Board
+    risk_holder: institutional
+    action: DENY_REDIRECT
+
+  - match:
+      service_category: Emergency Room (Facility)
+    risk_holder: institutional
+    action: DENY_REDIRECT
+
+  - match:
+      service_category: Diagnostic Imaging (Tech)
+    risk_holder: institutional
+    action: DENY_REDIRECT

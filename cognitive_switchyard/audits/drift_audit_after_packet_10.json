@@ -1,0 +1,11 @@
+{
+  "status": "repair_now",
+  "severity": "medium",
+  "effort": "small",
+  "summary": "Packet-10's headless resume path rejected packet-09 `verifying` and `auto_fixing` sessions; the audit repaired `start_session()` to route those states back into execution recovery.",
+  "fixes_applied": true,
+  "validation_rerun": "targeted",
+  "repair_packet_id": "",
+  "repair_packet_doc": "",
+  "notes": "Targeted validation passed: `.venv/bin/python -m pytest tests/test_orchestrator.py tests/test_recovery.py tests/test_cli.py -q` (`31 passed`). `./switchyard --help` also succeeded."
+}

@@ -1,0 +1,779 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "python-docx",
+#     "python-pptx",
+#     "openpyxl",
+#     "beautifulsoup4",
+#     "lxml",
+#     "readability-lxml",
+#     "markdownify",
+# ]
+# ///
+"""docpipe - Local document conversion pipeline."""
+
+import os
+import sys
+import subprocess
+import hashlib
+import json
+import argparse
+import tempfile
+import logging
+import io
+import csv
+from pathlib import Path
+from datetime import datetime, timezone
+from dataclasses import dataclass, field, asdict
+
+import docx
+import openpyxl
+from bs4 import BeautifulSoup
+from markdownify import markdownify as md_convert
+from pptx import Presentation
+from readability import Document as ReadabilityDocument
+
+VERSION = "0.1.0"
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("docpipe")
+logging.getLogger("readability").setLevel(logging.ERROR)
+logging.getLogger("readability.readability").setLevel(logging.ERROR)
+
+HAS_PDFTOTEXT = False
+HAS_PDFTOPPM = False
+HAS_PDFINFO = False
+HAS_PANDOC = False
+
+
+@dataclass
+class Asset:
+    id: str
+    kind: str
+    path: str
+    description: str | None = None
+
+
+@dataclass
+class Table:
+    id: str
+    format: str
+    csv: str
+    caption: str | None = None
+    bbox: list | None = None
+
+
+@dataclass
+class Segment:
+    id: str
+    type: str
+    index: int
+    text: str
+    tables: list[Table] = field(default_factory=list)
+    assets: list[Asset] = field(default_factory=list)
+
+
+@dataclass
+class ConversionResult:
+    source_path: str
+    source_type: str
+    sha256: str
+    converted_at: str
+    converter_version: str
+    segments: list[Segment] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+def check_external_tool(name: str, test_cmd: list[str]) -> bool:
+    """Check if an external tool is available. Returns True if found."""
+    try:
+        subprocess.run(test_cmd, capture_output=True, timeout=5)
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        logger.warning(f"External tool '{name}' not found. Some features will be unavailable.")
+        return False
+
+
+def detect_tools() -> None:
+    global HAS_PDFTOTEXT, HAS_PDFTOPPM, HAS_PDFINFO, HAS_PANDOC
+    HAS_PDFTOTEXT = check_external_tool("pdftotext", ["pdftotext", "-v"])
+    HAS_PDFTOPPM = check_external_tool("pdftoppm", ["pdftoppm", "-v"])
+    HAS_PDFINFO = check_external_tool("pdfinfo", ["pdfinfo", "-v"])
+    HAS_PANDOC = check_external_tool("pandoc", ["pandoc", "--version"])
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="docpipe", description="Local document conversion pipeline")
+    subparsers = parser.add_subparsers(dest="command")
+
+    convert = subparsers.add_parser("convert", help="Convert a document to canonical outputs")
+    convert.add_argument("--input", required=True, type=str, help="Path to input file")
+    convert.add_argument("--out", required=True, type=str, help="Output directory")
+    convert.add_argument("--images", action="store_true", help="Extract images when supported")
+    convert.add_argument(
+        "--format",
+        choices=["md", "json", "md+json"],
+        default="md+json",
+        help="Output format",
+    )
+    convert.add_argument(
+        "--max-page-images",
+        type=int,
+        default=50,
+        help="Max PDF pages to render as images",
+    )
+    convert.add_argument(
+        "--xlsx-max-cells",
+        type=int,
+        default=2_000_000,
+        help="Safety cap on XLSX cells",
+    )
+    convert.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail conversion when warnings are produced (fallback/degraded paths).",
+    )
+    convert.add_argument("--verbose", action="store_true", help="Verbose logging")
+    return parser
+
+
+def run_cmd(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Command timed out after {timeout}s: {' '.join(cmd)}") from exc
+
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip() or "(no stderr)"
+        raise RuntimeError(f"Command failed ({proc.returncode}): {' '.join(cmd)}\n{stderr}")
+
+    return proc
+
+
+def detect_file_type(path: str) -> str | None:
+    ext = Path(path).suffix.lower()
+    ext_map = {
+        ".pdf": "pdf",
+        ".docx": "docx",
+        ".pptx": "pptx",
+        ".html": "html",
+        ".htm": "html",
+        ".xlsx": "xlsx",
+        ".xls": "xls",
+    }
+    if ext in ext_map:
+        return ext_map[ext]
+
+    try:
+        proc = run_cmd(["file", "--mime-type", "-b", path], timeout=10)
+        mime = proc.stdout.strip().lower()
+    except Exception:
+        return None
+
+    mime_map = {
+        "application/pdf": "pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+        "text/html": "html",
+    }
+    return mime_map.get(mime)
+
+
+def compute_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(64 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _new_result(source_path: str, source_type: str, warnings: list[str] | None = None) -> ConversionResult:
+    return ConversionResult(
+        source_path=source_path,
+        source_type=source_type,
+        sha256=compute_sha256(source_path),
+        converted_at=datetime.now(timezone.utc).isoformat(),
+        converter_version=VERSION,
+        segments=[],
+        warnings=warnings or [],
+    )
+
+
+def convert_pdf(
+    input_path: str,
+    base_name: str,
+    out_dir: str,
+    extract_images: bool,
+    max_page_images: int,
+) -> ConversionResult:
+    warnings: list[str] = []
+    result = _new_result(input_path, "pdf", warnings)
+
+    if not HAS_PDFTOTEXT:
+        warnings.append("pdftotext not found, skipping PDF text extraction")
+        return result
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        txt_path = os.path.join(tmp_dir, "pdf.txt")
+        run_cmd(["pdftotext", "-layout", "-enc", "UTF-8", input_path, txt_path], timeout=180)
+
+        with open(txt_path, "r", encoding="utf-8", errors="replace") as f:
+            full_text = f.read()
+
+        pages = full_text.split("\x0c")
+        while pages and not pages[-1].strip():
+            pages.pop()
+        if not pages:
+            pages = [""]
+        for idx, page_text in enumerate(pages, 1):
+            cleaned = page_text.strip()
+            result.segments.append(
+                Segment(
+                    id=f"p{idx}",
+                    type="page",
+                    index=idx,
+                    text=cleaned,
+                )
+            )
+
+        if extract_images:
+            if not HAS_PDFTOPPM:
+                warnings.append("pdftoppm not found, skipping PDF page image extraction")
+            else:
+                assets_dir = os.path.join(out_dir, f"{base_name}.assets")
+                os.makedirs(assets_dir, exist_ok=True)
+                run_cmd(["pdftoppm", "-png", "-r", "144", input_path, os.path.join(assets_dir, "page")], timeout=300)
+
+                generated = sorted(Path(assets_dir).glob("page-*.png"))
+                if len(generated) > max_page_images:
+                    warnings.append(
+                        f"Extracted {len(generated)} page images, capped at {max_page_images}. Truncating output images."
+                    )
+
+                for i, old_path in enumerate(generated, 1):
+                    if i > max_page_images:
+                        try:
+                            old_path.unlink()
+                        except OSError:
+                            pass
+                        continue
+
+                    new_name = f"page-{i:03d}.png"
+                    new_path = Path(assets_dir) / new_name
+                    old_path.rename(new_path)
+                    seg_idx = i - 1
+                    if 0 <= seg_idx < len(result.segments):
+                        result.segments[seg_idx].assets.append(
+                            Asset(
+                                id=f"img{i:03d}",
+                                kind="image",
+                                path=f"{base_name}.assets/{new_name}",
+                            )
+                        )
+
+    return result
+
+
+def _docx_extract_single_segment(doc_obj) -> Segment:
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+    from docx.table import Table as DocxTable
+
+    # DOCX doesn't expose reliable rendered page boundaries; treat as one segment.
+    parts: list[str] = []
+    tables_found: list[Table] = []
+    table_counter = 0
+
+    for child in doc_obj.element.body:
+        if child.tag == qn("w:p"):
+            para = Paragraph(child, doc_obj)
+            style_name = para.style.name if para.style else ""
+            text = para.text.strip()
+            if not text:
+                parts.append("")
+                continue
+
+            if style_name.startswith("Heading"):
+                try:
+                    level = int(style_name.split()[-1])
+                except (ValueError, IndexError):
+                    level = 1
+                level = max(1, min(level, 6))
+                parts.append(f"{'#' * (level + 1)} {text}")
+            else:
+                parts.append(text)
+
+        elif child.tag == qn("w:tbl"):
+            table_counter += 1
+            tbl = DocxTable(child, doc_obj)
+            rows: list[list[str]] = []
+            for row in tbl.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                rows.append(cells)
+
+            if rows:
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+                writer.writerows(rows)
+                tables_found.append(
+                    Table(
+                        id=f"t{table_counter}",
+                        format="csv",
+                        csv=buf.getvalue(),
+                        caption=None,
+                    )
+                )
+                parts.append(f"\n[Table {table_counter}]\n")
+
+    return Segment(id="p1", type="page", index=1, text="\n".join(parts), tables=tables_found)
+
+
+def convert_docx(input_path: str, base_name: str, out_dir: str, extract_images: bool) -> ConversionResult:
+    warnings: list[str] = []
+    result = _new_result(input_path, "docx", warnings)
+
+    try:
+        doc_obj = docx.Document(input_path)
+        segment = _docx_extract_single_segment(doc_obj)
+        result.segments.append(segment)
+
+        if extract_images:
+            assets_dir = os.path.join(out_dir, f"{base_name}.assets")
+            os.makedirs(assets_dir, exist_ok=True)
+            img_counter = 0
+            for rel in doc_obj.part.rels.values():
+                if "image" not in rel.reltype:
+                    continue
+                img_counter += 1
+                image_data = rel.target_part.blob
+                ext = os.path.splitext(getattr(rel, "target_ref", ""))[1] or ".png"
+                img_filename = f"image-{img_counter:03d}{ext}"
+                img_path = os.path.join(assets_dir, img_filename)
+                with open(img_path, "wb") as f:
+                    f.write(image_data)
+                segment.assets.append(
+                    Asset(
+                        id=f"img{img_counter:03d}",
+                        kind="image",
+                        path=f"{base_name}.assets/{img_filename}",
+                    )
+                )
+
+    except Exception as exc:
+        warnings.append(f"python-docx failed, falling back to Pandoc: {exc}")
+        if not HAS_PANDOC:
+            warnings.append("Pandoc not found; unable to convert DOCX fallback")
+            return result
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_md = os.path.join(tmp_dir, "doc.md")
+            run_cmd(["pandoc", input_path, "-t", "gfm", "--wrap=none", "-o", temp_md], timeout=180)
+            with open(temp_md, "r", encoding="utf-8", errors="replace") as f:
+                md_text = f.read()
+            warnings.append("DOCX converted via Pandoc fallback; structured table extraction unavailable")
+            result.segments = [Segment(id="p1", type="page", index=1, text=md_text)]
+
+    return result
+
+
+def convert_pptx(input_path: str, base_name: str, out_dir: str, extract_images: bool = False) -> ConversionResult:
+    warnings: list[str] = []
+    result = _new_result(input_path, "pptx", warnings)
+
+    if extract_images:
+        warnings.append("PPTX slide image extraction requires LibreOffice (not installed). Skipping.")
+
+    prs = Presentation(input_path)
+
+    for slide_idx, slide in enumerate(prs.slides, 1):
+        text_parts: list[str] = []
+        tables: list[Table] = []
+        table_counter = 0
+
+        title_shape = slide.shapes.title
+        if title_shape and title_shape.text:
+            text_parts.append(title_shape.text.strip())
+
+        for shape in slide.shapes:
+            if title_shape and shape.shape_id == getattr(title_shape, "shape_id", None):
+                continue
+
+            if getattr(shape, "has_text_frame", False):
+                for para in shape.text_frame.paragraphs:
+                    t = para.text.strip()
+                    if t:
+                        text_parts.append(t)
+
+            if getattr(shape, "has_table", False):
+                table_counter += 1
+                rows: list[list[str]] = []
+                for row in shape.table.rows:
+                    cells = [cell.text.strip() for cell in row.cells]
+                    rows.append(cells)
+                if rows:
+                    buf = io.StringIO()
+                    writer = csv.writer(buf)
+                    writer.writerows(rows)
+                    tables.append(
+                        Table(
+                            id=f"s{slide_idx}_t{table_counter}",
+                            format="csv",
+                            csv=buf.getvalue(),
+                            caption=None,
+                        )
+                    )
+                    text_parts.append(f"\n[Table {table_counter}]\n")
+
+        if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+            notes = (slide.notes_slide.notes_text_frame.text or "").strip()
+            if notes:
+                text_parts.append(f"\n**Speaker Notes:** {notes}")
+
+        result.segments.append(
+            Segment(
+                id=f"s{slide_idx}",
+                type="slide",
+                index=slide_idx,
+                text="\n".join(text_parts),
+                tables=tables,
+            )
+        )
+
+    return result
+
+
+def convert_html(input_path: str, base_name: str, out_dir: str) -> ConversionResult:
+    warnings: list[str] = []
+    result = _new_result(input_path, "html", warnings)
+
+    with open(input_path, "rb") as f:
+        raw = f.read()
+
+    try:
+        html_content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        html_content = raw.decode("latin-1", errors="replace")
+        warnings.append("HTML was not UTF-8; decoded with latin-1 fallback")
+
+    title = ""
+    content_html = html_content
+    try:
+        readable = ReadabilityDocument(html_content)
+        title = readable.title() or ""
+        content_html = readable.summary()
+    except Exception as exc:
+        warnings.append(f"Readability extraction failed: {exc}. Using full HTML.")
+
+    tables: list[Table] = []
+    try:
+        soup = BeautifulSoup(content_html, "lxml")
+        for i, table_el in enumerate(soup.find_all("table"), 1):
+            rows: list[list[str]] = []
+            for tr in table_el.find_all("tr"):
+                cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+                if cells:
+                    rows.append(cells)
+            if rows:
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+                writer.writerows(rows)
+                tables.append(Table(id=f"t{i}", format="csv", csv=buf.getvalue()))
+    except Exception as exc:
+        warnings.append(f"HTML table extraction failed: {exc}")
+
+    markdown_text = None
+    try:
+        markdown_text = md_convert(content_html, heading_style="ATX", strip=["script", "style"])
+        if markdown_text is not None:
+            markdown_text = markdown_text.strip()
+        if not markdown_text:
+            warnings.append("markdownify produced empty output; trying Pandoc/plain-text fallback.")
+    except Exception as exc:
+        warnings.append(f"markdownify conversion failed: {exc}. Trying Pandoc/plain-text fallback.")
+        markdown_text = None
+
+    if not markdown_text and HAS_PANDOC:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_html = os.path.join(tmp_dir, "in.html")
+            temp_md = os.path.join(tmp_dir, "out.md")
+            with open(temp_html, "w", encoding="utf-8") as f:
+                f.write(content_html)
+            try:
+                run_cmd(["pandoc", temp_html, "-t", "gfm", "--wrap=none", "-o", temp_md], timeout=120)
+                with open(temp_md, "r", encoding="utf-8", errors="replace") as f:
+                    markdown_text = f.read().strip()
+            except Exception as exc:
+                warnings.append(f"Pandoc HTML fallback failed: {exc}")
+
+    if not markdown_text:
+        soup = BeautifulSoup(content_html, "lxml")
+        markdown_text = soup.get_text(separator="\n\n")
+        warnings.append("HTML to Markdown conversion degraded: plain text only.")
+
+    if title:
+        markdown_text = f"# {title}\n\n{markdown_text}"
+
+    result.segments = [
+        Segment(id="p1", type="page", index=1, text=markdown_text, tables=tables),
+    ]
+    return result
+
+
+def convert_xlsx(input_path: str, base_name: str, out_dir: str, max_cells: int) -> ConversionResult:
+    warnings: list[str] = []
+    result = _new_result(input_path, "xlsx", warnings)
+
+    try:
+        wb = openpyxl.load_workbook(input_path, data_only=True, read_only=True)
+    except Exception as exc:
+        warnings.append(f"Failed to load XLSX: {exc}")
+        return result
+
+    total_cells = 0
+    try:
+        for sheet_idx, sheet_name in enumerate(wb.sheetnames, 1):
+            ws = wb[sheet_name]
+
+            rows: list[list[str]] = []
+            sheet_truncated = False
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c) if c is not None else "" for c in row]
+                rows.append(cells)
+                total_cells += len(cells)
+                if total_cells > max_cells:
+                    warnings.append(f"Cell limit ({max_cells}) exceeded at sheet '{sheet_name}'. Truncating.")
+                    sheet_truncated = True
+                    break
+
+            if not rows:
+                if sheet_truncated:
+                    break
+                continue
+
+            while rows and all(c == "" for c in rows[-1]):
+                rows.pop()
+
+            max_col = 0
+            for row in rows:
+                for i in range(len(row) - 1, -1, -1):
+                    if row[i] != "":
+                        max_col = max(max_col, i + 1)
+                        break
+            if max_col > 0:
+                rows = [row[:max_col] for row in rows]
+
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerows(rows)
+            csv_str = buf.getvalue()
+
+            preview_rows = rows[: min(20, len(rows))]
+            text_parts = [f"Sheet: {sheet_name} ({len(rows)} rows x {max_col} cols)"]
+            if preview_rows:
+                text_parts.append(" | ".join(preview_rows[0]))
+                text_parts.append("---")
+                for r in preview_rows[1:]:
+                    text_parts.append(" | ".join(r))
+            if len(rows) > 20:
+                text_parts.append(f"... ({len(rows) - 20} more rows)")
+
+            table = Table(
+                id=f"sheet{sheet_idx}_t1",
+                format="csv",
+                csv=csv_str,
+                caption=f"Sheet: {sheet_name}",
+            )
+
+            result.segments.append(
+                Segment(
+                    id=f"sheet{sheet_idx}",
+                    type="sheet",
+                    index=sheet_idx,
+                    text="\n".join(text_parts),
+                    tables=[table],
+                )
+            )
+
+            if sheet_truncated:
+                break
+    finally:
+        wb.close()
+
+    return result
+
+
+def emit_markdown(result: ConversionResult, base_name: str) -> str:
+    lines = [f"# {base_name}.{result.source_type}", ""]
+
+    for seg in result.segments:
+        if seg.type == "page":
+            lines.append(f"## Page {seg.index}")
+        elif seg.type == "slide":
+            lines.append(f"## Slide {seg.index}")
+        elif seg.type == "sheet":
+            lines.append(f"## Sheet {seg.index}")
+        lines.append("")
+
+        lines.append(seg.text)
+        lines.append("")
+
+        for tbl in seg.tables:
+            caption = f" ({tbl.caption})" if tbl.caption else ""
+            lines.append(f"### {tbl.id}{caption}")
+            lines.append("")
+            lines.append("```csv")
+            lines.append(tbl.csv.rstrip())
+            lines.append("```")
+            lines.append("")
+
+        for asset in seg.assets:
+            lines.append(f"![{asset.id}]({asset.path})")
+            lines.append("")
+
+        lines.append("---")
+        lines.append("")
+
+    if result.warnings:
+        lines.append("## Warnings")
+        lines.append("")
+        for warning in result.warnings:
+            lines.append(f"- {warning}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def emit_json(result: ConversionResult) -> str:
+    output = {
+        "source": {
+            "path": result.source_path,
+            "type": result.source_type,
+            "sha256": result.sha256,
+            "converted_at": result.converted_at,
+            "converter_version": result.converter_version,
+        },
+        "segments": [asdict(seg) for seg in result.segments],
+        "warnings": result.warnings,
+    }
+    return json.dumps(output, indent=2, ensure_ascii=False)
+
+
+def run_convert(args: argparse.Namespace) -> int:
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+
+    input_path = os.path.abspath(args.input)
+    out_dir = os.path.abspath(args.out)
+
+    if not os.path.exists(input_path) or not os.path.isfile(input_path):
+        logger.error(f"Input not found or not a file: {input_path}")
+        return 1
+
+    file_size = os.path.getsize(input_path)
+    if file_size == 0:
+        logger.error("Input file is empty.")
+        return 1
+    if file_size > 500_000_000:
+        logger.error(f"File too large ({file_size / 1_000_000:.1f}MB). Maximum is 500MB.")
+        return 1
+    if file_size > 200_000_000:
+        logger.warning(f"Large file ({file_size / 1_000_000:.1f}MB). Conversion may be slow.")
+
+    file_type = detect_file_type(input_path)
+    if file_type is None:
+        logger.error("Could not detect a supported file type.")
+        return 1
+
+    if file_type == "xls":
+        logger.error(
+            "XLS is not supported in v1. Convert to XLSX manually (or with LibreOffice), then retry."
+        )
+        return 1
+
+    source_sha = compute_sha256(input_path)
+    os.makedirs(out_dir, exist_ok=True)
+
+    base_name = Path(input_path).stem
+    md_path = os.path.join(out_dir, f"{base_name}.opencode.md")
+    json_path = os.path.join(out_dir, f"{base_name}.opencode.json")
+
+    if os.path.exists(md_path) or os.path.exists(json_path):
+        logger.info("Output files exist and will be overwritten.")
+
+    try:
+        if file_type == "pdf":
+            result = convert_pdf(input_path, base_name, out_dir, args.images, args.max_page_images)
+        elif file_type == "docx":
+            result = convert_docx(input_path, base_name, out_dir, args.images)
+        elif file_type == "pptx":
+            result = convert_pptx(input_path, base_name, out_dir, args.images)
+        elif file_type == "html":
+            result = convert_html(input_path, base_name, out_dir)
+        elif file_type == "xlsx":
+            result = convert_xlsx(input_path, base_name, out_dir, args.xlsx_max_cells)
+        else:
+            logger.error(f"Unsupported type: {file_type}")
+            return 1
+    except Exception as exc:
+        logger.error(f"Conversion failed: {exc}")
+        if args.verbose:
+            import traceback
+
+            traceback.print_exc()
+        return 1
+
+    result.sha256 = source_sha
+
+    if args.strict and result.warnings:
+        logger.error("Strict mode enabled: conversion produced warnings and is treated as failure.")
+        for warning in result.warnings:
+            logger.error(f"  - {warning}")
+        return 2
+
+    fmt = args.format
+    if "md" in fmt:
+        md_content = emit_markdown(result, base_name)
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(md_content)
+        logger.info(f"  Markdown: {md_path}")
+
+    if "json" in fmt:
+        json_content = emit_json(result)
+        with open(json_path, "w", encoding="utf-8") as f:
+            f.write(json_content)
+        logger.info(f"  JSON: {json_path}")
+
+    logger.info(f"\nConverted: {input_path}")
+    logger.info(f"  Type: {file_type}")
+    logger.info(f"  Segments: {len(result.segments)}")
+    logger.info(f"  Tables: {sum(len(s.tables) for s in result.segments)}")
+    logger.info(f"  Assets: {sum(len(s.assets) for s in result.segments)}")
+    if result.warnings:
+        logger.info(f"  Warnings: {len(result.warnings)}")
+        for warning in result.warnings:
+            logger.info(f"    - {warning}")
+
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    detect_tools()
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "convert":
+        return run_convert(args)
+
+    parser.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

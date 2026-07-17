@@ -1,0 +1,13 @@
+.DS_Store
+secret.env
+MY_API_KEY.txt
+collector.log
+state.json
+reset_launchd.err
+reset_launchd.log
+snapshots/
+__pycache__/
+collector/__pycache__/
+collector/.pytest_cache/
+collector/*.pyc
+extension/config.local.js

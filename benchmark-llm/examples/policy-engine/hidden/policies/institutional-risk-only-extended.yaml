@@ -1,0 +1,55 @@
+policy_name: Institutional Risk Only Extended
+default_action: REVIEW
+default_risk_holder: unknown
+
+aliases:
+  emergency room physician: ER Physician Fee
+  er physician: ER Physician Fee
+  e.r. physician fee: ER Physician Fee
+  er phys fee: ER Physician Fee
+  primary care office visit: Primary Care Visit
+  pcp visit: Primary Care Visit
+  specialist office visit: Specialist Consultation
+  specialist consult: Specialist Consultation
+  diagnostic imaging professional component: Diagnostic Imaging (Prof)
+  imaging professional component: Diagnostic Imaging (Prof)
+  diagnostic imaging technical component: Diagnostic Imaging (Tech)
+  imaging technical component: Diagnostic Imaging (Tech)
+  inpatient room and board: Inpatient Room & Board
+  emergency room facility: Emergency Room (Facility)
+
+rules:
+  - match:
+      service_category: Primary Care Visit
+    risk_holder: professional
+    action: DENY_REDIRECT
+
+  - match:
+      service_category: Specialist Consultation
+    risk_holder: professional
+    action: DENY_REDIRECT
+
+  - match:
+      service_category: ER Physician Fee
+    risk_holder: professional
+    action: DENY_REDIRECT
+
+  - match:
+      service_category: Diagnostic Imaging (Prof)
+    risk_holder: professional
+    action: DENY_REDIRECT
+
+  - match:
+      service_category: Inpatient Room & Board
+    risk_holder: institutional
+    action: PAY
+
+  - match:
+      service_category: Emergency Room (Facility)
+    risk_holder: institutional
+    action: PAY
+
+  - match:
+      service_category: Diagnostic Imaging (Tech)
+    risk_holder: institutional
+    action: PAY

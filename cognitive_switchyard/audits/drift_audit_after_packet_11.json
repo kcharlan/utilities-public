@@ -1,0 +1,11 @@
+{
+  "status": "repair_packet",
+  "severity": "high",
+  "effort": "medium",
+  "summary": "Packet 11's backend transport seam exposes WebSocket manager methods but does not forward live orchestrator task, log, progress, or alert events from real background sessions, so packet 12 would otherwise have to repair backend semantics.",
+  "fixes_applied": false,
+  "validation_rerun": "none",
+  "repair_packet_id": "11A",
+  "repair_packet_doc": "plans/packet_11a_live_backend_event_streaming_repair.md",
+  "notes": "Trackers were updated to insert repair packet 11A immediately after the validated frontier and to make packet 12 depend on that repair."
+}

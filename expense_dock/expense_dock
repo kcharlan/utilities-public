@@ -1,0 +1,2042 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn[standard]",
+#     "python-multipart",
+#     "httpx",
+#     "msal",
+#     "openpyxl",
+# ]
+# ///
+"""Expense Dock -- local receipt upload and Excel append tool for OneDrive."""
+
+import argparse
+import base64
+import csv
+import io
+import json
+import logging
+import os
+import re
+import socket
+import stat
+import tempfile
+import threading
+import time
+import uuid
+import webbrowser
+from copy import copy
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
+
+import httpx
+import msal
+import uvicorn
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from openpyxl import load_workbook
+
+
+@dataclass(frozen=True)
+class RuntimePaths:
+    home: Path
+    config: Path
+
+
+def build_runtime_paths():
+    override = os.environ.get("EXPENSE_DOCK_HOME")
+    home = Path(override).expanduser() if override else Path.home() / ".expense_dock"
+    return RuntimePaths(
+        home=home,
+        config=home / "config.json",
+    )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Expense Dock: upload a receipt to OneDrive and append an Excel expense row.",
+    )
+    parser.add_argument("--port", "-p", type=int, default=8420, help="Preferred localhost port (default: 8420).")
+    parser.add_argument("--no-browser", action="store_true", help="Do not auto-open the browser UI.")
+    return parser.parse_args()
+
+RUNTIME_PATHS = build_runtime_paths()
+DATA_DIR = str(RUNTIME_PATHS.home)
+VERSION = "0.1.0"
+GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+AUTHORITY = "https://login.microsoftonline.com/consumers"
+GRAPH_SCOPES = ["Files.ReadWrite.All"]
+CONFIG_FILE = str(RUNTIME_PATHS.config)
+TOKEN_CACHE_FILE = os.path.join(DATA_DIR, "token_cache.json")
+PENDING_DIR = os.path.join(DATA_DIR, "pending")
+LAST_PORT_FILE = os.path.join(DATA_DIR, "last_port")
+DEFAULT_WORKBOOK = "Expense_Tracker.xlsx"
+DEFAULT_WORKSHEET = "Expense Log"
+DEFAULT_CATEGORIES_SHEET = "Categories"
+EXPECTED_HEADERS = [
+    "ID",
+    "Date",
+    "Vendor",
+    "Amount",
+    "Category",
+    "Business Purpose",
+    "Paid By",
+    "Payment Method",
+    "Reimbursable?",
+    "Reimb. Status",
+    "Receipt Link",
+    "Receipt Filename",
+    "Notes",
+]
+HEADER_SCAN_ROWS = 25
+LOOKUP_COLUMNS = {
+    "categories": 1,
+    "payment_methods": 2,
+    "paid_by": 3,
+    "reimbursement_statuses": 4,
+}
+DEFAULT_LOOKUPS = {
+    "categories": [],
+    "payment_methods": [],
+    "paid_by": [],
+    "reimbursement_statuses": [],
+    "reimbursable": ["Yes", "No"],
+}
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("expense_dock")
+
+_workbook_lock = threading.Lock()
+
+
+class GraphAPIError(RuntimeError):
+    def __init__(self, status_code: int, message: str, payload: Optional[dict] = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.payload = payload or {}
+
+
+class DuplicateExpenseError(RuntimeError):
+    def __init__(self, row_number: int, expense_id: Any):
+        super().__init__(f"Receipt is already logged on row {row_number}.")
+        self.row_number = row_number
+        self.expense_id = expense_id
+
+
+def ensure_runtime_dirs() -> None:
+    for path in (DATA_DIR, PENDING_DIR):
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        if os.path.islink(path) or not os.path.isdir(path):
+            raise RuntimeError(f"Sensitive runtime path must be a real directory: {path}")
+        os.chmod(path, 0o700)
+    for path in (CONFIG_FILE, TOKEN_CACHE_FILE, LAST_PORT_FILE):
+        secure_existing_file(path)
+    for name in os.listdir(PENDING_DIR):
+        if name.endswith(".json"):
+            secure_existing_file(os.path.join(PENDING_DIR, name))
+
+
+def secure_existing_file(path: str) -> None:
+    if not os.path.lexists(path):
+        return
+    metadata = os.lstat(path)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError(f"Sensitive runtime path must be a regular file: {path}")
+    os.chmod(path, 0o600)
+
+
+def atomic_write_text(path: str, text: str) -> None:
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    if os.path.islink(directory) or not os.path.isdir(directory):
+        raise RuntimeError(f"Sensitive runtime path must be a real directory: {directory}")
+    os.chmod(directory, 0o700)
+    descriptor, tmp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.", dir=directory
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.remove(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def atomic_write_json(path: str, data: dict) -> None:
+    atomic_write_text(path, json.dumps(data, indent=2, sort_keys=True))
+
+
+def load_json_file(path: str, default: dict) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return json.loads(json.dumps(default))
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON at %s; using defaults.", path)
+        return json.loads(json.dumps(default))
+
+
+def default_config() -> dict:
+    return {
+        "client_id": "",
+        "root_share_url": "",
+        "workbook_name": DEFAULT_WORKBOOK,
+        "worksheet_name": DEFAULT_WORKSHEET,
+        "categories_sheet_name": DEFAULT_CATEGORIES_SHEET,
+        "defaults": {
+            "paid_by": "",
+            "payment_method": "",
+            "reimbursable": "Yes",
+            "reimbursement_status": "",
+        },
+        "lookup_cache": json.loads(json.dumps(DEFAULT_LOOKUPS)),
+        "lookup_cache_updated_at": None,
+    }
+
+
+def ensure_runtime_config() -> None:
+    if os.path.isfile(CONFIG_FILE):
+        secure_existing_file(CONFIG_FILE)
+        return
+    atomic_write_json(CONFIG_FILE, default_config())
+    logger.info("[expense_dock] Wrote default runtime config to %s", CONFIG_FILE)
+
+
+def merge_config(existing: dict, incoming: dict) -> dict:
+    merged = default_config()
+    merged.update(existing or {})
+    for key in ("client_id", "root_share_url", "workbook_name", "worksheet_name", "categories_sheet_name"):
+        if key in incoming:
+            merged[key] = (incoming.get(key) or "").strip()
+    defaults = dict(merged.get("defaults") or {})
+    defaults.update(incoming.get("defaults") or {})
+    merged["defaults"] = {
+        "paid_by": (defaults.get("paid_by") or "").strip(),
+        "payment_method": (defaults.get("payment_method") or "").strip(),
+        "reimbursable": (defaults.get("reimbursable") or "").strip(),
+        "reimbursement_status": (defaults.get("reimbursement_status") or "").strip(),
+    }
+    if "lookup_cache" in incoming:
+        merged["lookup_cache"] = incoming.get("lookup_cache") or json.loads(json.dumps(DEFAULT_LOOKUPS))
+    else:
+        merged["lookup_cache"] = merged.get("lookup_cache") or json.loads(json.dumps(DEFAULT_LOOKUPS))
+    if "lookup_cache_updated_at" in incoming:
+        merged["lookup_cache_updated_at"] = incoming.get("lookup_cache_updated_at")
+    return merged
+
+
+def load_config() -> dict:
+    ensure_runtime_config()
+    return merge_config(load_json_file(CONFIG_FILE, default_config()), {})
+
+
+def save_config(config: dict) -> dict:
+    config = merge_config(load_config(), config)
+    atomic_write_json(CONFIG_FILE, config)
+    return config
+
+
+def config_is_complete(config: dict) -> bool:
+    return bool(config.get("client_id") and config.get("root_share_url") and config.get("workbook_name"))
+
+
+def find_free_port(start_port: int, max_attempts: int = 20) -> int:
+    for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free port found in range {start_port}-{start_port + max_attempts - 1}")
+
+
+def open_browser(port: int) -> None:
+    time.sleep(1.25)
+    webbrowser.open(f"http://127.0.0.1:{port}")
+
+
+def testing_mode_enabled() -> bool:
+    value = os.environ.get("UTILITIES_TESTING", "")
+    return value.lower() not in {"", "0", "false", "no"}
+
+
+def normalize_space(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def sanitize_filename_segment(value: str, fallback: str) -> str:
+    cleaned = normalize_space(value)
+    cleaned = re.sub(r'[\\/:*?"<>|]+', " ", cleaned)
+    cleaned = re.sub(r"[\x00-\x1f]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .-_")
+    return cleaned or fallback
+
+
+def format_amount_filename(amount: float) -> str:
+    return f"{amount:.2f}"
+
+
+def build_receipt_filename(submission: dict, original_filename: str) -> str:
+    _, ext = os.path.splitext(original_filename or "")
+    ext = ext or ".bin"
+    vendor = sanitize_filename_segment(submission["vendor"], "Vendor")
+    purpose = sanitize_filename_segment(submission.get("filename_purpose") or submission["business_purpose"], "Expense")
+    if len(purpose) > 80:
+        purpose = purpose[:80].rstrip(" .-_")
+    return f"{submission['date']}_{vendor}_{format_amount_filename(submission['amount'])}_{purpose}{ext}"
+
+
+def parse_submission(payload: dict) -> dict:
+    required = [
+        "date",
+        "vendor",
+        "amount",
+        "category",
+        "business_purpose",
+        "paid_by",
+        "payment_method",
+        "reimbursable",
+        "reimbursement_status",
+    ]
+    missing = [key for key in required if not normalize_space(str(payload.get(key, "")))]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required fields: {', '.join(missing)}")
+
+    try:
+        date.fromisoformat(str(payload["date"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD.") from exc
+
+    try:
+        amount = round(float(payload["amount"]), 2)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Amount must be numeric.") from exc
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive.")
+
+    return {
+        "date": str(payload["date"]).strip(),
+        "vendor": normalize_space(str(payload["vendor"])),
+        "amount": amount,
+        "category": normalize_space(str(payload["category"])),
+        "business_purpose": normalize_space(str(payload["business_purpose"])),
+        "filename_purpose": normalize_space(str(payload.get("filename_purpose", ""))),
+        "paid_by": normalize_space(str(payload["paid_by"])),
+        "payment_method": normalize_space(str(payload["payment_method"])),
+        "reimbursable": normalize_space(str(payload["reimbursable"])),
+        "reimbursement_status": normalize_space(str(payload["reimbursement_status"])),
+        "notes": normalize_space(str(payload.get("notes", ""))),
+    }
+
+
+def encode_share_url(share_url: str) -> str:
+    encoded = base64.urlsafe_b64encode(share_url.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"u!{encoded}"
+
+
+def load_token_cache() -> msal.SerializableTokenCache:
+    cache = msal.SerializableTokenCache()
+    if os.path.exists(TOKEN_CACHE_FILE):
+        with open(TOKEN_CACHE_FILE, "r", encoding="utf-8") as f:
+            cache.deserialize(f.read())
+    return cache
+
+
+def persist_token_cache(cache: msal.SerializableTokenCache) -> None:
+    if cache.has_state_changed:
+        atomic_write_text(TOKEN_CACHE_FILE, cache.serialize())
+
+
+def build_public_client(client_id: str, cache: msal.SerializableTokenCache) -> msal.PublicClientApplication:
+    return msal.PublicClientApplication(client_id=client_id, authority=AUTHORITY, token_cache=cache)
+
+
+def interactive_login(config: dict) -> dict:
+    client_id = config.get("client_id") or ""
+    if not client_id:
+        raise HTTPException(status_code=400, detail="Microsoft client ID is not configured.")
+
+    cache = load_token_cache()
+    app_obj = build_public_client(client_id, cache)
+    try:
+        result = app_obj.acquire_token_interactive(
+            scopes=GRAPH_SCOPES,
+            prompt="select_account",
+        )
+    except Exception as exc:
+        logger.exception("Interactive Microsoft login failed")
+        raise HTTPException(status_code=500, detail=f"Microsoft login failed: {exc}") from exc
+    persist_token_cache(cache)
+    if "access_token" not in result:
+        detail = result.get("error_description") or result.get("error") or "Authentication failed."
+        raise HTTPException(status_code=400, detail=detail)
+    return {
+        "username": result.get("id_token_claims", {}).get("preferred_username") or "",
+        "expires_in": result.get("expires_in"),
+    }
+
+
+def get_auth_status(config: dict) -> dict:
+    status = {
+        "configured": bool(config.get("client_id")),
+        "connected": False,
+        "account": "",
+    }
+    if not status["configured"]:
+        return status
+    cache = load_token_cache()
+    app_obj = build_public_client(config["client_id"], cache)
+    accounts = app_obj.get_accounts()
+    if accounts:
+        account = accounts[0]
+        status["connected"] = True
+        status["account"] = account.get("username") or account.get("home_account_id") or ""
+    return status
+
+
+def get_access_token(config: dict) -> str:
+    client_id = config.get("client_id") or ""
+    if not client_id:
+        raise HTTPException(status_code=400, detail="Microsoft client ID is not configured.")
+    cache = load_token_cache()
+    app_obj = build_public_client(client_id, cache)
+    accounts = app_obj.get_accounts()
+    result = None
+    if accounts:
+        result = app_obj.acquire_token_silent(scopes=GRAPH_SCOPES, account=accounts[0])
+    persist_token_cache(cache)
+    if not result or "access_token" not in result:
+        raise HTTPException(status_code=401, detail="Microsoft login required. Use Connect in the UI.")
+    return result["access_token"]
+
+
+def logout() -> None:
+    try:
+        os.remove(TOKEN_CACHE_FILE)
+    except FileNotFoundError:
+        pass
+
+
+class GraphClient:
+    def __init__(self, access_token: str):
+        self.access_token = access_token
+        self.client = httpx.Client(timeout=90.0, follow_redirects=True)
+
+    def close(self) -> None:
+        self.client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        full_url: bool = False,
+        include_auth: bool = True,
+        expected: Tuple[int, ...] = (200, 201, 202),
+        **kwargs: Any,
+    ) -> httpx.Response:
+        url = path if full_url else f"{GRAPH_ROOT}{path}"
+        headers = dict(kwargs.pop("headers", {}))
+        if include_auth:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+        response = self.client.request(method, url, headers=headers, **kwargs)
+        if response.status_code not in expected:
+            payload = {}
+            try:
+                payload = response.json()
+            except Exception:
+                payload = {}
+            message = (
+                payload.get("error", {}).get("message")
+                or payload.get("error_description")
+                or response.text[:400]
+                or f"Graph request failed with status {response.status_code}."
+            )
+            raise GraphAPIError(response.status_code, message, payload)
+        return response
+
+    def resolve_share_url(self, share_url: str) -> dict:
+        token = encode_share_url(share_url)
+        response = self._request("GET", f"/shares/{token}/driveItem")
+        return response.json()
+
+    def get_drive_id(self, item: dict) -> str:
+        drive_id = (
+            item.get("parentReference", {}).get("driveId")
+            or item.get("remoteItem", {}).get("parentReference", {}).get("driveId")
+        )
+        if drive_id:
+            return drive_id
+        item_id = item.get("id", "")
+        if "!" in item_id:
+            return item_id.split("!", 1)[0]
+        raise GraphAPIError(400, "Could not determine drive ID for the shared item.")
+
+    def list_children(self, drive_id: str, parent_id: str) -> List[dict]:
+        url = f"{GRAPH_ROOT}/drives/{drive_id}/items/{parent_id}/children?$select=id,name,folder,file,webUrl,parentReference"
+        items: List[dict] = []
+        while url:
+            response = self._request("GET", url, full_url=True, include_auth=True, expected=(200,))
+            data = response.json()
+            items.extend(data.get("value", []))
+            url = data.get("@odata.nextLink")
+        return items
+
+    def find_child_by_name(self, drive_id: str, parent_id: str, child_name: str) -> Optional[dict]:
+        for item in self.list_children(drive_id, parent_id):
+            if item.get("name", "").lower() == child_name.lower():
+                return item
+        return None
+
+    def ensure_folder(self, drive_id: str, parent_id: str, folder_name: str) -> Tuple[dict, bool]:
+        existing = self.find_child_by_name(drive_id, parent_id, folder_name)
+        if existing:
+            if "folder" not in existing:
+                raise GraphAPIError(409, f"'{folder_name}' exists but is not a folder.")
+            return existing, False
+
+        body = {
+            "name": folder_name,
+            "folder": {},
+            "@microsoft.graph.conflictBehavior": "fail",
+        }
+        try:
+            response = self._request("POST", f"/drives/{drive_id}/items/{parent_id}/children", json=body, expected=(201,))
+            return response.json(), True
+        except GraphAPIError as exc:
+            if exc.status_code == 409:
+                existing = self.find_child_by_name(drive_id, parent_id, folder_name)
+                if existing:
+                    return existing, False
+            raise
+
+    def upload_file(self, drive_id: str, parent_id: str, filename: str, content: bytes, content_type: str) -> Tuple[dict, bool]:
+        existing = self.find_child_by_name(drive_id, parent_id, filename)
+        if existing:
+            return existing, False
+
+        encoded_name = quote(filename, safe="")
+        if len(content) <= 4 * 1024 * 1024:
+            response = self._request(
+                "PUT",
+                f"/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content",
+                headers={"Content-Type": content_type or "application/octet-stream"},
+                content=content,
+                expected=(200, 201),
+            )
+            return response.json(), True
+
+        session = self._request(
+            "POST",
+            f"/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/createUploadSession",
+            json={"item": {"@microsoft.graph.conflictBehavior": "fail"}},
+            expected=(200,),
+        ).json()
+        upload_url = session["uploadUrl"]
+        chunk_size = 327680 * 10
+        total = len(content)
+        start = 0
+        item: Optional[dict] = None
+        while start < total:
+            end = min(start + chunk_size, total) - 1
+            chunk = content[start : end + 1]
+            response = self._request(
+                "PUT",
+                upload_url,
+                full_url=True,
+                include_auth=False,
+                headers={
+                    "Content-Length": str(len(chunk)),
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                },
+                content=chunk,
+                expected=(200, 201, 202),
+            )
+            if response.status_code in (200, 201):
+                item = response.json()
+            start = end + 1
+        if not item:
+            raise GraphAPIError(500, "Large file upload did not return a completed item.")
+        return item, True
+
+    def create_view_link(self, drive_id: str, item_id: str) -> str:
+        response = self._request(
+            "POST",
+            f"/drives/{drive_id}/items/{item_id}/createLink",
+            json={"type": "view", "scope": "anonymous"},
+            expected=(200, 201),
+        )
+        return response.json()["link"]["webUrl"]
+
+    def download_item_content(self, drive_id: str, item_id: str) -> bytes:
+        response = self._request("GET", f"/drives/{drive_id}/items/{item_id}/content", expected=(200,))
+        return response.content
+
+    def upload_item_content(self, drive_id: str, item_id: str, content: bytes, content_type: str) -> dict:
+        response = self._request(
+            "PUT",
+            f"/drives/{drive_id}/items/{item_id}/content",
+            headers={"Content-Type": content_type},
+            content=content,
+            expected=(200, 201),
+        )
+        return response.json()
+
+
+def extract_lookup_values(workbook_bytes: bytes, categories_sheet_name: str) -> dict:
+    with io.BytesIO(workbook_bytes) as buffer:
+        wb = load_workbook(buffer, data_only=True)
+        if categories_sheet_name not in wb.sheetnames:
+            raise ValueError(f"Lookup sheet '{categories_sheet_name}' not found.")
+        ws = wb[categories_sheet_name]
+        lookups = json.loads(json.dumps(DEFAULT_LOOKUPS))
+        for key, column_index in LOOKUP_COLUMNS.items():
+            values = []
+            seen = set()
+            for row in range(2, ws.max_row + 1):
+                value = ws.cell(row=row, column=column_index).value
+                if value is None:
+                    continue
+                text = normalize_space(str(value))
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                values.append(text)
+            lookups[key] = values
+        return lookups
+
+
+def find_last_data_row(ws, max_col: int, header_row: int = 1) -> int:
+    for row in range(ws.max_row, header_row, -1):
+        for col in range(1, max_col + 1):
+            value = ws.cell(row=row, column=col).value
+            if value not in (None, ""):
+                return row
+    return header_row
+
+
+def copy_row_format(ws, source_row: int, target_row: int, max_col: int) -> None:
+    for col in range(1, max_col + 1):
+        src = ws.cell(row=source_row, column=col)
+        dst = ws.cell(row=target_row, column=col)
+        if src.has_style:
+            dst._style = copy(src._style)
+        if src.number_format:
+            dst.number_format = src.number_format
+        if src.font:
+            dst.font = copy(src.font)
+        if src.fill:
+            dst.fill = copy(src.fill)
+        if src.border:
+            dst.border = copy(src.border)
+        if src.alignment:
+            dst.alignment = copy(src.alignment)
+        if src.protection:
+            dst.protection = copy(src.protection)
+
+
+def header_index_map(ws) -> Tuple[Dict[str, int], int]:
+    best_map: Dict[str, int] = {}
+    best_row = 1
+    best_matches = -1
+    scan_limit = min(ws.max_row, HEADER_SCAN_ROWS)
+    for row in range(1, scan_limit + 1):
+        row_map = {}
+        for col in range(1, ws.max_column + 1):
+            value = ws.cell(row=row, column=col).value
+            if value is None:
+                continue
+            text = normalize_space(str(value))
+            if text and text not in row_map:
+                row_map[text] = col
+        matches = sum(1 for header in EXPECTED_HEADERS if header in row_map)
+        if matches > best_matches:
+            best_map = row_map
+            best_row = row
+            best_matches = matches
+        if matches == len(EXPECTED_HEADERS):
+            return row_map, row
+    return best_map, best_row
+
+
+def append_expense_row(
+    workbook_bytes: bytes,
+    worksheet_name: str,
+    submission: dict,
+    receipt_link: str,
+    receipt_filename: str,
+) -> Tuple[bytes, int, int]:
+    with io.BytesIO(workbook_bytes) as buffer:
+        wb = load_workbook(buffer)
+    if worksheet_name not in wb.sheetnames:
+        raise ValueError(f"Worksheet '{worksheet_name}' not found.")
+    ws = wb[worksheet_name]
+    header_map, header_row = header_index_map(ws)
+    missing = [header for header in EXPECTED_HEADERS if header not in header_map]
+    if missing:
+        raise ValueError(f"Worksheet is missing expected headers: {', '.join(missing)}")
+
+    last_row = find_last_data_row(ws, max(header_map.values()), header_row)
+    max_id = 0
+    receipt_link_col = header_map["Receipt Link"]
+    receipt_filename_col = header_map["Receipt Filename"]
+    id_col = header_map["ID"]
+    for row in range(header_row + 1, last_row + 1):
+        existing_id = ws.cell(row=row, column=id_col).value
+        try:
+            max_id = max(max_id, int(existing_id))
+        except (TypeError, ValueError):
+            pass
+        existing_link = normalize_space(str(ws.cell(row=row, column=receipt_link_col).value or ""))
+        existing_filename = normalize_space(str(ws.cell(row=row, column=receipt_filename_col).value or ""))
+        if existing_filename and existing_filename == receipt_filename:
+            raise DuplicateExpenseError(row, ws.cell(row=row, column=id_col).value)
+        if existing_link and existing_link == receipt_link:
+            raise DuplicateExpenseError(row, ws.cell(row=row, column=id_col).value)
+
+    target_row = last_row + 1
+    source_row = max(header_row + 1, last_row)
+    if target_row != source_row:
+        copy_row_format(ws, source_row, target_row, max(header_map.values()))
+
+    next_id = max_id + 1 if max_id else 1
+    row_values = {
+        "ID": next_id,
+        "Date": date.fromisoformat(submission["date"]),
+        "Vendor": submission["vendor"],
+        "Amount": submission["amount"],
+        "Category": submission["category"],
+        "Business Purpose": submission["business_purpose"],
+        "Paid By": submission["paid_by"],
+        "Payment Method": submission["payment_method"],
+        "Reimbursable?": submission["reimbursable"],
+        "Reimb. Status": submission["reimbursement_status"],
+        "Receipt Link": receipt_link,
+        "Receipt Filename": receipt_filename,
+        "Notes": submission["notes"],
+    }
+    for header, value in row_values.items():
+        cell = ws.cell(row=target_row, column=header_map[header])
+        cell.value = value
+    ws.cell(row=target_row, column=header_map["Date"]).number_format = "yyyy-mm-dd"
+    ws.cell(row=target_row, column=header_map["Amount"]).number_format = "$#,##0.00"
+    ws.cell(row=target_row, column=header_map["Receipt Link"]).hyperlink = receipt_link
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue(), target_row, next_id
+
+
+def build_csv_text(submission: dict, receipt_link: str, receipt_filename: str) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(EXPECTED_HEADERS)
+    writer.writerow(
+        [
+            "",
+            submission["date"],
+            submission["vendor"],
+            f"{submission['amount']:.2f}",
+            submission["category"],
+            submission["business_purpose"],
+            submission["paid_by"],
+            submission["payment_method"],
+            submission["reimbursable"],
+            submission["reimbursement_status"],
+            receipt_link,
+            receipt_filename,
+            submission["notes"],
+        ]
+    )
+    return buffer.getvalue()
+
+
+def pending_path(operation_id: str) -> str:
+    if not re.fullmatch(r"[a-f0-9]{12}", operation_id):
+        raise HTTPException(status_code=400, detail="Invalid operation ID.")
+    return os.path.join(PENDING_DIR, f"{operation_id}.json")
+
+
+def list_pending_operations() -> List[dict]:
+    os.makedirs(PENDING_DIR, exist_ok=True)
+    entries = []
+    for name in sorted(os.listdir(PENDING_DIR), reverse=True):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(PENDING_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                entry = json.load(f)
+            entries.append(
+                {
+                    "id": entry.get("id"),
+                    "created_at": entry.get("created_at"),
+                    "updated_at": entry.get("updated_at"),
+                    "vendor": entry.get("submission", {}).get("vendor", ""),
+                    "date": entry.get("submission", {}).get("date", ""),
+                    "amount": entry.get("submission", {}).get("amount", ""),
+                    "receipt_filename": entry.get("receipt_filename", ""),
+                    "receipt_link": entry.get("receipt_link", ""),
+                    "error": entry.get("error", ""),
+                }
+            )
+        except Exception:
+            logger.warning("Skipping unreadable pending operation %s", path)
+    return entries
+
+
+def save_pending_operation(submission: dict, receipt_filename: str, receipt_link: str, receipt_item_id: str, error: str) -> dict:
+    operation_id = uuid.uuid4().hex[:12]
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    entry = {
+        "id": operation_id,
+        "created_at": now,
+        "updated_at": now,
+        "submission": submission,
+        "receipt_filename": receipt_filename,
+        "receipt_link": receipt_link,
+        "receipt_item_id": receipt_item_id,
+        "error": error,
+        "fallback_csv": build_csv_text(submission, receipt_link, receipt_filename),
+    }
+    atomic_write_json(pending_path(operation_id), entry)
+    return {
+        "id": operation_id,
+        "created_at": now,
+        "updated_at": now,
+        "vendor": submission["vendor"],
+        "date": submission["date"],
+        "amount": submission["amount"],
+        "receipt_filename": receipt_filename,
+        "receipt_link": receipt_link,
+        "error": error,
+    }
+
+
+def load_pending_operation(operation_id: str) -> dict:
+    path = pending_path(operation_id)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Pending operation not found.") from exc
+
+
+def update_pending_operation(entry: dict, error: str) -> dict:
+    entry["error"] = error
+    entry["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    atomic_write_json(pending_path(entry["id"]), entry)
+    return entry
+
+
+def delete_pending_operation(operation_id: str) -> None:
+    try:
+        os.remove(pending_path(operation_id))
+    except FileNotFoundError:
+        pass
+
+
+def resolve_root_and_workbook(graph: GraphClient, config: dict) -> Tuple[dict, dict, str]:
+    root_item = graph.resolve_share_url(config["root_share_url"])
+    drive_id = graph.get_drive_id(root_item)
+    workbook_item = graph.find_child_by_name(drive_id, root_item["id"], config["workbook_name"])
+    if not workbook_item:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Workbook '{config['workbook_name']}' was not found in the shared root folder.",
+        )
+    return root_item, workbook_item, drive_id
+
+
+def process_submission(config: dict, submission: dict, file_bytes: bytes, original_filename: str, content_type: str) -> dict:
+    receipt_item = None
+    share_link = ""
+    receipt_filename = build_receipt_filename(submission, original_filename)
+    access_token = get_access_token(config)
+    graph = GraphClient(access_token)
+    try:
+        root_item, workbook_item, drive_id = resolve_root_and_workbook(graph, config)
+        year_folder_name = submission["date"][:4]
+        month_folder_name = submission["date"][:7]
+        year_folder, _ = graph.ensure_folder(drive_id, root_item["id"], year_folder_name)
+        month_folder, _ = graph.ensure_folder(drive_id, year_folder["id"], month_folder_name)
+        receipt_item, uploaded = graph.upload_file(
+            drive_id,
+            month_folder["id"],
+            receipt_filename,
+            file_bytes,
+            content_type or "application/octet-stream",
+        )
+        share_link = graph.create_view_link(drive_id, receipt_item["id"])
+        with _workbook_lock:
+            workbook_bytes = graph.download_item_content(drive_id, workbook_item["id"])
+            updated_workbook, row_number, expense_id = append_expense_row(
+                workbook_bytes,
+                config["worksheet_name"],
+                submission,
+                share_link,
+                receipt_filename,
+            )
+            graph.upload_item_content(
+                drive_id,
+                workbook_item["id"],
+                updated_workbook,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        return {
+            "ok": True,
+            "uploaded": uploaded,
+            "receipt_filename": receipt_filename,
+            "receipt_link": share_link,
+            "expense_id": expense_id,
+            "row_number": row_number,
+            "duplicate": False,
+        }
+    except DuplicateExpenseError as exc:
+        return {
+            "ok": True,
+            "uploaded": False,
+            "receipt_filename": receipt_filename,
+            "receipt_link": share_link,
+            "expense_id": exc.expense_id,
+            "row_number": exc.row_number,
+            "duplicate": True,
+        }
+    except Exception as exc:
+        logger.exception("Expense submission failed")
+        message = str(exc)
+        pending = None
+        if receipt_item and share_link:
+            pending = save_pending_operation(
+                submission,
+                receipt_filename,
+                share_link,
+                receipt_item["id"],
+                message,
+            )
+        return {
+            "ok": False,
+            "error": message,
+            "receipt_filename": receipt_filename,
+            "receipt_link": share_link,
+            "fallback_csv": build_csv_text(submission, share_link, receipt_filename),
+            "pending": pending,
+        }
+    finally:
+        graph.close()
+
+
+def retry_pending_operation(config: dict, operation_id: str) -> dict:
+    entry = load_pending_operation(operation_id)
+    access_token = get_access_token(config)
+    graph = GraphClient(access_token)
+    try:
+        _, workbook_item, drive_id = resolve_root_and_workbook(graph, config)
+        with _workbook_lock:
+            workbook_bytes = graph.download_item_content(drive_id, workbook_item["id"])
+            updated_workbook, row_number, expense_id = append_expense_row(
+                workbook_bytes,
+                config["worksheet_name"],
+                entry["submission"],
+                entry["receipt_link"],
+                entry["receipt_filename"],
+            )
+            graph.upload_item_content(
+                drive_id,
+                workbook_item["id"],
+                updated_workbook,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        delete_pending_operation(operation_id)
+        return {
+            "ok": True,
+            "duplicate": False,
+            "receipt_filename": entry["receipt_filename"],
+            "receipt_link": entry["receipt_link"],
+            "expense_id": expense_id,
+            "row_number": row_number,
+        }
+    except DuplicateExpenseError as exc:
+        delete_pending_operation(operation_id)
+        return {
+            "ok": True,
+            "duplicate": True,
+            "receipt_filename": entry["receipt_filename"],
+            "receipt_link": entry["receipt_link"],
+            "expense_id": exc.expense_id,
+            "row_number": exc.row_number,
+        }
+    except Exception as exc:
+        update_pending_operation(entry, str(exc))
+        return {
+            "ok": False,
+            "error": str(exc),
+            "receipt_filename": entry["receipt_filename"],
+            "receipt_link": entry["receipt_link"],
+            "fallback_csv": entry.get("fallback_csv") or build_csv_text(entry["submission"], entry["receipt_link"], entry["receipt_filename"]),
+        }
+    finally:
+        graph.close()
+
+
+app = FastAPI(title="Expense Dock")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return HTMLResponse("", status_code=204)
+
+
+@app.get("/", response_class=HTMLResponse)
+def get_index():
+    return HTML_TEMPLATE.replace("{{VERSION}}", VERSION)
+
+
+@app.get("/api/status")
+def get_status():
+    config = load_config()
+    return {
+        "version": VERSION,
+        "config": {
+            "client_id": config.get("client_id", ""),
+            "root_share_url": config.get("root_share_url", ""),
+            "workbook_name": config.get("workbook_name", DEFAULT_WORKBOOK),
+            "worksheet_name": config.get("worksheet_name", DEFAULT_WORKSHEET),
+            "categories_sheet_name": config.get("categories_sheet_name", DEFAULT_CATEGORIES_SHEET),
+            "defaults": config.get("defaults", {}),
+        },
+        "auth": get_auth_status(config),
+        "lookups": config.get("lookup_cache") or json.loads(json.dumps(DEFAULT_LOOKUPS)),
+        "lookup_cache_updated_at": config.get("lookup_cache_updated_at"),
+        "pending": list_pending_operations(),
+        "ready": config_is_complete(config),
+    }
+
+
+@app.post("/api/config")
+def save_config_endpoint(payload: dict):
+    config = save_config(payload)
+    return {
+        "ok": True,
+        "config": {
+            "client_id": config["client_id"],
+            "root_share_url": config["root_share_url"],
+            "workbook_name": config["workbook_name"],
+            "worksheet_name": config["worksheet_name"],
+            "categories_sheet_name": config["categories_sheet_name"],
+            "defaults": config["defaults"],
+        },
+    }
+
+
+@app.post("/api/auth/login")
+def login_endpoint():
+    config = load_config()
+    result = interactive_login(config)
+    return {"ok": True, "auth": get_auth_status(config), "login": result}
+
+
+@app.post("/api/auth/logout")
+def logout_endpoint():
+    logout()
+    return {"ok": True}
+
+
+@app.post("/api/lookups/refresh")
+def refresh_lookups():
+    config = load_config()
+    if not config_is_complete(config):
+        raise HTTPException(status_code=400, detail="Complete the config first.")
+    access_token = get_access_token(config)
+    graph = GraphClient(access_token)
+    try:
+        _, workbook_item, drive_id = resolve_root_and_workbook(graph, config)
+        workbook_bytes = graph.download_item_content(drive_id, workbook_item["id"])
+        lookups = extract_lookup_values(workbook_bytes, config["categories_sheet_name"])
+        config["lookup_cache"] = lookups
+        config["lookup_cache_updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        save_config(config)
+        return {"ok": True, "lookups": lookups, "updated_at": config["lookup_cache_updated_at"]}
+    except GraphAPIError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        graph.close()
+
+
+@app.post("/api/submit")
+def submit_expense(payload: str = Form(...), receipt: UploadFile = File(...)):
+    config = load_config()
+    if not config_is_complete(config):
+        raise HTTPException(status_code=400, detail="Config is incomplete.")
+    try:
+        submission = parse_submission(json.loads(payload))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Payload must be valid JSON.") from exc
+    file_bytes = receipt.file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Receipt file is empty.")
+    if len(file_bytes) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 100 MB).")
+    result = process_submission(config, submission, file_bytes, receipt.filename or "receipt", receipt.content_type or "")
+    if result["ok"]:
+        return result
+    return JSONResponse(status_code=500, content=result)
+
+
+@app.get("/api/pending")
+def get_pending():
+    return {"pending": list_pending_operations()}
+
+
+@app.post("/api/pending/{operation_id}/retry")
+def retry_pending(operation_id: str):
+    config = load_config()
+    if not config_is_complete(config):
+        raise HTTPException(status_code=400, detail="Config is incomplete.")
+    result = retry_pending_operation(config, operation_id)
+    if result["ok"]:
+        return result
+    return JSONResponse(status_code=500, content=result)
+
+
+@app.get("/api/pending/{operation_id}/csv")
+def download_pending_csv(operation_id: str):
+    entry = load_pending_operation(operation_id)
+    csv_text = entry.get("fallback_csv") or build_csv_text(entry["submission"], entry["receipt_link"], entry["receipt_filename"])
+    return StreamingResponse(
+        iter([csv_text.encode("utf-8")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="expense-dock-{operation_id}.csv"'},
+    )
+
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Expense Dock</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@0.321.0/dist/umd/lucide.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['Fraunces', 'serif'],
+            body: ['Work Sans', 'sans-serif'],
+            mono: ['IBM Plex Mono', 'monospace'],
+          },
+          boxShadow: {
+            docket: '0 24px 80px rgba(16, 24, 40, 0.18)',
+          },
+          colors: {
+            ledger: {
+              paper: '#f7f0df',
+              ink: '#1d3124',
+              leaf: '#5e7c52',
+              rust: '#ad5a42',
+              dusk: '#10231a',
+              sand: '#dccfaf',
+            },
+          },
+        }
+      }
+    };
+  </script>
+  <style>
+    :root {
+      --bg: #f7f0df;
+      --card: #fffcf5;
+      --line: rgba(25, 58, 37, 0.14);
+      --ink: #193a25;
+      --muted: #5f6d60;
+      --accent: #ad5a42;
+      --accent-2: #5e7c52;
+      --shadow: rgba(17, 24, 39, 0.14);
+    }
+    html.dark {
+      --bg: #122219;
+      --card: #112219;
+      --line: rgba(214, 204, 176, 0.12);
+      --ink: #ecdfc4;
+      --muted: #b6b7aa;
+      --accent: #eb9b80;
+      --accent-2: #a7c796;
+      --shadow: rgba(0, 0, 0, 0.38);
+    }
+    body {
+      font-family: 'Work Sans', sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(173, 90, 66, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(94, 124, 82, 0.15), transparent 32%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      box-shadow: 0 2px 12px var(--shadow);
+    }
+    .pill {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.55);
+    }
+    html.dark .pill {
+      background: rgba(255,255,255,0.08);
+    }
+    .receipt-accent {
+      border-left: 4px solid var(--accent);
+    }
+    .toast-enter {
+      animation: toast-in 180ms ease-out;
+    }
+    @keyframes toast-in {
+      from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useEffect, useMemo, useState } = React;
+    const todayIso = () => new Date().toISOString().slice(0, 10);
+    const DEFAULT_LOOKUPS = {
+      categories: [],
+      payment_methods: [],
+      paid_by: [],
+      reimbursement_statuses: [],
+      reimbursable: ['Yes', 'No'],
+    };
+
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false, message: '' };
+      }
+      static getDerivedStateFromError(error) {
+        return { hasError: true, message: error?.message || 'Unknown UI error' };
+      }
+      render() {
+        if (this.state.hasError) {
+          return (
+            <div className="min-h-screen flex items-center justify-center p-6">
+              <div className="card max-w-xl rounded-2xl p-8">
+                <div className="text-sm uppercase tracking-[0.25em] text-[var(--accent)]">Expense Dock</div>
+                <h1 className="font-display text-3xl mt-3">UI runtime error</h1>
+                <p className="mt-3 text-[var(--muted)]">{this.state.message}</p>
+                <button onClick={() => window.location.reload()} className="mt-6 rounded-full bg-[var(--ink)] text-[var(--bg)] px-5 py-3">
+                  Reload
+                </button>
+              </div>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    function toPascalCase(value) {
+      return value.replace(/(\\w)(\\w*)(_|-|\\s*)/g, (_, first, rest) => first.toUpperCase() + rest.toLowerCase());
+    }
+
+    function icon(name, props = {}) {
+      const iconDef = window.lucide?.icons?.[toPascalCase(name)];
+      const [tag, baseAttrs, children] = Array.isArray(iconDef) ? iconDef : [];
+      const size = props.size || 18;
+      const className = props.className || '';
+      if (!iconDef || tag !== 'svg' || !Array.isArray(children)) {
+        return <span className={`inline-flex items-center justify-center ${className}`} style={{ width: size, height: size, minWidth: size }} aria-hidden="true" />;
+      }
+      return (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          {...baseAttrs}
+          width={size}
+          height={size}
+          className={`inline-block ${className}`.trim()}
+          aria-hidden="true"
+        >
+          {children.map(([childTag, attrs], index) => React.createElement(childTag, { ...attrs, key: `${name}-${index}` }))}
+        </svg>
+      );
+    }
+
+    function sanitizeSegment(value, fallback) {
+      let text = (value || '').trim().replace(/[\\\\/:*?"<>|]+/g, ' ').replace(/[\\x00-\\x1f]+/g, ' ');
+      text = text.replace(/\\s+/g, ' ').replace(/^[ ._-]+|[ ._-]+$/g, '');
+      return text || fallback;
+    }
+
+    function buildFilename(draft, fileName) {
+      const extMatch = (fileName || '').match(/(\\.[^.]+)$/);
+      const ext = extMatch ? extMatch[1] : '.bin';
+      const vendor = sanitizeSegment(draft.vendor, 'Vendor');
+      let purpose = sanitizeSegment(draft.filename_purpose || draft.business_purpose, 'Expense');
+      if (purpose.length > 80) purpose = purpose.slice(0, 80).replace(/[ ._-]+$/g, '');
+      const amount = Number.isFinite(Number(draft.amount)) ? Number(draft.amount).toFixed(2) : '0.00';
+      return `${draft.date || todayIso()}-${vendor}-${amount}-${purpose}${ext}`;
+    }
+
+    async function fetchJson(url, options = {}) {
+      const res = await fetch(url, options);
+      const text = await res.text();
+      let data = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { detail: text || 'Unexpected server response.' };
+      }
+      if (!res.ok) {
+        const message = data.detail || data.error || `Request failed (${res.status})`;
+        const error = new Error(message);
+        error.payload = data;
+        throw error;
+      }
+      return data;
+    }
+
+    function downloadCsv(csvText, fileName) {
+      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function Badge({ children, tone = 'default' }) {
+      const tones = {
+        default: 'text-[var(--ink)]',
+        good: 'text-emerald-700 dark:text-emerald-300',
+        warn: 'text-amber-700 dark:text-amber-300',
+        bad: 'text-rose-700 dark:text-rose-300',
+      };
+      return <span className={`pill inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${tones[tone]}`}>{children}</span>;
+    }
+
+    function Toast({ message, onClose }) {
+      if (!message) return null;
+      const accentClass = message.tone === 'good'
+        ? 'border-emerald-500/40'
+        : message.tone === 'warn'
+          ? 'border-amber-500/40'
+          : 'border-rose-500/40';
+      return (
+        <div className="fixed right-4 bottom-20 z-50 max-w-md w-[min(92vw,28rem)] toast-enter">
+          <div className={`card rounded-xl border-2 ${accentClass} px-5 py-4`}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-3">
+                  <Badge tone={message.tone}>{message.tone === 'good' ? 'Success' : message.tone === 'warn' ? 'Attention' : 'Failure'}</Badge>
+                </div>
+                <div className="mt-3 font-semibold">{message.text}</div>
+                {message.link ? (
+                  <div className="mt-3 text-sm">
+                    <a className="underline decoration-[var(--accent)] underline-offset-4 break-all" href={message.link} target="_blank" rel="noreferrer">Open receipt link</a>
+                  </div>
+                ) : null}
+                {message.pending ? (
+                  <div className="mt-3 text-sm text-[var(--muted)]">
+                    Workbook retry queued as <span className="font-mono">{message.pending.id}</span>.
+                  </div>
+                ) : null}
+                {message.csv ? (
+                  <div className="mt-3">
+                    <button
+                      onClick={() => downloadCsv(message.csv, `expense-dock-fallback-${todayIso()}.csv`)}
+                      className="pill rounded-full px-3 py-2 text-xs font-semibold"
+                    >
+                      Download CSV fallback
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <button onClick={onClose} className="pill rounded-full px-3 py-1 text-xs font-semibold">Close</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function StatusDot({ tone = 'default' }) {
+      const fills = { good: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-rose-500', default: 'bg-slate-400' };
+      const rings = { good: 'ring-emerald-500/25', warn: 'ring-amber-500/25', bad: 'ring-rose-500/25', default: 'ring-slate-400/20' };
+      return <span className={`inline-block h-3.5 w-3.5 rounded-full ${fills[tone] || fills.default} ring-4 ${rings[tone] || rings.default}`} />;
+    }
+
+    function NavButton({ active, iconName, label, meta, onClick }) {
+      return (
+        <button
+          onClick={onClick}
+          className={`w-full rounded-xl border px-4 py-4 text-left transition ${
+            active
+              ? 'border-[var(--accent)] bg-white dark:bg-white/10 shadow-sm'
+              : 'border-[var(--line)] bg-transparent hover:bg-white/40 dark:hover:bg-white/5'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <span className="pill rounded-full p-2">{icon(iconName, { size: 16 })}</span>
+            <div>
+              <div className="font-semibold">{label}</div>
+              {meta ? <div className="text-xs text-[var(--muted)] mt-1">{meta}</div> : null}
+            </div>
+          </div>
+        </button>
+      );
+    }
+
+    function HelpModal({ open, onClose }) {
+      if (!open) return null;
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} aria-label="Close help" />
+          <div className="relative card w-full max-w-3xl rounded-2xl p-6 md:p-8">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">Help</div>
+                <h2 className="font-display text-3xl mt-2">How Expense Dock runs</h2>
+              </div>
+              <button onClick={onClose} className="pill rounded-full px-4 py-2 text-sm font-semibold">Close</button>
+            </div>
+            <div className="grid gap-6 md:grid-cols-2 mt-6">
+              <div className="rounded-xl border border-[var(--line)] p-5">
+                <div className="text-xs uppercase tracking-[0.18em] text-[var(--accent)]">Workflow</div>
+                <ol className="mt-4 space-y-3 text-sm leading-7">
+                  <li>1. Resolve the shared <span className="font-mono">Business Expenses</span> folder from the configured OneDrive share URL.</li>
+                  <li>2. Ensure the target year and month folders exist.</li>
+                  <li>3. Upload the receipt if the normalized filename is not already present.</li>
+                  <li>4. Create an anonymous read-only OneDrive link for the receipt.</li>
+                  <li>5. Download the workbook, append one row, and upload the workbook back.</li>
+                </ol>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] p-5">
+                <div className="text-xs uppercase tracking-[0.18em] text-[var(--accent)]">Microsoft setup</div>
+                <ol className="mt-4 space-y-3 text-sm leading-7">
+                  <li>1. Create an app registration in Microsoft Entra ID.</li>
+                  <li>2. Supported account type: <span className="font-mono">Personal Microsoft accounts only</span>.</li>
+                  <li>3. Add platform <span className="font-mono">Mobile and desktop applications</span>.</li>
+                  <li>4. Add redirect URI <span className="font-mono">http://localhost</span>.</li>
+                  <li>5. Paste the client ID into Setup, save config, then click Connect Microsoft.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function Field({ label, hint, children }) {
+      return (
+        <label className="block">
+          <div className="flex items-end justify-between gap-3 mb-2">
+            <span className="text-sm font-semibold">{label}</span>
+            {hint ? <span className="text-xs text-[var(--muted)]">{hint}</span> : null}
+          </div>
+          {children}
+        </label>
+      );
+    }
+
+    function inputClass() {
+      return 'w-full rounded-xl border border-[var(--line)] bg-white dark:bg-[#1a3327] px-4 py-3 text-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20';
+    }
+
+    function SelectOrInput({ label, value, onChange, options, placeholder, hint }) {
+      const useSelect = options && options.length > 0;
+      return (
+        <Field label={label} hint={hint}>
+          {useSelect ? (
+            <select className={inputClass()} value={value} onChange={(e) => onChange(e.target.value)}>
+              <option value="">{placeholder || 'Select one'}</option>
+              {options.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          ) : (
+            <input className={inputClass()} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+          )}
+        </Field>
+      );
+    }
+
+    function App() {
+      const [status, setStatus] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [busy, setBusy] = useState('');
+      const [message, setMessage] = useState(null);
+      const [theme, setTheme] = useState(() => localStorage.getItem('expenseDockTheme') || 'light');
+      const [file, setFile] = useState(null);
+      const [activeView, setActiveView] = useState('submit');
+      const [helpOpen, setHelpOpen] = useState(false);
+      const [autoViewLocked, setAutoViewLocked] = useState(false);
+      const [configDraft, setConfigDraft] = useState({
+        client_id: '',
+        root_share_url: '',
+        workbook_name: 'Expense_Tracker.xlsx',
+        worksheet_name: 'Expense Log',
+        categories_sheet_name: 'Categories',
+        defaults: {
+          paid_by: '',
+          payment_method: '',
+          reimbursable: 'Yes',
+          reimbursement_status: '',
+        },
+      });
+      const [formDraft, setFormDraft] = useState({
+        date: todayIso(),
+        vendor: '',
+        amount: '',
+        category: '',
+        business_purpose: '',
+        filename_purpose: '',
+        paid_by: '',
+        payment_method: '',
+        reimbursable: 'Yes',
+        reimbursement_status: '',
+        notes: '',
+      });
+
+      useEffect(() => {
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        localStorage.setItem('expenseDockTheme', theme);
+      }, [theme]);
+
+      useEffect(() => {
+        if (!message) return;
+        const delay = message.tone === 'good' ? 2200 : message.tone === 'warn' ? 3500 : 6000;
+        const timer = window.setTimeout(() => setMessage((current) => current === message ? null : current), delay);
+        return () => window.clearTimeout(timer);
+      }, [message]);
+
+      async function loadStatus() {
+        setLoading(true);
+        try {
+          const data = await fetchJson('/api/status');
+          setStatus(data);
+          setConfigDraft(data.config);
+          setFormDraft((prev) => ({
+            ...prev,
+            date: prev.date || todayIso(),
+            paid_by: data.config.defaults?.paid_by || prev.paid_by,
+            payment_method: data.config.defaults?.payment_method || prev.payment_method,
+            reimbursable: data.config.defaults?.reimbursable || prev.reimbursable,
+            reimbursement_status: data.config.defaults?.reimbursement_status || prev.reimbursement_status,
+          }));
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      useEffect(() => { loadStatus(); }, []);
+
+      useEffect(() => {
+        if (!status || autoViewLocked) return;
+        setActiveView((!status.ready || !status.auth?.connected) ? 'setup' : 'submit');
+        setAutoViewLocked(true);
+      }, [status, autoViewLocked]);
+
+      const lookups = status?.lookups || DEFAULT_LOOKUPS;
+      const filenamePreview = useMemo(() => buildFilename(formDraft, file?.name || ''), [formDraft, file]);
+      const hasLookups = Boolean(status?.lookup_cache_updated_at || (lookups.categories || []).length || (lookups.payment_methods || []).length);
+      const queueCount = (status?.pending || []).length;
+      const statusItems = [
+        { label: 'Config', tone: status?.ready ? 'good' : 'bad', detail: status?.ready ? 'Saved' : 'Needs setup' },
+        { label: 'Microsoft', tone: status?.auth?.connected ? 'good' : 'bad', detail: status?.auth?.connected ? (status?.auth?.account || 'Connected') : 'Not connected' },
+        { label: 'Lookups', tone: hasLookups ? 'good' : (status?.auth?.connected ? 'warn' : 'default'), detail: hasLookups ? 'Workbook cached' : (status?.auth?.connected ? 'Refresh needed' : 'Waiting for auth') },
+        { label: 'Queue', tone: queueCount ? 'warn' : 'good', detail: queueCount ? `${queueCount} pending` : 'Clear' },
+      ];
+
+      async function saveConfig() {
+        setBusy('config');
+        setMessage(null);
+        try {
+          await fetchJson('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(configDraft),
+          });
+          await loadStatus();
+          setMessage({ tone: 'good', text: 'Config saved.' });
+        } catch (error) {
+          setMessage({ tone: 'bad', text: error.message });
+        } finally {
+          setBusy('');
+        }
+      }
+
+      async function login() {
+        setBusy('login');
+        setMessage({ tone: 'warn', text: 'Microsoft login is opening in a browser window.' });
+        try {
+          await fetchJson('/api/auth/login', { method: 'POST' });
+          await loadStatus();
+          setMessage({ tone: 'good', text: 'Microsoft account connected.' });
+        } catch (error) {
+          setMessage({ tone: 'bad', text: error.message });
+        } finally {
+          setBusy('');
+        }
+      }
+
+      async function logout() {
+        setBusy('logout');
+        try {
+          await fetchJson('/api/auth/logout', { method: 'POST' });
+          await loadStatus();
+          setMessage({ tone: 'good', text: 'Microsoft session cleared.' });
+        } catch (error) {
+          setMessage({ tone: 'bad', text: error.message });
+        } finally {
+          setBusy('');
+        }
+      }
+
+      async function refreshLookups() {
+        setBusy('lookups');
+        try {
+          await fetchJson('/api/lookups/refresh', { method: 'POST' });
+          await loadStatus();
+          setMessage({ tone: 'good', text: 'Lookup values refreshed from the workbook.' });
+        } catch (error) {
+          setMessage({ tone: 'bad', text: error.message });
+        } finally {
+          setBusy('');
+        }
+      }
+
+      async function submitExpense(event) {
+        event.preventDefault();
+        if (!file) {
+          setMessage({ tone: 'bad', text: 'Choose a receipt file first.' });
+          return;
+        }
+        setBusy('submit');
+        setMessage(null);
+        const formData = new FormData();
+        formData.append('payload', JSON.stringify(formDraft));
+        formData.append('receipt', file);
+        try {
+          const res = await fetch('/api/submit', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (!res.ok) {
+            throw Object.assign(new Error(data.error || data.detail || 'Submit failed.'), { payload: data });
+          }
+          await loadStatus();
+          setFile(null);
+          setFormDraft((prev) => ({
+            ...prev,
+            date: todayIso(),
+            vendor: '',
+            amount: '',
+            category: '',
+            business_purpose: '',
+            filename_purpose: '',
+            notes: '',
+            paid_by: status?.config?.defaults?.paid_by || prev.paid_by,
+            payment_method: status?.config?.defaults?.payment_method || prev.payment_method,
+            reimbursable: status?.config?.defaults?.reimbursable || prev.reimbursable,
+            reimbursement_status: status?.config?.defaults?.reimbursement_status || prev.reimbursement_status,
+          }));
+          setMessage({
+            tone: data.duplicate ? 'warn' : 'good',
+            text: data.duplicate ? `Receipt was already logged at row ${data.row_number}.` : `Expense appended on row ${data.row_number}.`,
+            link: data.receipt_link,
+          });
+        } catch (error) {
+          const payload = error.payload || {};
+          setMessage({
+            tone: 'bad',
+            text: payload.error || error.message,
+            link: payload.receipt_link || '',
+            pending: payload.pending || null,
+            csv: payload.fallback_csv || '',
+          });
+          await loadStatus();
+        } finally {
+          setBusy('');
+        }
+      }
+
+      async function retryPending(id) {
+        setBusy(`retry-${id}`);
+        setMessage(null);
+        try {
+          const res = await fetch(`/api/pending/${id}/retry`, { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) {
+            throw Object.assign(new Error(data.error || 'Retry failed.'), { payload: data });
+          }
+          await loadStatus();
+          setMessage({
+            tone: data.duplicate ? 'warn' : 'good',
+            text: data.duplicate ? `Pending item was already logged at row ${data.row_number}.` : `Pending item appended on row ${data.row_number}.`,
+            link: data.receipt_link,
+          });
+        } catch (error) {
+          const payload = error.payload || {};
+          setMessage({
+            tone: 'bad',
+            text: payload.error || error.message,
+            link: payload.receipt_link || '',
+            csv: payload.fallback_csv || '',
+          });
+          await loadStatus();
+        } finally {
+          setBusy('');
+        }
+      }
+
+      if (loading && !status) {
+        return <div className="min-h-screen flex items-center justify-center text-lg">Loading Expense Dock…</div>;
+      }
+
+      const setupView = (
+        <div className="space-y-6">
+          {(!status?.ready || !status?.auth?.connected) ? (
+            <div className="rounded-2xl border border-[var(--line)] bg-white dark:bg-[#1a3327] p-6">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">First-run path</div>
+                  <h2 className="font-display text-3xl mt-2">Finish setup before submitting expenses</h2>
+                  <p className="text-[var(--muted)] mt-3 max-w-2xl">Save the OneDrive and workbook config, connect Microsoft, then refresh workbook lookups once so the form can use your live category and payment defaults.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone={status?.ready ? 'good' : 'warn'}>{status?.ready ? 'Config ready' : 'Config needed'}</Badge>
+                  <Badge tone={status?.auth?.connected ? 'good' : 'warn'}>{status?.auth?.connected ? 'Microsoft connected' : 'Connect Microsoft'}</Badge>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <section className="rounded-2xl border border-[var(--line)] p-6 md:p-7">
+              <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">Connection</div>
+              <h2 className="font-display text-3xl mt-2">OneDrive + workbook settings</h2>
+              <div className="grid gap-5 mt-6 md:grid-cols-2">
+                <Field label="Microsoft client ID"><input className={inputClass()} value={configDraft.client_id} onChange={(e) => setConfigDraft({ ...configDraft, client_id: e.target.value })} placeholder="App registration client ID" /></Field>
+                <Field label="Workbook filename"><input className={inputClass()} value={configDraft.workbook_name} onChange={(e) => setConfigDraft({ ...configDraft, workbook_name: e.target.value })} /></Field>
+              </div>
+              <div className="mt-5">
+                <Field label="Business Expenses folder share URL" hint="Shared root that contains the workbook and year folders">
+                  <textarea className={inputClass()} rows="3" value={configDraft.root_share_url} onChange={(e) => setConfigDraft({ ...configDraft, root_share_url: e.target.value })} placeholder="https://1drv.ms/f/..." />
+                </Field>
+              </div>
+              <div className="grid gap-5 mt-5 md:grid-cols-2">
+                <Field label="Expense worksheet"><input className={inputClass()} value={configDraft.worksheet_name} onChange={(e) => setConfigDraft({ ...configDraft, worksheet_name: e.target.value })} /></Field>
+                <Field label="Lookup worksheet"><input className={inputClass()} value={configDraft.categories_sheet_name} onChange={(e) => setConfigDraft({ ...configDraft, categories_sheet_name: e.target.value })} /></Field>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] p-5 mt-6">
+                <div className="text-xs uppercase tracking-[0.18em] text-[var(--accent)]">Default values</div>
+                <div className="grid gap-4 mt-4 md:grid-cols-2">
+                  <SelectOrInput label="Default paid by" value={configDraft.defaults?.paid_by || ''} onChange={(value) => setConfigDraft({ ...configDraft, defaults: { ...configDraft.defaults, paid_by: value } })} options={lookups.paid_by} />
+                  <SelectOrInput label="Default payment method" value={configDraft.defaults?.payment_method || ''} onChange={(value) => setConfigDraft({ ...configDraft, defaults: { ...configDraft.defaults, payment_method: value } })} options={lookups.payment_methods} />
+                  <SelectOrInput label="Default reimbursable" value={configDraft.defaults?.reimbursable || ''} onChange={(value) => setConfigDraft({ ...configDraft, defaults: { ...configDraft.defaults, reimbursable: value } })} options={lookups.reimbursable} />
+                  <SelectOrInput label="Default reimbursement status" value={configDraft.defaults?.reimbursement_status || ''} onChange={(value) => setConfigDraft({ ...configDraft, defaults: { ...configDraft.defaults, reimbursement_status: value } })} options={lookups.reimbursement_statuses} />
+                </div>
+              </div>
+            </section>
+            <aside className="space-y-6">
+              <section className="rounded-2xl border border-[var(--line)] p-6">
+                <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">Auth</div>
+                <h2 className="font-display text-2xl mt-2">Connection status</h2>
+                <div className="rounded-xl border border-[var(--line)] p-4 mt-5">
+                  <div className="flex items-center gap-3"><StatusDot tone={status?.auth?.connected ? 'good' : 'bad'} /><div className="font-semibold">{status?.auth?.connected ? 'Connected to Microsoft' : 'Microsoft not connected'}</div></div>
+                  <div className="mt-2 text-sm text-[var(--muted)] break-all">{status?.auth?.connected ? (status?.auth?.account || 'Authenticated account cached.') : 'Save the client ID first, then run Connect Microsoft.'}</div>
+                  <div className="mt-5 grid gap-3">
+                    <button onClick={saveConfig} disabled={busy === 'config'} className="rounded-xl bg-[var(--ink)] text-[var(--bg)] px-4 py-3 font-semibold disabled:opacity-60">{busy === 'config' ? 'Saving…' : 'Save config'}</button>
+                    <button onClick={login} disabled={busy === 'login'} className="rounded-xl border border-[var(--line)] px-4 py-3 font-semibold disabled:opacity-60">{busy === 'login' ? 'Waiting for login…' : 'Connect Microsoft'}</button>
+                    <button onClick={refreshLookups} disabled={busy === 'lookups'} className="rounded-xl border border-[var(--line)] px-4 py-3 font-semibold disabled:opacity-60">{busy === 'lookups' ? 'Refreshing…' : 'Refresh dropdowns from workbook'}</button>
+                    <button onClick={logout} disabled={busy === 'logout'} className="rounded-xl border border-[var(--line)] px-4 py-3 font-semibold disabled:opacity-60">Clear cached Microsoft session</button>
+                  </div>
+                </div>
+              </section>
+              <section className="rounded-2xl border border-[var(--line)] p-6">
+                <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">Notes</div>
+                <h2 className="font-display text-2xl mt-2">App registration reminder</h2>
+                <p className="text-sm text-[var(--muted)] mt-4">Use a public client registration with personal Microsoft accounts and add <span className="font-mono">http://localhost</span> under mobile/desktop redirect URIs.</p>
+                {status?.lookup_cache_updated_at ? <p className="text-sm text-[var(--muted)] mt-4">Dropdown cache last refreshed: <span className="font-mono">{status.lookup_cache_updated_at}</span></p> : null}
+              </section>
+            </aside>
+          </div>
+        </div>
+      );
+
+      const submitView = (
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <section className="rounded-2xl border border-[var(--line)] p-6 md:p-7">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">New submission</div>
+                <h2 className="font-display text-3xl mt-2">Ledger entry</h2>
+                <p className="text-sm text-[var(--muted)] mt-3 max-w-2xl">The receipt filename is generated from the date, vendor, amount, and short-purpose field below. Business Purpose stays in the workbook row.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge tone={status?.ready ? 'good' : 'warn'}>{status?.ready ? 'Config ready' : 'Config needed'}</Badge>
+                <Badge tone={status?.auth?.connected ? 'good' : 'warn'}>{status?.auth?.connected ? 'Microsoft connected' : 'Connect Microsoft'}</Badge>
+              </div>
+            </div>
+            <form className="space-y-6 mt-7" onSubmit={submitExpense}>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <Field label="Expense date"><input className={inputClass()} type="date" value={formDraft.date} onChange={(e) => setFormDraft({ ...formDraft, date: e.target.value })} /></Field>
+                <Field label="Vendor"><input className={inputClass()} value={formDraft.vendor} onChange={(e) => setFormDraft({ ...formDraft, vendor: e.target.value })} placeholder="SYNTHETIC VENDOR" /></Field>
+                <Field label="Amount"><input className={inputClass()} type="number" step="0.01" min="0" value={formDraft.amount} onChange={(e) => setFormDraft({ ...formDraft, amount: e.target.value })} placeholder="10.00" /></Field>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <SelectOrInput label="Category" value={formDraft.category} onChange={(value) => setFormDraft({ ...formDraft, category: value })} options={lookups.categories} placeholder="Choose category" />
+                <Field label="Short filename purpose" hint="Optional; falls back to Business Purpose"><input className={inputClass()} value={formDraft.filename_purpose} onChange={(e) => setFormDraft({ ...formDraft, filename_purpose: e.target.value })} placeholder="SYNTHETIC PURPOSE" /></Field>
+              </div>
+              <Field label="Business Purpose"><textarea className={inputClass()} rows="3" value={formDraft.business_purpose} onChange={(e) => setFormDraft({ ...formDraft, business_purpose: e.target.value })} placeholder="SYNTHETIC BUSINESS PURPOSE" /></Field>
+              <div className="grid gap-4 md:grid-cols-2">
+                <SelectOrInput label="Paid By" value={formDraft.paid_by} onChange={(value) => setFormDraft({ ...formDraft, paid_by: value })} options={lookups.paid_by} />
+                <SelectOrInput label="Payment Method" value={formDraft.payment_method} onChange={(value) => setFormDraft({ ...formDraft, payment_method: value })} options={lookups.payment_methods} />
+                <SelectOrInput label="Reimbursable?" value={formDraft.reimbursable} onChange={(value) => setFormDraft({ ...formDraft, reimbursable: value })} options={lookups.reimbursable} />
+                <SelectOrInput label="Reimb. Status" value={formDraft.reimbursement_status} onChange={(value) => setFormDraft({ ...formDraft, reimbursement_status: value })} options={lookups.reimbursement_statuses} />
+              </div>
+              <Field label="Notes"><textarea className={inputClass()} rows="3" value={formDraft.notes} onChange={(e) => setFormDraft({ ...formDraft, notes: e.target.value })} placeholder="Optional context for the accountant or later reference" /></Field>
+              <Field label="Receipt file" hint="PDF, image, or any file type">
+                <label
+                  className="block rounded-xl border border-dashed border-[var(--line)] bg-white dark:bg-[#1a3327] p-6 cursor-pointer transition hover:border-[var(--accent)]"
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add('border-[var(--accent)]'); }}
+                  onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('border-[var(--accent)]'); }}
+                  onDrop={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('border-[var(--accent)]'); const f = e.dataTransfer?.files?.[0]; if (f) setFile(f); }}
+                >
+                  <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="font-semibold">{file ? file.name : 'Choose or drop a file'}</div>
+                      <div className="text-sm text-[var(--muted)] mt-1">OneDrive destination: <span className="font-mono">{formDraft.date ? `${formDraft.date.slice(0, 4)}/${formDraft.date.slice(0, 7)}` : 'YYYY/YYYY-MM'}</span></div>
+                    </div>
+                    {icon('FileUp', { size: 26 })}
+                  </div>
+                </label>
+              </Field>
+              <div className="flex flex-wrap gap-3 pt-2">
+                <button disabled={busy === 'submit'} className="rounded-full bg-[var(--accent)] text-white px-6 py-3 font-semibold disabled:opacity-60">{busy === 'submit' ? 'Submitting…' : 'Upload receipt and append workbook'}</button>
+                <button type="button" onClick={() => setActiveView('setup')} className="rounded-full border border-[var(--line)] px-6 py-3 font-semibold">Adjust setup</button>
+              </div>
+            </form>
+          </section>
+          <aside className="space-y-6">
+            <section className="rounded-2xl border border-[var(--line)] p-6">
+              <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">Preview</div>
+              <h2 className="font-display text-2xl mt-2">Filename + destination</h2>
+              <div className="rounded-xl border border-[var(--line)] p-4 mt-5 bg-white dark:bg-[#1a3327]">
+                <div className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Filename preview</div>
+                <div className="mt-3 font-mono text-sm break-all">{filenamePreview}</div>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] p-4 mt-4">
+                <div className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Current file</div>
+                <div className="mt-3 font-semibold">{file ? file.name : 'No file selected yet'}</div>
+                <div className="text-sm text-[var(--muted)] mt-2">{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : 'Choose a file to enable submit.'}</div>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] p-4 mt-4">
+                <div className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Ready checks</div>
+                <div className="space-y-3 mt-4 text-sm">
+                  <div className="flex items-center justify-between gap-3"><span>Config saved</span><span className="flex items-center gap-2"><StatusDot tone={status?.ready ? 'good' : 'bad'} />{status?.ready ? 'Yes' : 'No'}</span></div>
+                  <div className="flex items-center justify-between gap-3"><span>Microsoft connected</span><span className="flex items-center gap-2"><StatusDot tone={status?.auth?.connected ? 'good' : 'bad'} />{status?.auth?.connected ? 'Yes' : 'No'}</span></div>
+                  <div className="flex items-center justify-between gap-3"><span>Workbook lookups cached</span><span className="flex items-center gap-2"><StatusDot tone={hasLookups ? 'good' : 'warn'} />{hasLookups ? 'Yes' : 'Refresh'}</span></div>
+                </div>
+              </div>
+            </section>
+          </aside>
+        </div>
+      );
+
+      const queueView = (
+        <section className="rounded-2xl border border-[var(--line)] p-6 md:p-7">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">Queue</div>
+              <h2 className="font-display text-3xl mt-2">Pending workbook retries</h2>
+            </div>
+            <Badge tone={queueCount ? 'warn' : 'good'}>{queueCount ? `${queueCount} pending` : 'Queue clear'}</Badge>
+          </div>
+          <div className="space-y-4 mt-6">
+            {queueCount === 0 ? (
+              <div className="rounded-xl border border-[var(--line)] p-6 text-[var(--muted)]">Nothing waiting. If workbook upload fails after the receipt already reached OneDrive, the retry record shows up here.</div>
+            ) : (
+              status.pending.map((item) => (
+                <div key={item.id} className="rounded-xl border border-[var(--line)] p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <div className="font-semibold text-lg">{item.vendor} • ${Number(item.amount || 0).toFixed(2)}</div>
+                      <div className="text-sm text-[var(--muted)] mt-1">{item.date}</div>
+                      <div className="font-mono text-xs mt-3 break-all">{item.receipt_filename}</div>
+                    </div>
+                    <Badge tone="warn">Retry</Badge>
+                  </div>
+                  <div className="text-sm text-rose-700 dark:text-rose-300 mt-4">{item.error}</div>
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <button onClick={() => retryPending(item.id)} disabled={busy === `retry-${item.id}`} className="rounded-full bg-[var(--accent-2)] text-white px-4 py-2 text-sm font-semibold disabled:opacity-60">{busy === `retry-${item.id}` ? 'Retrying…' : 'Retry workbook append'}</button>
+                    <button onClick={() => window.open(`/api/pending/${item.id}/csv`, '_blank')} className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-semibold">Download CSV fallback</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      );
+
+      const lookupsView = (
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <section className="rounded-2xl border border-[var(--line)] p-6 md:p-7">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">Workbook lookups</div>
+                <h2 className="font-display text-3xl mt-2">Cached dropdown source</h2>
+              </div>
+              <button onClick={refreshLookups} disabled={busy === 'lookups'} className="rounded-full border border-[var(--line)] px-5 py-3 text-sm font-semibold disabled:opacity-60">{busy === 'lookups' ? 'Refreshing…' : 'Refresh now'}</button>
+            </div>
+            <div className="text-sm text-[var(--muted)] mt-3">{status?.lookup_cache_updated_at ? `Last refreshed ${status.lookup_cache_updated_at}` : 'Not refreshed yet. Connect Microsoft first, then pull from the workbook.'}</div>
+            <div className="grid gap-5 mt-6 md:grid-cols-2">
+              <div className="rounded-xl border border-[var(--line)] p-5"><div className="text-xs uppercase tracking-[0.18em] text-[var(--accent)]">Categories</div><div className="mt-4 flex flex-wrap gap-2">{(lookups.categories || []).map((item) => <span key={item} className="pill rounded-full px-3 py-1 text-xs">{item}</span>)}</div></div>
+              <div className="rounded-xl border border-[var(--line)] p-5"><div className="text-xs uppercase tracking-[0.18em] text-[var(--accent)]">Payment Methods</div><div className="mt-4 flex flex-wrap gap-2">{(lookups.payment_methods || []).map((item) => <span key={item} className="pill rounded-full px-3 py-1 text-xs">{item}</span>)}</div></div>
+              <div className="rounded-xl border border-[var(--line)] p-5"><div className="text-xs uppercase tracking-[0.18em] text-[var(--accent)]">Paid By</div><div className="mt-4 flex flex-wrap gap-2">{(lookups.paid_by || []).map((item) => <span key={item} className="pill rounded-full px-3 py-1 text-xs">{item}</span>)}</div></div>
+              <div className="rounded-xl border border-[var(--line)] p-5"><div className="text-xs uppercase tracking-[0.18em] text-[var(--accent)]">Reimbursement Status</div><div className="mt-4 flex flex-wrap gap-2">{(lookups.reimbursement_statuses || []).map((item) => <span key={item} className="pill rounded-full px-3 py-1 text-xs">{item}</span>)}</div></div>
+            </div>
+          </section>
+          <aside className="space-y-6">
+            <section className="rounded-2xl border border-[var(--line)] p-6">
+              <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">State</div>
+              <h2 className="font-display text-2xl mt-2">Lookup health</h2>
+              <div className="space-y-4 mt-5 text-sm">
+                <div className="flex items-center justify-between gap-3"><span>Microsoft auth</span><span className="flex items-center gap-2"><StatusDot tone={status?.auth?.connected ? 'good' : 'bad'} />{status?.auth?.connected ? 'Ready' : 'Missing'}</span></div>
+                <div className="flex items-center justify-between gap-3"><span>Workbook cache</span><span className="flex items-center gap-2"><StatusDot tone={hasLookups ? 'good' : 'warn'} />{hasLookups ? 'Loaded' : 'Refresh needed'}</span></div>
+                <div className="flex items-center justify-between gap-3"><span>Version</span><span className="font-mono">v{{VERSION}}</span></div>
+              </div>
+            </section>
+          </aside>
+        </div>
+      );
+
+      const activeViewNode = activeView === 'setup' ? setupView : activeView === 'queue' ? queueView : activeView === 'lookups' ? lookupsView : submitView;
+
+      return (
+        <>
+          <div className="min-h-screen px-4 py-5 pb-16 md:px-8 md:py-8 md:pb-16">
+            <div className="max-w-7xl mx-auto space-y-5">
+              <header className="card rounded-2xl receipt-accent">
+                <div className="px-6 py-4 md:px-8">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <h1 className="font-display text-2xl md:text-3xl leading-none">Expense Dock</h1>
+                      <Badge tone={status?.auth?.connected ? 'good' : 'warn'}>{status?.auth?.connected ? 'Connected' : 'Not connected'}</Badge>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button className="pill rounded-full px-4 py-2 text-sm font-semibold" onClick={() => setHelpOpen(true)}>Help</button>
+                      <button className="pill rounded-full px-4 py-2 text-sm font-semibold" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? 'Light' : 'Dark'}</button>
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div className="grid gap-5 xl:grid-cols-[220px_minmax(0,1fr)]">
+                <aside>
+                  <div className="card rounded-2xl p-4">
+                    <div className="text-xs uppercase tracking-[0.22em] text-[var(--accent)] px-2 pb-3">Workspace</div>
+                    <div className="space-y-3">
+                      <NavButton active={activeView === 'submit'} iconName="PenSquare" label="Submit" meta="Primary intake form" onClick={() => setActiveView('submit')} />
+                      <NavButton active={activeView === 'setup'} iconName="Settings2" label="Setup" meta="Connection and defaults" onClick={() => setActiveView('setup')} />
+                      <NavButton active={activeView === 'queue'} iconName="History" label="Queue" meta={queueCount ? `${queueCount} pending retries` : 'No pending retries'} onClick={() => setActiveView('queue')} />
+                      <NavButton active={activeView === 'lookups'} iconName="ListTree" label="Lookups" meta={hasLookups ? 'Cached workbook values' : 'Not refreshed yet'} onClick={() => setActiveView('lookups')} />
+                    </div>
+                  </div>
+                </aside>
+                <main className="space-y-5">{activeViewNode}</main>
+              </div>
+            </div>
+          </div>
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--card)]">
+            <div className="max-w-7xl mx-auto px-4 py-2 md:px-8">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-4">
+                  {statusItems.map((item) => (
+                    <div key={item.label} className="flex items-center gap-2 text-xs">
+                      <StatusDot tone={item.tone} />
+                      <span className="font-semibold">{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-xs text-[var(--muted)] font-mono">v{{VERSION}}</div>
+              </div>
+            </div>
+          </div>
+          <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+          <Toast message={message} onClose={() => setMessage(null)} />
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    );
+  </script>
+</body>
+</html>
+"""
+
+
+def main() -> None:
+    args = parse_args()
+    ensure_runtime_dirs()
+    ensure_runtime_config()
+    port = find_free_port(args.port)
+    if port != args.port:
+        logger.warning("Port %s is in use; using port %s instead.", args.port, port)
+    atomic_write_text(LAST_PORT_FILE, str(port))
+    logger.info("Expense Dock available at http://127.0.0.1:%s", port)
+    if not args.no_browser and not testing_mode_enabled():
+        threading.Thread(target=open_browser, args=(port,), daemon=True).start()
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

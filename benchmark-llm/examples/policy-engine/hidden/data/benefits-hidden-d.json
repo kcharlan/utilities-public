@@ -1,0 +1,50 @@
+{
+  "plan_name": "Hidden Plan D",
+  "benefits": [
+    {
+      "service_category": "primary care office visit",
+      "coverage_status": "covered",
+      "member_cost": "$10 copay"
+    },
+    {
+      "service_category": "  specialist office visit  ",
+      "coverage_status": "covered",
+      "member_cost": "$45 copay"
+    },
+    {
+      "service_category": "ER PHYS FEE",
+      "coverage_status": "covered",
+      "member_cost": null
+    },
+    {
+      "service_category": "diagnostic imaging professional component",
+      "coverage_status": "covered",
+      "member_cost": "$80 copay"
+    },
+    {
+      "service_category": "diagnostic imaging technical component",
+      "coverage_status": "covered",
+      "member_cost": "15% after deductible"
+    },
+    {
+      "service_category": "emergency room facility",
+      "coverage_status": "covered",
+      "member_cost": "$600 copay"
+    },
+    {
+      "service_category": "home infusion therapy",
+      "coverage_status": "covered",
+      "member_cost": "20% coinsurance"
+    },
+    {
+      "service_category": "",
+      "coverage_status": "covered",
+      "member_cost": "$0"
+    },
+    {
+      "service_category": "inpatient room and board",
+      "coverage_status": null,
+      "member_cost": "20% after deductible"
+    }
+  ]
+}

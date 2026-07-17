@@ -1,0 +1,1 @@
+{"id": "cal_09_january_first_after_boundary","category": "calendar_edges","weight": 1,"input": {"expr": "0 0 1 1 *","after": "2026-01-01T00:00:00+00:00","n": 2,"tz": "UTC"},"expected": {"kind": "fires","value": ["2027-01-01T00:00:00+00:00","2028-01-01T00:00:00+00:00"]}}

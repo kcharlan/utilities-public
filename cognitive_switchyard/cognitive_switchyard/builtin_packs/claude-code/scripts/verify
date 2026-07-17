@@ -1,0 +1,324 @@
+#!/bin/sh
+set -eu
+
+SESSION_ROOT="${1:-$PWD}"
+REPO_ROOT="${COGNITIVE_SWITCHYARD_REPO_ROOT:-}"
+SOURCE_REPO="${COGNITIVE_SWITCHYARD_SOURCE_REPO:-}"
+
+if [ -z "${COGNITIVE_SWITCHYARD_PACK_ROOT:-}" ]; then
+  echo "COGNITIVE_SWITCHYARD_PACK_ROOT is required for verify." >&2
+  exit 1
+fi
+
+if [ -z "$REPO_ROOT" ]; then
+  echo "COGNITIVE_SWITCHYARD_REPO_ROOT is required for verify." >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Test scoping
+# ---------------------------------------------------------------------------
+# 1. If COGNITIVE_SWITCHYARD_PROJECT_DIR is set, scope to that subdir.
+# 2. Otherwise, run at REPO_ROOT (single-project default).
+# ---------------------------------------------------------------------------
+
+PROJECT_DIR="${COGNITIVE_SWITCHYARD_PROJECT_DIR:-}"
+
+canonical_dir() {
+  if [ ! -d "$1" ]; then
+    return 1
+  fi
+  (
+    cd "$1" 2>/dev/null
+    pwd -P
+  )
+}
+
+path_within_root() {
+  case "$2" in
+    "$1"|"$1"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_target_dir() {
+  repo_real="$(canonical_dir "$REPO_ROOT")" || {
+    echo "Repository root does not exist: $REPO_ROOT" >&2
+    exit 1
+  }
+
+  if [ -n "$PROJECT_DIR" ]; then
+    candidate="$repo_real/$PROJECT_DIR"
+  else
+    candidate="$repo_real"
+  fi
+
+  target_real="$(canonical_dir "$candidate")" || {
+    if [ -n "$PROJECT_DIR" ]; then
+      echo "PROJECT_DIR '$PROJECT_DIR' does not exist under $repo_real" >&2
+    else
+      echo "Verification target does not exist: $candidate" >&2
+    fi
+    exit 1
+  }
+
+  if ! path_within_root "$repo_real" "$target_real"; then
+    echo "PROJECT_DIR '$PROJECT_DIR' escapes repository root $repo_real" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$target_real"
+}
+
+resolve_source_target_dir() {
+  if [ -z "$SOURCE_REPO" ]; then
+    return 1
+  fi
+
+  source_real="$(canonical_dir "$SOURCE_REPO")" || return 1
+  if [ -n "$PROJECT_DIR" ]; then
+    candidate="$source_real/$PROJECT_DIR"
+  else
+    candidate="$source_real"
+  fi
+  target_real="$(canonical_dir "$candidate")" || return 1
+  path_within_root "$source_real" "$target_real" || return 1
+  printf '%s\n' "$target_real"
+}
+
+is_python_project() {
+  [ -d "$1/tests" ] \
+    || [ -f "$1/pytest.ini" ] \
+    || [ -f "$1/pyproject.toml" ] \
+    || [ -f "$1/setup.py" ] \
+    || [ -f "$1/setup.cfg" ] \
+    || [ -f "$1/requirements.txt" ] \
+    || [ -f "$1/requirements-dev.txt" ]
+}
+
+find_existing_python() {
+  target="$1"
+  if [ -x "$target/.venv/bin/python" ]; then
+    printf '%s\n' "$target/.venv/bin/python"
+    return 0
+  fi
+  if [ -x "$target/venv/bin/python" ]; then
+    printf '%s\n' "$target/venv/bin/python"
+    return 0
+  fi
+  return 1
+}
+
+python_has_pytest() {
+  python_exec="$1"
+  target="$2"
+  (
+    cd "$target"
+    "$python_exec" -m pytest --version >/dev/null 2>&1
+  )
+}
+
+dependency_fingerprint() {
+  python3 - "$1" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+files = [
+    "requirements.txt",
+    "requirements-dev.txt",
+    "pyproject.toml",
+    "poetry.lock",
+    "uv.lock",
+    "setup.py",
+    "setup.cfg",
+    "tox.ini",
+    "pytest.ini",
+]
+
+h = hashlib.sha256()
+for rel in files:
+    path = root / rel
+    if not path.is_file():
+        continue
+    h.update(rel.encode("utf-8"))
+    h.update(b"\0")
+    h.update(path.read_bytes())
+    h.update(b"\0")
+print(h.hexdigest())
+PY
+}
+
+session_env_dir() {
+  slug="${PROJECT_DIR:-repo-root}"
+  slug="$(printf '%s' "$slug" | tr '/ ' '__' | tr -cd 'A-Za-z0-9._-')"
+  if [ -z "$slug" ]; then
+    slug="repo-root"
+  fi
+  printf '%s\n' "$SESSION_ROOT/verify_envs/$slug"
+}
+
+write_session_env_state() {
+  python3 - "$1" "$2" "$3" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+fingerprint = sys.argv[2]
+target_dir = sys.argv[3]
+state_path.parent.mkdir(parents=True, exist_ok=True)
+state_path.write_text(
+    json.dumps({"fingerprint": fingerprint, "target_dir": target_dir}, sort_keys=True),
+    encoding="utf-8",
+)
+PY
+}
+
+read_session_env_state() {
+  python3 - "$1" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+if not state_path.is_file():
+    print("\t")
+    raise SystemExit(0)
+data = json.loads(state_path.read_text(encoding="utf-8"))
+print(f"{data.get('fingerprint', '')}\t{data.get('target_dir', '')}")
+PY
+}
+
+install_python_dependencies() {
+  target="$1"
+  python_exec="$2"
+
+  (
+    cd "$target"
+    if [ -f "requirements.txt" ]; then
+      "$python_exec" -m pip install -r requirements.txt
+    fi
+    if [ -f "requirements-dev.txt" ]; then
+      "$python_exec" -m pip install -r requirements-dev.txt
+    fi
+    if [ -f "pyproject.toml" ] || [ -f "setup.py" ] || [ -f "setup.cfg" ]; then
+      "$python_exec" -m pip install -e .
+    fi
+    if ! "$python_exec" -m pytest --version >/dev/null 2>&1; then
+      "$python_exec" -m pip install pytest
+    fi
+  )
+}
+
+ensure_session_python() {
+  target="$1"
+  fingerprint="$2"
+  bootstrap_python="$3"
+
+  env_dir="$(session_env_dir)"
+  state_file="$env_dir/bootstrap_state.json"
+  current_state="$(read_session_env_state "$state_file")"
+  current_fingerprint="$(printf '%s' "$current_state" | cut -f1)"
+  current_target_dir="$(printf '%s' "$current_state" | cut -f2-)"
+
+  if [ ! -x "$env_dir/bin/python" ] || [ "$current_fingerprint" != "$fingerprint" ] || [ "$current_target_dir" != "$target" ]; then
+    rm -rf "$env_dir"
+    echo "Bootstrapping session verification env at $env_dir" >&2
+    "$bootstrap_python" -m venv "$env_dir"
+    install_python_dependencies "$target" "$env_dir/bin/python" >&2
+    write_session_env_state "$state_file" "$fingerprint" "$target"
+  fi
+
+  printf '%s\n' "$env_dir/bin/python"
+}
+
+run_pytest_cmd() {
+  target="$1"
+  python_exec="$2"
+
+  echo "Running verification in $target"
+  if [ -d "$target/tests" ]; then
+    test_target="tests"
+  else
+    test_target="."
+  fi
+
+  (
+    cd "$target"
+    "$python_exec" -m pytest "$test_target" --tb=short -q
+  )
+  rc=$?
+  if [ "$rc" -eq 5 ]; then
+    echo "No tests collected in $target. Verification passed (no-op)."
+    return 0
+  fi
+  return "$rc"
+}
+
+run_npm_tests() {
+  echo "Running verification in $1"
+  (
+    cd "$1"
+    npm test
+  )
+}
+
+TARGET_DIR="$(resolve_target_dir)"
+TARGET_FINGERPRINT="$(dependency_fingerprint "$TARGET_DIR")"
+SOURCE_TARGET_DIR=""
+if SOURCE_TARGET_DIR="$(resolve_source_target_dir 2>/dev/null)"; then
+  :
+else
+  SOURCE_TARGET_DIR=""
+fi
+
+if is_python_project "$TARGET_DIR"; then
+  TARGET_PYTHON=""
+  if TARGET_PYTHON="$(find_existing_python "$TARGET_DIR" 2>/dev/null)"; then
+    if python_has_pytest "$TARGET_PYTHON" "$TARGET_DIR"; then
+      run_pytest_cmd "$TARGET_DIR" "$TARGET_PYTHON"
+      exit $?
+    fi
+  fi
+
+  SOURCE_PYTHON=""
+  if [ -n "$SOURCE_TARGET_DIR" ]; then
+    if SOURCE_PYTHON="$(find_existing_python "$SOURCE_TARGET_DIR" 2>/dev/null)"; then
+      SOURCE_FINGERPRINT="$(dependency_fingerprint "$SOURCE_TARGET_DIR")"
+      if [ "$SOURCE_FINGERPRINT" = "$TARGET_FINGERPRINT" ]; then
+        if python_has_pytest "$SOURCE_PYTHON" "$TARGET_DIR"; then
+          echo "Using source repository verification env from $SOURCE_TARGET_DIR"
+          run_pytest_cmd "$TARGET_DIR" "$SOURCE_PYTHON"
+          exit $?
+        fi
+      fi
+    fi
+  fi
+
+  SESSION_BOOTSTRAP_PYTHON="python3"
+  if [ -n "$TARGET_PYTHON" ]; then
+    SESSION_BOOTSTRAP_PYTHON="$TARGET_PYTHON"
+  elif [ -n "$SOURCE_PYTHON" ]; then
+    SESSION_BOOTSTRAP_PYTHON="$SOURCE_PYTHON"
+  fi
+
+  SESSION_PYTHON="$(ensure_session_python "$TARGET_DIR" "$TARGET_FINGERPRINT" "$SESSION_BOOTSTRAP_PYTHON")"
+  run_pytest_cmd "$TARGET_DIR" "$SESSION_PYTHON"
+  exit $?
+fi
+
+if [ -f "$TARGET_DIR/package.json" ] && command -v npm >/dev/null 2>&1; then
+  run_npm_tests "$TARGET_DIR"
+  exit $?
+fi
+
+echo "No supported verification runner detected in $TARGET_DIR." >&2
+exit 1

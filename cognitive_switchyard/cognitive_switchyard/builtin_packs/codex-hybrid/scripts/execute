@@ -1,0 +1,163 @@
+#!/bin/sh
+set -eu
+
+PLAN_PATH="${1:?plan path required}"
+WORKSPACE_PATH="${2:?workspace path required}"
+TASK_FILE="$(basename "$PLAN_PATH")"
+TASK_ID="${TASK_FILE%.plan.md}"
+STATUS_PATH="$(dirname "$PLAN_PATH")/$TASK_ID.status"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+SYSTEM_PROMPT_PATH="$SCRIPT_DIR/../prompts/system.md"
+WORKER_PROMPT_PATH="$SCRIPT_DIR/../prompts/worker.md"
+MODEL="${CODEX_WORKER_MODEL:-gpt-5.4}"
+REASONING_EFFORT="${CODEX_WORKER_REASONING_EFFORT:-high}"
+
+# Build the combined prompt (system + worker)
+if [ -f "$SYSTEM_PROMPT_PATH" ]; then
+  PROMPT="$(printf '%s\n\n%s' "$(cat "$SYSTEM_PROMPT_PATH")" "$(cat "$WORKER_PROMPT_PATH")")"
+else
+  PROMPT="$(cat "$WORKER_PROMPT_PATH")"
+fi
+
+# Phase 1: reading
+echo "##PROGRESS## $TASK_ID | Phase: reading | 1/5"
+
+# Phase 2: entry-tests
+echo "##PROGRESS## $TASK_ID | Phase: entry-tests | 2/5"
+
+# Phase 3: implementing (Codex does the actual work)
+echo "##PROGRESS## $TASK_ID | Phase: implementing | 3/5"
+echo "##PROGRESS## $TASK_ID | Detail: Launching Codex CLI ($MODEL)"
+
+# Build the full input: system/worker prompt followed by the plan
+CODEX_INPUT="$(printf '%s\n\n---\n\n%s' "$PROMPT" "$(cat "$PLAN_PATH")")"
+
+# Run Codex in non-interactive exec mode; capture output for sidecar.
+# A background sampler emits periodic activity markers so the UI shows progress.
+CODEX_OUTPUT_FILE="$(dirname "$PLAN_PATH")/$TASK_ID.codex_output"
+: >"$CODEX_OUTPUT_FILE"
+
+# Stop-file for cooperative sampler shutdown
+SAMPLER_STOP_FILE="$(dirname "$PLAN_PATH")/$TASK_ID.sampler_stop"
+rm -f "$SAMPLER_STOP_FILE"
+
+# Background sampler: emit activity markers with output size to show liveness
+(
+  while [ ! -f "$SAMPLER_STOP_FILE" ]; do
+    # Sleep in short increments so we notice the stop-file within ~0.5s
+    _i=0
+    while [ "$_i" -lt 10 ] && [ ! -f "$SAMPLER_STOP_FILE" ]; do
+      sleep 0.5
+      _i=$((_i + 1))
+    done
+    [ -f "$SAMPLER_STOP_FILE" ] && break
+    [ -f "$CODEX_OUTPUT_FILE" ] || continue
+    _BYTES=$(wc -c < "$CODEX_OUTPUT_FILE" 2>/dev/null | tr -d ' ' || echo 0)
+    _LINES=$(wc -l < "$CODEX_OUTPUT_FILE" 2>/dev/null | tr -d ' ' || echo 0)
+    echo "##PROGRESS## $TASK_ID | Detail: Codex CLI running ($MODEL) — ${_LINES} lines, ${_BYTES} bytes"
+  done
+) &
+SAMPLER_PID=$!
+
+CODEX_EXIT=0
+codex exec \
+  --dangerously-bypass-approvals-and-sandbox \
+  -m "$MODEL" \
+  -c "model_reasoning_effort=\"$REASONING_EFFORT\"" \
+  -C "$WORKSPACE_PATH" \
+  "$CODEX_INPUT" >"$CODEX_OUTPUT_FILE" 2>&1 || CODEX_EXIT=$?
+
+# Signal the sampler to stop via stop-file, then escalate if needed
+touch "$SAMPLER_STOP_FILE"
+
+# Wait up to 3 seconds for cooperative exit
+_wait_count=0
+while kill -0 "$SAMPLER_PID" 2>/dev/null && [ "$_wait_count" -lt 6 ]; do
+  sleep 0.5
+  _wait_count=$((_wait_count + 1))
+done
+
+# Escalate: SIGTERM, then SIGKILL
+if kill -0 "$SAMPLER_PID" 2>/dev/null; then
+  kill "$SAMPLER_PID" 2>/dev/null || true
+  sleep 1
+  kill -9 "$SAMPLER_PID" 2>/dev/null || true
+fi
+wait "$SAMPLER_PID" 2>/dev/null || true
+rm -f "$SAMPLER_STOP_FILE"
+
+if [ "$CODEX_EXIT" -eq 0 ]; then
+  echo "##PROGRESS## $TASK_ID | Phase: exit-tests | 4/5"
+
+  # Extract commit SHAs made in the workspace during this session
+  COMMITS="none"
+  if [ -d "$WORKSPACE_PATH/.git" ] || [ -f "$WORKSPACE_PATH/.git" ]; then
+    # Get commits on the worktree branch that aren't on the source
+    WORKTREE_COMMITS="$(git -C "$WORKSPACE_PATH" log --format='%h' HEAD --not --remotes 2>/dev/null | paste -sd, - 2>/dev/null || true)"
+    if [ -n "$WORKTREE_COMMITS" ]; then
+      COMMITS="$WORKTREE_COMMITS"
+    fi
+  fi
+
+  # Determine test results from Codex output
+  TESTS_RAN="none"
+  TEST_RESULT="skip"
+  if grep -qi "pytest\|test.*pass\|tests.*pass\|test.*fail\|tests.*fail\|npm test\|jest\|vitest\|playwright" "$CODEX_OUTPUT_FILE" 2>/dev/null; then
+    TESTS_RAN="targeted"
+    if grep -qi "test.*fail\|tests.*fail\|FAILED\|AssertionError" "$CODEX_OUTPUT_FILE" 2>/dev/null; then
+      TEST_RESULT="fail"
+    else
+      TEST_RESULT="pass"
+    fi
+  fi
+
+  # Detect if the task modified code files (not just docs/config)
+  CODE_CHANGED="no"
+  if [ "$COMMITS" != "none" ]; then
+    FIRST_SHA=$(echo "$COMMITS" | tr ',' '\n' | tail -1)
+    CODE_EXTS=$(git -C "$WORKSPACE_PATH" diff --name-only "${FIRST_SHA}~1"..HEAD 2>/dev/null \
+      | grep -E '\.(py|js|jsx|ts|tsx|sh|go|rs|java|c|cpp|h|html|css|sql)$' \
+      || true)
+    if [ -n "$CODE_EXTS" ]; then
+      CODE_CHANGED="yes"
+    fi
+  fi
+
+  # Flag warning if code changed but no tests detected
+  NOTES="Codex worker completed in $WORKSPACE_PATH"
+  if [ "$CODE_CHANGED" = "yes" ] && [ "$TESTS_RAN" = "none" ]; then
+    NOTES="WARNING: Code files were modified but no test execution was detected in worker output. $NOTES"
+  fi
+
+  cat >"$STATUS_PATH" <<EOF
+STATUS: done
+COMMITS: $COMMITS
+TESTS_RAN: $TESTS_RAN
+TEST_RESULT: $TEST_RESULT
+NOTES: $NOTES
+EOF
+
+  echo "##PROGRESS## $TASK_ID | Phase: finalizing | 5/5"
+  rm -f "$CODEX_OUTPUT_FILE"
+  exit 0
+fi
+
+# Failure path — extract reason from Codex output
+BLOCKED_REASON="Codex worker command failed (exit code $CODEX_EXIT)."
+if [ -f "$CODEX_OUTPUT_FILE" ]; then
+  TAIL_LINES="$(tail -5 "$CODEX_OUTPUT_FILE" 2>/dev/null | head -3 || true)"
+  if [ -n "$TAIL_LINES" ]; then
+    BLOCKED_REASON="Codex CLI exit $CODEX_EXIT: $(echo "$TAIL_LINES" | tr '\n' ' ' | head -c 200)"
+  fi
+fi
+
+cat >"$STATUS_PATH" <<EOF
+STATUS: blocked
+COMMITS: none
+TESTS_RAN: none
+TEST_RESULT: fail
+BLOCKED_REASON: $BLOCKED_REASON
+EOF
+
+rm -f "$CODEX_OUTPUT_FILE"
+exit 1
