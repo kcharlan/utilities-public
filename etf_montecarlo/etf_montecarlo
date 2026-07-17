@@ -43,6 +43,13 @@ SIMULATION_BATCH_SIZE = 10_000
 SYMBOL_PATTERN = re.compile(r"[A-Z0-9.^=-]{1,32}")
 FORMULA_PREFIXES = frozenset("=+-@")
 SOURCE_SCAN_EXCLUSIONS = frozenset({".venv", ".pytest_cache", "__pycache__"})
+# macOS exposes these root-owned aliases while their canonical directories live
+# under /private. Only these exact, verified targets bypass the symlink guard.
+TRUSTED_SYSTEM_PATH_ALIASES = {
+    Path("/etc"): Path("/private/etc"),
+    Path("/tmp"): Path("/private/tmp"),
+    Path("/var"): Path("/private/var"),
+}
 PERCENTILES = (("P5", 5), ("P25", 25), ("P50", 50), ("P75", 75), ("P95", 95))
 INCOMPLETE_SKELETON: dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
@@ -219,6 +226,11 @@ def reject_symbolic_link_components(path: Path, *, label: str) -> None:
         except FileNotFoundError:
             return
         if stat.S_ISLNK(metadata.st_mode):
+            trusted_target = TRUSTED_SYSTEM_PATH_ALIASES.get(current)
+            if trusted_target is not None:
+                resolved = Path(os.path.realpath(current))
+                if resolved == trusted_target:
+                    continue
             raise UnsafePathError(
                 f"{label} path must not contain a symbolic link: {current}"
             )

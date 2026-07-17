@@ -279,6 +279,23 @@ def test_default_runtime_home_symlink_is_rejected(
     assert not (target / "config.json").exists()
 
 
+def test_explicitly_trusted_system_path_alias_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_module()
+    target = tmp_path / "canonical-root"
+    target.mkdir(mode=0o755)
+    runtime_link = tmp_path / "system-alias"
+    runtime_link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setitem(module.TRUSTED_SYSTEM_PATH_ALIASES, runtime_link, target)
+    monkeypatch.setenv("ETF_MONTECARLO_HOME", str(runtime_link / "runtime"))
+
+    assert module.main([]) == 2
+    assert "CONFIGURATION REQUIRED" in module.LAST_ERROR_FOR_TESTS
+    assert stat.S_IMODE((target / "runtime").stat().st_mode) == 0o700
+    assert stat.S_IMODE((target / "runtime" / "config.json").stat().st_mode) == 0o600
+
+
 def test_config_path_with_symlinked_ancestor_is_rejected_without_touching_target(
     tmp_path: Path
 ) -> None:
