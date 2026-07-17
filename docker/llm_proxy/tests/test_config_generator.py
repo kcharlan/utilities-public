@@ -3,8 +3,6 @@ import os
 import stat
 import tempfile
 
-import pytest
-
 from llm_proxy.config_generator import generate_opencode_configs
 from llm_proxy.models import ModelObject
 from llm_proxy.provider_base import ProviderAdapter

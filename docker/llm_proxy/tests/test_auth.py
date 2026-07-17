@@ -3,7 +3,6 @@ import json
 
 import pytest
 from fastapi import HTTPException
-from starlette.testclient import TestClient
 
 from llm_proxy.auth import decode_credentials, extract_authorization
 
@@ -37,7 +36,6 @@ class TestDecodeCredentials:
 class TestExtractAuthorization:
     def test_missing_header(self):
         from starlette.requests import Request
-        from starlette.datastructures import Headers
 
         scope = {
             "type": "http",

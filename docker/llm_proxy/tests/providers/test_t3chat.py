@@ -36,7 +36,7 @@ class TestInitialize:
         # Mock homepage with a script tag
         httpx_mock.add_response(
             url="https://t3.chat/",
-            html=f'<html><script src="/_next/static/chunks/abc123.js"></script></html>',
+            html='<html><script src="/_next/static/chunks/abc123.js"></script></html>',
         )
         # Mock JS chunk
         httpx_mock.add_response(

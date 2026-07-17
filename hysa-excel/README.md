@@ -4,6 +4,8 @@ Creates a formula-driven, four-sheet Excel workbook comparing a high-yield savin
 
 Operational financial inputs are private local data. They are never stored in this public repository. By default, the generator reads `~/.hysa-excel/inputs.csv` and writes `~/.hysa-excel/CD_vs_HYSA_Model.xlsx`. Set `HYSA_EXCEL_HOME` to choose a different runtime directory.
 
+The launcher keeps its runtime directory private (`0700`) and its input CSV and generated workbook owner-only (`0600`). It repairs more-permissive modes on existing files before use and refuses symbolic links at these sensitive path endpoints rather than changing or writing through their targets.
+
 ## Requirements
 
 Install [uv](https://docs.astral.sh/uv/) once (`brew install uv`). The launcher declares and resolves its own `xlsxwriter` dependency; there is no setup script or project virtual environment.

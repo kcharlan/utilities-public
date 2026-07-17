@@ -1,9 +1,6 @@
-import json
 import logging
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
-
-logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -16,6 +13,9 @@ from llm_proxy.models import (
     ModelListResponse,
     ModelObject,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderAdapter(ABC):

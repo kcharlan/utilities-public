@@ -1,14 +1,11 @@
 import json
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-import pytest_asyncio
 
 from llm_proxy.models import ChatCompletionRequest, ChatMessage
 from llm_proxy.providers.chatjimmy import (
-    CHATJIMMY_MODELS_URL,
     STATS_END,
     STATS_START,
     ChatJimmyAdapter,

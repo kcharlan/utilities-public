@@ -68,7 +68,11 @@ The current design is documented in [docs/DESIGN.md](docs/DESIGN.md).
 RouterView stores runtime state under `~/.routerview/`:
 
 - `routerview.db` SQLite database
+- `attribute_mapping.json` local attribute mapping overrides
 - `last_port` last bound port
+- `backups/` point-in-time SQLite backups created before timestamp rebuilds
+
+The runtime directory and its subdirectories use owner-only permissions (`0700`); the database, SQLite sidecars, port file, mapping file, backups, and other mutable runtime files use `0600`. RouterView hardens existing more-permissive state on startup and refuses symbolic links inside the runtime tree rather than following or changing their targets.
 
 Python dependencies are managed by uv (declared in the launcher's PEP 723 header) and cached in uv's shared cache — not under `~/.routerview/`.
 

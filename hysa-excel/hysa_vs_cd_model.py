@@ -13,6 +13,7 @@ import argparse
 import csv
 import math
 import os
+import stat
 import sys
 import tempfile
 from collections import OrderedDict
@@ -23,6 +24,8 @@ import xlsxwriter
 
 
 DEFAULT_OUTPUT_NAME = "CD_vs_HYSA_Model.xlsx"
+PRIVATE_DIRECTORY_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
 MAX_PRINCIPAL = 1e100
 MAX_SENSITIVITY = 100.0
 MAX_PROJECTED_ANNUAL_RATE = 1.0
@@ -102,9 +105,71 @@ def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
     return inputs_path, output_path
 
 
+def _path_status(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+
+
+def secure_private_directory(path: Path) -> None:
+    """Create or harden a private directory without following its final link."""
+    status = _path_status(path)
+    if status is None:
+        path.mkdir(parents=True, mode=PRIVATE_DIRECTORY_MODE, exist_ok=True)
+        status = path.lstat()
+    if stat.S_ISLNK(status.st_mode):
+        raise RuntimeError(f"refusing symbolic link for private directory: {path}")
+    if not stat.S_ISDIR(status.st_mode):
+        raise RuntimeError(f"private directory path is not a directory: {path}")
+
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened_status = os.fstat(descriptor)
+        if not stat.S_ISDIR(opened_status.st_mode):
+            raise RuntimeError(f"private directory path is not a directory: {path}")
+        if (opened_status.st_dev, opened_status.st_ino) != (
+            status.st_dev,
+            status.st_ino,
+        ):
+            raise RuntimeError(f"private directory changed while it was opened: {path}")
+        os.fchmod(descriptor, PRIVATE_DIRECTORY_MODE)
+    finally:
+        os.close(descriptor)
+
+
+def secure_private_file(path: Path, description: str) -> None:
+    """Harden an existing regular file without following symbolic links."""
+    status = path.lstat()
+    if stat.S_ISLNK(status.st_mode):
+        raise RuntimeError(f"refusing symbolic link for {description}: {path}")
+    if not stat.S_ISREG(status.st_mode):
+        raise RuntimeError(f"{description} is not a regular file: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened_status = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_status.st_mode):
+            raise RuntimeError(f"{description} is not a regular file: {path}")
+        if (opened_status.st_dev, opened_status.st_ino) != (
+            status.st_dev,
+            status.st_ino,
+        ):
+            raise RuntimeError(f"{description} changed while it was opened: {path}")
+        os.fchmod(descriptor, PRIVATE_FILE_MODE)
+    finally:
+        os.close(descriptor)
+
+
 def write_incomplete_template(path: Path) -> bool:
     """Atomically create a blank local template, returning False if it exists."""
-    if path.exists():
+    status = _path_status(path)
+    if status is not None:
+        secure_private_file(path, "input file")
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -118,7 +183,7 @@ def write_incomplete_template(path: Path) -> bool:
         with os.fdopen(descriptor, "w", newline="", encoding="utf-8") as handle:
             # Transfer descriptor ownership to the context manager before any
             # operation that can fail, so every path closes it exactly once.
-            os.fchmod(handle.fileno(), 0o600)
+            os.fchmod(handle.fileno(), PRIVATE_FILE_MODE)
             writer = csv.writer(handle)
             writer.writerow(["Parameter", "Value"])
             writer.writerows((name, "") for name in REQUIRED_PARAMETERS)
@@ -284,6 +349,7 @@ def load_inputs(path: Path) -> OrderedDict[str, float]:
     problems: list[str] = []
     raw_rows: OrderedDict[str, str] = OrderedDict()
     try:
+        secure_private_file(path, "input file")
         with path.open(newline="", encoding="utf-8-sig") as handle:
             reader = csv.DictReader(handle)
             if reader.fieldnames != ["Parameter", "Value"]:
@@ -333,6 +399,14 @@ def excel_column(index: int) -> str:
 
 
 def build_workbook(values: OrderedDict[str, float], output_path: Path) -> None:
+    existing_status = _path_status(output_path)
+    if existing_status is not None:
+        if stat.S_ISLNK(existing_status.st_mode):
+            raise RuntimeError(
+                f"refusing symbolic link for workbook output: {output_path}"
+            )
+        if not stat.S_ISREG(existing_status.st_mode):
+            raise RuntimeError(f"workbook output is not a regular file: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         dir=output_path.parent,
@@ -513,6 +587,7 @@ def build_workbook(values: OrderedDict[str, float], output_path: Path) -> None:
         close_required = False
         workbook.close()
         os.replace(temporary_path, output_path)
+        secure_private_file(output_path, "workbook output")
     except Exception:
         if close_required and workbook is not None:
             try:
@@ -540,6 +615,12 @@ def configuration_message(path: Path, problems: Iterable[str] | None = None) -> 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     inputs_path, output_path = resolve_paths(args)
+    if args.inputs is None or args.output is None:
+        try:
+            secure_private_directory(runtime_home())
+        except (OSError, RuntimeError) as exc:
+            print(f"ERROR: could not secure runtime directory: {exc}", file=sys.stderr)
+            return 1
     if inputs_path.resolve() == output_path.resolve():
         print(
             "CONFIGURATION REQUIRED: --inputs and --output must be different paths; "
@@ -547,10 +628,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if not inputs_path.is_file():
+    input_status = _path_status(inputs_path)
+    if input_status is None:
         try:
             write_incomplete_template(inputs_path)
-        except OSError as exc:
+        except (OSError, RuntimeError) as exc:
             print(
                 configuration_message(inputs_path, [f"could not create template: {exc}"]),
                 file=sys.stderr,
@@ -561,13 +643,16 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         values = load_inputs(inputs_path)
+    except RuntimeError as exc:
+        print(configuration_message(inputs_path, [str(exc)]), file=sys.stderr)
+        return 2
     except ConfigurationError as exc:
         print(configuration_message(inputs_path, exc.problems), file=sys.stderr)
         return 2
 
     try:
         build_workbook(values, output_path)
-    except (OSError, xlsxwriter.exceptions.XlsxWriterException) as exc:
+    except (OSError, RuntimeError, xlsxwriter.exceptions.XlsxWriterException) as exc:
         print(f"ERROR: could not write workbook {output_path}: {exc}", file=sys.stderr)
         return 1
     print(f"Workbook generated: {output_path}")

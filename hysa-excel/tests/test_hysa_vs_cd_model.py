@@ -4,6 +4,7 @@ import csv
 import importlib.util
 import math
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -67,6 +68,8 @@ def test_first_run_creates_incomplete_template_and_no_workbook(tmp_path: Path) -
     assert str(template) in result.stderr
     assert template.exists()
     assert not output.exists()
+    assert stat.S_IMODE(template.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(template.stat().st_mode) == 0o600
 
     with template.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
@@ -154,17 +157,38 @@ def test_explicit_input_and_output_paths_generate_workbook(tmp_path: Path) -> No
     assert output.exists()
     assert str(output) in result.stdout
     assert not (tmp_path / "runtime").exists()
+    assert stat.S_IMODE(inputs.stat().st_mode) == 0o600
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
 
 
 def test_default_output_is_written_to_runtime_home(tmp_path: Path) -> None:
     inputs = tmp_path / "runtime" / "inputs.csv"
+    inputs.parent.mkdir(mode=0o755)
     write_inputs(inputs)
+    inputs.chmod(0o644)
 
     result = run_cli(tmp_path)
 
     output = tmp_path / "runtime" / "CD_vs_HYSA_Model.xlsx"
     assert result.returncode == 0, result.stderr
     assert output.exists()
+    assert stat.S_IMODE(inputs.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(inputs.stat().st_mode) == 0o600
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+
+
+def test_runtime_home_symlink_is_rejected_without_touching_target(tmp_path: Path) -> None:
+    target = tmp_path / "target-runtime"
+    target.mkdir(mode=0o755)
+    runtime = tmp_path / "runtime"
+    runtime.symlink_to(target, target_is_directory=True)
+
+    result = run_cli(tmp_path)
+
+    assert result.returncode != 0
+    assert "symbolic link" in result.stderr
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
+    assert not (target / "inputs.csv").exists()
 
 
 def test_validation_rejects_duplicates_and_non_integer_periods(tmp_path: Path) -> None:
