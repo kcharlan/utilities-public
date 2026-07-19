@@ -762,6 +762,129 @@ def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() ->
     assert '"field_name": "pricing.overrides[0].prompt"' not in json_report
 
 
+def test_existing_pricing_override_tiers_render_only_changed_leaves() -> None:
+    old_overrides = [
+        {
+            "completion": "0.000012",
+            "input_cache_read": "0.000001",
+            "min_prompt_tokens": 200000,
+            "prompt": "0.000004",
+        },
+        {
+            "completion": "0.00000042",
+            "prompt": "0.00000028",
+            "utc_end": 1630,
+            "utc_start": 30,
+        },
+    ]
+    new_overrides = [
+        {
+            "completion": "0.00000042",
+            "prompt": "0.00000028",
+            "utc_end": 1630,
+            "utc_start": 30,
+        },
+        {
+            "completion": "0.000012",
+            "input_cache_read": "0.0000006",
+            "min_prompt_tokens": 200000,
+            "prompt": "0.000004",
+        },
+    ]
+    changed = (
+        ModelDelta(
+            "changed",
+            "x-ai/grok-4.5",
+            "xAI: Grok 4.5",
+            (FieldChange("pricing.overrides", old_overrides, new_overrides),),
+        ),
+    )
+
+    text_report = render_scan_report(
+        generated_at="2026-07-19T13:05:05+00:00",
+        command="scan",
+        format_name="text",
+        provider_results=[_scan_result(changed)],
+    )
+    html_report = render_scan_report(
+        generated_at="2026-07-19T13:05:05+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    json_report = render_scan_report(
+        generated_at="2026-07-19T13:05:05+00:00",
+        command="scan",
+        format_name="json",
+        provider_results=[_scan_result(changed)],
+    )
+
+    field_name = "pricing.overrides[min_prompt_tokens=200000].input_cache_read"
+    expected = f"{field_name}: 0.000001 \u2192 0.0000006 ($1.00 \u2192 $0.60 / 1M, \u2193 40.0%)"
+    assert expected in text_report
+    assert field_name in html_report
+    assert "$1.00 \u2192 $0.60 / 1M" in html_report
+    assert "pricing.overrides (2 \u2192 2)" not in text_report
+    assert "utc_start=30" not in text_report
+    assert '"field_name": "pricing.overrides"' in json_report
+    assert field_name not in json_report
+
+
+def test_pricing_override_tier_addition_and_removal_render_as_semantic_tiers() -> None:
+    changed = (
+        ModelDelta(
+            "changed",
+            "tiered-model",
+            "Tiered Model",
+            (
+                FieldChange(
+                    "pricing.overrides",
+                    [{"min_prompt_tokens": 200000, "prompt": "0.000004"}],
+                    [{"min_prompt_tokens": 300000, "prompt": "0.000005"}],
+                ),
+            ),
+        ),
+    )
+
+    report = render_scan_report(
+        generated_at="2026-07-19T13:05:05+00:00",
+        command="scan",
+        format_name="text",
+        provider_results=[_scan_result(changed)],
+    )
+
+    assert "pricing.overrides[min_prompt_tokens=200000].prompt: 0.000004 ($4.00 / 1M) \u2192 null" in report
+    assert "pricing.overrides[min_prompt_tokens=300000].prompt: null \u2192 0.000005 ($5.00 / 1M)" in report
+    assert "pricing.overrides[min_prompt_tokens=200000].min_prompt_tokens: 200,000 \u2192 null" in report
+    assert "pricing.overrides[min_prompt_tokens=300000].min_prompt_tokens: null \u2192 300,000" in report
+
+
+def test_unmatchable_pricing_overrides_keep_full_fidelity_list_fallback() -> None:
+    changed = (
+        ModelDelta(
+            "changed",
+            "unidentified-tier-model",
+            "Unidentified Tier Model",
+            (
+                FieldChange(
+                    "pricing.overrides",
+                    [{"prompt": "0.000004"}],
+                    [{"prompt": "0.000005"}],
+                ),
+            ),
+        ),
+    )
+
+    report = render_scan_report(
+        generated_at="2026-07-19T13:05:05+00:00",
+        command="scan",
+        format_name="text",
+        provider_results=[_scan_result(changed)],
+    )
+
+    assert "pricing.overrides: +{'prompt': '0.000005'}; -{'prompt': '0.000004'} (1 \u2192 1)" in report
+
+
 def test_generic_new_structured_key_expands_recursively() -> None:
     changed = (
         ModelDelta(

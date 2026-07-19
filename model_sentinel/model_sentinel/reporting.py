@@ -13,6 +13,12 @@ from .time_utils import to_local_human, to_local_iso
 REPORT_DETAIL_MODES = ("default", "all", "squelched")
 BULK_CHANGE_MIN_MODELS = 3
 
+_PRICING_OVERRIDE_CONDITION_FIELDS = (
+    "min_prompt_tokens",
+    "utc_start",
+    "utc_end",
+)
+
 DEFAULT_REPORT_SHOW_FIELDS = (
     "pricing.*",
     "context_length",
@@ -256,6 +262,19 @@ def _expand_structured_field_change(field_change: FieldChange) -> tuple[FieldCha
     old_value = field_change.old_value
     new_value = field_change.new_value
 
+    if (
+        field_change.field_name == "pricing.overrides"
+        and _is_structured_list(old_value)
+        and _is_structured_list(new_value)
+    ):
+        expanded = _expand_pricing_override_changes(
+            field_change.field_name,
+            old_value,
+            new_value,
+        )
+        if expanded is not None:
+            return expanded
+
     if old_value is None and isinstance(new_value, dict):
         return _flatten_one_sided_structure(field_change.field_name, new_value, added=True)
     if new_value is None and isinstance(old_value, dict):
@@ -271,6 +290,84 @@ def _expand_structured_field_change(field_change: FieldChange) -> tuple[FieldCha
 
 def _is_structured_list(value: Any) -> bool:
     return isinstance(value, list) and any(isinstance(item, (dict, list)) for item in value)
+
+
+def _expand_pricing_override_changes(
+    field_name: str,
+    old_value: list[Any],
+    new_value: list[Any],
+) -> tuple[FieldChange, ...] | None:
+    """Compare conditional-pricing tiers without treating dictionaries as list members.
+
+    OpenRouter identifies conditional pricing entries by fields such as a prompt-token
+    threshold or UTC window. Match unique entries on those conditions so reordering does
+    not create noise. If the payload cannot be matched safely, return ``None`` and let
+    the existing full-list fallback preserve the upstream values.
+    """
+    old_by_identity = _index_pricing_overrides(old_value)
+    new_by_identity = _index_pricing_overrides(new_value)
+    if old_by_identity is None or new_by_identity is None:
+        return None
+
+    identities = [
+        *old_by_identity,
+        *(identity for identity in new_by_identity if identity not in old_by_identity),
+    ]
+    changes: list[FieldChange] = []
+    for identity in identities:
+        path = _pricing_override_path(field_name, identity)
+        old_item = old_by_identity.get(identity)
+        new_item = new_by_identity.get(identity)
+        if old_item is None:
+            changes.extend(_flatten_one_sided_structure(path, new_item, added=True))
+        elif new_item is None:
+            changes.extend(_flatten_one_sided_structure(path, old_item, added=False))
+        else:
+            changes.extend(_diff_structured_values(path, old_item, new_item))
+    return tuple(changes)
+
+
+def _index_pricing_overrides(
+    value: list[Any],
+) -> dict[tuple[tuple[str, Any], ...], dict[str, Any]] | None:
+    indexed: dict[tuple[tuple[str, Any], ...], dict[str, Any]] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            return None
+        identity = tuple(
+            (field, item[field])
+            for field in _PRICING_OVERRIDE_CONDITION_FIELDS
+            if field in item and not isinstance(item[field], (dict, list))
+        )
+        if not identity or identity in indexed:
+            return None
+        indexed[identity] = item
+    return indexed
+
+
+def _pricing_override_path(
+    field_name: str,
+    identity: tuple[tuple[str, Any], ...],
+) -> str:
+    condition = ",".join(f"{key}={_render_value(value)}" for key, value in identity)
+    return f"{field_name}[{condition}]"
+
+
+def _diff_structured_values(path: str, old_value: Any, new_value: Any) -> tuple[FieldChange, ...]:
+    if isinstance(old_value, dict) and isinstance(new_value, dict):
+        changes: list[FieldChange] = []
+        for key in sorted(set(old_value) | set(new_value)):
+            child_path = f"{path}.{key}"
+            if key not in old_value:
+                changes.extend(_flatten_one_sided_structure(child_path, new_value[key], added=True))
+            elif key not in new_value:
+                changes.extend(_flatten_one_sided_structure(child_path, old_value[key], added=False))
+            else:
+                changes.extend(_diff_structured_values(child_path, old_value[key], new_value[key]))
+        return tuple(changes)
+    if old_value != new_value:
+        return (FieldChange(path, old_value, new_value),)
+    return ()
 
 
 def _flatten_one_sided_structure(
