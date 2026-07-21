@@ -1697,18 +1697,22 @@ header h1 .count {
   font-weight: 600;
   margin-bottom: 0.65rem;
 }
-.price-movement-title .count {
-  color: var(--text-dim);
+.price-movement-title .outcome {
   font-weight: 400;
 }
-.price-movement-buckets {
+.price-movement-model-summary {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem 1.25rem;
+  gap: 0.35rem 0;
   font-family: var(--font-mono);
   font-size: 0.82rem;
 }
-.price-movement-bucket strong { margin-left: 0.3rem; }
+.price-movement-model-summary > strong,
+.price-movement-fields > strong {
+  color: var(--text-bright);
+  font-weight: 600;
+  margin-right: 0.45rem;
+}
 .price-higher { color: var(--accent-red); }
 .price-lower { color: var(--accent-green); }
 .price-mixed { color: var(--accent-amber); }
@@ -1719,6 +1723,7 @@ header h1 .count {
   font-size: 0.78rem;
   margin-top: 0.45rem;
 }
+.price-movement-model-summary span + span::before,
 .price-movement-fields span + span::before {
   content: " · ";
   color: var(--text-dim);
@@ -2220,11 +2225,25 @@ def _append_html_field_changes(
 
 
 _PRICE_MOVEMENT_BUCKETS = (
-    ("higher", "\u2191 Higher, no decreases", "price-higher"),
-    ("lower", "\u2193 Lower, no increases", "price-lower"),
-    ("mixed", "\u2195 Mixed directions", "price-mixed"),
-    ("coverage", "Fields added/removed only", "price-coverage"),
+    ("higher", "\u2191 Higher, no decreases", "with increases and no decreases", "price-higher"),
+    ("lower", "\u2193 Lower, no increases", "with decreases and no increases", "price-lower"),
+    ("mixed", "\u2195 Mixed directions", "mixed", "price-mixed"),
+    ("coverage", "Fields added/removed only", "with fields added/removed only", "price-coverage"),
 )
+
+
+def _price_movement_outcome(summary: _PriceMovementSummary) -> tuple[str, str]:
+    if summary.higher_fields and summary.lower_fields:
+        if summary.higher_fields > summary.lower_fields:
+            return "mostly higher", "price-higher"
+        if summary.lower_fields > summary.higher_fields:
+            return "mostly lower", "price-lower"
+        return "mixed", "price-mixed"
+    if summary.higher_fields:
+        return "higher", "price-higher"
+    if summary.lower_fields:
+        return "lower", "price-lower"
+    return "price fields added/removed", "price-coverage"
 
 
 def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
@@ -2232,16 +2251,18 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
         return ""
 
     h = html_module.escape
-    bucket_parts = []
+    model_summary_parts = []
     group_parts = []
-    for bucket, label, css_class in _PRICE_MOVEMENT_BUCKETS:
-        models = summary.models_in(bucket)
-        bucket_parts.append(
-            f'<span class="price-movement-bucket {css_class}">'
-            f'<span>{h(label)}</span><strong>{len(models)}</strong></span>'
+    populated_buckets = [
+        (bucket, group_label, summary_label, css_class, summary.models_in(bucket))
+        for bucket, group_label, summary_label, css_class in _PRICE_MOVEMENT_BUCKETS
+        if summary.models_in(bucket)
+    ]
+    populated_buckets.sort(key=lambda item: -len(item[4]))
+    for _, group_label, summary_label, css_class, models in populated_buckets:
+        model_summary_parts.append(
+            f'<span class="{css_class}">{len(models)} {h(summary_label)}</span>'
         )
-        if not models:
-            continue
         model_rows = "".join(
             f'<div class="price-movement-model">'
             f'<span class="price-movement-provider">{h(model.provider_label)}</span>'
@@ -2250,22 +2271,43 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
         )
         group_parts.append(
             f'<div class="price-movement-group">'
-            f'<div class="price-movement-group-label {css_class}">{h(label)} \u2014 {len(models)}</div>'
+            f'<div class="price-movement-group-label {css_class}">{h(group_label)} \u2014 {len(models)}</div>'
             f'{model_rows}</div>'
         )
 
     model_suffix = "" if len(summary.models) == 1 else "s"
+    field_counts = (
+        ("higher", summary.higher_fields, "price-higher"),
+        ("lower", summary.lower_fields, "price-lower"),
+    )
+    if summary.lower_fields > summary.higher_fields:
+        field_counts = tuple(reversed(field_counts))
+    field_counts += (
+        ("added", summary.added_fields, "price-coverage"),
+        ("removed", summary.removed_fields, "price-coverage"),
+    )
+    field_parts = [
+        f'<span class="{css_class}">{count} {label}</span>'
+        for label, count, css_class in field_counts
+        if count
+    ]
+    field_total = (
+        summary.higher_fields
+        + summary.lower_fields
+        + summary.added_fields
+        + summary.removed_fields
+    )
+    field_suffix = "" if field_total == 1 else "s"
+    outcome, outcome_class = _price_movement_outcome(summary)
     return (
         '<section class="price-movement-summary">'
         f'<div class="price-movement-title">Price Movement '
-        f'<span class="count">\u2014 {len(summary.models)} model{model_suffix}</span></div>'
-        f'<div class="price-movement-buckets">{"".join(bucket_parts)}</div>'
-        f'<div class="price-movement-fields">Field movements: '
-        f'<span class="price-higher">{summary.higher_fields} higher</span>'
-        f'<span class="price-lower">{summary.lower_fields} lower</span>'
-        f'<span class="price-coverage">{summary.added_fields} added</span>'
-        f'<span class="price-coverage">{summary.removed_fields} removed</span></div>'
-        '<details class="price-movement-models"><summary>Show affected models</summary>'
+        f'<span class="outcome {outcome_class}">\u2014 {h(outcome)}</span></div>'
+        f'<div class="price-movement-model-summary"><strong>{len(summary.models)} affected model{model_suffix}:</strong>'
+        f'{"".join(model_summary_parts)}</div>'
+        f'<div class="price-movement-fields"><strong>{field_total} changed price field{field_suffix}:</strong>'
+        f'{"".join(field_parts)}</div>'
+        f'<details class="price-movement-models"><summary>View {len(summary.models)} affected model{model_suffix}</summary>'
         f'<div class="price-movement-model-groups">{"".join(group_parts)}</div>'
         '</details></section>'
     )

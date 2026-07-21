@@ -318,15 +318,18 @@ def test_html_price_movement_summary_uses_exclusive_model_buckets() -> None:
     )
 
     movement = report.split('<section class="price-movement-summary">', 1)[1].split("</section>", 1)[0]
-    assert 'Price Movement <span class="count">\u2014 4 models</span>' in movement
-    assert '\u2191 Higher, no decreases</span><strong>1</strong>' in movement
-    assert '\u2193 Lower, no increases</span><strong>1</strong>' in movement
-    assert '\u2195 Mixed directions</span><strong>1</strong>' in movement
-    assert 'Fields added/removed only</span><strong>1</strong>' in movement
+    assert 'Price Movement <span class="outcome price-mixed">\u2014 mixed</span>' in movement
+    assert '<strong>4 affected models:</strong>' in movement
+    assert '<span class="price-higher">1 with increases and no decreases</span>' in movement
+    assert '<span class="price-lower">1 with decreases and no increases</span>' in movement
+    assert '<span class="price-mixed">1 mixed</span>' in movement
+    assert '<span class="price-coverage">1 with fields added/removed only</span>' in movement
+    assert '<strong>8 changed price fields:</strong>' in movement
     assert '<span class="price-higher">2 higher</span>' in movement
     assert '<span class="price-lower">2 lower</span>' in movement
     assert '<span class="price-coverage">2 added</span>' in movement
     assert '<span class="price-coverage">2 removed</span>' in movement
+    assert '<summary>View 4 affected models</summary>' in movement
     for model_id in ("higher-model", "lower-model", "mixed-model", "coverage-model"):
         assert movement.count(f"<code>{model_id}</code>") == 1
 
@@ -359,10 +362,52 @@ def test_html_price_movement_summary_preserves_provider_identity() -> None:
     )
 
     movement = report.split('<section class="price-movement-summary">', 1)[1].split("</section>", 1)[0]
-    assert 'Price Movement <span class="count">\u2014 2 models</span>' in movement
+    assert '<strong>2 affected models:</strong>' in movement
     assert movement.count("<code>shared-model</code>") == 2
     assert '<span class="price-movement-provider">Abacus.AI</span>' in movement
     assert '<span class="price-movement-provider">OpenRouter</span>' in movement
+
+
+def test_html_price_movement_summary_omits_zero_categories_and_leads_with_direction() -> None:
+    changed = (
+        ModelDelta(
+            "changed",
+            "lower-model",
+            "Lower Model",
+            (
+                FieldChange("pricing.prompt", "0.2", "0.1"),
+                FieldChange("pricing.input_cache_read", "0.01", None),
+            ),
+        ),
+        ModelDelta(
+            "changed",
+            "mixed-model",
+            "Mixed Model",
+            (
+                FieldChange("pricing.prompt", "0.1", "0.2"),
+                FieldChange("pricing.completion", "0.4", "0.3"),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-21T13:05:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+
+    movement = report.split('<section class="price-movement-summary">', 1)[1].split("</section>", 1)[0]
+    assert 'Price Movement <span class="outcome price-lower">\u2014 mostly lower</span>' in movement
+    assert '<strong>2 affected models:</strong>' in movement
+    assert '<span class="price-lower">1 with decreases and no increases</span>' in movement
+    assert '<span class="price-mixed">1 mixed</span>' in movement
+    assert "with increases and no decreases" not in movement
+    assert "with fields added/removed only" not in movement
+    assert '<strong>4 changed price fields:</strong>' in movement
+    assert '<span class="price-lower">2 lower</span>' in movement
+    assert '<span class="price-higher">1 higher</span>' in movement
+    assert '<span class="price-coverage">1 removed</span>' in movement
+    assert ">0 added</span>" not in movement
 
 
 def test_html_price_movement_summary_uses_visible_monetary_leaves_only() -> None:
@@ -395,8 +440,9 @@ def test_html_price_movement_summary_uses_visible_monetary_leaves_only() -> None
     )
 
     movement = report.split('<section class="price-movement-summary">', 1)[1].split("</section>", 1)[0]
+    assert 'Price Movement <span class="outcome price-coverage">\u2014 price fields added/removed</span>' in movement
     assert '<span class="price-coverage">1 added</span>' in movement
-    assert '<span class="price-coverage">0 removed</span>' in movement
+    assert '>0 removed</span>' not in movement
     assert movement.count("<code>structured-model</code>") == 1
 
     squelched_policy = ReportDetailPolicy(

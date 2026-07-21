@@ -267,7 +267,7 @@ Scan reports use smart, field-type-aware formatting:
 - **All field changes** are grouped by category: Pricing, Context & Limits, Parameters, Capabilities, Other
 - **Repetitive list changes** affecting at least three models are consolidated into one bulk-change entry in default reports. List-size differences are ignored when the actual additions/removals match.
 - **Scalar and mixed changes remain model-specific**, so pricing, limits, cutoffs, and models with any additional visible change retain individual entries.
-- **HTML scan reports include a compact Price Movement summary** that classifies each affected provider/model identity exactly once as higher-only, lower-only, mixed-direction, or price-fields-added/removed-only. Separate field totals show higher, lower, added, and removed price fields.
+- **HTML scan reports include a compact Price Movement summary** that leads with the dominant direction, classifies each affected provider/model identity exactly once as higher-only, lower-only, mixed-direction, or price-fields-added/removed-only, and clearly separates affected-model counts from changed-price-field counts. Zero-count categories are omitted so only observed movements compete for attention.
 - Bulk entries aggregate their squelched changes and expose expandable model lists in HTML. The HTML Change Summary uses the same bulk entries plus one provider-level squelched rollup.
 
 Bulk consolidation applies only to the default human-readable report. `--detail all`, the automatically generated full-detail HTML companion, and JSON output remain ungrouped and full fidelity.
