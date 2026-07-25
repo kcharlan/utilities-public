@@ -78,6 +78,17 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   prints plainly. `test_vanishing_delta_row_reaches_every_human_format_but_
   not_json` carries its own fixture below.
 
+* Task 6b gave the PERCENT column the same escape hatch (a percentage that
+  would print `0.0%` over a real movement extends until it prints) and, for the
+  fourth time, changed NOT ONE golden in this module. The reason is different
+  from the previous three and worth stating, because this hatch fires at
+  ORDINARY magnitudes rather than sub-cent ones: every movement in the shared
+  fixture is large (`$2.00 → $3.50` is 75%, `131,072 → 262,144` is 100%), and
+  the smallest is `$0.05 → $0.09` at 80%. Nothing here moves by less than
+  0.05%, which is the only range the hatch touches.
+  `test_vanishing_percent_row_reaches_every_human_format_but_not_json` carries
+  its own fixture below.
+
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
 
@@ -1859,6 +1870,94 @@ def test_vanishing_delta_row_reaches_every_human_format_but_not_json() -> None:
     assert "$" not in payload
     assert "0.000124999" in payload
     assert "0.000125001" in payload
+
+
+def _vanishing_percent_scan_result() -> list[ProviderScanResult]:
+    """Two ordinary rows whose percentage, at one place, denied their movement.
+
+    Nothing exotic is needed for this one, which is the point: `3.000 -> 3.001`
+    is a tenth-of-a-cent price move and `262144 -> 262150` a six-token context
+    bump, both in the ranges the product meets constantly, and both printed
+    `↑ 0.0%` beside operands that showed the change plainly. Both kinds are in
+    ONE fixture because the hatch lives in `_pct_change`, which every numeric
+    kind shares -- a price-only fixture could not have caught a price-only fix.
+
+    Separate fixture for the same reason as the three above: adding a field to
+    the shared fixture would move the JSON goldens and destroy the evidence
+    that JSON is untouched.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-ordinary",
+                    "Synth Model Ordinary",
+                    (
+                        FieldChange("pricing.prompt", 3.000, 3.001),
+                        FieldChange("context_length", 262144, 262150),
+                    ),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_vanishing_percent_row_reaches_every_human_format_but_not_json() -> None:
+    """The percent hatch is a property of `RenderedChange`, so every renderer gets it.
+
+    `↑ 0.0%` must appear in NO human format: beside `$3.000 → $3.001` and
+    `262,144 → 262,150` it is a percentage asserting that nothing changed next
+    to two numbers that show it did. All three must print the extended
+    percentage instead -- and the price row and the count row are checked in
+    the same pass, because a fix applied only to the price path would leave the
+    context row still printing `0.0%` here.
+
+    JSON is asserted unchanged in the same test rather than a separate one, so
+    the human-format expectation and the audit-path expectation cannot drift.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_vanishing_percent_scan_result(),
+        )
+        assert "↑ 0.03%" in report, format_name
+        assert "↑ 0.002%" in report, format_name
+        # The spelling the hatch replaces, in either direction, ruled out
+        # outright: no row in this fixture may print a zero percentage.
+        assert "0.0%" not in report, format_name
+        # The operands the percentage has to agree with are still there.
+        assert "$3.000" in report, format_name
+        assert "$3.001" in report, format_name
+        assert "262,150" in report, format_name
+
+    payload = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_vanishing_percent_scan_result(),
+    )
+    assert "%" not in payload
+    assert "$" not in payload
+    assert '"old_value": 3.0' in payload
+    assert '"new_value": 3.001' in payload
+    assert '"old_value": 262144' in payload
+    assert '"new_value": 262150' in payload
 
 
 def test_characterization_text() -> None:

@@ -16,6 +16,8 @@ pin that so a future reshuffle cannot silently reinstate the defect.
 from __future__ import annotations
 
 import dataclasses
+import inspect
+import math
 from unittest.mock import patch
 
 import pytest
@@ -24,6 +26,8 @@ from model_sentinel.change_render import (
     FIELD_LEAF_LABELS,
     FIELD_PATH_LABELS,
     KNOWN_BOOLEAN_FIELDS,
+    PCT_MAX_PRECISION,
+    PCT_MIN_PRECISION,
     PRICE_COLLISION_MAX_PRECISION,
     PRICE_MAX_PRECISION,
     RenderedChange,
@@ -38,8 +42,12 @@ from model_sentinel.change_render import (
     _list_item_text,
     _normalize_price,
     _pct_change,
+    _pct_precision,
     _prettify_leaf,
     _price_precision,
+    _prints_alike,
+    _prints_as_zero,
+    _significant_decimals,
     _split_field_path,
     classify_change,
     format_qualified_label,
@@ -601,6 +609,278 @@ def test_one_sided_price_uses_its_own_operand_precision():
     )
     assert added.new_display == "$0.1425"
     assert added.old_display == "null"
+
+
+def test_the_collision_check_keeps_exact_equality_on_purpose():
+    """The collision check and the precision rule use DIFFERENT equalities, and must.
+
+    They look like one question asked twice -- `_significant_decimals` forgives
+    `_PRICE_PRECISION_REL_TOL`, `_prints_alike` does not -- so the natural
+    "coherence" fix is to give the collision check the same tolerance. That fix
+    reintroduces the module's headline defect, and this test is the
+    counterexample that says so rather than leaving it to be rediscovered.
+
+    Under the tolerance, `1957617.3956527107 -> 1957617.3956534583` (1.3e-10
+    apart relatively, so "one number" to the tolerance) prints ONE number twice
+    beside a delta and a percentage asserting a movement between them:
+
+        $1957617.395653 -> $1957617.395653   +$0.000001   ↑ 0.00000000004%
+
+    -- exactly what PRICE_COLLISION_MAX_PRECISION exists to prevent. The
+    tolerance is right for the question `_significant_decimals` asks (how many
+    places does ONE noisy value need) and wrong for this one (does the ROW
+    print one number twice), because the row's delta, direction and percentage
+    are all computed from exact arithmetic on these same two floats.
+
+    Asserted BOTH on the rendered row -- which is what a reader would see --
+    and on the check in isolation, so a tolerance introduced here fails with a
+    statement of what it breaks and not only with a changed number.
+    """
+    old, new = 1957617.3956527107, 1957617.3956534583
+    assert math.isclose(old, new, rel_tol=1e-09, abs_tol=0.0)  # "one number" to the tolerance
+    result = _price_change(repr(old), repr(new))
+    assert result.old_display != result.new_display
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$1957617.3956527",
+        "$1957617.3956535",
+        "+$0.0000007",
+    )
+
+    # The check itself, at the precision the tolerance-bearing rule picked for
+    # this pair: these two DO print alike there, and saying so is what makes
+    # the row extend past it. (Three places, not four: at this magnitude the
+    # relative tolerance is worth ~2e-03 absolute, so three places already
+    # "reproduce" both values -- which is precisely how far apart the two
+    # equalities are here, and why they must not be merged.)
+    capped = _significant_decimals(old)
+    assert capped == _significant_decimals(new) == 3
+    assert _prints_alike(old, new, capped) is True
+    assert _fmt_price_per_m(old, capped) == _fmt_price_per_m(new, capped) == "$1957617.396"
+
+
+# ---------------------------------------------------------------------------
+# 3b. Structural guarantees (Task 6b, Finding 3)
+#
+# Two required parameters carry a defect-prevention argument each: they exist
+# so that a caller CANNOT silently reinstate a fixed defect by omitting them.
+# The argument is behaviourally unfalsifiable -- no in-tree caller omits them,
+# so no rendered output changes if a default were added back -- which is
+# exactly why it needs pinning at the SIGNATURE level. A reverting change
+# passes every output test in this module; it fails here.
+# ---------------------------------------------------------------------------
+
+
+def test_fmt_price_per_m_requires_its_precision_at_the_signature():
+    """`precision` must stay required, so no caller can inherit a default.
+
+    It used to default to a value derived from the single operand, which is
+    correct only for one-sided rows; a two-sided caller that forgot it would
+    format each of old, new and delta from its own magnitude -- the
+    desynchronised-precision defect the shared precision replaced.
+    """
+    with pytest.raises(TypeError):
+        _fmt_price_per_m(2.0)  # type: ignore[call-arg]
+
+    precision = inspect.signature(_fmt_price_per_m).parameters["precision"]
+    assert precision.default is inspect.Parameter.empty
+    assert precision.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+
+
+def test_price_precision_requires_a_keyword_only_delta_at_the_signature():
+    """`delta` must stay required AND keyword-only.
+
+    Required, because a two-sided caller that omitted it would lose the delta
+    face of the contradiction rule and reinstate the vanishing delta
+    (`$0.00012 -> $0.00013` beside `+$0.00000`). Keyword-only, because
+    `_price_precision` takes `*values`: a positional `delta` would be
+    swallowed as another operand instead of raising, so the mistake would be
+    silent. Both properties are asserted, since a change to either alone
+    re-opens one of the two holes.
+    """
+    with pytest.raises(TypeError):
+        _price_precision(2.0)  # type: ignore[call-arg]
+
+    delta = inspect.signature(_price_precision).parameters["delta"]
+    assert delta.default is inspect.Parameter.empty
+    assert delta.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+# ---------------------------------------------------------------------------
+# 3c. Percent precision (Task 6b, Finding 1)
+#
+# `_pct_change` formatted at one decimal place, so any relative move under
+# 0.05% printed `0.0%`. Beside operands that render truthfully -- `$3.000 ->
+# $3.001`, `262,144 -> 262,150` -- that is a percentage denying a movement the
+# rest of the row asserts: the same self-contradiction the price operands'
+# escape hatch exists to eliminate, in the most ordinary magnitude range the
+# product has. The percent column gets the same treatment: trigger on the
+# rendered STRING, extend to the first precision that prints, bounded, with a
+# fallback to one place on exhaustion.
+# ---------------------------------------------------------------------------
+
+
+def test_the_percent_column_extends_rather_than_printing_a_lie():
+    """The reported rows, pinned on the values that produced them.
+
+    Each pair renders two visibly different prices. At one place each printed
+    `↑ 0.0%` beside them -- two numbers a reader can see differ, and a
+    percentage asserting they do not. The operands are asserted alongside the
+    percentage, because it is their truthfulness that makes `0.0%` a
+    contradiction rather than a rounding.
+    """
+    for old, new, expected_old, expected_new, expected_pct in (
+        ("3.000", "3.001", "$3.000", "$3.001", "↑ 0.03%"),
+        ("2.5000", "2.5005", "$2.5000", "$2.5005", "↑ 0.02%"),
+        ("12.345", "12.350", "$12.345", "$12.350", "↑ 0.04%"),
+        ("3.001", "3.000", "$3.001", "$3.000", "↓ 0.03%"),
+    ):
+        result = _price_change(old, new)
+        assert (result.old_display, result.new_display) == (expected_old, expected_new)
+        assert result.pct_display == expected_pct
+        assert result.pct_display != "↑ 0.0%"
+        assert result.pct_display != "↓ 0.0%"
+
+
+def test_the_percent_hatch_leaves_readable_percentages_untouched():
+    """`↑ 6.3%` must stay `↑ 6.3%`: the hatch fires only on the vanished ones.
+
+    Every row here already prints a non-zero percentage at one place, so the
+    hatch must return immediately and the column must keep exactly one decimal
+    -- including the borderline `0.05%`, the smallest move that rounds to a
+    visible `0.1%` and therefore the row most at risk of being widened by an
+    off-by-one in the trigger.
+    """
+    for old, new, expected in (
+        ("0.15", "0.1425", "↓ 5.0%"),
+        ("2", "3.5", "↑ 75.0%"),
+        ("0.11", "0.1169", "↑ 6.3%"),
+        ("2000", "2001", "↑ 0.1%"),  # exactly 0.05%, rounds up and stays at one place
+    ):
+        result = _price_change(old, new)
+        assert result.pct_display == expected
+        assert len(result.pct_display.rsplit(".", 1)[1]) == len("0%")
+
+
+def test_the_percent_hatch_covers_every_numeric_kind_not_only_prices():
+    """The defect is the percent column's, so the fix is the percent column's.
+
+    `_pct_change` renders the percentage for price, count AND numeric rows, and
+    a six-token context bump reads `262,144 -> 262,150 (+6, ↑ 0.0%)` for
+    exactly the same reason a one-tenth-of-a-cent price bump did. Fixing only
+    the price path would have left the same contradiction in the other two
+    columns, so the hatch lives in `_pct_change` and these two kinds are pinned
+    here to keep it there.
+    """
+    count = classify_change(FieldChange("context_length", 262144, 262150))
+    assert count.kind == "count"
+    assert (count.old_display, count.new_display) == ("262,144", "262,150")
+    assert count.delta_display == "+6"
+    assert count.pct_display == "↑ 0.002%"
+
+    numeric = classify_change(FieldChange("some.arbitrary.metric", 400000, 400001))
+    assert numeric.kind == "numeric"
+    # 0.00025%, which ROUNDS UP into four places rather than needing five: the
+    # trigger is "prints as zeroes", so a percentage that rounds to something a
+    # reader can see is already resolved, exactly as for the delta face.
+    assert numeric.pct_display == "↑ 0.0003%"
+
+
+def test_a_zero_basis_still_yields_no_percentage_at_all():
+    """The hatch is decided AFTER the zero-basis exit, and must not reach it.
+
+    `old == 0` has no relative reading at any precision, and the empty string
+    is how `_pct_change` has always said so (`pct_basis_zero` carries the
+    cause to the renderers). A hatch that computed a percentage first and then
+    asked whether it printed as zero would turn every price appearing out of
+    `free` into a percentage of nothing.
+    """
+    assert _pct_change(0, 5) == ""
+    assert _pct_change(0.0, 1e-09) == ""
+
+    result = _price_change("0", "0.000000001")
+    assert result.pct_display is None
+    assert result.pct_basis_zero is True
+
+
+def test_a_genuinely_zero_movement_is_not_extended():
+    """`0.0%` stays `0.0%` when nothing moved -- it is true, not a lie.
+
+    Reachable without float exotica: `3 -> "3"` is two different recorded
+    values (so it is a change) that are one number (so the movement is zero).
+    The trigger is "non-zero magnitude printing as zeroes", so it declines
+    here at the first place, and no amount of precision would print anything
+    else anyway.
+    """
+    assert _pct_change(3, 3) == "↓ 0.0%"
+    assert _pct_precision(0.0) == PCT_MIN_PRECISION
+
+    result = _price_change("3", "3.0")
+    assert (result.old_display, result.new_display) == ("$3.00", "$3.00")
+    assert result.pct_display == "↓ 0.0%"
+
+
+def test_the_percent_hatch_stops_at_the_first_precision_that_prints():
+    """Extend to what the number needs, not to the bound.
+
+    Asserted on `_pct_precision` directly and across three orders of magnitude,
+    so an implementation that jumped straight to PCT_MAX_PRECISION (or to any
+    fixed wider precision) fails here rather than quietly printing
+    `↑ 0.0300000000000000%`.
+    """
+    assert _pct_precision(50.0) == 1
+    assert _pct_precision(0.03) == 2
+    assert _pct_precision(0.002) == 3
+    assert _pct_precision(0.000012) == 5
+    assert _pct_precision(-0.000012) == 5  # sign is the arrow's business, not the precision's
+    # Rounding counts as printing: `0.00025` reaches a visible `0.0003` at four
+    # places, so it stops there instead of asking for the five its shortest
+    # exact form would need.
+    assert _pct_precision(0.00025) == 4
+
+
+def test_the_percent_hatch_is_bounded_and_falls_back_to_one_place():
+    """Bounded by construction, with the worst REAL case well inside the bound.
+
+    The bound is set by relative separation, not by any product magnitude: the
+    closest two distinct finite doubles can be is one unit in the last place,
+    `ulp(x)/|x| >= 2**-53`, i.e. `|pct| >= ~1.11e-14`, which prints from
+    fourteen places. That worst case is asserted to resolve, so the bound is
+    shown to be sufficient rather than asserted to be sixteen.
+
+    The fallback is therefore unreachable from any pair of distinct finite
+    operands, and is exercised directly: a percentage of `1e-30` would need
+    thirty-one places, so the loop exhausts and the column degrades to today's
+    `0.0%` rather than to sixteen zeroes.
+    """
+    assert PCT_MIN_PRECISION == 1
+    assert PCT_MAX_PRECISION == 16
+
+    one_ulp_apart = math.nextafter(1.0, 2.0)
+    assert one_ulp_apart != 1.0
+    worst_case_pct = ((one_ulp_apart - 1.0) / 1.0) * 100
+    assert _pct_precision(worst_case_pct) == 14 <= PCT_MAX_PRECISION
+    assert _pct_change(1.0, one_ulp_apart) == "↑ 0.00000000000002%"
+
+    assert _pct_precision(1e-30) == PCT_MIN_PRECISION
+    assert f"{abs(1e-30):.{_pct_precision(1e-30)}f}" == "0.0"
+
+
+def test_the_percent_hatch_shares_the_delta_face_s_vanished_test():
+    """One predicate for both vanishing columns, asserted as the same predicate.
+
+    A delta printing `+$0.00000` and a percentage printing `0.0%` are one
+    defect in two columns, so `_pct_precision` and the price row's delta face
+    ask the same question of `_prints_as_zero`. A second copy of the test could
+    drift from the first; this pins that there is only one.
+    """
+    assert _prints_as_zero(0.03, 1) is True
+    assert _prints_as_zero(0.03, 2) is False
+    assert _pct_precision(0.03) == 2
+    # Non-finite percentages format to letters, never to zeroes, so they are
+    # never called vanished and never widen the column.
+    assert _prints_as_zero(float("inf"), 1) is False
+    assert _prints_as_zero(float("nan"), 1) is False
+    assert _pct_precision(float("inf")) == PCT_MIN_PRECISION
 
 
 # ---------------------------------------------------------------------------

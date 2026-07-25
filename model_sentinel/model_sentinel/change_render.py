@@ -478,12 +478,81 @@ def _fmt_int(value: float) -> str:
     return f"{value:,.2f}"
 
 
+# Percent precision bounds. One place is what the percent column is FOR --
+# `↑ 63.6%`, `↓ 20.5%` (design: "RenderedChange / pct_display") -- and it is
+# what every percentage that reads correctly keeps.
+#
+# WHY THE HATCH EXISTS. One place makes any relative move under 0.05% print
+# `0.0%`, a percentage asserting that nothing changed, beside two operands the
+# row prints as visibly different numbers. It is the same defect the price
+# operands' hatch was built to eliminate -- a row that contradicts itself --
+# and at ordinary magnitudes it is far more common than the sub-cent collisions
+# that motivated that one: `$3.000 -> $3.001`, `$12.345 -> $12.350` and
+# `262,144 -> 262,150` are all ordinary rows, and all three printed `0.0%`.
+#
+# WHY 16. The percentage is scale-free, so the bound is set by the smallest
+# RELATIVE separation two distinct operands can have rather than by any
+# product magnitude. For finite doubles that is one unit in the last place:
+# `ulp(x)/|x| >= 2**-53`, so `|pct| >= 100 * 2**-53 ~= 1.11e-14`, which prints
+# non-zero from fourteen places. Sixteen clears that worst case with two places
+# of margin while keeping the column finite. The product's own smallest moves
+# are nowhere near it -- one token off a 10M context window is `1e-5%` (five
+# places), a price differing in its sixth significant digit is `1e-4%` (four).
+PCT_MIN_PRECISION = 1
+PCT_MAX_PRECISION = 16
+
+
+def _pct_precision(pct: float) -> int:
+    """The percent column's precision: one place, unless one place prints a lie.
+
+    Structured exactly like the price cap's hatch (`_precision_that_resolves`):
+    returns PCT_MIN_PRECISION untouched whenever the percentage already reads
+    non-zero there, so `↑ 6.3%` stays `↑ 6.3%` and only the rows that would
+    have printed `0.0%` over a real movement are extended -- and then only to
+    the FIRST precision that prints them, not to the bound.
+
+    The trigger is the rendered STRING, via the same `_prints_as_zero` the
+    price row's delta face uses: "this magnitude is not zero, and prints as
+    nothing but zeroes here". Sharing that predicate is the point -- a vanished
+    delta and a vanished percentage are one defect in two columns, and a second
+    copy of the test could drift from the first.
+
+    Bounded by PCT_MAX_PRECISION, and on exhaustion returns PCT_MIN_PRECISION
+    so a pathological input degrades to today's `0.0%` rather than to a column
+    of sixteen zeroes. That branch is unreachable from any pair of distinct
+    finite operands (see PCT_MAX_PRECISION); it exists so the loop is bounded
+    by construction rather than by an argument about its inputs.
+
+    Non-finite percentages (`inf` from a denormal basis, `nan` from a `nan`
+    operand) print `inf`/`nan`, never zeroes, so they return at one place
+    unchanged.
+    """
+    for places in range(PCT_MIN_PRECISION, PCT_MAX_PRECISION + 1):
+        if not _prints_as_zero(pct, places):
+            return places
+    return PCT_MIN_PRECISION
+
+
 def _pct_change(old: float, new: float) -> str:
+    """The row's relative movement, at a precision that cannot deny it.
+
+    A zero basis still yields NO percentage at all: `(new - 0) / 0` has no
+    relative reading, and the empty string is how this function has always said
+    so (callers pair it with `pct_basis_zero`, which names the cause). The
+    hatch cannot reach that case -- it is decided before any percentage is
+    computed -- and must not, because the defect it fixes is a percentage that
+    contradicts the row, not the absence of one.
+
+    An exactly zero movement (`3 -> "3"`: different recorded values, equal as
+    numbers) is likewise untouched: `0.0%` is what actually happened, so
+    `_prints_as_zero` declines it at the first place and the row prints
+    `0.0%`.
+    """
     if old == 0:
         return ""
     pct = ((new - old) / abs(old)) * 100
     arrow = "↑" if pct > 0 else "↓"
-    return f"{arrow} {abs(pct):.1f}%"
+    return f"{arrow} {abs(pct):.{_pct_precision(pct)}f}%"
 
 
 # Price precision bounds (design: "Value formatting / Price display (A1)").
@@ -592,6 +661,32 @@ def _prints_alike(first: float, second: float, precision: int) -> bool:
     which short-circuits to `free` before precision is consulted -- is
     correctly seen as DISTINCT from a tiny non-zero price. `free` beside
     `$0.0000` is already two different strings.
+
+    "Numerically different" is EXACT `!=`, deliberately, and NOT the
+    `_PRICE_PRECISION_REL_TOL` that `_significant_decimals` compares with. The
+    two look like one question asked twice; they are two questions:
+
+      * `_significant_decimals` asks how many places ONE value needs to
+        reproduce ITSELF. Its input is a noisy binary image of a decimal the
+        provider published (`5e-08 * 1_000_000` is `0.049999999999999996`), so
+        it must forgive noise or it prices a five-cent cache read at `$0.0500`.
+      * this asks whether the ROW prints one number twice. Its notion of
+        "different" has to be the one the REST of the row already used:
+        `delta_norm`, `direction` and `_pct_change` are all computed from exact
+        arithmetic on these same two floats. Borrowing the tolerance here
+        detaches this check from the numbers the row actually prints.
+
+    That detachment is not theoretical. With the tolerance applied,
+    `1957617.3956527107 -> 1957617.3956534583` (1.3e-10 apart in relative
+    terms, so "the same number" to the tolerance) renders
+
+        $1957617.395653 -> $1957617.395653   +$0.000001   ↑ 0.00000000004%
+
+    -- one number printed twice beside a delta and a percentage asserting a
+    movement between them, which is the exact defect PRICE_COLLISION_MAX_
+    PRECISION exists to eliminate. Under exact `!=` the same row reads
+    `$1957617.3956527 -> $1957617.3956535  +$0.0000007`, which is wider and
+    true. `test_the_collision_check_keeps_exact_equality_on_purpose` pins it.
     """
     if first == second:
         return False
@@ -601,10 +696,17 @@ def _prints_alike(first: float, second: float, precision: int) -> bool:
 def _prints_as_zero(value: float, precision: int) -> bool:
     """True when a numerically non-zero magnitude prints as nothing but zeroes.
 
+    Shared by the two columns that can vanish this way: the price row's delta
+    face (`_contradicts_itself`) and the percent column (`_pct_precision`).
+    One predicate, because `+$0.00000` beside two different prices and `0.0%`
+    beside two different numbers are one defect seen in two columns.
+
     Compared against the digits a zero WOULD print at this precision rather
-    than against `_fmt_price_per_m(0.0, precision)`: a delta that is exactly
-    zero prints `free`, so the renderer's own spelling of zero is not the
-    string this magnitude is in danger of being mistaken for. `+$0.00000` is.
+    than against any renderer's spelling of zero: a delta that is exactly zero
+    prints `free`, so the renderer's own spelling is not the string this
+    magnitude is in danger of being mistaken for. `+$0.00000` is. Values that
+    format to something other than digits (`inf`, `nan`) never match the zero
+    digits, so they are never called vanished.
     """
     if value == 0:
         return False
@@ -628,9 +730,24 @@ def _contradicts_itself(values: tuple[float, ...], delta: float | None, precisio
     prices whose delta still claims nothing changed, which is the first
     contradiction wearing the other face.
 
-    Both faces are decided on the STRING the row would print, never on the
-    magnitude behind it. A magnitude threshold would guess where the defect
-    starts and fire on rows that read perfectly well at the cap.
+    Both faces are decided on STRINGS, never on the magnitude behind them: a
+    magnitude threshold would guess where the defect starts and fire on rows
+    that read perfectly well at the cap. They are NOT decided on the same
+    string, and unifying them would break the row:
+
+      * the operand face asks whether two operands print ALIKE, so it compares
+        them through `_fmt_price_per_m` -- the free-aware formatter, so that
+        `free` beside `$0.0000` is correctly two strings and not a collision;
+      * the delta face asks whether one magnitude prints as NOTHING, so it
+        compares its digits against the digits a zero would print at this
+        precision. Routing it through `_fmt_price_per_m` instead would compare
+        against `free`, which no non-zero delta ever prints, and the face would
+        never fire.
+
+    So: face one compares a printed price with another printed price; face two
+    compares a printed magnitude with printed zero. `free` is the reason they
+    cannot share a spelling of zero -- see `_prints_alike` and
+    `_prints_as_zero`, which each say which comparison they make and why.
     """
     for index, first in enumerate(values):
         for second in values[index + 1 :]:
