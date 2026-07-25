@@ -166,7 +166,7 @@ def test_scan_writes_full_html_companion_report(tmp_path: Path, monkeypatch, cap
     assert concise_reports
     assert full_reports
     assert any("1 field change across 1 model" in path.read_text(encoding="utf-8") for path in concise_reports)
-    assert any("benchmarks.design_arena" in path.read_text(encoding="utf-8") for path in full_reports)
+    assert any("Design arena" in path.read_text(encoding="utf-8") for path in full_reports)
 
 
 def test_changes_writes_its_html_companion_when_a_model_was_added(
@@ -214,7 +214,7 @@ def test_changes_writes_its_html_companion_when_a_model_was_added(
     assert "<code>beta</code>" in summary[1]
     assert "<code>gamma</code>" in summary[1]
     # Squelched rows account for the hidden change instead of printing it.
-    assert "benchmarks.design_arena" not in summary[1]
+    assert "Design arena" not in summary[1]
 
 
 def test_history_model_list_lists_known_models(tmp_path: Path, monkeypatch, capsys) -> None:

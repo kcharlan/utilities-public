@@ -1,6 +1,6 @@
 import json
 
-from model_sentinel.change_render import classify_change
+from model_sentinel.change_render import classify_change, resolve_field_label
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
 from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
@@ -149,9 +149,9 @@ def test_scan_report_summarizes_benchmarks_by_default() -> None:
     )
 
     assert "squelched: 1 field change across 1 model" in report
-    assert "benchmarks.artificial_analysis.intelligence_index" not in report
+    assert "Intelligence index" not in report
     assert "[Unclassified]" in report
-    assert "metadata.owner: old \u2192 new" in report
+    assert "Owner: old \u2192 new" in report
 
 
 def test_scan_report_all_detail_shows_benchmark_fields() -> None:
@@ -183,7 +183,7 @@ def test_scan_report_all_detail_shows_benchmark_fields() -> None:
     )
 
     assert "[Benchmarks]" in report
-    assert "benchmarks.artificial_analysis.intelligence_index" in report
+    assert "Intelligence index" in report
 
 
 def test_scan_report_squelched_detail_only_shows_squelched_fields() -> None:
@@ -214,8 +214,8 @@ def test_scan_report_squelched_detail_only_shows_squelched_fields() -> None:
         ),
     )
 
-    assert "benchmarks.design_arena" in report
-    assert "metadata.owner: old" not in report
+    assert "Design arena" in report
+    assert "Owner: old" not in report
     assert "non-squelched" in report
 
 
@@ -247,8 +247,8 @@ def test_scan_report_unknown_fields_render_by_default_and_cap_overflow() -> None
         ),
     )
 
-    assert "new_payload.a: old \u2192 new" in report
-    assert "new_payload.b: old \u2192 new" not in report
+    assert "A: old \u2192 new" in report
+    assert "B: old \u2192 new" not in report
     assert "1 additional unclassified field change hidden" in report
 
 
@@ -277,7 +277,7 @@ def test_show_pattern_wins_over_squelch_pattern() -> None:
         ),
     )
 
-    assert "benchmarks.design_arena" in report
+    assert "Design arena" in report
     assert "squelched:" not in report
 
 
@@ -558,7 +558,7 @@ def test_default_html_summary_aggregates_squelched_benchmark_rows() -> None:
         ],
     )
 
-    assert "benchmarks.design_arena" not in report
+    assert "Design arena" not in report
     assert "1 field change across 1 model" in report
 
 
@@ -586,13 +586,13 @@ def test_default_scan_reports_group_repetitive_list_changes_but_keep_scalar_chan
 
     assert "Bulk change \u2014 3 models" in text_report
     assert "models: alpha, beta, gamma" in text_report
-    assert "supported_parameters: +reasoning_effort" in text_report
+    assert "Supported parameters: +reasoning_effort" in text_report
     assert "2 field changes across 2 of these models" in text_report
     assert "* priced-model (Priced Model)" in text_report
-    assert "pricing.prompt: 0.000001 \u2192 0.000002" in text_report
+    assert "Input: 0.000001 \u2192 0.000002" in text_report
 
     assert "**Bulk change \u2014 3 models**" in markdown_report
-    assert "`supported_parameters: +reasoning_effort`" in markdown_report
+    assert "`Supported parameters: +reasoning_effort`" in markdown_report
     assert "`priced-model` - Priced Model" in markdown_report
 
     detail_html, summary_html = html_report.split("<h2>Change Summary</h2>", 1)
@@ -707,8 +707,8 @@ def test_changes_report_applies_detail_policy() -> None:
         provider_pricing={"openrouter": (1, 1)},
     )
 
-    assert "pricing.prompt" in report
-    assert "benchmarks.design_arena" not in report
+    assert "Input" in report
+    assert "Design arena" not in report
     assert "squelched:" in report
 
 
@@ -727,7 +727,12 @@ def test_history_report_applies_detail_policy() -> None:
         ),
     )
 
+    # The history report renders HistoryEvent rows directly and never builds a
+    # RenderedChange, so it still prints RAW dotted paths. Labels stop at the
+    # scan/changes reports; pinning the raw spelling here documents that
+    # boundary rather than leaving it to be discovered by a future reader.
     assert "pricing.prompt" in report
+    assert "Input" not in report
     assert "benchmarks.design_arena" not in report
     assert "squelched" in report
 
@@ -751,7 +756,10 @@ def test_json_output_remains_full_fidelity() -> None:
         ],
     )
 
+    # JSON keeps the RAW dotted path: it is a machine-readable audit
+    # surface and never routes through the label registry.
     assert "benchmarks.design_arena" in report
+    assert "Design arena" not in report
 
 
 def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> None:
@@ -783,7 +791,7 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
         provider_results=[_scan_result(changed)],
     )
 
-    expected = "pricing.input_audio_cache: null \u2192 0.0000003 ($0.30 / 1M)"
+    expected = "Audio cache: null \u2192 0.0000003 ($0.30 / 1M)"
     assert expected in text_report
     assert expected in markdown_report
     assert '<td class="new-val">0.0000003 ($0.30 / 1M)</td>' in html_report
@@ -854,11 +862,11 @@ def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() ->
         provider_results=[_scan_result(changed)],
     )
 
-    assert "pricing.overrides[0].completion: null \u2192 0.0000225 ($22.50 / 1M)" in text_report
-    assert "pricing.overrides[0].input_cache_read: null \u2192 0.0000006 ($0.60 / 1M)" in text_report
-    assert "pricing.overrides[0].min_prompt_tokens: null \u2192 200,000" in text_report
+    assert "Output: null \u2192 0.0000225 ($22.50 / 1M)" in text_report
+    assert "Cache read: null \u2192 0.0000006 ($0.60 / 1M)" in text_report
+    assert "Min prompt tokens: null \u2192 200,000" in text_report
     assert "$200" not in text_report
-    assert "pricing.overrides[0].prompt" in html_report
+    assert "Input" in html_report
     assert "$6.00 / 1M" in html_report
     assert '"field_name": "pricing.overrides"' in json_report
     assert '"field_name": "pricing.overrides[0].prompt"' not in json_report
@@ -922,11 +930,13 @@ def test_existing_pricing_override_tiers_render_only_changed_leaves() -> None:
     )
 
     field_name = "pricing.overrides[min_prompt_tokens=200000].input_cache_read"
-    expected = f"{field_name}: 0.000001 \u2192 0.0000006 ($1.00 \u2192 $0.60 / 1M, \u2193 40.0%)"
+    label, qualifier = resolve_field_label(field_name)
+    assert (label, qualifier) == ("Cache read", "min_prompt_tokens=200000")
+    expected = f"{label}: 0.000001 \u2192 0.0000006 ($1.00 \u2192 $0.60 / 1M, \u2193 40.0%)"
     assert expected in text_report
-    assert field_name in html_report
+    assert label in html_report
     assert "$1.00 \u2192 $0.60 / 1M" in html_report
-    assert "pricing.overrides (2 \u2192 2)" not in text_report
+    assert "Conditional pricing (2 \u2192 2)" not in text_report
     assert "utc_start=30" not in text_report
     assert '"field_name": "pricing.overrides"' in json_report
     assert field_name not in json_report
@@ -955,10 +965,10 @@ def test_pricing_override_tier_addition_and_removal_render_as_semantic_tiers() -
         provider_results=[_scan_result(changed)],
     )
 
-    assert "pricing.overrides[min_prompt_tokens=200000].prompt: 0.000004 ($4.00 / 1M) \u2192 null" in report
-    assert "pricing.overrides[min_prompt_tokens=300000].prompt: null \u2192 0.000005 ($5.00 / 1M)" in report
-    assert "pricing.overrides[min_prompt_tokens=200000].min_prompt_tokens: 200,000 \u2192 null" in report
-    assert "pricing.overrides[min_prompt_tokens=300000].min_prompt_tokens: null \u2192 300,000" in report
+    assert "Input: 0.000004 ($4.00 / 1M) \u2192 null" in report
+    assert "Input: null \u2192 0.000005 ($5.00 / 1M)" in report
+    assert "Min prompt tokens: 200,000 \u2192 null" in report
+    assert "Min prompt tokens: null \u2192 300,000" in report
 
 
 def test_unmatchable_pricing_overrides_keep_full_fidelity_list_fallback() -> None:
@@ -988,7 +998,7 @@ def test_unmatchable_pricing_overrides_keep_full_fidelity_list_fallback() -> Non
     # shared `change_render._list_item_text` on both the per-model and bulk
     # paths. This assertion pinned the repr spelling before those two
     # conventions were unified.
-    assert 'pricing.overrides: +{"prompt": "0.000005"}; -{"prompt": "0.000004"} (1 \u2192 1)' in report
+    assert 'Conditional pricing: +{"prompt": "0.000005"}; -{"prompt": "0.000004"} (1 \u2192 1)' in report
 
 
 def test_generic_new_structured_key_expands_recursively() -> None:
@@ -1014,8 +1024,8 @@ def test_generic_new_structured_key_expands_recursively() -> None:
         provider_results=[_scan_result(changed)],
     )
 
-    assert "new_payload.tiers[0].label: null \u2192 small" in report
-    assert "new_payload.tiers[1].limit: null \u2192 20" in report
+    assert "Label: null \u2192 small" in report
+    assert "Limit: null \u2192 20" in report
     assert 'new_payload: null \u2192 {"tiers"' not in report
 
 
@@ -1075,11 +1085,11 @@ def test_noop_rows_are_absent_from_every_human_format() -> None:
         # Both noop forms: null -> null, and equal non-null values. Asserted on
         # the rendered field-name/value pair, not on the bare word "active",
         # which any future CSS class or markup could contain.
-        assert "default_parameters.temperature" not in report, format_name
+        assert "Temperature" not in report, format_name
         assert "status: active" not in report, format_name
         assert '<td class="field-name">status</td>' not in report, format_name
         # The real change on the same model still renders.
-        assert "expiration_date" in report, format_name
+        assert "Expiration date" in report, format_name
 
 
 def test_noop_only_model_gets_no_card_at_all() -> None:
@@ -1087,9 +1097,9 @@ def test_noop_only_model_gets_no_card_at_all() -> None:
     not consume a card, a header, or a summary row."""
     reports = _render_all_human_formats((_NOOP_MODEL,))
     _assert_no_model_card(reports, "synth/model-noop-only")
-    assert "default_parameters.temperature" not in reports["text"]
-    assert "default_parameters.temperature" not in reports["markdown"]
-    assert "default_parameters.temperature" not in reports["html"]
+    assert "Temperature" not in reports["text"]
+    assert "Temperature" not in reports["markdown"]
+    assert "Temperature" not in reports["html"]
 
 
 def test_noop_rows_are_suppressed_in_all_detail_mode_too() -> None:
@@ -1105,8 +1115,8 @@ def test_noop_rows_are_suppressed_in_all_detail_mode_too() -> None:
     for format_name, report in _render_all_human_formats(
         (_NOOP_PLUS_REAL_MODEL,), detail_policy=policy
     ).items():
-        assert "default_parameters.temperature" not in report, format_name
-        assert "expiration_date" in report, format_name
+        assert "Temperature" not in report, format_name
+        assert "Expiration date" in report, format_name
 
 
 def test_noop_rows_remain_in_json() -> None:
@@ -1166,8 +1176,8 @@ def test_noop_rows_are_absent_from_the_changes_report() -> None:
             changes=changes,
             provider_pricing={"openrouter": (1, 1)},
         )
-        assert "default_parameters.temperature" not in report, format_name
-        assert "expiration_date" in report, format_name
+        assert "Temperature" not in report, format_name
+        assert "Expiration date" in report, format_name
 
     payload = json.loads(
         render_changes_report(
@@ -1482,7 +1492,7 @@ def test_changes_html_keeps_added_and_removed_beside_a_squelched_change() -> Non
     assert "<td>Removed</td><td>Synth Provider</td><td><code>synth/model-gone</code></td>" in summary
     assert "<td>Squelched</td>" in summary
     # The squelched field is accounted for by the rollup, never spelled out.
-    assert "benchmarks.design_arena" not in report
+    assert "Design arena" not in report
 
 
 def test_changes_html_renders_a_provider_whose_only_record_is_squelched() -> None:
@@ -1514,7 +1524,7 @@ def test_changes_html_renders_a_provider_whose_only_record_is_squelched() -> Non
     assert "<td>Removed</td>" not in summary
     assert "synth/model-new" not in report
     assert "synth/model-gone" not in report
-    assert "benchmarks.design_arena" not in report
+    assert "Design arena" not in report
 
 
 def test_changes_text_and_json_are_unaffected_by_the_html_summary_fix() -> None:
@@ -1641,16 +1651,16 @@ def test_changes_report_keeps_field_changes_recorded_after_an_addition() -> None
         assert "2 changes across 1 date" in report, format_name
         assert "      + synth/model-churn (Synth Churn)" in report, format_name
         assert "      * synth/model-churn (Synth Churn)" in report, format_name
-        assert "expiration_date: null → 2030-12-31" in report, format_name
+        assert "Expiration date: null \u2192 2030-12-31" in report, format_name
 
     body = _html_section_body(reports["html"], "<h3>Synth Provider</h3>")
     assert '<ul class="model-list added-list">' in body
     assert '<div class="model-card-header"><code>synth/model-churn</code>' in body
-    assert "expiration_date" in body
+    assert "Expiration date" in body
 
     summary = reports["html"].split('<section class="summary-section">', 1)[1]
     assert "<td>Added</td><td>Synth Provider</td><td><code>synth/model-churn</code></td>" in summary
-    assert "expiration_date" in summary
+    assert "Expiration date" in summary
 
     assert _changes_json_kinds(rows) == [("added", None), ("field_changed", "expiration_date")]
 
@@ -1673,7 +1683,7 @@ def test_changes_report_keeps_a_removal_recorded_after_a_field_change() -> None:
         assert "2 changes across 1 date" in report, format_name
         assert "      - synth/model-churn (Synth Churn)" in report, format_name
         assert "      * synth/model-churn (Synth Churn)" in report, format_name
-        assert "expiration_date: null → 2030-12-31" in report, format_name
+        assert "Expiration date: null \u2192 2030-12-31" in report, format_name
 
     body = _html_section_body(reports["html"], "<h3>Synth Provider</h3>")
     assert '<ul class="model-list removed-list">' in body
@@ -1681,7 +1691,7 @@ def test_changes_report_keeps_a_removal_recorded_after_a_field_change() -> None:
 
     summary = reports["html"].split('<section class="summary-section">', 1)[1]
     assert "<td>Removed</td><td>Synth Provider</td><td><code>synth/model-churn</code></td>" in summary
-    assert "expiration_date" in summary
+    assert "Expiration date" in summary
 
     assert _changes_json_kinds(rows) == [("field_changed", "expiration_date"), ("removed", None)]
 
@@ -1753,7 +1763,7 @@ def test_changes_report_rolls_up_a_squelched_change_recorded_after_an_addition()
     assert "patterns: benchmarks, benchmarks.*" in text
     assert "models: synth/model-churn" in text
     # Never spelled out: it is squelched, not merely relocated.
-    assert "benchmarks.design_arena" not in text
+    assert "Design arena" not in text
 
     body = _html_section_body(reports["html"], "<h3>Synth Provider</h3>")
     assert '<ul class="model-list added-list">' in body
@@ -1808,7 +1818,7 @@ def test_changes_report_charges_a_post_addition_field_to_the_unclassified_budget
 
     assert "      + synth/model-first (Synth First)" in report
     # The first model spends the allowance...
-    assert "synth_unclassified_first: 1 → 2" in report
+    assert "Synth unclassified first: 1 → 2" in report
     # ...so the second model's field is hidden and counted, not rendered.
     assert "synth_unclassified_second" not in report
     assert "1 additional unclassified field change hidden" in report
@@ -1874,7 +1884,7 @@ def test_noop_suppression_cannot_desync_a_bulk_card_from_its_grouping_key() -> N
     reports = _render_all_human_formats(equal_but_differently_spelled)
     for format_name, report in reports.items():
         assert "Bulk change" not in report, format_name
-        assert "supported_parameters" not in report, format_name
+        assert "Supported parameters" not in report, format_name
     for suffix in ("a", "b", "c"):
         _assert_no_model_card(reports, f"synth/model-eq-{suffix}")
 
@@ -1889,7 +1899,7 @@ def test_bulk_grouping_still_forms_when_the_list_change_is_real() -> None:
     )
     text = _render_all_human_formats(real)["text"]
     assert "Bulk change — 3 models" in text
-    assert "supported_parameters: +seed" in text
+    assert "Supported parameters: +seed" in text
 
 
 # ---------------------------------------------------------------------------
@@ -1907,10 +1917,10 @@ def test_boolean_disable_renders_on_to_off_with_no_percent() -> None:
     """Regression test for the shipped `↓ 100.0%` defect: a flag turning off
     was percent-formatted as if it were a magnitude."""
     reports = _boolean_reports("top_provider.is_moderated", True, False)
-    assert "top_provider.is_moderated: on → off" in reports["text"]
-    assert "`top_provider.is_moderated: on → off`" in reports["markdown"]
+    assert "Moderated: on \u2192 off" in reports["text"]
+    assert "`Moderated: on \u2192 off`" in reports["markdown"]
     assert (
-        '<td class="field-name">top_provider.is_moderated</td>'
+        '<td class="field-name">Moderated</td>'
         '<td class="old-val">on</td><td class="new-val">off</td>'
         '<td class="change-delta delta-decrease">disabled</td>'
     ) in reports["html"]
@@ -1923,9 +1933,9 @@ def test_boolean_enable_renders_off_to_on_with_a_non_empty_delta_cell() -> None:
     returns "" when the old value is 0, so `False -> True` produced an empty
     delta cell. The boolean branch never reaches percent logic at all."""
     reports = _boolean_reports("top_provider.is_moderated", False, True)
-    assert "top_provider.is_moderated: off → on" in reports["text"]
+    assert "Moderated: off \u2192 on" in reports["text"]
     assert (
-        '<td class="field-name">top_provider.is_moderated</td>'
+        '<td class="field-name">Moderated</td>'
         '<td class="old-val">off</td><td class="new-val">on</td>'
         '<td class="change-delta delta-increase">enabled</td>'
     ) in reports["html"]
@@ -1935,7 +1945,7 @@ def test_boolean_enable_renders_off_to_on_with_a_non_empty_delta_cell() -> None:
 def test_integer_coded_boolean_renders_off_to_on_with_no_percent() -> None:
     """`reasoning.default_enabled` is recorded as 0/1, not as a real bool."""
     reports = _boolean_reports("reasoning.default_enabled", 0, 1)
-    assert "reasoning.default_enabled: off → on" in reports["text"]
+    assert "Reasoning default: off \u2192 on" in reports["text"]
     assert '<td class="change-delta delta-increase">enabled</td>' in reports["html"]
     for format_name, report in reports.items():
         assert "%" not in report.replace("%;", ""), format_name
@@ -1946,16 +1956,16 @@ def test_one_sided_boolean_renders_as_coverage_with_an_em_dash() -> None:
     other one-sided change -- em dash on the absent side, `added` pill in the
     delta column -- instead of leaking the raw Python repr `null -> True`."""
     reports = _boolean_reports("top_provider.is_moderated", None, True)
-    assert "top_provider.is_moderated: — → on" in reports["text"]
+    assert "Moderated: \u2014 \u2192 on" in reports["text"]
     assert (
-        '<td class="field-name">top_provider.is_moderated</td>'
+        '<td class="field-name">Moderated</td>'
         '<td class="old-val">—</td><td class="new-val">on</td>'
         '<td class="change-delta delta-increase">added</td>'
     ) in reports["html"]
     assert "null → True" not in reports["text"]
 
     removed = _boolean_reports("top_provider.is_moderated", True, None)
-    assert "top_provider.is_moderated: on → —" in removed["text"]
+    assert "Moderated: on \u2192 \u2014" in removed["text"]
     assert '<td class="change-delta delta-decrease">removed</td>' in removed["html"]
 
 
@@ -1969,11 +1979,11 @@ def test_numeric_field_holding_zero_and_one_is_not_treated_as_a_boolean() -> Non
     reaches a genuinely numeric default_parameters field.
     """
     reports = _boolean_reports("default_parameters.temperature", 0, 1)
-    assert "default_parameters.temperature: 0 → 1 (+1)" in reports["text"]
+    assert "Temperature: 0 \u2192 1 (+1)" in reports["text"]
     assert "off" not in reports["text"]
 
     with_percent = _boolean_reports("default_parameters.temperature", 0.5, 1)
-    assert "default_parameters.temperature: 0.50 → 1 (+0.50, ↑ 100.0%)" in with_percent["text"]
+    assert "Temperature: 0.50 \u2192 1 (+0.50, \u2191 100.0%)" in with_percent["text"]
 
 
 # ---------------------------------------------------------------------------
@@ -2088,8 +2098,8 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
         text.split(f"{_SHARED_LABEL} (synthprov-b)", 1)[1],
     )
     # ...and each lands under the provider it belongs to.
-    assert "pricing.prompt: 0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)" in a_section
-    assert "pricing.prompt: 0.000001 → 0.000002 ($0.000001 → $0.000002 / 1M, ↑ 100.0%)" in b_section
+    assert "Input: 0.000001 \u2192 0.000002 ($1.00 \u2192 $2.00 / 1M, \u2191 100.0%)" in a_section
+    assert "Input: 0.000001 \u2192 0.000002 ($0.000001 \u2192 $0.000002 / 1M, \u2191 100.0%)" in b_section
 
     html = _shared_label_report("html")
     assert '<td class="old-val">0.000001 ($1.00 / 1M)</td>' in html
@@ -2102,11 +2112,11 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     summary = html.split('<section class="summary-section">', 1)[1]
     assert (
         f"<td>{_SHARED_LABEL} (synthprov-a)</td><td><code>synth/shared-model</code></td>"
-        "<td>pricing.prompt</td><td>0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)</td>"
+        "<td>Input</td><td>0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)</td>"
     ) in summary
     assert (
         f"<td>{_SHARED_LABEL} (synthprov-b)</td><td><code>synth/shared-model</code></td>"
-        "<td>pricing.prompt</td><td>0.000001 → 0.000002 ($0.000001 → $0.000002 / 1M, ↑ 100.0%)</td>"
+        "<td>Input</td><td>0.000001 → 0.000002 ($0.000001 → $0.000002 / 1M, ↑ 100.0%)</td>"
     ) in summary
 
 

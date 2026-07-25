@@ -20,6 +20,8 @@ import dataclasses
 import pytest
 
 from model_sentinel.change_render import (
+    FIELD_LEAF_LABELS,
+    FIELD_PATH_LABELS,
     KNOWN_BOOLEAN_FIELDS,
     RenderedChange,
     _bool_state,
@@ -33,7 +35,10 @@ from model_sentinel.change_render import (
     _list_item_text,
     _normalize_price,
     _pct_change,
+    _prettify_leaf,
+    _split_field_path,
     classify_change,
+    resolve_field_label,
 )
 from model_sentinel.models import FieldChange
 
@@ -770,15 +775,282 @@ def test_one_sided_list_scalar_matches_render_value_json_form():
 
 
 # ---------------------------------------------------------------------------
-# Step 1 in the brief: label/qualifier are the raw field_path in this task.
+# Field label registry (Task 5)
+#
+# `label` is the human-readable name shown in every non-JSON renderer;
+# `field_path` stays the raw dotted path because tooltips and the JSON audit
+# surface depend on it. Lookup order is exact full path -> leaf segment ->
+# prettified leaf.
 # ---------------------------------------------------------------------------
 
 
-def test_label_and_qualifier_are_not_yet_populated_from_a_registry():
-    result = classify_change(FieldChange("pricing.prompt", "0.000001", "0.000002"))
-    assert result.field_path == "pricing.prompt"
-    assert result.label == "pricing.prompt"
-    assert result.qualifier is None
+def test_exact_path_match_wins_over_leaf_suffix_match():
+    """`top_provider.context_length` must not pick up the model-level label.
+
+    This is the one genuine key collision in the registry: `context_length`
+    is a real top-level field AND the leaf of `top_provider.context_length`.
+    The leaf entry says "Context length (model)", the path entry says
+    "Context length". If the cascade ever consulted the leaf table first --
+    or dropped the path entry -- the provider-level field would silently be
+    labelled as the model-level one, which is exactly the ambiguity the
+    design's disambiguation note exists to prevent.
+    """
+    # Precondition: both tables really do claim this name, with DIFFERENT
+    # labels. Without this, the assertion below could pass vacuously.
+    assert FIELD_PATH_LABELS["top_provider.context_length"] == "Context length"
+    assert FIELD_LEAF_LABELS["context_length"] == "Context length (model)"
+    assert FIELD_PATH_LABELS["top_provider.context_length"] != FIELD_LEAF_LABELS["context_length"]
+
+    assert resolve_field_label("top_provider.context_length") == ("Context length", None)
+    result = classify_change(FieldChange("top_provider.context_length", 128000, 200000))
+    assert result.label == "Context length"
+
+
+def test_context_length_and_top_provider_context_length_have_different_labels():
+    """Two distinct fields that both occur in real data must read differently."""
+    model_level = classify_change(FieldChange("context_length", 128000, 200000))
+    provider_level = classify_change(FieldChange("top_provider.context_length", 128000, 200000))
+
+    assert model_level.label == "Context length (model)"
+    assert provider_level.label == "Context length"
+    assert model_level.label != provider_level.label
+
+
+def test_leaf_suffix_match_resolves_a_dynamic_pricing_override_path():
+    """Conditional pricing expands to a bracketed path; the leaf still labels it.
+
+    `_pricing_override_path` (reporting.py) is what produces this shape:
+    the condition is appended to the `pricing.overrides` segment, and
+    `_diff_structured_values` then appends the money leaf. The bracketed
+    condition must be stripped before lookup and carried as `qualifier`,
+    and `field_path` must survive verbatim for the tooltip/audit surface.
+    """
+    path = "pricing.overrides[min_prompt_tokens=200000].completion"
+    result = classify_change(FieldChange(path, "0.000001", "0.000002"))
+
+    assert result.label == "Output"
+    assert result.qualifier == "min_prompt_tokens=200000"
+    assert result.field_path == path
+
+
+def test_dynamic_path_qualifier_survives_a_condition_value_containing_a_dot():
+    """The bracket stripper must not be a naive split on ".".
+
+    `_pricing_override_path` interpolates the condition value through
+    `_render_value`, so a non-integer threshold puts a "." INSIDE the
+    brackets. A segment-wise splitter that tokenizes on "." first would tear
+    `min_prompt_tokens=1.5` into two bogus segments and lose both the label
+    and the qualifier.
+    """
+    path = "pricing.overrides[min_prompt_tokens=1.5].prompt"
+    assert _split_field_path(path) == ("pricing.overrides.prompt", "min_prompt_tokens=1.5")
+
+    result = classify_change(FieldChange(path, "0.000001", "0.000002"))
+    assert result.label == "Input"
+    assert result.qualifier == "min_prompt_tokens=1.5"
+    assert result.field_path == path
+
+
+def test_indexed_bracket_segments_are_also_stripped_and_carried():
+    """`_flatten_one_sided_structure` emits `[index]` brackets, not just conditions.
+
+    A second producer of bracketed segments exists in reporting.py, so the
+    stripper cannot be specialised to `key=value` conditions.
+    """
+    path = "architecture.tier_profiles[0].weight"
+    assert _split_field_path(path) == ("architecture.tier_profiles.weight", "0")
+
+    result = classify_change(FieldChange(path, None, 1))
+    assert result.label == "Weight"
+    assert result.qualifier == "0"
+    assert result.field_path == path
+
+
+def test_unmatched_path_falls_back_to_prettified_leaf():
+    """Neither table claims the name: split on "_" and sentence-case the leaf."""
+    assert "max_prompt_images" not in FIELD_LEAF_LABELS
+    assert "top_provider.max_prompt_images" not in FIELD_PATH_LABELS
+
+    assert resolve_field_label("top_provider.max_prompt_images") == ("Max prompt images", None)
+    result = classify_change(FieldChange("top_provider.max_prompt_images", 4, 8))
+    assert result.label == "Max prompt images"
+    assert result.field_path == "top_provider.max_prompt_images"
+
+
+def test_prettify_leaf_sentence_cases_rather_than_title_cases():
+    """Only the first word is capitalised; interior words stay lowercase."""
+    assert _prettify_leaf("some_unregistered_metric") == "Some unregistered metric"
+    assert _prettify_leaf("weight") == "Weight"
+    # Not "Some Unregistered Metric" -- title-casing is a different rule and
+    # would collide visually with the registry's own sentence-cased labels.
+    assert _prettify_leaf("some_unregistered_metric") != "Some Unregistered Metric"
+
+
+def test_field_path_is_preserved_verbatim_even_when_a_label_was_found():
+    """A found label must never overwrite or normalise `field_path`.
+
+    Tooltips render the dotted path and the JSON payload is an audit
+    surface, so `field_path` is not allowed to become the pretty name.
+    """
+    # (path, old, new, expected label) -- one per lookup tier, plus a
+    # bracketed path, and spread across `kind`s so that a single construction
+    # site reverting to `field_path=label` cannot hide in an untested branch.
+    cases = [
+        ("top_provider.context_length", 1, 2, "Context length"),  # count
+        ("pricing.prompt", 1, 2, "Input"),  # price
+        ("hugging_face_id", "a", "b", "Hugging Face ID"),  # scalar
+        ("supported_parameters", ["a"], ["a", "b"], "Supported parameters"),  # list
+        ("reasoning.mandatory", False, True, "Reasoning required"),  # boolean
+        ("default_parameters.top_p", 0.5, 0.9, "Top-P"),  # numeric
+        ("knowledge_cutoff", "x", "x", "Knowledge cutoff"),  # noop
+        ("pricing.overrides[min_prompt_tokens=200000].completion", 1, 2, "Output"),
+        ("top_provider.max_prompt_images", 4, 8, "Max prompt images"),
+    ]
+    seen_kinds = set()
+    for path, old, new, expected_label in cases:
+        result = classify_change(FieldChange(path, old, new))
+        seen_kinds.add(result.kind)
+        assert result.field_path == path, path
+        assert result.label == expected_label, path
+        assert result.label != result.field_path, path
+    # Every kind that can carry a label is actually exercised above.
+    assert seen_kinds == {"count", "price", "scalar", "list", "boolean", "numeric", "noop"}
+
+
+def test_registry_covers_every_seeded_field_name():
+    """All 42 design-specified names resolve to their exact label.
+
+    Spelled out as data rather than asserted against the dicts themselves so
+    that a typo in a registry VALUE fails here, not just a missing key.
+    """
+    expected = {
+        # Pricing
+        "pricing.prompt": "Input",
+        "pricing.completion": "Output",
+        "pricing.input_cache_read": "Cache read",
+        "pricing.input_cache_write": "Cache write",
+        "pricing.input_cache_write_1h": "Cache write (1h)",
+        "pricing.input_audio_cache": "Audio cache",
+        "pricing.audio": "Audio",
+        "pricing.audio_output": "Audio output",
+        "pricing.image": "Image",
+        "pricing.image_output": "Image output",
+        "pricing.web_search": "Web search",
+        "pricing.internal_reasoning": "Internal reasoning",
+        "pricing.request": "Per request",
+        "pricing.overrides": "Conditional pricing",
+        # Context & limits
+        "top_provider.context_length": "Context length",
+        "context_length": "Context length (model)",
+        "top_provider.max_completion_tokens": "Max output",
+        # Capabilities
+        "reasoning": "Reasoning",
+        "reasoning.default_enabled": "Reasoning default",
+        "reasoning.default_effort": "Reasoning effort",
+        "reasoning.supported_efforts": "Supported efforts",
+        "reasoning.mandatory": "Reasoning required",
+        "supported_parameters": "Supported parameters",
+        "supported_voices": "Supported voices",
+        "architecture.modality": "Modality",
+        "architecture.input_modalities": "Input modalities",
+        "architecture.instruct_type": "Instruct type",
+        # Metadata
+        "top_provider.is_moderated": "Moderated",
+        "knowledge_cutoff": "Knowledge cutoff",
+        "expiration_date": "Expiration date",
+        "description": "Description",
+        "name": "Name",
+        "created": "Created",
+        "links": "Links",
+        "hugging_face_id": "Hugging Face ID",
+        # Default parameters
+        "default_parameters": "Default parameters",
+        "default_parameters.frequency_penalty": "Frequency penalty",
+        "default_parameters.presence_penalty": "Presence penalty",
+        "default_parameters.repetition_penalty": "Repetition penalty",
+        "default_parameters.temperature": "Temperature",
+        "default_parameters.top_k": "Top-K",
+        "default_parameters.top_p": "Top-P",
+    }
+    assert len(expected) == 42
+    assert len(FIELD_PATH_LABELS) + len(FIELD_LEAF_LABELS) == 42
+
+    for path, label in expected.items():
+        assert resolve_field_label(path) == (label, None), path
+
+
+def test_registry_tables_do_not_silently_shadow_each_other():
+    """Any name in both tables is a deliberate disambiguation, not an accident.
+
+    A leaf key that is also a whole path key with the SAME label is dead
+    weight; with a DIFFERENT label it is a deliberate override. Only the
+    documented `context_length` collision is allowed.
+    """
+    overlapping = {
+        path for path in FIELD_PATH_LABELS if path.rsplit(".", 1)[-1] in FIELD_LEAF_LABELS
+    }
+    assert overlapping == {"top_provider.context_length"}
+
+
+def test_registry_labels_are_non_empty_and_start_uppercase():
+    for table_name, table in (("FIELD_PATH_LABELS", FIELD_PATH_LABELS), ("FIELD_LEAF_LABELS", FIELD_LEAF_LABELS)):
+        for key, label in table.items():
+            assert label, f"{table_name}[{key!r}] is empty"
+            assert label[0].isupper(), f"{table_name}[{key!r}] = {label!r} is not capitalised"
+
+
+def test_every_classify_branch_populates_label_and_qualifier():
+    """Label resolution must reach every construction site, not just some.
+
+    `classify_change` builds a RenderedChange at ~10 sites across six
+    helpers. A site left on the old `label=field_path` spelling would leak a
+    raw dotted path into one specific kind of row -- the sort of gap that
+    only shows up in production on an uncommon change shape.
+    """
+    cases = [
+        # (FieldChange, expected kind)
+        (FieldChange("pricing.prompt", "0.000002", "0.000002"), "noop"),
+        (FieldChange("supported_parameters", ["tools"], ["tools", "seed"]), "list"),
+        (FieldChange("reasoning.mandatory", False, True), "boolean"),
+        (FieldChange("reasoning.mandatory", None, True), "boolean"),
+        (FieldChange("pricing.prompt", "0.000001", "0.000002"), "price"),
+        (FieldChange("pricing.prompt", None, "0.000002"), "price"),
+        (FieldChange("context_length", 128000, 200000), "count"),
+        (FieldChange("context_length", None, 200000), "count"),
+        (FieldChange("default_parameters.temperature", 0.7, 0.9), "numeric"),
+        (FieldChange("knowledge_cutoff", "2024-01", "2025-01"), "scalar"),
+    ]
+    for field_change, expected_kind in cases:
+        result = classify_change(field_change)
+        assert result.kind == expected_kind, field_change.field_name
+        expected_label, expected_qualifier = resolve_field_label(field_change.field_name)
+        assert result.label == expected_label, (field_change.field_name, expected_kind)
+        assert result.qualifier == expected_qualifier, (field_change.field_name, expected_kind)
+        # And the raw path is still intact on every branch.
+        assert result.field_path == field_change.field_name
+
+
+def test_bracketed_path_labels_reach_every_classify_branch():
+    """The same coverage check, but for paths carrying a qualifier."""
+    prefix = "pricing.overrides[min_prompt_tokens=200000]"
+    cases = [
+        (FieldChange(f"{prefix}.completion", "0.000002", "0.000002"), "noop", "Output"),
+        (FieldChange(f"{prefix}.completion", "0.000001", "0.000002"), "price", "Output"),
+        (FieldChange(f"{prefix}.completion", None, "0.000002"), "price", "Output"),
+    ]
+    for field_change, expected_kind, expected_label in cases:
+        result = classify_change(field_change)
+        assert result.kind == expected_kind, field_change.field_name
+        assert result.label == expected_label
+        assert result.qualifier == "min_prompt_tokens=200000"
+        assert result.field_path == field_change.field_name
+
+
+def test_unbracketed_paths_have_no_qualifier():
+    """`qualifier` is None unless the path actually carried a condition."""
+    for path in ("pricing.prompt", "context_length", "top_provider.max_prompt_images"):
+        assert _split_field_path(path) == (path, None)
+        assert classify_change(FieldChange(path, 1, 2)).qualifier is None
 
 
 # ---------------------------------------------------------------------------

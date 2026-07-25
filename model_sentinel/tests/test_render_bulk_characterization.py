@@ -226,23 +226,23 @@ Synth Provider (synthprov)
     * Bulk change — 3 models
       models: synth/model-bulk-a, synth/model-bulk-b, synth/model-bulk-c
       [Parameters]
-        supported_parameters: +logit_bias
+        Supported parameters: +logit_bias
       [Other]
-        architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1}
+        Tier profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1}
     * synth/model-pair-x (Synth Pair X)
-      supported_parameters: +seed (1 → 2)
+      Supported parameters: +seed (1 → 2)
     * synth/model-pair-y (Synth Pair Y)
-      supported_parameters: +seed (1 → 2)
+      Supported parameters: +seed (1 → 2)
     * synth/model-solo-struct (Synth Solo Struct)
-      architecture.tier_profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)
+      Tier profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)
     * synth/model-list-added (Synth List Added)
-      supported_parameters: null → ["tools", "logit_bias"]
+      Supported parameters: null → ["tools", "logit_bias"]
     * synth/model-list-removed (Synth List Removed)
-      supported_parameters: ["tools", "logit_bias"] → null
+      Supported parameters: ["tools", "logit_bias"] → null
     * synth/model-struct-added (Synth Struct Added)
       [Other]
-        architecture.tier_profiles[0].name: null → gamma
-        architecture.tier_profiles[0].weight: null → 5
+        Name: null → gamma
+        Weight: null → 5
 
 Summary
 ------------------------------------------------------------
@@ -267,33 +267,33 @@ Synth Provider (synthprov)
   changed: 9
     * synth/model-bulk-a (Synth Bulk A)
       [Parameters]
-        supported_parameters: +logit_bias (2 → 3)
+        Supported parameters: +logit_bias (2 → 3)
       [Other]
-        architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
+        Tier profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
     * synth/model-bulk-b (Synth Bulk B)
       [Parameters]
-        supported_parameters: +logit_bias (2 → 3)
+        Supported parameters: +logit_bias (2 → 3)
       [Other]
-        architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
+        Tier profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
     * synth/model-bulk-c (Synth Bulk C)
       [Parameters]
-        supported_parameters: +logit_bias (2 → 3)
+        Supported parameters: +logit_bias (2 → 3)
       [Other]
-        architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
+        Tier profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
     * synth/model-pair-x (Synth Pair X)
-      supported_parameters: +seed (1 → 2)
+      Supported parameters: +seed (1 → 2)
     * synth/model-pair-y (Synth Pair Y)
-      supported_parameters: +seed (1 → 2)
+      Supported parameters: +seed (1 → 2)
     * synth/model-solo-struct (Synth Solo Struct)
-      architecture.tier_profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)
+      Tier profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)
     * synth/model-list-added (Synth List Added)
-      supported_parameters: null → ["tools", "logit_bias"]
+      Supported parameters: null → ["tools", "logit_bias"]
     * synth/model-list-removed (Synth List Removed)
-      supported_parameters: ["tools", "logit_bias"] → null
+      Supported parameters: ["tools", "logit_bias"] → null
     * synth/model-struct-added (Synth Struct Added)
       [Other]
-        architecture.tier_profiles[0].name: null → gamma
-        architecture.tier_profiles[0].weight: null → 5
+        Name: null → gamma
+        Weight: null → 5
 
 Summary
 ------------------------------------------------------------
@@ -325,22 +325,22 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
 - **Bulk change — 3 models**
   - Models: `synth/model-bulk-a, synth/model-bulk-b, synth/model-bulk-c`
   - **Parameters**
-    - `supported_parameters: +logit_bias`
+    - `Supported parameters: +logit_bias`
   - **Other**
-    - `architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1}`
+    - `Tier profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1}`
 - `synth/model-pair-x` - Synth Pair X
-  - `supported_parameters: +seed (1 → 2)`
+  - `Supported parameters: +seed (1 → 2)`
 - `synth/model-pair-y` - Synth Pair Y
-  - `supported_parameters: +seed (1 → 2)`
+  - `Supported parameters: +seed (1 → 2)`
 - `synth/model-solo-struct` - Synth Solo Struct
-  - `architecture.tier_profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)`
+  - `Tier profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)`
 - `synth/model-list-added` - Synth List Added
-  - `supported_parameters: null → ["tools", "logit_bias"]`
+  - `Supported parameters: null → ["tools", "logit_bias"]`
 - `synth/model-list-removed` - Synth List Removed
-  - `supported_parameters: ["tools", "logit_bias"] → null`
+  - `Supported parameters: ["tools", "logit_bias"] → null`
 - `synth/model-struct-added` - Synth Struct Added
-  - `architecture.tier_profiles[0].name: null → gamma`
-  - `architecture.tier_profiles[0].weight: null → 5`"""
+  - `Name: null → gamma`
+  - `Weight: null → 5`"""
 
 EXPECTED_MARKDOWN = _EXPECTED_MARKDOWN_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
 
@@ -351,14 +351,14 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>Bulk change — 3 models</code></div>
 <details class="bulk-models"><summary>Models: synth/model-bulk-a, synth/model-bulk-b, synth/model-bulk-c</summary><div class="bulk-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details>
 <div class="change-category"><div class="category-label">Parameters</div>
-<div class="list-diff"><span class="field-name">supported_parameters</span>
+<div class="list-diff"><span class="field-name">Supported parameters</span>
 <div class="list-added">
 &nbsp;&nbsp;+ logit_bias
 </div>
 </div>
 </div>
 <div class="change-category"><div class="category-label">Other</div>
-<div class="list-diff"><span class="field-name">architecture.tier_profiles</span>
+<div class="list-diff"><span class="field-name">Tier profiles</span>
 <div class="list-added">
 &nbsp;&nbsp;+ {&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 2}
 </div>
@@ -372,7 +372,7 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>synth/model-pair-x</code><span class="display-name">Synth Pair X</span></div>
 <div class="change-category"><div class="category-label">Parameters</div>
 <div class="list-diff">
-<span class="field-name">supported_parameters</span> 
+<span class="field-name">Supported parameters</span> 
 <span class="list-count">(1 → 2)</span>
 <div class="list-added">
 &nbsp;&nbsp;+ seed
@@ -384,7 +384,7 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>synth/model-pair-y</code><span class="display-name">Synth Pair Y</span></div>
 <div class="change-category"><div class="category-label">Parameters</div>
 <div class="list-diff">
-<span class="field-name">supported_parameters</span> 
+<span class="field-name">Supported parameters</span> 
 <span class="list-count">(1 → 2)</span>
 <div class="list-added">
 &nbsp;&nbsp;+ seed
@@ -396,7 +396,7 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>synth/model-solo-struct</code><span class="display-name">Synth Solo Struct</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <div class="list-diff">
-<span class="field-name">architecture.tier_profiles</span> 
+<span class="field-name">Tier profiles</span> 
 <span class="list-count">(1 → 1)</span>
 <div class="list-added">
 &nbsp;&nbsp;+ {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}
@@ -411,7 +411,7 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>synth/model-list-added</code><span class="display-name">Synth List Added</span></div>
 <div class="change-category"><div class="category-label">Parameters</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">supported_parameters</td><td class="old-val">null</td><td class="new-val">[&quot;tools&quot;, &quot;logit_bias&quot;]</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Supported parameters</td><td class="old-val">null</td><td class="new-val">[&quot;tools&quot;, &quot;logit_bias&quot;]</td><td class="change-delta delta-neutral">—</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -419,7 +419,7 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>synth/model-list-removed</code><span class="display-name">Synth List Removed</span></div>
 <div class="change-category"><div class="category-label">Parameters</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">supported_parameters</td><td class="old-val">[&quot;tools&quot;, &quot;logit_bias&quot;]</td><td class="new-val">null</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Supported parameters</td><td class="old-val">[&quot;tools&quot;, &quot;logit_bias&quot;]</td><td class="new-val">null</td><td class="change-delta delta-neutral">—</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -427,8 +427,8 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>synth/model-struct-added</code><span class="display-name">Synth Struct Added</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">architecture.tier_profiles[0].name</td><td class="old-val">null</td><td class="new-val">gamma</td><td class="change-delta delta-neutral">—</td></tr>
-<tr><td class="field-name">architecture.tier_profiles[0].weight</td><td class="old-val">null</td><td class="new-val">5</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Name</td><td class="old-val">null</td><td class="new-val">gamma</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Weight</td><td class="old-val">null</td><td class="new-val">5</td><td class="change-delta delta-neutral">—</td></tr>
 </tbody></table>
 </div>
 </div></section>
@@ -437,15 +437,15 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 
 # Exact summary table. Bulk entries collapse the model column into a
 # <details> disclosure listing the grouped model ids.
-EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Parameters</td><td>Synth Provider</td><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>supported_parameters</td><td>+logit_bias</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-list-added</code></td><td>supported_parameters</td><td>null → [&quot;tools&quot;, &quot;logit_bias&quot;]</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-list-removed</code></td><td>supported_parameters</td><td>[&quot;tools&quot;, &quot;logit_bias&quot;] → null</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-x</code></td><td>supported_parameters</td><td>+seed (1 → 2)</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-y</code></td><td>supported_parameters</td><td>+seed (1 → 2)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>architecture.tier_profiles</td><td>+{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 2}; -{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 1}</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-solo-struct</code></td><td>architecture.tier_profiles</td><td>+{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}; -{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3} (1 → 1)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>architecture.tier_profiles[0].name</td><td>null → gamma</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>architecture.tier_profiles[0].weight</td><td>null → 5</td></tr></tbody></table></section>"""
+EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Parameters</td><td>Synth Provider</td><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>Supported parameters</td><td>+logit_bias</td></tr>
+<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-list-added</code></td><td>Supported parameters</td><td>null → [&quot;tools&quot;, &quot;logit_bias&quot;]</td></tr>
+<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-list-removed</code></td><td>Supported parameters</td><td>[&quot;tools&quot;, &quot;logit_bias&quot;] → null</td></tr>
+<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-x</code></td><td>Supported parameters</td><td>+seed (1 → 2)</td></tr>
+<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-y</code></td><td>Supported parameters</td><td>+seed (1 → 2)</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 2}; -{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 1}</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-solo-struct</code></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}; -{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3} (1 → 1)</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Name</td><td>null → gamma</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Weight</td><td>null → 5</td></tr></tbody></table></section>"""
 
 
 # ---------------------------------------------------------------------------
@@ -514,10 +514,10 @@ def test_bulk_group_with_unchanged_member_set_renders_membership_changed():
 
     text = render("text", changed=MULTIPLICITY_TRIO)
     assert "* Bulk change — 3 models" in text
-    assert "supported_parameters: membership changed" in text
+    assert "Supported parameters: membership changed" in text
 
     markdown = render("markdown", changed=MULTIPLICITY_TRIO)
-    assert "`supported_parameters: membership changed`" in markdown
+    assert "`Supported parameters: membership changed`" in markdown
 
     html = render("html", changed=MULTIPLICITY_TRIO)
     assert '<div class="list-count">membership changed</div>' in html
@@ -593,10 +593,10 @@ def test_bulk_and_per_model_dict_member_spellings_match():
     """
     text = render("text")
     # Bulk card (grouped trio) -- JSON quoting.
-    assert 'architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1}' in text
+    assert 'Tier profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1}' in text
     # Per-model card, same field and same dict-member shape -- JSON quoting too.
     assert (
-        'architecture.tier_profiles: +{"name": "beta", "weight": 4}; '
+        'Tier profiles: +{"name": "beta", "weight": 4}; '
         '-{"name": "beta", "weight": 3} (1 → 1)'
     ) in text
     # No Python repr spelling anywhere in the rendered report.

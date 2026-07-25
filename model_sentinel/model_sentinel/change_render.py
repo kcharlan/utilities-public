@@ -74,6 +74,192 @@ KNOWN_BOOLEAN_FIELDS = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# Field label registry
+#
+# `RenderedChange.label` is the human-readable name every non-JSON renderer
+# prints; `field_path` keeps the raw dotted path because the HTML tooltips and
+# the JSON payload are audit surfaces. JSON never routes through here at all --
+# `_delta_to_json` serialises `FieldChange` directly -- so labelling cannot
+# change the machine-readable output.
+#
+# TWO PLAIN DICTS, ON PURPOSE. Adding, removing, or renaming a field label is a
+# one-line edit to one of the literals below; there is no derivation, no
+# decorator, and no ordering dependency between them. Each label lives in
+# exactly one table so a rename is never a two-place edit.
+#
+# WHICH TABLE DOES A NAME GO IN?
+#
+#   FIELD_PATH_LABELS -- keyed by the FULL dotted path. Use when the leaf alone
+#   is ambiguous or when the name should only ever be labelled at that one
+#   location.
+#
+#   FIELD_LEAF_LABELS -- keyed by the LAST segment. Use when the leaf names the
+#   field unambiguously wherever it appears. This is what makes the dynamic
+#   conditional-pricing paths work: `_pricing_override_path` (reporting.py)
+#   emits `pricing.overrides[min_prompt_tokens=200000].completion`, so the
+#   money leaves cannot be keyed by a fixed full path and must be keyed by leaf
+#   to be labelled under BOTH `pricing.completion` and the override form. The
+#   six `default_parameters` leaves are leaf-keyed for the same reason (the
+#   design specifies them as leaves).
+#
+# Lookup order is exact path -> leaf -> prettified leaf. `resolve_field_label`
+# is the only consumer.
+#
+# Seeded from the design's "Initial registry contents": every distinct
+# non-benchmark `field_name` observed in the history database (42 names).
+# `tests/test_change_render.py::test_registry_covers_every_seeded_field_name`
+# pins all 42 key/label pairs.
+
+# Keyed by full dotted path. Consulted FIRST.
+FIELD_PATH_LABELS: dict[str, str] = {
+    # Context & limits.
+    #
+    # `top_provider.context_length` is the ONLY entry here that exists to beat
+    # a leaf entry: `context_length` is simultaneously a real top-level field
+    # and this field's leaf. They are distinct fields that both occur in the
+    # history database and must not share a label verbatim, or the report
+    # becomes ambiguous about which one moved. Deleting this line does not
+    # produce an unlabelled row -- it produces a WRONG one, silently labelling
+    # the provider-level field "Context length (model)".
+    "top_provider.context_length": "Context length",
+    "top_provider.max_completion_tokens": "Max output",
+    # Capabilities.
+    "reasoning.default_enabled": "Reasoning default",
+    "reasoning.default_effort": "Reasoning effort",
+    "reasoning.supported_efforts": "Supported efforts",
+    "reasoning.mandatory": "Reasoning required",
+    "architecture.modality": "Modality",
+    "architecture.input_modalities": "Input modalities",
+    "architecture.instruct_type": "Instruct type",
+    # Metadata.
+    "top_provider.is_moderated": "Moderated",
+}
+
+# Keyed by leaf segment. Consulted only when no full-path entry matched.
+FIELD_LEAF_LABELS: dict[str, str] = {
+    # Pricing. Leaf-keyed rather than path-keyed because conditional pricing
+    # relocates these same leaves under a dynamic bracketed parent -- see the
+    # note above.
+    "prompt": "Input",
+    "completion": "Output",
+    "input_cache_read": "Cache read",
+    "input_cache_write": "Cache write",
+    "input_cache_write_1h": "Cache write (1h)",
+    "input_audio_cache": "Audio cache",
+    "audio": "Audio",
+    "audio_output": "Audio output",
+    "image": "Image",
+    "image_output": "Image output",
+    "web_search": "Web search",
+    "internal_reasoning": "Internal reasoning",
+    "request": "Per request",
+    "overrides": "Conditional pricing",
+    # Context & limits. Deliberately carries the "(model)" disambiguator; the
+    # provider-level sibling is path-keyed above.
+    "context_length": "Context length (model)",
+    # Capabilities.
+    "reasoning": "Reasoning",
+    "supported_parameters": "Supported parameters",
+    "supported_voices": "Supported voices",
+    # Metadata.
+    "knowledge_cutoff": "Knowledge cutoff",
+    "expiration_date": "Expiration date",
+    "description": "Description",
+    "name": "Name",
+    "created": "Created",
+    "links": "Links",
+    "hugging_face_id": "Hugging Face ID",
+    # Default parameters.
+    "default_parameters": "Default parameters",
+    "frequency_penalty": "Frequency penalty",
+    "presence_penalty": "Presence penalty",
+    "repetition_penalty": "Repetition penalty",
+    "temperature": "Temperature",
+    "top_k": "Top-K",
+    "top_p": "Top-P",
+}
+
+
+def _split_field_path(field_path: str) -> tuple[str, str | None]:
+    """Split a path into its bare dotted form and any bracketed condition(s).
+
+    Two places in reporting.py append a bracketed segment to a path:
+
+      * `_pricing_override_path` -- a conditional-pricing predicate, e.g.
+        `pricing.overrides[min_prompt_tokens=200000]`, later extended by
+        `_diff_structured_values` into `...[min_prompt_tokens=200000].completion`.
+      * `_flatten_one_sided_structure` -- a list index, e.g.
+        `architecture.tier_profiles[0].weight`.
+
+    Both must be stripped for the registry lookup (the label belongs to the
+    field, not to the instance) and both are carried out as the qualifier (the
+    instance is what distinguishes two otherwise identical rows). The condition
+    is returned LITERALLY; turning `min_prompt_tokens=200000` into prose is a
+    renderer concern and out of scope here.
+
+    Scans character by character tracking bracket depth rather than splitting
+    on "." first. That is not defensiveness for its own sake:
+    `_pricing_override_path` interpolates the condition value through
+    `_render_value`, so a non-integer threshold puts a "." INSIDE the brackets
+    and a naive `field_path.split(".")` would tear the segment in half, losing
+    both the label and the qualifier.
+    """
+    bare: list[str] = []
+    condition: list[str] = []
+    conditions: list[str] = []
+    depth = 0
+    for char in field_path:
+        if char == "[":
+            depth += 1
+            if depth == 1:
+                condition = []
+                continue
+        elif char == "]" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                if condition:
+                    conditions.append("".join(condition))
+                continue
+        (condition if depth > 0 else bare).append(char)
+    return "".join(bare), (", ".join(conditions) or None)
+
+
+def _prettify_leaf(leaf: str) -> str:
+    """Fallback label for a field no registry entry claims.
+
+    Split on "_" and sentence-case: `max_prompt_images` -> `Max prompt images`.
+    Sentence case, NOT title case -- the registry's own labels are sentence
+    cased ("Cache read", "Internal reasoning"), so title-casing the fallback
+    would make unregistered fields visually distinct from registered ones for
+    no reason the reader can interpret.
+    """
+    words = leaf.replace("_", " ").strip()
+    if not words:
+        return leaf
+    return words[0].upper() + words[1:]
+
+
+def resolve_field_label(field_path: str) -> tuple[str, str | None]:
+    """Return `(label, qualifier)` for a raw field path.
+
+    Lookup order -- exact full path, then leaf segment, then prettified leaf.
+    Exact-before-leaf is what lets a path-keyed entry override a leaf-keyed one
+    (the `top_provider.context_length` / `context_length` collision); reversing
+    the two silently mislabels rather than failing loudly.
+
+    NEVER mutates `field_path`. Callers must store the original string in
+    `RenderedChange.field_path` regardless of what this returns, because the
+    HTML tooltips and the JSON payload render the raw path.
+    """
+    bare_path, qualifier = _split_field_path(field_path)
+    label = FIELD_PATH_LABELS.get(bare_path)
+    if label is None:
+        leaf = bare_path.rsplit(".", 1)[-1]
+        label = FIELD_LEAF_LABELS.get(leaf, _prettify_leaf(leaf))
+    return label, qualifier
+
+
 @dataclass(frozen=True)
 class RenderedChange:
     kind: Literal["price", "count", "numeric", "boolean", "list", "scalar", "noop"]
@@ -383,6 +569,8 @@ def _classify_boolean(field_change: FieldChange) -> RenderedChange:
     would otherwise fabricate a direction and put a non-display string into a
     display field (e.g. `top_p: False -> 0.9` reported as a disable).
     """
+    field_path = field_change.field_name
+    label, qualifier = resolve_field_label(field_path)
     old_value, new_value = field_change.old_value, field_change.new_value
     old_state = _bool_state(old_value)
     new_state = _bool_state(new_value)
@@ -401,9 +589,9 @@ def _classify_boolean(field_change: FieldChange) -> RenderedChange:
     if one_sided_direction is not None:
         return RenderedChange(
             kind="boolean",
-            field_path=field_change.field_name,
-            label=field_change.field_name,
-            qualifier=None,
+            field_path=field_path,
+            label=label,
+            qualifier=qualifier,
             old_display=old_display,
             new_display=new_display,
             old_raw=_raw_value(old_value),
@@ -433,9 +621,9 @@ def _classify_boolean(field_change: FieldChange) -> RenderedChange:
     delta_display = "enabled" if direction == "up" else "disabled"
     return RenderedChange(
         kind="boolean",
-        field_path=field_change.field_name,
-        label=field_change.field_name,
-        qualifier=None,
+        field_path=field_path,
+        label=label,
+        qualifier=qualifier,
         old_display=old_state,
         new_display=new_state,
         old_raw=_raw_value(old_value),
@@ -460,6 +648,7 @@ def _classify_price(
     price_divisor: int,
 ) -> RenderedChange:
     field_path = field_change.field_name
+    label, qualifier = resolve_field_label(field_path)
     old_value, new_value = field_change.old_value, field_change.new_value
 
     if old_numeric is not None and new_numeric is not None:
@@ -479,8 +668,8 @@ def _classify_price(
         return RenderedChange(
             kind="price",
             field_path=field_path,
-            label=field_path,
-            qualifier=None,
+            label=label,
+            qualifier=qualifier,
             old_display=_fmt_price_per_m(norm_old),
             new_display=_fmt_price_per_m(norm_new),
             old_raw=_raw_value(old_value),
@@ -508,8 +697,8 @@ def _classify_price(
     return RenderedChange(
         kind="price",
         field_path=field_path,
-        label=field_path,
-        qualifier=None,
+        label=label,
+        qualifier=qualifier,
         old_display=old_display,
         new_display=new_display,
         old_raw=_raw_value(old_value),
@@ -532,6 +721,7 @@ def _classify_count(
     new_numeric: float | None,
 ) -> RenderedChange:
     field_path = field_change.field_name
+    label, qualifier = resolve_field_label(field_path)
     old_value, new_value = field_change.old_value, field_change.new_value
 
     if old_numeric is not None and new_numeric is not None:
@@ -549,8 +739,8 @@ def _classify_count(
         return RenderedChange(
             kind="count",
             field_path=field_path,
-            label=field_path,
-            qualifier=None,
+            label=label,
+            qualifier=qualifier,
             old_display=_fmt_int(old_numeric),
             new_display=_fmt_int(new_numeric),
             old_raw=_raw_value(old_value),
@@ -578,8 +768,8 @@ def _classify_count(
     return RenderedChange(
         kind="count",
         field_path=field_path,
-        label=field_path,
-        qualifier=None,
+        label=label,
+        qualifier=qualifier,
         old_display=old_display,
         new_display=new_display,
         old_raw=_raw_value(old_value),
@@ -598,6 +788,7 @@ def _classify_count(
 
 def _classify_numeric(field_change: FieldChange) -> RenderedChange:
     field_path = field_change.field_name
+    label, qualifier = resolve_field_label(field_path)
     old_value, new_value = field_change.old_value, field_change.new_value
     old_f = float(old_value)
     new_f = float(new_value)
@@ -615,8 +806,8 @@ def _classify_numeric(field_change: FieldChange) -> RenderedChange:
     return RenderedChange(
         kind="numeric",
         field_path=field_path,
-        label=field_path,
-        qualifier=None,
+        label=label,
+        qualifier=qualifier,
         old_display=_fmt_int(old_f),
         new_display=_fmt_int(new_f),
         old_raw=_raw_value(old_value),
@@ -646,6 +837,7 @@ def classify_change(
     scalar.
     """
     field_path = field_change.field_name
+    label, qualifier = resolve_field_label(field_path)
     old_value, new_value = field_change.old_value, field_change.new_value
 
     # 1. noop
@@ -653,8 +845,8 @@ def classify_change(
         return RenderedChange(
             kind="noop",
             field_path=field_path,
-            label=field_path,
-            qualifier=None,
+            label=label,
+            qualifier=qualifier,
             old_display=_scalar_display(old_value),
             new_display=_scalar_display(new_value),
             old_raw=_raw_value(old_value),
@@ -680,8 +872,8 @@ def classify_change(
         return RenderedChange(
             kind="list",
             field_path=field_path,
-            label=field_path,
-            qualifier=None,
+            label=label,
+            qualifier=qualifier,
             # Raw int, NOT _fmt_int: production's _render_list_diff_text
             # interpolates len(...) directly (no thousands separator), so
             # _fmt_int here would silently diverge at >=1000 items (Finding 5).
@@ -763,8 +955,8 @@ def classify_change(
     return RenderedChange(
         kind="scalar",
         field_path=field_path,
-        label=field_path,
-        qualifier=None,
+        label=label,
+        qualifier=qualifier,
         old_display=_scalar_display(old_value),
         new_display=_scalar_display(new_value),
         old_raw=_raw_value(old_value),

@@ -226,31 +226,31 @@ Synth Provider (synthprov)
   changed: 7
     * synth/model-core (Synth Model Core)
       [Pricing]
-        pricing.completion: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
-        pricing.input_cache_read: null → 5e-08 ($0.05 / 1M)
-        pricing.input_cache_write: 9e-08 ($0.09 / 1M) → null
-        pricing.overrides[min_prompt_tokens=200000].completion: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
+        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
+        Cache read: null → 5e-08 ($0.05 / 1M)
+        Cache write: 9e-08 ($0.09 / 1M) → null
+        Output: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
       [Context & Limits]
-        top_provider.context_length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
+        Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
       [Parameters]
-        supported_parameters: +logit_bias (1 → 2)
+        Supported parameters: +logit_bias (1 → 2)
       [Capabilities]
-        reasoning.default_enabled: off → on
+        Reasoning default: off → on
       [Other]
-        top_provider.is_moderated: off → on
-        expiration_date: null → 2030-12-31
+        Moderated: off → on
+        Expiration date: null → 2030-12-31
       [Squelched]
         1 field change hidden by report detail policy
     * synth/model-limit-add (Synth Model Limit Add)
-      top_provider.max_completion_tokens: null → 16,384
+      Max output: null → 16,384
     * synth/model-limit-remove (Synth Model Limit Remove)
-      top_provider.max_completion_tokens: 8,192 → null
+      Max output: 8,192 → null
     * synth/model-moderation-off (Synth Model Moderation Off)
-      top_provider.is_moderated: on → off
+      Moderated: on → off
     * synth/model-temp-toggle (Synth Model Temp Toggle)
-      default_parameters.temperature: 0 → 1 (+1)
+      Temperature: 0 → 1 (+1)
     * synth/model-moderation-added (Synth Model Moderation Added)
-      top_provider.is_moderated: — → on
+      Moderated: — → on
   squelched: 1 field change across 1 model
     patterns: benchmarks, benchmarks.*
     models: synth/model-core
@@ -276,31 +276,31 @@ Synth Provider (synthprov)
   changed: 7
     * synth/model-core (Synth Model Core)
       [Pricing]
-        pricing.completion: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
-        pricing.input_cache_read: null → 5e-08 ($0.05 / 1M)
-        pricing.input_cache_write: 9e-08 ($0.09 / 1M) → null
-        pricing.overrides[min_prompt_tokens=200000].completion: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
+        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
+        Cache read: null → 5e-08 ($0.05 / 1M)
+        Cache write: 9e-08 ($0.09 / 1M) → null
+        Output: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
       [Context & Limits]
-        top_provider.context_length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
+        Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
       [Parameters]
-        supported_parameters: +logit_bias (1 → 2)
+        Supported parameters: +logit_bias (1 → 2)
       [Capabilities]
-        reasoning.default_enabled: off → on
+        Reasoning default: off → on
       [Benchmarks]
-        benchmarks.example_suite: +{"score": 2}; -{"score": 1} (1 → 1)
+        Example suite: +{"score": 2}; -{"score": 1} (1 → 1)
       [Other]
-        top_provider.is_moderated: off → on
-        expiration_date: null → 2030-12-31
+        Moderated: off → on
+        Expiration date: null → 2030-12-31
     * synth/model-limit-add (Synth Model Limit Add)
-      top_provider.max_completion_tokens: null → 16,384
+      Max output: null → 16,384
     * synth/model-limit-remove (Synth Model Limit Remove)
-      top_provider.max_completion_tokens: 8,192 → null
+      Max output: 8,192 → null
     * synth/model-moderation-off (Synth Model Moderation Off)
-      top_provider.is_moderated: on → off
+      Moderated: on → off
     * synth/model-temp-toggle (Synth Model Temp Toggle)
-      default_parameters.temperature: 0 → 1 (+1)
+      Temperature: 0 → 1 (+1)
     * synth/model-moderation-added (Synth Model Moderation Added)
-      top_provider.is_moderated: — → on
+      Moderated: — → on
   no-op: 1 field change across 1 model
     models: synth/model-temp-null
 
@@ -332,26 +332,26 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
 ### Changed (7)
 
 - `synth/model-core` - Synth Model Core
-  - `pricing.completion: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
-  - `pricing.input_cache_read: null → 5e-08 ($0.05 / 1M)`
-  - `pricing.input_cache_write: 9e-08 ($0.09 / 1M) → null`
-  - `top_provider.context_length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
-  - `top_provider.is_moderated: off → on`
-  - `reasoning.default_enabled: off → on`
-  - `supported_parameters: +logit_bias (1 → 2)`
-  - `pricing.overrides[min_prompt_tokens=200000].completion: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
-  - `expiration_date: null → 2030-12-31`
+  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
+  - `Cache read: null → 5e-08 ($0.05 / 1M)`
+  - `Cache write: 9e-08 ($0.09 / 1M) → null`
+  - `Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
+  - `Moderated: off → on`
+  - `Reasoning default: off → on`
+  - `Supported parameters: +logit_bias (1 → 2)`
+  - `Output: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
+  - `Expiration date: null → 2030-12-31`
   - Squelched: `1` field change(s) hidden by report detail policy
 - `synth/model-limit-add` - Synth Model Limit Add
-  - `top_provider.max_completion_tokens: null → 16,384`
+  - `Max output: null → 16,384`
 - `synth/model-limit-remove` - Synth Model Limit Remove
-  - `top_provider.max_completion_tokens: 8,192 → null`
+  - `Max output: 8,192 → null`
 - `synth/model-moderation-off` - Synth Model Moderation Off
-  - `top_provider.is_moderated: on → off`
+  - `Moderated: on → off`
 - `synth/model-temp-toggle` - Synth Model Temp Toggle
-  - `default_parameters.temperature: 0 → 1 (+1)`
+  - `Temperature: 0 → 1 (+1)`
 - `synth/model-moderation-added` - Synth Model Moderation Added
-  - `top_provider.is_moderated: — → on`
+  - `Moderated: — → on`
 - squelched: `1` field change across `1` model
 - Squelch patterns: `benchmarks, benchmarks.*`
 - Squelched models: `synth/model-core`
@@ -382,26 +382,26 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
 ### Changed (7)
 
 - `synth/model-core` - Synth Model Core
-  - `pricing.completion: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
-  - `pricing.input_cache_read: null → 5e-08 ($0.05 / 1M)`
-  - `pricing.input_cache_write: 9e-08 ($0.09 / 1M) → null`
-  - `top_provider.context_length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
-  - `top_provider.is_moderated: off → on`
-  - `reasoning.default_enabled: off → on`
-  - `supported_parameters: +logit_bias (1 → 2)`
-  - `pricing.overrides[min_prompt_tokens=200000].completion: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
-  - `expiration_date: null → 2030-12-31`
-  - `benchmarks.example_suite: +{"score": 2}; -{"score": 1} (1 → 1)`
+  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
+  - `Cache read: null → 5e-08 ($0.05 / 1M)`
+  - `Cache write: 9e-08 ($0.09 / 1M) → null`
+  - `Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
+  - `Moderated: off → on`
+  - `Reasoning default: off → on`
+  - `Supported parameters: +logit_bias (1 → 2)`
+  - `Output: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
+  - `Expiration date: null → 2030-12-31`
+  - `Example suite: +{"score": 2}; -{"score": 1} (1 → 1)`
 - `synth/model-limit-add` - Synth Model Limit Add
-  - `top_provider.max_completion_tokens: null → 16,384`
+  - `Max output: null → 16,384`
 - `synth/model-limit-remove` - Synth Model Limit Remove
-  - `top_provider.max_completion_tokens: 8,192 → null`
+  - `Max output: 8,192 → null`
 - `synth/model-moderation-off` - Synth Model Moderation Off
-  - `top_provider.is_moderated: on → off`
+  - `Moderated: on → off`
 - `synth/model-temp-toggle` - Synth Model Temp Toggle
-  - `default_parameters.temperature: 0 → 1 (+1)`
+  - `Temperature: 0 → 1 (+1)`
 - `synth/model-moderation-added` - Synth Model Moderation Added
-  - `top_provider.is_moderated: — → on`
+  - `Moderated: — → on`
 - no-op: `1` field change across `1` model
 - No-op models: `synth/model-temp-null`"""
 
@@ -838,20 +838,20 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span></div>
 <div class="change-category"><div class="category-label">Pricing</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">pricing.completion</td><td class="old-val">2e-06 ($2.00 / 1M)</td><td class="new-val">3.5e-06 ($3.50 / 1M)</td><td class="change-delta delta-price-higher">↑ 75.0%</td></tr>
-<tr><td class="field-name">pricing.input_cache_read</td><td class="old-val">null</td><td class="new-val">5e-08 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
-<tr><td class="field-name">pricing.input_cache_write</td><td class="old-val">9e-08 ($0.09 / 1M)</td><td class="new-val">null</td><td class="change-delta delta-price-coverage">removed</td></tr>
-<tr><td class="field-name">pricing.overrides[min_prompt_tokens=200000].completion</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
+<tr><td class="field-name">Output</td><td class="old-val">2e-06 ($2.00 / 1M)</td><td class="new-val">3.5e-06 ($3.50 / 1M)</td><td class="change-delta delta-price-higher">↑ 75.0%</td></tr>
+<tr><td class="field-name">Cache read</td><td class="old-val">null</td><td class="new-val">5e-08 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
+<tr><td class="field-name">Cache write</td><td class="old-val">9e-08 ($0.09 / 1M)</td><td class="new-val">null</td><td class="change-delta delta-price-coverage">removed</td></tr>
+<tr><td class="field-name">Output</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.context_length</td><td class="old-val">131,072</td><td class="new-val">262,144</td><td class="change-delta delta-increase">↑ 100.0%</td></tr>
+<tr><td class="field-name">Context length</td><td class="old-val">131,072</td><td class="new-val">262,144</td><td class="change-delta delta-increase">↑ 100.0%</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Parameters</div>
 <div class="list-diff">
-<span class="field-name">supported_parameters</span> 
+<span class="field-name">Supported parameters</span> 
 <span class="list-count">(1 → 2)</span>
 <div class="list-added">
 &nbsp;&nbsp;+ logit_bias
@@ -860,13 +860,13 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 <div class="change-category"><div class="category-label">Capabilities</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">reasoning.default_enabled</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
+<tr><td class="field-name">Reasoning default</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
-<tr><td class="field-name">expiration_date</td><td class="old-val">null</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
+<tr><td class="field-name">Expiration date</td><td class="old-val">null</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Squelched</div>
@@ -877,7 +877,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-limit-add</code><span class="display-name">Synth Model Limit Add</span></div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.max_completion_tokens</td><td class="old-val">null</td><td class="new-val">16,384</td><td class="change-delta delta-increase">added</td></tr>
+<tr><td class="field-name">Max output</td><td class="old-val">null</td><td class="new-val">16,384</td><td class="change-delta delta-increase">added</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -885,7 +885,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-limit-remove</code><span class="display-name">Synth Model Limit Remove</span></div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.max_completion_tokens</td><td class="old-val">8,192</td><td class="new-val">null</td><td class="change-delta delta-decrease">removed</td></tr>
+<tr><td class="field-name">Max output</td><td class="old-val">8,192</td><td class="new-val">null</td><td class="change-delta delta-decrease">removed</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -893,7 +893,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-moderation-off</code><span class="display-name">Synth Model Moderation Off</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">on</td><td class="new-val">off</td><td class="change-delta delta-decrease">disabled</td></tr>
+<tr><td class="field-name">Moderated</td><td class="old-val">on</td><td class="new-val">off</td><td class="change-delta delta-decrease">disabled</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -901,7 +901,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-temp-toggle</code><span class="display-name">Synth Model Temp Toggle</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">default_parameters.temperature</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
+<tr><td class="field-name">Temperature</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
 </tbody></table>
 </div>
 </div>
@@ -909,7 +909,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
+<tr><td class="field-name">Moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -926,20 +926,20 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
 </div></div></section>
-<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.completion</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.input_cache_read</td><td>null → 5e-08 ($0.05 / 1M)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.input_cache_write</td><td>9e-08 ($0.09 / 1M) → null</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.overrides[min_prompt_tokens=200000].completion</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.context_length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>top_provider.max_completion_tokens</td><td>null → 16,384</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>top_provider.max_completion_tokens</td><td>8,192 → null</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>supported_parameters</td><td>+logit_bias (1 → 2)</td></tr>
-<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>reasoning.default_enabled</td><td>off → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>expiration_date</td><td>null → 2030-12-31</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.is_moderated</td><td>off → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>top_provider.is_moderated</td><td>— → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>top_provider.is_moderated</td><td>on → off</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-toggle</code></td><td>default_parameters.temperature</td><td>0 → 1 (+1)</td></tr>
+<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache read</td><td>null → 5e-08 ($0.05 / 1M)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → null</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
+<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
+<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>Max output</td><td>null → 16,384</td></tr>
+<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → null</td></tr>
+<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
+<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Reasoning default</td><td>off → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Expiration date</td><td>null → 2030-12-31</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Moderated</td><td>off → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr>
 <tr><td>Squelched</td><td>Synth Provider</td><td><details class="summary-models"><summary>1 models</summary><div class="summary-model-list"><code>synth/model-core</code></div></details></td><td>benchmarks, benchmarks.*</td><td>1 field change hidden by report detail policy</td></tr></tbody></table></section>
 <footer>Generated by Model Sentinel</footer>
 </body>
@@ -977,20 +977,20 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span></div>
 <div class="change-category"><div class="category-label">Pricing</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">pricing.completion</td><td class="old-val">2e-06 ($2.00 / 1M)</td><td class="new-val">3.5e-06 ($3.50 / 1M)</td><td class="change-delta delta-price-higher">↑ 75.0%</td></tr>
-<tr><td class="field-name">pricing.input_cache_read</td><td class="old-val">null</td><td class="new-val">5e-08 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
-<tr><td class="field-name">pricing.input_cache_write</td><td class="old-val">9e-08 ($0.09 / 1M)</td><td class="new-val">null</td><td class="change-delta delta-price-coverage">removed</td></tr>
-<tr><td class="field-name">pricing.overrides[min_prompt_tokens=200000].completion</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
+<tr><td class="field-name">Output</td><td class="old-val">2e-06 ($2.00 / 1M)</td><td class="new-val">3.5e-06 ($3.50 / 1M)</td><td class="change-delta delta-price-higher">↑ 75.0%</td></tr>
+<tr><td class="field-name">Cache read</td><td class="old-val">null</td><td class="new-val">5e-08 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
+<tr><td class="field-name">Cache write</td><td class="old-val">9e-08 ($0.09 / 1M)</td><td class="new-val">null</td><td class="change-delta delta-price-coverage">removed</td></tr>
+<tr><td class="field-name">Output</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.context_length</td><td class="old-val">131,072</td><td class="new-val">262,144</td><td class="change-delta delta-increase">↑ 100.0%</td></tr>
+<tr><td class="field-name">Context length</td><td class="old-val">131,072</td><td class="new-val">262,144</td><td class="change-delta delta-increase">↑ 100.0%</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Parameters</div>
 <div class="list-diff">
-<span class="field-name">supported_parameters</span> 
+<span class="field-name">Supported parameters</span> 
 <span class="list-count">(1 → 2)</span>
 <div class="list-added">
 &nbsp;&nbsp;+ logit_bias
@@ -999,12 +999,12 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 </div>
 <div class="change-category"><div class="category-label">Capabilities</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">reasoning.default_enabled</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
+<tr><td class="field-name">Reasoning default</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Benchmarks</div>
 <div class="list-diff">
-<span class="field-name">benchmarks.example_suite</span> 
+<span class="field-name">Example suite</span> 
 <span class="list-count">(1 → 1)</span>
 <div class="list-added">
 &nbsp;&nbsp;+ {&quot;score&quot;: 2}
@@ -1016,8 +1016,8 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 </div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
-<tr><td class="field-name">expiration_date</td><td class="old-val">null</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
+<tr><td class="field-name">Expiration date</td><td class="old-val">null</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -1025,7 +1025,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-limit-add</code><span class="display-name">Synth Model Limit Add</span></div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.max_completion_tokens</td><td class="old-val">null</td><td class="new-val">16,384</td><td class="change-delta delta-increase">added</td></tr>
+<tr><td class="field-name">Max output</td><td class="old-val">null</td><td class="new-val">16,384</td><td class="change-delta delta-increase">added</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -1033,7 +1033,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-limit-remove</code><span class="display-name">Synth Model Limit Remove</span></div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.max_completion_tokens</td><td class="old-val">8,192</td><td class="new-val">null</td><td class="change-delta delta-decrease">removed</td></tr>
+<tr><td class="field-name">Max output</td><td class="old-val">8,192</td><td class="new-val">null</td><td class="change-delta delta-decrease">removed</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -1041,7 +1041,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-moderation-off</code><span class="display-name">Synth Model Moderation Off</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">on</td><td class="new-val">off</td><td class="change-delta delta-decrease">disabled</td></tr>
+<tr><td class="field-name">Moderated</td><td class="old-val">on</td><td class="new-val">off</td><td class="change-delta delta-decrease">disabled</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -1049,7 +1049,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-temp-toggle</code><span class="display-name">Synth Model Temp Toggle</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">default_parameters.temperature</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
+<tr><td class="field-name">Temperature</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
 </tbody></table>
 </div>
 </div>
@@ -1057,7 +1057,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
+<tr><td class="field-name">Moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -1067,21 +1067,21 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
 </div></div></section>
-<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.completion</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.input_cache_read</td><td>null → 5e-08 ($0.05 / 1M)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.input_cache_write</td><td>9e-08 ($0.09 / 1M) → null</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.overrides[min_prompt_tokens=200000].completion</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.context_length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>top_provider.max_completion_tokens</td><td>null → 16,384</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>top_provider.max_completion_tokens</td><td>8,192 → null</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>supported_parameters</td><td>+logit_bias (1 → 2)</td></tr>
-<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>reasoning.default_enabled</td><td>off → on</td></tr>
-<tr><td>Benchmarks</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>benchmarks.example_suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>expiration_date</td><td>null → 2030-12-31</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.is_moderated</td><td>off → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>top_provider.is_moderated</td><td>— → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>top_provider.is_moderated</td><td>on → off</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-toggle</code></td><td>default_parameters.temperature</td><td>0 → 1 (+1)</td></tr></tbody></table></section>
+<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache read</td><td>null → 5e-08 ($0.05 / 1M)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → null</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
+<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
+<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>Max output</td><td>null → 16,384</td></tr>
+<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → null</td></tr>
+<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
+<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Reasoning default</td><td>off → on</td></tr>
+<tr><td>Benchmarks</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Example suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Expiration date</td><td>null → 2030-12-31</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Moderated</td><td>off → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr></tbody></table></section>
 <footer>Generated by Model Sentinel</footer>
 </body>
 </html>"""
