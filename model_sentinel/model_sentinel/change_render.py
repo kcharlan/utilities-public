@@ -34,10 +34,26 @@ two-sided case is intentionally still classified as `numeric`.
 Task 4 (E2) is where the boolean branch is promoted ahead of numeric/price/
 count. That reordering is the deliberate, visible fix for the E2 defect, and
 it is expected to change the characterization goldens for boolean fields.
+
+UPDATE (Task 2 fix pass, Finding 2/3): `_is_boolean_change` now requires
+BOTH sides to be boolean-ish -- a `bool` paired with `None` no longer
+classifies as boolean here, matching production's generic scalar fallback
+exactly (production's dedicated boolean branch also requires
+`isinstance(old, bool) and isinstance(new, bool)`; see
+`_render_smart_change_text`). Combined with the ordering above, this means
+`classify_change`'s boolean branch (step 6) is currently **unreachable**:
+every two-sided bool/known-boolean-int pair is already caught by the numeric
+branch (step 5) first, and one-sided (bool-vs-None) pairs now fall through to
+scalar (step 7) instead of being coerced into a fabricated boolean toggle.
+The `boolean` kind and `_classify_boolean` are retained, fully implemented,
+and directly unit-tested for when Task 4 promotes the branch ahead of
+numeric -- at which point both the two-sided and (a deliberately deferred,
+separate) one-sided boolean presentation become live decisions again.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -189,7 +205,19 @@ def _raw_value(value: Any) -> str | None:
 
 
 def _scalar_display(value: Any) -> str:
-    return "null" if value is None else str(value)
+    """Match reporting.py's `_render_value` exactly (behavior-preserving).
+
+    `_render_value` special-cases `dict`/`list` through
+    `json.dumps(value, sort_keys=True, ensure_ascii=True)` (e.g. a one-sided
+    list scalar renders as `["a", "b"]`, not Python's `str([...])` ->
+    `['a', 'b']`). Any divergence here is a silent neutrality break once this
+    module is wired into the renderers.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, ensure_ascii=True)
+    return str(value)
 
 
 def _is_integer_like(value: Any) -> bool:
@@ -204,29 +232,57 @@ def _is_integer_like(value: Any) -> bool:
 
 
 def _is_boolean_change(field_change: FieldChange) -> bool:
-    """True if this change should be treated as a boolean toggle.
+    """True if this change should be treated as a two-sided boolean toggle.
 
-    Either value is a real `bool`, or the field is in `KNOWN_BOOLEAN_FIELDS`
-    and both values are integer-like 0/1. See the module docstring: under the
-    current transitional branch order, the `KNOWN_BOOLEAN_FIELDS` condition is
-    only reachable through this helper directly (in tests), not end-to-end
-    through `classify_change`, because any pair satisfying it is also
-    `_both_numeric` and gets caught by the numeric branch first.
+    BOTH sides must be boolean-ish: either a real `bool` pair, or the field is
+    in `KNOWN_BOOLEAN_FIELDS` and both values are integer-like 0/1. A `bool`
+    paired with `None` (or any other non-boolean-ish value) must return
+    `False` and fall through to `scalar` -- that matches production's
+    dedicated boolean branch in `_render_smart_change_text`, which likewise
+    requires `isinstance(old, bool) and isinstance(new, bool)`. One-sided
+    boolean presentation (e.g. a field toggling on/off from unset) is
+    deliberately deferred to a later task as a conscious design choice, not
+    an oversight -- see the module docstring.
+
+    The real-bool check additionally routes through `_bool_state` (rather
+    than trusting `isinstance` alone) so this predicate depends on the same
+    single source of truth for "boolean-ish" that `_bool_state` defines,
+    instead of re-deriving it here.
+
+    See the module docstring: under the current transitional branch order,
+    the `KNOWN_BOOLEAN_FIELDS` condition is only reachable through this
+    helper directly (in tests), not end-to-end through `classify_change`,
+    because any pair satisfying it is also `_both_numeric` and gets caught by
+    the numeric branch first.
     """
     old_value, new_value = field_change.old_value, field_change.new_value
-    if isinstance(old_value, bool) or isinstance(new_value, bool):
-        return True
+    if isinstance(old_value, bool) and isinstance(new_value, bool):
+        return _bool_state(old_value) is not None and _bool_state(new_value) is not None
     if field_change.field_name in KNOWN_BOOLEAN_FIELDS:
         return _is_integer_like(old_value) and _is_integer_like(new_value)
     return False
 
 
-def _bool_state(value: Any) -> Literal["on", "off"]:
+def _bool_state(value: Any) -> Literal["on", "off"] | None:
+    """Return "on"/"off" for a boolean-ish value, or `None` if not recognized.
+
+    Boolean-ish means a real `bool`, or an int/float equal to 0 or 1. Any
+    other value (e.g. `0.9`, `"yes"`) must return `None`, NOT be silently
+    coerced to "off" via a bare fallthrough -- that was the root cause of a
+    latent bug (Finding 3): a genuinely numeric change like
+    `default_parameters.top_p: False -> 0.9` could previously render with
+    both sides displaying "off" and a fabricated `direction="down"`, as if it
+    were a disable, when in fact only `old_value` was ever boolean-ish.
+
+    Callers must only rely on the returned value being non-`None` after
+    confirming (e.g. via `_is_boolean_change`) that the value is meant to be
+    treated as boolean; `_classify_boolean` relies on that precondition.
+    """
     if isinstance(value, bool):
         return "on" if value else "off"
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float)) and value in (0, 1):
         return "on" if value == 1 else "off"
-    return "off"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -481,8 +537,11 @@ def classify_change(
             field_path=field_path,
             label=field_path,
             qualifier=None,
-            old_display=_fmt_int(len(old_value)),
-            new_display=_fmt_int(len(new_value)),
+            # Raw int, NOT _fmt_int: production's _render_list_diff_text
+            # interpolates len(...) directly (no thousands separator), so
+            # _fmt_int here would silently diverge at >=1000 items (Finding 5).
+            old_display=str(len(old_value)),
+            new_display=str(len(new_value)),
             old_raw=_raw_value(old_value),
             new_raw=_raw_value(new_value),
             unit="items",
@@ -510,9 +569,29 @@ def classify_change(
         return _classify_price(field_change, old_numeric, new_numeric, price_multiplier, price_divisor)
 
     # 4. count -- same numeric-shape guard as price (permits one-sided None,
-    # rejects non-numeric strings). Unlike reporting.py's text-formatting
-    # guard, this is not restricted to the one-sided case: a two-sided count
-    # change (e.g. context_length up/down) is classified as `count` here too.
+    # rejects non-numeric strings), with one deliberate difference from
+    # reporting.py's `_render_smart_change_text`: that function's equivalent
+    # guard has a fifth clause, `and (old_numeric is None or new_numeric is
+    # None)`, which restricts it to the one-sided case and routes any
+    # two-sided count change (e.g. context_length up/down) through the
+    # *numeric* branch instead. This guard drops that fifth clause on
+    # purpose, so a two-sided count change is classified as `count` here.
+    #
+    # This is a KEPT design choice, not a bug: the approved design requires
+    # `semantic="capacity"` for two-sided numeric count fields, and the
+    # five-clause guard makes that impossible (it never lets a two-sided pair
+    # reach `_classify_count` at all).
+    #
+    # CONSEQUENCE FOR RENDERERS (read before wiring this module in): because
+    # of this divergence, a two-sided `count` RenderedChange from this module
+    # corresponds to a `numeric` RenderedChange in production for the exact
+    # same input. Any renderer consuming this module MUST render a two-sided
+    # `count` change IDENTICALLY to how it renders `numeric` -- the same
+    # `(+delta, pct)` suffix, and NO `tok` unit -- or behavior neutrality
+    # against the Task 1 characterization goldens breaks silently. See
+    # test_two_sided_count_must_render_like_numeric_for_neutrality in
+    # test_change_render.py, which pins the delta/pct fields a renderer needs
+    # to reproduce numeric's exact output from a `count` RenderedChange.
     if (
         _is_count_field(field_path)
         and (old_numeric is not None or new_numeric is not None)

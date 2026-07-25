@@ -7,16 +7,24 @@ from collections import OrderedDict, defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+# Deliberate compatibility re-export: these primitives moved to change_render.py
+# (see that module's docstring) but stay importable from here -- both because
+# this file still calls all nine of them directly today, and so existing
+# external call sites (e.g. tests importing from reporting.py before the move)
+# keep working unchanged. Once Task 3 wires change_render.py into the
+# renderers and these in-file call sites are replaced, a linter will see these
+# as unused imports; the `# noqa: F401` on each keeps that from being flagged
+# for deletion -- they are still needed as intentional compatibility shims.
 from .change_render import (
-    _both_numeric,
-    _classify_field,
-    _fmt_int,
-    _fmt_price_per_m,
-    _is_count_field,
-    _is_price_amount_field,
-    _normalize_price,
-    _numeric_value,
-    _pct_change,
+    _both_numeric,  # noqa: F401
+    _classify_field,  # noqa: F401
+    _fmt_int,  # noqa: F401
+    _fmt_price_per_m,  # noqa: F401
+    _is_count_field,  # noqa: F401
+    _is_price_amount_field,  # noqa: F401
+    _normalize_price,  # noqa: F401
+    _numeric_value,  # noqa: F401
+    _pct_change,  # noqa: F401
 )
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
 from .time_utils import to_local_human, to_local_iso

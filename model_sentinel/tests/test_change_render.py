@@ -24,6 +24,8 @@ import pytest
 from model_sentinel.change_render import (
     KNOWN_BOOLEAN_FIELDS,
     RenderedChange,
+    _bool_state,
+    _classify_boolean,
     _is_boolean_change,
     classify_change,
 )
@@ -231,6 +233,29 @@ def test_count_field_rejects_non_numeric_string():
     assert result.kind == "scalar"
 
 
+def test_two_sided_count_must_render_like_numeric_for_neutrality():
+    """Finding 1 (review fix pass): this module's count guard deliberately
+    drops the fifth clause of reporting.py's equivalent guard (`and
+    (old_numeric is None or new_numeric is None)`), so a two-sided count
+    change classifies as `count`/`capacity` here instead of `numeric`/
+    `neutral` as production does. That is the approved design (two-sided
+    numeric count fields need "capacity" semantics) -- but it means a
+    renderer built on this module MUST render a two-sided `count` change
+    IDENTICALLY to `numeric`: same `(+delta, pct)` suffix, no `tok` unit. This
+    test pins the exact fields a renderer needs to reproduce numeric's output
+    from a `count` RenderedChange, so a renderer that instead prints a `tok`
+    unit or omits the pct suffix for `count` breaks this test, not silence.
+    """
+    result = classify_change(FieldChange("context_length", 8192, 16384))
+    assert result.kind == "count"
+    assert result.semantic == "capacity"
+    assert result.delta_display == "+8,192"
+    assert result.pct_display == "↑ 100.0%"
+    assert result.delta_abs == 8192.0
+    assert result.old_display == "8,192"
+    assert result.new_display == "16,384"
+
+
 # ---------------------------------------------------------------------------
 # 5. numeric fallback (and the transitional-ordering documentation tests)
 # ---------------------------------------------------------------------------
@@ -267,30 +292,57 @@ def test_unclassified_numeric_fallback():
 
 
 # ---------------------------------------------------------------------------
-# 6. boolean (reachable, under this ordering, only for a bool-vs-None change)
+# 6. boolean -- currently UNREACHABLE through classify_change (see module
+# docstring and Finding 2/3 fix below): every two-sided bool/known-boolean-int
+# pair is caught by the numeric branch (step 5) first, and one-sided
+# (bool-vs-None) pairs now fall through to scalar (step 7) instead of being
+# coerced into a boolean toggle. `_classify_boolean` itself is still directly
+# unit-tested below so it stays correct for when Task 4 promotes this branch
+# ahead of numeric.
 # ---------------------------------------------------------------------------
 
 
-def test_boolean_one_sided_added_from_none():
+def test_boolean_one_sided_added_from_none_falls_through_to_scalar():
+    """Finding 2 fix: a bool paired with None must NOT classify as boolean --
+    production's dedicated boolean branch requires `isinstance(old, bool) and
+    isinstance(new, bool)`, so a one-sided change like this falls through to
+    its generic scalar fallback (`_render_value`). Before this fix,
+    `_is_boolean_change`'s `or` let this incorrectly classify as `boolean`
+    with a fabricated on/off display, which would have silently changed
+    output once this module is wired into the renderers (no fixture in
+    tests/test_render_characterization.py covered a bool-vs-None case, so
+    nothing would have caught it)."""
     result = classify_change(FieldChange("top_provider.is_moderated", None, True))
+    assert result.kind == "scalar"
+    assert result.direction == "none"
+    assert result.semantic == "neutral"
+    assert result.old_display == "null"
+    assert result.new_display == "True"
+
+
+def test_boolean_one_sided_removed_to_none_falls_through_to_scalar():
+    """Same fix, mirrored direction."""
+    result = classify_change(FieldChange("top_provider.is_moderated", True, None))
+    assert result.kind == "scalar"
+    assert result.direction == "none"
+    assert result.semantic == "neutral"
+    assert result.old_display == "True"
+    assert result.new_display == "null"
+
+
+def test_classify_boolean_helper_still_produces_boolean_kind_directly():
+    """`_classify_boolean` is unreachable through classify_change today (see
+    section docstring above) but must stay correct for Task 4, which promotes
+    the boolean branch ahead of numeric. Exercised directly since
+    classify_change can't reach it for a two-sided bool pair under the
+    current transitional ordering."""
+    result = _classify_boolean(FieldChange("top_provider.is_moderated", False, True))
     assert result.kind == "boolean"
     assert result.direction == "up"
     assert result.semantic == "capability"
     assert result.old_display == "off"
     assert result.new_display == "on"
     assert result.delta_display == "enabled"
-    assert result.pct_display is None
-    assert result.delta_abs is None
-
-
-def test_boolean_one_sided_removed_to_none():
-    result = classify_change(FieldChange("top_provider.is_moderated", True, None))
-    assert result.kind == "boolean"
-    assert result.direction == "down"
-    assert result.semantic == "capability"
-    assert result.old_display == "on"
-    assert result.new_display == "off"
-    assert result.delta_display == "disabled"
 
 
 def test_is_boolean_change_true_for_real_bool_pair():
@@ -305,6 +357,46 @@ def test_is_boolean_change_true_for_known_boolean_int_pair():
     assert _is_boolean_change(FieldChange("reasoning.default_enabled", 0, 1)) is True
     assert _is_boolean_change(FieldChange("reasoning.mandatory", 1, 0)) is True
     assert _is_boolean_change(FieldChange("deprecated", 0, 1)) is True
+
+
+def test_is_boolean_change_false_for_one_sided_real_bool_pair():
+    """Finding 2 fix, predicate-level: a bool paired with None is NOT a
+    two-sided toggle. Before the fix, `_is_boolean_change` used `or`, which
+    made this return True."""
+    assert _is_boolean_change(FieldChange("top_provider.is_moderated", None, True)) is False
+    assert _is_boolean_change(FieldChange("top_provider.is_moderated", True, None)) is False
+
+
+def test_is_boolean_change_false_for_mixed_bool_and_numeric_pair():
+    """Finding 3 regression: `default_parameters.top_p` is not in
+    KNOWN_BOOLEAN_FIELDS, so a `False`/`0.9` pair must never be treated as a
+    boolean toggle just because `old_value` happens to be a real bool.
+    Fixing Finding 2's `or` -> `and` already prevents this via
+    `_is_boolean_change` (one side, `0.9`, is not `isinstance(..., bool)`),
+    but the latent bug was one level down in `_bool_state`: it used to return
+    "off" for ANY unrecognized value via a bare fallthrough, so if
+    `_is_boolean_change` (or a future caller, e.g. after Task 4 reorders the
+    cascade) ever again let a mixed-type pair through, `_classify_boolean`
+    would render `0.9` as "off" and fabricate `direction="down"` -- a real
+    change reported as a disable. `_bool_state` must return None instead."""
+    fc = FieldChange("default_parameters.top_p", False, 0.9)
+    assert _is_boolean_change(fc) is False
+    assert _bool_state(0.9) is None
+
+
+def test_bool_state_returns_none_for_unrecognized_values():
+    """`_bool_state` must never coerce a non-boolean-ish value to "off" --
+    only real bool and integer-coded 0/1 are recognized."""
+    assert _bool_state(True) == "on"
+    assert _bool_state(False) == "off"
+    assert _bool_state(1) == "on"
+    assert _bool_state(0) == "off"
+    assert _bool_state(1.0) == "on"
+    assert _bool_state(0.0) == "off"
+    assert _bool_state(0.9) is None
+    assert _bool_state(2) is None
+    assert _bool_state("yes") is None
+    assert _bool_state(None) is None
 
 
 def test_is_boolean_change_false_for_int_fields_outside_known_set():
@@ -342,6 +434,21 @@ def test_unclassified_scalar():
     assert result.semantic == "neutral"
     assert result.old_display == "active"
     assert result.new_display == "deprecated"
+
+
+def test_one_sided_list_scalar_matches_render_value_json_form():
+    """Finding 4 fix: a one-sided list (old_value is None, so classify_change's
+    list branch -- which requires BOTH sides to be `list` -- never engages)
+    must format through the scalar fallback exactly like reporting.py's
+    `_render_value`: `json.dumps(value, sort_keys=True, ensure_ascii=True)`
+    for dict/list, not Python's `str(value)`. `str(['a', 'b'])` would give
+    `"['a', 'b']"` (single quotes) -- a silent divergence from production's
+    `'["a", "b"]'` (double quotes) once this module is wired into a renderer.
+    """
+    result = classify_change(FieldChange("some.arbitrary.list_field", None, ["a", "b"]))
+    assert result.kind == "scalar"
+    assert result.old_display == "null"
+    assert result.new_display == '["a", "b"]'
 
 
 # ---------------------------------------------------------------------------
