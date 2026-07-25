@@ -47,9 +47,31 @@ def _html_section_body(html: str, heading: str) -> str:
     never preceded by a newline in ANY output -- bare heading or full body.
     Split on the heading and inspect what follows instead, which is the shape
     the markdown assertions in this module already use.
+
+    `str.split` takes the FIRST match, so a `heading` present more than once
+    would silently narrow the returned body to whichever section happens to come
+    first while the assertion still reads as though it covered "the" section.
+    `"</h2>"` is exactly that hazard: every provider section's heading ends with
+    it, and so does `Change Summary`. Refuse the ambiguity here rather than
+    leaving a comment at each call site -- callers must pass a heading that
+    identifies exactly one place in the document.
     """
-    assert heading in html, f"{heading} missing from rendered output"
+    occurrences = html.count(heading)
+    assert occurrences, f"{heading} missing from rendered output"
+    assert occurrences == 1, (
+        f"{heading} matches {occurrences} places in this document, so the body "
+        "returned here would be only the first one's. Pass a heading unique to "
+        "the section under test."
+    )
     return html.split(heading, 1)[1].split("</section>", 1)[0].strip()
+
+
+def _html_provider_sections(html: str) -> list[str]:
+    """Every `<section class="provider-section">` body, in document order."""
+    return [
+        chunk.split("</section>", 1)[0]
+        for chunk in html.split('<section class="provider-section">')[1:]
+    ]
 
 
 def _bulk_parameter_changes() -> tuple[ModelDelta, ...]:
@@ -1275,8 +1297,14 @@ def test_scan_html_keeps_the_section_of_an_error_provider_with_no_body() -> None
             )
         ],
     )
-    assert '<section class="provider-section">' in html
-    assert "Synth Provider" in html
+    # `"Synth Provider" in html` cannot fail here: the provider-card block
+    # above the sections carries the label in every render, including one where
+    # this section was dropped. Assert instead that the surviving section is
+    # this provider's own -- its `<h2>` -- and that it is all the section has.
+    sections = _html_provider_sections(html)
+    assert sections == [
+        '<h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>'
+    ]
     assert _html_section_body(html, "</h2>") == ""
 
 
@@ -1386,13 +1414,13 @@ def _mixed_changes_rows() -> tuple[dict, ...]:
     )
 
 
-def _mixed_changes_report(format_name: str) -> str:
+def _mixed_changes_report(format_name: str, rows: tuple[dict, ...] | None = None) -> str:
     return render_changes_report(
         format_name=format_name,
         provider_id=None,
         since=None,
         until=None,
-        changes=_mixed_changes_rows(),
+        changes=_mixed_changes_rows() if rows is None else rows,
         provider_pricing={"synthprov": (1, 1)},
     )
 
@@ -1419,19 +1447,59 @@ def test_changes_html_renders_added_removed_and_squelched_without_crashing() -> 
     assert summary.index("synth/model-changed") < summary.index("<td>Added</td>")
 
 
-def test_changes_html_added_and_removed_survive_a_squelch_only_provider() -> None:
-    """A provider whose only field change is squelched still reaches the
-    summary table -- the squelched entry was the third tuple site."""
+def test_changes_html_keeps_added_and_removed_beside_a_squelched_change() -> None:
+    """Added, Removed and Squelched reach the summary table together.
+
+    Each was its own raw-5-tuple site, so each could abort the render alone.
+    The fixture drops the only non-squelched field change; the added and removed
+    rows carry `field_name=None` and so survive that filter untouched, which is
+    the point of the test -- all three categories must be present at once.
+    """
     rows = tuple(row for row in _mixed_changes_rows() if row["field_name"] != "expiration_date")
-    report = render_changes_report(
-        format_name="html",
-        provider_id=None,
-        since=None,
-        until=None,
-        changes=rows,
-        provider_pricing={"synthprov": (1, 1)},
+    assert [row["change_kind"] for row in rows] == ["added", "removed", "changed"]
+    report = _mixed_changes_report("html", rows)
+
+    # Body: the presence rows are listed, not merely counted somewhere.
+    assert '<li><code>synth/model-new</code> <span class="display-name">Synth New</span></li>' in report
+    assert '<li><code>synth/model-gone</code> <span class="display-name">Synth Gone</span></li>' in report
+
+    summary = report.split('<section class="summary-section">', 1)[1]
+    assert "<td>Added</td><td>Synth Provider</td><td><code>synth/model-new</code></td>" in summary
+    assert "<td>Removed</td><td>Synth Provider</td><td><code>synth/model-gone</code></td>" in summary
+    assert "<td>Squelched</td>" in summary
+    # The squelched field is accounted for by the rollup, never spelled out.
+    assert "benchmarks.design_arena" not in report
+
+
+def test_changes_html_renders_a_provider_whose_only_record_is_squelched() -> None:
+    """The scenario the previous test's name promised but never built.
+
+    One provider, one model, one row, and that row is squelched. Nothing added,
+    nothing removed, no visible field change: the squelched accounting is the
+    only thing standing between the `<h3>` and an empty section, and the only
+    thing that can put this provider in the summary table at all.
+    """
+    rows = tuple(
+        row for row in _mixed_changes_rows() if row["field_name"] == "benchmarks.design_arena"
     )
-    assert "<td>Squelched</td>" in report
+    assert len(rows) == 1
+    report = _mixed_changes_report("html", rows)
+
+    body = _html_section_body(report, "<h3>Synth Provider</h3>")
+    assert body, "provider heading rendered with nothing beneath it"
+    # Per-model card, then the provider-level rollup that justifies the heading.
+    assert '<div class="category-label">Squelched</div>' in body
+    assert "1 field change hidden by report detail policy" in body
+    assert '<div class="category-label">squelched</div>' in body
+    assert "1 field change across 1 model" in body
+
+    summary = report.split('<section class="summary-section">', 1)[1]
+    assert "<td>Squelched</td>" in summary
+    # Nothing is invented: no presence record exists, so no presence row may.
+    assert "<td>Added</td>" not in summary
+    assert "<td>Removed</td>" not in summary
+    assert "synth/model-new" not in report
+    assert "synth/model-gone" not in report
     assert "benchmarks.design_arena" not in report
 
 
