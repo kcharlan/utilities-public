@@ -2167,6 +2167,9 @@ h3 {
   padding: 0.5rem 1rem;
   border-bottom: 1px solid var(--border);
 }
+.card-table-wrap {
+  overflow-x: auto;
+}
 .change-category:last-child,
 .card-table-wrap:last-child {
   border-bottom: none;
@@ -2233,7 +2236,7 @@ td.delta-price-coverage { color: var(--accent-blue); }
   vertical-align: top;
   border-top: 1px solid transparent;
 }
-.card-table tr:nth-child(even) td {
+.card-table tr.row-alt td {
   background: var(--bg-table-alt);
 }
 .card-table tr.group-start td {
@@ -2248,7 +2251,15 @@ td.delta-price-coverage { color: var(--accent-blue); }
 .card-table td.pct {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.card-table td.num,
+.card-table td.delta,
+.card-table td.pct {
   white-space: nowrap;
+}
+.card-table td.old-val,
+.card-table td.new-val {
+  overflow-wrap: break-word;
 }
 .card-table td.arrow,
 .card-table td.unit {
@@ -2266,9 +2277,12 @@ td.delta-price-coverage { color: var(--accent-blue); }
   letter-spacing: 0.08em;
   font-weight: 600;
 }
-.card-table td.list-cell .list-diff {
-  padding: 0;
+.card-table tr.list-members td {
+  border-top: 1px solid transparent;
+  padding-top: 0;
 }
+.card-table .list-added { color: var(--accent-blue); }
+.card-table .list-removed { color: var(--text-dim); }
 td.sem-cost-up { color: var(--accent-red); }
 td.sem-cost-down { color: var(--accent-green); }
 td.sem-capacity { color: var(--accent-amber); }
@@ -2476,6 +2490,35 @@ def _build_summary_entries_from_bulk(
     return entries
 
 
+# How `change_render` and `_render_change_text` spell an absent side in the
+# shared TEXT line. `_SummaryEntry` is built from that line, so closing the
+# card's `—` / summary's `null` split means recognising this token.
+_ABSENT_TEXT_TOKEN = "null"
+
+
+def _summary_detail_with_absent_sides(detail: str, rendered: RenderedChange) -> str:
+    """The summary's change text, spelling an absent side the way the card does.
+
+    Fix pass 1, finding 3. The concise HTML report printed `— → $0.05` in the
+    model card and `null → 5e-08 ($0.05 / 1M)` in the Change Summary a few
+    inches below it -- one document, two spellings of the same absence.
+
+    Guarded on `raw is None`, the same signal `_card_side_display` reads, NOT on
+    the string `"null"`: a provider that ships the literal string `"null"` as a
+    value has a real value, and its side must keep printing `null`. `_SummaryEntry`
+    feeds `_build_html_summary_table` and nothing else, so this is confined to
+    HTML; the text, markdown and JSON renderers still spell `null` from
+    `_render_change_text` and their goldens do not move.
+    """
+    leading = f"{_ABSENT_TEXT_TOKEN} →"
+    trailing = f"→ {_ABSENT_TEXT_TOKEN}"
+    if rendered.old_raw is None and detail.startswith(leading):
+        detail = ABSENT_DISPLAY + detail[len(_ABSENT_TEXT_TOKEN):]
+    if rendered.new_raw is None and detail.endswith(trailing):
+        detail = detail[: -len(_ABSENT_TEXT_TOKEN)] + ABSENT_DISPLAY
+    return detail
+
+
 def _build_summary_entries_from_fc(
     *,
     provider_label: str,
@@ -2497,6 +2540,7 @@ def _build_summary_entries_from_fc(
         change_desc = _render_change_text(rendered).split(": ", 1)
         field_part = change_desc[0] if len(change_desc) > 1 else rendered.display_label
         detail_part = change_desc[1] if len(change_desc) > 1 else change_desc[0]
+        detail_part = _summary_detail_with_absent_sides(detail_part, rendered)
         entries.append(_SummaryEntry(category, provider_label, model_id, field_part, detail_part))
     return entries
 
@@ -2680,8 +2724,29 @@ _CARD_TABLE_COLGROUP = (
     '</colgroup>'
 )
 
-# Columns a list row's single wide cell spans: everything from `old` rightwards.
-_CARD_LIST_CELL_SPAN = 6
+# A list change's members are a full-width CONTINUATION row under their label
+# row, spanning every column except the category chip's. Fix pass 1: they used
+# to be an inline `(1 -> 2)` count plus a BLOCK-level `<div>` crammed into one
+# `colspan="6"` cell starting at the `old` column, so the members began
+# mid-table, left-aligned under the right-aligned numeric columns of the rows
+# above and below. No CSS fixes that -- the shape was wrong. The label row now
+# stays in the grid (chip + label + the count in the DELTA column, where it
+# lands under the other deltas) and the members get a band of their own.
+_CARD_LIST_MEMBERS_SPAN = 7
+
+# The kinds whose value cells hold a number, and so may be `nowrap`. Opt-IN on
+# purpose: `scalar` values are arbitrary-length provider strings (a real
+# `supported_parameters` list, an endpoint URL), and `nowrap` on those widened
+# the 7rem column HINT -- `col` widths are not a maximum -- until the card
+# overflowed horizontally, defeating the alignment this layout exists to
+# deliver. A kind added later gets the safe, wrapping treatment unless someone
+# deliberately names it numeric here.
+#
+# Right-alignment is deliberately NOT scoped this way: every value cell keeps
+# it, because the column's shared right edge IS the alignment, and left-aligning
+# `off`/`on` against a right-aligned `$2.00` two rows above put the two operands
+# of the same column in different places. Verified in a browser both ways.
+_CARD_NUMERIC_KINDS = frozenset({"price", "count", "numeric"})
 
 # B1: colour is a function of `semantic` and `direction`, NEVER of `direction`
 # alone. Keyed on the pair rather than branched on in a renderer so that the
@@ -2776,8 +2841,17 @@ def _render_html_card_table(
     only; later rows in the group leave that cell empty and the group's first
     row carries a stronger top border. Returns `""` when nothing is visible, so
     a card with no rows emits no empty table.
+
+    Zebra striping is emitted as a `row-alt` class rather than left to CSS
+    `:nth-child(even)`, and counted over FIELD rows only. A list change now adds
+    a second `<tr>` for its members, which shifted `nth-child` parity for every
+    row after it -- two adjacent rows came out the same shade -- and left the
+    members on a different background from the label they belong to. Counting
+    here fixes both: the stripe follows the field, and a continuation row takes
+    its label row's shade, so the pair reads as one band.
     """
     rows: list[str] = []
+    field_row_index = 0
     for category, field_changes in grouped:
         rendered_changes = [
             classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
@@ -2790,8 +2864,10 @@ def _render_html_card_table(
                 _render_html_card_row(
                     rendered,
                     category=category if index == 0 else None,
+                    alternate=field_row_index % 2 == 1,
                 )
             )
+            field_row_index += 1
     if not rows:
         return ""
     return (
@@ -2801,33 +2877,59 @@ def _render_html_card_table(
     )
 
 
-def _render_html_card_row(rendered: RenderedChange, *, category: str | None) -> str:
-    """One `<tr>` of the model card's eight-column table.
+def _render_html_card_row(
+    rendered: RenderedChange,
+    *,
+    category: str | None,
+    alternate: bool = False,
+) -> str:
+    """One field's `<tr>` -- plus a members `<tr>` for a list change.
 
     `category` is the group's name on the group's first row and `None` on every
     later row -- passing it is how a caller says "this row starts a group", so
     the chip and the group border cannot disagree about where a group begins.
+    `alternate` is the zebra stripe, decided by the caller because only the
+    caller knows the row's position among the card's FIELDS.
     """
     h = html_module.escape
     chip = f'<td class="cat-chip">{h(category)}</td>' if category is not None else '<td></td>'
-    row_class = ' class="group-start"' if category is not None else ""
+    classes = ([] if category is None else ["group-start"]) + (["row-alt"] if alternate else [])
+    row_class = f' class="{" ".join(classes)}"' if classes else ""
     label = (
         f'<td class="field-name" title="{h(rendered.field_path)}">'
         f'{h(rendered.display_label)}</td>'
     )
 
     if rendered.kind == "list":
-        # A membership change has no operands to align, so its members take one
-        # wide cell. Built from the same helper the standalone list-diff block
-        # uses, so the two spellings of a member cannot drift apart.
-        return (
+        # A membership change has no operands to align, so the four value
+        # columns stay empty and the member COUNT takes the delta column --
+        # the only number this row has, in the column the card's other numbers
+        # are in. The members follow as a continuation row, built from the same
+        # helper the standalone list-diff block uses so the two spellings of a
+        # member cannot drift apart.
+        label_row = (
             f'<tr{row_class}>{chip}{label}'
-            f'<td class="list-cell" colspan="{_CARD_LIST_CELL_SPAN}">'
-            f'<span class="list-count">({rendered.old_display} → {rendered.new_display})</span>'
-            f'{_html_list_members(rendered, separator="")}</td></tr>'
+            f'<td></td><td></td><td></td><td></td>'
+            f'<td class="delta list-count">'
+            f'({h(rendered.old_display)} → {h(rendered.new_display)})</td>'
+            f'<td class="pct"></td></tr>'
+        )
+        members = _html_list_members(rendered, separator="")
+        if not members:
+            return label_row
+        # The continuation row takes its LABEL row's stripe, not its own: the
+        # two rows are one field, and shading them differently split the band
+        # this fix exists to create.
+        members_class = "list-members row-alt" if alternate else "list-members"
+        return (
+            f'{label_row}\n<tr class="{members_class}"><td></td>'
+            f'<td colspan="{_CARD_LIST_MEMBERS_SPAN}">{members}</td></tr>'
         )
 
     semantic_cls = _card_semantic_class(rendered)
+    # Fix pass 1: `num` is what earns a cell right-alignment, tabular figures
+    # and `nowrap`. See `_CARD_NUMERIC_KINDS`.
+    value_cls = " num" if rendered.kind in _CARD_NUMERIC_KINDS else ""
     # Raw-value tooltips on the PRICE columns only. A price cell is the one that
     # no longer shows its provider value: A1 promotes the normalized per-1M
     # figure and drops the `2e-06 ($2.00 / 1M)` pair the old row led with, so
@@ -2839,9 +2941,9 @@ def _render_html_card_row(rendered: RenderedChange, *, category: str | None) -> 
     new_title = _card_raw_title(rendered, rendered.new_raw)
     return (
         f'<tr{row_class}>{chip}{label}'
-        f'<td class="old-val"{old_title}>{h(_card_side_display(rendered.old_display, rendered.old_raw))}</td>'
+        f'<td class="old-val{value_cls}"{old_title}>{h(_card_side_display(rendered.old_display, rendered.old_raw))}</td>'
         f'<td class="arrow">→</td>'
-        f'<td class="new-val"{new_title}>{h(_card_side_display(rendered.new_display, rendered.new_raw))}</td>'
+        f'<td class="new-val{value_cls}"{new_title}>{h(_card_side_display(rendered.new_display, rendered.new_raw))}</td>'
         f'<td class="unit">{h(rendered.unit or "")}</td>'
         f'<td class="delta {semantic_cls}">{h(_card_delta_cell(rendered))}</td>'
         f'<td class="pct {semantic_cls}">{h(rendered.pct_display or "")}</td></tr>'

@@ -382,19 +382,22 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-pair-x</code><span class="display-name">Synth Pair X</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td class="list-cell" colspan="6"><span class="list-count">(1 → 2)</span><div class="list-added">&nbsp;&nbsp;+ seed</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
+<tr class="list-members"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ seed</div></td></tr>
 </tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-pair-y</code><span class="display-name">Synth Pair Y</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td class="list-cell" colspan="6"><span class="list-count">(1 → 2)</span><div class="list-added">&nbsp;&nbsp;+ seed</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
+<tr class="list-members"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ seed</div></td></tr>
 </tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-solo-struct</code><span class="display-name">Synth Solo Struct</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="architecture.tier_profiles">Tier profiles</td><td class="list-cell" colspan="6"><span class="list-count">(1 → 1)</span><div class="list-added">&nbsp;&nbsp;+ {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}</div><div class="list-removed">&nbsp;&nbsp;− {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3}</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="architecture.tier_profiles">Tier profiles</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 1)</td><td class="pct"></td></tr>
+<tr class="list-members"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}</div><div class="list-removed">&nbsp;&nbsp;− {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3}</div></td></tr>
 </tbody></table></div>
 </div>
 <div class="model-card">
@@ -413,23 +416,22 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>synth/model-struct-added</code><span class="display-name">Synth Struct Added</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="architecture.tier_profiles[0].name">Name (#0)</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">gamma</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
-<tr><td></td><td class="field-name" title="architecture.tier_profiles[0].weight">Weight (#0)</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">5</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="architecture.tier_profiles[0].weight">Weight (#0)</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">5</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
 </tbody></table></div>
-</div></section>
-"""
+</div></section>"""
 
 
 # Exact summary table. Bulk entries collapse the model column into a
 # <details> disclosure listing the grouped model ids.
 EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Parameters</td><td>Synth Provider</td><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>Supported parameters</td><td>+logit_bias</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-list-added</code></td><td>Supported parameters</td><td>null → [&quot;tools&quot;, &quot;logit_bias&quot;]</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-list-removed</code></td><td>Supported parameters</td><td>[&quot;tools&quot;, &quot;logit_bias&quot;] → null</td></tr>
+<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-list-added</code></td><td>Supported parameters</td><td>— → [&quot;tools&quot;, &quot;logit_bias&quot;]</td></tr>
+<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-list-removed</code></td><td>Supported parameters</td><td>[&quot;tools&quot;, &quot;logit_bias&quot;] → —</td></tr>
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-x</code></td><td>Supported parameters</td><td>+seed (1 → 2)</td></tr>
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-y</code></td><td>Supported parameters</td><td>+seed (1 → 2)</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 2}; -{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 1}</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-solo-struct</code></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}; -{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3} (1 → 1)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Name (#0)</td><td>null → gamma</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Weight (#0)</td><td>null → 5</td></tr></tbody></table></section>"""
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Name (#0)</td><td>— → gamma</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Weight (#0)</td><td>— → 5</td></tr></tbody></table></section>"""
 
 
 # ---------------------------------------------------------------------------

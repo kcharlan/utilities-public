@@ -828,13 +828,27 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
     # raw value in the cell's tooltip; the absent side is an em dash, not
     # `null`.
     row = _card_row(html_report, "Audio cache")
-    assert '<td class="new-val" title="0.0000003">$0.30</td>' in row
-    assert '<td class="old-val">\u2014</td>' in row
+    assert '<td class="new-val num" title="0.0000003">$0.30</td>' in row
+    assert '<td class="old-val num">\u2014</td>' in row
     assert '<td class="unit">/1M</td>' in row
     assert '<td class="delta sem-coverage">added</td>' in row
 
+    # Fix pass 1, finding 3: the Change Summary is in the SAME document, and it
+    # spelled this absence `null` while the card above it spelled it `\u2014`.
+    assert "<td>\u2014 \u2192 0.0000003 ($0.30 / 1M)</td>" in html_report
+    assert "<td>null \u2192" not in html_report
+
 
 def _mixed_direction_card_html() -> str:
+    """A card spanning THREE categories, with both directions inside one of them.
+
+    Three, not two: C1's claim is that a card's columns line up ACROSS category
+    boundaries, and two groups exercise exactly one boundary -- which a renderer
+    that reset its widths on every SECOND group would still pass. The third
+    group is `Capabilities`, and it is also the only non-numeric value cell
+    here, so it pins that a `boolean` row sits in the same eight columns as a
+    price without claiming to be a number.
+    """
     changed = (
         ModelDelta(
             "changed",
@@ -845,6 +859,7 @@ def _mixed_direction_card_html() -> str:
                 FieldChange("pricing.completion", "0.4", "0.3"),
                 FieldChange("pricing.input_cache_read", "0.01", None),
                 FieldChange("context_length", 1000, 2000),
+                FieldChange("reasoning.default_enabled", False, True),
             ),
         ),
     )
@@ -902,13 +917,24 @@ def test_html_card_emits_exactly_one_table_for_a_multi_category_model() -> None:
 
     assert card.count("<table") == 1
     assert card.count("<colgroup>") == 1
-    # Both categories are present, each as a chip on the FIRST row of its group
-    # only -- four price rows, one capacity row, two chips.
-    assert card.count('<td class="cat-chip">') == 2
+    # All THREE categories are present, each as a chip on the FIRST row of its
+    # group only -- four price rows, one capacity row, one capability row,
+    # three chips.
+    assert card.count('<td class="cat-chip">') == 3
     assert '<td class="cat-chip">Pricing</td>' in card
     assert '<td class="cat-chip">Context &amp; Limits</td>' in card
-    assert card.count('class="group-start"') == 2
-    assert len(_card_rows(card)) == 4
+    assert '<td class="cat-chip">Capabilities</td>' in card
+    # Matched as a class TOKEN, not as a whole attribute: a row also carries
+    # `row-alt` when it falls on a zebra stripe, so `class="group-start"` would
+    # be a substring assertion about which classes happen to co-occur.
+    assert len(re.findall(r'<tr class="[^"]*\bgroup-start\b', card)) == 3
+    assert len(_card_rows(card)) == 5
+    # Every row carries all eight cells, across every group boundary. Counted
+    # rather than spot-checked: a row short of a cell shifts every cell to its
+    # right into the wrong column, which is the failure this layout exists to
+    # rule out, and it would not show up in a chip or border count.
+    for row in _card_rows(card):
+        assert row.count("<td") == 8, row
 
 
 def test_html_card_sorts_pricing_rows_by_absolute_impact() -> None:
@@ -942,7 +968,257 @@ def test_html_card_sorts_pricing_rows_by_absolute_impact() -> None:
     assert labels == ["Output", "Cache read", "Input"]
 
 
-_PRICE_VALUE_CELL = re.compile(r'<td class="(?:old|new)-val"(?: title="([^"]*)")?>([^<]*)</td>')
+_LONG_PARAMETER_LIST = (
+    '["tools", "tool_choice", "logit_bias", "logprobs", "top_logprobs", '
+    '"response_format", "structured_outputs", "repetition_penalty", "seed", "stop"]'
+)
+
+
+def _list_and_scalar_card_html() -> str:
+    """A card carrying a multi-member list diff AND a long one-sided scalar.
+
+    Both shapes are reachable on real provider data and neither is exercised by
+    the price/count fixtures above: `tier_profiles` moves two members in and two
+    out at once, and a provider that starts reporting `supported_parameters`
+    sends the whole list as one unbreakable-looking string.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-lists",
+            "Synth Lists",
+            (
+                FieldChange("pricing.prompt", "0.000002", "0.0000035"),
+                FieldChange("supported_parameters", None, _LONG_PARAMETER_LIST),
+                FieldChange(
+                    "tier_profiles",
+                    ['{"name": "alpha", "weight": 1}', '{"name": "gamma", "weight": 7}'],
+                    ['{"name": "alpha", "weight": 2}', '{"name": "beta", "weight": 4}'],
+                ),
+            ),
+        ),
+    )
+    return render_scan_report(
+        generated_at="2026-07-15T13:05:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+
+
+def test_list_members_take_a_continuation_row_instead_of_a_mid_table_cell() -> None:
+    """Fix pass 1, finding 1. The members are a BAND, not a squeezed cell.
+
+    The shape this replaces put an inline count and a block-level member `<div>`
+    in one `<td colspan="6">` that began at the `old` column. Two consequences,
+    both asserted against here: the cell always ran to two lines, and its
+    left-aligned members started under the right-aligned numeric columns of the
+    rows above and below. No CSS fixes that, so the assertions are about the
+    markup's SHAPE rather than about any declaration.
+    """
+    report = _list_and_scalar_card_html()
+
+    # The defect's own spelling is gone from the document outright.
+    assert "list-cell" not in report
+    assert 'colspan="6"' not in report
+
+    label_row = _card_row(report, "Tier profiles")
+    # The label row is an ordinary grid row: eight cells, four of them the empty
+    # value columns a membership change has no operands for.
+    assert label_row.count("<td") == 8
+    assert label_row.count("<td></td>") == 4
+    # THE point of finding 1: the count sits in the delta column, so it lands
+    # under the card's other deltas instead of floating mid-table.
+    assert '<td class="delta list-count">(2 → 2)</td>' in label_row
+    assert '<td class="pct"></td>' in label_row
+
+    members = report.split(label_row, 1)[1].split("</tr>", 1)[0] + "</tr>"
+    assert members.startswith('\n<tr class="list-members"><td></td><td colspan="7">')
+    # Both blocks of a two-sided membership change land in the one band.
+    assert '<div class="list-added">' in members
+    assert '<div class="list-removed">' in members
+    assert "+ {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}" in members
+    assert "− {&quot;name&quot;: &quot;gamma&quot;, &quot;weight&quot;: 7}" in members
+
+    # A continuation row carries no `field-name` cell, so it is not a card row
+    # and the row-count assertions elsewhere in this module are unaffected by
+    # its arrival. Stated as an assertion because it is load-bearing for them.
+    assert 'class="field-name"' not in members
+    assert len(_card_rows(report)) == 3
+
+
+def test_zebra_stripes_count_fields_not_table_rows() -> None:
+    """A continuation row must not shift the stripe of everything below it.
+
+    `:nth-child(even)` counts `<tr>` elements, and finding 1's members row is a
+    `<tr>`. Under that rule one list change in a card made the stripes stutter
+    -- two adjacent fields came out the same shade -- and shaded the members
+    differently from the label they belong to. The stripe is now emitted as a
+    `row-alt` class counted over FIELDS, and the members row inherits its
+    label's.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-stripes",
+            "Synth Stripes",
+            (
+                FieldChange("pricing.prompt", "0.000002", "0.0000035"),
+                FieldChange("pricing.completion", "0.000004", "0.000009"),
+                FieldChange("context_length", 1000, 2000),
+                FieldChange("supported_parameters", ["tools"], ["tools", "seed"]),
+                FieldChange("reasoning.default_enabled", False, True),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-15T13:05:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+
+    # Five fields, so five field rows, and their shades strictly alternate.
+    field_rows = _card_rows(report)
+    assert len(field_rows) == 5
+    assert ["row-alt" in row for row in field_rows] == [False, True, False, True, False]
+
+    # The list field is the fourth, so it is striped -- and its members row
+    # carries the SAME stripe, which is what makes the pair read as one band.
+    list_row = _card_row(report, "Supported parameters")
+    assert "row-alt" in list_row
+    members = report.split(list_row, 1)[1].split("</tr>", 1)[0]
+    assert members.startswith('\n<tr class="list-members row-alt">')
+
+    # The field AFTER the list is unstriped. Under `:nth-child(even)` it was the
+    # sixth `<tr>` and came out striped, directly below a striped row.
+    assert "row-alt" not in _card_row(report, "Reasoning default")
+
+    css = report.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert ".card-table tr.row-alt td {" in css
+    assert ".card-table tr:nth-child(even)" not in css
+
+
+def test_a_long_scalar_value_is_not_promised_nowrap_by_the_card() -> None:
+    """Fix pass 1, finding 2. `nowrap` on an arbitrary-length value breaks the card.
+
+    A `col` width is a HINT, not a maximum: a 100-character `supported_parameters`
+    value in a `nowrap` cell widens the column until the card overflows
+    sideways, which defeats the alignment the eight-column layout exists to
+    deliver. Numeric cells keep `nowrap` -- `$3.50` and `+131,072` must never be
+    broken across lines.
+    """
+    report = _list_and_scalar_card_html()
+
+    scalar_row = _card_row(report, "Supported parameters")
+    price_row = _card_row(report, "Input")
+
+    # The long value's cell does NOT claim to be numeric...
+    assert '<td class="new-val">' in scalar_row
+    assert "num" not in scalar_row
+    assert "logit_bias" in scalar_row
+    # ...while both price cells do.
+    assert '<td class="old-val num" title="0.000002">$2.00</td>' in price_row
+    assert '<td class="new-val num" title="0.0000035">$3.50</td>' in price_row
+
+    # And `nowrap` is scoped to that class, with the wrapping cells given an
+    # explicit break rule. Asserted on the stylesheet because the class is only
+    # half the fix -- markup that opts out of a declaration that still applies
+    # to everything would pass every assertion above and still overflow.
+    css = report.split("<style>", 1)[1].split("</style>", 1)[0]
+    nowrap_rule = css.split(".card-table td.num,", 1)[1].split("}", 1)[0]
+    assert "white-space: nowrap;" in nowrap_rule
+    assert ".card-table td.old-val," not in nowrap_rule
+    wrap_rule = css.split(".card-table td.old-val,\n.card-table td.new-val {", 1)[1].split("}", 1)[0]
+    assert "overflow-wrap: break-word;" in wrap_rule
+    # The wrapper can still scroll if a single unbreakable token exceeds even
+    # the widened column -- the backstop, not the fix.
+    assert "overflow-x: auto;" in css
+
+
+def test_card_list_members_keep_red_and_green_for_money() -> None:
+    """Fix pass 1, finding 4. B1's stated effect was false inside a card.
+
+    `+ logit_bias` rendered green and `− seed` red, so the two colours that mean
+    "a price went up" and "a price went down" also meant "a member arrived" and
+    "a member left" in the same card. The card now re-colours them to the
+    `capability` pair (blue on, dim off); the `+`/`−` glyphs carry the
+    add-vs-remove distinction, which is why losing the green/red contrast costs
+    nothing here.
+
+    Scoped to `.card-table`, so the `changes` report and the bulk cards -- which
+    are not this task's document -- keep the global rules untouched.
+    """
+    report = _list_and_scalar_card_html()
+    css = report.split("<style>", 1)[1].split("</style>", 1)[0]
+
+    # The two-class descendant form is load-bearing and is why these assertions
+    # name the selector rather than just the colour: `.card-table .list-added`
+    # is specificity (0,2,0) against the global rule's (0,1,0), so it wins
+    # WHEREVER it sits in the stylesheet. A single-class card override would
+    # tie and silently depend on source order.
+    assert ".card-table .list-added { color: var(--accent-blue); }" in css
+    assert ".card-table .list-removed { color: var(--text-dim); }" in css
+    # The global rules survive untouched, which is what keeps this change
+    # inside the card: the `changes` report and the bulk cards still use them.
+    assert ".list-added { color: var(--accent-green); }" in css
+    assert ".list-removed { color: var(--accent-red); }" in css
+
+    # No `sem-cost-*` class reaches a membership row: the money colours stay on
+    # the money columns.
+    members = report.split('<tr class="list-members">', 1)[1].split("</tr>", 1)[0]
+    assert "sem-cost-up" not in members
+    assert "sem-cost-down" not in members
+
+
+def test_one_html_document_spells_an_absent_side_one_way() -> None:
+    """Fix pass 1, finding 3. The card said `—` and the summary said `null`.
+
+    Asserted over the WHOLE document rather than on the two cells that
+    prompted it: any renderer that later reintroduces `null` for an absent side
+    anywhere in the HTML report fails here, which is the property the report
+    actually needs. Text and markdown are asserted to still say `null`, so this
+    cannot pass by having quietly changed the shared text line.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-absent",
+            "Synth Absent",
+            (
+                FieldChange("pricing.input_cache_read", None, "0.00000005"),
+                FieldChange("top_provider.max_completion_tokens", 8192, None),
+                FieldChange("expiration_date", None, "2030-12-31"),
+            ),
+        ),
+    )
+    kwargs = {
+        "generated_at": "2026-07-15T13:05:00+00:00",
+        "command": "scan",
+        "provider_results": [_scan_result(changed)],
+    }
+    html_report = render_scan_report(format_name="html", **kwargs)
+
+    assert "null" not in html_report
+    for cell in ("<td>— → 0.00000005 ($0.05 / 1M)</td>", "<td>8,192 → —</td>", "<td>— → 2030-12-31</td>"):
+        assert cell in html_report, cell
+    for row_label in ("Cache read", "Max output", "Expiration date"):
+        assert "—" in _card_row(html_report, row_label), row_label
+
+    # The split is closed in HTML ONLY, and deliberately: `old_display` /
+    # `new_display` are shared by every renderer, so respelling them there would
+    # move the text and markdown characterization goldens.
+    for format_name in ("text", "markdown"):
+        other = render_scan_report(format_name=format_name, **kwargs)
+        assert "null → 0.00000005 ($0.05 / 1M)" in other, format_name
+        assert "8,192 → null" in other, format_name
+
+
+# `num` is not optional in this pattern. A price is a number, so its cell must
+# carry the class that earns tabular figures and `nowrap`; a price cell that
+# lost it would silently start wrapping mid-figure and this regex would stop
+# matching, failing the count assertion below rather than passing quietly.
+_PRICE_VALUE_CELL = re.compile(r'<td class="(?:old|new)-val num"(?: title="([^"]*)")?>([^<]*)</td>')
 
 
 def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
@@ -992,8 +1268,8 @@ def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
         float(raw)
 
     row = _card_row(report, "Input")
-    assert '<td class="old-val" title="0.000002">$2.00</td>' in row
-    assert '<td class="new-val" title="0.0000035">$3.50</td>' in row
+    assert '<td class="old-val num" title="0.000002">$2.00</td>' in row
+    assert '<td class="new-val num" title="0.0000035">$3.50</td>' in row
 
 
 def _unscaled_price_report(old_value: str, new_value: str) -> str:
