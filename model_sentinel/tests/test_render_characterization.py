@@ -71,6 +71,13 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   here -- `$2.00`, `$4.00` and `$5.00` have no decimals to keep -- and is
   pinned in `test_change_render.py`.
 
+* Task 6 fix pass 2 widened that hatch's trigger (a row also extends when its
+  DELTA would print as zero while being numerically non-zero) and, for the
+  third time, changed NOT ONE golden in this module -- same reason again: the
+  shared fixture's prices resolve at two places, where every delta it produces
+  prints plainly. `test_vanishing_delta_row_reaches_every_human_format_but_
+  not_json` carries its own fixture below.
+
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
 
@@ -1777,6 +1784,81 @@ def test_price_escape_hatch_reaches_every_human_format_but_not_json() -> None:
     assert "$" not in payload
     assert "1e-06" in payload
     assert "2e-06" in payload
+
+
+def _vanishing_delta_price_scan_result() -> list[ProviderScanResult]:
+    """A row whose operands separate at the cap's edge but whose delta does not.
+
+    `0.000124999 -> 0.000125001` is the hatch's second face: five places
+    already tell the two prices apart, so the operand face stops asking there
+    and leaves a `+$0.00000` delta standing beside two visibly different
+    numbers. Separate fixture for the same reason as the two above -- adding a
+    field to the shared fixture would move the JSON goldens and destroy the
+    evidence that JSON is untouched.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-vanishing",
+                    "Synth Model Vanishing",
+                    (FieldChange("pricing.prompt", 0.000124999, 0.000125001),),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_vanishing_delta_row_reaches_every_human_format_but_not_json() -> None:
+    """The widened hatch is a property of `RenderedChange`, so every renderer gets it.
+
+    The five-place row the operand face alone produced (`$0.00012 → $0.00013`)
+    must appear in NO human format: it prints two prices whose difference the
+    row then puts at zero. All three must show the nine-place spelling instead.
+
+    JSON is asserted unchanged in the same test rather than a separate one, so
+    the human-format expectation and the audit-path expectation cannot drift.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_vanishing_delta_price_scan_result(),
+        )
+        assert "$0.000124999" in report, format_name
+        assert "$0.000125001" in report, format_name
+        # The five-place spelling, ruled out by counting rather than by
+        # `not in`: BOTH nine-place prices begin `$0.00012`, so equal counts
+        # means every occurrence of the short form is the head of a long one
+        # and none is a bare five-place price.
+        assert report.count("$0.00012") == (
+            report.count("$0.000124999") + report.count("$0.000125001")
+        ), format_name
+
+    payload = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_vanishing_delta_price_scan_result(),
+    )
+    assert "$" not in payload
+    assert "0.000124999" in payload
+    assert "0.000125001" in payload
 
 
 def test_characterization_text() -> None:

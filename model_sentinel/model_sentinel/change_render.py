@@ -495,21 +495,25 @@ PRICE_MIN_PRECISION = 2
 PRICE_MAX_PRECISION = 4
 
 # The cap's escape hatch: how far past PRICE_MAX_PRECISION a row may extend
-# when the cap would otherwise print one number twice.
+# when the cap would otherwise make the row contradict itself.
 #
-# WHY THE HATCH EXISTS. Capping at four lets two numerically different operands
-# render as the SAME string -- `$0.0000 -> $0.0000` sitting beside `↑ 100.0%`,
-# two identical numbers contradicting a non-zero percentage. That is not merely
-# ugly. The likeliest route to it is an operator configuring a new provider
-# with the wrong PRICE_MULTIPLIER/PRICE_DIVISOR, whose visible tell used to be
-# an obviously wrong `$0.000001 -> $0.000002`. The cap hides the tell, and the
-# text and markdown reports have no tooltip to fall back on.
+# WHY THE HATCH EXISTS. Capping at four lets a row print a number that denies a
+# movement the rest of the row asserts, in either of two directions. Two
+# numerically different operands can render as the SAME string -- `$0.0000 ->
+# $0.0000` sitting beside `↑ 100.0%`, two identical numbers contradicting a
+# non-zero percentage -- and a numerically non-zero delta can render as ZERO
+# beside operands that visibly differ: `$0.00012 -> $0.00013` with a delta of
+# `+$0.00000`, an arithmetic the reader can check and find false. That is not
+# merely ugly. The likeliest route to it is an operator configuring a new
+# provider with the wrong PRICE_MULTIPLIER/PRICE_DIVISOR, whose visible tell
+# used to be an obviously wrong `$0.000001 -> $0.000002`. The cap hides the
+# tell, and the text and markdown reports have no tooltip to fall back on.
 #
 # WHY 20. The motivating misconfiguration renders per-TOKEN prices in a column
 # built for per-1M prices. Real per-token prices bottom out around 1e-9
 # ($0.001 per 1M), which separates at nine places; twenty leaves eleven orders
 # of magnitude of headroom while keeping the worst case a finite 20-place
-# column. A row that still cannot separate by then is not per-token pricing, it
+# column. A row that still cannot resolve by then is not per-token pricing, it
 # is a pathological input -- and for it the hatch GIVES UP and returns the
 # ordinary cap, so the degenerate case degrades to today's `$0.0000` rather
 # than to a monstrous column of twenty zeroes.
@@ -536,9 +540,9 @@ def _significant_decimals(value: float) -> int:
     needs six places, so on its own it renders `$0.0000`: visibly a value too
     small for the column rather than a value that is not there.
 
-    The cap is the DEFAULT, not the last word. When a row's two operands land
-    here and collide into one string, `_price_precision` extends past it -- see
-    PRICE_COLLISION_MAX_PRECISION.
+    The cap is the DEFAULT, not the last word. When a row landing here would
+    print a number that contradicts the rest of the row, `_price_precision`
+    extends past it -- see PRICE_COLLISION_MAX_PRECISION.
     """
     for places in range(PRICE_MIN_PRECISION, PRICE_MAX_PRECISION):
         if math.isclose(round(value, places), value, rel_tol=_PRICE_PRECISION_REL_TOL, abs_tol=0.0):
@@ -546,8 +550,8 @@ def _significant_decimals(value: float) -> int:
     return PRICE_MAX_PRECISION
 
 
-def _price_precision(*values: float) -> int:
-    """THE shared precision for one price row: the greater of its operands'.
+def _price_precision(*values: float, delta: float | None) -> int:
+    """THE shared precision for one price row: its operands', unless that lies.
 
     Called ONCE per row and passed to every `_fmt_price_per_m` call for that
     row. The point of the function is that old, new and delta cannot disagree:
@@ -556,56 +560,103 @@ def _price_precision(*values: float) -> int:
     share a card with their decimal points in three different columns and the
     three numbers of one row could each claim a different precision.
 
-    The four-place cap is the default. It has ONE escape hatch: when the row's
-    operands are numerically different yet render as the same string at the
-    cap, the precision extends until they differ (see `_renders_alike` and
-    `_precision_that_separates`). The extended precision is still a single
+    `delta` is the difference this row will PRINT (`None` for a one-sided row,
+    which has no difference to print). Keyword-only and REQUIRED for the same
+    reason `_fmt_price_per_m`'s `precision` is: a two-sided caller that forgot
+    it would silently reinstate the vanishing-delta defect below, and the only
+    way to forget an argument you must name is to mean it.
+
+    The four-place cap is the default. It has ONE escape hatch, applied by
+    `_precision_that_resolves`: extend until the row stops contradicting itself
+    (see `_contradicts_itself`). The extended precision is still a single
     precision for the whole row -- it is the same return value, so old, new and
     delta share it exactly as they share the capped one.
     """
     capped = max((_significant_decimals(value) for value in values), default=PRICE_MIN_PRECISION)
-    if capped != PRICE_MAX_PRECISION:
-        # Below the cap every operand is reproduced exactly by its own
-        # precision, so two of them cannot render alike without being equal.
-        # The hatch is unreachable here, and asking is cheaper than proving.
-        return capped
-    return _precision_that_separates(values, capped)
+    # The rule is asked at EVERY capped precision, not only at the four-place
+    # cap. The previous shape returned a sub-cap precision unchecked, on the
+    # argument that below the cap each operand is reproduced exactly by its own
+    # precision and so two of them cannot print alike without being equal. That
+    # argument holds for exact reproduction and `_significant_decimals` uses a
+    # relative tolerance (it must -- see `_PRICE_PRECISION_REL_TOL`), so two
+    # operands agreeing to within 1e-9 relative are BOTH "reproduced" at two
+    # places and print `$0.05` twice. Asking is cheap; the exemption was the
+    # only part of this function resting on an argument rather than a check.
+    return _precision_that_resolves(values, delta, capped)
 
 
-def _renders_alike(values: tuple[float, ...], precision: int) -> bool:
-    """True when two numerically different values format to the SAME string.
-
-    The trigger is the string collision itself, not a magnitude threshold: the
-    defect is "these two render identically but are not equal", and a magnitude
-    threshold would guess where that starts and fire on rows that read fine.
+def _prints_alike(first: float, second: float, precision: int) -> bool:
+    """True when two numerically different prices print as ONE string.
 
     Compares `_fmt_price_per_m` output rather than raw `format()`, so `0` --
     which short-circuits to `free` before precision is consulted -- is
     correctly seen as DISTINCT from a tiny non-zero price. `free` beside
-    `$0.0000` is already two different strings and needs no hatch.
+    `$0.0000` is already two different strings.
+    """
+    if first == second:
+        return False
+    return _fmt_price_per_m(first, precision) == _fmt_price_per_m(second, precision)
+
+
+def _prints_as_zero(value: float, precision: int) -> bool:
+    """True when a numerically non-zero magnitude prints as nothing but zeroes.
+
+    Compared against the digits a zero WOULD print at this precision rather
+    than against `_fmt_price_per_m(0.0, precision)`: a delta that is exactly
+    zero prints `free`, so the renderer's own spelling of zero is not the
+    string this magnitude is in danger of being mistaken for. `+$0.00000` is.
+    """
+    if value == 0:
+        return False
+    return f"{abs(value):.{precision}f}" == f"{0.0:.{precision}f}"
+
+
+def _contradicts_itself(values: tuple[float, ...], delta: float | None, precision: int) -> bool:
+    """True when this row, printed at `precision`, would deny its own movement.
+
+    ONE rule -- every number the row prints must stand apart from the numbers
+    it is not -- with two faces, because a row prints two kinds of number:
+
+      * an OPERAND that prints as another operand it is not equal to:
+        `$0.0000 -> $0.0000` beside `↑ 100.0%`;
+      * a DELTA that prints as the zero it is not: `$0.00012 -> $0.00013`
+        beside `+$0.00000`.
+
+    Both are the same defect seen from opposite ends -- a reader shown a number
+    that denies a movement the rest of the row asserts -- and neither is
+    sufficient alone: fixing only the operands buys two visibly different
+    prices whose delta still claims nothing changed, which is the first
+    contradiction wearing the other face.
+
+    Both faces are decided on the STRING the row would print, never on the
+    magnitude behind it. A magnitude threshold would guess where the defect
+    starts and fire on rows that read perfectly well at the cap.
     """
     for index, first in enumerate(values):
         for second in values[index + 1 :]:
-            if first == second:
-                continue
-            if _fmt_price_per_m(first, precision) == _fmt_price_per_m(second, precision):
+            if _prints_alike(first, second, precision):
                 return True
-    return False
+    return delta is not None and _prints_as_zero(delta, precision)
 
 
-def _precision_that_separates(values: tuple[float, ...], capped: int) -> int:
-    """The cap, extended just far enough that no two operands collide.
+def _precision_that_resolves(values: tuple[float, ...], delta: float | None, capped: int) -> int:
+    """The cap, extended just far enough that the row stops contradicting itself.
 
-    Returns `capped` untouched unless the row actually collides there, so
-    normal-magnitude rows and the cap's intent are unaffected. When it does
-    collide, returns the FIRST precision that separates every pair -- one
+    Returns `capped` untouched when the row does not contradict itself there,
+    so normal-magnitude rows and the cap's intent are unaffected. Otherwise
+    returns the FIRST precision at which NEITHER face of the rule fires -- one
     precision, shared by old, new and delta exactly as at the cap. Bounded by
     PRICE_COLLISION_MAX_PRECISION; on exhaustion returns the cap.
+
+    The two faces can demand different precisions, and the row needs whichever
+    is greater: `0.000124999 -> 0.000125001` separates its operands at five
+    places while its `2e-09` delta stays invisible until nine. Because the loop
+    advances only when the WHOLE row is consistent, it cannot stop at the first
+    face to be satisfied -- five places here would print two visibly different
+    prices beside `+$0.00000`.
     """
-    if not _renders_alike(values, capped):
-        return capped
-    for places in range(capped + 1, PRICE_COLLISION_MAX_PRECISION + 1):
-        if not _renders_alike(values, places):
+    for places in range(capped, PRICE_COLLISION_MAX_PRECISION + 1):
+        if not _contradicts_itself(values, delta, places):
             return places
     return capped
 
@@ -891,12 +942,15 @@ def _classify_price(
         else:
             direction = "none"
         sign = "+" if delta_norm > 0 else ("-" if delta_norm < 0 else "")
-        # ONE precision for the whole row, derived from the OPERANDS and passed
-        # to all three formats. The delta does not get a say: it is a
-        # difference of the two operands, so letting it choose its own
-        # precision is how `$0.1500 -> $0.1425` ends up next to a delta that
-        # claims more (or fewer) places than the numbers it was computed from.
-        precision = _price_precision(norm_old, norm_new)
+        # ONE precision for the whole row, sized by the OPERANDS and passed to
+        # all three formats. The delta does not get a say in how many places
+        # the row prints -- it is a difference of the two operands, so letting
+        # it choose its own precision is how `$0.1500 -> $0.1425` ends up next
+        # to a delta claiming more (or fewer) places than the numbers it was
+        # computed from. It is passed in only so the row can be checked for
+        # printing it as zero; the return value remains a single shared
+        # precision.
+        precision = _price_precision(norm_old, norm_new, delta=delta_norm)
         delta_display = f"{sign}{_fmt_price_per_m(abs(delta_norm), precision)}"
         pct_display = _pct_change(old_numeric, new_numeric) or None
         return RenderedChange(
@@ -919,19 +973,20 @@ def _classify_price(
             list_removed=(),
         )
 
-    # One-sided: a single operand, with no second value to agree with, so it
-    # prices itself. The precision is derived and passed EXPLICITLY rather than
-    # left to a default, so the only way to format a price is to have named its
-    # precision at the call site.
+    # One-sided: a single operand, with no second value to agree with and no
+    # difference to print, so it prices itself and names `delta=None` to say
+    # so. The precision is derived and passed EXPLICITLY rather than left to a
+    # default, so the only way to format a price is to have named its precision
+    # at the call site.
     if old_numeric is None:
         one_sided_direction: Literal["added", "removed"] = "added"
         old_display = "null"
         norm_only = _normalize_price(new_numeric, price_multiplier, price_divisor)
-        new_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
+        new_display = _fmt_price_per_m(norm_only, _price_precision(norm_only, delta=None))
     else:
         one_sided_direction = "removed"
         norm_only = _normalize_price(old_numeric, price_multiplier, price_divisor)
-        old_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
+        old_display = _fmt_price_per_m(norm_only, _price_precision(norm_only, delta=None))
         new_display = "null"
 
     return RenderedChange(

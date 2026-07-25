@@ -287,6 +287,10 @@ def test_old_new_and_delta_always_share_one_precision():
       * `0.000001 / 0.000002` and `0.0000015 / 0.000002` -- the two escape-hatch
         rows. The invariant is asserted AT the extended precision too: the
         hatch may not buy separated operands by desynchronising the delta.
+      * `0.000124999 / 0.000125001` -- the row whose two faces demand DIFFERENT
+        precisions (operands separate at five places, the delta needs nine).
+        The invariant is what forbids the obvious wrong fix: printing the
+        operands at five and the delta at nine.
     """
     for old, new in (
         ("0.15", "0.1425"),
@@ -295,6 +299,7 @@ def test_old_new_and_delta_always_share_one_precision():
         ("0.196", "0.1876"),
         ("0.000001", "0.000002"),
         ("0.0000015", "0.000002"),
+        ("0.000124999", "0.000125001"),
     ):
         result = _price_change(old, new)
         places = {
@@ -385,31 +390,161 @@ def test_the_hatch_leaves_free_alone_because_free_is_not_a_collision():
 
     `0` and `1e-09` are numerically different and both format to `0.0000`, but
     `_fmt_price_per_m` short-circuits zero to `free` before precision is
-    consulted, so the reader never sees one number twice. Extending here would
-    fire the hatch on a row that reads fine -- the exact over-reach the
-    string-collision trigger exists to avoid.
+    consulted, so the OPERAND face of the rule never sees one number twice.
+    Asserted on the operand face in isolation (`delta=None`, the one-sided
+    caller's spelling of "this row prints no difference"), because that is
+    where the exemption lives: comparing raw `format()` output there would see
+    `0.0000 == 0.0000` and extend on a collision that does not exist.
     """
+    assert _price_precision(0.0, 1e-09, delta=None) == PRICE_MAX_PRECISION
+
+    # The full row DOES extend -- on the delta face, not the operand face. A
+    # price appearing out of `free` moved by `1e-09`, and `+$0.0000` denies it.
+    # `free` survives the extension: zero short-circuits before precision is
+    # consulted, so the row does not spell it `$0.000000000`.
     result = _price_change("0", "0.000000001")
-    assert (result.old_display, result.new_display) == ("free", "$0.0000")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "free",
+        "$0.000000001",
+        "+$0.000000001",
+    )
 
 
 def test_the_hatch_is_bounded_and_falls_back_to_the_cap():
     """A pathological input cannot loop unboundedly, or widen the column forever.
 
-    `1e-25 -> 2e-25` is not per-token pricing; nothing separates it inside
-    PRICE_COLLISION_MAX_PRECISION places. The hatch gives up and returns the
-    ordinary cap, so the degenerate case degrades to today's `$0.0000` rather
-    than to a column of twenty zeroes. Falsifiable in both directions: raising
-    the bound past 25 would make these render, lowering it below 6 would break
-    the sub-cent case above.
+    `1e-25 -> 2e-25` is not per-token pricing; nothing resolves it inside
+    PRICE_COLLISION_MAX_PRECISION places -- neither face of the rule: the
+    operands still collide there AND their `1e-25` delta still prints as zero.
+    The hatch gives up and returns the ordinary cap, so the degenerate case
+    degrades to today's `$0.0000` rather than to a column of twenty zeroes.
+    Falsifiable in both directions: raising the bound past 25 would make these
+    render, lowering it below 6 would break the sub-cent case above.
     """
     tiny_old, tiny_new = 1e-25, 2e-25
     assert tiny_old != tiny_new  # precondition: a real, if absurd, movement
-    assert _price_precision(tiny_old, tiny_new) == PRICE_MAX_PRECISION
+    assert _price_precision(tiny_old, tiny_new, delta=tiny_new - tiny_old) == PRICE_MAX_PRECISION
     assert PRICE_COLLISION_MAX_PRECISION == 20
 
     result = _price_change("0.0000000000000000000000001", "0.0000000000000000000000002")
     assert (result.old_display, result.new_display) == ("$0.0000", "$0.0000")
+
+
+def test_a_delta_that_would_print_as_zero_extends_the_row():
+    """The hatch's OTHER face: separated operands beside a delta of nothing.
+
+    `0.000124999 -> 0.000125001` separates its operands at five places, so the
+    operand face is satisfied there and stops asking. The row it leaves behind
+    reads `$0.00012 -> $0.00013` with a delta of `+$0.00000`: two visibly
+    different prices next to a number claiming the difference between them is
+    zero, an arithmetic the reader can check and find false. That is the first
+    contradiction wearing the other face, so it extends on the same rule --
+    here to nine places, where the `2e-09` delta finally prints.
+    """
+    result = _price_change("0.000124999", "0.000125001")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$0.000124999",
+        "$0.000125001",
+        "+$0.000000002",
+    )
+    # The defect this replaces, spelled out so the test names what it forbids:
+    # the five-place row the operand face alone would have produced.
+    assert result.delta_display != "+$0.00000"
+    assert (result.old_display, result.new_display) != ("$0.00012", "$0.00013")
+    # Raw values are untouched by any of it -- the audit path is the raw path.
+    assert (result.old_raw, result.new_raw) == ("0.000124999", "0.000125001")
+
+
+def test_the_row_takes_whichever_face_demands_more_precision():
+    """One precision for the row means the GREATER demand, not the first met.
+
+    `0.0000124999 -> 0.0000125001` is the discriminating shape: its operands
+    separate at six places while its `2e-10` delta stays invisible until ten.
+    The two faces are asserted SEPARATELY -- `delta=None` asks the operand face
+    alone -- so the four-place gap between their demands is visible rather than
+    inferred, and an implementation that returned as soon as either face was
+    satisfied would return 6 here and fail on the first assertion pair.
+    """
+    old, new = 0.0000124999, 0.0000125001
+    assert _price_precision(old, new, delta=None) == 6
+    assert _price_precision(old, new, delta=new - old) == 10
+
+    result = _price_change("0.0000124999", "0.0000125001")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$0.0000124999",
+        "$0.0000125001",
+        "+$0.0000000002",
+    )
+    places = {
+        _price_decimal_places(result.old_display),
+        _price_decimal_places(result.new_display),
+        _price_decimal_places(result.delta_display),
+    }
+    assert places == {10}
+
+
+def test_the_delta_face_reads_the_printed_delta_not_its_magnitude():
+    """The second face triggers on the string too, exactly like the first.
+
+    `0.15 -> 0.15006` has a delta of `6e-05`, which is SMALLER than the
+    `1e-04` its four-place row can resolve -- so a magnitude test ("the delta
+    is below one unit in the last place, therefore invisible") calls it zero
+    and widens a row that reads perfectly well. It is not invisible: it rounds
+    UP to `+$0.0001`, a number the reader can see. The row stays at four.
+    """
+    assert abs(0.15006 - 0.15) < 10 ** -PRICE_MAX_PRECISION  # precondition
+    result = _price_change("0.15", "0.15006")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$0.1500",
+        "$0.1501",
+        "+$0.0001",
+    )
+
+
+def test_normal_magnitude_rows_are_untouched_by_the_delta_face():
+    """The delta face may not widen a row that already reads correctly.
+
+    Every pair here prints a delta a reader can see at the precision its
+    operands ask for, so the face must not fire and the precision must be the
+    plain operand-derived one. Asserted as exact place counts, including the
+    two-place cents row that has the most room to be widened by mistake.
+    """
+    for old, new, expected_places in (
+        ("2", "3.5", 2),
+        ("0.15", "0.1425", 4),
+        ("0.1234567", "0.2345678", 4),
+        ("12.345", "12.5", 3),
+    ):
+        result = _price_change(old, new)
+        places = {
+            _price_decimal_places(result.old_display),
+            _price_decimal_places(result.new_display),
+            _price_decimal_places(result.delta_display),
+        }
+        assert places == {expected_places}, (old, new, result.old_display, result.delta_display)
+
+
+def test_the_rule_is_asked_below_the_cap_too():
+    """The sub-cap shortcut is gone, because its justification was not exact.
+
+    `_significant_decimals` reports two places for BOTH `0.05` and
+    `0.050000000001` -- it compares with a relative tolerance, which it must,
+    or normalization noise would price a five-cent cache read at `$0.0500`. So
+    "below the cap each operand is reproduced exactly, therefore two of them
+    cannot print alike without being equal" is not a theorem, and the row it
+    exempted printed `$0.05` twice with a delta of `+$0.00`.
+
+    Exotic values, deliberately: this is the only shape that reaches the rule
+    below the cap, and it is pinned so that reinstating the shortcut as an
+    optimisation fails here rather than silently reprinting one number twice.
+    """
+    result = _price_change("0.05", "0.050000000001")
+    assert result.old_display != result.new_display
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$0.050000000000",
+        "$0.050000000001",
+        "+$0.000000000001",
+    )
 
 
 def test_prices_over_a_dollar_keep_decimals_the_old_rule_truncated():
