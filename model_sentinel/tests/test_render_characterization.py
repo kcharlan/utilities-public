@@ -14,27 +14,45 @@ constant.
 
 from __future__ import annotations
 
+import os
+import time
+
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
 from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     ReportDetailPolicy,
     render_scan_report,
 )
-from model_sentinel.time_utils import to_local_human, to_local_iso
 
-# Fixed instant used for every golden render in this module. render_scan_report()
-# formats this through to_local_human()/to_local_iso(), both of which convert to the
-# *local* system timezone. The golden constants below therefore embed a placeholder
-# token instead of a literal timestamp, substituted at import time via the same
-# helpers the renderer itself calls -- this keeps the tests deterministic across
-# machines/CI runners in different timezones without weakening the assertions.
+# Pin the process timezone to UTC before any golden constant below is defined.
+# render_scan_report() formats timestamps through to_local_human()/to_local_iso()
+# (model_sentinel/time_utils.py), both of which convert via datetime.astimezone()
+# to whatever the OS considers "local". Without this pin, the golden constants
+# would have to be computed through those same helper functions to stay portable
+# across machines/CI runners in different timezones -- which would make the goldens
+# self-fulfilling and unable to catch a future regression in those helpers'
+# formatting. Pinning TZ here means "local" resolves to UTC for the whole test
+# run (this also overrides any ambient `TZ=...` set by whoever invokes pytest),
+# so the golden constants below can be hardcoded literal strings instead.
+os.environ["TZ"] = "UTC"
+time.tzset()
+
+# Fixed instant used for every golden render in this module.
 GENERATED_AT = "2026-07-25T09:00:00+00:00"
 COMMAND = "scan"
 
-_GENERATED_AT_HUMAN = to_local_human(GENERATED_AT)
-_GENERATED_AT_ISO = to_local_iso(GENERATED_AT)
+# Literal expected renderings of GENERATED_AT, valid because TZ is pinned to UTC
+# above. Do NOT replace these with calls to to_local_human()/to_local_iso() --
+# that would make the timestamp assertions below tautological.
+_GENERATED_AT_HUMAN = "2026-07-25 09:00:00"
+_GENERATED_AT_ISO = "2026-07-25T09:00:00+00:00"
 HUMAN_TOKEN = "@@GENERATED_AT_HUMAN@@"
 ISO_TOKEN = "@@GENERATED_AT_ISO@@"
+
+# Placeholder substituted with _EXPECTED_HTML_STYLE_BLOCK (defined further down,
+# next to the HTML templates) so the identical <style> block isn't pasted twice
+# across _EXPECTED_HTML_TEMPLATE and _EXPECTED_HTML_DETAIL_ALL_TEMPLATE.
+STYLE_TOKEN = "@@STYLE_BLOCK@@"
 
 ALL_DETAIL_POLICY = ReportDetailPolicy(
     mode="all",
@@ -330,14 +348,14 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
 EXPECTED_MARKDOWN_DETAIL_ALL = _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
 
 
-_EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Model Sentinel — @@GENERATED_AT_HUMAN@@</title>
-<style>
-:root {
+# The <style> block is byte-identical between _EXPECTED_HTML_TEMPLATE and
+# _EXPECTED_HTML_DETAIL_ALL_TEMPLATE below (the detail policy only affects which
+# rows/categories are rendered in <body>, not the stylesheet). It is kept here as
+# one literal golden string and spliced into both templates via STYLE_TOKEN,
+# rather than pasted twice, so a future CSS change only needs to be reviewed once.
+# This is NOT imported from model_sentinel.reporting -- it is an independent golden
+# copy, so it still catches an unintended CSS regression in the renderer.
+_EXPECTED_HTML_STYLE_BLOCK = """:root {
   --bg: #0f1419;
   --bg-card: #1a1f2e;
   --bg-card-hover: #1e2536;
@@ -731,7 +749,16 @@ footer {
   color: var(--text-dim);
   font-size: 0.75rem;
   font-family: var(--font-mono);
-}
+}"""
+
+_EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Sentinel — @@GENERATED_AT_HUMAN@@</title>
+<style>
+@@STYLE_BLOCK@@
 </style>
 </head>
 <body>
@@ -852,7 +879,9 @@ footer {
 </body>
 </html>"""
 
-EXPECTED_HTML = _EXPECTED_HTML_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
+EXPECTED_HTML = _EXPECTED_HTML_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN).replace(
+    STYLE_TOKEN, _EXPECTED_HTML_STYLE_BLOCK
+)
 
 
 _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
@@ -862,401 +891,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Model Sentinel — @@GENERATED_AT_HUMAN@@</title>
 <style>
-:root {
-  --bg: #0f1419;
-  --bg-card: #1a1f2e;
-  --bg-card-hover: #1e2536;
-  --bg-table-row: #151a24;
-  --bg-table-alt: #1a2030;
-  --border: #2a3040;
-  --border-accent: #3a4050;
-  --text: #c5cdd8;
-  --text-dim: #6b7a8d;
-  --text-bright: #e8edf4;
-  --accent-green: #34d399;
-  --accent-green-dim: rgba(52, 211, 153, 0.12);
-  --accent-red: #f87171;
-  --accent-red-dim: rgba(248, 113, 113, 0.12);
-  --accent-amber: #fbbf24;
-  --accent-amber-dim: rgba(251, 191, 36, 0.12);
-  --accent-blue: #60a5fa;
-  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
-  --font-body: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-}
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 1.6;
-  padding: 2rem;
-  max-width: 1100px;
-  margin: 0 auto;
-}
-header {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 1.5rem;
-  margin-bottom: 2rem;
-}
-header h1 {
-  font-family: var(--font-mono);
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: var(--text-bright);
-  letter-spacing: -0.02em;
-}
-header h1 .count {
-  color: var(--accent-amber);
-  font-weight: 400;
-}
-.meta {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  margin-top: 0.4rem;
-  font-family: var(--font-mono);
-}
-.provider-cards {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 2rem;
-  flex-wrap: wrap;
-}
-.provider-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-  min-width: 200px;
-  flex: 1;
-  border-left: 3px solid var(--border);
-}
-.provider-card.status-clean { border-left-color: var(--accent-green); }
-.provider-card.status-changed { border-left-color: var(--accent-amber); }
-.provider-card.status-error { border-left-color: var(--accent-red); }
-.provider-name {
-  font-weight: 600;
-  color: var(--text-bright);
-  font-size: 1rem;
-}
-.provider-stats {
-  color: var(--text-dim);
-  font-size: 0.8rem;
-  font-family: var(--font-mono);
-  margin-top: 0.2rem;
-}
-.provider-badge {
-  margin-top: 0.5rem;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.status-clean .provider-badge { color: var(--accent-green); }
-.status-changed .provider-badge { color: var(--accent-amber); }
-.status-error .provider-badge { color: var(--accent-red); }
-.price-movement-summary {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-  margin-bottom: 2rem;
-}
-.price-movement-title {
-  font-family: var(--font-mono);
-  color: var(--text-bright);
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin-bottom: 0.65rem;
-}
-.price-movement-title .outcome {
-  font-weight: 400;
-}
-.price-movement-model-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-}
-.price-movement-model-summary > strong,
-.price-movement-fields > strong {
-  color: var(--text-bright);
-  font-weight: 600;
-  margin-right: 0.45rem;
-}
-.price-higher { color: var(--accent-red); }
-.price-lower { color: var(--accent-green); }
-.price-mixed { color: var(--accent-amber); }
-.price-coverage { color: var(--accent-blue); }
-.price-movement-fields {
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  margin-top: 0.45rem;
-}
-.price-movement-model-summary span + span::before,
-.price-movement-fields span + span::before {
-  content: " · ";
-  color: var(--text-dim);
-}
-.price-movement-models {
-  border-top: 1px solid var(--border);
-  margin-top: 0.75rem;
-  padding-top: 0.55rem;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-}
-.price-movement-models summary {
-  cursor: pointer;
-  color: var(--text);
-}
-.price-movement-model-groups {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem 1.5rem;
-  margin-top: 0.75rem;
-}
-.price-movement-group-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  margin-bottom: 0.3rem;
-}
-.price-movement-model {
-  display: grid;
-  grid-template-columns: minmax(90px, auto) 1fr;
-  gap: 0.5rem;
-  padding: 0.15rem 0;
-}
-.price-movement-provider { color: var(--text-dim); }
-.price-movement-model code {
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-.date-heading {
-  font-family: var(--font-mono);
-  font-size: 1.15rem;
-  color: var(--text-bright);
-  margin: 1.5rem 0 0.75rem 0;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-.provider-section {
-  margin-bottom: 2.5rem;
-}
-.provider-section h2 {
-  font-family: var(--font-mono);
-  font-size: 1.15rem;
-  color: var(--text-bright);
-  margin-bottom: 0.75rem;
-  font-weight: 600;
-}
-.provider-id {
-  color: var(--text-dim);
-  font-weight: 400;
-  font-size: 0.9rem;
-}
-.baseline-info {
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  margin-bottom: 1rem;
-}
-.error-msg {
-  background: var(--accent-red-dim);
-  color: var(--accent-red);
-  padding: 0.5rem 0.75rem;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  margin-bottom: 1rem;
-}
-h3 {
-  font-size: 0.9rem;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin: 1.25rem 0 0.5rem 0;
-  font-weight: 600;
-}
-.model-list {
-  list-style: none;
-  padding-left: 0;
-}
-.model-list li {
-  padding: 0.35rem 0.5rem;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  margin-bottom: 0.2rem;
-}
-.added-list li {
-  background: var(--accent-green-dim);
-  color: var(--accent-green);
-}
-.removed-list li {
-  background: var(--accent-red-dim);
-  color: var(--accent-red);
-}
-.model-list .display-name {
-  color: var(--text-dim);
-  font-family: var(--font-body);
-}
-.model-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  margin-bottom: 1rem;
-  overflow: hidden;
-}
-.model-card-header {
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-card-hover);
-}
-.model-card-header code {
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  color: var(--accent-amber);
-  font-weight: 600;
-}
-.model-card-header .display-name {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  margin-left: 0.5rem;
-}
-.bulk-change-card {
-  border-left: 3px solid var(--accent-amber);
-}
-.bulk-models, .summary-models {
-  padding: 0.55rem 1rem;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-}
-.bulk-models summary, .summary-models summary {
-  cursor: pointer;
-  color: var(--text);
-}
-.bulk-model-list, .summary-model-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 0.25rem 1rem;
-  margin-top: 0.6rem;
-}
-.bulk-model-list code, .summary-model-list code {
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-.change-category {
-  padding: 0.5rem 1rem;
-  border-bottom: 1px solid var(--border);
-}
-.change-category:last-child {
-  border-bottom: none;
-}
-.category-label {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 0.4rem;
-  font-weight: 600;
-}
-.change-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-.change-table th {
-  text-align: left;
-  color: var(--text-dim);
-  font-weight: 500;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 0.3rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-.change-table td {
-  padding: 0.4rem 0.5rem;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  vertical-align: top;
-}
-.change-table tr:nth-child(even) td {
-  background: var(--bg-table-alt);
-}
-.field-name { color: var(--text); }
-td.old-val { color: var(--text-dim); }
-td.new-val { color: var(--text-bright); }
-td.change-delta { font-weight: 600; }
-td.delta-decrease { color: var(--accent-red); }
-td.delta-increase { color: var(--accent-green); }
-td.delta-neutral { color: var(--accent-amber); }
-td.delta-price-higher { color: var(--accent-red); }
-td.delta-price-lower { color: var(--accent-green); }
-td.delta-price-coverage { color: var(--accent-blue); }
-.list-diff {
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  padding: 0.35rem 0;
-}
-.list-added { color: var(--accent-green); }
-.list-removed { color: var(--accent-red); }
-.list-count { color: var(--text-dim); font-size: 0.8rem; }
-.summary-section {
-  margin-top: 2.5rem;
-  border-top: 1px solid var(--border);
-  padding-top: 1.5rem;
-}
-.summary-section h2 {
-  font-family: var(--font-mono);
-  font-size: 1.1rem;
-  color: var(--text-bright);
-  margin-bottom: 1rem;
-}
-.summary-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-.summary-table th {
-  text-align: left;
-  color: var(--text-dim);
-  font-weight: 600;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 2px solid var(--border-accent);
-  background: var(--bg-card);
-}
-.summary-table td {
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-}
-.summary-table tr:nth-child(even) td {
-  background: var(--bg-table-alt);
-}
-.summary-table .summary-models {
-  padding: 0;
-}
-footer {
-  margin-top: 3rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 0.75rem;
-  font-family: var(--font-mono);
-}
+@@STYLE_BLOCK@@
 </style>
 </head>
 <body>
@@ -1379,7 +1014,9 @@ footer {
 </body>
 </html>"""
 
-EXPECTED_HTML_DETAIL_ALL = _EXPECTED_HTML_DETAIL_ALL_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
+EXPECTED_HTML_DETAIL_ALL = _EXPECTED_HTML_DETAIL_ALL_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN).replace(
+    STYLE_TOKEN, _EXPECTED_HTML_STYLE_BLOCK
+)
 
 
 _EXPECTED_JSON_TEMPLATE = """{
@@ -1710,7 +1347,6 @@ _EXPECTED_JSON_DETAIL_ALL_TEMPLATE = """{
 }"""
 
 EXPECTED_JSON_DETAIL_ALL = _EXPECTED_JSON_DETAIL_ALL_TEMPLATE.replace(ISO_TOKEN, _GENERATED_AT_ISO)
-
 
 
 def test_characterization_text() -> None:
