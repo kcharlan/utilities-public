@@ -118,6 +118,17 @@ class _BulkChangeGroup:
     def model_ids(self) -> tuple[str, ...]:
         return tuple(member.delta.provider_model_id for member in self.members)
 
+    @property
+    def label(self) -> str:
+        """The one spelling of a bulk group's headline.
+
+        Text, markdown, HTML and the Change Summary all name a bulk group the
+        same way, differing only in the markup wrapped around it. Spelling it
+        four times meant four places to keep the em dash, the wording and the
+        count in step.
+        """
+        return f"Bulk change — {len(self.members)} models"
+
 
 @dataclass(frozen=True)
 class _HiddenRollups:
@@ -792,7 +803,15 @@ def _field_changes_from_change_rows(model_changes: list[dict[str, Any]]) -> tupl
 
 @dataclass(frozen=True)
 class _PlannedChangeEntry:
-    """One model's row group inside a `changes` report provider block."""
+    """One renderable row group inside a `changes` report provider block.
+
+    Not one per model. A model contributes one entry per presence event it
+    recorded in the bucket, plus at most one `changed` entry carrying all of
+    its field changes. A model that was added and then removed on the same date
+    therefore produces two entries, and both renderers -- which already dispatch
+    a flat entry list on `kind` -- render both without knowing they share a
+    model.
+    """
 
     model_id: str
     display_name: str
@@ -825,18 +844,30 @@ def _plan_changes_report_provider(
 
     Entries come back in source order with anything that renders nothing already
     pruned, so a caller emits its provider (and date) heading only when
-    `renders_nothing` is False.
+    `renders_nothing` is False. One model may contribute several entries; see
+    `_PlannedChangeEntry`.
     """
     entries: list[_PlannedChangeEntry] = []
     planned_displays: list[tuple[str, _FieldDisplayPlan]] = []
     unclassified_remaining = policy.unclassified_limit
     for model_id, model_changes in models.items():
         display_name = model_changes[0].get("display_name", model_id)
-        kind = model_changes[0]["change_kind"]
-        if kind in ("added", "removed"):
-            entries.append(_PlannedChangeEntry(model_id, display_name, kind, model_changes, None))
-            continue
-        field_changes = _field_changes_from_change_rows(model_changes)
+        # One model can hold several records inside one date bucket -- more than
+        # one scan a day is routine. Reading `model_changes[0]["change_kind"]`
+        # for the whole model discarded every record after the first: a model
+        # added and removed the same day claimed to be merely added, and one
+        # added then field-changed lost all of its field changes. Presence
+        # events and field changes are independent row groups; plan them so,
+        # and every recorded event reaches a renderer.
+        presence_rows = [row for row in model_changes if row["change_kind"] in ("added", "removed")]
+        field_rows = [row for row in model_changes if row["change_kind"] not in ("added", "removed")]
+        # Presence entries lead, matching the HTML renderer, which hoists its
+        # added/removed lists above the change cards regardless of row order.
+        # Within them, recorded order is kept: added-then-removed is not the
+        # same story as removed-then-added.
+        for row in presence_rows:
+            entries.append(_PlannedChangeEntry(model_id, display_name, row["change_kind"], [row], None))
+        field_changes = _field_changes_from_change_rows(field_rows)
         if not field_changes:
             continue
         plan = _field_display_plan(field_changes, policy, unclassified_remaining=unclassified_remaining)
@@ -844,7 +875,7 @@ def _plan_changes_report_provider(
         planned_displays.append((model_id, plan))
         if not _renders_anything(plan):
             continue
-        entries.append(_PlannedChangeEntry(model_id, display_name, "changed", model_changes, plan))
+        entries.append(_PlannedChangeEntry(model_id, display_name, "changed", field_rows, plan))
     return _ChangesProviderPlan(tuple(entries), _collect_hidden_rollups(planned_displays))
 
 
@@ -1552,7 +1583,7 @@ def _bulk_group_text_lines(
 ) -> list[str]:
     model_ids = tuple(sorted(group.model_ids))
     lines = [
-        f"{indent}* Bulk change — {len(model_ids)} models",
+        f"{indent}* {group.label}",
         f"{indent}  models: {_format_model_list(model_ids, limit=12)}",
     ]
     grouped = _group_field_changes_for_detail(group.visible, policy)
@@ -1579,7 +1610,7 @@ def _bulk_group_text_lines(
 def _bulk_group_markdown_lines(group: _BulkChangeGroup, policy: ReportDetailPolicy) -> list[str]:
     model_ids = tuple(sorted(group.model_ids))
     lines = [
-        f"- **Bulk change — {len(model_ids)} models**",
+        f"- **{group.label}**",
         f"  - Models: `{_format_model_list(model_ids, limit=12)}`",
     ]
     for category, changes in _group_field_changes_for_detail(group.visible, policy):
@@ -2304,7 +2335,7 @@ def _build_summary_entries_from_bulk(
         entries.append(_SummaryEntry(
             _classify_field(field_change.field_name),
             provider_label,
-            f"Bulk change — {len(group.members)} models",
+            group.label,
             rendered[0],
             rendered[1] if len(rendered) > 1 else "membership changed",
             tuple(sorted(group.model_ids)),
@@ -2383,7 +2414,7 @@ def _html_model_details(label: str, model_ids: tuple[str, ...], *, preview_limit
 def _render_html_bulk_changes(group: _BulkChangeGroup, policy: ReportDetailPolicy) -> str:
     parts = [
         '<div class="model-card bulk-change-card">',
-        f'<div class="model-card-header"><code>Bulk change — {len(group.members)} models</code></div>',
+        f'<div class="model-card-header"><code>{html_module.escape(group.label)}</code></div>',
         _html_model_details("Models", group.model_ids, preview_limit=12),
     ]
     for category, changes in _group_field_changes_for_detail(group.visible, policy):

@@ -1518,6 +1518,173 @@ def test_changes_text_and_json_are_unaffected_by_the_html_summary_fix() -> None:
     ]
 
 
+# ---------------------------------------------------------------------------
+# One model can record several changes inside a single date bucket -- more than
+# one scan a day is routine. `_plan_changes_report_provider` used to read
+# `model_changes[0]["change_kind"]` for the whole model and `continue` on a
+# presence kind, so everything recorded after the first row was discarded:
+# added-then-removed rendered as merely "added", added-then-field-changed lost
+# all its field changes, and (the mirror case) field-changed-then-removed lost
+# the removal, because `_field_changes_from_change_rows` skips rows with no
+# field name. The record count in the header kept counting what the body no
+# longer showed.
+# ---------------------------------------------------------------------------
+
+
+def _churn_row(change_kind: str, *, field_name: str | None, minute: int) -> dict:
+    """One record for a single model on a single date.
+
+    09:00 and 09:30 UTC land on the same local date under every UTC offset, so
+    the two records share a date bucket wherever the suite runs.
+    """
+    return {
+        "detected_at": f"2026-07-25T09:{minute:02d}:00+00:00",
+        "provider_id": "synthprov",
+        "provider_label": "Synth Provider",
+        "provider_model_id": "synth/model-churn",
+        "display_name": "Synth Churn",
+        "change_kind": change_kind,
+        "field_name": field_name,
+        "old_value": None,
+        # Storage writes NULL values for a presence record.
+        "new_value": "2030-12-31" if field_name else None,
+    }
+
+
+def _render_changes_human_formats(rows: tuple[dict, ...]) -> dict[str, str]:
+    """`changes` has no markdown renderer of its own -- `--format` offers only
+    text and json, and html is generated internally. `format_name="markdown"`
+    falls through to the text branch, so it is rendered here and pinned as
+    identical rather than claimed as separate coverage: whoever adds a real
+    markdown branch will be told by that assertion to extend these tests."""
+    reports = {
+        format_name: render_changes_report(
+            format_name=format_name,
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=rows,
+            provider_pricing={"synthprov": (1, 1)},
+        )
+        for format_name in ("text", "markdown", "html")
+    }
+    assert reports["markdown"] == reports["text"], "changes grew a markdown branch"
+    return reports
+
+
+def _changes_json_kinds(rows: tuple[dict, ...]) -> list[tuple[str, str | None]]:
+    payload = json.loads(
+        render_changes_report(
+            format_name="json", provider_id=None, since=None, until=None, changes=rows
+        )
+    )
+    return [(row["change_kind"], row["field_name"]) for row in payload["changes"]]
+
+
+def test_changes_report_keeps_both_presence_events_recorded_on_one_date() -> None:
+    """A model added and removed the same day must not claim to be merely added.
+
+    The report is a log of recorded events; the date bucket is a display
+    grouping, not a merge. Both records happened, so both are shown, in the
+    order they were recorded.
+    """
+    rows = (
+        _churn_row("added", field_name=None, minute=0),
+        _churn_row("removed", field_name=None, minute=30),
+    )
+    reports = _render_changes_human_formats(rows)
+
+    for format_name in ("text", "markdown"):
+        report = reports[format_name]
+        # The header counts two records; the body has to show two.
+        assert "2 changes across 1 date" in report, format_name
+        assert "      + synth/model-churn (Synth Churn)" in report, format_name
+        assert "      - synth/model-churn (Synth Churn)" in report, format_name
+        assert report.index("      + synth/") < report.index("      - synth/"), format_name
+
+    body = _html_section_body(reports["html"], "<h3>Synth Provider</h3>")
+    assert '<ul class="model-list added-list">' in body
+    assert '<ul class="model-list removed-list">' in body
+    assert body.count("<code>synth/model-churn</code>") == 2
+
+    summary = reports["html"].split('<section class="summary-section">', 1)[1]
+    assert "<td>Added</td><td>Synth Provider</td><td><code>synth/model-churn</code></td>" in summary
+    assert "<td>Removed</td><td>Synth Provider</td><td><code>synth/model-churn</code></td>" in summary
+
+    assert _changes_json_kinds(rows) == [("added", None), ("removed", None)]
+
+
+def test_changes_report_keeps_field_changes_recorded_after_an_addition() -> None:
+    """The `continue` after a presence kind threw away the rest of the model."""
+    rows = (
+        _churn_row("added", field_name=None, minute=0),
+        _churn_row("field_changed", field_name="expiration_date", minute=30),
+    )
+    reports = _render_changes_human_formats(rows)
+
+    for format_name in ("text", "markdown"):
+        report = reports[format_name]
+        assert "2 changes across 1 date" in report, format_name
+        assert "      + synth/model-churn (Synth Churn)" in report, format_name
+        assert "      * synth/model-churn (Synth Churn)" in report, format_name
+        assert "expiration_date: null → 2030-12-31" in report, format_name
+
+    body = _html_section_body(reports["html"], "<h3>Synth Provider</h3>")
+    assert '<ul class="model-list added-list">' in body
+    assert '<div class="model-card-header"><code>synth/model-churn</code>' in body
+    assert "expiration_date" in body
+
+    summary = reports["html"].split('<section class="summary-section">', 1)[1]
+    assert "<td>Added</td><td>Synth Provider</td><td><code>synth/model-churn</code></td>" in summary
+    assert "expiration_date" in summary
+
+    assert _changes_json_kinds(rows) == [("added", None), ("field_changed", "expiration_date")]
+
+
+def test_changes_report_keeps_a_removal_recorded_after_a_field_change() -> None:
+    """The mirror of the same defect, reached by row order rather than by kind.
+
+    With a field change first the model was planned as `changed`, and the
+    removal -- carrying no field name -- was dropped by
+    `_field_changes_from_change_rows`. Neither branch of the collapse survives.
+    """
+    rows = (
+        _churn_row("field_changed", field_name="expiration_date", minute=0),
+        _churn_row("removed", field_name=None, minute=30),
+    )
+    reports = _render_changes_human_formats(rows)
+
+    for format_name in ("text", "markdown"):
+        report = reports[format_name]
+        assert "2 changes across 1 date" in report, format_name
+        assert "      - synth/model-churn (Synth Churn)" in report, format_name
+        assert "      * synth/model-churn (Synth Churn)" in report, format_name
+        assert "expiration_date: null → 2030-12-31" in report, format_name
+
+    body = _html_section_body(reports["html"], "<h3>Synth Provider</h3>")
+    assert '<ul class="model-list removed-list">' in body
+    assert '<div class="model-card-header"><code>synth/model-churn</code>' in body
+
+    summary = reports["html"].split('<section class="summary-section">', 1)[1]
+    assert "<td>Removed</td><td>Synth Provider</td><td><code>synth/model-churn</code></td>" in summary
+    assert "expiration_date" in summary
+
+    assert _changes_json_kinds(rows) == [("field_changed", "expiration_date"), ("removed", None)]
+
+
+def test_changes_report_still_renders_a_lone_presence_record() -> None:
+    """The single-record case the collapse happened to get right stays right."""
+    rows = (_churn_row("added", field_name=None, minute=0),)
+    reports = _render_changes_human_formats(rows)
+    assert "1 change across 1 date" in reports["text"]
+    assert "      + synth/model-churn (Synth Churn)" in reports["text"]
+    assert "      - synth/model-churn" not in reports["text"]
+    assert "      * synth/model-churn" not in reports["text"]
+    body = _html_section_body(reports["html"], "<h3>Synth Provider</h3>")
+    assert body.count("<code>synth/model-churn</code>") == 1
+    assert '<ul class="model-list removed-list">' not in body
+
+
 def test_json_output_is_unchanged_by_heading_suppression() -> None:
     """JSON is the audit path: `noop` entries stay, and no rollup leaks in."""
     scan_payload = json.loads(
