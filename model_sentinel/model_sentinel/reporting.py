@@ -2243,6 +2243,75 @@ def _summary_entry_sort_key(entry: _SummaryEntry) -> tuple[int, str, str, str, s
     )
 
 
+# ---------------------------------------------------------------------------
+# Change Summary entry constructors.
+#
+# `_SummaryEntry` is built ONLY by the four functions below, one per row shape.
+# The scan report and the changes report each walk their own plan, so the
+# construction used to be open-coded at both -- and the changes report drifted
+# into appending raw 5-tuples, which crashed `_summary_entry_sort_key` for
+# every added model, removed model and squelched change. Route both renderers
+# through these and that class of drift cannot recur: there is nowhere else to
+# build a row.
+# ---------------------------------------------------------------------------
+
+
+def _presence_summary_entry(
+    *,
+    category: Literal["Added", "Removed"],
+    provider_label: str,
+    model_id: str,
+    display_name: str,
+) -> _SummaryEntry:
+    """One row for a model that appeared in, or disappeared from, a provider."""
+    return _SummaryEntry(category, provider_label, model_id, "", display_name)
+
+
+def _squelched_summary_entry(
+    *,
+    provider_label: str,
+    squelched: list[tuple[str, tuple[FieldChange, ...]]],
+    policy: ReportDetailPolicy,
+) -> _SummaryEntry | None:
+    """One provider-level row accounting for squelched field changes.
+
+    `None` when nothing was squelched, so callers append conditionally. This
+    mirrors the provider-level squelched rollup card `_append_hidden_rollup_html`
+    already emits into the body of both reports.
+    """
+    count, model_ids = _summarize_field_changes(squelched)
+    if not count:
+        return None
+    return _SummaryEntry(
+        "Squelched",
+        provider_label,
+        f"{len(model_ids)} models",
+        ", ".join(policy.squelch_fields) or "no patterns",
+        f"{count} field change{'s' if count != 1 else ''} hidden by report detail policy",
+        model_ids,
+    )
+
+
+def _build_summary_entries_from_bulk(
+    *,
+    provider_label: str,
+    group: _BulkChangeGroup,
+) -> list[_SummaryEntry]:
+    """Rows for one bulk-change group: one per shared visible field change."""
+    entries = []
+    for field_change in group.visible:
+        rendered = _render_bulk_list_diff_text(classify_change(field_change)).split(": ", 1)
+        entries.append(_SummaryEntry(
+            _classify_field(field_change.field_name),
+            provider_label,
+            f"Bulk change — {len(group.members)} models",
+            rendered[0],
+            rendered[1] if len(rendered) > 1 else "membership changed",
+            tuple(sorted(group.model_ids)),
+        ))
+    return entries
+
+
 def _build_summary_entries_from_fc(
     *,
     provider_label: str,
@@ -2252,7 +2321,7 @@ def _build_summary_entries_from_fc(
     price_multiplier: int,
     price_divisor: int,
 ) -> list[_SummaryEntry]:
-    """Build summary entry tuples for field-changed models."""
+    """Rows for one model's visible field changes, one per change."""
     entries = []
     for fc in field_changes:
         rendered = classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
@@ -2603,17 +2672,9 @@ def _render_scan_html(
         pm, pd = result.price_multiplier, result.price_divisor
         for item in provider_plan.items:
             if isinstance(item, _BulkChangeGroup):
-                for field_change in item.visible:
-                    category = _classify_field(field_change.field_name)
-                    rendered = _render_bulk_list_diff_text(classify_change(field_change)).split(": ", 1)
-                    summary_entries.append(_SummaryEntry(
-                        category,
-                        prov,
-                        f"Bulk change — {len(item.members)} models",
-                        rendered[0],
-                        rendered[1] if len(rendered) > 1 else "membership changed",
-                        tuple(sorted(item.model_ids)),
-                    ))
+                summary_entries.extend(_build_summary_entries_from_bulk(
+                    provider_label=prov, group=item,
+                ))
                 continue
             delta, plan = item.delta, item.display
             summary_entries.extend(_build_summary_entries_from_fc(
@@ -2621,20 +2682,21 @@ def _render_scan_html(
                 display_name=delta.display_name, field_changes=list(plan.visible),
                 price_multiplier=pm, price_divisor=pd,
             ))
-        squelched_count, squelched_models = _summarize_field_changes(provider_plan.rollups.squelched)
-        if squelched_count:
-            summary_entries.append(_SummaryEntry(
-                "Squelched",
-                prov,
-                f"{len(squelched_models)} models",
-                ", ".join(detail_policy.squelch_fields) or "no patterns",
-                f"{squelched_count} field change{'s' if squelched_count != 1 else ''} hidden by report detail policy",
-                squelched_models,
-            ))
+        squelched_entry = _squelched_summary_entry(
+            provider_label=prov, squelched=provider_plan.rollups.squelched, policy=detail_policy,
+        )
+        if squelched_entry:
+            summary_entries.append(squelched_entry)
         for delta in result.added:
-            summary_entries.append(_SummaryEntry("Added", prov, delta.provider_model_id, "", delta.display_name))
+            summary_entries.append(_presence_summary_entry(
+                category="Added", provider_label=prov,
+                model_id=delta.provider_model_id, display_name=delta.display_name,
+            ))
         for delta in result.removed:
-            summary_entries.append(_SummaryEntry("Removed", prov, delta.provider_model_id, "", delta.display_name))
+            summary_entries.append(_presence_summary_entry(
+                category="Removed", provider_label=prov,
+                model_id=delta.provider_model_id, display_name=delta.display_name,
+            ))
 
     suffix = "s" if total_changes != 1 else ""
     count_span = f'<span class="count">\u2014 {total_changes} change{suffix}</span>' if total_changes else ""
@@ -2689,7 +2751,7 @@ def _render_changes_html(
     meta_line = " &middot; ".join(h(p) for p in scope_parts) if scope_parts else "All providers"
 
     date_sections = []
-    summary_entries: list[tuple[str, str, str, str, str]] = []
+    summary_entries: list[_SummaryEntry] = []
 
     for date_str, providers in by_date.items():
         # Provider blocks are built before the date heading is committed, so a
@@ -2706,10 +2768,16 @@ def _render_changes_html(
             for entry in provider_plan.entries:
                 if entry.kind == "added":
                     added_models.append((entry.model_id, entry.display_name))
-                    summary_entries.append(("Added", provider_label, entry.model_id, "", entry.display_name))
+                    summary_entries.append(_presence_summary_entry(
+                        category="Added", provider_label=provider_label,
+                        model_id=entry.model_id, display_name=entry.display_name,
+                    ))
                 elif entry.kind == "removed":
                     removed_models.append((entry.model_id, entry.display_name))
-                    summary_entries.append(("Removed", provider_label, entry.model_id, "", entry.display_name))
+                    summary_entries.append(_presence_summary_entry(
+                        category="Removed", provider_label=provider_label,
+                        model_id=entry.model_id, display_name=entry.display_name,
+                    ))
                 else:
                     changed_entries.append(entry)
 
@@ -2753,14 +2821,16 @@ def _render_changes_html(
                     display_name=display_name, field_changes=list(plan.visible),
                     price_multiplier=pm, price_divisor=pd,
                 ))
-                if plan.squelched:
-                    summary_entries.append((
-                        "Squelched",
-                        provider_label,
-                        model_id,
-                        "",
-                        f"{len(plan.squelched)} field change(s) hidden by report detail policy",
-                    ))
+            # Squelched changes are accounted for once per provider, from the
+            # same rollup the body's squelched card is built from -- not once
+            # per model, which double-counted against that card.
+            squelched_entry = _squelched_summary_entry(
+                provider_label=provider_label,
+                squelched=provider_plan.rollups.squelched,
+                policy=detail_policy,
+            )
+            if squelched_entry:
+                summary_entries.append(squelched_entry)
             _append_hidden_rollup_html(parts, provider_plan.rollups, detail_policy)
             provider_parts.extend(parts)
 

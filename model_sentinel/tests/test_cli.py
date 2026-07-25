@@ -169,6 +169,54 @@ def test_scan_writes_full_html_companion_report(tmp_path: Path, monkeypatch, cap
     assert any("benchmarks.design_arena" in path.read_text(encoding="utf-8") for path in full_reports)
 
 
+def test_changes_writes_its_html_companion_when_a_model_was_added(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """`changes` always renders HTML alongside its text report, so the summary
+    table crashed the whole command for any added model, removed model or
+    squelched change -- after the text report had already been written."""
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    # One scan that produces all three previously-fatal record kinds at once,
+    # on three distinct models: `changes` groups rows by date/provider/model.
+    payloads = iter(
+        [
+            [
+                {"id": "alpha", "name": "Alpha", "benchmarks": {"design_arena": [{"elo": 1}]}},
+                {"id": "gamma", "name": "Gamma"},
+            ],
+            [
+                {"id": "alpha", "name": "Alpha", "benchmarks": {"design_arena": [{"elo": 2}]}},
+                {"id": "beta", "name": "Beta"},
+            ],
+        ]
+    )
+    monkeypatch.setattr(cli, "fetch_raw_models", lambda provider, api_key: next(payloads))
+
+    assert cli.main(["scan", "--save"]) == 0
+    # beta added, gamma removed, alpha's benchmarks change squelched
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["changes"]) == 0
+    capsys.readouterr()
+
+    html_reports = sorted((runtime_home / "reports").glob("changes_*.html"))
+    assert html_reports, "changes wrote no HTML companion report"
+    html = html_reports[-1].read_text(encoding="utf-8")
+    summary = html.split('<section class="summary-section">', 1)
+    assert len(summary) == 2, "changes HTML rendered without a Change Summary"
+    assert "<td>Added</td>" in summary[1]
+    assert "<td>Removed</td>" in summary[1]
+    assert "<td>Squelched</td>" in summary[1]
+    assert "<code>beta</code>" in summary[1]
+    assert "<code>gamma</code>" in summary[1]
+    # Squelched rows account for the hidden change instead of printing it.
+    assert "benchmarks.design_arena" not in summary[1]
+
+
 def test_history_model_list_lists_known_models(tmp_path: Path, monkeypatch, capsys) -> None:
     runtime_home = _write_config_files(tmp_path)
     monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))

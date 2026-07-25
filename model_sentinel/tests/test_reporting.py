@@ -1341,6 +1341,115 @@ def test_noop_rollup_is_absent_when_nothing_was_dropped() -> None:
         assert "no-op" not in report, format_name
 
 
+# ---------------------------------------------------------------------------
+# `changes --format html` with anything other than a plain field change used to
+# raise `AttributeError: 'tuple' object has no attribute 'category'`: the added,
+# removed and squelched paths appended raw 5-tuples to the same list
+# `_summary_entry_sort_key` reads `_SummaryEntry` attributes off.
+# ---------------------------------------------------------------------------
+
+
+def _mixed_changes_rows() -> tuple[dict, ...]:
+    def _row(**overrides) -> dict:
+        row = {
+            "detected_at": "2026-07-25T09:00:00+00:00",
+            "provider_id": "synthprov",
+            "provider_label": "Synth Provider",
+            "provider_model_id": "synth/model-changed",
+            "display_name": "Synth Changed",
+            "change_kind": "changed",
+            "field_name": "expiration_date",
+            "old_value": None,
+            "new_value": "2030-12-31",
+        }
+        row.update(overrides)
+        return row
+
+    return (
+        _row(
+            change_kind="added",
+            provider_model_id="synth/model-new",
+            display_name="Synth New",
+            field_name=None,
+            new_value=None,
+        ),
+        _row(
+            change_kind="removed",
+            provider_model_id="synth/model-gone",
+            display_name="Synth Gone",
+            field_name=None,
+            new_value=None,
+        ),
+        _row(),
+        # `benchmarks.*` is squelched by the default detail policy.
+        _row(field_name="benchmarks.design_arena", old_value=1, new_value=2),
+    )
+
+
+def _mixed_changes_report(format_name: str) -> str:
+    return render_changes_report(
+        format_name=format_name,
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=_mixed_changes_rows(),
+        provider_pricing={"synthprov": (1, 1)},
+    )
+
+
+def test_changes_html_renders_added_removed_and_squelched_without_crashing() -> None:
+    """Each of the three used to be enough on its own to abort the render."""
+    report = _mixed_changes_report("html")
+
+    # Body: added and removed models are listed, the changed model gets a card.
+    assert '<li><code>synth/model-new</code> <span class="display-name">Synth New</span></li>' in report
+    assert '<li><code>synth/model-gone</code> <span class="display-name">Synth Gone</span></li>' in report
+    assert '<div class="model-card-header"><code>synth/model-changed</code>' in report
+
+    # Summary table: one row per record, sorted by category rank, and the
+    # squelched field change is accounted for rather than silently dropped.
+    summary = report.split('<section class="summary-section">', 1)[1]
+    assert "<td>Added</td><td>Synth Provider</td><td><code>synth/model-new</code></td>" in summary
+    assert "<td>Removed</td><td>Synth Provider</td><td><code>synth/model-gone</code></td>" in summary
+    assert "<td>Squelched</td>" in summary
+    assert "1 field change hidden by report detail policy" in summary
+    assert "benchmarks, benchmarks.*" in summary
+    # Category rank puts field changes before Added/Removed/Squelched.
+    assert summary.index("<td>Added</td>") < summary.index("<td>Removed</td>") < summary.index("<td>Squelched</td>")
+    assert summary.index("synth/model-changed") < summary.index("<td>Added</td>")
+
+
+def test_changes_html_added_and_removed_survive_a_squelch_only_provider() -> None:
+    """A provider whose only field change is squelched still reaches the
+    summary table -- the squelched entry was the third tuple site."""
+    rows = tuple(row for row in _mixed_changes_rows() if row["field_name"] != "expiration_date")
+    report = render_changes_report(
+        format_name="html",
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=rows,
+        provider_pricing={"synthprov": (1, 1)},
+    )
+    assert "<td>Squelched</td>" in report
+    assert "benchmarks.design_arena" not in report
+
+
+def test_changes_text_and_json_are_unaffected_by_the_html_summary_fix() -> None:
+    """The other two formats never went through `_build_html_summary_table`."""
+    text = _mixed_changes_report("text")
+    assert "synth/model-new" in text
+    assert "synth/model-gone" in text
+
+    payload = json.loads(_mixed_changes_report("json"))
+    assert [(row["change_kind"], row["provider_model_id"], row["field_name"]) for row in payload["changes"]] == [
+        ("added", "synth/model-new", None),
+        ("removed", "synth/model-gone", None),
+        ("changed", "synth/model-changed", "expiration_date"),
+        ("changed", "synth/model-changed", "benchmarks.design_arena"),
+    ]
+
+
 def test_json_output_is_unchanged_by_heading_suppression() -> None:
     """JSON is the audit path: `noop` entries stay, and no rollup leaks in."""
     scan_payload = json.loads(
