@@ -928,7 +928,11 @@ def test_unmatchable_pricing_overrides_keep_full_fidelity_list_fallback() -> Non
         provider_results=[_scan_result(changed)],
     )
 
-    assert "pricing.overrides: +{'prompt': '0.000005'}; -{'prompt': '0.000004'} (1 \u2192 1)" in report
+    # JSON quoting, not Python repr: list members are stringified by the single
+    # shared `change_render._list_item_text` on both the per-model and bulk
+    # paths. This assertion pinned the repr spelling before those two
+    # conventions were unified.
+    assert 'pricing.overrides: +{"prompt": "0.000005"}; -{"prompt": "0.000004"} (1 \u2192 1)' in report
 
 
 def test_generic_new_structured_key_expands_recursively() -> None:

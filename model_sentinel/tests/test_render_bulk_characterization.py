@@ -10,30 +10,33 @@ single-model, non-bulk path, so three renderer paths were left unpinned:
    `_render_bulk_list_diff_text` / `_render_html_bulk_list_diff` instead of one
    per-model card each. Those two renderers were entirely uncovered.
 2. **Structured (`dict`) members inside a list field.** Bulk and per-model
-   renderers stringify list members through *different* helpers, and the two
-   disagree for `dict`/`list` members -- see BULK VS PER-MODEL below.
+   renderers used to stringify list members through *different* helpers that
+   disagreed for `dict`/`list` members -- see BULK VS PER-MODEL below.
 3. **One-sided list changes** (`None` -> list and list -> `None`), which never
    reach the list branch at all: `classify_change` routes them to `scalar`,
    and if the list is "structured" (contains dicts) `reporting.py` flattens it
    into indexed leaf changes before classification ever runs.
 
-BULK VS PER-MODEL STRINGIFICATION (a real, currently-shipping inconsistency):
+BULK VS PER-MODEL STRINGIFICATION (a shipped inconsistency, now fixed):
 
-`_list_change_signature` (bulk) stringifies members with `_list_item_text`,
-which JSON-encodes `dict`/`list` members. `classify_change`'s list branch
-(per-model) uses plain `str(x)`. For plain-string members the two agree
-exactly, so nothing downstream can tell them apart -- but for `dict` members
-they produce different text, and this fixture makes that visible on purpose:
-`synth/model-bulk-*` and `synth/model-solo-struct` carry the same *shape* of
-change to the same field, and render as
+Bulk grouping and the bulk cards stringified members with `_list_item_text`,
+which JSON-encodes `dict`/`list` members, while `classify_change`'s list
+branch (per-model) used plain `str(x)`. For plain-string members the two
+agreed exactly, so nothing downstream could tell them apart -- but for `dict`
+members they produced different text in the same report:
 
     bulk:      architecture.tier_profiles: +{"name": "alpha", "weight": 2}
     per-model: architecture.tier_profiles: +{'name': 'beta', 'weight': 4} (1 -> 1)
 
-JSON quoting in one, Python `repr` quoting in the other, in the same report.
-Unifying the two conventions is a deliberate output change that will alter the
-goldens below (and three goldens in `test_render_characterization.py`); these
-constants exist so that change is reviewable rather than silent.
+JSON quoting in one, Python `repr` quoting in the other. Both paths now go
+through the single shared `change_render._list_item_text` (JSON wins; repr
+must not reach rendered output), so `synth/model-bulk-*` and
+`synth/model-solo-struct` -- which carry the same *shape* of change to the
+same field -- are spelled identically. That was a deliberate, approved output
+change; it altered the goldens below and three goldens in
+`test_render_characterization.py`. These constants exist so such a change is
+reviewable rather than silent, and
+`test_bulk_and_per_model_dict_member_spellings_match` names the invariant.
 
 Do NOT update the golden constants to make a refactor's tests pass silently.
 A failing test here means renderer output changed; the reviewer must look at
@@ -85,9 +88,12 @@ HUMAN_TOKEN = "@@GENERATED_AT_HUMAN@@"
 # Fixture
 # ---------------------------------------------------------------------------
 
-# The identical pair of field changes shared by all three bulk models. Sharing
-# the same FieldChange objects is what makes their `_bulk_change_signature`
-# values equal and triggers consolidation.
+# The identical pair of field changes shared by all three bulk models.
+# Reusing the same objects is a convenience, NOT the mechanism: consolidation
+# keys models by the *value* of `_bulk_change_signature` (a tuple of strings
+# and string tuples used as a dict key), so object identity is irrelevant.
+# `FieldChange` is a frozen dataclass, so three distinct-but-equal instances
+# produce equal signatures and consolidate identically.
 BULK_PARAMS_CHANGE = FieldChange(
     "supported_parameters",
     ["temperature", "tools"],
@@ -143,6 +149,26 @@ OTHER_MODELS = (
     # are never reached at all. Pinned so a future change to the flattening
     # pass is visible.
     _delta("synth/model-struct-added", "Synth Struct Added", (FieldChange("architecture.tier_profiles", None, [{"name": "gamma", "weight": 5}]),)),
+)
+
+
+# A list change where MULTIPLICITY changed but the member SET did not:
+# ["tools", "tools", "seed"] -> ["tools", "seed", "seed"]. Both lists differ
+# (so this is a real change, not a noop), yet added and removed both come out
+# empty -- the only way to reach the `membership changed` fallback in
+# `_render_bulk_list_diff_text` and `_render_html_bulk_list_diff`, which is
+# bulk-only and therefore needs BULK_CHANGE_MIN_MODELS models to fire.
+#
+# Each model gets its own equal-but-distinct FieldChange instance on purpose:
+# that also demonstrates that consolidation is driven by signature *value*,
+# not by sharing one object (see the note on BULK_PARAMS_CHANGE above).
+def _multiplicity_change() -> FieldChange:
+    return FieldChange("supported_parameters", ["tools", "tools", "seed"], ["tools", "seed", "seed"])
+
+
+MULTIPLICITY_TRIO = tuple(
+    _delta(f"synth/model-multi-{suffix}", f"Synth Multi {suffix.upper()}", (_multiplicity_change(),))
+    for suffix in ("a", "b", "c")
 )
 
 
@@ -208,7 +234,7 @@ Synth Provider (synthprov)
     * synth/model-pair-y (Synth Pair Y)
       supported_parameters: +seed (1 → 2)
     * synth/model-solo-struct (Synth Solo Struct)
-      architecture.tier_profiles: +{'name': 'beta', 'weight': 4}; -{'name': 'beta', 'weight': 3} (1 → 1)
+      architecture.tier_profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)
     * synth/model-list-added (Synth List Added)
       supported_parameters: null → ["tools", "logit_bias"]
     * synth/model-list-removed (Synth List Removed)
@@ -243,23 +269,23 @@ Synth Provider (synthprov)
       [Parameters]
         supported_parameters: +logit_bias (2 → 3)
       [Other]
-        architecture.tier_profiles: +{'name': 'alpha', 'weight': 2}; -{'name': 'alpha', 'weight': 1} (1 → 1)
+        architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
     * synth/model-bulk-b (Synth Bulk B)
       [Parameters]
         supported_parameters: +logit_bias (2 → 3)
       [Other]
-        architecture.tier_profiles: +{'name': 'alpha', 'weight': 2}; -{'name': 'alpha', 'weight': 1} (1 → 1)
+        architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
     * synth/model-bulk-c (Synth Bulk C)
       [Parameters]
         supported_parameters: +logit_bias (2 → 3)
       [Other]
-        architecture.tier_profiles: +{'name': 'alpha', 'weight': 2}; -{'name': 'alpha', 'weight': 1} (1 → 1)
+        architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1} (1 → 1)
     * synth/model-pair-x (Synth Pair X)
       supported_parameters: +seed (1 → 2)
     * synth/model-pair-y (Synth Pair Y)
       supported_parameters: +seed (1 → 2)
     * synth/model-solo-struct (Synth Solo Struct)
-      architecture.tier_profiles: +{'name': 'beta', 'weight': 4}; -{'name': 'beta', 'weight': 3} (1 → 1)
+      architecture.tier_profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)
     * synth/model-list-added (Synth List Added)
       supported_parameters: null → ["tools", "logit_bias"]
     * synth/model-list-removed (Synth List Removed)
@@ -307,7 +333,7 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
 - `synth/model-pair-y` - Synth Pair Y
   - `supported_parameters: +seed (1 → 2)`
 - `synth/model-solo-struct` - Synth Solo Struct
-  - `architecture.tier_profiles: +{'name': 'beta', 'weight': 4}; -{'name': 'beta', 'weight': 3} (1 → 1)`
+  - `architecture.tier_profiles: +{"name": "beta", "weight": 4}; -{"name": "beta", "weight": 3} (1 → 1)`
 - `synth/model-list-added` - Synth List Added
   - `supported_parameters: null → ["tools", "logit_bias"]`
 - `synth/model-list-removed` - Synth List Removed
@@ -373,10 +399,10 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <span class="field-name">architecture.tier_profiles</span> 
 <span class="list-count">(1 → 1)</span>
 <div class="list-added">
-&nbsp;&nbsp;+ {&#x27;name&#x27;: &#x27;beta&#x27;, &#x27;weight&#x27;: 4}
+&nbsp;&nbsp;+ {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}
 </div>
 <div class="list-removed">
-&nbsp;&nbsp;− {&#x27;name&#x27;: &#x27;beta&#x27;, &#x27;weight&#x27;: 3}
+&nbsp;&nbsp;− {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3}
 </div>
 </div>
 </div>
@@ -417,7 +443,7 @@ EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-x</code></td><td>supported_parameters</td><td>+seed (1 → 2)</td></tr>
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-y</code></td><td>supported_parameters</td><td>+seed (1 → 2)</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>architecture.tier_profiles</td><td>+{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 2}; -{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 1}</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-solo-struct</code></td><td>architecture.tier_profiles</td><td>+{&#x27;name&#x27;: &#x27;beta&#x27;, &#x27;weight&#x27;: 4}; -{&#x27;name&#x27;: &#x27;beta&#x27;, &#x27;weight&#x27;: 3} (1 → 1)</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-solo-struct</code></td><td>architecture.tier_profiles</td><td>+{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}; -{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3} (1 → 1)</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>architecture.tier_profiles[0].name</td><td>null → gamma</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>architecture.tier_profiles[0].weight</td><td>null → 5</td></tr></tbody></table></section>"""
 
@@ -472,6 +498,34 @@ def test_all_detail_mode_never_consolidates():
         assert "Bulk change" in render(format_name), format_name
 
 
+def test_bulk_group_with_unchanged_member_set_renders_membership_changed():
+    """Cover the `membership changed` fallback in both bulk renderers.
+
+    Reachable only when a bulk group's added and removed sets are BOTH empty
+    while the lists themselves still differ -- i.e. multiplicity (or order)
+    moved but the set did not. Deliberately rendered with its own trio rather
+    than folded into `bulk_characterization_scan_result()`, so the goldens
+    above keep pinning exactly the cases they were written for.
+
+    Also evidence for the identity-vs-value note on the fixture: the three
+    models carry three distinct `FieldChange` instances and still consolidate.
+    """
+    assert len({id(delta.field_changes[0]) for delta in MULTIPLICITY_TRIO}) == 3
+
+    text = render("text", changed=MULTIPLICITY_TRIO)
+    assert "* Bulk change — 3 models" in text
+    assert "supported_parameters: membership changed" in text
+
+    markdown = render("markdown", changed=MULTIPLICITY_TRIO)
+    assert "`supported_parameters: membership changed`" in markdown
+
+    html = render("html", changed=MULTIPLICITY_TRIO)
+    assert '<div class="list-count">membership changed</div>' in html
+    # The bulk card carries no +/- rows at all for this change.
+    assert '<div class="list-added">' not in html
+    assert '<div class="list-removed">' not in html
+
+
 def test_json_output_is_unaffected_by_bulk_grouping():
     """JSON reports bypass every presentation helper touched here.
 
@@ -521,19 +575,29 @@ def test_json_output_is_unaffected_by_bulk_grouping():
     ]
 
 
-def test_bulk_and_per_model_dict_member_spellings_currently_differ():
-    """Pin the bulk/per-model stringification split as an explicit assertion.
+def test_bulk_and_per_model_dict_member_spellings_match():
+    """Pin the bulk/per-model stringification UNIFICATION as an explicit assertion.
 
-    The goldens above already encode this, but only implicitly, buried in two
-    large constants. This test names the inconsistency so that whoever unifies
-    `_list_item_text` and `classify_change`'s list branch gets a failure that
-    says what changed rather than a wall of diff. When the conventions are
-    unified, exactly one of these two assertions flips -- update this test and
-    the affected goldens together, deliberately.
+    This test previously pinned the opposite -- a real shipped inconsistency
+    where the bulk card spelled a `dict` member as JSON (`_list_item_text`) and
+    the per-model card spelled the same shape as a Python repr
+    (`classify_change`'s `str(x)`), in the same report. Both now go through
+    `change_render._list_item_text`, so the second assertion flipped from repr
+    to JSON. The goldens above encode this too, but only implicitly, buried in
+    large constants; this test names the invariant so a regression fails with
+    a statement of what broke rather than a wall of diff.
+
+    It is the regression guard that the two conventions stay unified: any
+    future change that reintroduces `str(x)` on either path fails here. Python
+    repr quoting must never reach rendered output.
     """
     text = render("text")
+    # Bulk card (grouped trio) -- JSON quoting.
     assert 'architecture.tier_profiles: +{"name": "alpha", "weight": 2}; -{"name": "alpha", "weight": 1}' in text
+    # Per-model card, same field and same dict-member shape -- JSON quoting too.
     assert (
-        "architecture.tier_profiles: +{'name': 'beta', 'weight': 4}; "
-        "-{'name': 'beta', 'weight': 3} (1 → 1)"
+        'architecture.tier_profiles: +{"name": "beta", "weight": 4}; '
+        '-{"name": "beta", "weight": 3} (1 → 1)'
     ) in text
+    # No Python repr spelling anywhere in the rendered report.
+    assert "{'" not in text

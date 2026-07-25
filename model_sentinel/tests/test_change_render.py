@@ -31,6 +31,8 @@ from model_sentinel.change_render import (
     _fmt_price_per_m,
     _is_boolean_change,
     _is_count_field,
+    _list_diff_members,
+    _list_item_text,
     _normalize_price,
     _pct_change,
     classify_change,
@@ -45,6 +47,7 @@ from model_sentinel.models import FieldChange
 from model_sentinel.reporting import (
     _classify_field,
     _is_price_amount_field,
+    _list_change_signature,
     _numeric_value,
 )
 
@@ -369,6 +372,171 @@ def test_pct_basis_zero_false_for_kinds_that_never_compute_a_percentage():
     for field_change in cases:
         result = classify_change(field_change)
         assert result.pct_basis_zero is False, field_change.field_name
+
+
+def _rendered_change_kwargs(**overrides):
+    """Minimal valid RenderedChange kwargs, for constructor-invariant tests."""
+    kwargs = dict(
+        kind="numeric",
+        field_path="some.arbitrary.metric",
+        label="some.arbitrary.metric",
+        qualifier=None,
+        old_display="0",
+        new_display="20",
+        old_raw="0",
+        new_raw="20",
+        unit=None,
+        delta_display="+20",
+        delta_abs=20.0,
+        pct_display=None,
+        pct_basis_zero=True,
+        direction="up",
+        semantic="neutral",
+        list_added=(),
+        list_removed=(),
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_rendered_change_rejects_zero_basis_with_a_percentage():
+    """`pct_basis_zero` and `pct_display` are set independently at ~10
+    construction sites with nothing but convention keeping them in step. A zero
+    basis makes the percentage undefined, so the pair is incoherent and
+    `__post_init__` must refuse to construct it."""
+    with pytest.raises(ValueError, match="pct_basis_zero=True requires pct_display=None"):
+        RenderedChange(**_rendered_change_kwargs(pct_basis_zero=True, pct_display="↑ 5.0%"))
+
+
+def test_rendered_change_allows_absent_percentage_without_a_zero_basis():
+    """The check is deliberately one-directional. `pct_display is None` does NOT
+    imply a zero basis -- one-sided price/count changes and every
+    list/boolean/scalar/noop change have no percentage and no zero basis -- so
+    the converse must stay constructible."""
+    result = RenderedChange(**_rendered_change_kwargs(pct_basis_zero=False, pct_display=None))
+    assert result.pct_basis_zero is False
+    assert result.pct_display is None
+
+    # And the two consistent "has a percentage" / "has a zero basis" forms.
+    assert RenderedChange(**_rendered_change_kwargs(pct_basis_zero=False, pct_display="↑ 5.0%"))
+    assert RenderedChange(**_rendered_change_kwargs(pct_basis_zero=True, pct_display=None))
+
+
+def test_every_classify_change_construction_site_satisfies_the_invariant():
+    """`__post_init__` guards the dataclass; this walks the real cascade so a
+    future construction site that sets the pair inconsistently fails here even
+    if no golden happens to cover it."""
+    cases = (
+        FieldChange("some.arbitrary.metric", 0, 20),
+        FieldChange("some.arbitrary.metric", 10, 20),
+        FieldChange("top_provider.context_length", 0, 4096),
+        FieldChange("top_provider.context_length", 4096, 8192),
+        FieldChange("top_provider.context_length", None, 4096),
+        FieldChange("top_provider.context_length", 4096, None),
+        FieldChange("pricing.completion", 0, 0.000002),
+        FieldChange("pricing.completion", 0.000002, 0.000003),
+        FieldChange("pricing.completion", None, 0.000002),
+        FieldChange("pricing.completion", 0.000002, None),
+        FieldChange("supported_parameters", ["tools"], ["tools", "logit_bias"]),
+        FieldChange("expiration_date", None, "2030-12-31"),
+        FieldChange("expiration_date", None, None),
+    )
+    for field_change in cases:
+        result = classify_change(field_change)
+        if result.pct_basis_zero:
+            assert result.pct_display is None, field_change.field_name
+
+
+# ---------------------------------------------------------------------------
+# 2b. list member stringification -- ONE convention, shared with the bulk
+# grouping key and the bulk renderers in reporting.py. `dict`/`list` members
+# are JSON-encoded; Python repr must never reach rendered output.
+# ---------------------------------------------------------------------------
+
+
+def test_list_members_are_json_encoded_not_python_repr():
+    result = classify_change(
+        FieldChange("architecture.tier_profiles", [{"name": "alpha", "weight": 1}], [{"name": "alpha", "weight": 2}])
+    )
+    assert result.kind == "list"
+    assert result.list_added == ('{"name": "alpha", "weight": 2}',)
+    assert result.list_removed == ('{"name": "alpha", "weight": 1}',)
+
+
+def test_list_member_stringification_matches_the_bulk_grouping_key():
+    """The exact defect this unification removed: the bulk grouping key and the
+    per-model list branch must spell a structured member identically."""
+    field_change = FieldChange(
+        "architecture.tier_profiles", [{"name": "alpha", "weight": 1}], [{"name": "alpha", "weight": 2}]
+    )
+    result = classify_change(field_change)
+    assert _list_change_signature(field_change) == (
+        result.field_path,
+        result.list_added,
+        result.list_removed,
+    )
+
+
+def test_grouping_key_does_not_route_through_the_noop_branch():
+    """Why `_list_change_signature` calls `_list_diff_members` and NOT
+    `classify_change`.
+
+    `classify_change` checks `noop` (`old_value == new_value`) before the list
+    branch, and Python list equality is not member-text equality: `[1] ==
+    [True]` is True while the two spell as `"1"` and `"True"`. Routing the
+    grouping key through the cascade would collapse this to the empty pair and
+    change which models consolidate. The key must keep reporting the
+    difference, byte-identically to its pre-unification behavior.
+
+    (Unreachable in production -- `diffing._diff_values` emits a FieldChange
+    only when `old_value != new_value` -- but the grouping guarantee is
+    unconditional, not conditional on that argument.)
+    """
+    field_change = FieldChange("supported_parameters", [1], [True])
+    assert field_change.old_value == field_change.new_value
+
+    assert classify_change(field_change).kind == "noop"
+    assert _list_change_signature(field_change) == ("supported_parameters", ("True",), ("1",))
+
+
+def test_list_diff_members_is_the_one_shared_set_difference():
+    for old, new in (
+        (["tools"], ["tools", "logit_bias"]),
+        ([{"b": 2, "a": 1}], [{"a": 1, "b": 3}]),
+        (["a", "a", "b"], ["a", "b", "b"]),
+        ([], []),
+    ):
+        rendered = classify_change(FieldChange("supported_parameters", old, new))
+        expected = _list_diff_members(old, new)
+        if rendered.kind == "list":
+            assert (rendered.list_added, rendered.list_removed) == expected, (old, new)
+        assert _list_change_signature(FieldChange("supported_parameters", old, new))[1:] == expected
+
+
+def test_string_list_members_render_bare():
+    """Unchanged by the unification: `str` members are returned as-is, so the
+    overwhelmingly common case still renders `+tools`, not `+"tools"`."""
+    result = classify_change(FieldChange("supported_parameters", ["tools"], ["tools", "logit_bias"]))
+    assert result.list_added == ("logit_bias",)
+    assert result.list_removed == ()
+
+
+def test_non_string_scalar_list_members_use_str():
+    result = classify_change(FieldChange("supported_parameters", [1, None], [1, True]))
+    assert result.list_added == ("True",)
+    assert result.list_removed == ("None",)
+
+
+def test_list_item_text_conventions():
+    assert _list_item_text("tools") == "tools"
+    # dict/list members: JSON, key-sorted, never Python repr.
+    assert _list_item_text({"b": 2, "a": 1}) == '{"a": 1, "b": 2}'
+    assert _list_item_text(["x", "y"]) == '["x", "y"]'
+    assert "'" not in _list_item_text({"name": "alpha"})
+    # Everything else falls back to str().
+    assert _list_item_text(5) == "5"
+    assert _list_item_text(None) == "None"
+    assert _list_item_text(True) == "True"
 
 
 # ---------------------------------------------------------------------------

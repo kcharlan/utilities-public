@@ -255,7 +255,7 @@ Synth Provider (synthprov)
       [Capabilities]
         reasoning.default_enabled: 0 → 1 (+1)
       [Benchmarks]
-        benchmarks.example_suite: +{'score': 2}; -{'score': 1} (1 → 1)
+        benchmarks.example_suite: +{"score": 2}; -{"score": 1} (1 → 1)
       [Other]
         top_provider.is_moderated: 0 → 1 (+1)
         expiration_date: null → 2030-12-31
@@ -359,7 +359,7 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
   - `supported_parameters: +logit_bias (1 → 2)`
   - `pricing.overrides[min_prompt_tokens=200000].completion: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
   - `expiration_date: null → 2030-12-31`
-  - `benchmarks.example_suite: +{'score': 2}; -{'score': 1} (1 → 1)`
+  - `benchmarks.example_suite: +{"score": 2}; -{"score": 1} (1 → 1)`
 - `synth/model-limit-add` - Synth Model Limit Add
   - `top_provider.max_completion_tokens: null → 16,384`
 - `synth/model-limit-remove` - Synth Model Limit Remove
@@ -978,10 +978,10 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <span class="field-name">benchmarks.example_suite</span> 
 <span class="list-count">(1 → 1)</span>
 <div class="list-added">
-&nbsp;&nbsp;+ {&#x27;score&#x27;: 2}
+&nbsp;&nbsp;+ {&quot;score&quot;: 2}
 </div>
 <div class="list-removed">
-&nbsp;&nbsp;− {&#x27;score&#x27;: 1}
+&nbsp;&nbsp;− {&quot;score&quot;: 1}
 </div>
 </div>
 </div>
@@ -1049,7 +1049,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>top_provider.max_completion_tokens</td><td>8,192 → null</td></tr>
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>supported_parameters</td><td>+logit_bias (1 → 2)</td></tr>
 <tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>reasoning.default_enabled</td><td>0 → 1 (+1)</td></tr>
-<tr><td>Benchmarks</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>benchmarks.example_suite</td><td>+{&#x27;score&#x27;: 2}; -{&#x27;score&#x27;: 1} (1 → 1)</td></tr>
+<tr><td>Benchmarks</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>benchmarks.example_suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>expiration_date</td><td>null → 2030-12-31</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.is_moderated</td><td>0 → 1 (+1)</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>top_provider.is_moderated</td><td>null → True</td></tr>

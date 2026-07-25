@@ -15,7 +15,11 @@ from typing import Any, Literal
 # called directly here -- by the category grouping helpers and by
 # `_price_movement_kind`, neither of which is a per-field renderer -- so they
 # stay imported (and therefore re-exported for external call sites that
-# imported them from reporting.py before the move to change_render.py). The
+# imported them from reporting.py before the move to change_render.py).
+# `_list_diff_members` is imported for `_list_change_signature`, the bulk
+# grouping key, which must share one member-stringification and one set
+# difference with `classify_change`'s list branch without inheriting the
+# cascade's noop-before-list ordering -- see both docstrings. The
 # six other primitives that moved (`_both_numeric`, `_fmt_int`,
 # `_fmt_price_per_m`, `_is_count_field`, `_normalize_price`, `_pct_change`)
 # had no remaining call site here once the renderers were rewired, so their
@@ -25,6 +29,7 @@ from .change_render import (
     RenderedChange,
     _classify_field,
     _is_price_amount_field,
+    _list_diff_members,
     _numeric_value,
     _scalar_display,
     classify_change,
@@ -417,21 +422,24 @@ def _flatten_one_sided_structure(
 
 
 def _list_change_signature(field_change: FieldChange) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
-    old_values = {_list_item_text(value) for value in field_change.old_value}
-    new_values = {_list_item_text(value) for value in field_change.new_value}
-    return (
-        field_change.field_name,
-        tuple(sorted(new_values - old_values)),
-        tuple(sorted(old_values - new_values)),
-    )
+    """Bulk grouping key for one list field change.
 
+    Derived from `change_render._list_diff_members` -- the exact helper
+    `classify_change`'s list branch uses -- rather than from a private set
+    difference of its own, so the key a group is formed on and the membership
+    its card displays come from one implementation. This used to hand-roll the
+    difference over a local `_list_item_text` while the per-model renderers
+    went through `RenderedChange.list_added`/`list_removed` over `str(x)`; the
+    two stringified `dict` members differently.
 
-def _list_item_text(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, sort_keys=True, ensure_ascii=True)
-    return str(value)
+    Calls `_list_diff_members` and not `classify_change`, deliberately: the
+    cascade's `noop` branch would shadow the list branch for lists that compare
+    equal but spell differently (`[1] == [True]`), which would change the key.
+    See that helper's docstring. Grouping is byte-identical to its
+    pre-unification behavior for every input.
+    """
+    added, removed = _list_diff_members(field_change.old_value, field_change.new_value)
+    return (field_change.field_name, added, removed)
 
 
 def _bulk_change_signature(plan: _FieldDisplayPlan) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] | None:
@@ -1250,36 +1258,40 @@ def _render_list_diff_text(rendered: RenderedChange) -> str:
     return f"{rendered.label}: {count_str}"
 
 
-def _render_bulk_list_diff_text(fc: FieldChange) -> str:
+def _render_bulk_list_diff_text(rendered: RenderedChange) -> str:
     """Format a bulk-grouped list membership change.
 
-    NOT routed through `RenderedChange.list_added`/`list_removed`, unlike the
-    per-model list renderers. Bulk grouping keys models by
-    `_list_change_signature`, which stringifies members through
-    `_list_item_text` (JSON for dict/list members); `classify_change`'s list
-    branch uses plain `str(x)`. For a list of dicts the two disagree
-    (`{"a": 1}` vs `{'a': 1}`), so switching here would change output for
-    bulk groups over structured lists. The group card must also keep showing
-    the exact membership its grouping key was computed from.
+    Routed through `RenderedChange.list_added`/`list_removed`, exactly like the
+    per-model `_render_list_diff_text`. This previously read
+    `_list_change_signature` directly, because that helper JSON-encoded
+    `dict`/`list` members while `classify_change`'s list branch used plain
+    `str(x)` -- so the same shape of change rendered as `+{"name": "alpha"}` on
+    a bulk card and `+{'name': 'beta'}` on a per-model card in one report. That
+    divergence is now removed (both go through `change_render._list_item_text`,
+    JSON), so the group card shows the membership its grouping key was computed
+    from while sharing one code path with the per-model renderers.
 
-    MEASURED (task 3b): unifying the two conventions on `_list_item_text` --
-    i.e. changing `classify_change`'s list branch to JSON-encode dict/list
-    members -- is NOT behavior-neutral. It changes three of the eight goldens
-    in tests/test_render_characterization.py
-    (`test_characterization_{text,markdown,html}_detail_all`), because that
-    module's `benchmarks.example_suite` case is a two-sided list of dicts and
-    its goldens pin today's `str(x)` spelling `{'score': 2}`. Unifying in the
-    other direction (`_list_item_text` -> `str(x)`) leaves those goldens
-    intact but changes bulk output instead, and additionally re-keys
-    `_bulk_change_signature`. Either direction is a deliberate, user-visible
-    output change that needs golden updates in both characterization modules;
-    it is NOT something to slip into a refactor billed as neutral. Both
-    spellings are pinned side by side in
-    tests/test_render_bulk_characterization.py.
+    One boundary: the card reads `classify_change`, whose `noop` branch
+    precedes its list branch, while the key calls `_list_diff_members`
+    directly. They part company only for lists that compare equal but spell
+    differently (`[1] == [True]`), where the card would say `membership
+    changed` and the key would report `+True; -1`. No such FieldChange is
+    produced -- both diff passes emit one only when `old_value != new_value` --
+    and the key was kept on the direct helper precisely so grouping stays
+    byte-identical there. See `_list_diff_members`.
+
+    Differs from `_render_list_diff_text` only in presentation, not in data:
+    no `(old -> new)` member counts (cardinality is deliberately excluded from
+    the grouping key, so it is not a property of the group), and an explicit
+    `membership changed` fallback for a group whose added and removed sets are
+    both empty -- reachable when multiplicity or order changed but the set did
+    not, e.g. `["a", "a", "b"] -> ["a", "b", "b"]`.
     """
-    field_name, added, removed = _list_change_signature(fc)
-    operations = [*(f"+{item}" for item in added), *(f"-{item}" for item in removed)]
-    return f"{field_name}: {'; '.join(operations) if operations else 'membership changed'}"
+    operations = [
+        *(f"+{item}" for item in rendered.list_added),
+        *(f"-{item}" for item in rendered.list_removed),
+    ]
+    return f"{rendered.label}: {'; '.join(operations) if operations else 'membership changed'}"
 
 
 def _bulk_hidden_entries(
@@ -1308,7 +1320,7 @@ def _bulk_group_text_lines(
     for category, changes in grouped:
         lines.append(f"{indent}  [{category}]")
         for field_change in changes:
-            lines.append(f"{indent}    {_render_bulk_list_diff_text(field_change)}")
+            lines.append(f"{indent}    {_render_bulk_list_diff_text(classify_change(field_change))}")
 
     squelched = _bulk_hidden_entries(group, "squelched")
     count, affected_models = _summarize_field_changes(squelched)
@@ -1334,7 +1346,7 @@ def _bulk_group_markdown_lines(group: _BulkChangeGroup, policy: ReportDetailPoli
     for category, changes in _group_field_changes_for_detail(group.visible, policy):
         lines.append(f"  - **{category}**")
         for field_change in changes:
-            lines.append(f"    - `{_render_bulk_list_diff_text(field_change)}`")
+            lines.append(f"    - `{_render_bulk_list_diff_text(classify_change(field_change))}`")
     squelched = _bulk_hidden_entries(group, "squelched")
     count, affected_models = _summarize_field_changes(squelched)
     if count:
@@ -2086,7 +2098,7 @@ def _render_html_bulk_changes(group: _BulkChangeGroup, policy: ReportDetailPolic
     for category, changes in _group_field_changes_for_detail(group.visible, policy):
         parts.append(f'<div class="change-category"><div class="category-label">{html_module.escape(category)}</div>')
         for field_change in changes:
-            parts.append(_render_html_bulk_list_diff(field_change))
+            parts.append(_render_html_bulk_list_diff(classify_change(field_change)))
         parts.append('</div>')
 
     squelched = _bulk_hidden_entries(group, "squelched")
@@ -2371,7 +2383,7 @@ def _render_scan_html(
             if isinstance(item, _BulkChangeGroup):
                 for field_change in item.visible:
                     category = _classify_field(field_change.field_name)
-                    rendered = _render_bulk_list_diff_text(field_change).split(": ", 1)
+                    rendered = _render_bulk_list_diff_text(classify_change(field_change)).split(": ", 1)
                     summary_entries.append(_SummaryEntry(
                         category,
                         prov,
@@ -2685,12 +2697,12 @@ def _render_html_list_diff(rendered: RenderedChange) -> str:
     return "\n".join(parts)
 
 
-def _render_html_bulk_list_diff(fc: FieldChange) -> str:
-    # Reads _list_change_signature rather than RenderedChange for the same
-    # reason as _render_bulk_list_diff_text -- see that docstring.
+def _render_html_bulk_list_diff(rendered: RenderedChange) -> str:
+    # Reads RenderedChange, like every other renderer in this module -- see
+    # _render_bulk_list_diff_text's docstring for what that unified.
     h = html_module.escape
-    field_name, added, removed = _list_change_signature(fc)
-    parts = [f'<div class="list-diff"><span class="field-name">{h(field_name)}</span>']
+    added, removed = rendered.list_added, rendered.list_removed
+    parts = [f'<div class="list-diff"><span class="field-name">{h(rendered.label)}</span>']
     if added:
         parts.append('<div class="list-added">')
         parts.extend(f'&nbsp;&nbsp;+ {h(item)}' for item in added)

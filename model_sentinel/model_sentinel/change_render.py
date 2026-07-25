@@ -112,6 +112,24 @@ class RenderedChange:
     list_added: tuple[str, ...]
     list_removed: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        # `pct_basis_zero` is the CAUSE ("a percentage applied but the basis
+        # was 0"), `pct_display` is the derived display string. The two are set
+        # independently at ~10 construction sites, with nothing but convention
+        # keeping them in step. A zero basis makes the percentage undefined, so
+        # a `RenderedChange` that claims a zero basis *and* carries a rendered
+        # percentage is incoherent and must not be constructible.
+        #
+        # Deliberately one-directional: `pct_display is None` does NOT imply a
+        # zero basis (one-sided price/count changes and every
+        # list/boolean/scalar/noop change have no percentage and no zero
+        # basis), so the converse is not checked.
+        if self.pct_basis_zero and self.pct_display is not None:
+            raise ValueError(
+                f"pct_basis_zero=True requires pct_display=None for field "
+                f"{self.field_path!r}, got pct_display={self.pct_display!r}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Shared primitives, moved verbatim from reporting.py (behavior-preserving).
@@ -228,6 +246,59 @@ def _scalar_display(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return json.dumps(value, sort_keys=True, ensure_ascii=True)
     return str(value)
+
+
+def _list_item_text(value: Any) -> str:
+    """Stringify one member of a list field. THE single convention.
+
+    Moved here from reporting.py, where it backed `_list_change_signature`
+    (the bulk grouping key and the bulk renderers) while `classify_change`'s
+    list branch used a plain `str(x)`. The two agreed for string members and
+    diverged for `dict`/`list` members, so one report could render the same
+    shape of data as `+{"name": "alpha"}` on a bulk card and
+    `+{'name': 'beta'}` on a per-model card. JSON wins: Python `repr` must not
+    reach rendered output.
+
+    Both the bulk grouping key and every list renderer now funnel through this
+    one function, so the conventions cannot drift apart again. `str` members
+    are returned as-is rather than JSON-encoded, so plain-string list members
+    render bare (`+tools`, not `+"tools"`) -- that is the shipped spelling for
+    the overwhelmingly common case and is unchanged by the unification.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, ensure_ascii=True)
+    return str(value)
+
+
+def _list_diff_members(old_value: Any, new_value: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return `(added, removed)` sorted member text for two list values.
+
+    THE single implementation of "what changed in this list": used by
+    `classify_change`'s list branch (and therefore by every renderer, via
+    `RenderedChange.list_added`/`list_removed`) and directly by
+    `reporting.py::_list_change_signature`, the bulk grouping key.
+
+    `_list_change_signature` calls this rather than `classify_change` on
+    purpose. `classify_change` checks its `noop` branch (`old_value ==
+    new_value`) BEFORE the list branch, and Python list equality is not the
+    same relation as member-text equality: `[1] == [True]` is True while
+    `_list_item_text` spells them `"1"` and `"True"`. Routing the grouping key
+    through the full cascade would therefore return the empty pair for such an
+    input where the previous hand-rolled key reported a difference -- a change
+    to which models consolidate. Calling this helper keeps the key byte-
+    identical to its pre-unification behavior for every possible input while
+    still sharing one stringification and one set difference.
+
+    (No FieldChange of that shape reaches production anyway: `diffing.py`'s
+    `_diff_values` and `reporting.py`'s `_diff_structured_values` both emit a
+    FieldChange only when `old_value != new_value`. The helper split makes the
+    grouping guarantee unconditional rather than resting on that argument.)
+    """
+    old_set = {_list_item_text(x) for x in old_value}
+    new_set = {_list_item_text(x) for x in new_value}
+    return tuple(sorted(new_set - old_set)), tuple(sorted(old_set - new_set))
 
 
 def _is_integer_like(value: Any) -> bool:
@@ -561,10 +632,11 @@ def classify_change(
 
     # 2. list
     if isinstance(old_value, list) and isinstance(new_value, list):
-        old_set = {str(x) for x in old_value}
-        new_set = {str(x) for x in new_value}
-        added = tuple(sorted(new_set - old_set))
-        removed = tuple(sorted(old_set - new_set))
+        # `_list_diff_members` (JSON member text), NOT a local set difference
+        # over `str(x)`: the same helper that produces the bulk grouping key,
+        # so per-model and bulk renderings of a structured list member are
+        # spelled identically.
+        added, removed = _list_diff_members(old_value, new_value)
         return RenderedChange(
             kind="list",
             field_path=field_path,
