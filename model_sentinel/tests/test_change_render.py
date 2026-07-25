@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import math
+import re
 from unittest.mock import patch
 
 import pytest
@@ -25,11 +26,11 @@ import pytest
 from model_sentinel.change_render import (
     FIELD_LEAF_LABELS,
     FIELD_PATH_LABELS,
+    INT_FRACTION_PRECISION,
     KNOWN_BOOLEAN_FIELDS,
-    PCT_MAX_PRECISION,
-    PCT_MIN_PRECISION,
-    PRICE_COLLISION_MAX_PRECISION,
+    PCT_PRECISION,
     PRICE_MAX_PRECISION,
+    PRICE_MIN_PRECISION,
     RenderedChange,
     _bool_state,
     _both_numeric,
@@ -42,12 +43,11 @@ from model_sentinel.change_render import (
     _list_item_text,
     _normalize_price,
     _pct_change,
-    _pct_precision,
     _prettify_leaf,
     _price_precision,
-    _prints_alike,
     _prints_as_zero,
     _significant_decimals,
+    _smallest_printable,
     _split_field_path,
     classify_change,
     format_qualified_label,
@@ -222,14 +222,19 @@ def test_price_amount_field_excludes_token_thresholds():
 
 
 def _price_decimal_places(rendered_price: str) -> int:
-    """Decimal places in a rendered price such as `$0.1425` or `-$0.0075`.
+    """Decimal places in a rendered price such as `$0.1425`, `-$0.0075`, `<$0.0001`.
 
     Reads the DISPLAY string rather than re-deriving the precision from the
     input, so these assertions fail on what a reader would see. Rejects
     anything that is not a rendered price, so a `free`/`null`/`—` slipping
     into a precision comparison is a loud failure and not a silent 0.
+
+    A SENTINEL counts, and must: its bound is `_smallest_printable(precision)`,
+    so `<$0.0001` carries the row's four places exactly as `$0.1425` does. If
+    the sentinel were exempted here, a row could bound one cell at four places
+    and print another at two and still satisfy the shared-precision invariant.
     """
-    body = rendered_price.lstrip("+-")
+    body = rendered_price.lstrip("+-").lstrip("<")
     assert body.startswith("$"), rendered_price
     whole, _, decimals = body[1:].partition(".")
     assert whole and decimals, rendered_price
@@ -292,13 +297,15 @@ def test_old_new_and_delta_always_share_one_precision():
       * `2 / 2.005` -- the mirror: the operands disagree (2 vs 3) and the delta
         needs 3, so nothing is pinned by coincidence.
       * `0.196 / 0.1876` -- the reported complaint, in its original numbers.
-      * `0.000001 / 0.000002` and `0.0000015 / 0.000002` -- the two escape-hatch
-        rows. The invariant is asserted AT the extended precision too: the
-        hatch may not buy separated operands by desynchronising the delta.
-      * `0.000124999 / 0.000125001` -- the row whose two faces demand DIFFERENT
-        precisions (operands separate at five places, the delta needs nine).
-        The invariant is what forbids the obvious wrong fix: printing the
-        operands at five and the delta at nine.
+      * `0.000001 / 0.000002` and `0.0000015 / 0.000002` -- rows where all
+        three cells are SENTINELS. `_price_decimal_places` reads a sentinel's
+        bound, so the invariant covers them rather than exempting them: a
+        sentinel bounded at four places beside a price printed at two would
+        fail here.
+      * `0.000124999 / 0.000125001` -- the mixed row: two operands PRINTED at
+        four places beside a delta BOUNDED at four. The bound and the print
+        must agree on the row's precision, which is the only thing keeping
+        `$0.0001 -> $0.0001  +<$0.01` off the page.
     """
     for old, new in (
         ("0.15", "0.1425"),
@@ -344,161 +351,139 @@ def test_price_precision_is_capped_at_four_places():
     assert result.old_raw == "0.1234567"
 
 
-def test_colliding_operands_extend_past_the_cap_until_they_differ():
-    """The cap's ONE escape hatch: it may not print one number twice.
+def test_prices_too_small_to_print_bound_themselves_instead_of_claiming_nothing():
+    """The sentinel, on the row that motivated all three of the escape hatches.
 
-    A per-token price of `0.000001` needs six places. Under the bare cap both
-    sides of a genuine doubling rendered `$0.0000` -- two identical numbers
-    sitting beside `↑ 100.0%`, a column that contradicts itself. The likeliest
-    route there is a provider configured with the wrong
-    PRICE_MULTIPLIER/PRICE_DIVISOR, whose visible tell is precisely the
-    absurd-looking pair the cap was erasing; text and markdown have no tooltip
-    to fall back on. So the row extends to six places and shows the movement.
+    A per-token price of `0.000001` needs six places. At the four-place cap
+    both sides of a genuine doubling rendered `$0.0000` -- two cells asserting
+    the price is nothing, beside `↑ 100.0%`. The likeliest route there is a
+    provider configured with the wrong PRICE_MULTIPLIER/PRICE_DIVISOR, and
+    text and markdown have no tooltip to fall back on.
+
+    The row no longer widens. Each cell states the one thing that is true of it
+    at this precision: `0 < value < $0.0001`. Two cells carrying the same bound
+    is not a claim that the two values are equal -- it is two true bounds --
+    and the delta and the percentage still carry the movement. The misconfig
+    tell survives in a different form: `<$0.0001` per 1M tokens is as absurd a
+    price as `$0.000001` was, and the raw operands sit beside it in every
+    format.
     """
     result = _price_change("0.000001", "0.000002")
-    assert result.old_display == "$0.000001"
-    assert result.new_display == "$0.000002"
-    assert result.delta_display == "+$0.000001"
-    assert (result.old_raw, result.new_raw) == ("0.000001", "0.000002")
+    assert result.old_display == "<$0.0001"
+    assert result.new_display == "<$0.0001"
+    assert result.delta_display == "+<$0.0001"
     assert result.pct_display == "↑ 100.0%"
+    # The false spelling, named so the test says what it forbids.
+    assert result.old_display != "$0.0000"
+    assert result.new_display != "$0.0000"
+    # Raw values are untouched by any of it -- the audit path is the raw path.
+    assert (result.old_raw, result.new_raw) == ("0.000001", "0.000002")
 
 
-def test_the_hatch_triggers_on_string_collision_not_on_magnitude():
-    """A row AT the cap whose operands already differ there does not extend.
+def test_values_over_the_cap_that_print_differently_are_not_sentinels():
+    """The trigger is the degenerate STRING, not smallness.
 
     Both `0.1234567` and `0.2345678` need more than four places, so a
-    magnitude-based hatch ("small numbers get more room") would fire here and
-    print seven places for a pair that reads perfectly well at four. They
-    render differently at the cap, so there is no defect to fix and the cap
-    stands -- which is what makes the trigger the collision itself.
+    magnitude rule ("small numbers get special treatment") would fire here.
+    Neither rounds to zero at four, so neither is in danger of claiming to be
+    nothing, and both simply print -- rounded, which is honest.
     """
     result = _price_change("0.1234567", "0.2345678")
     assert (result.old_display, result.new_display) == ("$0.1235", "$0.2346")
     assert _price_decimal_places(result.delta_display) == PRICE_MAX_PRECISION
+    assert "<" not in result.old_display + result.new_display + result.delta_display
 
 
-def test_the_hatch_holds_one_precision_for_the_whole_row():
-    """The invariant must survive the fix, not be traded away by it.
+def test_the_sentinel_never_widens_the_row():
+    """A bound is what a bound is FOR: the column keeps its width.
 
-    `0.0000015 -> 0.000002` needs seven places to separate. Old, new AND delta
-    must all render at seven: extending only the two operands, and leaving the
-    delta at the cap, would swap one contradiction (`$0.0000 -> $0.0000`) for
-    another (`$0.000002` next to a delta of `$0.0000`).
+    `0.0000015 -> 0.000002` used to drag the whole row out to seven places so
+    the operands could be spelled in full. Every cell now says the same thing
+    in the width the column already had, and the cap is a real cap again.
     """
     result = _price_change("0.0000015", "0.000002")
     assert (result.old_display, result.new_display, result.delta_display) == (
-        "$0.0000015",
-        "$0.0000020",
-        "+$0.0000005",
+        "<$0.0001",
+        "<$0.0001",
+        "+<$0.0001",
     )
+    assert _price_precision(1.5e-06, 2e-06) == PRICE_MAX_PRECISION
 
 
-def test_the_hatch_leaves_free_alone_because_free_is_not_a_collision():
-    """`free` beside `$0.0000` is already two different strings.
+def test_free_and_the_sentinel_are_distinguishable_claims():
+    """`free` means exactly zero; `<$0.0001` means non-zero and too small.
 
-    `0` and `1e-09` are numerically different and both format to `0.0000`, but
-    `_fmt_price_per_m` short-circuits zero to `free` before precision is
-    consulted, so the OPERAND face of the rule never sees one number twice.
-    Asserted on the operand face in isolation (`delta=None`, the one-sided
-    caller's spelling of "this row prints no difference"), because that is
-    where the exemption lives: comparing raw `format()` output there would see
-    `0.0000 == 0.0000` and extend on a collision that does not exist.
+    They are different claims and must be different strings, or the reader
+    cannot tell "this costs nothing" from "this costs less than the column can
+    show" -- which is precisely what `$0.0000` destroyed by making the second
+    look like the first.
+
+    `free` is decided BEFORE the sentinel (zero short-circuits in
+    `_fmt_price_per_m`), so it survives at any precision and never takes a
+    bound of its own.
     """
-    assert _price_precision(0.0, 1e-09, delta=None) == PRICE_MAX_PRECISION
+    assert _fmt_price_per_m(0.0, PRICE_MAX_PRECISION) == "free"
+    assert _fmt_price_per_m(1e-09, PRICE_MAX_PRECISION) == "<$0.0001"
+    assert _fmt_price_per_m(0.0, PRICE_MAX_PRECISION) != _fmt_price_per_m(1e-09, PRICE_MAX_PRECISION)
 
-    # The full row DOES extend -- on the delta face, not the operand face. A
-    # price appearing out of `free` moved by `1e-09`, and `+$0.0000` denies it.
-    # `free` survives the extension: zero short-circuits before precision is
-    # consulted, so the row does not spell it `$0.000000000`.
+    # The full row: a price appearing out of `free` and moving by `1e-09`.
     result = _price_change("0", "0.000000001")
     assert (result.old_display, result.new_display, result.delta_display) == (
         "free",
-        "$0.000000001",
-        "+$0.000000001",
+        "<$0.0001",
+        "+<$0.0001",
     )
 
 
-def test_the_hatch_is_bounded_and_falls_back_to_the_cap():
-    """A pathological input cannot loop unboundedly, or widen the column forever.
+def test_a_pathological_magnitude_needs_no_bound_of_its_own():
+    """`1e-25 -> 2e-25` renders by the same rule as every other tiny row.
 
-    `1e-25 -> 2e-25` is not per-token pricing; nothing resolves it inside
-    PRICE_COLLISION_MAX_PRECISION places -- neither face of the rule: the
-    operands still collide there AND their `1e-25` delta still prints as zero.
-    The hatch gives up and returns the ordinary cap, so the degenerate case
-    degrades to today's `$0.0000` rather than to a column of twenty zeroes.
-    Falsifiable in both directions: raising the bound past 25 would make these
-    render, lowering it below 6 would break the sub-cent case above.
+    The hatch this replaces had to carry a give-up branch for exactly this
+    input -- twenty places could not spell it either -- and gave up by printing
+    `$0.0000 -> $0.0000`, the false claim it existed to prevent. A bound is
+    true at ANY magnitude below the threshold, so there is nothing to exhaust
+    and no fallback to get wrong.
     """
-    tiny_old, tiny_new = 1e-25, 2e-25
-    assert tiny_old != tiny_new  # precondition: a real, if absurd, movement
-    assert _price_precision(tiny_old, tiny_new, delta=tiny_new - tiny_old) == PRICE_MAX_PRECISION
-    assert PRICE_COLLISION_MAX_PRECISION == 20
-
     result = _price_change("0.0000000000000000000000001", "0.0000000000000000000000002")
-    assert (result.old_display, result.new_display) == ("$0.0000", "$0.0000")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "<$0.0001",
+        "<$0.0001",
+        "+<$0.0001",
+    )
+    assert result.pct_display == "↑ 100.0%"
+    assert _price_precision(1e-25, 2e-25) == PRICE_MAX_PRECISION
 
 
-def test_a_delta_that_would_print_as_zero_extends_the_row():
-    """The hatch's OTHER face: separated operands beside a delta of nothing.
+def test_a_delta_too_small_to_print_bounds_itself():
+    """The delta column takes the same rule as the price columns.
 
-    `0.000124999 -> 0.000125001` separates its operands at five places, so the
-    operand face is satisfied there and stops asking. The row it leaves behind
-    reads `$0.00012 -> $0.00013` with a delta of `+$0.00000`: two visibly
-    different prices next to a number claiming the difference between them is
-    zero, an arithmetic the reader can check and find false. That is the first
-    contradiction wearing the other face, so it extends on the same rule --
-    here to nine places, where the `2e-09` delta finally prints.
+    `0.000124999 -> 0.000125001` prints two operands that both round to
+    `$0.0001` and a `2e-09` difference that cannot be shown at four places.
+    `+$0.00000` said that difference was zero; `+<$0.0001` says it is smaller
+    than the column can show, which is true and agrees with everything else in
+    the row -- including the percentage, which bounds itself for the same
+    reason.
     """
     result = _price_change("0.000124999", "0.000125001")
     assert (result.old_display, result.new_display, result.delta_display) == (
-        "$0.000124999",
-        "$0.000125001",
-        "+$0.000000002",
+        "$0.0001",
+        "$0.0001",
+        "+<$0.0001",
     )
-    # The defect this replaces, spelled out so the test names what it forbids:
-    # the five-place row the operand face alone would have produced.
-    assert result.delta_display != "+$0.00000"
-    assert (result.old_display, result.new_display) != ("$0.00012", "$0.00013")
+    assert result.pct_display == "↑ <0.1%"
+    # The defect this replaces, named so the test says what it forbids.
+    assert result.delta_display != "+$0.0000"
     # Raw values are untouched by any of it -- the audit path is the raw path.
     assert (result.old_raw, result.new_raw) == ("0.000124999", "0.000125001")
 
 
-def test_the_row_takes_whichever_face_demands_more_precision():
-    """One precision for the row means the GREATER demand, not the first met.
+def test_a_delta_that_rounds_up_into_view_is_not_a_sentinel():
+    """The trigger is what the delta PRINTS, not how its magnitude compares.
 
-    `0.0000124999 -> 0.0000125001` is the discriminating shape: its operands
-    separate at six places while its `2e-10` delta stays invisible until ten.
-    The two faces are asserted SEPARATELY -- `delta=None` asks the operand face
-    alone -- so the four-place gap between their demands is visible rather than
-    inferred, and an implementation that returned as soon as either face was
-    satisfied would return 6 here and fail on the first assertion pair.
-    """
-    old, new = 0.0000124999, 0.0000125001
-    assert _price_precision(old, new, delta=None) == 6
-    assert _price_precision(old, new, delta=new - old) == 10
-
-    result = _price_change("0.0000124999", "0.0000125001")
-    assert (result.old_display, result.new_display, result.delta_display) == (
-        "$0.0000124999",
-        "$0.0000125001",
-        "+$0.0000000002",
-    )
-    places = {
-        _price_decimal_places(result.old_display),
-        _price_decimal_places(result.new_display),
-        _price_decimal_places(result.delta_display),
-    }
-    assert places == {10}
-
-
-def test_the_delta_face_reads_the_printed_delta_not_its_magnitude():
-    """The second face triggers on the string too, exactly like the first.
-
-    `0.15 -> 0.15006` has a delta of `6e-05`, which is SMALLER than the
-    `1e-04` its four-place row can resolve -- so a magnitude test ("the delta
-    is below one unit in the last place, therefore invisible") calls it zero
-    and widens a row that reads perfectly well. It is not invisible: it rounds
-    UP to `+$0.0001`, a number the reader can see. The row stays at four.
+    `0.15 -> 0.15006` has a delta of `6e-05`, SMALLER than the `1e-04` its
+    four-place row can resolve -- so a magnitude test ("below one unit in the
+    last place, therefore invisible") would bound a delta that is perfectly
+    visible: it rounds UP to `+$0.0001`, a number the reader can see and check.
     """
     assert abs(0.15006 - 0.15) < 10 ** -PRICE_MAX_PRECISION  # precondition
     result = _price_change("0.15", "0.15006")
@@ -509,13 +494,14 @@ def test_the_delta_face_reads_the_printed_delta_not_its_magnitude():
     )
 
 
-def test_normal_magnitude_rows_are_untouched_by_the_delta_face():
-    """The delta face may not widen a row that already reads correctly.
+def test_normal_magnitude_rows_render_at_their_operands_precision():
+    """The sentinel may not touch a row that already reads correctly.
 
     Every pair here prints a delta a reader can see at the precision its
-    operands ask for, so the face must not fire and the precision must be the
-    plain operand-derived one. Asserted as exact place counts, including the
-    two-place cents row that has the most room to be widened by mistake.
+    operands ask for, so no cell is in danger of claiming to be nothing and the
+    precision must be the plain operand-derived one. Asserted as exact place
+    counts, including the two-place cents row that has the most room to be
+    widened by mistake.
     """
     for old, new, expected_places in (
         ("2", "3.5", 2),
@@ -530,29 +516,33 @@ def test_normal_magnitude_rows_are_untouched_by_the_delta_face():
             _price_decimal_places(result.delta_display),
         }
         assert places == {expected_places}, (old, new, result.old_display, result.delta_display)
+        assert "<" not in result.old_display + result.new_display + result.delta_display
 
 
-def test_the_rule_is_asked_below_the_cap_too():
-    """The sub-cap shortcut is gone, because its justification was not exact.
+def test_operands_that_round_alike_below_the_cap_still_claim_nothing_false():
+    """Two operands CAN print alike, and that is not a false claim.
 
     `_significant_decimals` reports two places for BOTH `0.05` and
     `0.050000000001` -- it compares with a relative tolerance, which it must,
     or normalization noise would price a five-cent cache read at `$0.0500`. So
-    "below the cap each operand is reproduced exactly, therefore two of them
-    cannot print alike without being equal" is not a theorem, and the row it
-    exempted printed `$0.05` twice with a delta of `+$0.00`.
+    the row prints `$0.05` twice: each cell says "this value rounds to $0.05
+    here", which is true of both, and two true roundings cannot contradict.
 
-    Exotic values, deliberately: this is the only shape that reaches the rule
-    below the cap, and it is pinned so that reinstating the shortcut as an
-    optimisation fails here rather than silently reprinting one number twice.
+    What the row may NOT do is then claim nothing moved, and it does not: the
+    `1e-12` delta bounds itself at the row's own two places, and the percentage
+    bounds itself too. Pinned because this is the ONE shape where the sub-cap
+    precision produces a collision, and because the previous rule answered it
+    by dragging the row out to twelve places.
     """
     result = _price_change("0.05", "0.050000000001")
-    assert result.old_display != result.new_display
     assert (result.old_display, result.new_display, result.delta_display) == (
-        "$0.050000000000",
-        "$0.050000000001",
-        "+$0.000000000001",
+        "$0.05",
+        "$0.05",
+        "+<$0.01",
     )
+    assert result.pct_display == "↑ <0.1%"
+    # The bound is the row's own precision, not a four-place constant.
+    assert _price_decimal_places(result.delta_display) == PRICE_MIN_PRECISION
 
 
 def test_prices_over_a_dollar_keep_decimals_the_old_rule_truncated():
@@ -592,9 +582,10 @@ def test_zero_price_still_renders_free_at_any_precision():
     """`free` survives the new rule, on both sides and however precise the row."""
     assert _fmt_price_per_m(0, 2) == "free"
     assert _fmt_price_per_m(0.0, 4) == "free"
-    # Including out at the escape hatch's bound, where zero would otherwise
-    # spell itself with twenty decimal places.
-    assert _fmt_price_per_m(0.0, PRICE_COLLISION_MAX_PRECISION) == "free"
+    # Zero is decided BEFORE the sentinel, so it never takes a bound of its
+    # own: `free` and `<$0.0001` stay two different claims at every precision.
+    assert _fmt_price_per_m(0.0, PRICE_MIN_PRECISION) == "free"
+    assert _fmt_price_per_m(0.0, PRICE_MAX_PRECISION) == "free"
     assert _price_change("0", "0.1425").old_display == "free"
     assert _price_change("0.1425", "0").new_display == "free"
 
@@ -611,62 +602,47 @@ def test_one_sided_price_uses_its_own_operand_precision():
     assert added.old_display == "null"
 
 
-def test_the_collision_check_keeps_exact_equality_on_purpose():
-    """The collision check and the precision rule use DIFFERENT equalities, and must.
+def test_operands_inside_the_precision_tolerance_state_only_true_things():
+    """A large pair the tolerance calls "one number" prints one number twice.
 
-    They look like one question asked twice -- `_significant_decimals` forgives
-    `_PRICE_PRECISION_REL_TOL`, `_prints_alike` does not -- so the natural
-    "coherence" fix is to give the collision check the same tolerance. That fix
-    reintroduces the module's headline defect, and this test is the
-    counterexample that says so rather than leaving it to be rediscovered.
+    `1957617.3956527107 -> 1957617.3956534583` is 1.3e-10 apart relatively, so
+    `_significant_decimals` reproduces BOTH at three places and the row prints
+    `$1957617.396` in two cells. The previous rule spent up to twenty places
+    prising them apart; the row is left as it is, because neither cell is
+    false: each says its value rounds to `$1957617.396` here, and it does.
 
-    Under the tolerance, `1957617.3956527107 -> 1957617.3956534583` (1.3e-10
-    apart relatively, so "one number" to the tolerance) prints ONE number twice
-    beside a delta and a percentage asserting a movement between them:
-
-        $1957617.395653 -> $1957617.395653   +$0.000001   ↑ 0.00000000004%
-
-    -- exactly what PRICE_COLLISION_MAX_PRECISION exists to prevent. The
-    tolerance is right for the question `_significant_decimals` asks (how many
-    places does ONE noisy value need) and wrong for this one (does the ROW
-    print one number twice), because the row's delta, direction and percentage
-    are all computed from exact arithmetic on these same two floats.
-
-    Asserted BOTH on the rendered row -- which is what a reader would see --
-    and on the check in isolation, so a tolerance introduced here fails with a
-    statement of what it breaks and not only with a changed number.
+    What the row must not do is deny the movement, and it does not -- the
+    `7.5e-07` delta and the `3.8e-13%` percentage both bound themselves. This
+    is the residual shape the sentinel rule deliberately tolerates, pinned so
+    that it is a decision on the record rather than an accident.
     """
     old, new = 1957617.3956527107, 1957617.3956534583
     assert math.isclose(old, new, rel_tol=1e-09, abs_tol=0.0)  # "one number" to the tolerance
-    result = _price_change(repr(old), repr(new))
-    assert result.old_display != result.new_display
-    assert (result.old_display, result.new_display, result.delta_display) == (
-        "$1957617.3956527",
-        "$1957617.3956535",
-        "+$0.0000007",
-    )
+    assert _significant_decimals(old) == _significant_decimals(new) == 3
 
-    # The check itself, at the precision the tolerance-bearing rule picked for
-    # this pair: these two DO print alike there, and saying so is what makes
-    # the row extend past it. (Three places, not four: at this magnitude the
-    # relative tolerance is worth ~2e-03 absolute, so three places already
-    # "reproduce" both values -- which is precisely how far apart the two
-    # equalities are here, and why they must not be merged.)
-    capped = _significant_decimals(old)
-    assert capped == _significant_decimals(new) == 3
-    assert _prints_alike(old, new, capped) is True
-    assert _fmt_price_per_m(old, capped) == _fmt_price_per_m(new, capped) == "$1957617.396"
+    result = _price_change(repr(old), repr(new))
+    assert result.old_display == result.new_display == "$1957617.396"
+    # ...and every other cell still reports the movement, bounded, never zero.
+    assert result.delta_display == "+<$0.001"
+    assert result.pct_display == "↑ <0.1%"
 
 
 # ---------------------------------------------------------------------------
-# 3b. Structural guarantees (Task 6b, Finding 3)
+# 3b. Structural guarantees
 #
-# Two required parameters carry a defect-prevention argument each: they exist
-# so that a caller CANNOT silently reinstate a fixed defect by omitting them.
-# The argument is behaviourally unfalsifiable -- no in-tree caller omits them,
-# so no rendered output changes if a default were added back -- which is
+# `_fmt_price_per_m`'s `precision` carries a defect-prevention argument: it
+# exists so that a caller CANNOT silently reinstate a fixed defect by omitting
+# it. The argument is behaviourally unfalsifiable -- no in-tree caller omits
+# it, so no rendered output changes if a default were added back -- which is
 # exactly why it needs pinning at the SIGNATURE level. A reverting change
 # passes every output test in this module; it fails here.
+#
+# `_price_precision` used to carry a second such guarantee, a required
+# keyword-only `delta`, pinned by
+# `test_price_precision_requires_a_keyword_only_delta_at_the_signature`. Both
+# the parameter and its test are gone: the delta was an input to the
+# vanishing-delta escape hatch, and a delta that cannot be printed now bounds
+# itself rather than voting on the row's precision.
 # ---------------------------------------------------------------------------
 
 
@@ -686,53 +662,31 @@ def test_fmt_price_per_m_requires_its_precision_at_the_signature():
     assert precision.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 
-def test_price_precision_requires_a_keyword_only_delta_at_the_signature():
-    """`delta` must stay required AND keyword-only.
-
-    Required, because a two-sided caller that omitted it would lose the delta
-    face of the contradiction rule and reinstate the vanishing delta
-    (`$0.00012 -> $0.00013` beside `+$0.00000`). Keyword-only, because
-    `_price_precision` takes `*values`: a positional `delta` would be
-    swallowed as another operand instead of raising, so the mistake would be
-    silent. Both properties are asserted, since a change to either alone
-    re-opens one of the two holes.
-    """
-    with pytest.raises(TypeError):
-        _price_precision(2.0)  # type: ignore[call-arg]
-
-    delta = inspect.signature(_price_precision).parameters["delta"]
-    assert delta.default is inspect.Parameter.empty
-    assert delta.kind is inspect.Parameter.KEYWORD_ONLY
-
-
 # ---------------------------------------------------------------------------
-# 3c. Percent precision (Task 6b, Finding 1)
+# 3c. The percent column
 #
-# `_pct_change` formatted at one decimal place, so any relative move under
-# 0.05% printed `0.0%`. Beside operands that render truthfully -- `$3.000 ->
-# $3.001`, `262,144 -> 262,150` -- that is a percentage denying a movement the
-# rest of the row asserts: the same self-contradiction the price operands'
-# escape hatch exists to eliminate, in the most ordinary magnitude range the
-# product has. The percent column gets the same treatment: trigger on the
-# rendered STRING, extend to the first precision that prints, bounded, with a
-# fallback to one place on exhaustion.
+# `_pct_change` formats at one decimal place, so any relative move under 0.05%
+# printed `0.0%`. Beside operands that render truthfully -- `$3.000 -> $3.001`,
+# `262,144 -> 262,150` -- that is a percentage denying a movement the rest of
+# the row asserts, in the most ordinary magnitude range the product has. The
+# column keeps its one place and bounds instead: `↑ <0.1%`.
 # ---------------------------------------------------------------------------
 
 
-def test_the_percent_column_extends_rather_than_printing_a_lie():
+def test_the_percent_column_bounds_rather_than_printing_a_lie():
     """The reported rows, pinned on the values that produced them.
 
     Each pair renders two visibly different prices. At one place each printed
     `↑ 0.0%` beside them -- two numbers a reader can see differ, and a
-    percentage asserting they do not. The operands are asserted alongside the
-    percentage, because it is their truthfulness that makes `0.0%` a
-    contradiction rather than a rounding.
+    percentage asserting they do not. `↑ <0.1%` is true of every one of them,
+    and the operands are asserted alongside it because it is their
+    truthfulness that made `0.0%` a contradiction rather than a rounding.
     """
     for old, new, expected_old, expected_new, expected_pct in (
-        ("3.000", "3.001", "$3.000", "$3.001", "↑ 0.03%"),
-        ("2.5000", "2.5005", "$2.5000", "$2.5005", "↑ 0.02%"),
-        ("12.345", "12.350", "$12.345", "$12.350", "↑ 0.04%"),
-        ("3.001", "3.000", "$3.001", "$3.000", "↓ 0.03%"),
+        ("3.000", "3.001", "$3.000", "$3.001", "↑ <0.1%"),
+        ("2.5000", "2.5005", "$2.5000", "$2.5005", "↑ <0.1%"),
+        ("12.345", "12.350", "$12.345", "$12.350", "↑ <0.1%"),
+        ("3.001", "3.000", "$3.001", "$3.000", "↓ <0.1%"),
     ):
         result = _price_change(old, new)
         assert (result.old_display, result.new_display) == (expected_old, expected_new)
@@ -741,58 +695,55 @@ def test_the_percent_column_extends_rather_than_printing_a_lie():
         assert result.pct_display != "↓ 0.0%"
 
 
-def test_the_percent_hatch_leaves_readable_percentages_untouched():
-    """`↑ 6.3%` must stay `↑ 6.3%`: the hatch fires only on the vanished ones.
+def test_readable_percentages_are_untouched_by_the_percent_sentinel():
+    """`↑ 6.3%` must stay `↑ 6.3%`: the bound is only for the vanished ones.
 
     Every row here already prints a non-zero percentage at one place, so the
-    hatch must return immediately and the column must keep exactly one decimal
-    -- including the borderline `0.05%`, the smallest move that rounds to a
-    visible `0.1%` and therefore the row most at risk of being widened by an
-    off-by-one in the trigger.
+    column must print the number -- including the borderline `0.05%`, the
+    smallest move that rounds to a visible `0.1%` and therefore the row most at
+    risk of being bounded by an off-by-one in the trigger. `↑ 0.1%` and
+    `↑ <0.1%` are different claims and the boundary decides which is true.
     """
     for old, new, expected in (
         ("0.15", "0.1425", "↓ 5.0%"),
         ("2", "3.5", "↑ 75.0%"),
         ("0.11", "0.1169", "↑ 6.3%"),
-        ("2000", "2001", "↑ 0.1%"),  # exactly 0.05%, rounds up and stays at one place
+        ("2000", "2001", "↑ 0.1%"),  # exactly 0.05%, rounds up to a printable 0.1%
     ):
         result = _price_change(old, new)
         assert result.pct_display == expected
-        assert len(result.pct_display.rsplit(".", 1)[1]) == len("0%")
+        assert "<" not in result.pct_display
 
 
-def test_the_percent_hatch_covers_every_numeric_kind_not_only_prices():
-    """The defect is the percent column's, so the fix is the percent column's.
+def test_the_percent_sentinel_covers_every_numeric_kind_not_only_prices():
+    """The defect is the percent column's, so the rule is the percent column's.
 
     `_pct_change` renders the percentage for price, count AND numeric rows, and
-    a six-token context bump reads `262,144 -> 262,150 (+6, ↑ 0.0%)` for
-    exactly the same reason a one-tenth-of-a-cent price bump did. Fixing only
-    the price path would have left the same contradiction in the other two
-    columns, so the hatch lives in `_pct_change` and these two kinds are pinned
-    here to keep it there.
+    a six-token context bump read `262,144 -> 262,150 (+6, ↑ 0.0%)` for exactly
+    the same reason a one-tenth-of-a-cent price bump did. A price-only fix
+    would have left the same contradiction in the other two columns, so the
+    rule lives in `_pct_change` and these two kinds are pinned here to keep it
+    there.
     """
     count = classify_change(FieldChange("context_length", 262144, 262150))
     assert count.kind == "count"
     assert (count.old_display, count.new_display) == ("262,144", "262,150")
     assert count.delta_display == "+6"
-    assert count.pct_display == "↑ 0.002%"
+    assert count.pct_display == "↑ <0.1%"
 
     numeric = classify_change(FieldChange("some.arbitrary.metric", 400000, 400001))
     assert numeric.kind == "numeric"
-    # 0.00025%, which ROUNDS UP into four places rather than needing five: the
-    # trigger is "prints as zeroes", so a percentage that rounds to something a
-    # reader can see is already resolved, exactly as for the delta face.
-    assert numeric.pct_display == "↑ 0.0003%"
+    assert numeric.pct_display == "↑ <0.1%"
 
 
 def test_a_zero_basis_still_yields_no_percentage_at_all():
-    """The hatch is decided AFTER the zero-basis exit, and must not reach it.
+    """The sentinel is decided AFTER the zero-basis exit, and must not reach it.
 
     `old == 0` has no relative reading at any precision, and the empty string
     is how `_pct_change` has always said so (`pct_basis_zero` carries the
-    cause to the renderers). A hatch that computed a percentage first and then
+    cause to the renderers). A rule that computed a percentage first and then
     asked whether it printed as zero would turn every price appearing out of
-    `free` into a percentage of nothing.
+    `free` into a bound on a quantity that does not exist.
     """
     assert _pct_change(0, 5) == ""
     assert _pct_change(0.0, 1e-09) == ""
@@ -802,85 +753,289 @@ def test_a_zero_basis_still_yields_no_percentage_at_all():
     assert result.pct_basis_zero is True
 
 
-def test_a_genuinely_zero_movement_is_not_extended():
+def test_a_genuinely_zero_movement_prints_zero_with_no_arrow():
     """`0.0%` stays `0.0%` when nothing moved -- it is true, not a lie.
 
     Reachable without float exotica: `3 -> "3"` is two different recorded
     values (so it is a change) that are one number (so the movement is zero).
     The trigger is "non-zero magnitude printing as zeroes", so it declines
-    here at the first place, and no amount of precision would print anything
-    else anyway.
+    here, and no bound would be true anyway: the movement is not *below* a
+    threshold, it is nothing.
+
+    The ARROW is dropped, and that is a behaviour change. `↓ 0.0%` put a
+    decrease in one column beside three columns reporting no change -- the last
+    remaining cell in this module able to state something false about its own
+    row. A movement of zero has no direction, so it is given none.
     """
-    assert _pct_change(3, 3) == "↓ 0.0%"
-    assert _pct_precision(0.0) == PCT_MIN_PRECISION
+    assert _pct_change(3, 3) == "0.0%"
+    assert _pct_change(3, 3.0) == "0.0%"
 
     result = _price_change("3", "3.0")
     assert (result.old_display, result.new_display) == ("$3.00", "$3.00")
-    assert result.pct_display == "↓ 0.0%"
+    assert result.pct_display == "0.0%"
+    assert result.direction == "none"
+    assert "↓" not in result.pct_display
+    assert "↑" not in result.pct_display
 
 
-def test_the_percent_hatch_stops_at_the_first_precision_that_prints():
-    """Extend to what the number needs, not to the bound.
+def test_one_predicate_triggers_every_sentinel():
+    """`_prints_as_zero` is the ONE trigger, asserted as the same one.
 
-    Asserted on `_pct_precision` directly and across three orders of magnitude,
-    so an implementation that jumped straight to PCT_MAX_PRECISION (or to any
-    fixed wider precision) fails here rather than quietly printing
-    `↑ 0.0300000000000000%`.
-    """
-    assert _pct_precision(50.0) == 1
-    assert _pct_precision(0.03) == 2
-    assert _pct_precision(0.002) == 3
-    assert _pct_precision(0.000012) == 5
-    assert _pct_precision(-0.000012) == 5  # sign is the arrow's business, not the precision's
-    # Rounding counts as printing: `0.00025` reaches a visible `0.0003` at four
-    # places, so it stops there instead of asking for the five its shortest
-    # exact form would need.
-    assert _pct_precision(0.00025) == 4
-
-
-def test_the_percent_hatch_is_bounded_and_falls_back_to_one_place():
-    """Bounded by construction, with the worst REAL case well inside the bound.
-
-    The bound is set by relative separation, not by any product magnitude: the
-    closest two distinct finite doubles can be is one unit in the last place,
-    `ulp(x)/|x| >= 2**-53`, i.e. `|pct| >= ~1.11e-14`, which prints from
-    fourteen places. That worst case is asserted to resolve, so the bound is
-    shown to be sufficient rather than asserted to be sixteen.
-
-    The fallback is therefore unreachable from any pair of distinct finite
-    operands, and is exercised directly: a percentage of `1e-30` would need
-    thirty-one places, so the loop exhausts and the column degrades to today's
-    `0.0%` rather than to sixteen zeroes.
-    """
-    assert PCT_MIN_PRECISION == 1
-    assert PCT_MAX_PRECISION == 16
-
-    one_ulp_apart = math.nextafter(1.0, 2.0)
-    assert one_ulp_apart != 1.0
-    worst_case_pct = ((one_ulp_apart - 1.0) / 1.0) * 100
-    assert _pct_precision(worst_case_pct) == 14 <= PCT_MAX_PRECISION
-    assert _pct_change(1.0, one_ulp_apart) == "↑ 0.00000000000002%"
-
-    assert _pct_precision(1e-30) == PCT_MIN_PRECISION
-    assert f"{abs(1e-30):.{_pct_precision(1e-30)}f}" == "0.0"
-
-
-def test_the_percent_hatch_shares_the_delta_face_s_vanished_test():
-    """One predicate for both vanishing columns, asserted as the same predicate.
-
-    A delta printing `+$0.00000` and a percentage printing `0.0%` are one
-    defect in two columns, so `_pct_precision` and the price row's delta face
-    ask the same question of `_prints_as_zero`. A second copy of the test could
-    drift from the first; this pins that there is only one.
+    A price printing `$0.0000`, a delta printing `+$0.00000`, a count printing
+    `0.00` and a percentage printing `0.0%` are one defect in four columns.
+    Three hatches went wrong by answering them separately; this pins that there
+    is a single predicate, consulted by every column at its own precision.
     """
     assert _prints_as_zero(0.03, 1) is True
     assert _prints_as_zero(0.03, 2) is False
-    assert _pct_precision(0.03) == 2
-    # Non-finite percentages format to letters, never to zeroes, so they are
-    # never called vanished and never widen the column.
+    assert _prints_as_zero(0.0, 1) is False  # exactly zero is not "vanished"
+
+    # The same predicate, seen through each of the four columns it governs.
+    assert _pct_change(1000.0, 1000.0003) == "↑ <0.1%"  # percent, 1 place
+    assert _fmt_price_per_m(3e-05, PRICE_MAX_PRECISION) == "<$0.0001"  # price, 4
+    assert _fmt_price_per_m(3e-05, PRICE_MIN_PRECISION) == "<$0.01"  # price, 2
+    assert _fmt_int(0.003) == "<0.01"  # count/numeric, 2
+
+    # Non-finite magnitudes format to letters, never to zeroes, so they are
+    # never called vanished and never take a bound.
     assert _prints_as_zero(float("inf"), 1) is False
     assert _prints_as_zero(float("nan"), 1) is False
-    assert _pct_precision(float("inf")) == PCT_MIN_PRECISION
+
+
+def test_the_sentinel_bound_is_derived_from_the_columns_precision():
+    """The bound is `_smallest_printable(precision)`, never a per-call literal.
+
+    A hardcoded `<$0.0001` would be a second place where the column's precision
+    is decided, and the two would part company the first time a precision
+    moved. Asserted at all three precisions in use -- the percent column's one,
+    the price floor's two, the price cap's four -- and then through the
+    formatters, so a literal reintroduced at any call site fails here.
+    """
+    assert _smallest_printable(PCT_PRECISION) == "0.1"
+    assert _smallest_printable(PRICE_MIN_PRECISION) == "0.01"
+    assert _smallest_printable(PRICE_MAX_PRECISION) == "0.0001"
+    assert _smallest_printable(INT_FRACTION_PRECISION) == "0.01"
+
+    # A two-place row bounds at a cent, not at the four-place constant: the
+    # bound follows the row it is printed in.
+    cents_row = _price_change("0.05", "0.050000000001")
+    assert cents_row.delta_display == "+<$0.01"
+    four_place_row = _price_change("0.000124999", "0.000125001")
+    assert four_place_row.delta_display == "+<$0.0001"
+
+
+def test_the_sentinel_keeps_the_sign_of_a_negative_magnitude():
+    """A bound may not flatten a sign: `-0.001` is `-<0.01`, not `<0.01`.
+
+    The delta column formats magnitudes and carries its own sign, so this is
+    reached through the operand columns, where a negative value is possible on
+    the numeric path. Dropping the sign would be a false claim of exactly the
+    kind the rule exists to prevent -- the reader would be told a negative
+    quantity is a positive one below the threshold.
+    """
+    assert _fmt_int(-0.001) == "-<0.01"
+    assert _fmt_int(0.001) == "<0.01"
+    assert _fmt_price_per_m(-1e-09, PRICE_MAX_PRECISION) == "-<$0.0001"
+
+    result = classify_change(FieldChange("some.arbitrary.metric", -0.001, 0.002))
+    assert (result.old_display, result.new_display) == ("-<0.01", "<0.01")
+    assert result.delta_display == "+<0.01"
+
+
+def test_the_count_column_bounds_a_fractional_value_that_would_print_as_zero():
+    """`_fmt_int` takes the same rule, because it had the same failure.
+
+    `0.001 -> 0.002` rendered `0.00 -> 0.00  +0.00  ↑ 100.0%`: three cells
+    asserting nothing beside a percentage asserting a doubling. Every cell now
+    states a true bound, and the row agrees with itself.
+    """
+    result = classify_change(FieldChange("some.arbitrary.metric", 0.001, 0.002))
+    assert result.kind == "numeric"
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "<0.01",
+        "<0.01",
+        "+<0.01",
+    )
+    assert result.pct_display == "↑ 100.0%"
+
+    # A count field reaches the same formatter by a different branch.
+    count = classify_change(FieldChange("context_length", 2.0001, 2.0002))
+    assert count.kind == "count"
+    assert (count.old_display, count.new_display, count.delta_display) == ("2.00", "2.00", "+<0.01")
+    assert count.pct_display == "↑ <0.1%"
+
+
+def test_whole_numbers_never_take_the_count_sentinel():
+    """Integers print exactly at any magnitude, and can never round to zero.
+
+    Which is nearly the whole of this column in practice -- `context_length`
+    and every published count field is an integer. The sentinel is reachable
+    here only through fractional values, and a change that let it fire on a
+    whole number would put `<0.01` where `0` belongs.
+    """
+    assert _fmt_int(0.0) == "0"
+    assert _fmt_int(-0.0) == "0"
+    assert _fmt_int(1) == "1"
+    assert _fmt_int(262144.0) == "262,144"
+    assert _fmt_int(-8192.0) == "-8,192"
+
+    result = classify_change(FieldChange("context_length", 0, 262144))
+    assert (result.old_display, result.new_display) == ("0", "262,144")
+    # Exactly zero is not a bound: it is the true value, and the row says so.
+    assert result.pct_basis_zero is True
+
+
+def test_a_one_sided_price_below_the_columns_resolution_bounds_itself():
+    """The one-sided branch formats through the same function, so it too bounds.
+
+    A price appearing from nothing at `1e-09` per 1M would have read
+    `null → $0.0000`, which says the new price is free. It is not free; it is
+    below what the column can show, and the row now says that instead.
+    """
+    added = classify_change(
+        FieldChange("pricing.prompt", None, "0.000000001"),
+        price_multiplier=1,
+        price_divisor=1,
+    )
+    assert (added.old_display, added.new_display) == ("null", "<$0.0001")
+    assert added.delta_display is None
+
+    removed = classify_change(
+        FieldChange("pricing.prompt", "0.000000001", None),
+        price_multiplier=1,
+        price_divisor=1,
+    )
+    assert (removed.old_display, removed.new_display) == ("<$0.0001", "null")
+
+
+# ---------------------------------------------------------------------------
+# 3d. The rule, asserted as a rule
+#
+# The three escape hatches were each a case fixed after it was reported, and
+# each fix moved the defect into a column the fix did not cover. The sentinel
+# rule is meant to hold BY CONSTRUCTION, so it is asserted that way: one
+# property, quantified over every rendered row shape, rather than a list of
+# expected strings.
+# ---------------------------------------------------------------------------
+
+
+# A cell that asserts NOTHING: `free`, or digits that are all zero, with an
+# optional sign, currency mark or percent sign. `$0.0000`, `+$0.00000`, `0.00`,
+# `-0.00`, `0`, `0.0%`. A sentinel never matches -- `<$0.0001` and `+<0.01`
+# both carry a `<` -- which is the entire point: a bound is not a claim of
+# nothing.
+_CLAIMS_NOTHING = re.compile(r"[+-]?\$?0(?:\.0+)?%?")
+
+
+def _claims_nothing(cell: str) -> bool:
+    return cell == "free" or _CLAIMS_NOTHING.fullmatch(cell) is not None
+
+
+# Every rendered price/count/numeric row shape, as (field, old, new, multiplier).
+# The enumeration is the acceptance criterion; `test_no_cell_claims_nothing_
+# unless_it_is_nothing` is the criterion applied to it.
+_ROW_SHAPES = (
+    # --- price, two-sided ---
+    ("pricing.prompt", "0", "0.0", 1),  # free -> free, no movement, no basis
+    ("pricing.prompt", "0", "0.000000001", 1),  # free -> below resolution
+    ("pricing.prompt", "0", "3", 1),  # free -> printable
+    ("pricing.prompt", "0.000000001", "0", 1),  # below resolution -> free
+    ("pricing.prompt", "0.000000001", "0.000000002", 1),  # both below resolution
+    ("pricing.prompt", "0.000000001", "3", 1),  # below resolution -> printable
+    ("pricing.prompt", "3", "3.0", 1),  # printable, movement exactly zero
+    ("pricing.prompt", "3.000", "3.001", 1),  # printable, movement below 0.1%
+    ("pricing.prompt", "2", "3.5", 1),  # printable, ordinary movement
+    ("pricing.prompt", "0.15", "0.1425", 1),  # printable, four places
+    ("pricing.prompt", "0.05", "0.050000000001", 1),  # operands round alike below the cap
+    ("pricing.prompt", "0.000124999", "0.000125001", 1),  # printable operands, bounded delta
+    ("pricing.prompt", "0.9999500001", "1.0000499999", 1),  # operands round alike AT the cap
+    ("pricing.prompt", "0.0000000000000000000000001", "0.0000000000000000000000002", 1),
+    ("pricing.prompt", "0.00000005", "0.00000009", 1_000_000),  # normalization noise
+    ("pricing.prompt", "1957617.3956527107", "1957617.3956534583", 1),  # inside the tolerance
+    # --- price, one-sided ---
+    ("pricing.prompt", None, "0.000000001", 1),
+    ("pricing.prompt", None, "0", 1),
+    ("pricing.prompt", "0.000000001", None, 1),
+    ("pricing.prompt", "3", None, 1),
+    # --- count ---
+    ("context_length", "8192", "16384", 1),  # whole numbers, ordinary movement
+    ("context_length", "262144", "262150", 1),  # whole numbers, movement below 0.1%
+    ("context_length", "0", "262144", 1),  # zero basis
+    ("context_length", "2.0001", "2.0002", 1),  # fractional, both round alike
+    ("context_length", "2", "2.0", 1),  # movement exactly zero
+    ("context_length", None, "8192", 1),
+    ("context_length", "8192", None, 1),
+    # --- numeric ---
+    ("some.arbitrary.metric", "0.001", "0.002", 1),  # both below resolution
+    ("some.arbitrary.metric", "-0.001", "0.002", 1),  # signed, below resolution
+    ("some.arbitrary.metric", "400000", "400001", 1),  # movement below 0.1%
+    ("some.arbitrary.metric", "0.5", "1", 1),  # fractional, printable
+)
+
+
+def _shape_quantities(old: str | None, new: str | None, multiplier: int) -> dict[str, float | None]:
+    """The exact quantities the four cells of a row shape are ABOUT.
+
+    Computed from the inputs, not read back off the RenderedChange, so the test
+    compares the rendering against the arithmetic rather than against itself.
+    """
+    old_q = None if old is None else float(old) * multiplier
+    new_q = None if new is None else float(new) * multiplier
+    delta_q = None if old_q is None or new_q is None else new_q - old_q
+    return {"old": old_q, "new": new_q, "delta": delta_q, "pct": delta_q}
+
+
+def test_no_cell_claims_nothing_unless_it_is_nothing():
+    """THE rule, over every row shape: no cell asserts nothing falsely.
+
+    A cell can be one of three things. `free`/`0` claims the value is EXACTLY
+    zero. A sentinel claims it is non-zero and below what the column can show.
+    Anything else is the number, rounded -- which is a true statement about the
+    value ("it rounds to this here") and can never be a claim of nothing.
+
+    So the only cell that can lie about a movement is one claiming nothing, and
+    this asserts the biconditional for all four columns of every shape: a cell
+    claims nothing IF AND ONLY IF the quantity behind it is exactly zero.
+    Removing any one of the four sentinel branches fails here, on the shape
+    that reaches it, with the false cell in the message.
+
+    This is what "provable by construction" means for this module: the rule is
+    not a list of repaired cases, it is one property that every row satisfies.
+    Row shapes that are self-consistent yet imperfect -- two operands that
+    round to the same string -- are IN the table on purpose (`0.05 ->
+    0.050000000001`, `0.9999500001 -> 1.0000499999`), because they must still
+    satisfy the property, and they do.
+    """
+    bounded_columns = set()
+    for field, old, new, multiplier in _ROW_SHAPES:
+        result = classify_change(
+            FieldChange(field, old, new),
+            price_multiplier=multiplier,
+            price_divisor=1,
+        )
+        quantities = _shape_quantities(old, new, multiplier)
+        cells = {
+            "old": result.old_display,
+            "new": result.new_display,
+            "delta": result.delta_display,
+            "pct": result.pct_display,
+        }
+        for column, cell in cells.items():
+            quantity = quantities[column]
+            if cell is None or cell == "null" or quantity is None:
+                # An absent side has no quantity to be true or false about.
+                continue
+            assert cell, (field, old, new, column)
+            if "<" in cell:
+                bounded_columns.add(column)
+            assert _claims_nothing(cell) is (quantity == 0), (
+                f"{field}: {old} -> {new} rendered {column}={cell!r} "
+                f"for a quantity of {quantity!r}"
+            )
+
+    # The table must actually REACH the rule in every column, or the property
+    # above would hold vacuously for a formatter that never bounds anything.
+    assert bounded_columns == {"old", "new", "delta", "pct"}
 
 
 # ---------------------------------------------------------------------------

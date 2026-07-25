@@ -472,87 +472,155 @@ def _is_count_field(field_name: str) -> bool:
     return "token" in leaf or _classify_field(field_name) == "Context & Limits"
 
 
-def _fmt_int(value: float) -> str:
-    if value == int(value):
-        return f"{int(value):,}"
-    return f"{value:,.2f}"
-
-
-# Percent precision bounds. One place is what the percent column is FOR --
-# `↑ 63.6%`, `↓ 20.5%` (design: "RenderedChange / pct_display") -- and it is
-# what every percentage that reads correctly keeps.
+# ---------------------------------------------------------------------------
+# THE SENTINEL RULE.
 #
-# WHY THE HATCH EXISTS. One place makes any relative move under 0.05% print
-# `0.0%`, a percentage asserting that nothing changed, beside two operands the
-# row prints as visibly different numbers. It is the same defect the price
-# operands' hatch was built to eliminate -- a row that contradicts itself --
-# and at ordinary magnitudes it is far more common than the sub-cent collisions
-# that motivated that one: `$3.000 -> $3.001`, `$12.345 -> $12.350` and
-# `262,144 -> 262,150` are all ordinary rows, and all three printed `0.0%`.
+# A column that would round to a DEGENERATE value -- a zero price, a zero
+# delta, a zero percentage -- prints a bounded sentinel instead of a false one.
+# `<$0.0001` says "smaller than this column can show"; `$0.0000` says
+# "nothing", which for a value that is not nothing is simply untrue.
 #
-# WHY 16. The percentage is scale-free, so the bound is set by the smallest
-# RELATIVE separation two distinct operands can have rather than by any
-# product magnitude. For finite doubles that is one unit in the last place:
-# `ulp(x)/|x| >= 2**-53`, so `|pct| >= 100 * 2**-53 ~= 1.11e-14`, which prints
-# non-zero from fourteen places. Sixteen clears that worst case with two places
-# of margin while keeping the column finite. The product's own smallest moves
-# are nowhere near it -- one token off a 10M context window is `1e-5%` (five
-# places), a price differing in its sixth significant digit is `1e-4%` (four).
-PCT_MIN_PRECISION = 1
-PCT_MAX_PRECISION = 16
+# WHAT COUNTS AS DEGENERATE, AND WHY ONLY THAT. Every other rendering in this
+# module is a ROUNDING, and a rounding is an honest claim: `$12.345` says "this
+# value rounds to 12.345 here", which is true of the number behind it. Zero is
+# the one display whose natural reading is absolute rather than approximate --
+# `$0.0000` reads as "free", `+$0.00000` as "unchanged", `0.0%` as "no
+# movement". So zero is the only rendering that can be FALSE rather than
+# merely coarse, and it is the only one the rule replaces.
+#
+# WHY A BOUND RATHER THAN MORE PRECISION. This replaces three accumulated
+# escape hatches, each of which extended some column's precision until the
+# degenerate value went away, and each of which fixed one column by pushing the
+# inconsistency into another: a row whose operands had been separated still
+# printed a vanishing delta; a row whose delta had been rescued still printed
+# `0.0%`. A bound needs no extension at all, because it is already true at the
+# precision the column has: `0 < |x| < B` is a fact about the value, not a
+# rendering of it. Every cell of every row then states something true about the
+# operands, and true statements about the same two numbers cannot contradict
+# one another -- which is why the rule holds by construction rather than
+# case by case.
+#
+# WHY IT MUST REMAIN DISTINGUISHABLE FROM ZERO. `free` (and `_fmt_int`'s bare
+# `0`) means EXACTLY zero, is decided before the sentinel is consulted, and is
+# spelled differently from it. A reader can therefore still tell "this costs
+# nothing" from "this costs less than the column can show" -- a distinction
+# `$0.0000` destroyed.
+# ---------------------------------------------------------------------------
 
 
-def _pct_precision(pct: float) -> int:
-    """The percent column's precision: one place, unless one place prints a lie.
+def _prints_as_zero(value: float, precision: int) -> bool:
+    """True when a numerically non-zero magnitude prints as nothing but zeroes.
 
-    Structured exactly like the price cap's hatch (`_precision_that_resolves`):
-    returns PCT_MIN_PRECISION untouched whenever the percentage already reads
-    non-zero there, so `↑ 6.3%` stays `↑ 6.3%` and only the rows that would
-    have printed `0.0%` over a real movement are extended -- and then only to
-    the FIRST precision that prints them, not to the bound.
-
-    The trigger is the rendered STRING, via the same `_prints_as_zero` the
-    price row's delta face uses: "this magnitude is not zero, and prints as
-    nothing but zeroes here". Sharing that predicate is the point -- a vanished
-    delta and a vanished percentage are one defect in two columns, and a second
+    THE trigger for the sentinel rule, and the only one. Shared by every column
+    that can vanish this way -- the price operands, the price delta, the
+    count/numeric operands and delta, and the percentage -- because `$0.0000`
+    beside two different prices, `+$0.00000` beside a real movement and `0.0%`
+    beside two different numbers are one defect seen in five columns. A second
     copy of the test could drift from the first.
 
-    Bounded by PCT_MAX_PRECISION, and on exhaustion returns PCT_MIN_PRECISION
-    so a pathological input degrades to today's `0.0%` rather than to a column
-    of sixteen zeroes. That branch is unreachable from any pair of distinct
-    finite operands (see PCT_MAX_PRECISION); it exists so the loop is bounded
-    by construction rather than by an argument about its inputs.
+    Decided on the STRING the column would print, never on the magnitude behind
+    it: a magnitude threshold has to guess where the defect starts, and would
+    fire on rows that read perfectly well (`0.15 -> 0.15006` has a delta below
+    one unit in the last place, yet it ROUNDS UP to a visible `+$0.0001` and
+    needs no sentinel).
 
-    Non-finite percentages (`inf` from a denormal basis, `nan` from a `nan`
-    operand) print `inf`/`nan`, never zeroes, so they return at one place
-    unchanged.
+    Compared against the digits a zero WOULD print at this precision rather
+    than against any renderer's spelling of zero: an exactly zero price prints
+    `free`, so the renderer's own spelling is not the string this magnitude is
+    in danger of being mistaken for. `0.0000` is. Values that format to
+    something other than digits (`inf`, `nan`) never match the zero digits, so
+    they are never called vanished and never take a sentinel.
     """
-    for places in range(PCT_MIN_PRECISION, PCT_MAX_PRECISION + 1):
-        if not _prints_as_zero(pct, places):
-            return places
-    return PCT_MIN_PRECISION
+    if value == 0:
+        return False
+    return f"{abs(value):.{precision}f}" == f"{0.0:.{precision}f}"
+
+
+def _smallest_printable(precision: int) -> str:
+    """The smallest magnitude `precision` decimal places can show, as digits.
+
+    THE bound every sentinel quotes, derived from the column's own precision
+    and never spelled at a call site: four places bound at `0.0001`, two at
+    `0.01`, the percent column's one at `0.1`. A literal at each call site
+    would be a second place where the column's precision is decided, and the
+    two would part company the first time a precision moved.
+
+    Deliberately the smallest PRINTABLE magnitude and not the tightest true
+    one. A value printing as zero at four places is in fact below `0.00005`,
+    half a unit; `<$0.0001` is the bound the reader can verify from the width
+    of the column in front of them, where `<$0.00005` would be a number the row
+    never mentions anywhere else. Both are true statements; this is the one
+    that explains itself.
+    """
+    return f"{10.0 ** -precision:.{precision}f}"
+
+
+# The decimal places `_fmt_int` gives a value that is not a whole number.
+INT_FRACTION_PRECISION = 2
+
+
+def _fmt_int(value: float) -> str:
+    """A count or plain numeric value: exact when whole, two places otherwise.
+
+    The sentinel rule reaches this column too, and must. `_fmt_int` is not a
+    price formatter, but it had the identical failure: `0.001 -> 0.002` printed
+    `0.00 -> 0.00` with a delta of `+0.00`, three cells asserting nothing
+    beside a percentage asserting a doubling. It now prints
+    `<0.01 -> <0.01  +<0.01`, three true bounds.
+
+    Whole numbers are untouched, which is nearly the whole of this column in
+    practice: `context_length` and every published count field is an integer,
+    prints exactly at any magnitude, and can never round to a zero it is not.
+    The sentinel is reachable here only through fractional values on the
+    count/numeric paths.
+
+    The sign is carried explicitly onto the sentinel so a negative magnitude is
+    not flattened into a positive bound: `-0.001` renders `-<0.01`, not `<0.01`
+    (true of the magnitude, and the direction the rest of the row asserts).
+    """
+    if value == int(value):
+        return f"{int(value):,}"
+    if _prints_as_zero(value, INT_FRACTION_PRECISION):
+        return f"{'-' if value < 0 else ''}<{_smallest_printable(INT_FRACTION_PRECISION)}"
+    return f"{value:,.{INT_FRACTION_PRECISION}f}"
+
+
+# The percent column's one decimal place -- `↑ 63.6%`, `↓ 20.5%` (design:
+# "RenderedChange / pct_display"). One place is what the column is FOR, and the
+# sentinel is what lets it stay one place: a movement too small to show here
+# prints `↑ <0.1%`, not the `↑ 0.0%` that denied it.
+PCT_PRECISION = 1
 
 
 def _pct_change(old: float, new: float) -> str:
-    """The row's relative movement, at a precision that cannot deny it.
+    """The row's relative movement: one place, bounded rather than denied.
+
+    Serves price, count AND numeric rows, so the sentinel does too -- a
+    six-token bump on a 262,144 context window reads `↑ <0.1%` for exactly the
+    same reason a tenth-of-a-cent price move does, and a price-only fix would
+    have left the same lie in the other two columns.
 
     A zero basis still yields NO percentage at all: `(new - 0) / 0` has no
     relative reading, and the empty string is how this function has always said
     so (callers pair it with `pct_basis_zero`, which names the cause). The
-    hatch cannot reach that case -- it is decided before any percentage is
-    computed -- and must not, because the defect it fixes is a percentage that
-    contradicts the row, not the absence of one.
+    sentinel cannot reach that case -- it is decided before any percentage is
+    computed -- and must not: a bound on an undefined quantity is not a truer
+    statement than its absence.
 
     An exactly zero movement (`3 -> "3"`: different recorded values, equal as
-    numbers) is likewise untouched: `0.0%` is what actually happened, so
-    `_prints_as_zero` declines it at the first place and the row prints
-    `0.0%`.
+    numbers) prints `0.0%` and NO arrow. `0.0%` is what actually happened, so
+    the sentinel declines it -- and the arrow is dropped because a movement of
+    zero has no direction. The `↓` this used to print was the row's last
+    remaining false claim: one column reporting a decrease beside three
+    reporting no change.
     """
     if old == 0:
         return ""
     pct = ((new - old) / abs(old)) * 100
-    arrow = "↑" if pct > 0 else "↓"
-    return f"{arrow} {abs(pct):.{_pct_precision(pct)}f}%"
+    arrow = "↑ " if pct > 0 else ("↓ " if pct < 0 else "")
+    if _prints_as_zero(pct, PCT_PRECISION):
+        return f"{arrow}<{_smallest_printable(PCT_PRECISION)}%"
+    return f"{arrow}{abs(pct):.{PCT_PRECISION}f}%"
 
 
 # Price precision bounds (design: "Value formatting / Price display (A1)").
@@ -560,33 +628,13 @@ def _pct_change(old: float, new: float) -> str:
 # Every price in a row renders at ONE precision, between these two bounds. The
 # floor is cents because that is the granularity a reader prices in; the
 # ceiling keeps the normalized column narrow for the values it was sized for.
+#
+# The ceiling is now a real ceiling. It used to be extended, without limit up
+# to twenty places, by whichever row would otherwise have printed a degenerate
+# value; a price too small to show at four places says so with a bound instead
+# (see THE SENTINEL RULE above), so nothing is left for the extension to buy.
 PRICE_MIN_PRECISION = 2
 PRICE_MAX_PRECISION = 4
-
-# The cap's escape hatch: how far past PRICE_MAX_PRECISION a row may extend
-# when the cap would otherwise make the row contradict itself.
-#
-# WHY THE HATCH EXISTS. Capping at four lets a row print a number that denies a
-# movement the rest of the row asserts, in either of two directions. Two
-# numerically different operands can render as the SAME string -- `$0.0000 ->
-# $0.0000` sitting beside `↑ 100.0%`, two identical numbers contradicting a
-# non-zero percentage -- and a numerically non-zero delta can render as ZERO
-# beside operands that visibly differ: `$0.00012 -> $0.00013` with a delta of
-# `+$0.00000`, an arithmetic the reader can check and find false. That is not
-# merely ugly. The likeliest route to it is an operator configuring a new
-# provider with the wrong PRICE_MULTIPLIER/PRICE_DIVISOR, whose visible tell
-# used to be an obviously wrong `$0.000001 -> $0.000002`. The cap hides the
-# tell, and the text and markdown reports have no tooltip to fall back on.
-#
-# WHY 20. The motivating misconfiguration renders per-TOKEN prices in a column
-# built for per-1M prices. Real per-token prices bottom out around 1e-9
-# ($0.001 per 1M), which separates at nine places; twenty leaves eleven orders
-# of magnitude of headroom while keeping the worst case a finite 20-place
-# column. A row that still cannot resolve by then is not per-token pricing, it
-# is a pathological input -- and for it the hatch GIVES UP and returns the
-# ordinary cap, so the degenerate case degrades to today's `$0.0000` rather
-# than to a monstrous column of twenty zeroes.
-PRICE_COLLISION_MAX_PRECISION = 20
 
 # Absorbs the float error `_normalize_price` introduces, NOT a fudge factor.
 # `(raw * multiplier) / divisor` is inexact in binary: `5e-08 * 1_000_000` is
@@ -605,13 +653,16 @@ def _significant_decimals(value: float) -> int:
     Returns the smallest precision in [PRICE_MIN_PRECISION, PRICE_MAX_PRECISION]
     that reproduces `value`, or PRICE_MAX_PRECISION when no precision in that
     range does -- which is what makes "capped at 4" mean "renders at 4" rather
-    than "renders at whatever is left after rounding". A value of 0.000001
-    needs six places, so on its own it renders `$0.0000`: visibly a value too
-    small for the column rather than a value that is not there.
+    than "renders at whatever is left after rounding".
 
-    The cap is the DEFAULT, not the last word. When a row landing here would
-    print a number that contradicts the rest of the row, `_price_precision`
-    extends past it -- see PRICE_COLLISION_MAX_PRECISION.
+    A value of 0.000001 needs six places. At four it is NOT rounded away into
+    `$0.0000`: `_fmt_price_per_m` bounds it into `<$0.0001`, which is the
+    statement the cap was always trying to make ("too small for this column")
+    without the false one it used to make instead ("nothing").
+
+    The relative tolerance is load-bearing, not a fudge: `(raw * multiplier) /
+    divisor` is inexact in binary, so an exact comparison would price a
+    five-cent cache read at `$0.0500`. See _PRICE_PRECISION_REL_TOL.
     """
     for places in range(PRICE_MIN_PRECISION, PRICE_MAX_PRECISION):
         if math.isclose(round(value, places), value, rel_tol=_PRICE_PRECISION_REL_TOL, abs_tol=0.0):
@@ -619,8 +670,8 @@ def _significant_decimals(value: float) -> int:
     return PRICE_MAX_PRECISION
 
 
-def _price_precision(*values: float, delta: float | None) -> int:
-    """THE shared precision for one price row: its operands', unless that lies.
+def _price_precision(*values: float) -> int:
+    """THE shared precision for one price row: its operands', capped at four.
 
     Called ONCE per row and passed to every `_fmt_price_per_m` call for that
     row. The point of the function is that old, new and delta cannot disagree:
@@ -629,157 +680,29 @@ def _price_precision(*values: float, delta: float | None) -> int:
     share a card with their decimal points in three different columns and the
     three numbers of one row could each claim a different precision.
 
-    `delta` is the difference this row will PRINT (`None` for a one-sided row,
-    which has no difference to print). Keyword-only and REQUIRED for the same
-    reason `_fmt_price_per_m`'s `precision` is: a two-sided caller that forgot
-    it would silently reinstate the vanishing-delta defect below, and the only
-    way to forget an argument you must name is to mean it.
-
-    The four-place cap is the default. It has ONE escape hatch, applied by
-    `_precision_that_resolves`: extend until the row stops contradicting itself
-    (see `_contradicts_itself`). The extended precision is still a single
-    precision for the whole row -- it is the same return value, so old, new and
-    delta share it exactly as they share the capped one.
+    The DELTA gets no say in the answer, and no longer needs one. It is a
+    difference of the two operands, so letting it choose its own precision is
+    how `$0.1500 -> $0.1425` ends up beside a delta claiming more (or fewer)
+    places than the numbers it was computed from; and a delta too small to
+    print at the row's precision now says exactly that (`+<$0.0001`) instead of
+    demanding the whole row be widened until it can be spelled in full. That
+    demand was the second of the three escape hatches, and the reason this
+    function used to take a required keyword-only `delta`.
     """
-    capped = max((_significant_decimals(value) for value in values), default=PRICE_MIN_PRECISION)
-    # The rule is asked at EVERY capped precision, not only at the four-place
-    # cap. The previous shape returned a sub-cap precision unchecked, on the
-    # argument that below the cap each operand is reproduced exactly by its own
-    # precision and so two of them cannot print alike without being equal. That
-    # argument holds for exact reproduction and `_significant_decimals` uses a
-    # relative tolerance (it must -- see `_PRICE_PRECISION_REL_TOL`), so two
-    # operands agreeing to within 1e-9 relative are BOTH "reproduced" at two
-    # places and print `$0.05` twice. Asking is cheap; the exemption was the
-    # only part of this function resting on an argument rather than a check.
-    return _precision_that_resolves(values, delta, capped)
-
-
-def _prints_alike(first: float, second: float, precision: int) -> bool:
-    """True when two numerically different prices print as ONE string.
-
-    Compares `_fmt_price_per_m` output rather than raw `format()`, so `0` --
-    which short-circuits to `free` before precision is consulted -- is
-    correctly seen as DISTINCT from a tiny non-zero price. `free` beside
-    `$0.0000` is already two different strings.
-
-    "Numerically different" is EXACT `!=`, deliberately, and NOT the
-    `_PRICE_PRECISION_REL_TOL` that `_significant_decimals` compares with. The
-    two look like one question asked twice; they are two questions:
-
-      * `_significant_decimals` asks how many places ONE value needs to
-        reproduce ITSELF. Its input is a noisy binary image of a decimal the
-        provider published (`5e-08 * 1_000_000` is `0.049999999999999996`), so
-        it must forgive noise or it prices a five-cent cache read at `$0.0500`.
-      * this asks whether the ROW prints one number twice. Its notion of
-        "different" has to be the one the REST of the row already used:
-        `delta_norm`, `direction` and `_pct_change` are all computed from exact
-        arithmetic on these same two floats. Borrowing the tolerance here
-        detaches this check from the numbers the row actually prints.
-
-    That detachment is not theoretical. With the tolerance applied,
-    `1957617.3956527107 -> 1957617.3956534583` (1.3e-10 apart in relative
-    terms, so "the same number" to the tolerance) renders
-
-        $1957617.395653 -> $1957617.395653   +$0.000001   ↑ 0.00000000004%
-
-    -- one number printed twice beside a delta and a percentage asserting a
-    movement between them, which is the exact defect PRICE_COLLISION_MAX_
-    PRECISION exists to eliminate. Under exact `!=` the same row reads
-    `$1957617.3956527 -> $1957617.3956535  +$0.0000007`, which is wider and
-    true. `test_the_collision_check_keeps_exact_equality_on_purpose` pins it.
-    """
-    if first == second:
-        return False
-    return _fmt_price_per_m(first, precision) == _fmt_price_per_m(second, precision)
-
-
-def _prints_as_zero(value: float, precision: int) -> bool:
-    """True when a numerically non-zero magnitude prints as nothing but zeroes.
-
-    Shared by the two columns that can vanish this way: the price row's delta
-    face (`_contradicts_itself`) and the percent column (`_pct_precision`).
-    One predicate, because `+$0.00000` beside two different prices and `0.0%`
-    beside two different numbers are one defect seen in two columns.
-
-    Compared against the digits a zero WOULD print at this precision rather
-    than against any renderer's spelling of zero: a delta that is exactly zero
-    prints `free`, so the renderer's own spelling is not the string this
-    magnitude is in danger of being mistaken for. `+$0.00000` is. Values that
-    format to something other than digits (`inf`, `nan`) never match the zero
-    digits, so they are never called vanished.
-    """
-    if value == 0:
-        return False
-    return f"{abs(value):.{precision}f}" == f"{0.0:.{precision}f}"
-
-
-def _contradicts_itself(values: tuple[float, ...], delta: float | None, precision: int) -> bool:
-    """True when this row, printed at `precision`, would deny its own movement.
-
-    ONE rule -- every number the row prints must stand apart from the numbers
-    it is not -- with two faces, because a row prints two kinds of number:
-
-      * an OPERAND that prints as another operand it is not equal to:
-        `$0.0000 -> $0.0000` beside `↑ 100.0%`;
-      * a DELTA that prints as the zero it is not: `$0.00012 -> $0.00013`
-        beside `+$0.00000`.
-
-    Both are the same defect seen from opposite ends -- a reader shown a number
-    that denies a movement the rest of the row asserts -- and neither is
-    sufficient alone: fixing only the operands buys two visibly different
-    prices whose delta still claims nothing changed, which is the first
-    contradiction wearing the other face.
-
-    Both faces are decided on STRINGS, never on the magnitude behind them: a
-    magnitude threshold would guess where the defect starts and fire on rows
-    that read perfectly well at the cap. They are NOT decided on the same
-    string, and unifying them would break the row:
-
-      * the operand face asks whether two operands print ALIKE, so it compares
-        them through `_fmt_price_per_m` -- the free-aware formatter, so that
-        `free` beside `$0.0000` is correctly two strings and not a collision;
-      * the delta face asks whether one magnitude prints as NOTHING, so it
-        compares its digits against the digits a zero would print at this
-        precision. Routing it through `_fmt_price_per_m` instead would compare
-        against `free`, which no non-zero delta ever prints, and the face would
-        never fire.
-
-    So: face one compares a printed price with another printed price; face two
-    compares a printed magnitude with printed zero. `free` is the reason they
-    cannot share a spelling of zero -- see `_prints_alike` and
-    `_prints_as_zero`, which each say which comparison they make and why.
-    """
-    for index, first in enumerate(values):
-        for second in values[index + 1 :]:
-            if _prints_alike(first, second, precision):
-                return True
-    return delta is not None and _prints_as_zero(delta, precision)
-
-
-def _precision_that_resolves(values: tuple[float, ...], delta: float | None, capped: int) -> int:
-    """The cap, extended just far enough that the row stops contradicting itself.
-
-    Returns `capped` untouched when the row does not contradict itself there,
-    so normal-magnitude rows and the cap's intent are unaffected. Otherwise
-    returns the FIRST precision at which NEITHER face of the rule fires -- one
-    precision, shared by old, new and delta exactly as at the cap. Bounded by
-    PRICE_COLLISION_MAX_PRECISION; on exhaustion returns the cap.
-
-    The two faces can demand different precisions, and the row needs whichever
-    is greater: `0.000124999 -> 0.000125001` separates its operands at five
-    places while its `2e-09` delta stays invisible until nine. Because the loop
-    advances only when the WHOLE row is consistent, it cannot stop at the first
-    face to be satisfied -- five places here would print two visibly different
-    prices beside `+$0.00000`.
-    """
-    for places in range(capped, PRICE_COLLISION_MAX_PRECISION + 1):
-        if not _contradicts_itself(values, delta, places):
-            return places
-    return capped
+    return max((_significant_decimals(value) for value in values), default=PRICE_MIN_PRECISION)
 
 
 def _fmt_price_per_m(value: float, precision: int) -> str:
     """Format one normalized per-1M price at the row's shared precision.
+
+    Three outcomes, and only one of them is a rendering of the number:
+
+      * EXACTLY zero -> `free`. The one value permitted to claim it is nothing,
+        because it is.
+      * non-zero but too small to print here -> `<$0.0001`, the sentinel (see
+        THE SENTINEL RULE). Not `$0.0000`, which makes `free`'s claim falsely
+        and which a reader cannot tell apart from it.
+      * anything else -> the number, at the row's precision.
 
     `precision` is REQUIRED. It used to default to a value derived from this
     one operand, which was correct only for the one-sided branches; any future
@@ -787,9 +710,17 @@ def _fmt_price_per_m(value: float, precision: int) -> str:
     have reintroduced the desynchronised-precision defect. One-sided callers
     pass `_price_precision(value)` explicitly instead, which says the same
     thing at the call site where it is true.
+
+    The sign is carried explicitly onto the sentinel (`-<$0.0001`) so a
+    negative magnitude cannot be flattened into a positive bound. No observed
+    payload prices below zero, so that is a guard rather than a live case --
+    but a bound that silently dropped a sign would be a false claim of exactly
+    the kind this rule exists to prevent.
     """
     if value == 0:
         return "free"
+    if _prints_as_zero(value, precision):
+        return f"{'-' if value < 0 else ''}<${_smallest_printable(precision)}"
     return f"${value:.{precision}f}"
 
 
@@ -1064,10 +995,9 @@ def _classify_price(
         # the row prints -- it is a difference of the two operands, so letting
         # it choose its own precision is how `$0.1500 -> $0.1425` ends up next
         # to a delta claiming more (or fewer) places than the numbers it was
-        # computed from. It is passed in only so the row can be checked for
-        # printing it as zero; the return value remains a single shared
-        # precision.
-        precision = _price_precision(norm_old, norm_new, delta=delta_norm)
+        # computed from. A delta too small to print here bounds itself
+        # (`+<$0.0001`) rather than widening the row.
+        precision = _price_precision(norm_old, norm_new)
         delta_display = f"{sign}{_fmt_price_per_m(abs(delta_norm), precision)}"
         pct_display = _pct_change(old_numeric, new_numeric) or None
         return RenderedChange(
@@ -1091,19 +1021,18 @@ def _classify_price(
         )
 
     # One-sided: a single operand, with no second value to agree with and no
-    # difference to print, so it prices itself and names `delta=None` to say
-    # so. The precision is derived and passed EXPLICITLY rather than left to a
-    # default, so the only way to format a price is to have named its precision
-    # at the call site.
+    # difference to print, so it prices itself. The precision is derived and
+    # passed EXPLICITLY rather than left to a default, so the only way to
+    # format a price is to have named its precision at the call site.
     if old_numeric is None:
         one_sided_direction: Literal["added", "removed"] = "added"
         old_display = "null"
         norm_only = _normalize_price(new_numeric, price_multiplier, price_divisor)
-        new_display = _fmt_price_per_m(norm_only, _price_precision(norm_only, delta=None))
+        new_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
     else:
         one_sided_direction = "removed"
         norm_only = _normalize_price(old_numeric, price_multiplier, price_divisor)
-        old_display = _fmt_price_per_m(norm_only, _price_precision(norm_only, delta=None))
+        old_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
         new_display = "null"
 
     return RenderedChange(

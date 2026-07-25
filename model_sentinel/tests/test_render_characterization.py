@@ -63,8 +63,9 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   cap until they differ) and, again, changed NOT ONE golden in this module --
   for the same reason: the shared fixture's prices all resolve at two places,
   which is below the cap, so neither the cap nor its hatch is reachable from
-  them. `test_price_escape_hatch_reaches_every_human_format_but_not_json`
-  carries its own fixture below. The same pass also disclosed a SECOND
+  them. `test_a_price_below_the_columns_resolution_bounds_itself_in_every_
+  format` (renamed in Task 6c) carries its own fixture below. The same pass
+  also disclosed a SECOND
   behaviour-change class from Task 6 that had gone unrecorded: prices >= $1
   with three or four significant decimals now render those decimals
   (`$12.345`, not the old rule's `$12.35`). That class is likewise invisible
@@ -75,8 +76,8 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   DELTA would print as zero while being numerically non-zero) and, for the
   third time, changed NOT ONE golden in this module -- same reason again: the
   shared fixture's prices resolve at two places, where every delta it produces
-  prints plainly. `test_vanishing_delta_row_reaches_every_human_format_but_
-  not_json` carries its own fixture below.
+  prints plainly. `test_vanishing_delta_row_bounds_its_delta_in_every_human_format_but_not_
+  json` (renamed in Task 6c) carries its own fixture below.
 
 * Task 6b gave the PERCENT column the same escape hatch (a percentage that
   would print `0.0%` over a real movement extends until it prints) and, for the
@@ -86,8 +87,22 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   fixture is large (`$2.00 → $3.50` is 75%, `131,072 → 262,144` is 100%), and
   the smallest is `$0.05 → $0.09` at 80%. Nothing here moves by less than
   0.05%, which is the only range the hatch touches.
-  `test_vanishing_percent_row_reaches_every_human_format_but_not_json` carries
-  its own fixture below.
+  `test_vanishing_percent_row_bounds_its_percent_in_every_format_but_not_json`
+  (renamed in Task 6c) carries its own fixture below.
+
+* Task 6c REMOVED all three of those escape hatches and replaced them with one
+  rule: a column that would round to a degenerate value prints a bounded
+  sentinel (`<$0.0001`, `+<$0.0001`, `↑ <0.1%`) instead of a false zero. Each
+  hatch had fixed one column by extending the row's precision, and each moved
+  the inconsistency into a column it did not cover; a bound is true at the
+  precision the column already has, so nothing is extended and the price cap is
+  a cap again. For the FIFTH time this changed NOT ONE golden in this module,
+  and for the union of the reasons above: every price in the shared fixture
+  resolves at two places (so nothing rounds to zero) and every movement in it
+  is large (so no percentage vanishes). The three fixtures below that DO reach
+  the rule changed their expectations, and only their expectations -- their
+  fixture values are unchanged, so the before/after is a rendering diff and not
+  a different input.
 
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
@@ -1725,14 +1740,15 @@ def test_sub_cent_precision_does_not_reach_json() -> None:
     assert "1.425e-07" in report
 
 
-def _escape_hatch_price_scan_result() -> list[ProviderScanResult]:
+def _below_resolution_price_scan_result() -> list[ProviderScanResult]:
     """A provider configured as if its raw prices were already per-1M.
 
-    `price_multiplier=1` is the misconfiguration the escape hatch exists for:
-    per-TOKEN values land unscaled in a per-1M column, where the four-place cap
-    would render both sides of a doubling as `$0.0000`. Separate fixture for
-    the same reason as `_sub_cent_price_scan_result` -- adding a field to the
-    shared fixture would move the JSON goldens.
+    `price_multiplier=1` is the misconfiguration this row exists for: per-TOKEN
+    values land unscaled in a per-1M column, where the four-place cap would
+    render both sides of a doubling as `$0.0000` -- twice telling the reader
+    the price is nothing. Separate fixture for the same reason as
+    `_sub_cent_price_scan_result` -- adding a field to the shared fixture would
+    move the JSON goldens.
     """
     return [
         ProviderScanResult(
@@ -1761,14 +1777,27 @@ def _escape_hatch_price_scan_result() -> list[ProviderScanResult]:
     ]
 
 
-def test_price_escape_hatch_reaches_every_human_format_but_not_json() -> None:
-    """The hatch is a property of `RenderedChange`, so every renderer gets it.
+def _sentinel(format_name: str, text: str) -> str:
+    """A sentinel as the given format spells it.
 
-    Text and markdown are the reason the hatch had to exist at all: the design
-    note that "the tooltip will carry exactness" is an HTML-only mitigation,
-    unavailable in the two formats a scheduled run actually mails out. All
-    three human formats must therefore show the movement themselves, and none
-    may still print the capped `$0.0000` for either operand.
+    HTML escapes the `<`, so a test that asserted the bare form would pass on
+    text and markdown and silently miss the HTML cell -- or, worse, be "fixed"
+    by emitting an unescaped `<` into a document, which is a rendering bug and
+    an injection hazard at once. Asserting the ESCAPED form in HTML is what
+    pins that the sentinel goes through `html.escape` like every other cell.
+    """
+    return text.replace("<", "&lt;") if format_name == "html" else text
+
+
+def test_a_price_below_the_columns_resolution_bounds_itself_in_every_format() -> None:
+    """The sentinel is a property of `RenderedChange`, so every renderer gets it.
+
+    Text and markdown are why this matters: the design note that "the tooltip
+    will carry exactness" is an HTML-only mitigation, unavailable in the two
+    formats a scheduled run actually mails out. All three human formats must
+    show a bound rather than the capped `$0.0000`, which claimed the price was
+    nothing -- and the raw per-token values stay beside it in every format, so
+    the misconfiguration tell survives in full.
 
     JSON is asserted unchanged in the same test rather than a separate one, so
     the human-format expectation and the audit-path expectation cannot drift.
@@ -1778,34 +1807,48 @@ def test_price_escape_hatch_reaches_every_human_format_but_not_json() -> None:
             generated_at=GENERATED_AT,
             command=COMMAND,
             format_name=format_name,
-            provider_results=_escape_hatch_price_scan_result(),
+            provider_results=_below_resolution_price_scan_result(),
         )
-        assert "$0.000001" in report, format_name
-        assert "$0.000002" in report, format_name
-        # The capped spelling the hatch replaces. `$0.000001` does not contain
-        # `$0.0000 ` (the next char is a digit), so this cannot pass by prefix.
-        assert "$0.0000 " not in report, format_name
+        # BOTH operands are bounded. (A price row's `delta_display` is not
+        # rendered by any format -- the text form is
+        # `raw → raw ($old → $new / 1M, pct)` and the HTML delta cell carries
+        # the percentage -- so the delta sentinel is pinned in
+        # test_change_render.py and, end to end, by the count/numeric fixture
+        # below, which is the one column that prints a delta.)
+        # Twice per rendering of the row -- the model card and the Change
+        # Summary both carry it, and HTML renders both.
+        assert report.count(_sentinel(format_name, "<$0.0001")) >= 2, format_name
+        # The false spelling, in every delimiter. `$0.0000` cannot appear at
+        # all here: no cell in this row is allowed to print a zero price.
+        assert "$0.0000" not in report, format_name
+        # The movement itself is still reported, and the raw per-token values
+        # sit beside the bound in every format -- so the misconfiguration tell
+        # the hatch was built to preserve is preserved without it.
+        assert "↑ 100.0%" in report, format_name
+        assert "1e-06" in report, format_name
+        assert "2e-06" in report, format_name
 
     payload = render_scan_report(
         generated_at=GENERATED_AT,
         command=COMMAND,
         format_name="json",
-        provider_results=_escape_hatch_price_scan_result(),
+        provider_results=_below_resolution_price_scan_result(),
     )
     assert "$" not in payload
+    assert "<" not in payload
     assert "1e-06" in payload
     assert "2e-06" in payload
 
 
 def _vanishing_delta_price_scan_result() -> list[ProviderScanResult]:
-    """A row whose operands separate at the cap's edge but whose delta does not.
+    """A row whose operands print at the cap but whose delta cannot.
 
-    `0.000124999 -> 0.000125001` is the hatch's second face: five places
-    already tell the two prices apart, so the operand face stops asking there
-    and leaves a `+$0.00000` delta standing beside two visibly different
-    numbers. Separate fixture for the same reason as the two above -- adding a
-    field to the shared fixture would move the JSON goldens and destroy the
-    evidence that JSON is untouched.
+    `0.000124999 -> 0.000125001` both round to `$0.0001`, which is true of
+    each; the `2e-09` between them is what a four-place column cannot show, and
+    it used to print `+$0.00000` -- a delta asserting the difference between
+    the two prices is zero. Separate fixture for the same reason as the two
+    above -- adding a field to the shared fixture would move the JSON goldens
+    and destroy the evidence that JSON is untouched.
     """
     return [
         ProviderScanResult(
@@ -1834,12 +1877,15 @@ def _vanishing_delta_price_scan_result() -> list[ProviderScanResult]:
     ]
 
 
-def test_vanishing_delta_row_reaches_every_human_format_but_not_json() -> None:
-    """The widened hatch is a property of `RenderedChange`, so every renderer gets it.
+def test_vanishing_delta_row_bounds_its_delta_in_every_human_format_but_not_json() -> None:
+    """The row whose operands print but whose movement cannot, through every renderer.
 
-    The five-place row the operand face alone produced (`$0.00012 → $0.00013`)
-    must appear in NO human format: it prints two prices whose difference the
-    row then puts at zero. All three must show the nine-place spelling instead.
+    The hatch answered this row by dragging it out to nine places
+    (`$0.000124999 → $0.000125001`) so the delta could be spelled in full. It
+    now prints at the cap: `$0.0001` is a true rounding of both operands, and
+    the movement -- too small for the column in either the delta or the percent
+    reading of it -- is bounded rather than denied. `↑ 0.0%` must appear in no
+    format.
 
     JSON is asserted unchanged in the same test rather than a separate one, so
     the human-format expectation and the audit-path expectation cannot drift.
@@ -1851,15 +1897,18 @@ def test_vanishing_delta_row_reaches_every_human_format_but_not_json() -> None:
             format_name=format_name,
             provider_results=_vanishing_delta_price_scan_result(),
         )
-        assert "$0.000124999" in report, format_name
-        assert "$0.000125001" in report, format_name
-        # The five-place spelling, ruled out by counting rather than by
-        # `not in`: BOTH nine-place prices begin `$0.00012`, so equal counts
-        # means every occurrence of the short form is the head of a long one
-        # and none is a bare five-place price.
-        assert report.count("$0.00012") == (
-            report.count("$0.000124999") + report.count("$0.000125001")
-        ), format_name
+        assert _sentinel(format_name, "↑ <0.1%") in report, format_name
+        # No cell may print a zero price or a zero percentage here.
+        assert "$0.0000" not in report, format_name
+        assert "0.0%" not in report, format_name
+        # The operands print at the cap, and the raw values sit beside them.
+        assert report.count("$0.0001") >= 2, format_name
+        assert "0.000124999" in report, format_name
+        assert "0.000125001" in report, format_name
+        # The row is NOT widened to prise the operands apart -- that was the
+        # hatch, and its nine-place spelling must not survive it.
+        assert "$0.000124999" not in report, format_name
+        assert "$0.000125001" not in report, format_name
 
     payload = render_scan_report(
         generated_at=GENERATED_AT,
@@ -1868,8 +1917,88 @@ def test_vanishing_delta_row_reaches_every_human_format_but_not_json() -> None:
         provider_results=_vanishing_delta_price_scan_result(),
     )
     assert "$" not in payload
+    assert "<" not in payload
     assert "0.000124999" in payload
     assert "0.000125001" in payload
+
+
+def _fractional_numeric_scan_result() -> list[ProviderScanResult]:
+    """A fractional numeric field whose operands and delta all round to zero.
+
+    `default_parameters.temperature` is the realistic fractional field on the
+    numeric path -- `_fmt_int` renders whole numbers exactly, so `0.001 ->
+    0.002` is the shape that reaches its two-place fallback, where it printed
+    `0.00 -> 0.00 (+0.00, ↑ 100.0%)`: three cells asserting nothing beside a
+    percentage asserting a doubling.
+
+    This fixture exists because the numeric path is the ONLY one whose DELTA a
+    renderer prints. A price row's delta is computed and carried on
+    `RenderedChange` but never rendered (the text form shows the two prices and
+    the percentage; the HTML delta cell carries the percentage), so without
+    this fixture no end-to-end test could see a bounded delta at all.
+
+    Separate fixture for the same reason as the others -- adding a field to the
+    shared fixture would move the JSON goldens.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-fractional",
+                    "Synth Model Fractional",
+                    (FieldChange("default_parameters.temperature", 0.001, 0.002),),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_a_fractional_delta_below_resolution_bounds_itself_in_every_format() -> None:
+    """The count/numeric column takes the same rule, in the same three formats.
+
+    All three cells bound: `<0.01 → <0.01 (+<0.01, ...)`. `0.00` may not appear
+    anywhere in the row -- as an operand it says the value is nothing, as a
+    delta it says nothing moved, and both are false here.
+
+    JSON is asserted unchanged in the same test rather than a separate one, so
+    the human-format expectation and the audit-path expectation cannot drift.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_fractional_numeric_scan_result(),
+            detail_policy=ALL_DETAIL_POLICY,
+        )
+        assert report.count(_sentinel(format_name, "<0.01")) >= 2, format_name
+        assert "0.00" not in report, format_name
+        assert "↑ 100.0%" in report, format_name
+
+    payload = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_fractional_numeric_scan_result(),
+        detail_policy=ALL_DETAIL_POLICY,
+    )
+    assert "<" not in payload
+    assert "0.001" in payload
+    assert "0.002" in payload
 
 
 def _vanishing_percent_scan_result() -> list[ProviderScanResult]:
@@ -1879,7 +2008,7 @@ def _vanishing_percent_scan_result() -> list[ProviderScanResult]:
     is a tenth-of-a-cent price move and `262144 -> 262150` a six-token context
     bump, both in the ranges the product meets constantly, and both printed
     `↑ 0.0%` beside operands that showed the change plainly. Both kinds are in
-    ONE fixture because the hatch lives in `_pct_change`, which every numeric
+    ONE fixture because the rule lives in `_pct_change`, which every numeric
     kind shares -- a price-only fixture could not have caught a price-only fix.
 
     Separate fixture for the same reason as the three above: adding a field to
@@ -1916,15 +2045,20 @@ def _vanishing_percent_scan_result() -> list[ProviderScanResult]:
     ]
 
 
-def test_vanishing_percent_row_reaches_every_human_format_but_not_json() -> None:
-    """The percent hatch is a property of `RenderedChange`, so every renderer gets it.
+def test_vanishing_percent_row_bounds_its_percent_in_every_format_but_not_json() -> None:
+    """The percent sentinel is a property of `RenderedChange`, so every renderer gets it.
 
     `↑ 0.0%` must appear in NO human format: beside `$3.000 → $3.001` and
     `262,144 → 262,150` it is a percentage asserting that nothing changed next
-    to two numbers that show it did. All three must print the extended
-    percentage instead -- and the price row and the count row are checked in
-    the same pass, because a fix applied only to the price path would leave the
-    context row still printing `0.0%` here.
+    to two numbers that show it did. All three formats must print the bound
+    instead -- and the price row and the count row are checked in the same
+    pass, because a fix applied only to the price path would leave the context
+    row still printing `0.0%` here.
+
+    Both rows print the SAME bound (`↑ <0.1%`) where the hatch printed two
+    different extended percentages (`↑ 0.03%`, `↑ 0.002%`). That is the
+    deliberate trade: the column keeps its one place, and the exact magnitudes
+    remain in the operands beside it and in the JSON audit path.
 
     JSON is asserted unchanged in the same test rather than a separate one, so
     the human-format expectation and the audit-path expectation cannot drift.
@@ -1936,12 +2070,14 @@ def test_vanishing_percent_row_reaches_every_human_format_but_not_json() -> None
             format_name=format_name,
             provider_results=_vanishing_percent_scan_result(),
         )
-        assert "↑ 0.03%" in report, format_name
-        assert "↑ 0.002%" in report, format_name
-        # The spelling the hatch replaces, in either direction, ruled out
+        # Two rows, two bounds: the price row and the count row alike.
+        assert report.count(_sentinel(format_name, "↑ <0.1%")) >= 2, format_name
+        # The spelling the sentinel replaces, in either direction, ruled out
         # outright: no row in this fixture may print a zero percentage.
         assert "0.0%" not in report, format_name
-        # The operands the percentage has to agree with are still there.
+        # The operands the percentage has to agree with are still there, and
+        # they still print in full -- a bounded percentage does not coarsen
+        # the columns it sits beside.
         assert "$3.000" in report, format_name
         assert "$3.001" in report, format_name
         assert "262,150" in report, format_name
@@ -1954,6 +2090,7 @@ def test_vanishing_percent_row_reaches_every_human_format_but_not_json() -> None
     )
     assert "%" not in payload
     assert "$" not in payload
+    assert "<" not in payload
     assert '"old_value": 3.0' in payload
     assert '"new_value": 3.001' in payload
     assert '"old_value": 262144' in payload

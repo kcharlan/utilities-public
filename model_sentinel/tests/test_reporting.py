@@ -2357,14 +2357,26 @@ _SHARED_LABEL = "Shared Label"
 # so a crossover cannot hide inside rounding.
 #
 # B's own two cells discriminate as well, which is what makes this fixture
-# catch more than the one defect it was written for. Task 6's four-place cap
-# had briefly collapsed them to `$0.0000 -> $0.0000`: still enough to catch a
-# crossover (A's spelling would appear twice and B's not at all), but blind to
-# any OTHER misconfiguration of B that drives its prices below the cap -- a
-# wrong divisor on B would have rendered `$0.0000` and passed. The cap's
-# escape hatch restores `$0.000001 -> $0.000002`, so B's four assertions now
-# pin its exact multiplier/divisor RATIO: change either factor and the
-# rendered pair moves and the assertions fail.
+# catch more than the one defect it was written for: they pin B's exact
+# multiplier/divisor RATIO, so changing either factor moves the rendered pair
+# and the assertions fail.
+#
+# That property depends on B's converted prices being PRINTABLE, and the raw
+# values were chosen for it. They were `0.000001 -> 0.000002`, which under B's
+# 1/1 conversion lands below the four-place column: Task 6's cap rendered both
+# cells `$0.0000` and Task 6c's sentinel renders both `<$0.0001`. Either way
+# two DIFFERENT B misconfigurations render alike, and the ratio pin degrades
+# into "B's price is somewhere below a hundredth of a cent" -- still enough to
+# catch a crossover with A, blind to a wrong divisor on B.
+#
+# `0.0001 -> 0.0002` (a $100/1M model, an ordinary flagship price) converts to
+# `$100.00 -> $200.00` under A and `$0.0001 -> $0.0002` under B: still six
+# orders of magnitude apart, still one per-token convention and one per-1M
+# convention, and now both sides printable so all four assertions pin ratios
+# again. What the old values exercised -- how a below-resolution price renders
+# -- is covered directly, and per format, by
+# `test_a_price_below_the_columns_resolution_bounds_itself_in_every_format`
+# in test_render_characterization.py.
 _SHARED_LABEL_PRICING = {"synthprov-a": (1000000, 1), "synthprov-b": (1, 1)}
 
 
@@ -2384,8 +2396,8 @@ def _shared_label_row(
         "display_name": display_name,
         "change_kind": "changed",
         "field_name": "pricing.prompt",
-        "old_value": "0.000001",
-        "new_value": "0.000002",
+        "old_value": "0.0001",
+        "new_value": "0.0002",
     }
     row.update(overrides)
     return row
@@ -2438,46 +2450,47 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     Both providers report the SAME raw price change on the SAME model id under
     the SAME label. Only their configured conversion factors differ. When
     `rows[0]` chose the factors for the merged list, provider B's raw prices
-    were rendered with provider A's multiplier and read as $1.00 -> $2.00
+    were rendered with provider A's multiplier and read as $100.00 -> $200.00
     instead of B's own conversion -- a millionfold error presented as fact.
 
-    B's `1/1` conversion renders `$0.000001 -> $0.000002` -- an absurd-looking
-    pair for a per-1M column, which is exactly the point: that absurdity is the
-    visible tell of a mis-set PRICE_MULTIPLIER/PRICE_DIVISOR, and the price
-    cap's escape hatch exists so it is not rounded away into `$0.0000`.
+    B's `1/1` conversion renders `$0.0001 -> $0.0002` -- an absurd-looking pair
+    for a per-1M column, which is exactly the point: that absurdity is the
+    visible tell of a mis-set PRICE_MULTIPLIER/PRICE_DIVISOR, and it is
+    asserted here in full rather than through a bound. See the note above
+    `_SHARED_LABEL_PRICING` for why the raw values are what they are.
     """
     text = _shared_label_report("text")
 
     # Assert the VALUES before assigning them to sections, so the wrong number
     # is what fails rather than a section split that never found its heading.
     # Under the defect these read 2 and 0: A's conversion applied to both rows.
-    assert text.count("$1.00 → $2.00 / 1M") == 1
-    assert text.count("$0.000001 → $0.000002 / 1M") == 1
+    assert text.count("$100.00 → $200.00 / 1M") == 1
+    assert text.count("$0.0001 → $0.0002 / 1M") == 1
 
     a_section, b_section = (
         text.split(f"{_SHARED_LABEL} (synthprov-a)", 1)[1].split(f"{_SHARED_LABEL} (synthprov-b)", 1)[0],
         text.split(f"{_SHARED_LABEL} (synthprov-b)", 1)[1],
     )
     # ...and each lands under the provider it belongs to.
-    assert "Input: 0.000001 \u2192 0.000002 ($1.00 \u2192 $2.00 / 1M, \u2191 100.0%)" in a_section
-    assert "Input: 0.000001 \u2192 0.000002 ($0.000001 \u2192 $0.000002 / 1M, \u2191 100.0%)" in b_section
+    assert "Input: 0.0001 \u2192 0.0002 ($100.00 \u2192 $200.00 / 1M, \u2191 100.0%)" in a_section
+    assert "Input: 0.0001 \u2192 0.0002 ($0.0001 \u2192 $0.0002 / 1M, \u2191 100.0%)" in b_section
 
     html = _shared_label_report("html")
-    assert '<td class="old-val">0.000001 ($1.00 / 1M)</td>' in html
-    assert '<td class="new-val">0.000002 ($2.00 / 1M)</td>' in html
-    assert '<td class="old-val">0.000001 ($0.000001 / 1M)</td>' in html
-    assert '<td class="new-val">0.000002 ($0.000002 / 1M)</td>' in html
+    assert '<td class="old-val">0.0001 ($100.00 / 1M)</td>' in html
+    assert '<td class="new-val">0.0002 ($200.00 / 1M)</td>' in html
+    assert '<td class="old-val">0.0001 ($0.0001 / 1M)</td>' in html
+    assert '<td class="new-val">0.0002 ($0.0002 / 1M)</td>' in html
 
     # The Change Summary is built from the same per-provider factors, and keeps
     # the two providers apart by the disambiguated label.
     summary = html.split('<section class="summary-section">', 1)[1]
     assert (
         f"<td>{_SHARED_LABEL} (synthprov-a)</td><td><code>synth/shared-model</code></td>"
-        "<td>Input</td><td>0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)</td>"
+        "<td>Input</td><td>0.0001 → 0.0002 ($100.00 → $200.00 / 1M, ↑ 100.0%)</td>"
     ) in summary
     assert (
         f"<td>{_SHARED_LABEL} (synthprov-b)</td><td><code>synth/shared-model</code></td>"
-        "<td>Input</td><td>0.000001 → 0.000002 ($0.000001 → $0.000002 / 1M, ↑ 100.0%)</td>"
+        "<td>Input</td><td>0.0001 → 0.0002 ($0.0001 → $0.0002 / 1M, ↑ 100.0%)</td>"
     ) in summary
 
 
