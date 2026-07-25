@@ -244,20 +244,25 @@ def _is_boolean_change(field_change: FieldChange) -> bool:
     deliberately deferred to a later task as a conscious design choice, not
     an oversight -- see the module docstring.
 
-    The real-bool check additionally routes through `_bool_state` (rather
-    than trusting `isinstance` alone) so this predicate depends on the same
-    single source of truth for "boolean-ish" that `_bool_state` defines,
-    instead of re-deriving it here.
-
     See the module docstring: under the current transitional branch order,
-    the `KNOWN_BOOLEAN_FIELDS` condition is only reachable through this
-    helper directly (in tests), not end-to-end through `classify_change`,
-    because any pair satisfying it is also `_both_numeric` and gets caught by
-    the numeric branch first.
+    this predicate is only reachable through this helper directly (in
+    tests), not end-to-end through `classify_change`, because any pair
+    satisfying it -- whether a real bool pair or a known-boolean-field
+    integer-coded pair -- is also `_both_numeric` and gets caught by the
+    numeric branch first.
     """
     old_value, new_value = field_change.old_value, field_change.new_value
     if isinstance(old_value, bool) and isinstance(new_value, bool):
-        return _bool_state(old_value) is not None and _bool_state(new_value) is not None
+        # `_bool_state` returns non-None for every real bool by construction,
+        # so a pair that already passed both isinstance checks is
+        # unconditionally boolean-ish; return True directly instead of
+        # re-deriving that through `_bool_state`. (Gating this branch purely
+        # on `_bool_state(...) is not None`, dropping isinstance, would
+        # broaden it to match any plain int/float 0/1 pair regardless of
+        # field name -- e.g. `default_parameters.top_p: 0 -> 1` -- which must
+        # stay excluded unless the field is in KNOWN_BOOLEAN_FIELDS; see
+        # test_is_boolean_change_false_for_int_fields_outside_known_set.)
+        return True
     if field_change.field_name in KNOWN_BOOLEAN_FIELDS:
         return _is_integer_like(old_value) and _is_integer_like(new_value)
     return False
@@ -292,7 +297,18 @@ def _bool_state(value: Any) -> Literal["on", "off"] | None:
 
 def _classify_boolean(field_change: FieldChange) -> RenderedChange:
     old_value, new_value = field_change.old_value, field_change.new_value
+    old_state = _bool_state(old_value)
     new_state = _bool_state(new_value)
+    if old_state is None or new_state is None:
+        offending = []
+        if old_state is None:
+            offending.append(f"old_value={old_value!r}")
+        if new_state is None:
+            offending.append(f"new_value={new_value!r}")
+        raise ValueError(
+            f"_classify_boolean requires boolean-ish values for field "
+            f"{field_change.field_name!r}, got {', '.join(offending)}"
+        )
     direction: Literal["up", "down"] = "up" if new_state == "on" else "down"
     delta_display = "enabled" if direction == "up" else "disabled"
     return RenderedChange(
@@ -300,7 +316,7 @@ def _classify_boolean(field_change: FieldChange) -> RenderedChange:
         field_path=field_change.field_name,
         label=field_change.field_name,
         qualifier=None,
-        old_display=_bool_state(old_value),
+        old_display=old_state,
         new_display=new_state,
         old_raw=_raw_value(old_value),
         new_raw=_raw_value(new_value),
@@ -606,8 +622,12 @@ def classify_change(
     if _both_numeric(old_value, new_value):
         return _classify_numeric(field_change)
 
-    # 6. boolean -- only reachable here for a bool-vs-None (one-sided) change
-    # under the current transitional ordering (see module docstring).
+    # 6. boolean -- currently unreachable: every two-sided bool/known-boolean-int
+    # pair is caught by the numeric branch (step 5) first, and one-sided
+    # (bool-vs-None) pairs fall through to scalar (step 7) since
+    # `_is_boolean_change` returns False for them. This branch becomes
+    # reachable when Task 4 promotes boolean ahead of numeric/price/count
+    # (see module docstring).
     if _is_boolean_change(field_change):
         return _classify_boolean(field_change)
 

@@ -345,6 +345,20 @@ def test_classify_boolean_helper_still_produces_boolean_kind_directly():
     assert result.delta_display == "enabled"
 
 
+def test_classify_boolean_raises_for_non_boolean_value():
+    """`_classify_boolean`'s precondition (both sides boolean-ish per
+    `_bool_state`) is documented but was previously unenforced: calling it
+    directly with a non-boolean value (bypassing `_is_boolean_change`) would
+    fabricate `direction="down"` and put the literal string `None` into a
+    `str`-typed display field. It must raise instead."""
+    with pytest.raises(ValueError, match="default_parameters.top_p"):
+        _classify_boolean(FieldChange("default_parameters.top_p", False, 0.9))
+    with pytest.raises(ValueError, match="top_provider.is_moderated"):
+        _classify_boolean(FieldChange("top_provider.is_moderated", None, True))
+    with pytest.raises(ValueError, match="top_provider.is_moderated"):
+        _classify_boolean(FieldChange("top_provider.is_moderated", True, None))
+
+
 def test_is_boolean_change_true_for_real_bool_pair():
     """The boolean predicate itself (not the cascade) recognizes a real bool
     pair -- exercised directly since classify_change can't reach this branch
