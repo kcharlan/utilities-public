@@ -135,6 +135,12 @@ After running setup:
 4. run `./model-sentinel healthcheck`
 5. create the first baseline with `./model-sentinel scan --save`
 
+`MODEL_SENTINEL_PROVIDER_<ID>_LABEL` is display text only; `<ID>` is the
+provider's identity and is what reports group by. Labels must be unique across
+all providers, enabled or not. A duplicate label is rejected when the config
+loads, and `healthcheck` reports it as a failed `config_load` check naming both
+providers.
+
 Each provider entry in `providers.env` must now include:
 
 - `MODEL_SENTINEL_PROVIDER_<ID>_PRICE_MULTIPLIER`

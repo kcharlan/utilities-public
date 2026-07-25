@@ -592,3 +592,58 @@ def test_history_with_unknown_provider_exits_cleanly(tmp_path: Path, monkeypatch
         assert exc.code == 2
     captured = capsys.readouterr()
     assert "Unknown provider 'abacusai'" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# A colliding provider label has to be visible where the user goes looking for
+# config problems. `run_healthcheck` already catches `ConfigError` from
+# `load_config` and renders it as a failed `config_load` check, so the
+# uniqueness rule needed no new mechanism -- but that path has to be pinned,
+# because it is the whole justification for making the rule a hard error: the
+# one command that diagnoses config keeps working and names the problem.
+# ---------------------------------------------------------------------------
+
+
+def test_healthcheck_reports_a_duplicate_provider_label(tmp_path: Path, monkeypatch, capsys) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    providers_path = runtime_home / "providers.env"
+    providers_path.write_text(
+        providers_path.read_text(encoding="utf-8")
+        + "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_ENABLED=1\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_LABEL=OpenRouter\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_KIND=openrouter\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_BASE_URL=https://synth.invalid/api/v1\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_MODELS_PATH=/models\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_API_KEY_ENV=SYNTHTWIN_CREDS\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_PRICE_MULTIPLIER=1\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_PRICE_DIVISOR=1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
+    monkeypatch.setenv("SYNTHTWIN_CREDS", "token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    exit_code = cli.main(["healthcheck"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "config_load" in captured.out
+    assert "ERROR" in captured.out
+    # The message the user acts on, not just a generic failure.
+    assert "Duplicate provider label" in captured.out
+    assert "'OpenRouter'" in captured.out
+    assert "openrouter, synthtwin" in captured.out
+
+
+def test_healthcheck_passes_config_load_with_distinct_labels(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Control: the check is silent on the shipped single-provider fixture."""
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    exit_code = cli.main(["healthcheck"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Duplicate provider label" not in captured.out
+    assert "config_load" not in captured.out

@@ -175,7 +175,44 @@ def load_provider_configs(path: Path) -> tuple[ProviderConfig, ...]:
                 enabled=enabled,
             )
         )
+    _reject_duplicate_labels(providers, path)
     return tuple(providers)
+
+
+def _reject_duplicate_labels(providers: list[ProviderConfig], path: Path) -> None:
+    """Refuse a providers.env in which two providers claim the same label.
+
+    A label is display text; `provider_id` is identity. Reports key on identity
+    and disambiguate a shared label as `Label (provider_id)`, so a collision is
+    no longer a correctness problem -- but it is still a config authoring
+    mistake that makes every report, notification and summary row ambiguous
+    about which provider it is talking about, and the user owns the file that
+    fixes it.
+
+    Raised, not warned, because `ConfigError` is the only validation mechanism
+    this module has: every other invalid value here (a bad boolean, a
+    non-positive price divisor, an unknown detail mode) already halts the load.
+    `healthcheck` catches `ConfigError` and renders it as a failed `config_load`
+    check, so the one command a user runs to diagnose config keeps working and
+    names the problem exactly.
+
+    Comparison is exact. Labels differing in case or spacing are still
+    distinguishable to a reader; only identical spellings are not.
+    """
+    by_label: dict[str, list[str]] = {}
+    for provider in providers:
+        by_label.setdefault(provider.label, []).append(provider.provider_id)
+    collisions = sorted(
+        (label, ids) for label, ids in by_label.items() if len(ids) > 1
+    )
+    if not collisions:
+        return
+    detail = "; ".join(f"{label!r} used by {', '.join(sorted(ids))}" for label, ids in collisions)
+    raise ConfigError(
+        f"Duplicate provider label{'s' if len(collisions) != 1 else ''} in {path}: {detail}. "
+        "Provider labels must be unique; give each provider a distinct "
+        "MODEL_SENTINEL_PROVIDER_<ID>_LABEL."
+    )
 
 
 def load_settings(path: Path, *, runtime_home: Path) -> Settings:

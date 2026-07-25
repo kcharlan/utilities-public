@@ -6,6 +6,7 @@ from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     ReportDetailPolicy,
     _list_change_signature,
+    make_report_detail_policy,
     render_changes_report,
     render_history_report,
     render_scan_report,
@@ -66,8 +67,21 @@ def _html_section_body(html: str, heading: str) -> str:
     return html.split(heading, 1)[1].split("</section>", 1)[0].strip()
 
 
-def _html_provider_sections(html: str) -> list[str]:
-    """Every `<section class="provider-section">` body, in document order."""
+def _scan_html_provider_sections(html: str) -> list[str]:
+    """Every SCAN-report provider section body, in document order.
+
+    Scoped to the scan report on purpose. `provider-section` is not a
+    scan-only class: `_render_changes_html` wraps each of its *date* sections
+    in the very same class, so pointing this helper at a `changes` report
+    would return date bodies while every name here still said "provider".
+    The changes renderer is the only one that emits `<h2 class="date-heading">`,
+    so refuse that document outright rather than quietly answering the wrong
+    question.
+    """
+    assert '<h2 class="date-heading">' not in html, (
+        "this is a changes report -- its `provider-section` elements are DATE "
+        "sections, not provider sections. Split on `<h3>` instead."
+    )
     return [
         chunk.split("</section>", 1)[0]
         for chunk in html.split('<section class="provider-section">')[1:]
@@ -1301,7 +1315,7 @@ def test_scan_html_keeps_the_section_of_an_error_provider_with_no_body() -> None
     # above the sections carries the label in every render, including one where
     # this section was dropped. Assert instead that the surviving section is
     # this provider's own -- its `<h2>` -- and that it is all the section has.
-    sections = _html_provider_sections(html)
+    sections = _scan_html_provider_sections(html)
     assert sections == [
         '<h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>'
     ]
@@ -1685,6 +1699,121 @@ def test_changes_report_still_renders_a_lone_presence_record() -> None:
     assert '<ul class="model-list removed-list">' not in body
 
 
+def test_changes_report_keeps_a_removal_recorded_before_a_re_addition() -> None:
+    """The mirror of the added-then-removed ordering test, and the reason the
+    presence rows are kept in RECORDED order rather than sorted by kind.
+
+    Removed-then-added is a model coming back; added-then-removed is a model
+    that did not last the day. They are different stories about the same two
+    records, and the only thing that tells them apart in the rendered report is
+    which line comes first. Sorting `presence_rows` by kind -- an inviting
+    tidy-up -- would silently rewrite half of them, and with only the
+    added-then-removed fixture in the suite it would still be green.
+    """
+    rows = (
+        _churn_row("removed", field_name=None, minute=0),
+        _churn_row("added", field_name=None, minute=30),
+    )
+    reports = _render_changes_human_formats(rows)
+
+    for format_name in ("text", "markdown"):
+        report = reports[format_name]
+        assert "2 changes across 1 date" in report, format_name
+        assert "      - synth/model-churn (Synth Churn)" in report, format_name
+        assert "      + synth/model-churn (Synth Churn)" in report, format_name
+        assert report.index("      - synth/") < report.index("      + synth/"), format_name
+
+    assert _changes_json_kinds(rows) == [("removed", None), ("added", None)]
+
+
+def test_changes_report_rolls_up_a_squelched_change_recorded_after_an_addition() -> None:
+    """A presence row first no longer costs the model its field-row planning.
+
+    The old `continue` fired on the first row's kind, so a model whose bucket
+    opened with `added` never reached `_field_display_plan` at all: its field
+    rows were not planned, contributed nothing to the provider squelched
+    rollup, and put no `Squelched` row in the Change Summary. The addition was
+    reported and the squelched change simply evaporated -- unaccounted for
+    rather than deliberately hidden.
+    """
+    rows = (
+        _churn_row("added", field_name=None, minute=0),
+        _churn_row("field_changed", field_name="benchmarks.design_arena", minute=30),
+    )
+    rows = (rows[0], {**rows[1], "old_value": 1, "new_value": 2})
+    reports = _render_changes_human_formats(rows)
+
+    text = reports["text"]
+    assert "      + synth/model-churn (Synth Churn)" in text
+    # The model keeps a line of its own carrying the hidden-detail summary...
+    assert "      * synth/model-churn (Synth Churn)" in text
+    assert "1 field change hidden by report detail policy" in text
+    # ...and the provider-level rollup accounts for it once more, by pattern.
+    assert "      squelched: 1 field change across 1 model" in text
+    assert "patterns: benchmarks, benchmarks.*" in text
+    assert "models: synth/model-churn" in text
+    # Never spelled out: it is squelched, not merely relocated.
+    assert "benchmarks.design_arena" not in text
+
+    body = _html_section_body(reports["html"], "<h3>Synth Provider</h3>")
+    assert '<ul class="model-list added-list">' in body
+    assert '<div class="category-label">Squelched</div>' in body
+    assert '<div class="category-label">squelched</div>' in body
+    assert "1 field change across 1 model" in body
+
+    summary = reports["html"].split('<section class="summary-section">', 1)[1]
+    assert "<td>Added</td><td>Synth Provider</td><td><code>synth/model-churn</code></td>" in summary
+    assert "<td>Squelched</td>" in summary
+
+    assert _changes_json_kinds(rows) == [("added", None), ("field_changed", "benchmarks.design_arena")]
+
+
+def test_changes_report_charges_a_post_addition_field_to_the_unclassified_budget() -> None:
+    """The same `continue` also let a skipped model's fields dodge the budget.
+
+    `unclassified_remaining` is a per-provider allowance threaded across models
+    in order. A model whose bucket opened with a presence row used to be skipped
+    before it could spend any of it, so a LATER model was shown an unclassified
+    field that the budget had already been claimed for. The allowance is one, so
+    exactly one of these two models may spell its field out -- and it must be
+    the first one, which is the one that recorded it first.
+    """
+    def _row(model_id: str, display_name: str, change_kind: str, field_name: str | None, minute: int) -> dict:
+        return {
+            "detected_at": f"2026-07-25T09:{minute:02d}:00+00:00",
+            "provider_id": "synthprov",
+            "provider_label": "Synth Provider",
+            "provider_model_id": model_id,
+            "display_name": display_name,
+            "change_kind": change_kind,
+            "field_name": field_name,
+            "old_value": 1 if field_name else None,
+            "new_value": 2 if field_name else None,
+        }
+
+    rows = (
+        _row("synth/model-first", "Synth First", "added", None, 0),
+        _row("synth/model-first", "Synth First", "field_changed", "synth_unclassified_first", 10),
+        _row("synth/model-second", "Synth Second", "field_changed", "synth_unclassified_second", 20),
+    )
+    report = render_changes_report(
+        format_name="text",
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=rows,
+        provider_pricing={"synthprov": (1, 1)},
+        detail_policy=make_report_detail_policy(unclassified_limit=1),
+    )
+
+    assert "      + synth/model-first (Synth First)" in report
+    # The first model spends the allowance...
+    assert "synth_unclassified_first: 1 → 2" in report
+    # ...so the second model's field is hidden and counted, not rendered.
+    assert "synth_unclassified_second" not in report
+    assert "1 additional unclassified field change hidden" in report
+
+
 def test_json_output_is_unchanged_by_heading_suppression() -> None:
     """JSON is the audit path: `noop` entries stay, and no rollup leaks in."""
     scan_payload = json.loads(
@@ -1845,3 +1974,240 @@ def test_numeric_field_holding_zero_and_one_is_not_treated_as_a_boolean() -> Non
 
     with_percent = _boolean_reports("default_parameters.temperature", 0.5, 1)
     assert "default_parameters.temperature: 0.50 → 1 (+0.50, ↑ 100.0%)" in with_percent["text"]
+
+
+# ---------------------------------------------------------------------------
+# Provider identity in the `changes` report.
+#
+# `render_changes_report` grouped by `provider_label` -- display text that
+# nothing in config.py constrained to be unique -- rather than by `provider_id`.
+# Two providers sharing a label always merged into one section, and where both
+# listed the same `provider_model_id` their rows merged into ONE list, after
+# which `rows[0]` alone decided the display name AND the price
+# multiplier/divisor for every row in it. One provider's raw prices were then
+# converted with the other provider's factors: wrong dollar figures, rendered
+# confidently, with no error anywhere.
+#
+# Overlapping model ids across providers is the documented expectation
+# (README: "OpenRouter and Abacus.AI are tracked independently even when they
+# expose similarly named upstream models"), not an edge case.
+# ---------------------------------------------------------------------------
+
+
+_SHARED_LABEL = "Shared Label"
+
+# Deliberately far apart: 1000000/1 is the per-token convention, 1/1 the
+# per-1M convention. The same raw price renders six orders of magnitude apart,
+# so a crossover cannot hide inside rounding.
+_SHARED_LABEL_PRICING = {"synthprov-a": (1000000, 1), "synthprov-b": (1, 1)}
+
+
+def _shared_label_row(
+    provider_id: str,
+    display_name: str,
+    *,
+    model_id: str = "synth/shared-model",
+    label: str = _SHARED_LABEL,
+    **overrides,
+) -> dict:
+    row = {
+        "detected_at": "2026-07-25T09:00:00+00:00",
+        "provider_id": provider_id,
+        "provider_label": label,
+        "provider_model_id": model_id,
+        "display_name": display_name,
+        "change_kind": "changed",
+        "field_name": "pricing.prompt",
+        "old_value": "0.000001",
+        "new_value": "0.000002",
+    }
+    row.update(overrides)
+    return row
+
+
+def _shared_label_rows() -> tuple[dict, ...]:
+    return (
+        _shared_label_row("synthprov-a", "Alpha Shared"),
+        _shared_label_row("synthprov-b", "Beta Shared"),
+    )
+
+
+def _shared_label_report(format_name: str, rows: tuple[dict, ...] | None = None) -> str:
+    return render_changes_report(
+        format_name=format_name,
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=_shared_label_rows() if rows is None else rows,
+        provider_pricing=_SHARED_LABEL_PRICING,
+    )
+
+
+def test_changes_report_does_not_merge_two_providers_that_share_a_label() -> None:
+    """Distinct `provider_id`s render as distinct sections whatever their labels.
+
+    Identity, not display text, is the grouping key. Both providers reported a
+    change, so both must appear -- and because their labels collide, each
+    heading is disambiguated with its id, the form the scan report already uses.
+    """
+    text = _shared_label_report("text")
+
+    assert "2 changes across 1 date" in text
+    assert f"    {_SHARED_LABEL} (synthprov-a)" in text
+    assert f"    {_SHARED_LABEL} (synthprov-b)" in text
+    # The bare label would be a single merged heading -- exactly the defect.
+    assert f"    {_SHARED_LABEL}\n" not in text
+    # Two headings, two model lines: nothing collapsed into the other.
+    assert text.count("* synth/shared-model") == 2
+
+    html = _shared_label_report("html")
+    assert f"<h3>{_SHARED_LABEL} (synthprov-a)</h3>" in html
+    assert f"<h3>{_SHARED_LABEL} (synthprov-b)</h3>" in html
+    assert f"<h3>{_SHARED_LABEL}</h3>" not in html
+
+
+def test_changes_report_prices_each_shared_label_provider_with_its_own_factors() -> None:
+    """The silent-wrong-numbers case, asserted on the rendered dollar values.
+
+    Both providers report the SAME raw price change on the SAME model id under
+    the SAME label. Only their configured conversion factors differ. When
+    `rows[0]` chose the factors for the merged list, provider B's raw prices
+    were rendered with provider A's multiplier and read as $1.00 -> $2.00
+    instead of $0.000001 -> $0.000002 -- a millionfold error presented as fact.
+    """
+    text = _shared_label_report("text")
+
+    # Assert the VALUES before assigning them to sections, so the wrong number
+    # is what fails rather than a section split that never found its heading.
+    # Under the defect these read 2 and 0: A's conversion applied to both rows.
+    assert text.count("$1.00 → $2.00 / 1M") == 1
+    assert text.count("$0.000001 → $0.000002 / 1M") == 1
+
+    a_section, b_section = (
+        text.split(f"{_SHARED_LABEL} (synthprov-a)", 1)[1].split(f"{_SHARED_LABEL} (synthprov-b)", 1)[0],
+        text.split(f"{_SHARED_LABEL} (synthprov-b)", 1)[1],
+    )
+    # ...and each lands under the provider it belongs to.
+    assert "pricing.prompt: 0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)" in a_section
+    assert "pricing.prompt: 0.000001 → 0.000002 ($0.000001 → $0.000002 / 1M, ↑ 100.0%)" in b_section
+
+    html = _shared_label_report("html")
+    assert '<td class="old-val">0.000001 ($1.00 / 1M)</td>' in html
+    assert '<td class="new-val">0.000002 ($2.00 / 1M)</td>' in html
+    assert '<td class="old-val">0.000001 ($0.000001 / 1M)</td>' in html
+    assert '<td class="new-val">0.000002 ($0.000002 / 1M)</td>' in html
+
+    # The Change Summary is built from the same per-provider factors, and keeps
+    # the two providers apart by the disambiguated label.
+    summary = html.split('<section class="summary-section">', 1)[1]
+    assert (
+        f"<td>{_SHARED_LABEL} (synthprov-a)</td><td><code>synth/shared-model</code></td>"
+        "<td>pricing.prompt</td><td>0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)</td>"
+    ) in summary
+    assert (
+        f"<td>{_SHARED_LABEL} (synthprov-b)</td><td><code>synth/shared-model</code></td>"
+        "<td>pricing.prompt</td><td>0.000001 → 0.000002 ($0.000001 → $0.000002 / 1M, ↑ 100.0%)</td>"
+    ) in summary
+
+
+def test_changes_report_does_not_cross_display_names_between_shared_label_providers() -> None:
+    """`model_changes[0]["display_name"]` decided the name for the merged list.
+
+    Provider B's model was announced under provider A's display name, so the
+    report named a model something its own provider never called it.
+    """
+    text = _shared_label_report("text")
+    a_section, b_section = (
+        text.split(f"{_SHARED_LABEL} (synthprov-a)", 1)[1].split(f"{_SHARED_LABEL} (synthprov-b)", 1)[0],
+        text.split(f"{_SHARED_LABEL} (synthprov-b)", 1)[1],
+    )
+    assert "* synth/shared-model (Alpha Shared)" in a_section
+    assert "* synth/shared-model (Beta Shared)" in b_section
+    assert "Beta Shared" not in a_section
+    assert "Alpha Shared" not in b_section
+
+    html = _shared_label_report("html")
+    assert html.count('<span class="display-name">Alpha Shared</span>') == 1
+    assert html.count('<span class="display-name">Beta Shared</span>') == 1
+
+
+def test_changes_report_keeps_presence_records_of_shared_label_providers_apart() -> None:
+    """Added/removed rows merged too -- both lists hung off one `<h3>`."""
+    rows = (
+        _shared_label_row(
+            "synthprov-a", "Alpha Shared", change_kind="added", field_name=None,
+            old_value=None, new_value=None,
+        ),
+        _shared_label_row(
+            "synthprov-b", "Beta Shared", change_kind="removed", field_name=None,
+            old_value=None, new_value=None,
+        ),
+    )
+    text = _shared_label_report("text", rows)
+    a_section, b_section = (
+        text.split(f"{_SHARED_LABEL} (synthprov-a)", 1)[1].split(f"{_SHARED_LABEL} (synthprov-b)", 1)[0],
+        text.split(f"{_SHARED_LABEL} (synthprov-b)", 1)[1],
+    )
+    assert "      + synth/shared-model (Alpha Shared)" in a_section
+    assert "      - synth/shared-model" not in a_section
+    assert "      - synth/shared-model (Beta Shared)" in b_section
+    assert "      + synth/shared-model" not in b_section
+
+    summary = _shared_label_report("html", rows).split('<section class="summary-section">', 1)[1]
+    assert f"<td>Added</td><td>{_SHARED_LABEL} (synthprov-a)</td>" in summary
+    assert f"<td>Removed</td><td>{_SHARED_LABEL} (synthprov-b)</td>" in summary
+
+
+def test_changes_report_leaves_a_unique_label_undecorated() -> None:
+    """Disambiguation is a response to a collision, not a new default.
+
+    A provider whose label nobody else claims still renders bare, so existing
+    reports read exactly as before.
+    """
+    rows = (
+        _shared_label_row("synthprov-a", "Alpha Shared", label="Alpha Provider"),
+        _shared_label_row("synthprov-b", "Beta Shared", label="Beta Provider"),
+    )
+    text = _shared_label_report("text", rows)
+    assert "    Alpha Provider\n" in text
+    assert "    Beta Provider\n" in text
+    assert "(synthprov-a)" not in text
+    assert "(synthprov-b)" not in text
+
+    html = _shared_label_report("html", rows)
+    assert "<h3>Alpha Provider</h3>" in html
+    assert "<h3>Beta Provider</h3>" in html
+
+
+def test_changes_report_spells_a_colliding_label_the_same_way_on_every_date() -> None:
+    """The label map is built over the whole report, not per date bucket.
+
+    Were it built per date, a date on which only one of the two colliding
+    providers reported would print the bare label while the other date printed
+    the disambiguated one -- the same provider, two spellings, in one document.
+    """
+    rows = (
+        _shared_label_row("synthprov-a", "Alpha Shared", detected_at="2026-07-24T09:00:00+00:00"),
+        _shared_label_row("synthprov-a", "Alpha Shared"),
+        _shared_label_row("synthprov-b", "Beta Shared"),
+    )
+    text = _shared_label_report("text", rows)
+    assert text.count(f"    {_SHARED_LABEL} (synthprov-a)") == 2
+    assert f"    {_SHARED_LABEL}\n" not in text
+
+
+def test_changes_json_is_unchanged_by_provider_identity_grouping() -> None:
+    """JSON is the audit path and never went through the grouping at all.
+
+    It is a flat echo of the recorded rows, so both providers' records survive
+    intact, in order, with their own ids, labels, names and raw values -- no
+    disambiguation suffix, no conversion applied.
+    """
+    payload = json.loads(_shared_label_report("json"))
+    assert payload == {
+        "provider_id": None,
+        "since": None,
+        "until": None,
+        "changes": list(_shared_label_rows()),
+    }
+    assert "(synthprov-a)" not in json.dumps(payload)

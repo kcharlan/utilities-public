@@ -811,12 +811,18 @@ class _PlannedChangeEntry:
     therefore produces two entries, and both renderers -- which already dispatch
     a flat entry list on `kind` -- render both without knowing they share a
     model.
+
+    Deliberately carries NO raw source rows. It used to, and `entry.rows[0]`
+    was how both renderers recovered a `provider_id` to price with -- which is
+    precisely how one provider's prices came to be converted with another's
+    factors once two providers merged into one block. Provider identity is the
+    grouping key now and is known to the caller; an entry that cannot offer a
+    "just look at the first row" shortcut cannot be misused as one again.
     """
 
     model_id: str
     display_name: str
     kind: str
-    rows: list[dict[str, Any]]
     display: _FieldDisplayPlan | None  # None for added/removed models
 
 
@@ -866,7 +872,7 @@ def _plan_changes_report_provider(
         # Within them, recorded order is kept: added-then-removed is not the
         # same story as removed-then-added.
         for row in presence_rows:
-            entries.append(_PlannedChangeEntry(model_id, display_name, row["change_kind"], [row], None))
+            entries.append(_PlannedChangeEntry(model_id, display_name, row["change_kind"], None))
         field_changes = _field_changes_from_change_rows(field_rows)
         if not field_changes:
             continue
@@ -875,7 +881,7 @@ def _plan_changes_report_provider(
         planned_displays.append((model_id, plan))
         if not _renders_anything(plan):
             continue
-        entries.append(_PlannedChangeEntry(model_id, display_name, "changed", field_rows, plan))
+        entries.append(_PlannedChangeEntry(model_id, display_name, "changed", plan))
     return _ChangesProviderPlan(tuple(entries), _collect_hidden_rollups(planned_displays))
 
 
@@ -1216,6 +1222,35 @@ def render_healthcheck_report(*, format_name: str, checks: list[dict[str, Any]])
     return "\n".join(f"{check['status'].upper():7} {check['check']}: {check['detail']}" for check in checks)
 
 
+def _changes_provider_display_labels(changes: tuple[dict[str, Any], ...]) -> dict[str, str]:
+    """Map each `provider_id` in the report to the heading text it renders under.
+
+    Grouping is by identity, so two providers sharing a label now render as two
+    adjacent sections. Two adjacent sections spelled identically are worse than
+    useless, so when a label is claimed by more than one `provider_id` anywhere
+    in the report, every section using it is disambiguated as
+    `Label (provider_id)` -- the same form the scan report already uses for its
+    provider headings (`_render_scan_html`, and the text report's provider
+    line). A label claimed by exactly one provider renders bare, unchanged.
+
+    The map is built once over all `changes`, not per date, so a provider is
+    spelled the same way on every date it appears on.
+
+    First label wins per `provider_id`: a provider renamed between two recorded
+    scans is one provider with one heading, not two.
+    """
+    labels: dict[str, str] = {}
+    for change in changes:
+        labels.setdefault(change.get("provider_id", ""), change.get("provider_label", ""))
+    claimants: dict[str, int] = defaultdict(int)
+    for label in labels.values():
+        claimants[label] += 1
+    return {
+        pid: (f"{label} ({pid})" if claimants[label] > 1 else label)
+        for pid, label in labels.items()
+    }
+
+
 def render_changes_report(
     *,
     format_name: str,
@@ -1249,17 +1284,33 @@ def render_changes_report(
         scope = f"provider {provider_id}" if provider_id else "all providers"
         return f"No changes found for {scope} {period}."
 
-    # Group by detected_at date, then provider, then model
+    # Group by detected_at date, then provider IDENTITY, then model.
+    #
+    # The grouping key is `provider_id`, never `provider_label`. Labels are
+    # user-authored display text and nothing constrains two providers from
+    # sharing one, but provider identity is first-class here: OpenRouter and
+    # Abacus.AI are tracked independently even when they expose the same
+    # upstream model id. Keying on the label merged two distinct providers into
+    # one section, and where both listed the same `provider_model_id` it merged
+    # their rows into one list -- after which `rows[0]` alone decided the
+    # display name and, worse, the price multiplier/divisor applied to every
+    # row in it. One provider's prices were converted with the other's
+    # conversion factors, silently and with no error. See
+    # `_changes_provider_display_labels` for how the label is put back for
+    # display only.
     by_date: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = OrderedDict()
     for change in changes:
         date_str = to_local_human(change["detected_at"]).split(" ")[0] if change["detected_at"] else "unknown"
-        provider = change["provider_label"]
+        provider = change.get("provider_id", "")
         model = change["provider_model_id"]
         by_date.setdefault(date_str, OrderedDict()).setdefault(provider, OrderedDict()).setdefault(model, []).append(change)
+
+    display_labels = _changes_provider_display_labels(changes)
 
     if format_name == "html":
         return _render_changes_html(
             by_date=by_date,
+            display_labels=display_labels,
             provider_id=provider_id,
             since=since,
             until=until,
@@ -1289,11 +1340,15 @@ def render_changes_report(
         # Build every provider block first: a date heading and its rule are
         # emitted only if something survives beneath them.
         date_lines: list[str] = []
-        for provider_label, models in providers.items():
+        for group_provider_id, models in providers.items():
             plan = _plan_changes_report_provider(models, detail_policy)
             if plan.renders_nothing:
                 continue
-            date_lines.append(f"    {provider_label}")
+            date_lines.append(f"    {display_labels.get(group_provider_id, group_provider_id)}")
+            # Conversion factors come from the group key, i.e. from the provider
+            # whose rows these are -- not from `rows[0]`, which only happened to
+            # agree while the grouping key was the label.
+            pm, pd = (provider_pricing or {}).get(group_provider_id, (1, 1))
             for entry in plan.entries:
                 if entry.kind == "added":
                     date_lines.append(f"      + {entry.model_id} ({entry.display_name})")
@@ -1303,10 +1358,6 @@ def render_changes_report(
                     continue
                 assert entry.display is not None  # `changed` entries always carry a plan
                 date_lines.append(f"      * {entry.model_id} ({entry.display_name})")
-                pm, pd = 1, 1
-                if provider_pricing:
-                    pid = entry.rows[0].get("provider_id", "")
-                    pm, pd = provider_pricing.get(pid, (1, 1))
                 grouped = _group_field_changes_for_detail(entry.display.visible, detail_policy)
                 for category, fcs in grouped:
                     if len(grouped) > 1 or category == "Unclassified":
@@ -2762,6 +2813,7 @@ def _render_scan_html(
 def _render_changes_html(
     *,
     by_date: dict[str, dict[str, dict[str, list[dict[str, Any]]]]],
+    display_labels: dict[str, str],
     provider_id: str | None,
     since: str | None,
     until: str | None,
@@ -2788,10 +2840,14 @@ def _render_changes_html(
         # Provider blocks are built before the date heading is committed, so a
         # date whose every model was suppressed emits no section at all.
         provider_parts: list[str] = []
-        for provider_label, models in providers.items():
+        for group_provider_id, models in providers.items():
             provider_plan = _plan_changes_report_provider(models, detail_policy)
             if provider_plan.renders_nothing:
                 continue
+            provider_label = display_labels.get(group_provider_id, group_provider_id)
+            # From the group key, so a provider's own conversion factors are the
+            # ones its prices are rendered with -- see `render_changes_report`.
+            pm, pd = (provider_pricing or {}).get(group_provider_id, (1, 1))
             parts: list[str] = [f'<h3>{h(provider_label)}</h3>']
             added_models = []
             removed_models = []
@@ -2827,10 +2883,6 @@ def _render_changes_html(
                 model_id, display_name = entry.model_id, entry.display_name
                 plan = entry.display
                 assert plan is not None  # `changed` entries always carry a plan
-                pm, pd = 1, 1
-                if provider_pricing:
-                    pid = entry.rows[0].get("provider_id", "")
-                    pm, pd = provider_pricing.get(pid, (1, 1))
 
                 # Model change card
                 parts.append('<div class="model-card">')
