@@ -25,21 +25,27 @@ from model_sentinel.change_render import (
     KNOWN_BOOLEAN_FIELDS,
     RenderedChange,
     _bool_state,
+    _both_numeric,
     _classify_boolean,
+    _fmt_int,
+    _fmt_price_per_m,
     _is_boolean_change,
+    _is_count_field,
+    _normalize_price,
+    _pct_change,
     classify_change,
 )
 from model_sentinel.models import FieldChange
+
+# Still re-exported from reporting.py because non-renderer call sites there
+# (category grouping, _price_movement_kind) call them directly. The six other
+# primitives that moved to change_render.py lost their reporting.py call sites
+# when Task 3 rewired the renderers onto RenderedChange, so their transitional
+# re-export shims were dropped and they are imported above from their real home.
 from model_sentinel.reporting import (
-    _both_numeric,
     _classify_field,
-    _fmt_int,
-    _fmt_price_per_m,
-    _is_count_field,
     _is_price_amount_field,
-    _normalize_price,
     _numeric_value,
-    _pct_change,
 )
 
 
@@ -478,15 +484,28 @@ def test_label_and_qualifier_are_not_yet_populated_from_a_registry():
 
 
 # ---------------------------------------------------------------------------
-# Re-export shims: existing reporting.py call sites keep working unchanged.
+# Shared primitives: still correct wherever they are imported from.
 # ---------------------------------------------------------------------------
 
 
-def test_reporting_module_reexports_shared_primitives():
+def test_reporting_module_reexports_still_used_primitives():
+    """The three primitives reporting.py still calls stay importable from it.
+
+    Task 3 rewired reporting.py's renderers onto RenderedChange, which removed
+    every reporting.py call site for the other six primitives; their
+    transitional re-export shims were dropped rather than kept as unused
+    imports. These three are still called there (by the category grouping
+    helpers and _price_movement_kind), so they remain importable from
+    reporting.py for external call sites that predate the move.
+    """
     assert _classify_field("pricing.prompt") == "Pricing"
-    assert _both_numeric(1, 2) is True
     assert _numeric_value("3.5") == 3.5
     assert _is_price_amount_field("pricing.prompt") is True
+
+
+def test_shared_primitives_behave_the_same_in_change_render():
+    """The six primitives no longer re-exported keep their exact behavior."""
+    assert _both_numeric(1, 2) is True
     assert _is_count_field("context_length") is True
     assert _fmt_int(1024.0) == "1,024"
     assert _pct_change(10, 20) == "↑ 100.0%"

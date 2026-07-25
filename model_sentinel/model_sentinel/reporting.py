@@ -7,24 +7,27 @@ from collections import OrderedDict, defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
-# Deliberate compatibility re-export: these primitives moved to change_render.py
-# (see that module's docstring) but stay importable from here -- both because
-# this file still calls all nine of them directly today, and so existing
-# external call sites (e.g. tests importing from reporting.py before the move)
-# keep working unchanged. Once Task 3 wires change_render.py into the
-# renderers and these in-file call sites are replaced, a linter will see these
-# as unused imports; the `# noqa: F401` on each keeps that from being flagged
-# for deletion -- they are still needed as intentional compatibility shims.
+# Renderers in this module are pure formatters over `RenderedChange`: they call
+# `classify_change` once per field change and format the result, instead of
+# re-deriving price/count/numeric/list classification per output format.
+#
+# `_classify_field`, `_is_price_amount_field`, and `_numeric_value` are still
+# called directly here -- by the category grouping helpers and by
+# `_price_movement_kind`, neither of which is a per-field renderer -- so they
+# stay imported (and therefore re-exported for external call sites that
+# imported them from reporting.py before the move to change_render.py). The
+# six other primitives that moved (`_both_numeric`, `_fmt_int`,
+# `_fmt_price_per_m`, `_is_count_field`, `_normalize_price`, `_pct_change`)
+# had no remaining call site here once the renderers were rewired, so their
+# transitional re-export shims were dropped; import those from
+# `model_sentinel.change_render` directly.
 from .change_render import (
-    _both_numeric,  # noqa: F401
-    _classify_field,  # noqa: F401
-    _fmt_int,  # noqa: F401
-    _fmt_price_per_m,  # noqa: F401
-    _is_count_field,  # noqa: F401
-    _is_price_amount_field,  # noqa: F401
-    _normalize_price,  # noqa: F401
-    _numeric_value,  # noqa: F401
-    _pct_change,  # noqa: F401
+    RenderedChange,
+    _classify_field,
+    _is_price_amount_field,
+    _numeric_value,
+    _scalar_display,
+    classify_change,
 )
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
 from .time_utils import to_local_human, to_local_iso
@@ -1173,94 +1176,93 @@ def _collect_price_movement_summary(
     return _PriceMovementSummary(tuple(models))
 
 
+def _is_one_sided(rendered: RenderedChange) -> bool:
+    """Whether only one side of a price/count change carries a value.
+
+    `classify_change` records that as `direction="added"`/`"removed"`; the
+    two-sided forms always use `up`/`down`/`none`.
+    """
+    return rendered.direction in ("added", "removed")
+
+
 def _render_smart_change_text(fc: FieldChange, price_multiplier: int = 1, price_divisor: int = 1) -> str:
-    # List diff (supported_parameters)
-    if isinstance(fc.old_value, list) and isinstance(fc.new_value, list):
-        return _render_list_diff_text(fc)
-
-    old_numeric = _numeric_value(fc.old_value)
-    new_numeric = _numeric_value(fc.new_value)
-
-    # Pricing additions/removals still need normalized per-1M display even
-    # though only one side of the change is numeric.
-    if (
-        _is_price_amount_field(fc.field_name)
-        and (old_numeric is not None or new_numeric is not None)
-        and (fc.old_value is None or old_numeric is not None)
-        and (fc.new_value is None or new_numeric is not None)
-    ):
-        if old_numeric is not None and new_numeric is not None:
-            norm_old = _normalize_price(old_numeric, price_multiplier, price_divisor)
-            norm_new = _normalize_price(new_numeric, price_multiplier, price_divisor)
-            pct = _pct_change(old_numeric, new_numeric)
-            price_hint = f"{_fmt_price_per_m(norm_old)} \u2192 {_fmt_price_per_m(norm_new)} / 1M"
-            suffix = f", {pct}" if pct else ""
-            return f"{fc.field_name}: {fc.old_value} \u2192 {fc.new_value} ({price_hint}{suffix})"
-        old_hint = (
-            f"{fc.old_value} ({_fmt_price_per_m(_normalize_price(old_numeric, price_multiplier, price_divisor))} / 1M)"
-            if old_numeric is not None
-            else "null"
-        )
-        new_hint = (
-            f"{fc.new_value} ({_fmt_price_per_m(_normalize_price(new_numeric, price_multiplier, price_divisor))} / 1M)"
-            if new_numeric is not None
-            else "null"
-        )
-        return f"{fc.field_name}: {old_hint} \u2192 {new_hint}"
-
-    if (
-        _is_count_field(fc.field_name)
-        and (old_numeric is not None or new_numeric is not None)
-        and (fc.old_value is None or old_numeric is not None)
-        and (fc.new_value is None or new_numeric is not None)
-        and (old_numeric is None or new_numeric is None)
-    ):
-        old_text = _fmt_int(old_numeric) if old_numeric is not None else "null"
-        new_text = _fmt_int(new_numeric) if new_numeric is not None else "null"
-        return f"{fc.field_name}: {old_text} \u2192 {new_text}"
-
-    # Numeric fields with delta and percentage
-    if _both_numeric(fc.old_value, fc.new_value):
-        old_f = float(fc.old_value)
-        new_f = float(fc.new_value)
-        delta = new_f - old_f
-
-        # Context and other integers: show formatted with delta
-        pct = _pct_change(old_f, new_f)
-        sign = "+" if delta > 0 else ""  # negative sign is automatic
-        delta_str = f"{sign}{_fmt_int(delta)}"
-        return f"{fc.field_name}: {_fmt_int(old_f)} \u2192 {_fmt_int(new_f)} ({delta_str}, {pct})" if pct else \
-            f"{fc.field_name}: {_fmt_int(old_f)} \u2192 {_fmt_int(new_f)} ({delta_str})"
-
-    # Boolean toggle
-    if isinstance(fc.old_value, bool) and isinstance(fc.new_value, bool):
-        old_sym = "\u2713" if fc.old_value else "\u2717"
-        new_sym = "\u2713" if fc.new_value else "\u2717"
-        return f"{fc.field_name}: {old_sym} \u2192 {new_sym}"
-
-    # Generic fallback
-    return f"{fc.field_name}: {_render_value(fc.old_value)} \u2192 {_render_value(fc.new_value)}"
+    return _render_change_text(
+        classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
+    )
 
 
-def _render_list_diff_text(fc: FieldChange) -> str:
-    old_set = set(str(x) for x in fc.old_value) if isinstance(fc.old_value, list) else set()
-    new_set = set(str(x) for x in fc.new_value) if isinstance(fc.new_value, list) else set()
-    added = sorted(new_set - old_set)
-    removed = sorted(old_set - new_set)
-    old_count = len(fc.old_value) if isinstance(fc.old_value, list) else 0
-    new_count = len(fc.new_value) if isinstance(fc.new_value, list) else 0
+def _render_change_text(rendered: RenderedChange) -> str:
+    """Format a classified change as one plain-text line.
+
+    Pure formatter: every classification decision was already made by
+    `classify_change`. `noop` entries are NOT suppressed here -- suppression
+    is a later, deliberate change with its own golden updates.
+    """
+    if rendered.kind == "list":
+        return _render_list_diff_text(rendered)
+
+    if rendered.kind == "price":
+        if _is_one_sided(rendered):
+            # `old_raw is None` <=> that side was absent; the price guard in
+            # classify_change rejects a present-but-non-numeric side, so the
+            # two conditions cannot come apart here.
+            old_hint = "null" if rendered.old_raw is None else f"{rendered.old_raw} ({rendered.old_display} / 1M)"
+            new_hint = "null" if rendered.new_raw is None else f"{rendered.new_raw} ({rendered.new_display} / 1M)"
+            return f"{rendered.label}: {old_hint} \u2192 {new_hint}"
+        price_hint = f"{rendered.old_display} \u2192 {rendered.new_display} / 1M"
+        suffix = f", {rendered.pct_display}" if rendered.pct_display else ""
+        return f"{rendered.label}: {rendered.old_raw} \u2192 {rendered.new_raw} ({price_hint}{suffix})"
+
+    if rendered.kind in ("count", "numeric"):
+        # A two-sided `count` is rendered EXACTLY like `numeric` -- same
+        # `(+delta, pct)` suffix and no `tok` unit. classify_change routes
+        # two-sided count fields (e.g. context_length) to `count` where the
+        # renderer this replaced routed them to its numeric branch; see the
+        # count guard comment in change_render.py. Emitting `unit` here, or
+        # giving `count` its own suffix, would silently change output.
+        if _is_one_sided(rendered):
+            return f"{rendered.label}: {rendered.old_display} \u2192 {rendered.new_display}"
+        body = f"{rendered.label}: {rendered.old_display} \u2192 {rendered.new_display}"
+        if rendered.pct_display:
+            return f"{body} ({rendered.delta_display}, {rendered.pct_display})"
+        return f"{body} ({rendered.delta_display})"
+
+    if rendered.kind == "boolean":
+        old_sym = "\u2713" if rendered.old_display == "on" else "\u2717"
+        new_sym = "\u2713" if rendered.new_display == "on" else "\u2717"
+        return f"{rendered.label}: {old_sym} \u2192 {new_sym}"
+
+    # scalar and noop share the generic form. `old_display`/`new_display` are
+    # produced by change_render._scalar_display, which matches _render_value.
+    return f"{rendered.label}: {rendered.old_display} \u2192 {rendered.new_display}"
+
+
+def _render_list_diff_text(rendered: RenderedChange) -> str:
     parts = []
-    if added:
-        parts.append(", ".join(f"+{item}" for item in added))
-    if removed:
-        parts.append(", ".join(f"-{item}" for item in removed))
-    count_str = f"({old_count} \u2192 {new_count})"
+    if rendered.list_added:
+        parts.append(", ".join(f"+{item}" for item in rendered.list_added))
+    if rendered.list_removed:
+        parts.append(", ".join(f"-{item}" for item in rendered.list_removed))
+    # old_display/new_display carry the raw member counts for `list` changes.
+    count_str = f"({rendered.old_display} \u2192 {rendered.new_display})"
     if parts:
-        return f"{fc.field_name}: {'; '.join(parts)} {count_str}"
-    return f"{fc.field_name}: {count_str}"
+        return f"{rendered.label}: {'; '.join(parts)} {count_str}"
+    return f"{rendered.label}: {count_str}"
 
 
 def _render_bulk_list_diff_text(fc: FieldChange) -> str:
+    """Format a bulk-grouped list membership change.
+
+    NOT routed through `RenderedChange.list_added`/`list_removed`, unlike the
+    per-model list renderers. Bulk grouping keys models by
+    `_list_change_signature`, which stringifies members through
+    `_list_item_text` (JSON for dict/list members); `classify_change`'s list
+    branch uses plain `str(x)`. For a list of dicts the two disagree
+    (`{"a": 1}` vs `{'a': 1}`), so switching here would change output for
+    bulk groups over structured lists. The group card must also keep showing
+    the exact membership its grouping key was computed from. Reconciling the
+    two stringifications is a separate, deliberate change.
+    """
     field_name, added, removed = _list_change_signature(fc)
     operations = [*(f"+{item}" for item in added), *(f"-{item}" for item in removed)]
     return f"{field_name}: {'; '.join(operations) if operations else 'membership changed'}"
@@ -2005,9 +2007,14 @@ def _build_summary_entries_from_fc(
     """Build summary entry tuples for field-changed models."""
     entries = []
     for fc in field_changes:
-        category = _classify_field(fc.field_name)
-        change_desc = _render_smart_change_text(fc, price_multiplier, price_divisor).split(": ", 1)
-        field_part = change_desc[0] if len(change_desc) > 1 else fc.field_name
+        rendered = classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
+        category = _classify_field(rendered.field_path)
+        # Split the already-formatted line rather than assuming the label never
+        # contains ": " -- dynamic paths such as
+        # `pricing.overrides[min_prompt_tokens=200000].completion` are built
+        # from provider payload values.
+        change_desc = _render_change_text(rendered).split(": ", 1)
+        field_part = change_desc[0] if len(change_desc) > 1 else rendered.label
         detail_part = change_desc[1] if len(change_desc) > 1 else change_desc[0]
         entries.append(_SummaryEntry(category, provider_label, model_id, field_part, detail_part))
     return entries
@@ -2140,8 +2147,12 @@ def _append_html_field_changes(
     price_divisor: int,
 ) -> None:
     """Append HTML for a group of field changes (table rows + list diffs) to parts."""
-    list_changes = [fc for fc in field_changes if isinstance(fc.old_value, list) and isinstance(fc.new_value, list)]
-    table_changes = [fc for fc in field_changes if fc not in list_changes]
+    rendered_changes = [
+        classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
+        for fc in field_changes
+    ]
+    list_changes = [rendered for rendered in rendered_changes if rendered.kind == "list"]
+    table_changes = [rendered for rendered in rendered_changes if rendered.kind != "list"]
 
     if table_changes:
         parts.append(
@@ -2149,12 +2160,12 @@ def _append_html_field_changes(
             '<th>Field</th><th>Old</th><th>New</th><th>Change</th>'
             '</tr></thead><tbody>'
         )
-        for fc in table_changes:
-            parts.append(_render_html_table_row(fc, price_multiplier, price_divisor))
+        for rendered in table_changes:
+            parts.append(_render_html_table_row(rendered))
         parts.append('</tbody></table>')
 
-    for fc in list_changes:
-        parts.append(_render_html_list_diff(fc))
+    for rendered in list_changes:
+        parts.append(_render_html_list_diff(rendered))
 
 
 _PRICE_MOVEMENT_BUCKETS = (
@@ -2547,124 +2558,110 @@ def _render_changes_html(
 # ---------------------------------------------------------------------------
 
 
-def _render_html_table_row(fc: FieldChange, price_multiplier: int = 1, price_divisor: int = 1) -> str:
-    h = html_module.escape
-
-    old_numeric = _numeric_value(fc.old_value)
-    new_numeric = _numeric_value(fc.new_value)
-    if (
-        _is_price_amount_field(fc.field_name)
-        and (old_numeric is not None or new_numeric is not None)
-        and (fc.old_value is None or old_numeric is not None)
-        and (fc.new_value is None or new_numeric is not None)
-    ):
-        old_str = (
-            h(f"{fc.old_value} ({_fmt_price_per_m(_normalize_price(old_numeric, price_multiplier, price_divisor))} / 1M)")
-            if old_numeric is not None
-            else "null"
-        )
-        new_str = (
-            h(f"{fc.new_value} ({_fmt_price_per_m(_normalize_price(new_numeric, price_multiplier, price_divisor))} / 1M)")
-            if new_numeric is not None
-            else "null"
-        )
-        if old_numeric is None:
-            delta_cls, delta_text = "delta-price-coverage", "added"
-        elif new_numeric is None:
-            delta_cls, delta_text = "delta-price-coverage", "removed"
-        elif new_numeric > old_numeric:
-            delta_cls = "delta-price-higher"
-            delta_text = _pct_change(old_numeric, new_numeric)
-        elif new_numeric < old_numeric:
-            delta_cls = "delta-price-lower"
-            delta_text = _pct_change(old_numeric, new_numeric)
-        else:
-            delta_cls, delta_text = "delta-neutral", "\u2014"
-        return (
-            f'<tr><td class="field-name">{h(fc.field_name)}</td>'
-            f'<td class="old-val">{old_str}</td>'
-            f'<td class="new-val">{new_str}</td>'
-            f'<td class="change-delta {delta_cls}">{h(delta_text)}</td></tr>'
-        )
-
-    if (
-        _is_count_field(fc.field_name)
-        and (old_numeric is not None or new_numeric is not None)
-        and (fc.old_value is None or old_numeric is not None)
-        and (fc.new_value is None or new_numeric is not None)
-        and (old_numeric is None or new_numeric is None)
-    ):
-        old_str = h(_fmt_int(old_numeric)) if old_numeric is not None else "null"
-        new_str = h(_fmt_int(new_numeric)) if new_numeric is not None else "null"
-        if old_numeric is None:
-            delta_cls, delta_text = "delta-increase", "added"
-        else:
-            delta_cls, delta_text = "delta-decrease", "removed"
-        return (
-            f'<tr><td class="field-name">{h(fc.field_name)}</td>'
-            f'<td class="old-val">{old_str}</td>'
-            f'<td class="new-val">{new_str}</td>'
-            f'<td class="change-delta {delta_cls}">{delta_text}</td></tr>'
-        )
-
-    if _both_numeric(fc.old_value, fc.new_value):
-        old_f = float(fc.old_value)
-        new_f = float(fc.new_value)
-        pct = _pct_change(old_f, new_f)
-        if old_f != 0:
-            delta_cls = "delta-decrease" if new_f < old_f else "delta-increase"
-        else:
-            delta_cls = "delta-neutral"
-
-        old_str = h(_fmt_int(old_f))
-        new_str = h(_fmt_int(new_f))
-
-        return (
-            f'<tr><td class="field-name">{h(fc.field_name)}</td>'
-            f'<td class="old-val">{old_str}</td>'
-            f'<td class="new-val">{new_str}</td>'
-            f'<td class="change-delta {delta_cls}">{h(pct)}</td></tr>'
-        )
-
-    if isinstance(fc.old_value, bool) and isinstance(fc.new_value, bool):
-        old_sym = "\u2713" if fc.old_value else "\u2717"
-        new_sym = "\u2713" if fc.new_value else "\u2717"
-        delta_cls = "delta-increase" if fc.new_value else "delta-decrease"
-        return (
-            f'<tr><td class="field-name">{h(fc.field_name)}</td>'
-            f'<td class="old-val">{old_sym}</td>'
-            f'<td class="new-val">{new_sym}</td>'
-            f'<td class="change-delta {delta_cls}">{"\u2713" if fc.new_value else "\u2717"}</td></tr>'
-        )
-
+def _html_change_row(*, label: str, old_cell: str, new_cell: str, delta_cls: str, delta_cell: str) -> str:
+    """Assemble one four-column change row. Cells arrive already escaped."""
     return (
-        f'<tr><td class="field-name">{h(fc.field_name)}</td>'
-        f'<td class="old-val">{h(_render_value(fc.old_value))}</td>'
-        f'<td class="new-val">{h(_render_value(fc.new_value))}</td>'
-        f'<td class="change-delta delta-neutral">\u2014</td></tr>'
+        f'<tr><td class="field-name">{html_module.escape(label)}</td>'
+        f'<td class="old-val">{old_cell}</td>'
+        f'<td class="new-val">{new_cell}</td>'
+        f'<td class="change-delta {delta_cls}">{delta_cell}</td></tr>'
     )
 
 
-def _render_html_list_diff(fc: FieldChange) -> str:
-    h = html_module.escape
-    old_set = set(str(x) for x in fc.old_value) if isinstance(fc.old_value, list) else set()
-    new_set = set(str(x) for x in fc.new_value) if isinstance(fc.new_value, list) else set()
-    added = sorted(new_set - old_set)
-    removed = sorted(old_set - new_set)
-    old_count = len(fc.old_value) if isinstance(fc.old_value, list) else 0
-    new_count = len(fc.new_value) if isinstance(fc.new_value, list) else 0
+def _render_html_table_row(rendered: RenderedChange) -> str:
+    """Format a classified change as one `<tr>` of the four-column change table.
 
-    parts = [f'<div class="list-diff">']
-    parts.append(f'<span class="field-name">{h(fc.field_name)}</span> ')
-    parts.append(f'<span class="list-count">({old_count} \u2192 {new_count})</span>')
-    if added:
+    Pure formatter, mirroring `_render_change_text` branch for branch. `noop`
+    entries are NOT suppressed here.
+    """
+    h = html_module.escape
+
+    if rendered.kind == "price":
+        old_str = "null" if rendered.old_raw is None else h(f"{rendered.old_raw} ({rendered.old_display} / 1M)")
+        new_str = "null" if rendered.new_raw is None else h(f"{rendered.new_raw} ({rendered.new_display} / 1M)")
+        if rendered.direction == "added":
+            delta_cls, delta_text = "delta-price-coverage", "added"
+        elif rendered.direction == "removed":
+            delta_cls, delta_text = "delta-price-coverage", "removed"
+        elif rendered.direction == "up":
+            delta_cls, delta_text = "delta-price-higher", rendered.pct_display or ""
+        elif rendered.direction == "down":
+            delta_cls, delta_text = "delta-price-lower", rendered.pct_display or ""
+        else:
+            delta_cls, delta_text = "delta-neutral", "\u2014"
+        return _html_change_row(
+            label=rendered.label,
+            old_cell=old_str,
+            new_cell=new_str,
+            delta_cls=delta_cls,
+            delta_cell=h(delta_text),
+        )
+
+    if rendered.kind == "count" and _is_one_sided(rendered):
+        delta_cls, delta_text = (
+            ("delta-increase", "added") if rendered.direction == "added" else ("delta-decrease", "removed")
+        )
+        return _html_change_row(
+            label=rendered.label,
+            old_cell=h(rendered.old_display),
+            new_cell=h(rendered.new_display),
+            delta_cls=delta_cls,
+            delta_cell=delta_text,
+        )
+
+    if rendered.kind == "numeric" or rendered.kind == "count":
+        # Two-sided `count` renders exactly like `numeric` -- see the matching
+        # note in _render_change_text and the count guard in change_render.py.
+        # `pct_display is None` <=> the old value was 0, which is the only case
+        # the percentage cell is blank and the delta reads as neutral.
+        if rendered.pct_display is None:
+            delta_cls = "delta-neutral"
+        elif rendered.direction == "down":
+            delta_cls = "delta-decrease"
+        else:
+            delta_cls = "delta-increase"
+        return _html_change_row(
+            label=rendered.label,
+            old_cell=h(rendered.old_display),
+            new_cell=h(rendered.new_display),
+            delta_cls=delta_cls,
+            delta_cell=h(rendered.pct_display or ""),
+        )
+
+    if rendered.kind == "boolean":
+        old_sym = "\u2713" if rendered.old_display == "on" else "\u2717"
+        new_sym = "\u2713" if rendered.new_display == "on" else "\u2717"
+        return _html_change_row(
+            label=rendered.label,
+            old_cell=old_sym,
+            new_cell=new_sym,
+            delta_cls="delta-increase" if rendered.direction == "up" else "delta-decrease",
+            delta_cell=new_sym,
+        )
+
+    return _html_change_row(
+        label=rendered.label,
+        old_cell=h(rendered.old_display),
+        new_cell=h(rendered.new_display),
+        delta_cls="delta-neutral",
+        delta_cell="\u2014",
+    )
+
+
+def _render_html_list_diff(rendered: RenderedChange) -> str:
+    h = html_module.escape
+    parts = ['<div class="list-diff">']
+    parts.append(f'<span class="field-name">{h(rendered.label)}</span> ')
+    # old_display/new_display carry the raw member counts for `list` changes.
+    parts.append(f'<span class="list-count">({rendered.old_display} \u2192 {rendered.new_display})</span>')
+    if rendered.list_added:
         parts.append('<div class="list-added">')
-        for item in added:
+        for item in rendered.list_added:
             parts.append(f'&nbsp;&nbsp;+ {h(item)}')
         parts.append('</div>')
-    if removed:
+    if rendered.list_removed:
         parts.append('<div class="list-removed">')
-        for item in removed:
+        for item in rendered.list_removed:
             parts.append(f'&nbsp;&nbsp;\u2212 {h(item)}')
         parts.append('</div>')
     parts.append('</div>')
@@ -2672,6 +2669,8 @@ def _render_html_list_diff(fc: FieldChange) -> str:
 
 
 def _render_html_bulk_list_diff(fc: FieldChange) -> str:
+    # Reads _list_change_signature rather than RenderedChange for the same
+    # reason as _render_bulk_list_diff_text -- see that docstring.
     h = html_module.escape
     field_name, added, removed = _list_change_signature(fc)
     parts = [f'<div class="list-diff"><span class="field-name">{h(field_name)}</span>']
@@ -2694,12 +2693,13 @@ def _render_html_bulk_list_diff(fc: FieldChange) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _render_value(value: Any) -> str:
-    if value is None:
-        return "null"
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, sort_keys=True, ensure_ascii=True)
-    return str(value)
+# `_render_value` was a byte-identical copy of change_render._scalar_display.
+# Keeping two bodies made silent drift between them a neutrality hazard: the
+# rewired renderers emit RenderedChange.old_display/new_display for scalar and
+# noop changes, and those are produced by _scalar_display, so the two MUST
+# agree. Aliasing collapses them to one implementation instead of a convention.
+# The name stays for the history-report and pricing-override-path call sites.
+_render_value = _scalar_display
 
 
 def _group_models_by_prefix(models: tuple[dict[str, Any], ...]) -> list[tuple[str | None, list[dict[str, Any]]]]:
