@@ -58,6 +58,19 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   `test_sub_cent_precision_reaches_every_human_format` and its JSON
   counterpart carry their own single-model fixture below.
 
+* Task 6 fix pass 1 gave the four-place cap an escape hatch (a row whose two
+  operands are numerically different but render as ONE string extends past the
+  cap until they differ) and, again, changed NOT ONE golden in this module --
+  for the same reason: the shared fixture's prices all resolve at two places,
+  which is below the cap, so neither the cap nor its hatch is reachable from
+  them. `test_price_escape_hatch_reaches_every_human_format_but_not_json`
+  carries its own fixture below. The same pass also disclosed a SECOND
+  behaviour-change class from Task 6 that had gone unrecorded: prices >= $1
+  with three or four significant decimals now render those decimals
+  (`$12.345`, not the old rule's `$12.35`). That class is likewise invisible
+  here -- `$2.00`, `$4.00` and `$5.00` have no decimals to keep -- and is
+  pinned in `test_change_render.py`.
+
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
 
@@ -1663,10 +1676,16 @@ def test_sub_cent_precision_reaches_every_human_format() -> None:
         )
         assert "$0.1500" in report, format_name
         assert "$0.1425" in report, format_name
-        # The replaced rule's spelling of the same pair: three places against
+        # The replaced rule's spelling of the same pair: two places against
         # four. Absent from every format, or the row is still magnitude-priced.
         assert "$0.15 " not in report, format_name
-        assert "$0.196" not in report, format_name
+        # ...and absent in EVERY delimiter, not just the space-delimited one.
+        # `$0.1500` contains `$0.15`, so equal counts means every occurrence of
+        # `$0.15` is the head of a `$0.1500` and none is a bare two-place
+        # price. (The previous line's `"$0.196" not in report` was vacuous:
+        # this fixture's operands are 0.15 and 0.1425, so no implementation
+        # could ever emit 0.196.)
+        assert report.count("$0.15") == report.count("$0.1500"), format_name
 
 
 def test_sub_cent_precision_does_not_reach_json() -> None:
@@ -1686,6 +1705,78 @@ def test_sub_cent_precision_does_not_reach_json() -> None:
     assert "$" not in report
     assert "1.5e-07" in report
     assert "1.425e-07" in report
+
+
+def _escape_hatch_price_scan_result() -> list[ProviderScanResult]:
+    """A provider configured as if its raw prices were already per-1M.
+
+    `price_multiplier=1` is the misconfiguration the escape hatch exists for:
+    per-TOKEN values land unscaled in a per-1M column, where the four-place cap
+    would render both sides of a doubling as `$0.0000`. Separate fixture for
+    the same reason as `_sub_cent_price_scan_result` -- adding a field to the
+    shared fixture would move the JSON goldens.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-unscaled",
+                    "Synth Model Unscaled",
+                    (FieldChange("pricing.prompt", 0.000001, 0.000002),),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_price_escape_hatch_reaches_every_human_format_but_not_json() -> None:
+    """The hatch is a property of `RenderedChange`, so every renderer gets it.
+
+    Text and markdown are the reason the hatch had to exist at all: the design
+    note that "the tooltip will carry exactness" is an HTML-only mitigation,
+    unavailable in the two formats a scheduled run actually mails out. All
+    three human formats must therefore show the movement themselves, and none
+    may still print the capped `$0.0000` for either operand.
+
+    JSON is asserted unchanged in the same test rather than a separate one, so
+    the human-format expectation and the audit-path expectation cannot drift.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_escape_hatch_price_scan_result(),
+        )
+        assert "$0.000001" in report, format_name
+        assert "$0.000002" in report, format_name
+        # The capped spelling the hatch replaces. `$0.000001` does not contain
+        # `$0.0000 ` (the next char is a digit), so this cannot pass by prefix.
+        assert "$0.0000 " not in report, format_name
+
+    payload = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_escape_hatch_price_scan_result(),
+    )
+    assert "$" not in payload
+    assert "1e-06" in payload
+    assert "2e-06" in payload
 
 
 def test_characterization_text() -> None:

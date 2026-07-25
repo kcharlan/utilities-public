@@ -490,11 +490,30 @@ def _pct_change(old: float, new: float) -> str:
 #
 # Every price in a row renders at ONE precision, between these two bounds. The
 # floor is cents because that is the granularity a reader prices in; the
-# ceiling is the design's open assumption #2 -- a value needing more renders at
-# four and relies on the raw value carried alongside it (`old_raw`/`new_raw`,
-# and the HTML tooltip a later task adds) for exactness.
+# ceiling keeps the normalized column narrow for the values it was sized for.
 PRICE_MIN_PRECISION = 2
 PRICE_MAX_PRECISION = 4
+
+# The cap's escape hatch: how far past PRICE_MAX_PRECISION a row may extend
+# when the cap would otherwise print one number twice.
+#
+# WHY THE HATCH EXISTS. Capping at four lets two numerically different operands
+# render as the SAME string -- `$0.0000 -> $0.0000` sitting beside `↑ 100.0%`,
+# two identical numbers contradicting a non-zero percentage. That is not merely
+# ugly. The likeliest route to it is an operator configuring a new provider
+# with the wrong PRICE_MULTIPLIER/PRICE_DIVISOR, whose visible tell used to be
+# an obviously wrong `$0.000001 -> $0.000002`. The cap hides the tell, and the
+# text and markdown reports have no tooltip to fall back on.
+#
+# WHY 20. The motivating misconfiguration renders per-TOKEN prices in a column
+# built for per-1M prices. Real per-token prices bottom out around 1e-9
+# ($0.001 per 1M), which separates at nine places; twenty leaves eleven orders
+# of magnitude of headroom while keeping the worst case a finite 20-place
+# column. A row that still cannot separate by then is not per-token pricing, it
+# is a pathological input -- and for it the hatch GIVES UP and returns the
+# ordinary cap, so the degenerate case degrades to today's `$0.0000` rather
+# than to a monstrous column of twenty zeroes.
+PRICE_COLLISION_MAX_PRECISION = 20
 
 # Absorbs the float error `_normalize_price` introduces, NOT a fudge factor.
 # `(raw * multiplier) / divisor` is inexact in binary: `5e-08 * 1_000_000` is
@@ -514,8 +533,12 @@ def _significant_decimals(value: float) -> int:
     that reproduces `value`, or PRICE_MAX_PRECISION when no precision in that
     range does -- which is what makes "capped at 4" mean "renders at 4" rather
     than "renders at whatever is left after rounding". A value of 0.000001
-    needs six places, so it renders `$0.0000`: visibly a value too small for
-    the column rather than a value that is not there.
+    needs six places, so on its own it renders `$0.0000`: visibly a value too
+    small for the column rather than a value that is not there.
+
+    The cap is the DEFAULT, not the last word. When a row's two operands land
+    here and collide into one string, `_price_precision` extends past it -- see
+    PRICE_COLLISION_MAX_PRECISION.
     """
     for places in range(PRICE_MIN_PRECISION, PRICE_MAX_PRECISION):
         if math.isclose(round(value, places), value, rel_tol=_PRICE_PRECISION_REL_TOL, abs_tol=0.0):
@@ -532,21 +555,73 @@ def _price_precision(*values: float) -> int:
     the defect this replaces, where `$0.196`, `$0.1876` and `$0.0196` could
     share a card with their decimal points in three different columns and the
     three numbers of one row could each claim a different precision.
+
+    The four-place cap is the default. It has ONE escape hatch: when the row's
+    operands are numerically different yet render as the same string at the
+    cap, the precision extends until they differ (see `_renders_alike` and
+    `_precision_that_separates`). The extended precision is still a single
+    precision for the whole row -- it is the same return value, so old, new and
+    delta share it exactly as they share the capped one.
     """
-    return max((_significant_decimals(value) for value in values), default=PRICE_MIN_PRECISION)
+    capped = max((_significant_decimals(value) for value in values), default=PRICE_MIN_PRECISION)
+    if capped != PRICE_MAX_PRECISION:
+        # Below the cap every operand is reproduced exactly by its own
+        # precision, so two of them cannot render alike without being equal.
+        # The hatch is unreachable here, and asking is cheaper than proving.
+        return capped
+    return _precision_that_separates(values, capped)
 
 
-def _fmt_price_per_m(value: float, precision: int | None = None) -> str:
-    """Format one normalized per-1M price.
+def _renders_alike(values: tuple[float, ...], precision: int) -> bool:
+    """True when two numerically different values format to the SAME string.
 
-    `precision` is the row's shared precision (see `_price_precision`). It is
-    optional only for the one-sided case, where there is a single operand and
-    no other value to agree with; a two-sided change must always pass one.
+    The trigger is the string collision itself, not a magnitude threshold: the
+    defect is "these two render identically but are not equal", and a magnitude
+    threshold would guess where that starts and fire on rows that read fine.
+
+    Compares `_fmt_price_per_m` output rather than raw `format()`, so `0` --
+    which short-circuits to `free` before precision is consulted -- is
+    correctly seen as DISTINCT from a tiny non-zero price. `free` beside
+    `$0.0000` is already two different strings and needs no hatch.
+    """
+    for index, first in enumerate(values):
+        for second in values[index + 1 :]:
+            if first == second:
+                continue
+            if _fmt_price_per_m(first, precision) == _fmt_price_per_m(second, precision):
+                return True
+    return False
+
+
+def _precision_that_separates(values: tuple[float, ...], capped: int) -> int:
+    """The cap, extended just far enough that no two operands collide.
+
+    Returns `capped` untouched unless the row actually collides there, so
+    normal-magnitude rows and the cap's intent are unaffected. When it does
+    collide, returns the FIRST precision that separates every pair -- one
+    precision, shared by old, new and delta exactly as at the cap. Bounded by
+    PRICE_COLLISION_MAX_PRECISION; on exhaustion returns the cap.
+    """
+    if not _renders_alike(values, capped):
+        return capped
+    for places in range(capped + 1, PRICE_COLLISION_MAX_PRECISION + 1):
+        if not _renders_alike(values, places):
+            return places
+    return capped
+
+
+def _fmt_price_per_m(value: float, precision: int) -> str:
+    """Format one normalized per-1M price at the row's shared precision.
+
+    `precision` is REQUIRED. It used to default to a value derived from this
+    one operand, which was correct only for the one-sided branches; any future
+    two-sided caller that forgot to pass the row's precision would silently
+    have reintroduced the desynchronised-precision defect. One-sided callers
+    pass `_price_precision(value)` explicitly instead, which says the same
+    thing at the call site where it is true.
     """
     if value == 0:
         return "free"
-    if precision is None:
-        precision = _price_precision(value)
     return f"${value:.{precision}f}"
 
 
@@ -844,13 +919,19 @@ def _classify_price(
             list_removed=(),
         )
 
+    # One-sided: a single operand, with no second value to agree with, so it
+    # prices itself. The precision is derived and passed EXPLICITLY rather than
+    # left to a default, so the only way to format a price is to have named its
+    # precision at the call site.
     if old_numeric is None:
         one_sided_direction: Literal["added", "removed"] = "added"
         old_display = "null"
-        new_display = _fmt_price_per_m(_normalize_price(new_numeric, price_multiplier, price_divisor))
+        norm_only = _normalize_price(new_numeric, price_multiplier, price_divisor)
+        new_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
     else:
         one_sided_direction = "removed"
-        old_display = _fmt_price_per_m(_normalize_price(old_numeric, price_multiplier, price_divisor))
+        norm_only = _normalize_price(old_numeric, price_multiplier, price_divisor)
+        old_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
         new_display = "null"
 
     return RenderedChange(

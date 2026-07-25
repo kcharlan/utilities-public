@@ -2356,13 +2356,15 @@ _SHARED_LABEL = "Shared Label"
 # per-1M convention. The same raw price renders six orders of magnitude apart,
 # so a crossover cannot hide inside rounding.
 #
-# TASK 6 CONSEQUENCE, stated because it weakens what provider B's own cells
-# show: under the operand-based precision rule prices are capped at four
-# decimal places, so B's `0.000001 -> 0.000002` renders `$0.0000 -> $0.0000`.
-# Its two cells no longer differ from EACH OTHER. They still differ from A's
-# `$1.00 -> $2.00`, which is the crossover this fixture exists to catch, and
-# the assertions below are counts of both spellings so the crossover still
-# fails them (it would make A's spelling appear twice and B's not at all).
+# B's own two cells discriminate as well, which is what makes this fixture
+# catch more than the one defect it was written for. Task 6's four-place cap
+# had briefly collapsed them to `$0.0000 -> $0.0000`: still enough to catch a
+# crossover (A's spelling would appear twice and B's not at all), but blind to
+# any OTHER misconfiguration of B that drives its prices below the cap -- a
+# wrong divisor on B would have rendered `$0.0000` and passed. The cap's
+# escape hatch restores `$0.000001 -> $0.000002`, so B's four assertions now
+# pin its exact multiplier/divisor RATIO: change either factor and the
+# rendered pair moves and the assertions fail.
 _SHARED_LABEL_PRICING = {"synthprov-a": (1000000, 1), "synthprov-b": (1, 1)}
 
 
@@ -2439,9 +2441,10 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     were rendered with provider A's multiplier and read as $1.00 -> $2.00
     instead of B's own conversion -- a millionfold error presented as fact.
 
-    Since Task 6, B's own conversion renders `$0.0000 -> $0.0000` (four-place
-    cap; see `_SHARED_LABEL_PRICING`). The raw values either side of the
-    parenthetical are what carry B's actual movement.
+    B's `1/1` conversion renders `$0.000001 -> $0.000002` -- an absurd-looking
+    pair for a per-1M column, which is exactly the point: that absurdity is the
+    visible tell of a mis-set PRICE_MULTIPLIER/PRICE_DIVISOR, and the price
+    cap's escape hatch exists so it is not rounded away into `$0.0000`.
     """
     text = _shared_label_report("text")
 
@@ -2449,7 +2452,7 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     # is what fails rather than a section split that never found its heading.
     # Under the defect these read 2 and 0: A's conversion applied to both rows.
     assert text.count("$1.00 → $2.00 / 1M") == 1
-    assert text.count("$0.0000 → $0.0000 / 1M") == 1
+    assert text.count("$0.000001 → $0.000002 / 1M") == 1
 
     a_section, b_section = (
         text.split(f"{_SHARED_LABEL} (synthprov-a)", 1)[1].split(f"{_SHARED_LABEL} (synthprov-b)", 1)[0],
@@ -2457,13 +2460,13 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     )
     # ...and each lands under the provider it belongs to.
     assert "Input: 0.000001 \u2192 0.000002 ($1.00 \u2192 $2.00 / 1M, \u2191 100.0%)" in a_section
-    assert "Input: 0.000001 \u2192 0.000002 ($0.0000 \u2192 $0.0000 / 1M, \u2191 100.0%)" in b_section
+    assert "Input: 0.000001 \u2192 0.000002 ($0.000001 \u2192 $0.000002 / 1M, \u2191 100.0%)" in b_section
 
     html = _shared_label_report("html")
     assert '<td class="old-val">0.000001 ($1.00 / 1M)</td>' in html
     assert '<td class="new-val">0.000002 ($2.00 / 1M)</td>' in html
-    assert '<td class="old-val">0.000001 ($0.0000 / 1M)</td>' in html
-    assert '<td class="new-val">0.000002 ($0.0000 / 1M)</td>' in html
+    assert '<td class="old-val">0.000001 ($0.000001 / 1M)</td>' in html
+    assert '<td class="new-val">0.000002 ($0.000002 / 1M)</td>' in html
 
     # The Change Summary is built from the same per-provider factors, and keeps
     # the two providers apart by the disambiguated label.
@@ -2474,7 +2477,7 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     ) in summary
     assert (
         f"<td>{_SHARED_LABEL} (synthprov-b)</td><td><code>synth/shared-model</code></td>"
-        "<td>Input</td><td>0.000001 → 0.000002 ($0.0000 → $0.0000 / 1M, ↑ 100.0%)</td>"
+        "<td>Input</td><td>0.000001 → 0.000002 ($0.000001 → $0.000002 / 1M, ↑ 100.0%)</td>"
     ) in summary
 
 

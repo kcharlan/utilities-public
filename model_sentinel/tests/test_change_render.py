@@ -24,6 +24,8 @@ from model_sentinel.change_render import (
     FIELD_LEAF_LABELS,
     FIELD_PATH_LABELS,
     KNOWN_BOOLEAN_FIELDS,
+    PRICE_COLLISION_MAX_PRECISION,
+    PRICE_MAX_PRECISION,
     RenderedChange,
     _bool_state,
     _both_numeric,
@@ -37,6 +39,7 @@ from model_sentinel.change_render import (
     _normalize_price,
     _pct_change,
     _prettify_leaf,
+    _price_precision,
     _split_field_path,
     classify_change,
     format_qualified_label,
@@ -281,8 +284,18 @@ def test_old_new_and_delta_always_share_one_precision():
       * `2 / 2.005` -- the mirror: the operands disagree (2 vs 3) and the delta
         needs 3, so nothing is pinned by coincidence.
       * `0.196 / 0.1876` -- the reported complaint, in its original numbers.
+      * `0.000001 / 0.000002` and `0.0000015 / 0.000002` -- the two escape-hatch
+        rows. The invariant is asserted AT the extended precision too: the
+        hatch may not buy separated operands by desynchronising the delta.
     """
-    for old, new in (("0.15", "0.1425"), ("0.1234", "0.2234"), ("2", "2.005"), ("0.196", "0.1876")):
+    for old, new in (
+        ("0.15", "0.1425"),
+        ("0.1234", "0.2234"),
+        ("2", "2.005"),
+        ("0.196", "0.1876"),
+        ("0.000001", "0.000002"),
+        ("0.0000015", "0.000002"),
+    ):
         result = _price_change(old, new)
         places = {
             _price_decimal_places(result.old_display),
@@ -318,20 +331,103 @@ def test_price_precision_is_capped_at_four_places():
     assert result.old_raw == "0.1234567"
 
 
-def test_price_smaller_than_the_cap_can_resolve_renders_at_the_cap():
-    """The cap's uncomfortable case, stated rather than hidden.
+def test_colliding_operands_extend_past_the_cap_until_they_differ():
+    """The cap's ONE escape hatch: it may not print one number twice.
 
-    A per-token price of `0.000001` needs six places, so under the cap both
-    sides of a genuine doubling render `$0.0000` and the normalized column
-    stops discriminating. That is the design's open assumption #2 (values
-    needing more than four places rely on the raw value for exactness), not an
-    accident: `old_raw`/`new_raw` and the percentage still carry the change.
+    A per-token price of `0.000001` needs six places. Under the bare cap both
+    sides of a genuine doubling rendered `$0.0000` -- two identical numbers
+    sitting beside `↑ 100.0%`, a column that contradicts itself. The likeliest
+    route there is a provider configured with the wrong
+    PRICE_MULTIPLIER/PRICE_DIVISOR, whose visible tell is precisely the
+    absurd-looking pair the cap was erasing; text and markdown have no tooltip
+    to fall back on. So the row extends to six places and shows the movement.
     """
     result = _price_change("0.000001", "0.000002")
-    assert result.old_display == "$0.0000"
-    assert result.new_display == "$0.0000"
+    assert result.old_display == "$0.000001"
+    assert result.new_display == "$0.000002"
+    assert result.delta_display == "+$0.000001"
     assert (result.old_raw, result.new_raw) == ("0.000001", "0.000002")
     assert result.pct_display == "↑ 100.0%"
+
+
+def test_the_hatch_triggers_on_string_collision_not_on_magnitude():
+    """A row AT the cap whose operands already differ there does not extend.
+
+    Both `0.1234567` and `0.2345678` need more than four places, so a
+    magnitude-based hatch ("small numbers get more room") would fire here and
+    print seven places for a pair that reads perfectly well at four. They
+    render differently at the cap, so there is no defect to fix and the cap
+    stands -- which is what makes the trigger the collision itself.
+    """
+    result = _price_change("0.1234567", "0.2345678")
+    assert (result.old_display, result.new_display) == ("$0.1235", "$0.2346")
+    assert _price_decimal_places(result.delta_display) == PRICE_MAX_PRECISION
+
+
+def test_the_hatch_holds_one_precision_for_the_whole_row():
+    """The invariant must survive the fix, not be traded away by it.
+
+    `0.0000015 -> 0.000002` needs seven places to separate. Old, new AND delta
+    must all render at seven: extending only the two operands, and leaving the
+    delta at the cap, would swap one contradiction (`$0.0000 -> $0.0000`) for
+    another (`$0.000002` next to a delta of `$0.0000`).
+    """
+    result = _price_change("0.0000015", "0.000002")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$0.0000015",
+        "$0.0000020",
+        "+$0.0000005",
+    )
+
+
+def test_the_hatch_leaves_free_alone_because_free_is_not_a_collision():
+    """`free` beside `$0.0000` is already two different strings.
+
+    `0` and `1e-09` are numerically different and both format to `0.0000`, but
+    `_fmt_price_per_m` short-circuits zero to `free` before precision is
+    consulted, so the reader never sees one number twice. Extending here would
+    fire the hatch on a row that reads fine -- the exact over-reach the
+    string-collision trigger exists to avoid.
+    """
+    result = _price_change("0", "0.000000001")
+    assert (result.old_display, result.new_display) == ("free", "$0.0000")
+
+
+def test_the_hatch_is_bounded_and_falls_back_to_the_cap():
+    """A pathological input cannot loop unboundedly, or widen the column forever.
+
+    `1e-25 -> 2e-25` is not per-token pricing; nothing separates it inside
+    PRICE_COLLISION_MAX_PRECISION places. The hatch gives up and returns the
+    ordinary cap, so the degenerate case degrades to today's `$0.0000` rather
+    than to a column of twenty zeroes. Falsifiable in both directions: raising
+    the bound past 25 would make these render, lowering it below 6 would break
+    the sub-cent case above.
+    """
+    tiny_old, tiny_new = 1e-25, 2e-25
+    assert tiny_old != tiny_new  # precondition: a real, if absurd, movement
+    assert _price_precision(tiny_old, tiny_new) == PRICE_MAX_PRECISION
+    assert PRICE_COLLISION_MAX_PRECISION == 20
+
+    result = _price_change("0.0000000000000000000000001", "0.0000000000000000000000002")
+    assert (result.old_display, result.new_display) == ("$0.0000", "$0.0000")
+
+
+def test_prices_over_a_dollar_keep_decimals_the_old_rule_truncated():
+    """The operand rule's OTHER behaviour change, pinned so it is not a surprise.
+
+    The replaced magnitude rule gave every value >= $1 exactly two places, so
+    `$12.345` rendered `$12.35` and `$2.625` rendered `$2.62` -- silently
+    truncating (or inflating) by up to half a cent on values a reader is far
+    more likely to meet in real per-1M pricing than the sub-cent collapse. The
+    operand rule shows what the provider actually published.
+    """
+    result = _price_change("12.345", "12.5")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$12.345",
+        "$12.500",
+        "+$0.155",
+    )
+    assert _price_change("2.625", "3").old_display == "$2.625"
 
 
 def test_price_precision_ignores_normalization_float_noise():
@@ -351,8 +447,11 @@ def test_price_precision_ignores_normalization_float_noise():
 
 def test_zero_price_still_renders_free_at_any_precision():
     """`free` survives the new rule, on both sides and however precise the row."""
-    assert _fmt_price_per_m(0) == "free"
+    assert _fmt_price_per_m(0, 2) == "free"
     assert _fmt_price_per_m(0.0, 4) == "free"
+    # Including out at the escape hatch's bound, where zero would otherwise
+    # spell itself with twenty decimal places.
+    assert _fmt_price_per_m(0.0, PRICE_COLLISION_MAX_PRECISION) == "free"
     assert _price_change("0", "0.1425").old_display == "free"
     assert _price_change("0.1425", "0").new_display == "free"
 
@@ -1524,5 +1623,5 @@ def test_shared_primitives_behave_the_same_in_change_render():
     assert _is_count_field("context_length") is True
     assert _fmt_int(1024.0) == "1,024"
     assert _pct_change(10, 20) == "↑ 100.0%"
-    assert _fmt_price_per_m(2.0) == "$2.00"
+    assert _fmt_price_per_m(2.0, 2) == "$2.00"
     assert _normalize_price(0.000002, 1_000_000, 1) == 2.0
