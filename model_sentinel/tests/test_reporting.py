@@ -1126,6 +1126,59 @@ def test_tiered_pricing_json_keeps_raw_paths_and_is_unaffected() -> None:
     assert "pricing.overrides[" not in raw
 
 
+def _sub_cent_changes_rows() -> tuple[dict, ...]:
+    """One changes-report row whose price change resolves below cents."""
+    return (
+        {
+            "detected_at": "2026-07-25T09:00:00+00:00",
+            "provider_id": "synthprov",
+            "provider_label": "Synth Provider",
+            "provider_model_id": "synth/model-subcent",
+            "display_name": "Synth Model Subcent",
+            "change_kind": "changed",
+            "field_name": "pricing.prompt",
+            "old_value": "0.00000015",
+            "new_value": "0.0000001425",
+        },
+    )
+
+
+def _sub_cent_changes_report(format_name: str) -> str:
+    return render_changes_report(
+        format_name=format_name,
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=_sub_cent_changes_rows(),
+        provider_pricing={"synthprov": (1000000, 1)},
+    )
+
+
+def test_changes_report_carries_the_shared_price_precision() -> None:
+    """The changes report is a THIRD consumer of `RenderedChange`, verified here.
+
+    It reaches the same formatter by a different route (history rows rather
+    than a scan result), so "it consumes the same RenderedChange, therefore it
+    follows" is an argument, not evidence. `0.15` renders at four places
+    because the other operand needs four -- in the changes report's text, its
+    per-model HTML table and its HTML Change Summary alike.
+    """
+    text = _sub_cent_changes_report("text")
+    assert "($0.1500 → $0.1425 / 1M" in text
+
+    html = _sub_cent_changes_report("html")
+    assert '<td class="old-val">0.00000015 ($0.1500 / 1M)</td>' in html
+    assert '<td class="new-val">0.0000001425 ($0.1425 / 1M)</td>' in html
+    summary = html[html.index('<section class="summary-section">') :]
+    assert "($0.1500 → $0.1425 / 1M" in summary
+
+    # The audit path is untouched: raw values, no formatted price anywhere.
+    payload = json.loads(_sub_cent_changes_report("json"))
+    assert payload["changes"][0]["old_value"] == "0.00000015"
+    assert payload["changes"][0]["new_value"] == "0.0000001425"
+    assert "$" not in _sub_cent_changes_report("json")
+
+
 # ---------------------------------------------------------------------------
 # Every report entry point must surface the qualifier
 #
@@ -2302,6 +2355,14 @@ _SHARED_LABEL = "Shared Label"
 # Deliberately far apart: 1000000/1 is the per-token convention, 1/1 the
 # per-1M convention. The same raw price renders six orders of magnitude apart,
 # so a crossover cannot hide inside rounding.
+#
+# TASK 6 CONSEQUENCE, stated because it weakens what provider B's own cells
+# show: under the operand-based precision rule prices are capped at four
+# decimal places, so B's `0.000001 -> 0.000002` renders `$0.0000 -> $0.0000`.
+# Its two cells no longer differ from EACH OTHER. They still differ from A's
+# `$1.00 -> $2.00`, which is the crossover this fixture exists to catch, and
+# the assertions below are counts of both spellings so the crossover still
+# fails them (it would make A's spelling appear twice and B's not at all).
 _SHARED_LABEL_PRICING = {"synthprov-a": (1000000, 1), "synthprov-b": (1, 1)}
 
 
@@ -2376,7 +2437,11 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     the SAME label. Only their configured conversion factors differ. When
     `rows[0]` chose the factors for the merged list, provider B's raw prices
     were rendered with provider A's multiplier and read as $1.00 -> $2.00
-    instead of $0.000001 -> $0.000002 -- a millionfold error presented as fact.
+    instead of B's own conversion -- a millionfold error presented as fact.
+
+    Since Task 6, B's own conversion renders `$0.0000 -> $0.0000` (four-place
+    cap; see `_SHARED_LABEL_PRICING`). The raw values either side of the
+    parenthetical are what carry B's actual movement.
     """
     text = _shared_label_report("text")
 
@@ -2384,7 +2449,7 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     # is what fails rather than a section split that never found its heading.
     # Under the defect these read 2 and 0: A's conversion applied to both rows.
     assert text.count("$1.00 → $2.00 / 1M") == 1
-    assert text.count("$0.000001 → $0.000002 / 1M") == 1
+    assert text.count("$0.0000 → $0.0000 / 1M") == 1
 
     a_section, b_section = (
         text.split(f"{_SHARED_LABEL} (synthprov-a)", 1)[1].split(f"{_SHARED_LABEL} (synthprov-b)", 1)[0],
@@ -2392,13 +2457,13 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     )
     # ...and each lands under the provider it belongs to.
     assert "Input: 0.000001 \u2192 0.000002 ($1.00 \u2192 $2.00 / 1M, \u2191 100.0%)" in a_section
-    assert "Input: 0.000001 \u2192 0.000002 ($0.000001 \u2192 $0.000002 / 1M, \u2191 100.0%)" in b_section
+    assert "Input: 0.000001 \u2192 0.000002 ($0.0000 \u2192 $0.0000 / 1M, \u2191 100.0%)" in b_section
 
     html = _shared_label_report("html")
     assert '<td class="old-val">0.000001 ($1.00 / 1M)</td>' in html
     assert '<td class="new-val">0.000002 ($2.00 / 1M)</td>' in html
-    assert '<td class="old-val">0.000001 ($0.000001 / 1M)</td>' in html
-    assert '<td class="new-val">0.000002 ($0.000002 / 1M)</td>' in html
+    assert '<td class="old-val">0.000001 ($0.0000 / 1M)</td>' in html
+    assert '<td class="new-val">0.000002 ($0.0000 / 1M)</td>' in html
 
     # The Change Summary is built from the same per-provider factors, and keeps
     # the two providers apart by the disambiguated label.
@@ -2409,7 +2474,7 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     ) in summary
     assert (
         f"<td>{_SHARED_LABEL} (synthprov-b)</td><td><code>synth/shared-model</code></td>"
-        "<td>Input</td><td>0.000001 → 0.000002 ($0.000001 → $0.000002 / 1M, ↑ 100.0%)</td>"
+        "<td>Input</td><td>0.000001 → 0.000002 ($0.0000 → $0.0000 / 1M, ↑ 100.0%)</td>"
     ) in summary
 
 

@@ -198,6 +198,178 @@ def test_price_amount_field_excludes_token_thresholds():
 
 
 # ---------------------------------------------------------------------------
+# 3a. Price precision (Task 6)
+#
+# The rule: ONE precision per row -- the greater of the two operands'
+# significant decimal places, floored at cents and capped at four -- applied
+# identically to old, new and delta. It replaces a magnitude-based selection
+# (2/4/6 places by size) under which a single card could show `$0.196` beside
+# `$0.1876` beside `$0.0196`, decimal points landing in three different
+# columns, and under which the three numbers of ONE row could each claim a
+# different precision.
+# ---------------------------------------------------------------------------
+
+
+def _price_decimal_places(rendered_price: str) -> int:
+    """Decimal places in a rendered price such as `$0.1425` or `-$0.0075`.
+
+    Reads the DISPLAY string rather than re-deriving the precision from the
+    input, so these assertions fail on what a reader would see. Rejects
+    anything that is not a rendered price, so a `free`/`null`/`—` slipping
+    into a precision comparison is a loud failure and not a silent 0.
+    """
+    body = rendered_price.lstrip("+-")
+    assert body.startswith("$"), rendered_price
+    whole, _, decimals = body[1:].partition(".")
+    assert whole and decimals, rendered_price
+    return len(decimals)
+
+
+def _price_change(old: str, new: str, *, multiplier: int = 1, divisor: int = 1):
+    """A two-sided `pricing.prompt` change, classified.
+
+    `multiplier=1` means the raw values ARE the per-1M prices, which keeps the
+    precision cases below readable: the number in the test is the number in the
+    assertion. The float-noise case overrides it.
+    """
+    return classify_change(
+        FieldChange("pricing.prompt", old, new),
+        price_multiplier=multiplier,
+        price_divisor=divisor,
+    )
+
+
+def test_cents_level_price_change_renders_two_places_on_every_value():
+    """The design's first example: `$2.00 → $3.50`, delta `+$1.50`."""
+    result = _price_change("2", "3.5")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$2.00",
+        "$3.50",
+        "+$1.50",
+    )
+
+
+def test_fourth_decimal_price_change_renders_four_places_on_every_value():
+    """The design's second example: `$0.1500 → $0.1425`, delta `−$0.0075`.
+
+    `0.15` alone needs two places. It renders at four because the OTHER operand
+    needs four -- which is the whole point of deriving one precision from the
+    pair rather than formatting each value on its own merits.
+    """
+    result = _price_change("0.15", "0.1425")
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$0.1500",
+        "$0.1425",
+        "-$0.0075",
+    )
+
+
+def test_old_new_and_delta_always_share_one_precision():
+    """THE invariant, asserted as an invariant.
+
+    Not three expected strings that happen to agree: this compares the three
+    rendered values against EACH OTHER, so a change that formats the delta from
+    its own magnitude fails here even if every literal in the tests above were
+    updated to match it.
+
+    Each pair is one where independent per-value formatting would disagree:
+
+      * `0.15 / 0.1425` -- operands disagree with each other (2 vs 4).
+      * `0.1234 / 0.2234` -- operands agree at 4 but their difference is
+        exactly `0.1`, which needs 2. This is the pair that catches a delta
+        formatted from `abs(delta_norm)` alone.
+      * `2 / 2.005` -- the mirror: the operands disagree (2 vs 3) and the delta
+        needs 3, so nothing is pinned by coincidence.
+      * `0.196 / 0.1876` -- the reported complaint, in its original numbers.
+    """
+    for old, new in (("0.15", "0.1425"), ("0.1234", "0.2234"), ("2", "2.005"), ("0.196", "0.1876")):
+        result = _price_change(old, new)
+        places = {
+            _price_decimal_places(result.old_display),
+            _price_decimal_places(result.new_display),
+            _price_decimal_places(result.delta_display),
+        }
+        assert len(places) == 1, (old, new, result.old_display, result.new_display, result.delta_display)
+
+
+def test_price_precision_is_not_chosen_by_magnitude():
+    """The reported complaint, pinned on the values that produced it.
+
+    Under the replaced rule these two rendered `$0.196` and `$0.1876`: three
+    decimals against four, because the selection read each value's magnitude
+    rather than the row's. Two numbers one column apart disagreed about how
+    precise they were.
+    """
+    result = _price_change("0.196", "0.1876")
+    assert result.old_display == "$0.1960"
+    assert result.new_display == "$0.1876"
+
+
+def test_price_precision_is_capped_at_four_places():
+    """A value needing more renders AT four -- not at whatever survives rounding.
+
+    `0.1234567` needs seven. It renders `$0.1235`: four places, rounded, with
+    `old_raw` still carrying the exact value for the audit paths.
+    """
+    result = _price_change("0.1234567", "0.2")
+    assert result.old_display == "$0.1235"
+    assert result.new_display == "$0.2000"
+    assert result.delta_display == "+$0.0765"
+    assert result.old_raw == "0.1234567"
+
+
+def test_price_smaller_than_the_cap_can_resolve_renders_at_the_cap():
+    """The cap's uncomfortable case, stated rather than hidden.
+
+    A per-token price of `0.000001` needs six places, so under the cap both
+    sides of a genuine doubling render `$0.0000` and the normalized column
+    stops discriminating. That is the design's open assumption #2 (values
+    needing more than four places rely on the raw value for exactness), not an
+    accident: `old_raw`/`new_raw` and the percentage still carry the change.
+    """
+    result = _price_change("0.000001", "0.000002")
+    assert result.old_display == "$0.0000"
+    assert result.new_display == "$0.0000"
+    assert (result.old_raw, result.new_raw) == ("0.000001", "0.000002")
+    assert result.pct_display == "↑ 100.0%"
+
+
+def test_price_precision_ignores_normalization_float_noise():
+    """`5e-08 * 1_000_000` is `0.049999999999999996`, and must still read `$0.05`.
+
+    The operands' "significant decimal places" are the provider's, not those of
+    the binary approximation `_normalize_price` produces. Without the relative
+    tolerance in `_significant_decimals` this five-cent cache read would render
+    `$0.0500` -- four places demanded by representation noise.
+    """
+    assert _normalize_price(0.00000005, 1_000_000, 1) != 0.05  # precondition: noisy
+    result = _price_change("0.00000005", "0.00000009", multiplier=1_000_000)
+    assert result.old_display == "$0.05"
+    assert result.new_display == "$0.09"
+    assert result.delta_display == "+$0.04"
+
+
+def test_zero_price_still_renders_free_at_any_precision():
+    """`free` survives the new rule, on both sides and however precise the row."""
+    assert _fmt_price_per_m(0) == "free"
+    assert _fmt_price_per_m(0.0, 4) == "free"
+    assert _price_change("0", "0.1425").old_display == "free"
+    assert _price_change("0.1425", "0").new_display == "free"
+
+
+def test_one_sided_price_uses_its_own_operand_precision():
+    """With one operand there is nothing to agree with, so it prices itself."""
+    assert _price_change("0.1425", "0").old_display == "$0.1425"
+    added = classify_change(
+        FieldChange("pricing.prompt", None, "0.1425"),
+        price_multiplier=1,
+        price_divisor=1,
+    )
+    assert added.new_display == "$0.1425"
+    assert added.old_display == "null"
+
+
+# ---------------------------------------------------------------------------
 # 4. count
 # ---------------------------------------------------------------------------
 

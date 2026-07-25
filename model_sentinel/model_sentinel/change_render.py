@@ -46,6 +46,7 @@ numeric leaf appearing from nothing (`...[0].weight: null -> 1`) stays
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -120,12 +121,32 @@ KNOWN_BOOLEAN_FIELDS = frozenset(
 
 # Keyed by full dotted path. Consulted FIRST, and the default table.
 FIELD_PATH_LABELS: dict[str, str] = {
-    # Pricing. Only the money leaves conditional pricing can relocate are
-    # leaf-keyed (see below); these four are spelled in full. `pricing.audio`,
-    # `pricing.image` and `pricing.request` have no override form, and
+    # Pricing. Only the money leaves conditional pricing has been OBSERVED to
+    # relocate are leaf-keyed (see below); these four are spelled in full.
+    #
+    # `pricing.audio`, `pricing.image` and `pricing.request` are path-keyed
+    # because no recorded override tier has ever carried them -- an observation
+    # about provider payloads, NOT a property of this code. `_diff_pricing_
+    # overrides` walks every key of a matched tier through
+    # `_diff_structured_values` (reporting.py), so
+    # `pricing.overrides[<condition>].request` is constructible the moment a
+    # provider emits one.
+    #
+    # If that ever happens the three behave differently, and only one of them
+    # visibly: `_prettify_leaf` spells `audio` and `image` exactly as the
+    # registry does ("Audio", "Image"), so their tiered form reads correctly by
+    # coincidence, while `request` falls back to "Request" and a single card
+    # would show "Per request" at the base rate beside "Request
+    # (min_prompt_tokens=...)" for the same money leaf. The fix at that point
+    # is a leaf key for `request` -- deliberately NOT added ahead of the
+    # evidence, because a leaf key claims every path in the product ending in
+    # that segment (`provider_metadata.request` and any future homonym would
+    # inherit "Per request", which for a non-pricing field is a false claim,
+    # where "Request" is merely a plainer spelling of a true one).
+    #
     # `pricing.overrides` is matched as a literal exact string by
-    # `_diff_pricing_overrides` (reporting.py) -- it is never itself a leaf
-    # under a dynamic parent, only the container that creates one.
+    # `_diff_pricing_overrides` -- it is never itself a leaf under a dynamic
+    # parent, only the container that creates one.
     "pricing.audio": "Audio",
     "pricing.image": "Image",
     "pricing.request": "Per request",
@@ -465,22 +486,68 @@ def _pct_change(old: float, new: float) -> str:
     return f"{arrow} {abs(pct):.1f}%"
 
 
-def _fmt_price_per_m(value: float) -> str:
+# Price precision bounds (design: "Value formatting / Price display (A1)").
+#
+# Every price in a row renders at ONE precision, between these two bounds. The
+# floor is cents because that is the granularity a reader prices in; the
+# ceiling is the design's open assumption #2 -- a value needing more renders at
+# four and relies on the raw value carried alongside it (`old_raw`/`new_raw`,
+# and the HTML tooltip a later task adds) for exactness.
+PRICE_MIN_PRECISION = 2
+PRICE_MAX_PRECISION = 4
+
+# Absorbs the float error `_normalize_price` introduces, NOT a fudge factor.
+# `(raw * multiplier) / divisor` is inexact in binary: `5e-08 * 1_000_000` is
+# `0.049999999999999996`, whose shortest exact decimal form has seventeen
+# places. Asking for exact equality would price a five-cent cache read at
+# `$0.0500` because of representation noise in a value the provider spelled
+# with two significant digits. The tolerance is RELATIVE because the error it
+# absorbs is relative: it scales with the magnitude the multiplication
+# produced.
+_PRICE_PRECISION_REL_TOL = 1e-9
+
+
+def _significant_decimals(value: float) -> int:
+    """Decimal places `value` actually needs, clamped to the price bounds.
+
+    Returns the smallest precision in [PRICE_MIN_PRECISION, PRICE_MAX_PRECISION]
+    that reproduces `value`, or PRICE_MAX_PRECISION when no precision in that
+    range does -- which is what makes "capped at 4" mean "renders at 4" rather
+    than "renders at whatever is left after rounding". A value of 0.000001
+    needs six places, so it renders `$0.0000`: visibly a value too small for
+    the column rather than a value that is not there.
+    """
+    for places in range(PRICE_MIN_PRECISION, PRICE_MAX_PRECISION):
+        if math.isclose(round(value, places), value, rel_tol=_PRICE_PRECISION_REL_TOL, abs_tol=0.0):
+            return places
+    return PRICE_MAX_PRECISION
+
+
+def _price_precision(*values: float) -> int:
+    """THE shared precision for one price row: the greater of its operands'.
+
+    Called ONCE per row and passed to every `_fmt_price_per_m` call for that
+    row. The point of the function is that old, new and delta cannot disagree:
+    formatting them from three independent magnitude-based decisions is exactly
+    the defect this replaces, where `$0.196`, `$0.1876` and `$0.0196` could
+    share a card with their decimal points in three different columns and the
+    three numbers of one row could each claim a different precision.
+    """
+    return max((_significant_decimals(value) for value in values), default=PRICE_MIN_PRECISION)
+
+
+def _fmt_price_per_m(value: float, precision: int | None = None) -> str:
+    """Format one normalized per-1M price.
+
+    `precision` is the row's shared precision (see `_price_precision`). It is
+    optional only for the one-sided case, where there is a single operand and
+    no other value to agree with; a two-sided change must always pass one.
+    """
     if value == 0:
         return "free"
-    abs_val = abs(value)
-    if abs_val >= 1:
-        formatted = f"{value:.2f}"
-    elif abs_val >= 0.01:
-        formatted = f"{value:.4f}"
-    else:
-        formatted = f"{value:.6f}"
-    # Strip trailing zeros but keep at least 2 decimal places
-    parts = formatted.split(".")
-    decimals = parts[1].rstrip("0")
-    if len(decimals) < 2:
-        decimals = decimals.ljust(2, "0")
-    return f"${parts[0]}.{decimals}"
+    if precision is None:
+        precision = _price_precision(value)
+    return f"${value:.{precision}f}"
 
 
 def _normalize_price(raw_value: float, multiplier: int, divisor: int) -> float:
@@ -749,15 +816,21 @@ def _classify_price(
         else:
             direction = "none"
         sign = "+" if delta_norm > 0 else ("-" if delta_norm < 0 else "")
-        delta_display = f"{sign}{_fmt_price_per_m(abs(delta_norm))}"
+        # ONE precision for the whole row, derived from the OPERANDS and passed
+        # to all three formats. The delta does not get a say: it is a
+        # difference of the two operands, so letting it choose its own
+        # precision is how `$0.1500 -> $0.1425` ends up next to a delta that
+        # claims more (or fewer) places than the numbers it was computed from.
+        precision = _price_precision(norm_old, norm_new)
+        delta_display = f"{sign}{_fmt_price_per_m(abs(delta_norm), precision)}"
         pct_display = _pct_change(old_numeric, new_numeric) or None
         return RenderedChange(
             kind="price",
             field_path=field_path,
             label=label,
             qualifier=qualifier,
-            old_display=_fmt_price_per_m(norm_old),
-            new_display=_fmt_price_per_m(norm_new),
+            old_display=_fmt_price_per_m(norm_old, precision),
+            new_display=_fmt_price_per_m(norm_new, precision),
             old_raw=_raw_value(old_value),
             new_raw=_raw_value(new_value),
             unit="/1M",

@@ -48,6 +48,16 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
        that as a multiset rather than leaving it to the eye.
   The JSON goldens are untouched, as always.
 
+* Task 6 replaced the magnitude-based price precision with the operand-based
+  rule and changed NOT ONE golden in this module -- stated because a silent
+  no-diff on a deliberate output change is exactly what should be checked
+  rather than assumed. Every price in `characterization_scan_result()`
+  resolves at two decimal places (`$2.00`, `$3.50`, `$0.05`, `$0.09`, `$4.00`,
+  `$5.00`), which both the old rule and the new one spell identically. The
+  consequence is that this fixture cannot demonstrate the new rule at all, so
+  `test_sub_cent_precision_reaches_every_human_format` and its JSON
+  counterpart carry their own single-model fixture below.
+
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
 
@@ -1595,6 +1605,87 @@ def test_qualifier_is_what_reordered_the_change_summary() -> None:
     field_cells = [_split_summary_row(row)[1] for row in _summary_rows(report)]
     assert field_cells.index("Output") < field_cells.index("Output (min_prompt_tokens=200000)")
     assert "Output".casefold() < "Output (min_prompt_tokens=200000)".casefold()
+
+
+def _sub_cent_price_scan_result() -> list[ProviderScanResult]:
+    """One model, one price change, deliberately below cent resolution.
+
+    Separate from `characterization_scan_result()` ON PURPOSE. Every price in
+    that fixture resolves at two decimal places, so the Task 6 precision rule
+    left all eight of its goldens byte-identical -- which is worth having, but
+    means the shared fixture cannot demonstrate the new rule at all. Adding a
+    sub-cent field to it would also have moved the JSON goldens (a new field
+    change is a new JSON entry), destroying the evidence that JSON is untouched.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-subcent",
+                    "Synth Model Subcent",
+                    (FieldChange("pricing.prompt", 0.00000015, 0.0000001425),),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1000000,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_sub_cent_precision_reaches_every_human_format() -> None:
+    """The shared precision is a property of `RenderedChange`, so it should
+    reach text, markdown and HTML without any per-renderer change. Verified,
+    not assumed.
+
+    `0.15` needs two decimal places on its own and renders at four because the
+    other operand needs four. Every human format must show BOTH operands at
+    four: a format that formatted one of them independently would print
+    `$0.15` here and pass every other test in this module.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_sub_cent_price_scan_result(),
+        )
+        assert "$0.1500" in report, format_name
+        assert "$0.1425" in report, format_name
+        # The replaced rule's spelling of the same pair: three places against
+        # four. Absent from every format, or the row is still magnitude-priced.
+        assert "$0.15 " not in report, format_name
+        assert "$0.196" not in report, format_name
+
+
+def test_sub_cent_precision_does_not_reach_json() -> None:
+    """JSON is the audit path: raw values, no formatted prices, ever.
+
+    The precision rule lives entirely in `RenderedChange`, and `_delta_to_json`
+    serialises `FieldChange` directly -- so no rounding can reach the machine-
+    readable output. Asserted on the absence of a dollar sign rather than on a
+    golden string, so any future formatted price leaking into JSON fails here.
+    """
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_sub_cent_price_scan_result(),
+    )
+    assert "$" not in report
+    assert "1.5e-07" in report
+    assert "1.425e-07" in report
 
 
 def test_characterization_text() -> None:
