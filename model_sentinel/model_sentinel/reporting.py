@@ -44,6 +44,7 @@ from typing import Any, Literal
 # transitional re-export shims were dropped; import those from
 # `model_sentinel.change_render` directly.
 from .change_render import (
+    ABSENT_DISPLAY,
     RenderedChange,
     _classify_field,
     _is_price_amount_field,
@@ -2161,11 +2162,13 @@ h3 {
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
-.change-category {
+.change-category,
+.card-table-wrap {
   padding: 0.5rem 1rem;
   border-bottom: 1px solid var(--border);
 }
-.change-category:last-child {
+.change-category:last-child,
+.card-table-wrap:last-child {
   border-bottom: none;
 }
 .category-label {
@@ -2211,6 +2214,68 @@ td.delta-neutral { color: var(--accent-amber); }
 td.delta-price-higher { color: var(--accent-red); }
 td.delta-price-lower { color: var(--accent-green); }
 td.delta-price-coverage { color: var(--accent-blue); }
+.card-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.card-table col.col-category { width: 7.5rem; }
+.card-table col.col-arrow { width: 1.25rem; }
+.card-table col.col-old,
+.card-table col.col-new { width: 7rem; }
+.card-table col.col-unit { width: 2.75rem; }
+.card-table col.col-delta { width: 7rem; }
+.card-table col.col-pct { width: 5.5rem; }
+.card-table td {
+  padding: 0.35rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  vertical-align: top;
+  border-top: 1px solid transparent;
+}
+.card-table tr:nth-child(even) td {
+  background: var(--bg-table-alt);
+}
+.card-table tr.group-start td {
+  border-top: 1px solid var(--border-accent);
+}
+.card-table tr:first-child td {
+  border-top: 1px solid transparent;
+}
+.card-table td.old-val,
+.card-table td.new-val,
+.card-table td.delta,
+.card-table td.pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.card-table td.arrow,
+.card-table td.unit {
+  color: var(--text-dim);
+}
+.card-table td.delta,
+.card-table td.pct {
+  font-weight: 600;
+}
+.card-table td.cat-chip {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+.card-table td.list-cell .list-diff {
+  padding: 0;
+}
+td.sem-cost-up { color: var(--accent-red); }
+td.sem-cost-down { color: var(--accent-green); }
+td.sem-capacity { color: var(--accent-amber); }
+td.sem-capability { color: var(--accent-blue); }
+td.sem-capability-off { color: var(--text-dim); }
+td.sem-coverage { color: var(--accent-blue); }
+td.sem-neutral { color: var(--text-dim); }
 .list-diff {
   font-family: var(--font-mono);
   font-size: 0.82rem;
@@ -2457,11 +2522,16 @@ def _render_html_model_changes(
         f'<span class="display-name">{h(delta.display_name)}</span></div>',
     ]
 
-    grouped = _group_field_changes_for_detail(plan.visible, policy)
-    for category, changes in grouped:
-        parts.append(f'<div class="change-category"><div class="category-label">{h(category)}</div>')
-        _append_html_field_changes(parts, changes, price_multiplier, price_divisor)
-        parts.append('</div>')
+    # C1: ONE table for the whole card, not one per category. Per-category
+    # tables size their columns independently, which is why a card's decimal
+    # points did not line up from one category to the next.
+    table_html = _render_html_card_table(
+        _group_field_changes_for_detail(plan.visible, policy),
+        price_multiplier,
+        price_divisor,
+    )
+    if table_html:
+        parts.append(f'<div class="card-table-wrap">{table_html}</div>')
     _append_html_hidden_summary(parts, plan, model_ids=(delta.provider_model_id,))
 
     parts.append('</div>')
@@ -2562,7 +2632,16 @@ def _append_html_field_changes(
     price_multiplier: int,
     price_divisor: int,
 ) -> None:
-    """Append HTML for a group of field changes (table rows + list diffs) to parts."""
+    """Append HTML for a group of field changes (table rows + list diffs) to parts.
+
+    The `changes` report's layout, and only that report's: the scan report's
+    model cards render through `_render_html_card_table` instead. The two are
+    deliberately different documents -- the scan card is a triage surface (C1's
+    single aligned table) and the change log stays on the four-column
+    per-category table it has always used. Both consume `RenderedChange`, so no
+    classification, labelling or value formatting is duplicated between them;
+    what differs is markup.
+    """
     rendered_changes = [
         classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
         for fc in field_changes
@@ -2582,6 +2661,191 @@ def _append_html_field_changes(
 
     for rendered in list_changes:
         parts.append(_render_html_list_diff(rendered))
+
+
+# A1: the model card's eight columns, fixed for the whole card by one
+# `<colgroup>`. The colgroup is what makes the alignment a property of the CARD
+# rather than of each category -- widths live in `_HTML_CSS` keyed off these
+# class names, so a column is re-sized in one place.
+_CARD_TABLE_COLGROUP = (
+    '<colgroup>'
+    '<col class="col-category">'
+    '<col class="col-field">'
+    '<col class="col-old">'
+    '<col class="col-arrow">'
+    '<col class="col-new">'
+    '<col class="col-unit">'
+    '<col class="col-delta">'
+    '<col class="col-pct">'
+    '</colgroup>'
+)
+
+# Columns a list row's single wide cell spans: everything from `old` rightwards.
+_CARD_LIST_CELL_SPAN = 6
+
+# B1: colour is a function of `semantic` and `direction`, NEVER of `direction`
+# alone. Keyed on the pair rather than branched on in a renderer so that the
+# design's colour table is one readable object -- the whole point being that
+# `up` means red under `cost` and amber under `capacity`, and a renderer that
+# looks only at `up` cannot express that.
+#
+# Absent keys fall through to `sem-neutral` (dim), which covers `neutral` in
+# both directions, `capability` on a list membership change (direction `none`),
+# and a `cost`/`capacity` change that netted to zero. Every mapped class is
+# defined in `_HTML_CSS` against an existing `:root` custom property; this
+# introduces no colour values.
+_CARD_SEMANTIC_CLASSES = {
+    ("cost", "up"): "sem-cost-up",            # higher price: red
+    ("cost", "down"): "sem-cost-down",        # lower price: green
+    ("capacity", "up"): "sem-capacity",       # amber BOTH ways -- a bigger
+    ("capacity", "down"): "sem-capacity",     # context window is not "good"
+    ("capability", "up"): "sem-capability",   # on: blue
+    ("capability", "down"): "sem-capability-off",  # off: dim
+    ("coverage", "added"): "sem-coverage",    # field appeared: blue
+    ("coverage", "removed"): "sem-coverage",  # field disappeared: blue
+}
+_CARD_NEUTRAL_CLASS = "sem-neutral"
+
+
+def _card_semantic_class(rendered: RenderedChange) -> str:
+    """The CSS class the card's delta and percent cells carry for this change."""
+    return _CARD_SEMANTIC_CLASSES.get((rendered.semantic, rendered.direction), _CARD_NEUTRAL_CLASS)
+
+
+def _card_side_display(display: str, raw: str | None) -> str:
+    """One side of a change as the card spells it, absent sides included.
+
+    `classify_change` spells the absent side of a one-sided boolean `—` but the
+    absent side of a one-sided price, count or scalar `null` -- three renderers
+    inherited that split. The card closes it: `raw is None` is what "this side
+    was absent" MEANS (`_raw_value` returns `None` for exactly that), so it is
+    read here rather than string-matching `"null"`, which is also a legitimate
+    rendering of the literal string `"null"` arriving from a provider payload.
+
+    Text and markdown are deliberately NOT changed here -- see the task report.
+    """
+    return ABSENT_DISPLAY if raw is None else display
+
+
+def _card_delta_cell(rendered: RenderedChange) -> str:
+    """The delta column's text: an absolute movement, a pill, or an em dash.
+
+    This is the column that makes A1 visible. Until now no renderer read
+    `delta_display` on a price change at all (text prints the two prices and a
+    percentage; the `changes` table puts the percentage in its one Change
+    column), so a price row's absolute movement -- the "by how much" -- was
+    computed on every scan and shown nowhere. It has its own column here,
+    bounded sentinels (`+<$0.0001`) included.
+    """
+    if rendered.delta_display is not None:
+        return rendered.delta_display
+    if rendered.direction in ("added", "removed"):
+        return rendered.direction
+    return ABSENT_DISPLAY
+
+
+def _card_raw_title(rendered: RenderedChange, raw: str | None) -> str:
+    """A `title="<raw provider value>"` attribute for a price cell, else `""`.
+
+    Absent sides carry no tooltip: there is no raw value to show, and an empty
+    `title` is a tooltip that opens onto nothing.
+    """
+    if rendered.kind != "price" or raw is None:
+        return ""
+    return f' title="{html_module.escape(raw)}"'
+
+
+def _pricing_rows_by_impact(rendered_changes: list[RenderedChange]) -> list[RenderedChange]:
+    """Pricing rows, largest absolute movement first.
+
+    `delta_abs` is `None` on a one-sided change (nothing to subtract from), which
+    sorts as 0 -- the same treatment the design gives such models in the F2 card
+    sort. Python's sort is stable, so equal-impact rows keep their arrival order.
+    """
+    return sorted(rendered_changes, key=lambda rendered: -abs(rendered.delta_abs or 0.0))
+
+
+def _render_html_card_table(
+    grouped: list[tuple[str, list[FieldChange]]],
+    price_multiplier: int,
+    price_divisor: int,
+) -> str:
+    """C1: one `<table>` for a whole model card, grouped by category.
+
+    The category name is a dim chip in column 1 on the FIRST row of each group
+    only; later rows in the group leave that cell empty and the group's first
+    row carries a stronger top border. Returns `""` when nothing is visible, so
+    a card with no rows emits no empty table.
+    """
+    rows: list[str] = []
+    for category, field_changes in grouped:
+        rendered_changes = [
+            classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
+            for fc in field_changes
+        ]
+        if category == "Pricing":
+            rendered_changes = _pricing_rows_by_impact(rendered_changes)
+        for index, rendered in enumerate(rendered_changes):
+            rows.append(
+                _render_html_card_row(
+                    rendered,
+                    category=category if index == 0 else None,
+                )
+            )
+    if not rows:
+        return ""
+    return (
+        f'<table class="card-table">{_CARD_TABLE_COLGROUP}<tbody>\n'
+        + "\n".join(rows)
+        + '\n</tbody></table>'
+    )
+
+
+def _render_html_card_row(rendered: RenderedChange, *, category: str | None) -> str:
+    """One `<tr>` of the model card's eight-column table.
+
+    `category` is the group's name on the group's first row and `None` on every
+    later row -- passing it is how a caller says "this row starts a group", so
+    the chip and the group border cannot disagree about where a group begins.
+    """
+    h = html_module.escape
+    chip = f'<td class="cat-chip">{h(category)}</td>' if category is not None else '<td></td>'
+    row_class = ' class="group-start"' if category is not None else ""
+    label = (
+        f'<td class="field-name" title="{h(rendered.field_path)}">'
+        f'{h(rendered.display_label)}</td>'
+    )
+
+    if rendered.kind == "list":
+        # A membership change has no operands to align, so its members take one
+        # wide cell. Built from the same helper the standalone list-diff block
+        # uses, so the two spellings of a member cannot drift apart.
+        return (
+            f'<tr{row_class}>{chip}{label}'
+            f'<td class="list-cell" colspan="{_CARD_LIST_CELL_SPAN}">'
+            f'<span class="list-count">({rendered.old_display} → {rendered.new_display})</span>'
+            f'{_html_list_members(rendered, separator="")}</td></tr>'
+        )
+
+    semantic_cls = _card_semantic_class(rendered)
+    # Raw-value tooltips on the PRICE columns only. A price cell is the one that
+    # no longer shows its provider value: A1 promotes the normalized per-1M
+    # figure and drops the `2e-06 ($2.00 / 1M)` pair the old row led with, so
+    # without the tooltip the raw would be unreachable from the card. Every
+    # other kind already prints its value verbatim, and a tooltip repeating it
+    # would be noise. The whole raw value is available in `_full.html`, JSON and
+    # the text report regardless.
+    old_title = _card_raw_title(rendered, rendered.old_raw)
+    new_title = _card_raw_title(rendered, rendered.new_raw)
+    return (
+        f'<tr{row_class}>{chip}{label}'
+        f'<td class="old-val"{old_title}>{h(_card_side_display(rendered.old_display, rendered.old_raw))}</td>'
+        f'<td class="arrow">→</td>'
+        f'<td class="new-val"{new_title}>{h(_card_side_display(rendered.new_display, rendered.new_raw))}</td>'
+        f'<td class="unit">{h(rendered.unit or "")}</td>'
+        f'<td class="delta {semantic_cls}">{h(_card_delta_cell(rendered))}</td>'
+        f'<td class="pct {semantic_cls}">{h(rendered.pct_display or "")}</td></tr>'
+    )
 
 
 _PRICE_MOVEMENT_BUCKETS = (
@@ -3057,22 +3321,36 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
     )
 
 
+def _html_list_members(rendered: RenderedChange, *, separator: str = "\n") -> str:
+    """The `+ member` / `- member` blocks of a list change.
+
+    THE spelling of a changed list member in HTML, shared by the standalone
+    list-diff block (`changes` report, provider rollups) and the model card's
+    list row. Two copies would be two places for the glyphs, the escaping and
+    the added-before-removed order to drift.
+    """
+    h = html_module.escape
+    parts: list[str] = []
+    if rendered.list_added:
+        parts.append('<div class="list-added">')
+        parts.extend(f'&nbsp;&nbsp;+ {h(item)}' for item in rendered.list_added)
+        parts.append('</div>')
+    if rendered.list_removed:
+        parts.append('<div class="list-removed">')
+        parts.extend(f'&nbsp;&nbsp;\u2212 {h(item)}' for item in rendered.list_removed)
+        parts.append('</div>')
+    return separator.join(parts)
+
+
 def _render_html_list_diff(rendered: RenderedChange) -> str:
     h = html_module.escape
     parts = ['<div class="list-diff">']
     parts.append(f'<span class="field-name">{h(rendered.display_label)}</span> ')
     # old_display/new_display carry the raw member counts for `list` changes.
     parts.append(f'<span class="list-count">({rendered.old_display} \u2192 {rendered.new_display})</span>')
-    if rendered.list_added:
-        parts.append('<div class="list-added">')
-        for item in rendered.list_added:
-            parts.append(f'&nbsp;&nbsp;+ {h(item)}')
-        parts.append('</div>')
-    if rendered.list_removed:
-        parts.append('<div class="list-removed">')
-        for item in rendered.list_removed:
-            parts.append(f'&nbsp;&nbsp;\u2212 {h(item)}')
-        parts.append('</div>')
+    members = _html_list_members(rendered)
+    if members:
+        parts.append(members)
     parts.append('</div>')
     return "\n".join(parts)
 
@@ -3081,18 +3359,9 @@ def _render_html_bulk_list_diff(rendered: RenderedChange) -> str:
     # Reads RenderedChange, like every other renderer in this module -- see
     # _render_bulk_list_diff_text's docstring for what that unified.
     h = html_module.escape
-    added, removed = rendered.list_added, rendered.list_removed
     parts = [f'<div class="list-diff"><span class="field-name">{h(rendered.display_label)}</span>']
-    if added:
-        parts.append('<div class="list-added">')
-        parts.extend(f'&nbsp;&nbsp;+ {h(item)}' for item in added)
-        parts.append('</div>')
-    if removed:
-        parts.append('<div class="list-removed">')
-        parts.extend(f'&nbsp;&nbsp;− {h(item)}' for item in removed)
-        parts.append('</div>')
-    if not added and not removed:
-        parts.append('<div class="list-count">membership changed</div>')
+    members = _html_list_members(rendered)
+    parts.append(members if members else '<div class="list-count">membership changed</div>')
     parts.append('</div>')
     return "\n".join(parts)
 

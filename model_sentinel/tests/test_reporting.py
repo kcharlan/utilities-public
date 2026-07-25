@@ -45,6 +45,32 @@ def _scan_result(
     )
 
 
+def _card_rows(html: str) -> list[str]:
+    """Every `<tr>` of a scan report's model-card tables, in document order.
+
+    Matched on the `field-name` cell that only a card row carries, so the
+    Change Summary's rows (plain `<td>`s) and the provider/price-movement
+    markup cannot be mistaken for card rows.
+    """
+    return [
+        row
+        for row in re.findall(r"<tr[^>]*>.*?</tr>", html, re.S)
+        if 'class="field-name"' in row
+    ]
+
+
+def _card_row(html: str, label: str) -> str:
+    """THE model-card row whose field cell renders exactly `label`.
+
+    Fails when the label matches no row or more than one: a helper that
+    silently returned the first of several would let an assertion about "the
+    Output row" pass while pointing at a row the test's author never saw.
+    """
+    matches = [row for row in _card_rows(html) if f">{label}</td>" in row]
+    assert len(matches) == 1, f"expected exactly one {label!r} card row, got {len(matches)}"
+    return matches[0]
+
+
 def _html_section_body(html: str, heading: str) -> str:
     """Return what `heading` actually presides over, up to its `</section>`.
 
@@ -798,11 +824,17 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
     expected = "Audio cache: null \u2192 0.0000003 ($0.30 / 1M)"
     assert expected in text_report
     assert expected in markdown_report
-    assert '<td class="new-val">0.0000003 ($0.30 / 1M)</td>' in html_report
-    assert '<td class="change-delta delta-price-coverage">added</td>' in html_report
+    # A1: the card leads with the normalized figure and keeps the provider's
+    # raw value in the cell's tooltip; the absent side is an em dash, not
+    # `null`.
+    row = _card_row(html_report, "Audio cache")
+    assert '<td class="new-val" title="0.0000003">$0.30</td>' in row
+    assert '<td class="old-val">\u2014</td>' in row
+    assert '<td class="unit">/1M</td>' in row
+    assert '<td class="delta sem-coverage">added</td>' in row
 
 
-def test_html_price_rows_use_cost_specific_direction_colors() -> None:
+def _mixed_direction_card_html() -> str:
     changed = (
         ModelDelta(
             "changed",
@@ -816,6 +848,125 @@ def test_html_price_rows_use_cost_specific_direction_colors() -> None:
             ),
         ),
     )
+    return render_scan_report(
+        generated_at="2026-07-15T13:05:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+
+
+def test_html_card_colors_are_driven_by_semantic_not_direction() -> None:
+    """B1. A price rise and a context rise are BOTH `direction == "up"`; they
+    must not be the same color, because one is money and the other is capacity.
+
+    Asserted on the class names rather than on "they differ", so a future change
+    that re-merges cost and capacity coloring fails here with the two spellings
+    in the failure message. `sem-cost-up` is red and `sem-capacity` amber in
+    `_HTML_CSS`; the pair of classes is the contract this pins.
+    """
+    report = _mixed_direction_card_html()
+
+    price_up = _card_row(report, "Input")
+    price_down = _card_row(report, "Output")
+    price_gone = _card_row(report, "Cache read")
+    capacity_up = _card_row(report, "Context length (model)")
+
+    # No thousands separator: `_fmt_price_per_m` has never grouped digits, and
+    # it is shared with text and markdown, so this task does not change it.
+    assert '<td class="delta sem-cost-up">+$100000.00</td>' in price_up
+    assert '<td class="pct sem-cost-up">\u2191 100.0%</td>' in price_up
+    assert '<td class="delta sem-cost-down">-$100000.00</td>' in price_down
+    assert '<td class="pct sem-cost-down">\u2193 25.0%</td>' in price_down
+    assert '<td class="delta sem-coverage">removed</td>' in price_gone
+    # THE regression this test exists for: same direction, same column,
+    # different meaning -- so a different class.
+    assert '<td class="delta sem-capacity">+1,000</td>' in capacity_up
+    assert '<td class="pct sem-capacity">\u2191 100.0%</td>' in capacity_up
+    assert "sem-cost-up" not in capacity_up
+    assert "sem-capacity" not in price_up
+
+    # The old direction-only classes are gone from the card entirely: they are
+    # what made a context increase green, i.e. "good".
+    for stale in ("delta-increase", "delta-decrease", "delta-price-higher", "delta-price-lower"):
+        assert stale not in "".join(_card_rows(report)), stale
+
+
+def test_html_card_emits_exactly_one_table_for_a_multi_category_model() -> None:
+    """C1. Per-category tables size their columns independently, which is why a
+    card's numbers did not line up from one category to the next. One table for
+    the card, one `<colgroup>`, and the category names become row-group chips.
+    """
+    report = _mixed_direction_card_html()
+    card = report[report.index('<div class="model-card">') : report.index('<section class="summary-section">')]
+
+    assert card.count("<table") == 1
+    assert card.count("<colgroup>") == 1
+    # Both categories are present, each as a chip on the FIRST row of its group
+    # only -- four price rows, one capacity row, two chips.
+    assert card.count('<td class="cat-chip">') == 2
+    assert '<td class="cat-chip">Pricing</td>' in card
+    assert '<td class="cat-chip">Context &amp; Limits</td>' in card
+    assert card.count('class="group-start"') == 2
+    assert len(_card_rows(card)) == 4
+
+
+def test_html_card_sorts_pricing_rows_by_absolute_impact() -> None:
+    """C1's ordering rule: within Pricing, the largest mover leads.
+
+    Alphabetical order would put `Cache read` first and the two $100k movements
+    below it; the fixture's field order would put `Input` before `Output`. The
+    expected order matches neither, so this cannot pass by accident.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "sorted-model",
+            "Sorted Model",
+            (
+                FieldChange("pricing.input_cache_read", "0.000001", "0.000002"),
+                FieldChange("pricing.prompt", "0.000004", "0.000005"),
+                FieldChange("pricing.completion", "0.000001", "0.000009"),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-15T13:05:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    labels = re.findall(r'<td class="field-name"[^>]*>(.*?)</td>', report)
+    # +$8.00, then +$1.00, then +$1.00 -- the last two tie on impact and keep
+    # their arrival order (`Cache read` was first in the fixture).
+    assert labels == ["Output", "Cache read", "Input"]
+
+
+_PRICE_VALUE_CELL = re.compile(r'<td class="(?:old|new)-val"(?: title="([^"]*)")?>([^<]*)</td>')
+
+
+def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
+    """A1 promoted the normalized per-1M figure and dropped the
+    `2e-06 ($2.00 / 1M)` pair the old row led with, so the provider's raw value
+    now lives in the cell's `title`.
+
+    Asserted as an invariant over EVERY price cell in the report, not just the
+    two spelled out below: a row added later that showed a normalized price
+    with no raw behind it -- or a raw with no normalized figure in front of it
+    -- fails here without anyone having to remember to extend the test.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-prices",
+            "Synth Prices",
+            (
+                FieldChange("pricing.prompt", "0.000002", "0.0000035"),
+                FieldChange("pricing.input_cache_read", None, "0.00000005"),
+                FieldChange("pricing.input_cache_write", "0.00000009", None),
+            ),
+        ),
+    )
     report = render_scan_report(
         generated_at="2026-07-15T13:05:00+00:00",
         command="scan",
@@ -823,10 +974,131 @@ def test_html_price_rows_use_cost_specific_direction_colors() -> None:
         provider_results=[_scan_result(changed)],
     )
 
-    assert '<td class="change-delta delta-price-higher">\u2191 100.0%</td>' in report
-    assert '<td class="change-delta delta-price-lower">\u2193 25.0%</td>' in report
-    assert '<td class="change-delta delta-price-coverage">removed</td>' in report
-    assert '<td class="change-delta delta-increase">\u2191 100.0%</td>' in report
+    price_rows = [row for row in _card_rows(report) if '<td class="unit">/1M</td>' in row]
+    assert len(price_rows) == 3
+    cells = [match for row in price_rows for match in _PRICE_VALUE_CELL.findall(row)]
+    assert len(cells) == 6, cells
+    for raw, shown in cells:
+        if shown == "—":
+            # The absent side of a one-sided change: nothing to show, and so
+            # nothing to put in a tooltip either.
+            assert raw == "", cells
+            continue
+        assert shown.startswith("$"), cells
+        assert raw, cells
+        # The tooltip is the PROVIDER's number, not a second copy of the
+        # normalized one -- a title echoing the cell would be no audit trail.
+        assert raw != shown, cells
+        float(raw)
+
+    row = _card_row(report, "Input")
+    assert '<td class="old-val" title="0.000002">$2.00</td>' in row
+    assert '<td class="new-val" title="0.0000035">$3.50</td>' in row
+
+
+def _unscaled_price_report(old_value: str, new_value: str) -> str:
+    """A provider whose raw prices are already per-1M (`price_multiplier=1`).
+
+    The configuration that puts per-token magnitudes into a per-1M column,
+    which is where the price columns meet the sentinel rule.
+    """
+    return render_scan_report(
+        generated_at="2026-07-15T13:05:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[
+            ProviderScanResult(
+                provider_id="synthprov",
+                provider_label="Synth Provider",
+                status="success",
+                current_count=1,
+                saved=False,
+                baseline=None,
+                baseline_message=None,
+                scrape_id=None,
+                added=(),
+                removed=(),
+                changed=(
+                    ModelDelta(
+                        "changed",
+                        "synth/model-unscaled",
+                        "Synth Model Unscaled",
+                        (FieldChange("pricing.prompt", old_value, new_value),),
+                    ),
+                ),
+                error_message=None,
+                price_multiplier=1,
+                price_divisor=1,
+            )
+        ],
+    )
+
+
+def test_price_delta_column_renders_the_absolute_movement() -> None:
+    """A1's column, and the first renderer ever to read a price
+    `delta_display`.
+
+    Until this layout, `RenderedChange.delta_display` had NO consumer on the
+    price path: the text form prints the two prices and a percentage, and the
+    old HTML row put the percentage in its single Change cell. A price row's
+    absolute movement -- the "by how much" the report existed to answer -- was
+    computed on every scan and shown nowhere.
+
+    Both signs are asserted: the sign is what makes the column readable at a
+    glance, and a formatter that dropped it would still pass a magnitude-only
+    assertion.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-delta",
+            "Synth Model Delta",
+            (
+                FieldChange("pricing.prompt", "0.000002", "0.0000035"),
+                FieldChange("pricing.completion", "0.000004", "0.0000015"),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-15T13:05:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+
+    assert '<td class="delta sem-cost-up">+$1.50</td>' in _card_row(report, "Input")
+    assert '<td class="delta sem-cost-down">-$2.50</td>' in _card_row(report, "Output")
+
+
+def test_price_delta_column_renders_a_bounded_sentinel_rather_than_a_false_zero() -> None:
+    """The degenerate delta, end to end, for the first time.
+
+    The sentinel rule bounds a movement too small for the column
+    (`+<$0.0001`), and `_fmt_price_per_m` has produced that string for the
+    price delta since it landed -- but with no renderer reading a price
+    `delta_display`, the price-delta sentinel had never reached a document.
+    This is the test that exercises it.
+
+    `$0.0000` is asserted absent from the whole report, not just this cell: a
+    zero-priced delta beside two prices that differ is the defect the bound
+    replaced, and it must not reappear in any column of the row.
+    """
+    report = _unscaled_price_report("0.000001", "0.000002")
+    row = _card_row(report, "Input")
+
+    # HTML-escaped, so the `<` goes through `html.escape` like every other
+    # cell rather than being emitted raw into the document.
+    assert '<td class="delta sem-cost-up">+&lt;$0.0001</td>' in row
+    assert "+<$0.0001" not in report
+    # The operands bound themselves at the same precision, and the percentage
+    # is a real one -- the movement is reported, just not overstated.
+    assert row.count("&lt;$0.0001") == 3
+    assert '<td class="pct sem-cost-up">↑ 100.0%</td>' in row
+    assert "$0.0000" not in report
+
+    # The negative form takes the same bound with a leading sign.
+    falling = _card_row(_unscaled_price_report("0.000002", "0.000001"), "Input")
+    assert '<td class="delta sem-cost-down">-&lt;$0.0001</td>' in falling
 
 
 def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() -> None:
@@ -1088,9 +1360,17 @@ def test_base_price_and_conditional_tier_render_distinguishably_in_markdown() ->
 def test_base_price_and_conditional_tier_render_distinguishably_in_html() -> None:
     report = _tiered_pricing_report("html")
 
-    # Change table (the per-model card).
-    field_cells = re.findall(r'<td class="field-name">(.*?)</td>', report)
+    # Change table (the per-model card). The cell also carries a `title` with
+    # the full dotted path, so the pattern must tolerate attributes -- and the
+    # two rows' titles are asserted below, since the qualifier is exactly what
+    # distinguishes their paths.
+    field_cells = re.findall(r'<td class="field-name"[^>]*>(.*?)</td>', report)
     assert sorted(field_cells) == ["Input", "Input (min_prompt_tokens=200000)"]
+    assert '<td class="field-name" title="pricing.prompt">Input</td>' in report
+    assert (
+        '<td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].prompt">'
+        "Input (min_prompt_tokens=200000)</td>"
+    ) in report
 
     # Change Summary (the other HTML path). Same requirement, separate renderer
     # input: the summary splits the already-formatted text line.
@@ -2265,11 +2545,11 @@ def test_boolean_disable_renders_on_to_off_with_no_percent() -> None:
     reports = _boolean_reports("top_provider.is_moderated", True, False)
     assert "Moderated: on \u2192 off" in reports["text"]
     assert "`Moderated: on \u2192 off`" in reports["markdown"]
-    assert (
-        '<td class="field-name">Moderated</td>'
-        '<td class="old-val">on</td><td class="new-val">off</td>'
-        '<td class="change-delta delta-decrease">disabled</td>'
-    ) in reports["html"]
+    row = _card_row(reports["html"], "Moderated")
+    assert '<td class="old-val">on</td>' in row
+    assert '<td class="new-val">off</td>' in row
+    # B1: a flag is `capability`, never `cost` -- off is dim, not red.
+    assert '<td class="delta sem-capability-off">disabled</td>' in row
     for format_name, report in reports.items():
         assert "%" not in report.replace("%;", ""), format_name
 
@@ -2280,19 +2560,21 @@ def test_boolean_enable_renders_off_to_on_with_a_non_empty_delta_cell() -> None:
     delta cell. The boolean branch never reaches percent logic at all."""
     reports = _boolean_reports("top_provider.is_moderated", False, True)
     assert "Moderated: off \u2192 on" in reports["text"]
-    assert (
-        '<td class="field-name">Moderated</td>'
-        '<td class="old-val">off</td><td class="new-val">on</td>'
-        '<td class="change-delta delta-increase">enabled</td>'
-    ) in reports["html"]
-    assert '<td class="change-delta delta-neutral"></td>' not in reports["html"]
+    row = _card_row(reports["html"], "Moderated")
+    assert '<td class="old-val">off</td>' in row
+    assert '<td class="new-val">on</td>' in row
+    assert '<td class="delta sem-capability">enabled</td>' in row
+    # The defect this pins is an EMPTY delta cell, whatever class it carries.
+    assert not re.search(r'<td class="delta [^"]*"></td>', reports["html"])
 
 
 def test_integer_coded_boolean_renders_off_to_on_with_no_percent() -> None:
     """`reasoning.default_enabled` is recorded as 0/1, not as a real bool."""
     reports = _boolean_reports("reasoning.default_enabled", 0, 1)
     assert "Reasoning default: off \u2192 on" in reports["text"]
-    assert '<td class="change-delta delta-increase">enabled</td>' in reports["html"]
+    assert '<td class="delta sem-capability">enabled</td>' in _card_row(
+        reports["html"], "Reasoning default"
+    )
     for format_name, report in reports.items():
         assert "%" not in report.replace("%;", ""), format_name
 
@@ -2303,16 +2585,19 @@ def test_one_sided_boolean_renders_as_coverage_with_an_em_dash() -> None:
     delta column -- instead of leaking the raw Python repr `null -> True`."""
     reports = _boolean_reports("top_provider.is_moderated", None, True)
     assert "Moderated: \u2014 \u2192 on" in reports["text"]
-    assert (
-        '<td class="field-name">Moderated</td>'
-        '<td class="old-val">—</td><td class="new-val">on</td>'
-        '<td class="change-delta delta-increase">added</td>'
-    ) in reports["html"]
+    row = _card_row(reports["html"], "Moderated")
+    assert '<td class="old-val">—</td>' in row
+    assert '<td class="new-val">on</td>' in row
+    # B1: a field appearing is `coverage` -- blue in both directions, not the
+    # green/red a one-sided flag used to borrow from the numeric path.
+    assert '<td class="delta sem-coverage">added</td>' in row
     assert "null → True" not in reports["text"]
 
     removed = _boolean_reports("top_provider.is_moderated", True, None)
     assert "Moderated: on \u2192 \u2014" in removed["text"]
-    assert '<td class="change-delta delta-decrease">removed</td>' in removed["html"]
+    removed_row = _card_row(removed["html"], "Moderated")
+    assert '<td class="new-val">—</td>' in removed_row
+    assert '<td class="delta sem-coverage">removed</td>' in removed_row
 
 
 def test_numeric_field_holding_zero_and_one_is_not_treated_as_a_boolean() -> None:

@@ -104,6 +104,33 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   fixture values are unchanged, so the before/after is a rendering diff and not
   a different input.
 
+* Task 7 rebuilt the concise HTML model card: one `<table>` per card with a
+  fixed eight-column `<colgroup>` (category, field, old, arrow, new, unit,
+  delta, percent) in place of one four-column table per category, colour driven
+  by `RenderedChange.semantic` instead of `direction`, and Pricing rows sorted
+  by descending absolute delta. ONLY the two HTML goldens in this module moved;
+  the text, markdown and JSON goldens are byte-identical, which is the evidence
+  that the layout work stayed inside the HTML card renderer. Four classes of
+  diff, all deliberate:
+    1. structure -- `<div class="change-category">` + per-category
+       `<table class="change-table">` becomes one `<table class="card-table">`
+       inside `<div class="card-table-wrap">`, with the category name as a
+       `cat-chip` cell on the first row of each group only;
+    2. price presentation -- the cell that read `2e-06 ($2.00 / 1M)` now reads
+       `$2.00` with `title="2e-06"`, the unit moves to its own column, and the
+       ABSOLUTE delta (`+$1.50`) appears for the first time in any format;
+    3. colour -- `delta-increase`/`delta-decrease`/`delta-price-*` give way to
+       `sem-cost-up`/`sem-cost-down`/`sem-capacity`/`sem-capability`/
+       `sem-capability-off`/`sem-coverage`/`sem-neutral`, so a context-length
+       increase is no longer the same green as a price DECREASE;
+    4. absent sides -- a one-sided price, count or scalar renders `—` in the
+       card where it rendered `null`, matching what one-sided booleans have
+       always done. Text and markdown still say `null`; that split is recorded
+       in the Task 7 report and is not closed here.
+  The Pricing group of `synth/model-core` also reorders (Output, Output
+  (min_prompt_tokens=200000), Cache read, Cache write) -- descending absolute
+  delta, not the arrival order.
+
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
 
@@ -778,11 +805,13 @@ h3 {
   color: var(--text-dim);
   overflow-wrap: anywhere;
 }
-.change-category {
+.change-category,
+.card-table-wrap {
   padding: 0.5rem 1rem;
   border-bottom: 1px solid var(--border);
 }
-.change-category:last-child {
+.change-category:last-child,
+.card-table-wrap:last-child {
   border-bottom: none;
 }
 .category-label {
@@ -828,6 +857,68 @@ td.delta-neutral { color: var(--accent-amber); }
 td.delta-price-higher { color: var(--accent-red); }
 td.delta-price-lower { color: var(--accent-green); }
 td.delta-price-coverage { color: var(--accent-blue); }
+.card-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.card-table col.col-category { width: 7.5rem; }
+.card-table col.col-arrow { width: 1.25rem; }
+.card-table col.col-old,
+.card-table col.col-new { width: 7rem; }
+.card-table col.col-unit { width: 2.75rem; }
+.card-table col.col-delta { width: 7rem; }
+.card-table col.col-pct { width: 5.5rem; }
+.card-table td {
+  padding: 0.35rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  vertical-align: top;
+  border-top: 1px solid transparent;
+}
+.card-table tr:nth-child(even) td {
+  background: var(--bg-table-alt);
+}
+.card-table tr.group-start td {
+  border-top: 1px solid var(--border-accent);
+}
+.card-table tr:first-child td {
+  border-top: 1px solid transparent;
+}
+.card-table td.old-val,
+.card-table td.new-val,
+.card-table td.delta,
+.card-table td.pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.card-table td.arrow,
+.card-table td.unit {
+  color: var(--text-dim);
+}
+.card-table td.delta,
+.card-table td.pct {
+  font-weight: 600;
+}
+.card-table td.cat-chip {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+.card-table td.list-cell .list-diff {
+  padding: 0;
+}
+td.sem-cost-up { color: var(--accent-red); }
+td.sem-cost-down { color: var(--accent-green); }
+td.sem-capacity { color: var(--accent-amber); }
+td.sem-capability { color: var(--accent-blue); }
+td.sem-capability-off { color: var(--text-dim); }
+td.sem-coverage { color: var(--accent-blue); }
+td.sem-neutral { color: var(--text-dim); }
 .list-diff {
   font-family: var(--font-mono);
   font-size: 0.82rem;
@@ -909,82 +1000,50 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <h3>Changed</h3>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span></div>
-<div class="change-category"><div class="category-label">Pricing</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Output</td><td class="old-val">2e-06 ($2.00 / 1M)</td><td class="new-val">3.5e-06 ($3.50 / 1M)</td><td class="change-delta delta-price-higher">↑ 75.0%</td></tr>
-<tr><td class="field-name">Cache read</td><td class="old-val">null</td><td class="new-val">5e-08 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
-<tr><td class="field-name">Cache write</td><td class="old-val">9e-08 ($0.09 / 1M)</td><td class="new-val">null</td><td class="change-delta delta-price-coverage">removed</td></tr>
-<tr><td class="field-name">Output (min_prompt_tokens=200000)</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
-</tbody></table>
-</div>
-<div class="change-category"><div class="category-label">Context &amp; Limits</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Context length</td><td class="old-val">131,072</td><td class="new-val">262,144</td><td class="change-delta delta-increase">↑ 100.0%</td></tr>
-</tbody></table>
-</div>
-<div class="change-category"><div class="category-label">Parameters</div>
-<div class="list-diff">
-<span class="field-name">Supported parameters</span> 
-<span class="list-count">(1 → 2)</span>
-<div class="list-added">
-&nbsp;&nbsp;+ logit_bias
-</div>
-</div>
-</div>
-<div class="change-category"><div class="category-label">Capabilities</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Reasoning default</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
-</tbody></table>
-</div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
-<tr><td class="field-name">Expiration date</td><td class="old-val">null</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val" title="2e-06">$2.00</td><td class="arrow">→</td><td class="new-val" title="3.5e-06">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val" title="0.000004">$4.00</td><td class="arrow">→</td><td class="new-val" title="0.000005">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val" title="5e-08">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val" title="9e-08">$0.09</td><td class="arrow">→</td><td class="new-val">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val">131,072</td><td class="arrow">→</td><td class="new-val">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
+<tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td class="list-cell" colspan="6"><span class="list-count">(1 → 2)</span><div class="list-added">&nbsp;&nbsp;+ logit_bias</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Capabilities</td><td class="field-name" title="reasoning.default_enabled">Reasoning default</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
+<tr><td></td><td class="field-name" title="expiration_date">Expiration date</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">2030-12-31</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
+</tbody></table></div>
 <div class="change-category"><div class="category-label">Squelched</div>
 <div class="list-diff">1 field change hidden by report detail policy</div>
 </div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-limit-add</code><span class="display-name">Synth Model Limit Add</span></div>
-<div class="change-category"><div class="category-label">Context &amp; Limits</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Max output</td><td class="old-val">null</td><td class="new-val">16,384</td><td class="change-delta delta-increase">added</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">16,384</td><td class="unit">tok</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-limit-remove</code><span class="display-name">Synth Model Limit Remove</span></div>
-<div class="change-category"><div class="category-label">Context &amp; Limits</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Max output</td><td class="old-val">8,192</td><td class="new-val">null</td><td class="change-delta delta-decrease">removed</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val">8,192</td><td class="arrow">→</td><td class="new-val">—</td><td class="unit">tok</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-moderation-off</code><span class="display-name">Synth Model Moderation Off</span></div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Moderated</td><td class="old-val">on</td><td class="new-val">off</td><td class="change-delta delta-decrease">disabled</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">on</td><td class="arrow">→</td><td class="new-val">off</td><td class="unit"></td><td class="delta sem-capability-off">disabled</td><td class="pct sem-capability-off"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-temp-toggle</code><span class="display-name">Synth Model Temp Toggle</span></div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Temperature</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="default_parameters.temperature">Temperature</td><td class="old-val">0</td><td class="arrow">→</td><td class="new-val">1</td><td class="unit"></td><td class="delta sem-neutral">+1</td><td class="pct sem-neutral"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>squelched</code><span class="display-name">report detail summary</span></div>
@@ -1048,91 +1107,48 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <h3>Changed</h3>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span></div>
-<div class="change-category"><div class="category-label">Pricing</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Output</td><td class="old-val">2e-06 ($2.00 / 1M)</td><td class="new-val">3.5e-06 ($3.50 / 1M)</td><td class="change-delta delta-price-higher">↑ 75.0%</td></tr>
-<tr><td class="field-name">Cache read</td><td class="old-val">null</td><td class="new-val">5e-08 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
-<tr><td class="field-name">Cache write</td><td class="old-val">9e-08 ($0.09 / 1M)</td><td class="new-val">null</td><td class="change-delta delta-price-coverage">removed</td></tr>
-<tr><td class="field-name">Output (min_prompt_tokens=200000)</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
-</tbody></table>
-</div>
-<div class="change-category"><div class="category-label">Context &amp; Limits</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Context length</td><td class="old-val">131,072</td><td class="new-val">262,144</td><td class="change-delta delta-increase">↑ 100.0%</td></tr>
-</tbody></table>
-</div>
-<div class="change-category"><div class="category-label">Parameters</div>
-<div class="list-diff">
-<span class="field-name">Supported parameters</span> 
-<span class="list-count">(1 → 2)</span>
-<div class="list-added">
-&nbsp;&nbsp;+ logit_bias
-</div>
-</div>
-</div>
-<div class="change-category"><div class="category-label">Capabilities</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Reasoning default</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
-</tbody></table>
-</div>
-<div class="change-category"><div class="category-label">Benchmarks</div>
-<div class="list-diff">
-<span class="field-name">Example suite</span> 
-<span class="list-count">(1 → 1)</span>
-<div class="list-added">
-&nbsp;&nbsp;+ {&quot;score&quot;: 2}
-</div>
-<div class="list-removed">
-&nbsp;&nbsp;− {&quot;score&quot;: 1}
-</div>
-</div>
-</div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
-<tr><td class="field-name">Expiration date</td><td class="old-val">null</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val" title="2e-06">$2.00</td><td class="arrow">→</td><td class="new-val" title="3.5e-06">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val" title="0.000004">$4.00</td><td class="arrow">→</td><td class="new-val" title="0.000005">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val" title="5e-08">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val" title="9e-08">$0.09</td><td class="arrow">→</td><td class="new-val">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val">131,072</td><td class="arrow">→</td><td class="new-val">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
+<tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td class="list-cell" colspan="6"><span class="list-count">(1 → 2)</span><div class="list-added">&nbsp;&nbsp;+ logit_bias</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Capabilities</td><td class="field-name" title="reasoning.default_enabled">Reasoning default</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
+<tr class="group-start"><td class="cat-chip">Benchmarks</td><td class="field-name" title="benchmarks.example_suite">Example suite</td><td class="list-cell" colspan="6"><span class="list-count">(1 → 1)</span><div class="list-added">&nbsp;&nbsp;+ {&quot;score&quot;: 2}</div><div class="list-removed">&nbsp;&nbsp;− {&quot;score&quot;: 1}</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
+<tr><td></td><td class="field-name" title="expiration_date">Expiration date</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">2030-12-31</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-limit-add</code><span class="display-name">Synth Model Limit Add</span></div>
-<div class="change-category"><div class="category-label">Context &amp; Limits</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Max output</td><td class="old-val">null</td><td class="new-val">16,384</td><td class="change-delta delta-increase">added</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">16,384</td><td class="unit">tok</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-limit-remove</code><span class="display-name">Synth Model Limit Remove</span></div>
-<div class="change-category"><div class="category-label">Context &amp; Limits</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Max output</td><td class="old-val">8,192</td><td class="new-val">null</td><td class="change-delta delta-decrease">removed</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val">8,192</td><td class="arrow">→</td><td class="new-val">—</td><td class="unit">tok</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-moderation-off</code><span class="display-name">Synth Model Moderation Off</span></div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Moderated</td><td class="old-val">on</td><td class="new-val">off</td><td class="change-delta delta-decrease">disabled</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">on</td><td class="arrow">→</td><td class="new-val">off</td><td class="unit"></td><td class="delta sem-capability-off">disabled</td><td class="pct sem-capability-off"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-temp-toggle</code><span class="display-name">Synth Model Temp Toggle</span></div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Temperature</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="default_parameters.temperature">Temperature</td><td class="old-val">0</td><td class="arrow">→</td><td class="new-val">1</td><td class="unit"></td><td class="delta sem-neutral">+1</td><td class="pct sem-neutral"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
-</tbody></table>
-</div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
 </div>
 <div class="model-card">
 <div class="model-card-header"><code>no-op</code><span class="display-name">report detail summary</span></div>
@@ -1809,12 +1825,12 @@ def test_a_price_below_the_columns_resolution_bounds_itself_in_every_format() ->
             format_name=format_name,
             provider_results=_below_resolution_price_scan_result(),
         )
-        # BOTH operands are bounded. (A price row's `delta_display` is not
-        # rendered by any format -- the text form is
-        # `raw → raw ($old → $new / 1M, pct)` and the HTML delta cell carries
-        # the percentage -- so the delta sentinel is pinned in
-        # test_change_render.py and, end to end, by the count/numeric fixture
-        # below, which is the one column that prints a delta.)
+        # BOTH operands are bounded. (Text and markdown still print no price
+        # delta -- their form is `raw → raw ($old → $new / 1M, pct)`. Task 7
+        # gave the HTML card a delta column, so HTML now bounds a third cell
+        # here; that is asserted exactly, by count, in
+        # `test_reporting.py::test_price_delta_column_renders_a_bounded_
+        # sentinel_rather_than_a_false_zero`.)
         # Twice per rendering of the row -- the model card and the Change
         # Summary both carry it, and HTML renders both.
         assert report.count(_sentinel(format_name, "<$0.0001")) >= 2, format_name
@@ -1822,8 +1838,11 @@ def test_a_price_below_the_columns_resolution_bounds_itself_in_every_format() ->
         # all here: no cell in this row is allowed to print a zero price.
         assert "$0.0000" not in report, format_name
         # The movement itself is still reported, and the raw per-token values
-        # sit beside the bound in every format -- so the misconfiguration tell
-        # the hatch was built to preserve is preserved without it.
+        # survive in every format -- so the misconfiguration tell the hatch was
+        # built to preserve is preserved without it. NOTE the HTML card carries
+        # the raw in the price cell's `title` rather than in the cell text
+        # since Task 7 (A1); it is visible on hover, not at a glance, until R3's
+        # raw-value toggle lands.
         assert "↑ 100.0%" in report, format_name
         assert "1e-06" in report, format_name
         assert "2e-06" in report, format_name
@@ -1931,11 +1950,14 @@ def _fractional_numeric_scan_result() -> list[ProviderScanResult]:
     `0.00 -> 0.00 (+0.00, ↑ 100.0%)`: three cells asserting nothing beside a
     percentage asserting a doubling.
 
-    This fixture exists because the numeric path is the ONLY one whose DELTA a
-    renderer prints. A price row's delta is computed and carried on
-    `RenderedChange` but never rendered (the text form shows the two prices and
-    the percentage; the HTML delta cell carries the percentage), so without
-    this fixture no end-to-end test could see a bounded delta at all.
+    This fixture exists because the numeric path was, when it was written, the
+    ONLY one whose DELTA a renderer printed: a price row's delta was computed
+    and carried on `RenderedChange` but rendered nowhere, so without this
+    fixture no end-to-end test could see a bounded delta at all. Task 7 gave
+    the HTML card a price delta column and that is no longer the case in HTML
+    -- text and markdown still print no price delta, which is why this fixture
+    stays. Its own claim is unchanged: a fractional numeric delta bounds itself
+    in all three human formats.
 
     Separate fixture for the same reason as the others -- adding a field to the
     shared fixture would move the JSON goldens.
