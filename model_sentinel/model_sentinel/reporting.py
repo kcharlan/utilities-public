@@ -7,6 +7,17 @@ from collections import OrderedDict, defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+from .change_render import (
+    _both_numeric,
+    _classify_field,
+    _fmt_int,
+    _fmt_price_per_m,
+    _is_count_field,
+    _is_price_amount_field,
+    _normalize_price,
+    _numeric_value,
+    _pct_change,
+)
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
 from .time_utils import to_local_human, to_local_iso
 
@@ -1078,55 +1089,11 @@ _SUMMARY_CATEGORY_ORDER = [*_CATEGORY_ORDER, "Added", "Removed", "Squelched"]
 _SUMMARY_CATEGORY_RANK = {category: index for index, category in enumerate(_SUMMARY_CATEGORY_ORDER)}
 
 
-def _classify_field(field_name: str) -> str:
-    lower = field_name.lower()
-    if any(p in lower for p in ("pricing.", "price", "cost", "_rate")):
-        return "Pricing"
-    if any(p in lower for p in ("context_length", "context_window", "max_completion", "max_tokens", "max_output")):
-        return "Context & Limits"
-    if "supported_parameters" in lower or lower == "parameters":
-        return "Parameters"
-    if any(p in lower for p in ("vision", "audio", "image", "tool", "reasoning", "structured", "modality")):
-        return "Capabilities"
-    if lower.startswith("benchmarks.") or lower == "benchmarks":
-        return "Benchmarks"
-    return "Other"
-
-
 def _group_field_changes(field_changes: tuple[FieldChange, ...]) -> list[tuple[str, list[FieldChange]]]:
     grouped: dict[str, list[FieldChange]] = defaultdict(list)
     for fc in field_changes:
         grouped[_classify_field(fc.field_name)].append(fc)
     return [(cat, grouped[cat]) for cat in _CATEGORY_ORDER if cat in grouped]
-
-
-def _both_numeric(a: Any, b: Any) -> bool:
-    if a is None or b is None:
-        return False
-    try:
-        float(a)
-        float(b)
-        return True
-    except (TypeError, ValueError):
-        return False
-
-
-def _numeric_value(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _is_price_amount_field(field_name: str) -> bool:
-    """Distinguish monetary leaves from thresholds nested under pricing."""
-    if _classify_field(field_name) != "Pricing":
-        return False
-    leaf = field_name.rsplit(".", 1)[-1]
-    leaf = leaf.split("[", 1)[0]
-    return "token" not in leaf.lower()
 
 
 def _price_movement_kind(
@@ -1196,48 +1163,6 @@ def _collect_price_movement_summary(
         )
     )
     return _PriceMovementSummary(tuple(models))
-
-
-def _is_count_field(field_name: str) -> bool:
-    lower = field_name.lower()
-    leaf = lower.rsplit(".", 1)[-1].split("[", 1)[0]
-    return "token" in leaf or _classify_field(field_name) == "Context & Limits"
-
-
-def _fmt_int(value: float) -> str:
-    if value == int(value):
-        return f"{int(value):,}"
-    return f"{value:,.2f}"
-
-
-def _pct_change(old: float, new: float) -> str:
-    if old == 0:
-        return ""
-    pct = ((new - old) / abs(old)) * 100
-    arrow = "\u2191" if pct > 0 else "\u2193"
-    return f"{arrow} {abs(pct):.1f}%"
-
-
-def _fmt_price_per_m(value: float) -> str:
-    if value == 0:
-        return "free"
-    abs_val = abs(value)
-    if abs_val >= 1:
-        formatted = f"{value:.2f}"
-    elif abs_val >= 0.01:
-        formatted = f"{value:.4f}"
-    else:
-        formatted = f"{value:.6f}"
-    # Strip trailing zeros but keep at least 2 decimal places
-    parts = formatted.split(".")
-    decimals = parts[1].rstrip("0")
-    if len(decimals) < 2:
-        decimals = decimals.ljust(2, "0")
-    return f"${parts[0]}.{decimals}"
-
-
-def _normalize_price(raw_value: float, multiplier: int, divisor: int) -> float:
-    return (raw_value * multiplier) / divisor
 
 
 def _render_smart_change_text(fc: FieldChange, price_multiplier: int = 1, price_divisor: int = 1) -> str:
