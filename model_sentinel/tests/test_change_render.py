@@ -832,10 +832,19 @@ def test_the_sentinel_keeps_the_sign_of_a_negative_magnitude():
     the numeric path. Dropping the sign would be a false claim of exactly the
     kind the rule exists to prevent -- the reader would be told a negative
     quantity is a positive one below the threshold.
+
+    It also pins WHERE the sign goes, which the two price branches used to
+    disagree about: the bound led with it (`-<$0.0001`) while an ordinary
+    negative buried it behind the currency mark (`$-3.00`). Both spellings are
+    guards -- no observed payload prices below zero -- which is exactly why
+    nothing downstream would have caught them diverging. One position, from
+    `_minus`, for both.
     """
     assert _fmt_int(-0.001) == "-<0.01"
     assert _fmt_int(0.001) == "<0.01"
     assert _fmt_price_per_m(-1e-09, PRICE_MAX_PRECISION) == "-<$0.0001"
+    assert _fmt_price_per_m(-3.0, PRICE_MIN_PRECISION) == "-$3.00"
+    assert _fmt_price_per_m(3.0, PRICE_MIN_PRECISION) == "$3.00"
 
     result = classify_change(FieldChange("some.arbitrary.metric", -0.001, 0.002))
     assert (result.old_display, result.new_display) == ("-<0.01", "<0.01")
@@ -919,12 +928,27 @@ def test_a_one_sided_price_below_the_columns_resolution_bounds_itself():
 # ---------------------------------------------------------------------------
 
 
-# A cell that asserts NOTHING: `free`, or digits that are all zero, with an
-# optional sign, currency mark or percent sign. `$0.0000`, `+$0.00000`, `0.00`,
-# `-0.00`, `0`, `0.0%`. A sentinel never matches -- `<$0.0001` and `+<0.01`
-# both carry a `<` -- which is the entire point: a bound is not a claim of
-# nothing.
-_CLAIMS_NOTHING = re.compile(r"[+-]?\$?0(?:\.0+)?%?")
+# Every prefix a rendered cell can carry before its magnitude: a delta's sign,
+# or the percent column's direction arrow. This list is a RESTATEMENT of what
+# `change_render._sentinel` and its callers compose, and restatements drift --
+# this one did. It had `+`/`-` and no arrow, so `↑ 0.0%` and `↓ 0.0%`, the only
+# two false spellings the percent column can produce, were invisible to the
+# predicate below and the acceptance criterion could not see them.
+#
+# It is now asserted complete against the module's own output by
+# `test_the_claims_nothing_predicate_knows_every_spelling_the_module_emits`,
+# which derives its leads from real rendered cells rather than from this tuple.
+# A column that grows a prefix this list does not know fails there.
+_CELL_LEADS = ("+", "-", "↑ ", "↓ ")
+
+# A cell that asserts NOTHING: `free`, or digits that are all zero, carrying an
+# optional lead, currency mark and percent sign. `$0.0000`, `+$0.00000`,
+# `-$0.00`, `0.00`, `-0.00`, `0`, `0.0%`, `↑ 0.0%`, `↓ 0.0%`. A sentinel never
+# matches -- `<$0.0001`, `+<0.01` and `↑ <0.1%` all carry a `<` -- which is the
+# entire point: a bound is not a claim of nothing.
+_CLAIMS_NOTHING = re.compile(
+    rf"(?:{'|'.join(re.escape(lead) for lead in _CELL_LEADS)})?\$?0(?:\.0+)?%?"
+)
 
 
 def _claims_nothing(cell: str) -> bool:
@@ -944,6 +968,13 @@ _ROW_SHAPES = (
     ("pricing.prompt", "0.000000001", "3", 1),  # below resolution -> printable
     ("pricing.prompt", "3", "3.0", 1),  # printable, movement exactly zero
     ("pricing.prompt", "3.000", "3.001", 1),  # printable, movement below 0.1%
+    # The mirror of the row above, and NOT redundant with it: the percent
+    # column is the one column whose cell carries a direction, so an upward
+    # sub-threshold movement exercises a different spelling (`↑ <0.1%`) from a
+    # downward one (`↓ <0.1%`). Without this shape a percent sentinel that
+    # fired only on increases would print `↓ 0.0%` -- the exact lie the column
+    # exists to prevent -- and the enumeration would never render it.
+    ("pricing.prompt", "3.001", "3.000", 1),  # printable, DOWNWARD movement below 0.1%
     ("pricing.prompt", "2", "3.5", 1),  # printable, ordinary movement
     ("pricing.prompt", "0.15", "0.1425", 1),  # printable, four places
     ("pricing.prompt", "0.05", "0.050000000001", 1),  # operands round alike below the cap
@@ -970,6 +1001,13 @@ _ROW_SHAPES = (
     ("some.arbitrary.metric", "-0.001", "0.002", 1),  # signed, below resolution
     ("some.arbitrary.metric", "400000", "400001", 1),  # movement below 0.1%
     ("some.arbitrary.metric", "0.5", "1", 1),  # fractional, printable
+    # The residual, on the only path that RENDERS a delta: both operands round
+    # to `2.00`, the delta rounds to `+0.01`, and a reader who adds the two
+    # displayed numbers gets a mismatch. Every cell is true of its own quantity
+    # -- which is why it satisfies the rule below -- and the row still reads as
+    # a contradiction. In the table so the property is asserted over it and so
+    # the residual is a listed shape rather than a remark in a report.
+    ("default_parameters.temperature", "1.9951", "2.0049", 1),
 )
 
 
@@ -983,6 +1021,30 @@ def _shape_quantities(old: str | None, new: str | None, multiplier: int) -> dict
     new_q = None if new is None else float(new) * multiplier
     delta_q = None if old_q is None or new_q is None else new_q - old_q
     return {"old": old_q, "new": new_q, "delta": delta_q, "pct": delta_q}
+
+
+def _rendered_cells():
+    """Every `(shape, column, cell, quantity)` the enumeration produces.
+
+    ONE traversal of `_ROW_SHAPES`, shared by the two properties asserted over
+    it, so the rule and the drift guard that keeps the rule legible can never
+    end up looking at different tables.
+    """
+    for field, old, new, multiplier in _ROW_SHAPES:
+        result = classify_change(
+            FieldChange(field, old, new),
+            price_multiplier=multiplier,
+            price_divisor=1,
+        )
+        quantities = _shape_quantities(old, new, multiplier)
+        cells = {
+            "old": result.old_display,
+            "new": result.new_display,
+            "delta": result.delta_display,
+            "pct": result.pct_display,
+        }
+        for column, cell in cells.items():
+            yield (field, old, new), column, cell, quantities[column]
 
 
 def test_no_cell_claims_nothing_unless_it_is_nothing():
@@ -1007,35 +1069,107 @@ def test_no_cell_claims_nothing_unless_it_is_nothing():
     satisfy the property, and they do.
     """
     bounded_columns = set()
-    for field, old, new, multiplier in _ROW_SHAPES:
-        result = classify_change(
-            FieldChange(field, old, new),
-            price_multiplier=multiplier,
-            price_divisor=1,
+    bounded_pct_leads = set()
+    for (field, old, new), column, cell, quantity in _rendered_cells():
+        if cell is None or cell == "null" or quantity is None:
+            # An absent side has no quantity to be true or false about.
+            continue
+        assert cell, (field, old, new, column)
+        if "<" in cell:
+            bounded_columns.add(column)
+            if column == "pct":
+                bounded_pct_leads.add(cell.split("<", 1)[0])
+        assert _claims_nothing(cell) is (quantity == 0), (
+            f"{field}: {old} -> {new} rendered {column}={cell!r} "
+            f"for a quantity of {quantity!r}"
         )
-        quantities = _shape_quantities(old, new, multiplier)
-        cells = {
-            "old": result.old_display,
-            "new": result.new_display,
-            "delta": result.delta_display,
-            "pct": result.pct_display,
-        }
-        for column, cell in cells.items():
-            quantity = quantities[column]
-            if cell is None or cell == "null" or quantity is None:
-                # An absent side has no quantity to be true or false about.
-                continue
-            assert cell, (field, old, new, column)
-            if "<" in cell:
-                bounded_columns.add(column)
-            assert _claims_nothing(cell) is (quantity == 0), (
-                f"{field}: {old} -> {new} rendered {column}={cell!r} "
-                f"for a quantity of {quantity!r}"
-            )
 
     # The table must actually REACH the rule in every column, or the property
     # above would hold vacuously for a formatter that never bounds anything.
     assert bounded_columns == {"old", "new", "delta", "pct"}
+
+    # And it must reach the percent column in BOTH directions. That column is
+    # the only one whose cell carries a direction, so "the sentinel fires" is
+    # two claims there, not one: a percent sentinel conditioned on `pct > 0`
+    # would print `↓ 0.0%` for every decrease too small to show, and an
+    # upward-only table would render that lie nowhere and pass.
+    assert bounded_pct_leads == {"↑ ", "↓ "}
+
+
+# A rendered bound, split into the pieces `change_render._sentinel` composed
+# it from: the currency mark (if the column has one) and the bound's digits.
+# The lead and any percent sign fall outside the match and are carried through
+# untouched, which is what makes the twin below the module's spelling rather
+# than this file's.
+_BOUND_IN_CELL = re.compile(r"<(\$?)(\d+\.\d+)")
+
+
+def _degenerate_twin(cell: str) -> str:
+    """The cell this one would have been had its sentinel not fired.
+
+    The bound is replaced by the zeroes the column would otherwise have
+    printed, at the bound's OWN precision, read off the bound rather than
+    supplied here. `<$0.0001` -> `$0.0000`, `-<$0.0001` -> `-$0.0000`,
+    `+<0.01` -> `+0.00`, `↑ <0.1%` -> `↑ 0.0%`.
+
+    Nothing about the lead, the mark or the precision is restated: they arrive
+    already attached to a cell the module rendered. That is the whole point --
+    the twin is what the module WOULD emit, not what this file guesses it
+    would.
+    """
+    match = _BOUND_IN_CELL.search(cell)
+    assert match is not None, f"not a bounded cell: {cell!r}"
+    places = len(match.group(2).partition(".")[2])
+    zeroes = f"{0.0:.{places}f}"
+    return f"{cell[: match.start()]}{match.group(1)}{zeroes}{cell[match.end() :]}"
+
+
+def test_the_claims_nothing_predicate_knows_every_spelling_the_module_emits():
+    """The predicate and the formatters must agree, or the rule cannot see.
+
+    `_claims_nothing` is a fourth restatement of "what counts as degenerate" --
+    the module has one predicate (`_prints_as_zero`) and one spelling
+    (`_sentinel`), and this file has a regex describing the same thing in
+    another notation. It drifted, in the only way a restatement can: it carried
+    `+`/`-` and no arrow, so `↑ 0.0%` and `↓ 0.0%`, the percent column's only
+    false spellings, matched nothing. `test_no_cell_claims_nothing_unless_it_is_
+    nothing` was therefore satisfied by ANY arrowed cell, true or false, and a
+    percent sentinel that fired only on increases passed it.
+
+    This closes the loop without adding a fifth restatement. Every bounded cell
+    the enumeration renders is turned back into the cell it would have been if
+    its sentinel had not fired -- same lead, same mark, same precision, taken
+    off the real output -- and that twin MUST be recognised as a claim of
+    nothing while the bound itself must not. A column that grows a prefix
+    `_CELL_LEADS` does not know fails here, loudly, instead of quietly exempting
+    itself from the acceptance criterion.
+    """
+    twinned_columns = set()
+    twinned_leads = set()
+    for (field, old, new), column, cell, _quantity in _rendered_cells():
+        if not cell or "<" not in cell:
+            continue
+        assert _claims_nothing(cell) is False, (
+            f"{field}: {old} -> {new} rendered {column}={cell!r}, "
+            f"and the predicate read a bound as a claim of nothing"
+        )
+        twin = _degenerate_twin(cell)
+        assert _claims_nothing(twin) is True, (
+            f"{field}: {old} -> {new} rendered {column}={cell!r}, whose "
+            f"unbounded spelling {twin!r} the predicate does not recognise "
+            f"as a claim of nothing -- the rule cannot see this column"
+        )
+        twinned_columns.add(column)
+        twinned_leads.add(cell.split("<", 1)[0])
+
+    # Same reachability obligation as the rule itself: all four columns, and
+    # every lead a bound can carry -- bare (a price operand), a rising delta's
+    # `+`, a `-` (reached twice over: a falling price delta, and a negative
+    # numeric operand), and both of the percent column's arrows. Each is a
+    # distinct spelling the predicate has to recognise in its degenerate form,
+    # and the arrows are the two it did not.
+    assert twinned_columns == {"old", "new", "delta", "pct"}
+    assert twinned_leads == {"", "+", "-", "↑ ", "↓ "}
 
 
 # ---------------------------------------------------------------------------

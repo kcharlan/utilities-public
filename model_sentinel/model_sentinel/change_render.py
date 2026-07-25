@@ -555,6 +555,59 @@ def _smallest_printable(precision: int) -> str:
     return f"{10.0 ** -precision:.{precision}f}"
 
 
+def _minus(value: float) -> str:
+    """THE sign position for a rendered magnitude: leading, before any mark.
+
+    `-$3.00` and `-<$0.0001`, never `$-3.00`. One convention, in one function,
+    because a column that spelled its ordinary negatives one way and its
+    bounded ones another would align on nothing, and a reader scanning for a
+    minus should find it in the same place in every cell. It is also the
+    spelling the delta column has always used, where the sign leads by
+    construction (`+$0.0075` above `-$0.0075`), so the price operands now agree
+    with the delta printed beside them.
+
+    A consequence worth naming: it keeps a negative's degenerate spelling
+    (`-$0.00`) the same shape as a positive's (`$0.00`), so one predicate
+    recognises both. `$-0.00` would need a second one, and a second one is how
+    the first drifts.
+
+    No observed payload prices below zero, so this is a guard rather than a
+    live case on the price path; it is reachable on the numeric path, where
+    `-0.001` renders `-<0.01`.
+    """
+    return "-" if value < 0 else ""
+
+
+def _sentinel(
+    value: float,
+    precision: int,
+    *,
+    mark: str = "",
+    suffix: str = "",
+    lead: str | None = None,
+) -> str:
+    """THE spelling of a bounded magnitude, composed in exactly one place.
+
+    `lead` + `<` + `mark` + the column's bound + `suffix`, which is every
+    sentinel this module emits: `<$0.0001` and `-<$0.0001` (price, mark `$`),
+    `<0.01` and `-<0.01` (count/numeric, no mark), `↑ <0.1%` and `↓ <0.1%`
+    (percent, suffix `%`, lead supplied by the caller because the percent
+    column's prefix is a DIRECTION and not a sign -- the magnitude's own minus
+    would be a second, contradictory statement of the same thing).
+
+    This existed as three separate f-strings, one per column, each rebuilding
+    the same shape from the same two pieces. That is one rule with three
+    renderings, and a rule with three renderings is three rules that happen to
+    agree today: the moment one column grows a prefix the others do not know
+    about, anything reading the column's output back -- including the test that
+    asserts the rule -- is reading a spelling it was not written for. That is
+    not hypothetical; it is exactly how the percent column's arrow escaped the
+    acceptance criterion.
+    """
+    prefix = _minus(value) if lead is None else lead
+    return f"{prefix}<{mark}{_smallest_printable(precision)}{suffix}"
+
+
 # The decimal places `_fmt_int` gives a value that is not a whole number.
 INT_FRACTION_PRECISION = 2
 
@@ -574,14 +627,15 @@ def _fmt_int(value: float) -> str:
     The sentinel is reachable here only through fractional values on the
     count/numeric paths.
 
-    The sign is carried explicitly onto the sentinel so a negative magnitude is
-    not flattened into a positive bound: `-0.001` renders `-<0.01`, not `<0.01`
-    (true of the magnitude, and the direction the rest of the row asserts).
+    The sign is carried onto the sentinel through `_minus`, the same function
+    the price column uses, so a negative magnitude is not flattened into a
+    positive bound: `-0.001` renders `-<0.01`, not `<0.01` (true of the
+    magnitude, and the direction the rest of the row asserts).
     """
     if value == int(value):
         return f"{int(value):,}"
     if _prints_as_zero(value, INT_FRACTION_PRECISION):
-        return f"{'-' if value < 0 else ''}<{_smallest_printable(INT_FRACTION_PRECISION)}"
+        return _sentinel(value, INT_FRACTION_PRECISION)
     return f"{value:,.{INT_FRACTION_PRECISION}f}"
 
 
@@ -619,7 +673,7 @@ def _pct_change(old: float, new: float) -> str:
     pct = ((new - old) / abs(old)) * 100
     arrow = "↑ " if pct > 0 else ("↓ " if pct < 0 else "")
     if _prints_as_zero(pct, PCT_PRECISION):
-        return f"{arrow}<{_smallest_printable(PCT_PRECISION)}%"
+        return _sentinel(pct, PCT_PRECISION, suffix="%", lead=arrow)
     return f"{arrow}{abs(pct):.{PCT_PRECISION}f}%"
 
 
@@ -711,17 +765,18 @@ def _fmt_price_per_m(value: float, precision: int) -> str:
     pass `_price_precision(value)` explicitly instead, which says the same
     thing at the call site where it is true.
 
-    The sign is carried explicitly onto the sentinel (`-<$0.0001`) so a
-    negative magnitude cannot be flattened into a positive bound. No observed
-    payload prices below zero, so that is a guard rather than a live case --
-    but a bound that silently dropped a sign would be a false claim of exactly
-    the kind this rule exists to prevent.
+    Both the bound and the number carry their sign through `_minus`, so a
+    negative price is spelled `-$3.00` and a negative bound `-<$0.0001` -- one
+    sign position for the column rather than one per branch. No observed
+    payload prices below zero, so both are guards rather than live cases; that
+    is precisely why they must not be allowed to disagree, because nothing
+    downstream would ever see them do it.
     """
     if value == 0:
         return "free"
     if _prints_as_zero(value, precision):
-        return f"{'-' if value < 0 else ''}<${_smallest_printable(precision)}"
-    return f"${value:.{precision}f}"
+        return _sentinel(value, precision, mark="$")
+    return f"{_minus(value)}${abs(value):.{precision}f}"
 
 
 def _normalize_price(raw_value: float, multiplier: int, divisor: int) -> float:
