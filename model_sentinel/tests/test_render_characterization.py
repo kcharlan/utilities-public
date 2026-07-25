@@ -22,6 +22,14 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   fields off the numeric path: `off -> on` / `on -> off` with an
   `enabled`/`disabled` pill instead of `0 -> 1 (+1)` and `↓ 100.0%`, and a
   one-sided boolean now reads `— -> on` with an `added` pill.
+* Task 4 fix pass 1 completed E1's accounting. Dropping a card left the
+  provider's `changed: 7` / `### Changed (7)` counters standing over six, with
+  nothing to say where the seventh went -- and, when EVERY model under a
+  heading was no-op-only, the heading was emitted over nothing at all. The
+  counters stay record counts; a provider-level `no-op: N field changes across
+  M models` rollup now follows the pre-existing `squelched` rollup in the text,
+  markdown and HTML goldens and names the models whose rows were dropped. That
+  rollup line is the ONLY diff in this pass; the JSON goldens are untouched.
 
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
@@ -246,6 +254,8 @@ Synth Provider (synthprov)
   squelched: 1 field change across 1 model
     patterns: benchmarks, benchmarks.*
     models: synth/model-core
+  no-op: 1 field change across 1 model
+    models: synth/model-temp-null
 
 Summary
 ------------------------------------------------------------
@@ -291,6 +301,8 @@ Synth Provider (synthprov)
       default_parameters.temperature: 0 → 1 (+1)
     * synth/model-moderation-added (Synth Model Moderation Added)
       top_provider.is_moderated: — → on
+  no-op: 1 field change across 1 model
+    models: synth/model-temp-null
 
 Summary
 ------------------------------------------------------------
@@ -342,7 +354,9 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
   - `top_provider.is_moderated: — → on`
 - squelched: `1` field change across `1` model
 - Squelch patterns: `benchmarks, benchmarks.*`
-- Squelched models: `synth/model-core`"""
+- Squelched models: `synth/model-core`
+- no-op: `1` field change across `1` model
+- No-op models: `synth/model-temp-null`"""
 
 EXPECTED_MARKDOWN = _EXPECTED_MARKDOWN_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
 
@@ -387,7 +401,9 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
 - `synth/model-temp-toggle` - Synth Model Temp Toggle
   - `default_parameters.temperature: 0 → 1 (+1)`
 - `synth/model-moderation-added` - Synth Model Moderation Added
-  - `top_provider.is_moderated: — → on`"""
+  - `top_provider.is_moderated: — → on`
+- no-op: `1` field change across `1` model
+- No-op models: `synth/model-temp-null`"""
 
 EXPECTED_MARKDOWN_DETAIL_ALL = _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
 
@@ -903,6 +919,12 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">patterns: benchmarks, benchmarks.*</div>
 <div class="list-count">models: synth/model-core</div>
+</div></div>
+<div class="model-card">
+<div class="model-card-header"><code>no-op</code><span class="display-name">report detail summary</span></div>
+<div class="change-category"><div class="category-label">no-op</div>
+<div class="list-diff">1 field change across 1 model</div>
+<div class="list-count">models: synth/model-temp-null</div>
 </div></div></section>
 <section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.completion</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
 <tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.input_cache_read</td><td>null → 5e-08 ($0.05 / 1M)</td></tr>
@@ -1038,7 +1060,13 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
 </tbody></table>
 </div>
-</div></section>
+</div>
+<div class="model-card">
+<div class="model-card-header"><code>no-op</code><span class="display-name">report detail summary</span></div>
+<div class="change-category"><div class="category-label">no-op</div>
+<div class="list-diff">1 field change across 1 model</div>
+<div class="list-count">models: synth/model-temp-null</div>
+</div></div></section>
 <section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.completion</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
 <tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.input_cache_read</td><td>null → 5e-08 ($0.05 / 1M)</td></tr>
 <tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>pricing.input_cache_write</td><td>9e-08 ($0.09 / 1M) → null</td></tr>

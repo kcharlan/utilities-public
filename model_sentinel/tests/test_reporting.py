@@ -1006,11 +1006,26 @@ def _render_all_human_formats(changed: tuple[ModelDelta, ...], **kwargs) -> dict
     }
 
 
+def _assert_no_model_card(reports: dict[str, str], model_id: str) -> None:
+    """Assert no renderer gave `model_id` a card of its own.
+
+    Checks the per-format card markers rather than bare substring absence: the
+    model id legitimately appears inside the provider-level `no-op` rollup's
+    model list, which is the whole point of the rollup.
+    """
+    assert f"* {model_id} (" not in reports["text"]
+    assert f"- `{model_id}` - " not in reports["markdown"]
+    assert f'<div class="model-card-header"><code>{model_id}</code>' not in reports["html"]
+
+
 def test_noop_rows_are_absent_from_every_human_format() -> None:
     for format_name, report in _render_all_human_formats((_NOOP_PLUS_REAL_MODEL,)).items():
-        # Both noop forms: null -> null, and equal non-null values.
+        # Both noop forms: null -> null, and equal non-null values. Asserted on
+        # the rendered field-name/value pair, not on the bare word "active",
+        # which any future CSS class or markup could contain.
         assert "default_parameters.temperature" not in report, format_name
-        assert "active" not in report, format_name
+        assert "status: active" not in report, format_name
+        assert '<td class="field-name">status</td>' not in report, format_name
         # The real change on the same model still renders.
         assert "expiration_date" in report, format_name
 
@@ -1018,8 +1033,11 @@ def test_noop_rows_are_absent_from_every_human_format() -> None:
 def test_noop_only_model_gets_no_card_at_all() -> None:
     """A model whose every change is a noop has nothing to report, so it must
     not consume a card, a header, or a summary row."""
-    for format_name, report in _render_all_human_formats((_NOOP_MODEL,)).items():
-        assert "synth/model-noop-only" not in report, format_name
+    reports = _render_all_human_formats((_NOOP_MODEL,))
+    _assert_no_model_card(reports, "synth/model-noop-only")
+    assert "default_parameters.temperature" not in reports["text"]
+    assert "default_parameters.temperature" not in reports["markdown"]
+    assert "default_parameters.temperature" not in reports["html"]
 
 
 def test_noop_rows_are_suppressed_in_all_detail_mode_too() -> None:
@@ -1115,6 +1133,176 @@ def test_noop_rows_are_absent_from_the_changes_report() -> None:
     ]
 
 
+# ---------------------------------------------------------------------------
+# E1 follow-up: when EVERY model under a heading is no-op-only, the heading
+# must not be left standing over nothing, and the dropped rows must be
+# accounted for -- the same contract the pre-existing squelched-only path
+# already honours through its provider rollup.
+# ---------------------------------------------------------------------------
+
+
+def _noop_change_row(field_name: str = "default_parameters.temperature") -> dict:
+    return {
+        "detected_at": "2026-07-25T09:00:00+00:00",
+        "provider_id": "synthprov",
+        "provider_label": "Synth Provider",
+        "provider_model_id": "synth/model-noop-only",
+        "display_name": "Synth Noop Only",
+        "change_kind": "changed",
+        "field_name": field_name,
+        "old_value": None,
+        "new_value": None,
+    }
+
+
+def _noop_only_changes_report(format_name: str) -> str:
+    return render_changes_report(
+        format_name=format_name,
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=(_noop_change_row(),),
+        provider_pricing={"synthprov": (1, 1)},
+    )
+
+
+def test_scan_markdown_changed_section_is_never_an_empty_heading() -> None:
+    """`### Changed (1)` used to be emitted with nothing at all beneath it --
+    not even the `- None` that `Added (0)`/`Removed (0)` get."""
+    markdown = _render_all_human_formats((_NOOP_MODEL,))["markdown"]
+    section = markdown.split("### Changed (1)", 1)[1].strip()
+    assert section, "Changed section rendered as a bare heading"
+    assert "no-op: `1` field change across `1` model" in section
+    assert "No-op models: `synth/model-noop-only`" in section
+
+
+def test_scan_markdown_falls_back_to_none_when_a_section_has_no_body() -> None:
+    """The `- None` fallback is what guarantees the invariant even for a future
+    suppression reason that produces no rollup of its own."""
+    markdown = _render_all_human_formats(())["markdown"]
+    changed_section = markdown.split("### Changed (0)", 1)[1].strip()
+    assert changed_section == "- None"
+
+
+def test_scan_html_omits_the_changed_heading_when_no_card_survives() -> None:
+    """`<h3>Changed</h3>` with no cards after it was the HTML symptom."""
+    html = _render_all_human_formats((_NOOP_MODEL,))["html"]
+    assert "<h3>Changed</h3>\n</section>" not in html
+    assert "<h3>Changed</h3>" in html  # the rollup card justifies the heading
+    assert '<div class="category-label">no-op</div>' in html
+    assert "1 field change across 1 model" in html
+
+
+def test_scan_html_emits_no_section_at_all_for_a_bare_provider_heading() -> None:
+    """A provider section reduced to its `<h2>` is suppressed outright."""
+    result = _scan_result(
+        (_NOOP_MODEL,),
+        provider_id="synthprov",
+        provider_label="Synth Provider",
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[result],
+    )
+    # The section exists only because the rollup card fills it.
+    assert '<section class="provider-section">' in html
+    assert "</h2>\n</section>" not in html
+
+
+def test_changes_text_report_omits_date_and_provider_when_nothing_survives() -> None:
+    """The date heading, its `----` rule and the provider label used to be
+    emitted with nothing underneath."""
+    report = _noop_only_changes_report("text")
+    assert "Synth Provider" in report
+    assert "no-op: 1 field change across 1 model" in report
+    assert "models: synth/model-noop-only" in report
+    # Nothing is left dangling: the provider label is always followed by content.
+    lines = [line for line in report.splitlines() if line.strip()]
+    assert lines[-1].strip() == "models: synth/model-noop-only"
+    assert "* synth/model-noop-only" not in report
+
+
+def test_changes_html_report_omits_date_and_provider_when_nothing_survives() -> None:
+    report = _noop_only_changes_report("html")
+    assert "<h3>Synth Provider</h3>\n</section>" not in report
+    assert '<div class="category-label">no-op</div>' in report
+    assert '<div class="model-card-header"><code>synth/model-noop-only</code>' not in report
+
+
+def test_changes_report_drops_a_date_section_with_no_surviving_provider() -> None:
+    """With no rollup to carry it, a date whose every model is invisible must
+    emit no section, not an orphan heading. Exercised through a model whose
+    change rows carry no field name at all -- the pre-existing empty-plan case
+    the four skip guards used to leave dangling."""
+    row = _noop_change_row()
+    row["field_name"] = None
+    for format_name in ("text", "html"):
+        report = render_changes_report(
+            format_name=format_name,
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=(row,),
+            provider_pricing={"synthprov": (1, 1)},
+        )
+        assert "2026-07-25" not in report, format_name
+        assert "Synth Provider" not in report, format_name
+
+
+def test_noop_rollup_counts_every_dropped_row_not_just_whole_models() -> None:
+    """Accounting is per field change, exactly like the squelched rollup: a
+    model that still renders but lost a no-op row is counted too."""
+    text = _render_all_human_formats((_NOOP_MODEL, _NOOP_PLUS_REAL_MODEL))["text"]
+    assert "no-op: 3 field changes across 2 models" in text
+    assert "models: synth/model-noop-mixed, synth/model-noop-only" in text
+
+
+def test_noop_rollup_is_absent_when_nothing_was_dropped() -> None:
+    """The rollup is accounting, not decoration -- a clean report never shows it."""
+    clean = ModelDelta(
+        "changed",
+        "synth/model-clean",
+        "Synth Clean",
+        (FieldChange("expiration_date", None, "2030-12-31"),),
+    )
+    for format_name, report in _render_all_human_formats((clean,)).items():
+        assert "no-op" not in report, format_name
+
+
+def test_json_output_is_unchanged_by_heading_suppression() -> None:
+    """JSON is the audit path: `noop` entries stay, and no rollup leaks in."""
+    scan_payload = json.loads(
+        render_scan_report(
+            generated_at="2026-07-25T09:00:00+00:00",
+            command="scan",
+            format_name="json",
+            provider_results=[_scan_result((_NOOP_MODEL,))],
+        )
+    )
+    changed = scan_payload["providers"][0]["changed"]
+    assert changed[0]["field_changes"] == [
+        {"field_name": "default_parameters.temperature", "old_value": None, "new_value": None}
+    ]
+    assert "no-op" not in json.dumps(scan_payload)
+
+    changes_payload = json.loads(
+        render_changes_report(
+            format_name="json",
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=(_noop_change_row(),),
+            provider_pricing={"synthprov": (1, 1)},
+        )
+    )
+    assert [row["field_name"] for row in changes_payload["changes"]] == [
+        "default_parameters.temperature"
+    ]
+    assert "no-op" not in json.dumps(changes_payload)
+
+
 def test_noop_suppression_cannot_desync_a_bulk_card_from_its_grouping_key() -> None:
     """`_list_change_signature` derives the bulk grouping key from
     `_list_diff_members`, NOT from `classify_change`, so it reports a
@@ -1140,11 +1328,12 @@ def test_noop_suppression_cannot_desync_a_bulk_card_from_its_grouping_key() -> N
         ("1",),
     )
 
-    for format_name, report in _render_all_human_formats(equal_but_differently_spelled).items():
+    reports = _render_all_human_formats(equal_but_differently_spelled)
+    for format_name, report in reports.items():
         assert "Bulk change" not in report, format_name
         assert "supported_parameters" not in report, format_name
-        for suffix in ("a", "b", "c"):
-            assert f"synth/model-eq-{suffix}" not in report, format_name
+    for suffix in ("a", "b", "c"):
+        _assert_no_model_card(reports, f"synth/model-eq-{suffix}")
 
 
 def test_bulk_grouping_still_forms_when_the_list_change_is_real() -> None:

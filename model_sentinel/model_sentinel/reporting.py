@@ -4,6 +4,7 @@ import fnmatch
 import html as html_module
 import json
 from collections import OrderedDict, defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
@@ -92,6 +93,11 @@ class _FieldDisplayPlan:
     hidden_unclassified: tuple[FieldChange, ...]
     hidden_non_squelched: tuple[FieldChange, ...]
     unclassified_used: int
+    # No-op field changes dropped by `_drop_noop_changes` (E1). Carried so the
+    # provider-level rollup can account for them; deliberately NOT part of
+    # `_has_hidden_details`, because a model whose every change is a no-op has
+    # nothing to say and must not keep a card alive.
+    noop: tuple[FieldChange, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,9 +120,28 @@ class _BulkChangeGroup:
 
 
 @dataclass(frozen=True)
+class _HiddenRollups:
+    """Provider-level accounting for everything a report chose not to render.
+
+    One container for all three suppression reasons so every renderer emits the
+    same set of rollups in the same order, instead of each rebuilding its own
+    `hidden_squelched`/`hidden_non_squelched` lists inline.
+    """
+
+    squelched: list[tuple[str, tuple[FieldChange, ...]]]
+    non_squelched: list[tuple[str, tuple[FieldChange, ...]]]
+    noop: list[tuple[str, tuple[FieldChange, ...]]]
+
+    @property
+    def any_hidden(self) -> bool:
+        return bool(self.squelched or self.non_squelched or self.noop)
+
+
+@dataclass(frozen=True)
 class _ProviderChangePlan:
     planned: tuple[_PlannedModelChange, ...]
     items: tuple[_PlannedModelChange | _BulkChangeGroup, ...]
+    rollups: _HiddenRollups
 
 
 @dataclass(frozen=True)
@@ -249,8 +274,17 @@ def _drop_noop_changes(field_changes: tuple[FieldChange, ...]) -> tuple[FieldCha
     a key whose only member had been suppressed, producing a bulk card with a
     category header and no rows. Running before `_bulk_change_signature` sees
     anything makes the suppressed change invisible to key and card alike.
+
+    Returns `(kept, dropped)`. The dropped tuple is not discarded: it feeds the
+    provider-level `no-op` rollup, so a suppressed change is accounted for
+    rather than silently vanishing from under a heading that still counts it.
     """
-    return tuple(fc for fc in field_changes if classify_change(fc).kind != "noop")
+    kept: list[FieldChange] = []
+    dropped: list[FieldChange] = []
+    for field_change in field_changes:
+        target = dropped if classify_change(field_change).kind == "noop" else kept
+        target.append(field_change)
+    return tuple(kept), tuple(dropped)
 
 
 def _field_display_plan(
@@ -265,15 +299,15 @@ def _field_display_plan(
     # policy. The filter sits above the `mode == "all"` early return on
     # purpose: E1 is a correctness fix, not a verbosity setting, so the
     # full-detail audit view drops them too.
-    field_changes = _drop_noop_changes(_expand_structured_field_changes(field_changes))
+    field_changes, noop = _drop_noop_changes(_expand_structured_field_changes(field_changes))
     if policy.mode == "all":
-        return _FieldDisplayPlan(field_changes, (), (), (), 0)
+        return _FieldDisplayPlan(field_changes, (), (), (), 0, noop)
 
     filtered = filter_field_changes_for_detail(field_changes, policy)
     if policy.mode == "squelched":
         visible = tuple(fc for fc in field_changes if fc in filtered.squelched)
         hidden = tuple(fc for fc in field_changes if fc not in filtered.squelched)
-        return _FieldDisplayPlan(visible, (), (), hidden, 0)
+        return _FieldDisplayPlan(visible, (), (), hidden, 0, noop)
 
     visible: list[FieldChange] = []
     hidden_unclassified: list[FieldChange] = []
@@ -298,6 +332,7 @@ def _field_display_plan(
         tuple(hidden_unclassified),
         (),
         unclassified_used,
+        noop,
     )
 
 
@@ -505,8 +540,12 @@ def _plan_provider_changes(
         unclassified_remaining = max(0, unclassified_remaining - display.unclassified_used)
         planned.append(_PlannedModelChange(delta, display))
 
+    rollups = _collect_hidden_rollups(
+        (item.delta.provider_model_id, item.display) for item in planned
+    )
+
     if policy.mode != "default":
-        return _ProviderChangePlan(tuple(planned), tuple(planned))
+        return _ProviderChangePlan(tuple(planned), _prune_empty_items(planned), rollups)
 
     by_signature: dict[
         tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
@@ -535,11 +574,74 @@ def _plan_provider_changes(
                 emitted.add(signature)
             continue
         items.append(item)
-    return _ProviderChangePlan(tuple(planned), tuple(items))
+    return _ProviderChangePlan(tuple(planned), _prune_empty_items(items), rollups)
 
 
 def _has_hidden_details(plan: _FieldDisplayPlan) -> bool:
     return bool(plan.squelched or plan.hidden_unclassified or plan.hidden_non_squelched)
+
+
+def _renders_anything(plan: _FieldDisplayPlan) -> bool:
+    """THE "does this model still say something?" rule.
+
+    A model earns a card when it has a visible row, or a hidden-detail rollup
+    of its own to explain. `noop` is deliberately absent: no-op changes are
+    accounted for once at provider level, never on a card, so a model whose
+    every change was a no-op renders nothing at all.
+
+    One implementation, consulted by `_prune_empty_items` (scan) and
+    `_plan_changes_report_provider` (changes report), so no renderer repeats
+    the rule -- and so a heading is emitted only when this predicate said yes
+    for at least one model beneath it.
+
+    The scan path additionally drops squelched-only models via
+    `_is_squelched_only`; the `changes` report has always kept them (they get a
+    model line carrying only their hidden-detail summary). That difference is
+    pre-existing and preserved here, which is why the extra rule composes at
+    the call site instead of being folded into this predicate.
+    """
+    return bool(plan.visible or _has_hidden_details(plan))
+
+
+def _prune_empty_items(
+    items: Sequence[_PlannedModelChange | _BulkChangeGroup],
+) -> tuple[_PlannedModelChange | _BulkChangeGroup, ...]:
+    """Drop planned models that would render an empty card.
+
+    Applied once here rather than repeated as a guard inside each scan
+    renderer, so `provider_plan.items` is already exactly what gets rendered
+    and every renderer can decide whether to emit its enclosing heading by
+    asking whether that tuple (plus the rollups) is empty.
+    """
+    return tuple(
+        item
+        for item in items
+        if isinstance(item, _BulkChangeGroup)
+        or (_renders_anything(item.display) and not _is_squelched_only(item.display))
+    )
+
+
+def _collect_hidden_rollups(
+    entries: Iterable[tuple[str, _FieldDisplayPlan]],
+) -> _HiddenRollups:
+    """Gather every provider-level suppression rollup in one pass.
+
+    Replaces the per-renderer `hidden_squelched`/`hidden_non_squelched`
+    accumulation loops that scan text, scan markdown, scan HTML, changes text
+    and changes HTML each carried a copy of, and adds `no-op` to all five at
+    once.
+    """
+    squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
+    non_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
+    noop: list[tuple[str, tuple[FieldChange, ...]]] = []
+    for model_id, plan in entries:
+        if plan.squelched:
+            squelched.append((model_id, plan.squelched))
+        if plan.hidden_non_squelched:
+            non_squelched.append((model_id, plan.hidden_non_squelched))
+        if plan.noop:
+            noop.append((model_id, plan.noop))
+    return _HiddenRollups(squelched, non_squelched, noop)
 
 
 def _is_squelched_only(plan: _FieldDisplayPlan) -> bool:
@@ -635,6 +737,50 @@ def _provider_hidden_summary_markdown(
     return lines
 
 
+def _ordered_rollups(
+    rollups: _HiddenRollups,
+) -> tuple[tuple[str, list[tuple[str, tuple[FieldChange, ...]]]], ...]:
+    """The rollup labels paired with their entries, in emission order.
+
+    One ordering for every format, so text, markdown and HTML cannot drift.
+    `no-op` comes last: it is the least policy-driven reason and reads as a
+    footnote to the two detail-policy rollups above it.
+    """
+    return (
+        ("squelched", rollups.squelched),
+        ("non-squelched", rollups.non_squelched),
+        ("no-op", rollups.noop),
+    )
+
+
+def _hidden_rollup_lines(
+    rollups: _HiddenRollups,
+    policy: ReportDetailPolicy,
+    *,
+    indent: str,
+) -> list[str]:
+    lines: list[str] = []
+    for label, entries in _ordered_rollups(rollups):
+        lines.extend(_provider_hidden_summary_lines(label, entries, policy, indent=indent))
+    return lines
+
+
+def _hidden_rollup_markdown(rollups: _HiddenRollups, policy: ReportDetailPolicy) -> list[str]:
+    lines: list[str] = []
+    for label, entries in _ordered_rollups(rollups):
+        lines.extend(_provider_hidden_summary_markdown(label, entries, policy))
+    return lines
+
+
+def _append_hidden_rollup_html(
+    parts: list[str],
+    rollups: _HiddenRollups,
+    policy: ReportDetailPolicy,
+) -> None:
+    for label, entries in _ordered_rollups(rollups):
+        _append_html_provider_summary(parts, label, entries, policy)
+
+
 def _field_changes_from_change_rows(model_changes: list[dict[str, Any]]) -> tuple[FieldChange, ...]:
     field_changes = []
     for change in model_changes:
@@ -642,6 +788,64 @@ def _field_changes_from_change_rows(model_changes: list[dict[str, Any]]) -> tupl
         if fn:
             field_changes.append(FieldChange(fn, change["old_value"], change["new_value"]))
     return tuple(field_changes)
+
+
+@dataclass(frozen=True)
+class _PlannedChangeEntry:
+    """One model's row group inside a `changes` report provider block."""
+
+    model_id: str
+    display_name: str
+    kind: str
+    rows: list[dict[str, Any]]
+    display: _FieldDisplayPlan | None  # None for added/removed models
+
+
+@dataclass(frozen=True)
+class _ChangesProviderPlan:
+    entries: tuple[_PlannedChangeEntry, ...]
+    rollups: _HiddenRollups
+
+    @property
+    def renders_nothing(self) -> bool:
+        """Whether this provider block would be a heading with nothing under it."""
+        return not self.entries and not self.rollups.any_hidden
+
+
+def _plan_changes_report_provider(
+    models: dict[str, list[dict[str, Any]]],
+    policy: ReportDetailPolicy,
+) -> _ChangesProviderPlan:
+    """Plan one provider block of the `changes` report, for text and HTML alike.
+
+    Both renderers previously walked `models` themselves, built their own
+    `_field_display_plan`, threaded `unclassified_remaining` by hand, and
+    carried their own copy of the "skip a model that renders nothing" guard.
+    That is one rule, so it lives here once; the renderers only decide markup.
+
+    Entries come back in source order with anything that renders nothing already
+    pruned, so a caller emits its provider (and date) heading only when
+    `renders_nothing` is False.
+    """
+    entries: list[_PlannedChangeEntry] = []
+    planned_displays: list[tuple[str, _FieldDisplayPlan]] = []
+    unclassified_remaining = policy.unclassified_limit
+    for model_id, model_changes in models.items():
+        display_name = model_changes[0].get("display_name", model_id)
+        kind = model_changes[0]["change_kind"]
+        if kind in ("added", "removed"):
+            entries.append(_PlannedChangeEntry(model_id, display_name, kind, model_changes, None))
+            continue
+        field_changes = _field_changes_from_change_rows(model_changes)
+        if not field_changes:
+            continue
+        plan = _field_display_plan(field_changes, policy, unclassified_remaining=unclassified_remaining)
+        unclassified_remaining = max(0, unclassified_remaining - plan.unclassified_used)
+        planned_displays.append((model_id, plan))
+        if not _renders_anything(plan):
+            continue
+        entries.append(_PlannedChangeEntry(model_id, display_name, "changed", model_changes, plan))
+    return _ChangesProviderPlan(tuple(entries), _collect_hidden_rollups(planned_displays))
 
 
 def _visible_history_events(
@@ -1051,51 +1255,47 @@ def render_changes_report(
     lines.append("")
 
     for date_str, providers in by_date.items():
+        # Build every provider block first: a date heading and its rule are
+        # emitted only if something survives beneath them.
+        date_lines: list[str] = []
+        for provider_label, models in providers.items():
+            plan = _plan_changes_report_provider(models, detail_policy)
+            if plan.renders_nothing:
+                continue
+            date_lines.append(f"    {provider_label}")
+            for entry in plan.entries:
+                if entry.kind == "added":
+                    date_lines.append(f"      + {entry.model_id} ({entry.display_name})")
+                    continue
+                if entry.kind == "removed":
+                    date_lines.append(f"      - {entry.model_id} ({entry.display_name})")
+                    continue
+                assert entry.display is not None  # `changed` entries always carry a plan
+                date_lines.append(f"      * {entry.model_id} ({entry.display_name})")
+                pm, pd = 1, 1
+                if provider_pricing:
+                    pid = entry.rows[0].get("provider_id", "")
+                    pm, pd = provider_pricing.get(pid, (1, 1))
+                grouped = _group_field_changes_for_detail(entry.display.visible, detail_policy)
+                for category, fcs in grouped:
+                    if len(grouped) > 1 or category == "Unclassified":
+                        date_lines.append(f"          [{category}]")
+                        indent = "            "
+                    else:
+                        indent = "          "
+                    for fc in fcs:
+                        date_lines.append(f"{indent}{_render_smart_change_text(fc, pm, pd)}")
+                date_lines.extend(
+                    _hidden_change_summary_lines(
+                        entry.display, indent="          ", model_ids=(entry.model_id,)
+                    )
+                )
+            date_lines.extend(_hidden_rollup_lines(plan.rollups, detail_policy, indent="      "))
+        if not date_lines:
+            continue
         lines.append(f"  {date_str}")
         lines.append(f"  {'-' * 40}")
-        for provider_label, models in providers.items():
-            lines.append(f"    {provider_label}")
-            hidden_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-            hidden_non_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-            unclassified_remaining = detail_policy.unclassified_limit
-            for model_id, model_changes in models.items():
-                display_name = model_changes[0].get("display_name", model_id)
-                kind = model_changes[0]["change_kind"]
-                if kind == "added":
-                    lines.append(f"      + {model_id} ({display_name})")
-                elif kind == "removed":
-                    lines.append(f"      - {model_id} ({display_name})")
-                else:
-                    field_changes = _field_changes_from_change_rows(model_changes)
-                    plan = _field_display_plan(
-                        field_changes,
-                        detail_policy,
-                        unclassified_remaining=unclassified_remaining,
-                    )
-                    unclassified_remaining = max(0, unclassified_remaining - plan.unclassified_used)
-                    if plan.squelched:
-                        hidden_squelched.append((model_id, plan.squelched))
-                    if plan.hidden_non_squelched:
-                        hidden_non_squelched.append((model_id, plan.hidden_non_squelched))
-                    if not plan.visible and not _has_hidden_details(plan):
-                        continue
-                    lines.append(f"      * {model_id} ({display_name})")
-                    pm, pd = 1, 1
-                    if provider_pricing:
-                        pid = model_changes[0].get("provider_id", "")
-                        pm, pd = provider_pricing.get(pid, (1, 1))
-                    grouped = _group_field_changes_for_detail(plan.visible, detail_policy)
-                    for category, fcs in grouped:
-                        if len(grouped) > 1 or category == "Unclassified":
-                            lines.append(f"          [{category}]")
-                            indent = "            "
-                        else:
-                            indent = "          "
-                        for fc in fcs:
-                            lines.append(f"{indent}{_render_smart_change_text(fc, pm, pd)}")
-                    lines.extend(_hidden_change_summary_lines(plan, indent="          ", model_ids=(model_id,)))
-            lines.extend(_provider_hidden_summary_lines("squelched", hidden_squelched, detail_policy, indent="      "))
-            lines.extend(_provider_hidden_summary_lines("non-squelched", hidden_non_squelched, detail_policy, indent="      "))
+        lines.extend(date_lines)
         lines.append("")
 
     return "\n".join(lines).rstrip()
@@ -1435,25 +1635,18 @@ def _render_scan_text(
         lines.append(f"  removed: {len(result.removed)}")
         for delta in result.removed:
             lines.append(f"    - {delta.provider_model_id} ({delta.display_name})")
+        # The counter stays a record count -- it is the number of changed
+        # models the scan detected, the same number the JSON payload, the HTML
+        # provider badge and the Summary block report. Rows that never render
+        # are accounted for by the rollup lines below, exactly as squelched
+        # rows always have been.
         lines.append(f"  changed: {len(result.changed)}")
         provider_plan = _plan_provider_changes(result.changed, detail_policy)
-        hidden_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-        hidden_non_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-        for item in provider_plan.planned:
-            delta, plan = item.delta, item.display
-            if plan.squelched:
-                hidden_squelched.append((delta.provider_model_id, plan.squelched))
-            if plan.hidden_non_squelched:
-                hidden_non_squelched.append((delta.provider_model_id, plan.hidden_non_squelched))
         for item in provider_plan.items:
             if isinstance(item, _BulkChangeGroup):
                 lines.extend(_bulk_group_text_lines(item, detail_policy, indent="    "))
                 continue
             delta, plan = item.delta, item.display
-            if _is_squelched_only(plan):
-                continue
-            if not plan.visible and not _has_hidden_details(plan):
-                continue
             lines.append(f"    * {delta.provider_model_id} ({delta.display_name})")
             if not plan.visible:
                 lines.extend(_hidden_change_summary_lines(plan, indent="      ", model_ids=(delta.provider_model_id,)))
@@ -1469,8 +1662,7 @@ def _render_scan_text(
                     for fc in changes:
                         lines.append(f"        {_render_smart_change_text(fc, pm, pd)}")
             lines.extend(_hidden_change_summary_lines(plan, indent="      ", model_ids=(delta.provider_model_id,)))
-        lines.extend(_provider_hidden_summary_lines("squelched", hidden_squelched, detail_policy, indent="  "))
-        lines.extend(_provider_hidden_summary_lines("non-squelched", hidden_non_squelched, detail_policy, indent="  "))
+        lines.extend(_hidden_rollup_lines(provider_plan.rollups, detail_policy, indent="  "))
         lines.append("")
 
     # Summary table when there are changes across providers
@@ -1543,43 +1735,34 @@ def _render_scan_markdown(
         else:
             lines.append("- None")
         lines.append("")
+        # The count stays a record count (see `_render_scan_text`); the body is
+        # built first so the heading is never left standing over nothing. When
+        # every changed model was suppressed the rollup lines explain why, and
+        # `- None` is the last-resort fallback so the section is never empty.
         lines.append(f"### Changed ({len(result.changed)})")
         lines.append("")
+        changed_lines: list[str] = []
         if result.changed:
             provider_plan = _plan_provider_changes(result.changed, detail_policy)
-            hidden_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-            hidden_non_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-            for item in provider_plan.planned:
-                delta, plan = item.delta, item.display
-                if plan.squelched:
-                    hidden_squelched.append((delta.provider_model_id, plan.squelched))
-                if plan.hidden_non_squelched:
-                    hidden_non_squelched.append((delta.provider_model_id, plan.hidden_non_squelched))
             for item in provider_plan.items:
                 if isinstance(item, _BulkChangeGroup):
-                    lines.extend(_bulk_group_markdown_lines(item, detail_policy))
+                    changed_lines.extend(_bulk_group_markdown_lines(item, detail_policy))
                     continue
                 delta, plan = item.delta, item.display
-                if _is_squelched_only(plan):
-                    continue
-                if not plan.visible and not _has_hidden_details(plan):
-                    continue
-                lines.append(f"- `{delta.provider_model_id}` - {delta.display_name}")
+                changed_lines.append(f"- `{delta.provider_model_id}` - {delta.display_name}")
                 for field_change in plan.visible:
-                    lines.append(f"  - `{_render_smart_change_text(field_change, result.price_multiplier, result.price_divisor)}`")
+                    changed_lines.append(f"  - `{_render_smart_change_text(field_change, result.price_multiplier, result.price_divisor)}`")
                 if plan.squelched:
-                    lines.append(f"  - Squelched: `{len(plan.squelched)}` field change(s) hidden by report detail policy")
+                    changed_lines.append(f"  - Squelched: `{len(plan.squelched)}` field change(s) hidden by report detail policy")
                 if plan.hidden_unclassified:
-                    lines.append(
+                    changed_lines.append(
                         f"  - Unclassified: `{len(plan.hidden_unclassified)}` additional field change(s) hidden; "
                         "add patterns to show_fields or squelch_fields"
                     )
                 if plan.hidden_non_squelched:
-                    lines.append(f"  - Filtered: `{len(plan.hidden_non_squelched)}` non-squelched field change(s) omitted")
-            lines.extend(_provider_hidden_summary_markdown("squelched", hidden_squelched, detail_policy))
-            lines.extend(_provider_hidden_summary_markdown("non-squelched", hidden_non_squelched, detail_policy))
-        else:
-            lines.append("- None")
+                    changed_lines.append(f"  - Filtered: `{len(plan.hidden_non_squelched)}` non-squelched field change(s) omitted")
+            changed_lines.extend(_hidden_rollup_markdown(provider_plan.rollups, detail_policy))
+        lines.extend(changed_lines or ["- None"])
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -2386,31 +2569,31 @@ def _render_scan_html(
                 section_parts.append(f'<li><code>{h(delta.provider_model_id)}</code> <span class="display-name">{h(delta.display_name)}</span></li>')
             section_parts.append('</ul>')
         if result.changed:
-            section_parts.append('<h3>Changed</h3>')
-            hidden_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-            hidden_non_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-            for item in provider_plan.planned:
-                delta, plan = item.delta, item.display
-                if plan.squelched:
-                    hidden_squelched.append((delta.provider_model_id, plan.squelched))
-                if plan.hidden_non_squelched:
-                    hidden_non_squelched.append((delta.provider_model_id, plan.hidden_non_squelched))
+            # Build the cards first: `<h3>Changed</h3>` is emitted only when
+            # something survives beneath it.
+            changed_parts: list[str] = []
             for item in provider_plan.items:
                 if isinstance(item, _BulkChangeGroup):
-                    section_parts.append(_render_html_bulk_changes(item, detail_policy))
+                    changed_parts.append(_render_html_bulk_changes(item, detail_policy))
                     continue
-                delta, plan = item.delta, item.display
-                if not _is_squelched_only(plan) and (plan.visible or _has_hidden_details(plan)):
-                    html, _ = _render_html_model_changes(
-                        delta,
-                        result.price_multiplier,
-                        result.price_divisor,
-                        detail_policy,
-                        display_plan=plan,
-                    )
-                    section_parts.append(html)
-            _append_html_provider_summary(section_parts, "squelched", hidden_squelched, detail_policy)
-            _append_html_provider_summary(section_parts, "non-squelched", hidden_non_squelched, detail_policy)
+                html, _ = _render_html_model_changes(
+                    item.delta,
+                    result.price_multiplier,
+                    result.price_divisor,
+                    detail_policy,
+                    display_plan=item.display,
+                )
+                changed_parts.append(html)
+            _append_hidden_rollup_html(changed_parts, provider_plan.rollups, detail_policy)
+            if changed_parts:
+                section_parts.append('<h3>Changed</h3>')
+                section_parts.extend(changed_parts)
+        if len(section_parts) == 1 and result.status != "error":
+            # Provider heading with no baseline and no surviving change beneath
+            # it -- emit nothing rather than a bare `<h2>`. Error providers keep
+            # their heading: the provider card above says ERROR and the section
+            # is where a reader looks for it.
+            continue
         change_sections.append('<section class="provider-section">' + "\n".join(section_parts) + '</section>')
 
     # Summary entries
@@ -2433,19 +2616,12 @@ def _render_scan_html(
                     ))
                 continue
             delta, plan = item.delta, item.display
-            if _is_squelched_only(plan):
-                continue
             summary_entries.extend(_build_summary_entries_from_fc(
                 provider_label=prov, model_id=delta.provider_model_id,
                 display_name=delta.display_name, field_changes=list(plan.visible),
                 price_multiplier=pm, price_divisor=pd,
             ))
-        squelched_entries = [
-            (item.delta.provider_model_id, item.display.squelched)
-            for item in provider_plan.planned
-            if item.display.squelched
-        ]
-        squelched_count, squelched_models = _summarize_field_changes(squelched_entries)
+        squelched_count, squelched_models = _summarize_field_changes(provider_plan.rollups.squelched)
         if squelched_count:
             summary_entries.append(_SummaryEntry(
                 "Squelched",
@@ -2516,26 +2692,26 @@ def _render_changes_html(
     summary_entries: list[tuple[str, str, str, str, str]] = []
 
     for date_str, providers in by_date.items():
-        parts = [f'<h2 class="date-heading">{h(date_str)}</h2>']
+        # Provider blocks are built before the date heading is committed, so a
+        # date whose every model was suppressed emits no section at all.
+        provider_parts: list[str] = []
         for provider_label, models in providers.items():
-            parts.append(f'<h3>{h(provider_label)}</h3>')
+            provider_plan = _plan_changes_report_provider(models, detail_policy)
+            if provider_plan.renders_nothing:
+                continue
+            parts: list[str] = [f'<h3>{h(provider_label)}</h3>']
             added_models = []
             removed_models = []
-            changed_models = []
-            hidden_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-            hidden_non_squelched: list[tuple[str, tuple[FieldChange, ...]]] = []
-            unclassified_remaining = detail_policy.unclassified_limit
-            for model_id, model_changes in models.items():
-                display_name = model_changes[0].get("display_name", model_id)
-                kind = model_changes[0]["change_kind"]
-                if kind == "added":
-                    added_models.append((model_id, display_name))
-                    summary_entries.append(("Added", provider_label, model_id, "", display_name))
-                elif kind == "removed":
-                    removed_models.append((model_id, display_name))
-                    summary_entries.append(("Removed", provider_label, model_id, "", display_name))
+            changed_entries = []
+            for entry in provider_plan.entries:
+                if entry.kind == "added":
+                    added_models.append((entry.model_id, entry.display_name))
+                    summary_entries.append(("Added", provider_label, entry.model_id, "", entry.display_name))
+                elif entry.kind == "removed":
+                    removed_models.append((entry.model_id, entry.display_name))
+                    summary_entries.append(("Removed", provider_label, entry.model_id, "", entry.display_name))
                 else:
-                    changed_models.append((model_id, display_name, model_changes))
+                    changed_entries.append(entry)
 
             if added_models:
                 parts.append('<ul class="model-list added-list">')
@@ -2548,26 +2724,14 @@ def _render_changes_html(
                     parts.append(f'<li><code>{h(mid)}</code> <span class="display-name">{h(dname)}</span></li>')
                 parts.append('</ul>')
 
-            for model_id, display_name, model_changes in changed_models:
-                field_changes = _field_changes_from_change_rows(model_changes)
-                if not field_changes:
-                    continue
+            for entry in changed_entries:
+                model_id, display_name = entry.model_id, entry.display_name
+                plan = entry.display
+                assert plan is not None  # `changed` entries always carry a plan
                 pm, pd = 1, 1
                 if provider_pricing:
-                    pid = model_changes[0].get("provider_id", "")
+                    pid = entry.rows[0].get("provider_id", "")
                     pm, pd = provider_pricing.get(pid, (1, 1))
-                plan = _field_display_plan(
-                    field_changes,
-                    detail_policy,
-                    unclassified_remaining=unclassified_remaining,
-                )
-                unclassified_remaining = max(0, unclassified_remaining - plan.unclassified_used)
-                if plan.squelched:
-                    hidden_squelched.append((model_id, plan.squelched))
-                if plan.hidden_non_squelched:
-                    hidden_non_squelched.append((model_id, plan.hidden_non_squelched))
-                if not plan.visible and not _has_hidden_details(plan):
-                    continue
 
                 # Model change card
                 parts.append('<div class="model-card">')
@@ -2597,9 +2761,12 @@ def _render_changes_html(
                         "",
                         f"{len(plan.squelched)} field change(s) hidden by report detail policy",
                     ))
-            _append_html_provider_summary(parts, "squelched", hidden_squelched, detail_policy)
-            _append_html_provider_summary(parts, "non-squelched", hidden_non_squelched, detail_policy)
+            _append_hidden_rollup_html(parts, provider_plan.rollups, detail_policy)
+            provider_parts.extend(parts)
 
+        if not provider_parts:
+            continue
+        parts = [f'<h2 class="date-heading">{h(date_str)}</h2>', *provider_parts]
         date_sections.append('<section class="provider-section">' + "\n".join(parts) + '</section>')
 
     header_html = (
