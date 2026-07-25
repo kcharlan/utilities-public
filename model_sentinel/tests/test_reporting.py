@@ -1,7 +1,11 @@
+import json
+
+from model_sentinel.change_render import classify_change
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
 from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     ReportDetailPolicy,
+    _list_change_signature,
     render_changes_report,
     render_history_report,
     render_scan_report,
@@ -961,3 +965,280 @@ def test_generic_new_structured_key_expands_recursively() -> None:
     assert "new_payload.tiers[0].label: null \u2192 small" in report
     assert "new_payload.tiers[1].limit: null \u2192 20" in report
     assert 'new_payload: null \u2192 {"tiers"' not in report
+
+
+# ---------------------------------------------------------------------------
+# E1: render-time no-op suppression. `noop` field changes (both sides null, or
+# otherwise equal) are dropped by every non-JSON renderer through the single
+# shared filter in `_field_display_plan`, and kept verbatim in JSON and in
+# `ModelDelta.field_changes`.
+# ---------------------------------------------------------------------------
+
+_NOOP_MODEL = ModelDelta(
+    "changed",
+    "synth/model-noop-only",
+    "Synth Noop Only",
+    (FieldChange("default_parameters.temperature", None, None),),
+)
+_NOOP_PLUS_REAL_MODEL = ModelDelta(
+    "changed",
+    "synth/model-noop-mixed",
+    "Synth Noop Mixed",
+    (
+        FieldChange("default_parameters.temperature", None, None),
+        FieldChange("status", "active", "active"),
+        FieldChange("expiration_date", None, "2030-12-31"),
+    ),
+)
+
+
+def _render_all_human_formats(changed: tuple[ModelDelta, ...], **kwargs) -> dict[str, str]:
+    """Render one fixture through every non-JSON scan format."""
+    return {
+        format_name: render_scan_report(
+            generated_at="2026-07-25T09:00:00+00:00",
+            command="scan",
+            format_name=format_name,
+            provider_results=[_scan_result(changed)],
+            **kwargs,
+        )
+        for format_name in ("text", "markdown", "html")
+    }
+
+
+def test_noop_rows_are_absent_from_every_human_format() -> None:
+    for format_name, report in _render_all_human_formats((_NOOP_PLUS_REAL_MODEL,)).items():
+        # Both noop forms: null -> null, and equal non-null values.
+        assert "default_parameters.temperature" not in report, format_name
+        assert "active" not in report, format_name
+        # The real change on the same model still renders.
+        assert "expiration_date" in report, format_name
+
+
+def test_noop_only_model_gets_no_card_at_all() -> None:
+    """A model whose every change is a noop has nothing to report, so it must
+    not consume a card, a header, or a summary row."""
+    for format_name, report in _render_all_human_formats((_NOOP_MODEL,)).items():
+        assert "synth/model-noop-only" not in report, format_name
+
+
+def test_noop_rows_are_suppressed_in_all_detail_mode_too() -> None:
+    """`--detail all` is the audit view, but E1 is a correctness fix, not a
+    verbosity setting: `_field_display_plan` returns early for mode="all", so
+    the filter has to run before that early return."""
+    policy = ReportDetailPolicy(
+        mode="all",
+        show_fields=DEFAULT_REPORT_SHOW_FIELDS,
+        squelch_fields=("benchmarks", "benchmarks.*"),
+        unclassified_limit=20,
+    )
+    for format_name, report in _render_all_human_formats(
+        (_NOOP_PLUS_REAL_MODEL,), detail_policy=policy
+    ).items():
+        assert "default_parameters.temperature" not in report, format_name
+        assert "expiration_date" in report, format_name
+
+
+def test_noop_rows_remain_in_json() -> None:
+    """Suppression is render-time only. JSON is the audit path and must not
+    silently drop records."""
+    payload = json.loads(
+        render_scan_report(
+            generated_at="2026-07-25T09:00:00+00:00",
+            command="scan",
+            format_name="json",
+            provider_results=[_scan_result((_NOOP_MODEL,))],
+        )
+    )
+    changed = payload["providers"][0]["changed"]
+    assert [entry["provider_model_id"] for entry in changed] == ["synth/model-noop-only"]
+    assert changed[0]["field_changes"] == [
+        {"field_name": "default_parameters.temperature", "old_value": None, "new_value": None}
+    ]
+
+
+def test_noop_suppression_does_not_mutate_the_model_delta() -> None:
+    """`noop` entries stay in `ModelDelta.field_changes` (and therefore in
+    whatever the storage layer persists) after a human render."""
+    changed = (_NOOP_PLUS_REAL_MODEL,)
+    _render_all_human_formats(changed)
+    assert changed[0].field_changes == (
+        FieldChange("default_parameters.temperature", None, None),
+        FieldChange("status", "active", "active"),
+        FieldChange("expiration_date", None, "2030-12-31"),
+    )
+
+
+def test_noop_rows_are_absent_from_the_changes_report() -> None:
+    def _row(field_name, old_value, new_value):
+        return {
+            "detected_at": "2026-07-25T09:00:00+00:00",
+            "provider_id": "openrouter",
+            "provider_label": "OpenRouter",
+            "provider_model_id": "alpha",
+            "display_name": "Alpha",
+            "change_kind": "changed",
+            "field_name": field_name,
+            "old_value": old_value,
+            "new_value": new_value,
+        }
+
+    changes = (
+        _row("default_parameters.temperature", None, None),
+        _row("expiration_date", None, "2030-12-31"),
+    )
+    for format_name in ("text", "html"):
+        report = render_changes_report(
+            format_name=format_name,
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=changes,
+            provider_pricing={"openrouter": (1, 1)},
+        )
+        assert "default_parameters.temperature" not in report, format_name
+        assert "expiration_date" in report, format_name
+
+    payload = json.loads(
+        render_changes_report(
+            format_name="json",
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=changes,
+            provider_pricing={"openrouter": (1, 1)},
+        )
+    )
+    assert [row["field_name"] for row in payload["changes"]] == [
+        "default_parameters.temperature",
+        "expiration_date",
+    ]
+
+
+def test_noop_suppression_cannot_desync_a_bulk_card_from_its_grouping_key() -> None:
+    """`_list_change_signature` derives the bulk grouping key from
+    `_list_diff_members`, NOT from `classify_change`, so it reports a
+    difference for lists that compare equal but spell differently
+    (`[1] == [True]`). E1 filters on `classify_change(...).kind`, which calls
+    such a change a `noop`. If the filter ran AFTER grouping, three models
+    could consolidate on a key whose only member had been suppressed, leaving
+    a bulk card with a category header and no rows.
+
+    The filter runs inside `_field_display_plan`, i.e. before
+    `_bulk_change_signature` ever sees the changes, so the suppressed change
+    is invisible to grouping and card alike and no such group can form.
+    """
+    equal_but_differently_spelled = tuple(
+        ModelDelta("changed", f"synth/model-eq-{suffix}", f"Synth Eq {suffix.upper()}",
+                   (FieldChange("supported_parameters", [1], [True]),))
+        for suffix in ("a", "b", "c")
+    )
+    assert classify_change(equal_but_differently_spelled[0].field_changes[0]).kind == "noop"
+    assert _list_change_signature(equal_but_differently_spelled[0].field_changes[0]) == (
+        "supported_parameters",
+        ("True",),
+        ("1",),
+    )
+
+    for format_name, report in _render_all_human_formats(equal_but_differently_spelled).items():
+        assert "Bulk change" not in report, format_name
+        assert "supported_parameters" not in report, format_name
+        for suffix in ("a", "b", "c"):
+            assert f"synth/model-eq-{suffix}" not in report, format_name
+
+
+def test_bulk_grouping_still_forms_when_the_list_change_is_real() -> None:
+    """Control for the test above: an actually-differing list change is not a
+    noop, is not suppressed, and still consolidates with rendered rows."""
+    real = tuple(
+        ModelDelta("changed", f"synth/model-real-{suffix}", f"Synth Real {suffix.upper()}",
+                   (FieldChange("supported_parameters", ["tools"], ["tools", "seed"]),))
+        for suffix in ("a", "b", "c")
+    )
+    text = _render_all_human_formats(real)["text"]
+    assert "Bulk change — 3 models" in text
+    assert "supported_parameters: +seed" in text
+
+
+# ---------------------------------------------------------------------------
+# E2: booleans render off/on, never as a percent-formatted magnitude.
+# ---------------------------------------------------------------------------
+
+
+def _boolean_reports(field_name: str, old_value, new_value) -> dict[str, str]:
+    return _render_all_human_formats(
+        (ModelDelta("changed", "synth/model-flag", "Synth Flag", (FieldChange(field_name, old_value, new_value),)),)
+    )
+
+
+def test_boolean_disable_renders_on_to_off_with_no_percent() -> None:
+    """Regression test for the shipped `↓ 100.0%` defect: a flag turning off
+    was percent-formatted as if it were a magnitude."""
+    reports = _boolean_reports("top_provider.is_moderated", True, False)
+    assert "top_provider.is_moderated: on → off" in reports["text"]
+    assert "`top_provider.is_moderated: on → off`" in reports["markdown"]
+    assert (
+        '<td class="field-name">top_provider.is_moderated</td>'
+        '<td class="old-val">on</td><td class="new-val">off</td>'
+        '<td class="change-delta delta-decrease">disabled</td>'
+    ) in reports["html"]
+    for format_name, report in reports.items():
+        assert "%" not in report.replace("%;", ""), format_name
+
+
+def test_boolean_enable_renders_off_to_on_with_a_non_empty_delta_cell() -> None:
+    """Regression test for the blank-Change-cell defect: `_pct_change`
+    returns "" when the old value is 0, so `False -> True` produced an empty
+    delta cell. The boolean branch never reaches percent logic at all."""
+    reports = _boolean_reports("top_provider.is_moderated", False, True)
+    assert "top_provider.is_moderated: off → on" in reports["text"]
+    assert (
+        '<td class="field-name">top_provider.is_moderated</td>'
+        '<td class="old-val">off</td><td class="new-val">on</td>'
+        '<td class="change-delta delta-increase">enabled</td>'
+    ) in reports["html"]
+    assert '<td class="change-delta delta-neutral"></td>' not in reports["html"]
+
+
+def test_integer_coded_boolean_renders_off_to_on_with_no_percent() -> None:
+    """`reasoning.default_enabled` is recorded as 0/1, not as a real bool."""
+    reports = _boolean_reports("reasoning.default_enabled", 0, 1)
+    assert "reasoning.default_enabled: off → on" in reports["text"]
+    assert '<td class="change-delta delta-increase">enabled</td>' in reports["html"]
+    for format_name, report in reports.items():
+        assert "%" not in report.replace("%;", ""), format_name
+
+
+def test_one_sided_boolean_renders_as_coverage_with_an_em_dash() -> None:
+    """Task 4 decision: a flag appearing from nothing is presented like every
+    other one-sided change -- em dash on the absent side, `added` pill in the
+    delta column -- instead of leaking the raw Python repr `null -> True`."""
+    reports = _boolean_reports("top_provider.is_moderated", None, True)
+    assert "top_provider.is_moderated: — → on" in reports["text"]
+    assert (
+        '<td class="field-name">top_provider.is_moderated</td>'
+        '<td class="old-val">—</td><td class="new-val">on</td>'
+        '<td class="change-delta delta-increase">added</td>'
+    ) in reports["html"]
+    assert "null → True" not in reports["text"]
+
+    removed = _boolean_reports("top_provider.is_moderated", True, None)
+    assert "top_provider.is_moderated: on → —" in removed["text"]
+    assert '<td class="change-delta delta-decrease">removed</td>' in removed["html"]
+
+
+def test_numeric_field_holding_zero_and_one_is_not_treated_as_a_boolean() -> None:
+    """The known-boolean set is a restriction, not a blanket 0/1 rule: a
+    temperature is a magnitude even when its values look like a flag's.
+
+    NOTE: `0 -> 1` has a zero basis, so `_pct_change` yields no percentage
+    for it either -- that is the pre-existing zero-basis rule, not the E2
+    boolean rule. The `0.5 -> 1` case below is what proves a percent still
+    reaches a genuinely numeric default_parameters field.
+    """
+    reports = _boolean_reports("default_parameters.temperature", 0, 1)
+    assert "default_parameters.temperature: 0 → 1 (+1)" in reports["text"]
+    assert "off" not in reports["text"]
+
+    with_percent = _boolean_reports("default_parameters.temperature", 0.5, 1)
+    assert "default_parameters.temperature: 0.50 → 1 (+0.50, ↑ 100.0%)" in with_percent["text"]

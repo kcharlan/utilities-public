@@ -6,49 +6,41 @@ list, ...), which direction it moved, and what it means semantically (cost,
 capacity, capability, coverage, neutral). Renderers (text/markdown/html/json)
 consume `RenderedChange` instead of re-deriving this logic themselves.
 
-TRANSITIONAL BRANCH ORDER (read before touching the cascade):
+BRANCH ORDER (read before touching the cascade):
 
-`classify_change` currently checks price/count/numeric *before* boolean. This
-looks backwards relative to the final design -- boolean should normally win
-over numeric for a real bool pair -- but it is deliberate for now.
+`classify_change` checks `boolean` BEFORE price/count/numeric. That ordering
+is the E2 fix and must not be reshuffled.
 
-The production renderer this module is being extracted from
-(`reporting.py::_render_smart_change_text`) calls `_both_numeric()`, and
-`_both_numeric()` calls `float()` on its arguments. Since Python's `bool` is a
-subclass of `int`, `float(True)` succeeds, so a real `bool` pair has *always*
-been caught by the numeric branch in production -- the dedicated boolean
-branch in the old renderer is effectively dead code today. `is_moderated:
-False -> True` currently renders as `0 -> 1 (+1)`, not as a boolean toggle,
-and that behavior is pinned by the Task 1 characterization goldens.
+Python's `bool` is a subclass of `int`, so `float(True)` succeeds and every
+guard built on `_both_numeric`/`_numeric_value` accepts a real `bool` pair.
+For the whole pre-E2 life of this code the numeric branch therefore swallowed
+boolean toggles and the dedicated boolean branch in the renderer it replaced
+(`reporting.py::_render_smart_change_text`) was dead code:
+`top_provider.is_moderated: False -> True` shipped as `0 -> 1 (+1)`, and
+`True -> False` shipped as `-1, down 100.0%` -- a flag percent-formatted as if
+it were a magnitude. Integer-coded flags (`reasoning.default_enabled: 0 -> 1`)
+had the same fate, with the added insult that `_pct_change` returns `""` for a
+zero basis, so the HTML delta cell came out blank.
 
-Task 3 wires this module into the renderers and must be provably
-behavior-neutral against those goldens, so `classify_change` here reproduces
-today's effective ordering: numeric/price/count take precedence over boolean
-for any pair `_both_numeric` currently accepts (including real `bool` pairs
-and known-boolean integer-coded fields, since `0`/`1` are just as
-`float()`-able as `True`/`False`). The `boolean` branch and the known-boolean
-field set are fully implemented and unit-tested here, but under this ordering
-they are only reachable for a bool-vs-`None` (one-sided) change -- the
-two-sided case is intentionally still classified as `numeric`.
+Putting `boolean` first is what makes the branch reachable. Its correctness
+therefore rests entirely on `_is_boolean_change` being narrow: a false
+positive there now *shadows* the numeric branch rather than being shadowed by
+it, so a genuinely numeric field must never satisfy it. That is why
+KNOWN_BOOLEAN_FIELDS is a restriction rather than a convenience, and why
+`_bool_state` returns `None` for anything that is not a real bool or an
+integer-coded 0/1.
 
-Task 4 (E2) is where the boolean branch is promoted ahead of numeric/price/
-count. That reordering is the deliberate, visible fix for the E2 defect, and
-it is expected to change the characterization goldens for boolean fields.
-
-UPDATE (Task 2 fix pass, Finding 2/3): `_is_boolean_change` now requires
-BOTH sides to be boolean-ish -- a `bool` paired with `None` no longer
-classifies as boolean here, matching production's generic scalar fallback
-exactly (production's dedicated boolean branch also requires
-`isinstance(old, bool) and isinstance(new, bool)`; see
-`_render_smart_change_text`). Combined with the ordering above, this means
-`classify_change`'s boolean branch (step 6) is currently **unreachable**:
-every two-sided bool/known-boolean-int pair is already caught by the numeric
-branch (step 5) first, and one-sided (bool-vs-None) pairs now fall through to
-scalar (step 7) instead of being coerced into a fabricated boolean toggle.
-The `boolean` kind and `_classify_boolean` are retained, fully implemented,
-and directly unit-tested for when Task 4 promotes the branch ahead of
-numeric -- at which point both the two-sided and (a deliberately deferred,
-separate) one-sided boolean presentation become live decisions again.
+ONE-SIDED BOOLEANS (Task 4 decision): a boolean-ish value paired with `None`
+classifies as `boolean` with `direction="added"`/`"removed"` and
+`semantic="coverage"`, the absent side rendering as an em dash and the delta
+carrying an `added`/`removed` pill -- the design's uniform treatment of
+one-sided changes. This shape is not hypothetical: `reporting.py`'s
+`_flatten_one_sided_structure` turns a newly added `reasoning` object into
+leaves like `reasoning.default_enabled: None -> True`, which previously fell
+through to `scalar` and leaked the raw Python repr (`null -> True`) into the
+report. The known-boolean restriction applies to the present side too, so a
+numeric leaf appearing from nothing (`...[0].weight: null -> 1`) stays
+`scalar`.
 """
 
 from __future__ import annotations
@@ -312,41 +304,42 @@ def _is_integer_like(value: Any) -> bool:
     return False
 
 
+def _is_boolean_side(field_name: str, value: Any) -> bool:
+    """True if one side of a change is a value that means on/off, not a number.
+
+    A real `bool` always qualifies. A plain `0`/`1` qualifies ONLY when the
+    field is in `KNOWN_BOOLEAN_FIELDS`: gating on the value alone would
+    capture `default_parameters.top_p: 0 -> 1`, a magnitude, and -- since the
+    boolean branch now runs before the numeric one -- render it as a toggle.
+    The restriction is what keeps that branch from over-reaching.
+    """
+    if isinstance(value, bool):
+        return True
+    if field_name in KNOWN_BOOLEAN_FIELDS:
+        return _is_integer_like(value)
+    return False
+
+
 def _is_boolean_change(field_change: FieldChange) -> bool:
-    """True if this change should be treated as a two-sided boolean toggle.
+    """True if this change should be presented as a flag rather than a number.
 
-    BOTH sides must be boolean-ish: either a real `bool` pair, or the field is
-    in `KNOWN_BOOLEAN_FIELDS` and both values are integer-like 0/1. A `bool`
-    paired with `None` (or any other non-boolean-ish value) must return
-    `False` and fall through to `scalar` -- that matches production's
-    dedicated boolean branch in `_render_smart_change_text`, which likewise
-    requires `isinstance(old, bool) and isinstance(new, bool)`. One-sided
-    boolean presentation (e.g. a field toggling on/off from unset) is
-    deliberately deferred to a later task as a conscious design choice, not
-    an oversight -- see the module docstring.
+    Two-sided: BOTH sides must be boolean-ish, so a mixed pair such as
+    `default_parameters.top_p: False -> 0.9` (a real change where only the old
+    value happens to be a bool) is not mistaken for a disable.
 
-    See the module docstring: under the current transitional branch order,
-    this predicate is only reachable through this helper directly (in
-    tests), not end-to-end through `classify_change`, because any pair
-    satisfying it -- whether a real bool pair or a known-boolean-field
-    integer-coded pair -- is also `_both_numeric` and gets caught by the
-    numeric branch first.
+    One-sided: exactly one side is `None` and the PRESENT side is boolean-ish.
+    `(None, None)` is not one-sided -- it is a noop, and the cascade catches it
+    before this predicate is ever consulted.
     """
     old_value, new_value = field_change.old_value, field_change.new_value
-    if isinstance(old_value, bool) and isinstance(new_value, bool):
-        # `_bool_state` returns non-None for every real bool by construction,
-        # so a pair that already passed both isinstance checks is
-        # unconditionally boolean-ish; return True directly instead of
-        # re-deriving that through `_bool_state`. (Gating this branch purely
-        # on `_bool_state(...) is not None`, dropping isinstance, would
-        # broaden it to match any plain int/float 0/1 pair regardless of
-        # field name -- e.g. `default_parameters.top_p: 0 -> 1` -- which must
-        # stay excluded unless the field is in KNOWN_BOOLEAN_FIELDS; see
-        # test_is_boolean_change_false_for_int_fields_outside_known_set.)
-        return True
-    if field_change.field_name in KNOWN_BOOLEAN_FIELDS:
-        return _is_integer_like(old_value) and _is_integer_like(new_value)
-    return False
+    field_name = field_change.field_name
+    if old_value is None and new_value is None:
+        return False
+    if old_value is None:
+        return _is_boolean_side(field_name, new_value)
+    if new_value is None:
+        return _is_boolean_side(field_name, old_value)
+    return _is_boolean_side(field_name, old_value) and _is_boolean_side(field_name, new_value)
 
 
 def _bool_state(value: Any) -> Literal["on", "off"] | None:
@@ -376,10 +369,56 @@ def _bool_state(value: Any) -> Literal["on", "off"] | None:
 # ---------------------------------------------------------------------------
 
 
+# Rendered in place of a value that is absent on one side of a change. The
+# design's uniform treatment of one-sided changes; `null`/`None` must not leak
+# into a rendered flag.
+ABSENT_DISPLAY = "—"
+
+
 def _classify_boolean(field_change: FieldChange) -> RenderedChange:
+    """Build the `boolean` RenderedChange for a two-sided or one-sided flag.
+
+    Precondition: `_is_boolean_change(field_change)`. Enforced rather than
+    assumed -- calling this with a value `_bool_state` does not recognize
+    would otherwise fabricate a direction and put a non-display string into a
+    display field (e.g. `top_p: False -> 0.9` reported as a disable).
+    """
     old_value, new_value = field_change.old_value, field_change.new_value
     old_state = _bool_state(old_value)
     new_state = _bool_state(new_value)
+
+    # One-sided: the absent side is `None` by definition, so only the present
+    # side is required to be boolean-ish. `semantic="coverage"` and an
+    # added/removed pill, matching one-sided price and count changes.
+    one_sided_direction: Literal["added", "removed"] | None = None
+    if old_value is None and new_state is not None:
+        one_sided_direction = "added"
+        old_display, new_display = ABSENT_DISPLAY, new_state
+    elif new_value is None and old_state is not None:
+        one_sided_direction = "removed"
+        old_display, new_display = old_state, ABSENT_DISPLAY
+
+    if one_sided_direction is not None:
+        return RenderedChange(
+            kind="boolean",
+            field_path=field_change.field_name,
+            label=field_change.field_name,
+            qualifier=None,
+            old_display=old_display,
+            new_display=new_display,
+            old_raw=_raw_value(old_value),
+            new_raw=_raw_value(new_value),
+            unit=None,
+            delta_display=one_sided_direction,
+            delta_abs=None,
+            pct_display=None,
+            pct_basis_zero=False,
+            direction=one_sided_direction,
+            semantic="coverage",
+            list_added=(),
+            list_removed=(),
+        )
+
     if old_state is None or new_state is None:
         offending = []
         if old_state is None:
@@ -602,8 +641,9 @@ def classify_change(
 ) -> RenderedChange:
     """Classify a single field change into a structured `RenderedChange`.
 
-    Branch order (see module docstring for why boolean sits after numeric):
-    noop -> list -> price -> count -> numeric -> boolean -> scalar.
+    Branch order (see module docstring for why boolean must precede the
+    numeric family): noop -> list -> boolean -> price -> count -> numeric ->
+    scalar.
     """
     field_path = field_change.field_name
     old_value, new_value = field_change.old_value, field_change.new_value
@@ -660,10 +700,17 @@ def classify_change(
             list_removed=removed,
         )
 
+    # 3. boolean (E2) -- MUST precede price/count/numeric. `bool` is an `int`
+    # subclass, so every guard below accepts a real bool pair and would
+    # classify a flag as a magnitude; that is the defect this ordering fixes.
+    # See the module docstring.
+    if _is_boolean_change(field_change):
+        return _classify_boolean(field_change)
+
     old_numeric = _numeric_value(old_value)
     new_numeric = _numeric_value(new_value)
 
-    # 3. price -- guard preserved exactly from reporting.py's current
+    # 4. price -- guard preserved exactly from reporting.py's current
     # _render_smart_change_text (permits one-sided None, rejects non-numeric
     # strings).
     if (
@@ -674,7 +721,7 @@ def classify_change(
     ):
         return _classify_price(field_change, old_numeric, new_numeric, price_multiplier, price_divisor)
 
-    # 4. count -- same numeric-shape guard as price (permits one-sided None,
+    # 5. count -- same numeric-shape guard as price (permits one-sided None,
     # rejects non-numeric strings), with one deliberate difference from
     # reporting.py's `_render_smart_change_text`: that function's equivalent
     # guard has a fifth clause, `and (old_numeric is None or new_numeric is
@@ -706,20 +753,11 @@ def classify_change(
     ):
         return _classify_count(field_change, old_numeric, new_numeric)
 
-    # 5. numeric -- both numeric, no category match. Transitional ordering:
-    # this also catches real bool pairs and known-boolean integer-coded
-    # pairs, matching today's production behavior (see module docstring).
+    # 6. numeric -- both numeric, no category match. Real bool pairs and
+    # known-boolean integer-coded pairs no longer reach here: step 3 claims
+    # them first.
     if _both_numeric(old_value, new_value):
         return _classify_numeric(field_change)
-
-    # 6. boolean -- currently unreachable: every two-sided bool/known-boolean-int
-    # pair is caught by the numeric branch (step 5) first, and one-sided
-    # (bool-vs-None) pairs fall through to scalar (step 7) since
-    # `_is_boolean_change` returns False for them. This branch becomes
-    # reachable when Task 4 promotes boolean ahead of numeric/price/count
-    # (see module docstring).
-    if _is_boolean_change(field_change):
-        return _classify_boolean(field_change)
 
     # 7. scalar fallback
     return RenderedChange(

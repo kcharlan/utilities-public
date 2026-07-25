@@ -10,6 +10,20 @@ Do NOT update the golden constants to make a refactor's tests pass silently.
 A failing test here means the renderer output changed; the reviewer must look at
 the diff and decide whether the new output is intentional before updating the
 constant.
+
+DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
+
+* Task 3c unified list-member stringification on JSON, changing how `dict`
+  members inside a list field are spelled.
+* Task 4 landed E1 and E2, the first intentional readability changes. E1
+  removed every `null -> null` row -- and, where that was a model's only
+  change, the whole card and its summary row -- from the text, markdown and
+  HTML goldens while leaving the JSON goldens untouched. E2 moved boolean
+  fields off the numeric path: `off -> on` / `on -> off` with an
+  `enabled`/`disabled` pill instead of `0 -> 1 (+1)` and `↓ 100.0%`, and a
+  one-sided boolean now reads `— -> on` with an `added` pill.
+
+The JSON goldens have never changed and must not: JSON is the audit path.
 """
 
 from __future__ import annotations
@@ -69,9 +83,15 @@ def characterization_scan_result() -> list[ProviderScanResult]:
     the cases (cases 1-4, 7, 9, 11-14 from the task-1 brief); cases 5, 6, 8, 9b,
     10, and 15 each get their own model because they reuse a field name already
     used by another case and a real diff would never emit the same field twice
-    for one model. Case 15 (bool paired with None) was added in the Task 2 fix
-    pass to pin production's scalar-fallback behavior for that case -- see
-    change_render.py Finding 2/3.
+    for one model.
+
+    Seven models are ALWAYS reported in the provider counters (`changed: 7`),
+    which count `ModelDelta`s, not visible rows. Since E1 only six of them
+    reach the human-readable goldens: `synth/model-temp-null`'s single change
+    is a no-op, so the model contributes no card and no summary row there
+    while staying fully present in the JSON golden. That asymmetry between
+    the counters, the human formats, and JSON is deliberate and is what these
+    goldens pin.
     """
     changed = (
         ModelDelta(
@@ -132,33 +152,37 @@ def characterization_scan_result() -> list[ProviderScanResult]:
             "changed",
             "synth/model-temp-toggle",
             "Synth Model Temp Toggle",
-            # Case 9b: numeric field holding 0/1 that must NOT classify as boolean
-            # (separate model from cases 9/10 -- same field name as case 10).
+            # Case 9b: numeric field holding 0/1 that must NOT classify as
+            # boolean. E2 put the boolean branch ahead of the numeric family,
+            # so this is the direct counter-example proving KNOWN_BOOLEAN_FIELDS
+            # is applied as a restriction: a temperature of 1 is a magnitude
+            # and must keep rendering `0 -> 1 (+1)`, not `off -> on`.
+            # (Separate model from cases 9/10 -- same field name as case 10.)
             (FieldChange("default_parameters.temperature", 0, 1),),
         ),
         ModelDelta(
             "changed",
             "synth/model-temp-null",
             "Synth Model Temp Null",
-            # Case 10: null -> null.
+            # Case 10: null -> null. E1's case. Deliberately the ONLY change
+            # on its own model, so suppression shows up in the goldens as an
+            # entire card and summary row disappearing rather than one row
+            # among several -- and so a renderer that suppressed the row but
+            # still emitted an empty card would fail here.
             (FieldChange("default_parameters.temperature", None, None),),
         ),
         ModelDelta(
             "changed",
             "synth/model-moderation-added",
             "Synth Model Moderation Added",
-            # Case 15: bool paired with None (one-sided), added from None -> True.
-            # Neither the numeric guard (both sides fail _numeric_value: None is
-            # None, and bool is excluded from _numeric_value) nor the dedicated
-            # boolean branch (which requires isinstance(old, bool) AND
-            # isinstance(new, bool)) accept this, so production's
-            # _render_smart_change_text sends it through the generic scalar
-            # fallback (`_render_value`), not the boolean toggle branch --
-            # separate model from cases 7/8 (same field name). This case exists
-            # so a future change_render-backed renderer that (incorrectly)
-            # treats a bool-vs-None pair as a boolean toggle fails this golden
-            # instead of changing output silently (see change_render.py
-            # Finding 2/3 fix pass).
+            # Case 15: bool paired with None (one-sided), added from
+            # None -> True. Through Task 3 this fell through to the generic
+            # scalar fallback and leaked a raw Python repr into the report
+            # (`null -> True`). Task 4 settled the open question: a one-sided
+            # boolean is a `coverage` change presented like every other
+            # one-sided change -- em dash on the absent side, `added` pill in
+            # the delta column -- so the golden now reads `— -> on`. Separate
+            # model from cases 7/8 (same field name).
             (FieldChange("top_provider.is_moderated", None, True),),
         ),
     )
@@ -203,9 +227,9 @@ Synth Provider (synthprov)
       [Parameters]
         supported_parameters: +logit_bias (1 → 2)
       [Capabilities]
-        reasoning.default_enabled: 0 → 1 (+1)
+        reasoning.default_enabled: off → on
       [Other]
-        top_provider.is_moderated: 0 → 1 (+1)
+        top_provider.is_moderated: off → on
         expiration_date: null → 2030-12-31
       [Squelched]
         1 field change hidden by report detail policy
@@ -214,13 +238,11 @@ Synth Provider (synthprov)
     * synth/model-limit-remove (Synth Model Limit Remove)
       top_provider.max_completion_tokens: 8,192 → null
     * synth/model-moderation-off (Synth Model Moderation Off)
-      top_provider.is_moderated: 1 → 0 (-1, ↓ 100.0%)
+      top_provider.is_moderated: on → off
     * synth/model-temp-toggle (Synth Model Temp Toggle)
       default_parameters.temperature: 0 → 1 (+1)
-    * synth/model-temp-null (Synth Model Temp Null)
-      default_parameters.temperature: null → null
     * synth/model-moderation-added (Synth Model Moderation Added)
-      top_provider.is_moderated: null → True
+      top_provider.is_moderated: — → on
   squelched: 1 field change across 1 model
     patterns: benchmarks, benchmarks.*
     models: synth/model-core
@@ -253,24 +275,22 @@ Synth Provider (synthprov)
       [Parameters]
         supported_parameters: +logit_bias (1 → 2)
       [Capabilities]
-        reasoning.default_enabled: 0 → 1 (+1)
+        reasoning.default_enabled: off → on
       [Benchmarks]
         benchmarks.example_suite: +{"score": 2}; -{"score": 1} (1 → 1)
       [Other]
-        top_provider.is_moderated: 0 → 1 (+1)
+        top_provider.is_moderated: off → on
         expiration_date: null → 2030-12-31
     * synth/model-limit-add (Synth Model Limit Add)
       top_provider.max_completion_tokens: null → 16,384
     * synth/model-limit-remove (Synth Model Limit Remove)
       top_provider.max_completion_tokens: 8,192 → null
     * synth/model-moderation-off (Synth Model Moderation Off)
-      top_provider.is_moderated: 1 → 0 (-1, ↓ 100.0%)
+      top_provider.is_moderated: on → off
     * synth/model-temp-toggle (Synth Model Temp Toggle)
       default_parameters.temperature: 0 → 1 (+1)
-    * synth/model-temp-null (Synth Model Temp Null)
-      default_parameters.temperature: null → null
     * synth/model-moderation-added (Synth Model Moderation Added)
-      top_provider.is_moderated: null → True
+      top_provider.is_moderated: — → on
 
 Summary
 ------------------------------------------------------------
@@ -304,8 +324,8 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
   - `pricing.input_cache_read: null → 5e-08 ($0.05 / 1M)`
   - `pricing.input_cache_write: 9e-08 ($0.09 / 1M) → null`
   - `top_provider.context_length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
-  - `top_provider.is_moderated: 0 → 1 (+1)`
-  - `reasoning.default_enabled: 0 → 1 (+1)`
+  - `top_provider.is_moderated: off → on`
+  - `reasoning.default_enabled: off → on`
   - `supported_parameters: +logit_bias (1 → 2)`
   - `pricing.overrides[min_prompt_tokens=200000].completion: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
   - `expiration_date: null → 2030-12-31`
@@ -315,13 +335,11 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
 - `synth/model-limit-remove` - Synth Model Limit Remove
   - `top_provider.max_completion_tokens: 8,192 → null`
 - `synth/model-moderation-off` - Synth Model Moderation Off
-  - `top_provider.is_moderated: 1 → 0 (-1, ↓ 100.0%)`
+  - `top_provider.is_moderated: on → off`
 - `synth/model-temp-toggle` - Synth Model Temp Toggle
   - `default_parameters.temperature: 0 → 1 (+1)`
-- `synth/model-temp-null` - Synth Model Temp Null
-  - `default_parameters.temperature: null → null`
 - `synth/model-moderation-added` - Synth Model Moderation Added
-  - `top_provider.is_moderated: null → True`
+  - `top_provider.is_moderated: — → on`
 - squelched: `1` field change across `1` model
 - Squelch patterns: `benchmarks, benchmarks.*`
 - Squelched models: `synth/model-core`"""
@@ -354,8 +372,8 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
   - `pricing.input_cache_read: null → 5e-08 ($0.05 / 1M)`
   - `pricing.input_cache_write: 9e-08 ($0.09 / 1M) → null`
   - `top_provider.context_length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
-  - `top_provider.is_moderated: 0 → 1 (+1)`
-  - `reasoning.default_enabled: 0 → 1 (+1)`
+  - `top_provider.is_moderated: off → on`
+  - `reasoning.default_enabled: off → on`
   - `supported_parameters: +logit_bias (1 → 2)`
   - `pricing.overrides[min_prompt_tokens=200000].completion: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
   - `expiration_date: null → 2030-12-31`
@@ -365,13 +383,11 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
 - `synth/model-limit-remove` - Synth Model Limit Remove
   - `top_provider.max_completion_tokens: 8,192 → null`
 - `synth/model-moderation-off` - Synth Model Moderation Off
-  - `top_provider.is_moderated: 1 → 0 (-1, ↓ 100.0%)`
+  - `top_provider.is_moderated: on → off`
 - `synth/model-temp-toggle` - Synth Model Temp Toggle
   - `default_parameters.temperature: 0 → 1 (+1)`
-- `synth/model-temp-null` - Synth Model Temp Null
-  - `default_parameters.temperature: null → null`
 - `synth/model-moderation-added` - Synth Model Moderation Added
-  - `top_provider.is_moderated: null → True`"""
+  - `top_provider.is_moderated: — → on`"""
 
 EXPECTED_MARKDOWN_DETAIL_ALL = _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
 
@@ -828,12 +844,12 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 <div class="change-category"><div class="category-label">Capabilities</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">reasoning.default_enabled</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
+<tr><td class="field-name">reasoning.default_enabled</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
+<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
 <tr><td class="field-name">expiration_date</td><td class="old-val">null</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
 </tbody></table>
 </div>
@@ -861,7 +877,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-moderation-off</code><span class="display-name">Synth Model Moderation Off</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">1</td><td class="new-val">0</td><td class="change-delta delta-decrease">↓ 100.0%</td></tr>
+<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">on</td><td class="new-val">off</td><td class="change-delta delta-decrease">disabled</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -874,18 +890,10 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 </div>
 <div class="model-card">
-<div class="model-card-header"><code>synth/model-temp-null</code><span class="display-name">Synth Model Temp Null</span></div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">default_parameters.temperature</td><td class="old-val">null</td><td class="new-val">null</td><td class="change-delta delta-neutral">—</td></tr>
-</tbody></table>
-</div>
-</div>
-<div class="model-card">
 <div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">null</td><td class="new-val">True</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -904,12 +912,11 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>top_provider.max_completion_tokens</td><td>null → 16,384</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>top_provider.max_completion_tokens</td><td>8,192 → null</td></tr>
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>supported_parameters</td><td>+logit_bias (1 → 2)</td></tr>
-<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>reasoning.default_enabled</td><td>0 → 1 (+1)</td></tr>
+<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>reasoning.default_enabled</td><td>off → on</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>expiration_date</td><td>null → 2030-12-31</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.is_moderated</td><td>0 → 1 (+1)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>top_provider.is_moderated</td><td>null → True</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>top_provider.is_moderated</td><td>1 → 0 (-1, ↓ 100.0%)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-null</code></td><td>default_parameters.temperature</td><td>null → null</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.is_moderated</td><td>off → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>top_provider.is_moderated</td><td>— → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>top_provider.is_moderated</td><td>on → off</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-toggle</code></td><td>default_parameters.temperature</td><td>0 → 1 (+1)</td></tr>
 <tr><td>Squelched</td><td>Synth Provider</td><td><details class="summary-models"><summary>1 models</summary><div class="summary-model-list"><code>synth/model-core</code></div></details></td><td>benchmarks, benchmarks.*</td><td>1 field change hidden by report detail policy</td></tr></tbody></table></section>
 <footer>Generated by Model Sentinel</footer>
@@ -970,7 +977,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 </div>
 <div class="change-category"><div class="category-label">Capabilities</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">reasoning.default_enabled</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
+<tr><td class="field-name">reasoning.default_enabled</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Benchmarks</div>
@@ -987,7 +994,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 </div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">0</td><td class="new-val">1</td><td class="change-delta delta-neutral"></td></tr>
+<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
 <tr><td class="field-name">expiration_date</td><td class="old-val">null</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
 </tbody></table>
 </div>
@@ -1012,7 +1019,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-moderation-off</code><span class="display-name">Synth Model Moderation Off</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">1</td><td class="new-val">0</td><td class="change-delta delta-decrease">↓ 100.0%</td></tr>
+<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">on</td><td class="new-val">off</td><td class="change-delta delta-decrease">disabled</td></tr>
 </tbody></table>
 </div>
 </div>
@@ -1025,18 +1032,10 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 </div>
 </div>
 <div class="model-card">
-<div class="model-card-header"><code>synth/model-temp-null</code><span class="display-name">Synth Model Temp Null</span></div>
-<div class="change-category"><div class="category-label">Other</div>
-<table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">default_parameters.temperature</td><td class="old-val">null</td><td class="new-val">null</td><td class="change-delta delta-neutral">—</td></tr>
-</tbody></table>
-</div>
-</div>
-<div class="model-card">
 <div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">null</td><td class="new-val">True</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">top_provider.is_moderated</td><td class="old-val">—</td><td class="new-val">on</td><td class="change-delta delta-increase">added</td></tr>
 </tbody></table>
 </div>
 </div></section>
@@ -1048,13 +1047,12 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>top_provider.max_completion_tokens</td><td>null → 16,384</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>top_provider.max_completion_tokens</td><td>8,192 → null</td></tr>
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>supported_parameters</td><td>+logit_bias (1 → 2)</td></tr>
-<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>reasoning.default_enabled</td><td>0 → 1 (+1)</td></tr>
+<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>reasoning.default_enabled</td><td>off → on</td></tr>
 <tr><td>Benchmarks</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>benchmarks.example_suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>expiration_date</td><td>null → 2030-12-31</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.is_moderated</td><td>0 → 1 (+1)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>top_provider.is_moderated</td><td>null → True</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>top_provider.is_moderated</td><td>1 → 0 (-1, ↓ 100.0%)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-null</code></td><td>default_parameters.temperature</td><td>null → null</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>top_provider.is_moderated</td><td>off → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>top_provider.is_moderated</td><td>— → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>top_provider.is_moderated</td><td>on → off</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-toggle</code></td><td>default_parameters.temperature</td><td>0 → 1 (+1)</td></tr></tbody></table></section>
 <footer>Generated by Model Sentinel</footer>
 </body>

@@ -226,13 +226,46 @@ def _matches_any(field_name: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatchcase(field_name, pattern) for pattern in patterns)
 
 
+def _drop_noop_changes(field_changes: tuple[FieldChange, ...]) -> tuple[FieldChange, ...]:
+    """THE render-time no-op filter (E1). One implementation, one call site.
+
+    A change whose two sides are semantically identical -- both `null`, or
+    equal values -- says nothing. `classify_change` already recognizes that as
+    `kind == "noop"`; this drops those entries so no renderer has to know the
+    rule. Deliberately NOT repeated per renderer: text, markdown, both HTML
+    paths and the `changes` report all reach it through `_field_display_plan`,
+    which is the single gate every non-JSON path passes through.
+
+    Suppression is presentation-only. `noop` entries stay in
+    `ModelDelta.field_changes`, in the database, and in JSON output, which is
+    the audit path and must not silently drop records.
+
+    Filtering here rather than at the grouping/rendering layer is also what
+    keeps bulk consolidation coherent. `_list_change_signature` builds the
+    bulk grouping key from `_list_diff_members`, not from `classify_change`,
+    so it reports a difference for lists that compare equal but spell
+    differently (`[1] == [True]` while the members spell `"1"` and `"True"`).
+    A filter applied after grouping would let three such models consolidate on
+    a key whose only member had been suppressed, producing a bulk card with a
+    category header and no rows. Running before `_bulk_change_signature` sees
+    anything makes the suppressed change invisible to key and card alike.
+    """
+    return tuple(fc for fc in field_changes if classify_change(fc).kind != "noop")
+
+
 def _field_display_plan(
     field_changes: tuple[FieldChange, ...],
     policy: ReportDetailPolicy,
     *,
     unclassified_remaining: int | None = None,
 ) -> _FieldDisplayPlan:
-    field_changes = _expand_structured_field_changes(field_changes)
+    # Expand first (a one-sided structure flattens into leaves, and some of
+    # those leaves ARE no-ops -- a newly added object with a null member
+    # produces `path: null -> null`), then drop no-ops, then apply the detail
+    # policy. The filter sits above the `mode == "all"` early return on
+    # purpose: E1 is a correctness fix, not a verbosity setting, so the
+    # full-detail audit view drops them too.
+    field_changes = _drop_noop_changes(_expand_structured_field_changes(field_changes))
     if policy.mode == "all":
         return _FieldDisplayPlan(field_changes, (), (), (), 0)
 
@@ -1203,8 +1236,9 @@ def _render_change_text(rendered: RenderedChange) -> str:
     """Format a classified change as one plain-text line.
 
     Pure formatter: every classification decision was already made by
-    `classify_change`. `noop` entries are NOT suppressed here -- suppression
-    is a later, deliberate change with its own golden updates.
+    `classify_change`. `noop` entries never reach any renderer -- E1 drops
+    them once, in `_drop_noop_changes`. This function still formats one if
+    handed it directly, rather than growing a second copy of the rule.
     """
     if rendered.kind == "list":
         return _render_list_diff_text(rendered)
@@ -1235,13 +1269,18 @@ def _render_change_text(rendered: RenderedChange) -> str:
             return f"{body} ({rendered.delta_display}, {rendered.pct_display})"
         return f"{body} ({rendered.delta_display})"
 
-    if rendered.kind == "boolean":
-        old_sym = "\u2713" if rendered.old_display == "on" else "\u2717"
-        new_sym = "\u2713" if rendered.new_display == "on" else "\u2717"
-        return f"{rendered.label}: {old_sym} \u2192 {new_sym}"
-
-    # scalar and noop share the generic form. `old_display`/`new_display` are
-    # produced by change_render._scalar_display, which matches _render_value.
+    # boolean, scalar and noop share the generic `old -> new` form.
+    #
+    # boolean (E2): `old_display`/`new_display` already carry `on`/`off` (or
+    # an em dash for the absent side of a one-sided change), so no
+    # translation is needed here. There is deliberately no `(delta)` suffix:
+    # `delta_display` for a boolean is the `enabled`/`disabled` (or
+    # `added`/`removed`) pill, which occupies the HTML delta column and has
+    # no place in a line that already reads `off -> on`. No percent is
+    # reachable either -- `pct_display` is always None for this kind.
+    #
+    # scalar/noop: `old_display`/`new_display` are produced by
+    # change_render._scalar_display, which matches _render_value.
     return f"{rendered.label}: {rendered.old_display} \u2192 {rendered.new_display}"
 
 
@@ -2598,7 +2637,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
     """Format a classified change as one `<tr>` of the four-column change table.
 
     Pure formatter, mirroring `_render_change_text` branch for branch. `noop`
-    entries are NOT suppressed here.
+    entries never reach here -- E1 drops them once, in `_drop_noop_changes`.
     """
     h = html_module.escape
 
@@ -2658,14 +2697,18 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         )
 
     if rendered.kind == "boolean":
-        old_sym = "\u2713" if rendered.old_display == "on" else "\u2717"
-        new_sym = "\u2713" if rendered.new_display == "on" else "\u2717"
+        # E2. Old/new carry `on`/`off` (or an em dash for the absent side of a
+        # one-sided change); the delta column carries the pill -- `enabled`/
+        # `disabled` for a toggle, `added`/`removed` for a one-sided change.
+        # No percent branch exists, which is the point: `_pct_change` returns
+        # "" for a zero basis, so the old numeric path left this cell blank on
+        # every `0 -> 1` flag.
         return _html_change_row(
             label=rendered.label,
-            old_cell=old_sym,
-            new_cell=new_sym,
-            delta_cls="delta-increase" if rendered.direction == "up" else "delta-decrease",
-            delta_cell=new_sym,
+            old_cell=h(rendered.old_display),
+            new_cell=h(rendered.new_display),
+            delta_cls="delta-decrease" if rendered.direction in ("down", "removed") else "delta-increase",
+            delta_cell=h(rendered.delta_display or ""),
         )
 
     return _html_change_row(

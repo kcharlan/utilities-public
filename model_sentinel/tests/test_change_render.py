@@ -3,16 +3,14 @@
 Covers the RenderedChange shape and every branch of classify_change's
 cascade: noop, list, price, count, numeric, boolean, scalar.
 
-IMPORTANT ORDERING NOTE (see change_render.py module docstring): the
-production renderer this module is extracted from treats a real Python
-`bool` pair as numeric, not boolean, because `_both_numeric()` calls
-`float()` and `bool` is a subclass of `int`. classify_change here
-deliberately reproduces that today, with numeric/price/count checked before
-boolean. The tests below assert the CURRENT ordering on purpose --
-`test_real_bool_pair_currently_classifies_as_numeric` and
-`test_known_boolean_int_pair_currently_classifies_as_numeric` exist so that
-Task 4 (E2) flipping the boolean branch ahead of numeric shows up as a
-visible, deliberate test change rather than a silent one.
+BRANCH ORDER (see change_render.py module docstring): `boolean` is checked
+BEFORE price/count/numeric. That ordering is load-bearing, not cosmetic:
+Python's `bool` is a subclass of `int`, so `_both_numeric()` -- which calls
+`float()` -- accepts a real `bool` pair, and for the whole pre-E2 life of
+this code the numeric branch swallowed every boolean toggle
+(`is_moderated: False -> True` rendered as `0 -> 1 (+1)`). Task 4 promoted
+the boolean branch ahead of the numeric family; the ordering tests below
+pin that so a future reshuffle cannot silently reinstate the defect.
 """
 
 from __future__ import annotations
@@ -267,30 +265,8 @@ def test_two_sided_count_must_render_like_numeric_for_neutrality():
 
 
 # ---------------------------------------------------------------------------
-# 5. numeric fallback (and the transitional-ordering documentation tests)
+# 5. numeric fallback
 # ---------------------------------------------------------------------------
-
-
-def test_real_bool_pair_currently_classifies_as_numeric():
-    """Pinned per the Task 2 ordering directive: today's production code
-    renders a real bool pair via the numeric path (`0 -> 1 (+1)`), not as a
-    boolean toggle -- the dedicated boolean branch is currently dead code
-    for this case. Task 4 (E2) promotes boolean ahead of numeric and this
-    test is expected to change at that point, deliberately."""
-    result = classify_change(FieldChange("top_provider.is_moderated", False, True))
-    assert result.kind == "numeric"
-    assert result.direction == "up"
-    assert result.old_display == "0"
-    assert result.new_display == "1"
-
-
-def test_known_boolean_int_pair_currently_classifies_as_numeric():
-    """Same E2 defect, integer-coded form: reasoning.default_enabled is in
-    KNOWN_BOOLEAN_FIELDS, but under the current transitional ordering a
-    two-sided 0/1 pair is still caught by the numeric branch first."""
-    result = classify_change(FieldChange("reasoning.default_enabled", 0, 1))
-    assert result.kind == "numeric"
-    assert result.direction == "up"
 
 
 def test_unclassified_numeric_fallback():
@@ -368,10 +344,19 @@ def test_pct_basis_zero_false_for_kinds_that_never_compute_a_percentage():
         FieldChange("supported_parameters", ["tools"], ["tools", "logit_bias"]),
         FieldChange("expiration_date", None, "2030-12-31"),
         FieldChange("expiration_date", None, None),
+        # Booleans in every form. `False -> True` is the one that matters:
+        # under the pre-E2 ordering it was a `numeric` change off a zero
+        # basis, so it reported pct_basis_zero=True.
+        FieldChange("top_provider.is_moderated", False, True),
+        FieldChange("top_provider.is_moderated", True, False),
+        FieldChange("reasoning.default_enabled", 0, 1),
+        FieldChange("top_provider.is_moderated", None, True),
+        FieldChange("top_provider.is_moderated", True, None),
     )
     for field_change in cases:
         result = classify_change(field_change)
         assert result.pct_basis_zero is False, field_change.field_name
+        assert result.pct_display is None, field_change.field_name
 
 
 def _rendered_change_kwargs(**overrides):
@@ -440,6 +425,9 @@ def test_every_classify_change_construction_site_satisfies_the_invariant():
         FieldChange("supported_parameters", ["tools"], ["tools", "logit_bias"]),
         FieldChange("expiration_date", None, "2030-12-31"),
         FieldChange("expiration_date", None, None),
+        FieldChange("top_provider.is_moderated", False, True),
+        FieldChange("top_provider.is_moderated", None, True),
+        FieldChange("reasoning.default_enabled", 1, 0),
     )
     for field_change in cases:
         result = classify_change(field_change)
@@ -540,51 +528,19 @@ def test_list_item_text_conventions():
 
 
 # ---------------------------------------------------------------------------
-# 6. boolean -- currently UNREACHABLE through classify_change (see module
-# docstring and Finding 2/3 fix below): every two-sided bool/known-boolean-int
-# pair is caught by the numeric branch (step 5) first, and one-sided
-# (bool-vs-None) pairs now fall through to scalar (step 7) instead of being
-# coerced into a boolean toggle. `_classify_boolean` itself is still directly
-# unit-tested below so it stays correct for when Task 4 promotes this branch
-# ahead of numeric.
+# 6. boolean (E2) -- checked BEFORE price/count/numeric. See the module
+# docstring: `bool` is an `int` subclass, so every branch guarded by
+# `_both_numeric`/`_numeric_value` accepts a real bool pair, and for the whole
+# pre-E2 life of this code the numeric branch swallowed boolean toggles.
 # ---------------------------------------------------------------------------
 
 
-def test_boolean_one_sided_added_from_none_falls_through_to_scalar():
-    """Finding 2 fix: a bool paired with None must NOT classify as boolean --
-    production's dedicated boolean branch requires `isinstance(old, bool) and
-    isinstance(new, bool)`, so a one-sided change like this falls through to
-    its generic scalar fallback (`_render_value`). Before this fix,
-    `_is_boolean_change`'s `or` let this incorrectly classify as `boolean`
-    with a fabricated on/off display, which would have silently changed
-    output once this module is wired into the renderers (no fixture in
-    tests/test_render_characterization.py covered a bool-vs-None case, so
-    nothing would have caught it)."""
-    result = classify_change(FieldChange("top_provider.is_moderated", None, True))
-    assert result.kind == "scalar"
-    assert result.direction == "none"
-    assert result.semantic == "neutral"
-    assert result.old_display == "null"
-    assert result.new_display == "True"
-
-
-def test_boolean_one_sided_removed_to_none_falls_through_to_scalar():
-    """Same fix, mirrored direction."""
-    result = classify_change(FieldChange("top_provider.is_moderated", True, None))
-    assert result.kind == "scalar"
-    assert result.direction == "none"
-    assert result.semantic == "neutral"
-    assert result.old_display == "True"
-    assert result.new_display == "null"
-
-
-def test_classify_boolean_helper_still_produces_boolean_kind_directly():
-    """`_classify_boolean` is unreachable through classify_change today (see
-    section docstring above) but must stay correct for Task 4, which promotes
-    the boolean branch ahead of numeric. Exercised directly since
-    classify_change can't reach it for a two-sided bool pair under the
-    current transitional ordering."""
-    result = _classify_boolean(FieldChange("top_provider.is_moderated", False, True))
+def test_real_bool_pair_classifies_as_boolean_not_numeric():
+    """E2, two-sided real-bool form. This is the regression test for the
+    shipped defect where `top_provider.is_moderated: False -> True` rendered
+    as `0 -> 1 (+1)` because `float(True)` succeeds and the numeric branch
+    ran first."""
+    result = classify_change(FieldChange("top_provider.is_moderated", False, True))
     assert result.kind == "boolean"
     assert result.direction == "up"
     assert result.semantic == "capability"
@@ -593,24 +549,104 @@ def test_classify_boolean_helper_still_produces_boolean_kind_directly():
     assert result.delta_display == "enabled"
 
 
+def test_known_boolean_int_pair_classifies_as_boolean_not_numeric():
+    """Same defect, integer-coded form: `reasoning.default_enabled` holds 0/1
+    rather than real bools, and is in KNOWN_BOOLEAN_FIELDS precisely so those
+    values classify as a flag rather than a magnitude."""
+    result = classify_change(FieldChange("reasoning.default_enabled", 0, 1))
+    assert result.kind == "boolean"
+    assert result.direction == "up"
+    assert result.old_display == "off"
+    assert result.new_display == "on"
+    assert result.delta_display == "enabled"
+
+
+def test_boolean_disable_classifies_as_boolean_with_no_percentage():
+    """The `True -> False` direction, and the other half of the E2 defect: the
+    numeric branch rendered this as `-1, down 100.0%`, percent-formatting a
+    flag. A boolean must never carry a percentage in any form."""
+    result = classify_change(FieldChange("top_provider.is_moderated", True, False))
+    assert result.kind == "boolean"
+    assert result.direction == "down"
+    assert result.old_display == "on"
+    assert result.new_display == "off"
+    assert result.delta_display == "disabled"
+    assert result.pct_display is None
+    assert result.pct_basis_zero is False
+    assert result.delta_abs is None
+
+
+def test_boolean_wins_over_every_numeric_family_branch():
+    """Branch-order guard. Each of these pairs is also `_both_numeric`, so a
+    cascade that put price/count/numeric first would classify them as such --
+    exactly the pre-E2 behavior."""
+    for field_name in ("top_provider.is_moderated", "reasoning.mandatory", "deprecated"):
+        assert classify_change(FieldChange(field_name, False, True)).kind == "boolean", field_name
+    assert _both_numeric(False, True) is True
+    assert _both_numeric(0, 1) is True
+
+
+def test_known_boolean_restriction_still_excludes_genuine_numeric_fields():
+    """The known-boolean set is a restriction, not a blanket 0/1 rule: a
+    temperature of `1` is a magnitude. This must stay `numeric` with a
+    percent even though its values look identical to a flag's."""
+    result = classify_change(FieldChange("default_parameters.temperature", 0, 1))
+    assert result.kind == "numeric"
+    assert result.delta_display == "+1"
+
+
+def test_boolean_one_sided_added_from_none_is_coverage():
+    """Task 4 decision: a boolean appearing from nothing is a `boolean`
+    change with `coverage` semantics, presented like every other one-sided
+    change in the design -- absent side as an em dash, an `added` pill in the
+    delta column, no percent. Previously this fell through to `scalar` and
+    rendered the raw Python repr `null -> True`."""
+    result = classify_change(FieldChange("top_provider.is_moderated", None, True))
+    assert result.kind == "boolean"
+    assert result.direction == "added"
+    assert result.semantic == "coverage"
+    assert result.old_display == "—"
+    assert result.new_display == "on"
+    assert result.delta_display == "added"
+    assert result.pct_display is None
+
+
+def test_boolean_one_sided_removed_to_none_is_coverage():
+    """Mirrored direction."""
+    result = classify_change(FieldChange("top_provider.is_moderated", False, None))
+    assert result.kind == "boolean"
+    assert result.direction == "removed"
+    assert result.semantic == "coverage"
+    assert result.old_display == "off"
+    assert result.new_display == "—"
+    assert result.delta_display == "removed"
+    assert result.pct_display is None
+
+
+def test_boolean_one_sided_covers_the_integer_coded_form():
+    """One-sided known-boolean ints matter in production, not just real
+    bools: `_flatten_one_sided_structure` in reporting.py turns a whole newly
+    added `reasoning` object into leaves like this one."""
+    result = classify_change(FieldChange("reasoning.default_enabled", None, 1))
+    assert result.kind == "boolean"
+    assert result.direction == "added"
+    assert result.new_display == "on"
+
+
 def test_classify_boolean_raises_for_non_boolean_value():
-    """`_classify_boolean`'s precondition (both sides boolean-ish per
-    `_bool_state`) is documented but was previously unenforced: calling it
-    directly with a non-boolean value (bypassing `_is_boolean_change`) would
-    fabricate `direction="down"` and put the literal string `None` into a
-    `str`-typed display field. It must raise instead."""
+    """`_classify_boolean`'s precondition (each present side boolean-ish per
+    `_bool_state`) is enforced: calling it directly with a non-boolean value
+    (bypassing `_is_boolean_change`) would fabricate `direction="down"` and
+    put the literal string `None` into a `str`-typed display field."""
     with pytest.raises(ValueError, match="default_parameters.top_p"):
         _classify_boolean(FieldChange("default_parameters.top_p", False, 0.9))
-    with pytest.raises(ValueError, match="top_provider.is_moderated"):
-        _classify_boolean(FieldChange("top_provider.is_moderated", None, True))
-    with pytest.raises(ValueError, match="top_provider.is_moderated"):
-        _classify_boolean(FieldChange("top_provider.is_moderated", True, None))
+    with pytest.raises(ValueError, match="default_parameters.top_p"):
+        _classify_boolean(FieldChange("default_parameters.top_p", None, 0.9))
+    with pytest.raises(ValueError, match="expiration_date"):
+        _classify_boolean(FieldChange("expiration_date", None, None))
 
 
 def test_is_boolean_change_true_for_real_bool_pair():
-    """The boolean predicate itself (not the cascade) recognizes a real bool
-    pair -- exercised directly since classify_change can't reach this branch
-    for a two-sided bool pair under the transitional ordering."""
     assert _is_boolean_change(FieldChange("top_provider.is_moderated", False, True)) is True
 
 
@@ -621,12 +657,29 @@ def test_is_boolean_change_true_for_known_boolean_int_pair():
     assert _is_boolean_change(FieldChange("deprecated", 0, 1)) is True
 
 
-def test_is_boolean_change_false_for_one_sided_real_bool_pair():
-    """Finding 2 fix, predicate-level: a bool paired with None is NOT a
-    two-sided toggle. Before the fix, `_is_boolean_change` used `or`, which
-    made this return True."""
-    assert _is_boolean_change(FieldChange("top_provider.is_moderated", None, True)) is False
-    assert _is_boolean_change(FieldChange("top_provider.is_moderated", True, None)) is False
+def test_is_boolean_change_true_for_one_sided_boolean_ish_side():
+    """Task 4 decision, predicate-level: only the PRESENT side has to be
+    boolean-ish for a one-sided change."""
+    assert _is_boolean_change(FieldChange("top_provider.is_moderated", None, True)) is True
+    assert _is_boolean_change(FieldChange("top_provider.is_moderated", True, None)) is True
+    assert _is_boolean_change(FieldChange("reasoning.default_enabled", None, 1)) is True
+
+
+def test_is_boolean_change_false_for_one_sided_value_outside_the_known_set():
+    """The known-boolean restriction applies to one-sided changes too, so a
+    genuinely numeric leaf appearing from nothing is not turned into a flag.
+    `architecture.tier_profiles[0].weight: null -> 1` (a real shape produced
+    by reporting.py's structured flattening) must stay `scalar`."""
+    assert _is_boolean_change(FieldChange("default_parameters.top_p", None, 1)) is False
+    assert _is_boolean_change(FieldChange("architecture.tier_profiles[0].weight", None, 1)) is False
+    assert classify_change(FieldChange("default_parameters.top_p", None, 1)).kind == "scalar"
+
+
+def test_is_boolean_change_false_for_none_to_none():
+    """`(None, None)` is a noop, not a one-sided boolean, even on a
+    known-boolean field."""
+    assert _is_boolean_change(FieldChange("top_provider.is_moderated", None, None)) is False
+    assert classify_change(FieldChange("top_provider.is_moderated", None, None)).kind == "noop"
 
 
 def test_is_boolean_change_false_for_mixed_bool_and_numeric_pair():
@@ -637,13 +690,16 @@ def test_is_boolean_change_false_for_mixed_bool_and_numeric_pair():
     `_is_boolean_change` (one side, `0.9`, is not `isinstance(..., bool)`),
     but the latent bug was one level down in `_bool_state`: it used to return
     "off" for ANY unrecognized value via a bare fallthrough, so if
-    `_is_boolean_change` (or a future caller, e.g. after Task 4 reorders the
-    cascade) ever again let a mixed-type pair through, `_classify_boolean`
-    would render `0.9` as "off" and fabricate `direction="down"` -- a real
-    change reported as a disable. `_bool_state` must return None instead."""
+    `_is_boolean_change` (or any future caller) ever again let a mixed-type
+    pair through, `_classify_boolean` would render `0.9` as "off" and
+    fabricate `direction="down"` -- a real change reported as a disable.
+    `_bool_state` must return None instead. This matters more since E2 put
+    the boolean branch first: a false positive here now shadows the numeric
+    branch instead of being shadowed by it."""
     fc = FieldChange("default_parameters.top_p", False, 0.9)
     assert _is_boolean_change(fc) is False
     assert _bool_state(0.9) is None
+    assert classify_change(fc).kind == "numeric"
 
 
 def test_bool_state_returns_none_for_unrecognized_values():
