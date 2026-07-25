@@ -17,11 +17,13 @@ def _scan_result(
     *,
     provider_id: str = "openrouter",
     provider_label: str = "OpenRouter",
+    status: str = "success",
+    error_message: str | None = None,
 ) -> ProviderScanResult:
     return ProviderScanResult(
         provider_id=provider_id,
         provider_label=provider_label,
-        status="success",
+        status=status,
         current_count=2,
         saved=False,
         baseline=None,
@@ -30,10 +32,24 @@ def _scan_result(
         added=(),
         removed=(),
         changed=changed,
-        error_message=None,
+        error_message=error_message,
         price_multiplier=1000000,
         price_divisor=1,
     )
+
+
+def _html_section_body(html: str, heading: str) -> str:
+    """Return what `heading` actually presides over, up to its `</section>`.
+
+    Asserting `f"{heading}\\n</section>"` is absent cannot fail. Both HTML
+    renderers assemble a section as
+    `'<section ...>' + "\\n".join(parts) + '</section>'`, so `</section>` is
+    never preceded by a newline in ANY output -- bare heading or full body.
+    Split on the heading and inspect what follows instead, which is the shape
+    the markdown assertions in this module already use.
+    """
+    assert heading in html, f"{heading} missing from rendered output"
+    return html.split(heading, 1)[1].split("</section>", 1)[0].strip()
 
 
 def _bulk_parameter_changes() -> tuple[ModelDelta, ...]:
@@ -1187,14 +1203,15 @@ def test_scan_markdown_falls_back_to_none_when_a_section_has_no_body() -> None:
 def test_scan_html_omits_the_changed_heading_when_no_card_survives() -> None:
     """`<h3>Changed</h3>` with no cards after it was the HTML symptom."""
     html = _render_all_human_formats((_NOOP_MODEL,))["html"]
-    assert "<h3>Changed</h3>\n</section>" not in html
-    assert "<h3>Changed</h3>" in html  # the rollup card justifies the heading
-    assert '<div class="category-label">no-op</div>' in html
-    assert "1 field change across 1 model" in html
+    body = _html_section_body(html, "<h3>Changed</h3>")
+    assert body, "<h3>Changed</h3> rendered with nothing beneath it"
+    # The rollup card is what justifies the heading, and it is what follows it.
+    assert '<div class="category-label">no-op</div>' in body
+    assert "1 field change across 1 model" in body
 
 
-def test_scan_html_emits_no_section_at_all_for_a_bare_provider_heading() -> None:
-    """A provider section reduced to its `<h2>` is suppressed outright."""
+def test_scan_html_provider_section_is_never_a_bare_heading() -> None:
+    """A provider `<h2>` always presides over something."""
     result = _scan_result(
         (_NOOP_MODEL,),
         provider_id="synthprov",
@@ -1208,7 +1225,59 @@ def test_scan_html_emits_no_section_at_all_for_a_bare_provider_heading() -> None
     )
     # The section exists only because the rollup card fills it.
     assert '<section class="provider-section">' in html
-    assert "</h2>\n</section>" not in html
+    body = _html_section_body(html, "</h2>")
+    assert body, "provider section rendered as a bare <h2>"
+    assert '<div class="category-label">no-op</div>' in body
+
+
+def test_scan_html_emits_no_provider_section_when_the_body_would_be_empty() -> None:
+    """A provider section reduced to its `<h2>` is suppressed outright.
+
+    Drives `_render_scan_html`'s `len(section_parts) == 1` guard directly. A
+    `ModelDelta` carrying no field changes still counts toward `change_count`
+    -- that is a record count -- so the section loop is entered, but nothing
+    survives planning and no rollup stands in for it. The counter on the
+    provider card still reports the record.
+    """
+    empty = ModelDelta("changed", "synth/model-empty", "Synth Empty", ())
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[
+            _scan_result((empty,), provider_id="synthprov", provider_label="Synth Provider")
+        ],
+    )
+    assert '<section class="provider-section">' not in html
+    assert "synth/model-empty" not in html
+    assert '<div class="provider-badge">1 change</div>' in html
+
+
+def test_scan_html_keeps_the_section_of_an_error_provider_with_no_body() -> None:
+    """The `result.status != "error"` half of the same guard.
+
+    An error provider whose message never made it into the result still
+    reduces to a bare `<h2>`, and that section is deliberately kept: the
+    provider card above says ERROR and the section is where a reader looks
+    for it.
+    """
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[
+            _scan_result(
+                (),
+                provider_id="synthprov",
+                provider_label="Synth Provider",
+                status="error",
+                error_message=None,
+            )
+        ],
+    )
+    assert '<section class="provider-section">' in html
+    assert "Synth Provider" in html
+    assert _html_section_body(html, "</h2>") == ""
 
 
 def test_changes_text_report_omits_date_and_provider_when_nothing_survives() -> None:
@@ -1226,8 +1295,9 @@ def test_changes_text_report_omits_date_and_provider_when_nothing_survives() -> 
 
 def test_changes_html_report_omits_date_and_provider_when_nothing_survives() -> None:
     report = _noop_only_changes_report("html")
-    assert "<h3>Synth Provider</h3>\n</section>" not in report
-    assert '<div class="category-label">no-op</div>' in report
+    body = _html_section_body(report, "<h3>Synth Provider</h3>")
+    assert body, "provider heading rendered with nothing beneath it"
+    assert '<div class="category-label">no-op</div>' in body
     assert '<div class="model-card-header"><code>synth/model-noop-only</code>' not in report
 
 
