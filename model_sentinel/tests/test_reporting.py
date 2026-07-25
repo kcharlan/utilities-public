@@ -1,6 +1,5 @@
 import json
 import re
-from pathlib import Path
 
 from model_sentinel import reporting
 from model_sentinel.change_render import (
@@ -8,7 +7,7 @@ from model_sentinel.change_render import (
     format_qualified_label,
     resolve_field_label,
 )
-from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
+from model_sentinel.models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
 from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     ReportDetailPolicy,
@@ -720,8 +719,6 @@ def test_changes_report_applies_detail_policy() -> None:
 
 
 def test_history_report_applies_detail_policy() -> None:
-    from model_sentinel.models import HistoryEvent
-
     report = render_history_report(
         provider_id="openrouter",
         model_id="alpha",
@@ -877,7 +874,10 @@ def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() ->
     assert "Cache read (#0): null \u2192 0.0000006 ($0.60 / 1M)" in text_report
     assert "Min prompt tokens (#0): null \u2192 200,000" in text_report
     assert "$200" not in text_report
-    assert "Input" in html_report
+    # The qualifier is required here too. A bare `assert "Input" in html_report`
+    # passes whether or not the HTML renderer qualified the row, which makes it
+    # weaker than its three text siblings above rather than merely shorter.
+    assert "Input (#0)" in html_report
     assert "$6.00 / 1M" in html_report
     assert '"field_name": "pricing.overrides"' in json_report
     assert '"field_name": "pricing.overrides[0].prompt"' not in json_report
@@ -1029,6 +1029,29 @@ def _tiered_pricing_report(format_name: str) -> str:
     )
 
 
+def _tiered_pricing_changes_rows() -> tuple[dict, ...]:
+    """The same two field changes, in the row shape the changes report takes.
+
+    Derived from `_TIERED_PRICING_MODEL` rather than respelled, so the scan
+    and changes entry points are provably fed the identical field changes and
+    the fixture cannot drift between the two halves of the qualifier guard.
+    """
+    return tuple(
+        {
+            "detected_at": "2026-07-25T09:00:00+00:00",
+            "provider_id": "synthprov",
+            "provider_label": "Synth Provider",
+            "provider_model_id": _TIERED_PRICING_MODEL.provider_model_id,
+            "display_name": _TIERED_PRICING_MODEL.display_name,
+            "change_kind": _TIERED_PRICING_MODEL.kind,
+            "field_name": field_change.field_name,
+            "old_value": field_change.old_value,
+            "new_value": field_change.new_value,
+        }
+        for field_change in _TIERED_PRICING_MODEL.field_changes
+    )
+
+
 def test_base_price_and_conditional_tier_render_distinguishably_in_text() -> None:
     report = _tiered_pricing_report("text")
 
@@ -1103,20 +1126,140 @@ def test_tiered_pricing_json_keeps_raw_paths_and_is_unaffected() -> None:
     assert "pricing.overrides[" not in raw
 
 
-def test_no_renderer_prints_a_bare_label() -> None:
-    """The parenthetical lives in ONE place; five copies would rot separately.
+# ---------------------------------------------------------------------------
+# Every report entry point must surface the qualifier
+#
+# `RenderedChange.label` is the registry lookup with the bracketed segment
+# already stripped, so it cannot identify a row on its own; only
+# `display_label` re-attaches it. The guard below is BEHAVIOURAL, and replaces
+# an earlier source-text assertion (`"rendered.label" not in reporting.py`)
+# that could pass while the behaviour was broken -- a renderer written as
+# `def _render_x(change: RenderedChange)` printing `change.label`, or reaching
+# it via `getattr(rendered, "label")`, or binding `rc = rendered` first,
+# contains no such substring. It also constrained what the module's own
+# comments were allowed to say.
+#
+# The entry-point inventory is DISCOVERED from the module, not listed, so a
+# seventh renderer reached through a new `render_*_report` cannot be added
+# without either satisfying the qualifier assertion or being explicitly
+# classified as a report that carries no field changes.
+# ---------------------------------------------------------------------------
 
-    `RenderedChange.label` is the registry lookup with the bracketed segment
-    already stripped, so it cannot identify a row on its own. Every non-JSON
-    renderer must read `display_label`. This asserts the FIX -- that no
-    `rendered.label` spelling survives in reporting.py -- rather than only its
-    symptom, because a sixth renderer added later would reintroduce the
-    collapse silently and no output golden would cover it until someone wrote
-    a fixture for it.
+# Renders field changes, and must therefore surface the qualifier.
+_FIELD_CHANGE_ENTRY_POINTS = {"render_scan_report", "render_changes_report"}
+# Carries no `FieldChange` rows at all, so there is no label to qualify.
+_NO_FIELD_CHANGE_ENTRY_POINTS = {
+    "render_model_list_report",
+    "render_providers_report",
+    "render_healthcheck_report",
+}
+# Formats `HistoryEvent` rows directly and never builds a `RenderedChange`, so
+# it prints raw dotted paths. Pinned separately below.
+_RAW_PATH_ENTRY_POINTS = {"render_history_report"}
+
+
+def test_every_public_report_entry_point_is_classified() -> None:
+    """A new `render_*_report` must be triaged, not silently uncovered.
+
+    This is what makes the qualifier guard below closed rather than a spot
+    check: the set of entry points is read off the module, so adding one
+    fails here until its qualifier behaviour is decided and asserted.
     """
-    source = (Path(reporting.__file__)).read_text(encoding="utf-8")
-    assert "rendered.display_label" in source
-    assert "rendered.label" not in source
+    discovered = {
+        name
+        for name in dir(reporting)
+        if name.startswith("render_") and name.endswith("_report")
+    }
+    assert discovered == (
+        _FIELD_CHANGE_ENTRY_POINTS | _NO_FIELD_CHANGE_ENTRY_POINTS | _RAW_PATH_ENTRY_POINTS
+    )
+    for name in discovered:
+        assert callable(getattr(reporting, name)), name
+
+
+def test_every_field_change_entry_point_surfaces_the_qualifier() -> None:
+    """One fixture, every entry point that renders field changes, every format.
+
+    The fixture carries a base `pricing.prompt` move AND a conditional tier
+    moving the same leaf, so the two rows collapse into an indistinguishable
+    pair of `Input`s the moment any renderer prints the bare label. Asserting
+    the parenthetical is present is not enough on its own -- a renderer could
+    emit it for one row and not the other -- so each report is also required
+    to contain a bare `Input` row and a qualified one, exactly once each.
+    """
+    qualified = "Input (min_prompt_tokens=200000)"
+
+    scan_reports = {
+        format_name: _tiered_pricing_report(format_name)
+        for format_name in ("text", "markdown", "html")
+    }
+    changes_reports = _render_changes_human_formats(_tiered_pricing_changes_rows())
+
+    rendered = {
+        f"render_scan_report/{name}": report for name, report in scan_reports.items()
+    } | {
+        f"render_changes_report/{name}": report for name, report in changes_reports.items()
+    }
+    # Precondition: every entry point classified as rendering field changes is
+    # actually exercised here. Without this the loop could cover a subset.
+    assert {key.split("/")[0] for key in rendered} == _FIELD_CHANGE_ENTRY_POINTS
+
+    for key, report in rendered.items():
+        assert qualified in report, f"{key} dropped the qualifier"
+        # Pairing rather than a fixed count, because the number of render
+        # SITES differs by format: HTML prints every label twice (the per-model
+        # change table and the Change Summary), text and markdown once. What
+        # holds in all of them is that each site emits the two rows together,
+        # so bare and qualified occurrences must come in equal numbers. Every
+        # qualified occurrence also contains the bare substring, hence the 2x.
+        #
+        # This is what fails when a renderer prints the bare label: the
+        # collapsed site contributes two bare `Input`s and no qualified one,
+        # and the equality breaks. A fixed count would have had to be spelled
+        # per format, and would then pass for a format nobody updated.
+        assert report.count(qualified) >= 1, key
+        assert report.count("Input") == 2 * report.count(qualified), key
+
+
+def test_history_report_entry_point_prints_raw_paths_not_collapsed_labels() -> None:
+    """The one entry point exempt from the qualifier rule, and why it is safe.
+
+    `render_history_report` never builds a `RenderedChange`, so it has no
+    label to collapse -- it prints the raw dotted path, which is strictly more
+    specific than a qualified label. The exemption is therefore a real
+    property of its output, not an untested carve-out: if it ever starts
+    routing through the registry, this test fails and it joins the guard above.
+    """
+    events = (
+        HistoryEvent(
+            detected_at="2026-07-25T09:00:00+00:00",
+            change_kind="changed",
+            field_name="pricing.overrides[min_prompt_tokens=200000].prompt",
+            old_value="0.000004",
+            new_value="0.000005",
+        ),
+    )
+    report = render_history_report(
+        provider_id="synthprov",
+        model_id="synth/model-tiered",
+        format_name="text",
+        first_seen="2026-07-01T09:00:00+00:00",
+        last_seen="2026-07-25T09:00:00+00:00",
+        events=events,
+    )
+
+    assert "pricing.overrides[min_prompt_tokens=200000].prompt" in report
+    assert "Input" not in report
+
+
+def test_unmatchable_pricing_overrides_keep_full_fidelity_list_fallback() -> None:
+    """Overrides with no identifiable condition fall back to a whole-list diff.
+
+    `_index_pricing_overrides` returns None when no tier carries one of the
+    condition fields, so there is nothing to pair tiers on and no per-leaf
+    expansion happens. The row must then keep the complete old and new member
+    text rather than losing the values it could not align.
+    """
     changed = (
         ModelDelta(
             "changed",

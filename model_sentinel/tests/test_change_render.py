@@ -16,6 +16,7 @@ pin that so a future reshuffle cannot silently reinstate the defect.
 from __future__ import annotations
 
 import dataclasses
+from unittest.mock import patch
 
 import pytest
 
@@ -786,35 +787,56 @@ def test_one_sided_list_scalar_matches_render_value_json_form():
 
 
 def test_exact_path_match_wins_over_leaf_suffix_match():
-    """`top_provider.context_length` must not pick up the model-level label.
+    """The path table is consulted first, and that ordering is load-bearing.
 
-    This is the one genuine key collision in the registry: `context_length`
-    is a real top-level field AND the leaf of `top_provider.context_length`.
-    The leaf entry says "Context length (model)", the path entry says
-    "Context length". If the cascade ever consulted the leaf table first --
-    or dropped the path entry -- the provider-level field would silently be
-    labelled as the model-level one, which is exactly the ambiguity the
-    design's disambiguation note exists to prevent.
+    The shipped registry no longer contains a name in both tables -- see
+    `test_registry_tables_are_disjoint`, which requires exactly that -- so the
+    ordering cannot be observed from the real data any more. It still has to
+    hold: a leaf key claims every path ending in its segment, so the moment
+    anyone adds a leaf entry that collides with an existing path entry, a
+    leaf-first cascade would silently relabel the path-keyed field rather than
+    fail. Inject the collision to pin the rule directly.
     """
-    # Precondition: both tables really do claim this name, with DIFFERENT
-    # labels. Without this, the assertion below could pass vacuously.
-    assert FIELD_PATH_LABELS["top_provider.context_length"] == "Context length"
-    assert FIELD_LEAF_LABELS["context_length"] == "Context length (model)"
-    assert FIELD_PATH_LABELS["top_provider.context_length"] != FIELD_LEAF_LABELS["context_length"]
+    with (
+        patch.dict(FIELD_PATH_LABELS, {"synthetic.parent.leaf_name": "From the path table"}),
+        patch.dict(FIELD_LEAF_LABELS, {"leaf_name": "From the leaf table"}),
+    ):
+        # Precondition: both tables really do claim this name, with DIFFERENT
+        # labels. Without this the assertion below could pass vacuously.
+        assert (
+            FIELD_PATH_LABELS["synthetic.parent.leaf_name"] != FIELD_LEAF_LABELS["leaf_name"]
+        )
 
-    assert resolve_field_label("top_provider.context_length") == ("Context length", None)
-    result = classify_change(FieldChange("top_provider.context_length", 128000, 200000))
-    assert result.label == "Context length"
+        assert resolve_field_label("synthetic.parent.leaf_name") == ("From the path table", None)
+        result = classify_change(FieldChange("synthetic.parent.leaf_name", "a", "b"))
+        assert result.label == "From the path table"
+
+        # The leaf entry still governs any OTHER path ending in that segment.
+        assert resolve_field_label("synthetic.other.leaf_name") == ("From the leaf table", None)
+
+    # patch.dict restored both tables; no test after this one sees the collision.
+    assert "synthetic.parent.leaf_name" not in FIELD_PATH_LABELS
+    assert "leaf_name" not in FIELD_LEAF_LABELS
 
 
 def test_context_length_and_top_provider_context_length_have_different_labels():
-    """Two distinct fields that both occur in real data must read differently."""
+    """Two distinct fields that both occur in real data must read differently.
+
+    The design's disambiguation note requires this explicitly. Both are now
+    exact-path keys, so the distinction no longer depends on lookup order --
+    each field states its own label at its own path, and deleting either
+    produces a prettified fallback rather than the other field's label.
+    """
     model_level = classify_change(FieldChange("context_length", 128000, 200000))
     provider_level = classify_change(FieldChange("top_provider.context_length", 128000, 200000))
 
     assert model_level.label == "Context length (model)"
     assert provider_level.label == "Context length"
     assert model_level.label != provider_level.label
+
+    # Neither is reachable through the leaf table any more, so a nested
+    # homonym cannot inherit either label -- see the nested-homonym tests.
+    assert "context_length" not in FIELD_LEAF_LABELS
 
 
 def test_leaf_suffix_match_resolves_a_dynamic_pricing_override_path():
@@ -973,24 +995,165 @@ def test_registry_covers_every_seeded_field_name():
         "default_parameters.top_k": "Top-K",
         "default_parameters.top_p": "Top-P",
     }
-    assert len(expected) == 42
-    assert len(FIELD_PATH_LABELS) + len(FIELD_LEAF_LABELS) == 42
+    # Both counts are DERIVED from `expected`, never spelled as literals.
+    # Adding a label must be a one-line edit to the registry plus a one-line
+    # edit here; a hard-coded total made it four lines and invited the count
+    # and the data to drift apart.
+    assert len(FIELD_PATH_LABELS) + len(FIELD_LEAF_LABELS) == len(expected)
 
     for path, label in expected.items():
         assert resolve_field_label(path) == (label, None), path
 
 
-def test_registry_tables_do_not_silently_shadow_each_other():
-    """Any name in both tables is a deliberate disambiguation, not an accident.
+def test_registry_tables_are_disjoint():
+    """No name may appear in both tables. The overlap allowance is gone.
 
-    A leaf key that is also a whole path key with the SAME label is dead
-    weight; with a DIFFERENT label it is a deliberate override. Only the
-    documented `context_length` collision is allowed.
+    A leaf key claims EVERY path in the product ending in that segment, so it
+    is a last resort reserved for fields whose parent is dynamic. Every other
+    name is keyed by its exact path. Under that rule an overlap can only be
+    one of two mistakes: a redundant duplicate, or a leaf entry silently
+    shadowed by a path entry for one location while still mislabelling every
+    other location that ends in the same segment. Both are defects, so the
+    allowed overlap set is empty rather than a curated exception list.
     """
     overlapping = {
         path for path in FIELD_PATH_LABELS if path.rsplit(".", 1)[-1] in FIELD_LEAF_LABELS
     }
-    assert overlapping == {"top_provider.context_length"}
+    assert overlapping == set()
+
+
+def test_leaf_table_holds_only_names_with_a_dynamic_parent():
+    """The leaf table's membership rule, asserted rather than documented.
+
+    Two producers in reporting.py put a field under a parent that cannot be
+    spelled as a fixed path: `_pricing_override_path` relocates the money
+    leaves under `pricing.overrides[<condition>]`, and the payload nests the
+    six tuning parameters under `default_parameters`. Those are the only
+    names entitled to a leaf key. Anything else added here is a claim over
+    unrelated nested homonyms, which is the defect this list exists to stop.
+    """
+    money_leaves = {
+        "prompt",
+        "completion",
+        "input_cache_read",
+        "input_cache_write",
+        "input_cache_write_1h",
+        "input_audio_cache",
+        "audio_output",
+        "image_output",
+        "web_search",
+        "internal_reasoning",
+    }
+    default_parameter_leaves = {
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "temperature",
+        "top_k",
+        "top_p",
+    }
+    assert set(FIELD_LEAF_LABELS) == money_leaves | default_parameter_leaves
+
+
+def test_nested_homonym_does_not_inherit_the_top_level_context_length_label():
+    """`...[0].context_length` is a TIER's limit, not the model's.
+
+    This is the visible half of the defect. While `context_length` was
+    leaf-keyed, any path ending in that segment inherited the model-level
+    label including its "(model)" disambiguator, so a tier profile's own
+    context limit rendered as `Context length (model) (#0)` -- a row that
+    names the wrong field and asserts a distinction that does not apply to it.
+    """
+    nested = "architecture.tier_profiles[0].context_length"
+
+    label, qualifier = resolve_field_label(nested)
+    assert label == "Context length"
+    assert qualifier == "0"
+    assert format_qualified_label(label, qualifier) == "Context length (#0)"
+
+    # The model-level field keeps its own label; only the homonym moved.
+    assert resolve_field_label("context_length") == ("Context length (model)", None)
+
+
+def test_nested_homonyms_no_longer_inherit_a_top_level_label():
+    """The cases where leaf-keying was VISIBLY mislabelling nested fields.
+
+    Each of these paths ends in a segment that used to be leaf-keyed, so each
+    inherited the top-level field's label wherever it appeared. Now that the
+    top-level fields are path-keyed, the nested rows fall through to the
+    prettified-leaf fallback and describe themselves.
+
+    `hugging_face_id` is included deliberately even though the fallback spells
+    it less prettily than the registry did ("Hugging face id" vs "Hugging Face
+    ID"). That is the correct outcome: a nested field the registry does not
+    know about should read as an unregistered field, not borrow the casing of
+    an unrelated one.
+    """
+    was_inherited = {
+        # nested path: (label it used to inherit, label it resolves to now)
+        "architecture.tier_profiles[0].context_length": (
+            "Context length (model)",
+            "Context length",
+        ),
+        "provider_metadata.hugging_face_id": ("Hugging Face ID", "Hugging face id"),
+        "provider_metadata.request": ("Per request", "Request"),
+        "provider_metadata.overrides": ("Conditional pricing", "Overrides"),
+    }
+    for path, (inherited, own) in was_inherited.items():
+        assert inherited != own, path  # precondition: the case is observable
+        label, _ = resolve_field_label(path)
+        assert label == own, path
+        assert label != inherited, path
+
+    # The top-level fields themselves are untouched -- only the homonyms moved.
+    assert resolve_field_label("context_length") == ("Context length (model)", None)
+    assert resolve_field_label("hugging_face_id") == ("Hugging Face ID", None)
+    assert resolve_field_label("pricing.request") == ("Per request", None)
+    assert resolve_field_label("pricing.overrides") == ("Conditional pricing", None)
+
+
+def test_nested_homonyms_whose_label_is_unchanged_are_still_severed():
+    """Most of the moved names read the SAME either way. Stated, not hidden.
+
+    `_prettify_leaf("name")` is "Name" -- exactly what the registry holds for
+    the model's own `name` -- so `architecture.tier_profiles[0].name` renders
+    `Name (#0)` both before and after this change and NO output golden can
+    tell the two regimes apart. Ten of the fourteen names moved out of the
+    leaf table are like this.
+
+    That does not make the move cosmetic. Under leaf keying the coincidence
+    was load-bearing: renaming the top-level field silently renamed every
+    nested homonym with it. Under path keying the two are independent, which
+    is what this asserts -- re-label the top-level fields and require the
+    homonyms to stay put. The structural counterpart is
+    `test_leaf_table_holds_only_names_with_a_dynamic_parent`.
+    """
+    homonyms = {
+        "architecture.tier_profiles[0].name": "Name",
+        "architecture.tier_profiles[0].description": "Description",
+        "architecture.tier_profiles[0].created": "Created",
+        "provider_metadata.links": "Links",
+    }
+    for path, expected in homonyms.items():
+        assert resolve_field_label(path)[0] == expected, path
+
+    renamed = {
+        "name": "Model name",
+        "description": "Model description",
+        "created": "First seen",
+        "links": "Model links",
+    }
+    # Precondition: every one of these really is a live top-level path entry,
+    # so the patch below changes something rather than adding dead keys.
+    assert set(renamed) <= set(FIELD_PATH_LABELS)
+
+    with patch.dict(FIELD_PATH_LABELS, renamed):
+        for path, expected in homonyms.items():
+            assert resolve_field_label(path)[0] == expected, path
+        # ...while the top-level fields themselves DID move, proving the patch
+        # was live and the assertions above are not vacuous.
+        for field, new_label in renamed.items():
+            assert resolve_field_label(field)[0] == new_label
 
 
 def test_registry_labels_are_non_empty_and_start_uppercase():

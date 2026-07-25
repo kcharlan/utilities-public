@@ -20,7 +20,14 @@ from typing import Any, Literal
 # `display_label` re-attaches the stripped segment as a parenthetical, in one
 # place, for all six renderers. JSON does not go through any of this --
 # `_delta_to_json` serialises `FieldChange` and its raw dotted paths directly.
-# `tests/test_reporting.py::test_no_renderer_prints_a_bare_label` pins it.
+#
+# `tests/test_reporting.py::test_every_field_change_entry_point_surfaces_the_qualifier`
+# pins it, from the output rather than from this source text: it feeds one
+# fixture whose base rate and conditional tier share a leaf through every
+# public `render_*_report` that carries field changes, and requires the two
+# rows to stay distinguishable in every human format. A companion test
+# discovers the `render_*_report` inventory from this module, so a seventh
+# renderer cannot be added without being triaged.
 #
 # `_classify_field`, `_is_price_amount_field`, and `_numeric_value` are still
 # called directly here -- by the category grouping helpers and by

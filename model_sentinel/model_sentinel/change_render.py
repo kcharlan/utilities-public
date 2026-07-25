@@ -90,18 +90,25 @@ KNOWN_BOOLEAN_FIELDS = frozenset(
 #
 # WHICH TABLE DOES A NAME GO IN?
 #
-#   FIELD_PATH_LABELS -- keyed by the FULL dotted path. Use when the leaf alone
-#   is ambiguous or when the name should only ever be labelled at that one
-#   location.
+#   FIELD_PATH_LABELS -- keyed by the FULL dotted path. THE DEFAULT. A path key
+#   labels exactly the field it names and nothing else.
 #
-#   FIELD_LEAF_LABELS -- keyed by the LAST segment. Use when the leaf names the
-#   field unambiguously wherever it appears. This is what makes the dynamic
-#   conditional-pricing paths work: `_pricing_override_path` (reporting.py)
-#   emits `pricing.overrides[min_prompt_tokens=200000].completion`, so the
-#   money leaves cannot be keyed by a fixed full path and must be keyed by leaf
-#   to be labelled under BOTH `pricing.completion` and the override form. The
-#   six `default_parameters` leaves are leaf-keyed for the same reason (the
-#   design specifies them as leaves).
+#   FIELD_LEAF_LABELS -- keyed by the LAST segment. A LAST RESORT, used ONLY
+#   when the field's parent is dynamic and therefore cannot be spelled in a
+#   fixed path. Two producers create that situation, both in reporting.py:
+#   `_pricing_override_path` emits
+#   `pricing.overrides[min_prompt_tokens=200000].completion`, and
+#   `_diff_structured_values` emits `default_parameters.<leaf>`. The pricing
+#   money leaves and the six `default_parameters` leaves are leaf-keyed for
+#   that reason and no other.
+#
+#   A leaf key is a claim over EVERY path in the product that ends in that
+#   segment, including nested homonyms nobody has written yet. `name` was
+#   leaf-keyed once; that made `architecture.tier_profiles[0].name` -- a tier's
+#   name, filed under category "Other" -- carry the registry's label for the
+#   MODEL's name. The raw path had conveyed the difference; the leaf key
+#   asserted a false equivalence. Prefer a path key unless a dynamic parent
+#   makes one impossible.
 #
 # Lookup order is exact path -> leaf -> prettified leaf. `resolve_field_label`
 # is the only consumer.
@@ -111,58 +118,42 @@ KNOWN_BOOLEAN_FIELDS = frozenset(
 # `tests/test_change_render.py::test_registry_covers_every_seeded_field_name`
 # pins all 42 key/label pairs.
 
-# Keyed by full dotted path. Consulted FIRST.
+# Keyed by full dotted path. Consulted FIRST, and the default table.
 FIELD_PATH_LABELS: dict[str, str] = {
+    # Pricing. Only the money leaves conditional pricing can relocate are
+    # leaf-keyed (see below); these four are spelled in full. `pricing.audio`,
+    # `pricing.image` and `pricing.request` have no override form, and
+    # `pricing.overrides` is matched as a literal exact string by
+    # `_diff_pricing_overrides` (reporting.py) -- it is never itself a leaf
+    # under a dynamic parent, only the container that creates one.
+    "pricing.audio": "Audio",
+    "pricing.image": "Image",
+    "pricing.request": "Per request",
+    "pricing.overrides": "Conditional pricing",
     # Context & limits.
     #
-    # `top_provider.context_length` is the ONLY entry here that exists to beat
-    # a leaf entry: `context_length` is simultaneously a real top-level field
-    # and this field's leaf. They are distinct fields that both occur in the
-    # history database and must not share a label verbatim, or the report
-    # becomes ambiguous about which one moved. Deleting this line does not
-    # produce an unlabelled row -- it produces a WRONG one, silently labelling
-    # the provider-level field "Context length (model)".
+    # `context_length` and `top_provider.context_length` are DISTINCT fields
+    # that both occur in the history database, and the design requires they not
+    # share a label verbatim or the report becomes ambiguous about which one
+    # moved. Both are exact-path keys, so neither shadows the other and neither
+    # depends on lookup order; the "(model)" disambiguator is a reader-facing
+    # requirement, not a lookup mechanism, and survives on its own merits.
+    "context_length": "Context length (model)",
     "top_provider.context_length": "Context length",
     "top_provider.max_completion_tokens": "Max output",
     # Capabilities.
+    "reasoning": "Reasoning",
     "reasoning.default_enabled": "Reasoning default",
     "reasoning.default_effort": "Reasoning effort",
     "reasoning.supported_efforts": "Supported efforts",
     "reasoning.mandatory": "Reasoning required",
+    "supported_parameters": "Supported parameters",
+    "supported_voices": "Supported voices",
     "architecture.modality": "Modality",
     "architecture.input_modalities": "Input modalities",
     "architecture.instruct_type": "Instruct type",
     # Metadata.
     "top_provider.is_moderated": "Moderated",
-}
-
-# Keyed by leaf segment. Consulted only when no full-path entry matched.
-FIELD_LEAF_LABELS: dict[str, str] = {
-    # Pricing. Leaf-keyed rather than path-keyed because conditional pricing
-    # relocates these same leaves under a dynamic bracketed parent -- see the
-    # note above.
-    "prompt": "Input",
-    "completion": "Output",
-    "input_cache_read": "Cache read",
-    "input_cache_write": "Cache write",
-    "input_cache_write_1h": "Cache write (1h)",
-    "input_audio_cache": "Audio cache",
-    "audio": "Audio",
-    "audio_output": "Audio output",
-    "image": "Image",
-    "image_output": "Image output",
-    "web_search": "Web search",
-    "internal_reasoning": "Internal reasoning",
-    "request": "Per request",
-    "overrides": "Conditional pricing",
-    # Context & limits. Deliberately carries the "(model)" disambiguator; the
-    # provider-level sibling is path-keyed above.
-    "context_length": "Context length (model)",
-    # Capabilities.
-    "reasoning": "Reasoning",
-    "supported_parameters": "Supported parameters",
-    "supported_voices": "Supported voices",
-    # Metadata.
     "knowledge_cutoff": "Knowledge cutoff",
     "expiration_date": "Expiration date",
     "description": "Description",
@@ -170,8 +161,32 @@ FIELD_LEAF_LABELS: dict[str, str] = {
     "created": "Created",
     "links": "Links",
     "hugging_face_id": "Hugging Face ID",
-    # Default parameters.
+    # Default parameters. The container is path-keyed; its six leaves cannot
+    # be, see below.
     "default_parameters": "Default parameters",
+}
+
+# Keyed by leaf segment. Consulted only when no full-path entry matched.
+#
+# EVERY entry here exists because its parent is dynamic and cannot be spelled
+# as a fixed path. Nothing else belongs in this table -- a leaf key claims
+# every path in the product ending in that segment.
+FIELD_LEAF_LABELS: dict[str, str] = {
+    # Pricing money leaves. `_pricing_override_path` relocates these same
+    # leaves under `pricing.overrides[<condition>]`, so one leaf key labels
+    # both `pricing.completion` and every conditional-tier form of it.
+    "prompt": "Input",
+    "completion": "Output",
+    "input_cache_read": "Cache read",
+    "input_cache_write": "Cache write",
+    "input_cache_write_1h": "Cache write (1h)",
+    "input_audio_cache": "Audio cache",
+    "audio_output": "Audio output",
+    "image_output": "Image output",
+    "web_search": "Web search",
+    "internal_reasoning": "Internal reasoning",
+    # Default parameters. The design specifies these as leaves because the
+    # payload nests them one level below `default_parameters`.
     "frequency_penalty": "Frequency penalty",
     "presence_penalty": "Presence penalty",
     "repetition_penalty": "Repetition penalty",
