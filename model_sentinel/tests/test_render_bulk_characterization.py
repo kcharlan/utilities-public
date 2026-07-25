@@ -43,6 +43,17 @@ A failing test here means renderer output changed; the reviewer must look at
 the diff and decide whether the new output is intentional before updating the
 constant.
 
+DELIBERATE UPDATE (Task 5 fix pass 1): `synth/model-struct-added` is a
+one-sided structured list, so `_flatten_one_sided_structure` gives its leaves
+INDEX brackets (`architecture.tier_profiles[0].name`) rather than the
+condition brackets `_pricing_override_path` produces. The renderers now print
+that bracketed segment as a qualifier, so `Name` / `Weight` became
+`Name (#0)` / `Weight (#0)` in the text, markdown, HTML change-table and HTML
+Change Summary goldens here. That is the only diff in this module, and no row
+moved (`"name (#0)"` still sorts before `"weight (#0)"`). See
+`test_change_render.py::test_index_qualifier_renders_as_an_ordinal` for why an
+index reads `#0` while a condition renders literally.
+
 DELIBERATELY NOT COVERED HERE: the full HTML document envelope (`<!DOCTYPE>`,
 the `<style>` block, provider headers) is already pinned byte-for-byte by
 `test_render_characterization.py`; duplicating it would add hundreds of lines
@@ -241,8 +252,8 @@ Synth Provider (synthprov)
       Supported parameters: ["tools", "logit_bias"] → null
     * synth/model-struct-added (Synth Struct Added)
       [Other]
-        Name: null → gamma
-        Weight: null → 5
+        Name (#0): null → gamma
+        Weight (#0): null → 5
 
 Summary
 ------------------------------------------------------------
@@ -292,8 +303,8 @@ Synth Provider (synthprov)
       Supported parameters: ["tools", "logit_bias"] → null
     * synth/model-struct-added (Synth Struct Added)
       [Other]
-        Name: null → gamma
-        Weight: null → 5
+        Name (#0): null → gamma
+        Weight (#0): null → 5
 
 Summary
 ------------------------------------------------------------
@@ -339,8 +350,8 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
 - `synth/model-list-removed` - Synth List Removed
   - `Supported parameters: ["tools", "logit_bias"] → null`
 - `synth/model-struct-added` - Synth Struct Added
-  - `Name: null → gamma`
-  - `Weight: null → 5`"""
+  - `Name (#0): null → gamma`
+  - `Weight (#0): null → 5`"""
 
 EXPECTED_MARKDOWN = _EXPECTED_MARKDOWN_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
 
@@ -427,8 +438,8 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <div class="model-card-header"><code>synth/model-struct-added</code><span class="display-name">Synth Struct Added</span></div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Name</td><td class="old-val">null</td><td class="new-val">gamma</td><td class="change-delta delta-neutral">—</td></tr>
-<tr><td class="field-name">Weight</td><td class="old-val">null</td><td class="new-val">5</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Name (#0)</td><td class="old-val">null</td><td class="new-val">gamma</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Weight (#0)</td><td class="old-val">null</td><td class="new-val">5</td><td class="change-delta delta-neutral">—</td></tr>
 </tbody></table>
 </div>
 </div></section>
@@ -444,8 +455,8 @@ EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-pair-y</code></td><td>Supported parameters</td><td>+seed (1 → 2)</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 2}; -{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 1}</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-solo-struct</code></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}; -{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3} (1 → 1)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Name</td><td>null → gamma</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Weight</td><td>null → 5</td></tr></tbody></table></section>"""
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Name (#0)</td><td>null → gamma</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-struct-added</code></td><td>Weight (#0)</td><td>null → 5</td></tr></tbody></table></section>"""
 
 
 # ---------------------------------------------------------------------------

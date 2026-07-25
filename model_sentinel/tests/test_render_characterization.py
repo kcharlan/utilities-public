@@ -30,6 +30,23 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   M models` rollup now follows the pre-existing `squelched` rollup in the text,
   markdown and HTML goldens and names the models whose rows were dropped. That
   rollup line is the ONLY diff in this pass; the JSON goldens are untouched.
+* Task 5 introduced the field-label registry, replacing raw dotted paths with
+  human labels throughout the text, markdown and HTML goldens.
+* Task 5 fix pass 1 made the renderers print the registry's `qualifier`
+  alongside its label. The registry alone had collapsed
+  `pricing.overrides[min_prompt_tokens=200000].completion` and a plain
+  `pricing.completion` to the same bare `Output`, so `synth/model-core` showed
+  two rows that read identically. Two diffs in this module, both consequences
+  of that one change:
+    1. the tiered row now reads `Output (min_prompt_tokens=200000)` in the
+       text, markdown, HTML change-table and HTML Change Summary goldens;
+    2. that row MOVED within the Change Summary. `_summary_entry_sort_key`
+       orders on the displayed field text, and `"output"` sorts before
+       `"output (min_prompt_tokens=200000)"`, so the tiered row now follows
+       the base `Output` row. The section is the same 15 rows either way --
+       `test_qualifier_change_summary_is_a_pure_permutation` below asserts
+       that as a multiset rather than leaving it to the eye.
+  The JSON goldens are untouched, as always.
 
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
@@ -229,7 +246,7 @@ Synth Provider (synthprov)
         Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
         Cache read: null → 5e-08 ($0.05 / 1M)
         Cache write: 9e-08 ($0.09 / 1M) → null
-        Output: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
+        Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
       [Context & Limits]
         Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
       [Parameters]
@@ -279,7 +296,7 @@ Synth Provider (synthprov)
         Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
         Cache read: null → 5e-08 ($0.05 / 1M)
         Cache write: 9e-08 ($0.09 / 1M) → null
-        Output: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
+        Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
       [Context & Limits]
         Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
       [Parameters]
@@ -339,7 +356,7 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
   - `Moderated: off → on`
   - `Reasoning default: off → on`
   - `Supported parameters: +logit_bias (1 → 2)`
-  - `Output: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
+  - `Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
   - `Expiration date: null → 2030-12-31`
   - Squelched: `1` field change(s) hidden by report detail policy
 - `synth/model-limit-add` - Synth Model Limit Add
@@ -389,7 +406,7 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
   - `Moderated: off → on`
   - `Reasoning default: off → on`
   - `Supported parameters: +logit_bias (1 → 2)`
-  - `Output: 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
+  - `Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
   - `Expiration date: null → 2030-12-31`
   - `Example suite: +{"score": 2}; -{"score": 1} (1 → 1)`
 - `synth/model-limit-add` - Synth Model Limit Add
@@ -841,7 +858,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <tr><td class="field-name">Output</td><td class="old-val">2e-06 ($2.00 / 1M)</td><td class="new-val">3.5e-06 ($3.50 / 1M)</td><td class="change-delta delta-price-higher">↑ 75.0%</td></tr>
 <tr><td class="field-name">Cache read</td><td class="old-val">null</td><td class="new-val">5e-08 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
 <tr><td class="field-name">Cache write</td><td class="old-val">9e-08 ($0.09 / 1M)</td><td class="new-val">null</td><td class="change-delta delta-price-coverage">removed</td></tr>
-<tr><td class="field-name">Output</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
+<tr><td class="field-name">Output (min_prompt_tokens=200000)</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
@@ -928,8 +945,8 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 </div></div></section>
 <section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache read</td><td>null → 5e-08 ($0.05 / 1M)</td></tr>
 <tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → null</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
 <tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>Max output</td><td>null → 16,384</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → null</td></tr>
@@ -980,7 +997,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <tr><td class="field-name">Output</td><td class="old-val">2e-06 ($2.00 / 1M)</td><td class="new-val">3.5e-06 ($3.50 / 1M)</td><td class="change-delta delta-price-higher">↑ 75.0%</td></tr>
 <tr><td class="field-name">Cache read</td><td class="old-val">null</td><td class="new-val">5e-08 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
 <tr><td class="field-name">Cache write</td><td class="old-val">9e-08 ($0.09 / 1M)</td><td class="new-val">null</td><td class="change-delta delta-price-coverage">removed</td></tr>
-<tr><td class="field-name">Output</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
+<tr><td class="field-name">Output (min_prompt_tokens=200000)</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">0.000005 ($5.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 25.0%</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
@@ -1069,8 +1086,8 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 </div></div></section>
 <section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache read</td><td>null → 5e-08 ($0.05 / 1M)</td></tr>
 <tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → null</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
 <tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>Max output</td><td>null → 16,384</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → null</td></tr>
@@ -1443,6 +1460,141 @@ _EXPECTED_JSON_DETAIL_ALL_TEMPLATE = """{
 }"""
 
 EXPECTED_JSON_DETAIL_ALL = _EXPECTED_JSON_DETAIL_ALL_TEMPLATE.replace(ISO_TOKEN, _GENERATED_AT_ISO)
+
+
+# ---------------------------------------------------------------------------
+# Change Summary: what the qualifier did, and did not, do to the section.
+#
+# `_summary_entry_sort_key` sorts on the DISPLAYED field text, so any change to
+# how a field is spelled reorders this section. Task 5 moved it once (raw paths
+# -> registry labels) and this pass moves it again (labels -> labels with
+# qualifiers). Reordering is acceptable; gaining, losing or duplicating a row
+# is not, and an ordered golden alone cannot tell those apart at a glance.
+#
+# The two constants below split each row at the only cell a qualifier can
+# touch. `_SUMMARY_ROW_SHAPES` is the row multiset with the Field cell removed
+# -- it is byte-identical to what b94a9d3 produced and must stay that way.
+# `_SUMMARY_FIELD_CELLS` is the Field cells alone; exactly one entry differs
+# from b94a9d3, which is the whole intent of this pass.
+# ---------------------------------------------------------------------------
+
+_SUMMARY_CORE = "<td>Synth Provider</td><td><code>synth/model-core</code></td>"
+
+_SUMMARY_ROW_SHAPES = (
+    f"<td>Pricing</td>{_SUMMARY_CORE}<td>null → 5e-08 ($0.05 / 1M)</td>",
+    f"<td>Pricing</td>{_SUMMARY_CORE}<td>9e-08 ($0.09 / 1M) → null</td>",
+    f"<td>Pricing</td>{_SUMMARY_CORE}<td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td>",
+    f"<td>Pricing</td>{_SUMMARY_CORE}<td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td>",
+    f"<td>Context &amp; Limits</td>{_SUMMARY_CORE}<td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td>",
+    "<td>Context &amp; Limits</td><td>Synth Provider</td>"
+    "<td><code>synth/model-limit-add</code></td><td>null → 16,384</td>",
+    "<td>Context &amp; Limits</td><td>Synth Provider</td>"
+    "<td><code>synth/model-limit-remove</code></td><td>8,192 → null</td>",
+    f"<td>Parameters</td>{_SUMMARY_CORE}<td>+logit_bias (1 → 2)</td>",
+    f"<td>Capabilities</td>{_SUMMARY_CORE}<td>off → on</td>",
+    f"<td>Other</td>{_SUMMARY_CORE}<td>null → 2030-12-31</td>",
+    f"<td>Other</td>{_SUMMARY_CORE}<td>off → on</td>",
+    "<td>Other</td><td>Synth Provider</td>"
+    "<td><code>synth/model-moderation-added</code></td><td>— → on</td>",
+    "<td>Other</td><td>Synth Provider</td>"
+    "<td><code>synth/model-moderation-off</code></td><td>on → off</td>",
+    "<td>Other</td><td>Synth Provider</td>"
+    "<td><code>synth/model-temp-toggle</code></td><td>0 → 1 (+1)</td>",
+    '<td>Squelched</td><td>Synth Provider</td><td><details class="summary-models">'
+    '<summary>1 models</summary><div class="summary-model-list">'
+    "<code>synth/model-core</code></div></details></td>"
+    "<td>1 field change hidden by report detail policy</td>",
+)
+
+_SUMMARY_FIELD_CELLS = (
+    "Cache read",
+    "Cache write",
+    "Output",
+    # The ONLY cell this pass changed. Under b94a9d3 this read "Output" -- two
+    # rows for one model, both spelled "Output", one the base rate and one the
+    # 200K-token tier, with nothing in the report to say which was which.
+    "Output (min_prompt_tokens=200000)",
+    "Context length",
+    "Max output",
+    "Max output",
+    "Supported parameters",
+    "Reasoning default",
+    "Expiration date",
+    "Moderated",
+    "Moderated",
+    "Moderated",
+    "Temperature",
+    "benchmarks, benchmarks.*",
+)
+
+
+def _summary_rows(html: str) -> list[str]:
+    """The `<tr>` bodies of the Change Summary section, in document order."""
+    start = html.index('<section class="summary-section">')
+    section = html[start : html.index("</section>", start)]
+    body = section[section.index("<tbody>") : section.index("</tbody>")]
+    return [row for row in body.split("<tr>")[1:]]
+
+
+def _split_summary_row(row: str) -> tuple[str, str]:
+    """Return `(row_without_field_cell, field_cell)` for one summary row.
+
+    Every summary row is five `<td>`s (or three, for the colspan-2 presence
+    rows, which this fixture does not produce). The Field cell is the fourth
+    and is the only one a qualifier can reach.
+    """
+    body = row[: row.index("</tr>")]
+    cells = ["<td>" + cell for cell in body.split("<td>")[1:]]
+    assert len(cells) == 5, row
+    field_cell = cells[3]
+    assert field_cell.startswith("<td>") and field_cell.endswith("</td>"), field_cell
+    return "".join(cells[:3] + cells[4:]), field_cell[len("<td>") : -len("</td>")]
+
+
+def test_qualifier_change_summary_is_a_pure_permutation() -> None:
+    """The section still holds the same 15 rows; only order and one cell moved.
+
+    Checked as a MULTISET, not by reading the ordered golden: `sorted()` on
+    both sides, so a row that was silently duplicated or dropped by the re-sort
+    fails here even though the ordered golden was updated wholesale.
+
+    `_SUMMARY_ROW_SHAPES` deliberately excludes the Field cell, which makes it
+    invariant across this pass -- if anything OTHER than the field label
+    changed, this assertion is what catches it.
+    """
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="html",
+        provider_results=characterization_scan_result(),
+    )
+    rows = _summary_rows(report)
+    assert len(rows) == 15
+    assert len(_SUMMARY_ROW_SHAPES) == 15
+    assert len(_SUMMARY_FIELD_CELLS) == 15
+
+    shapes, field_cells = zip(*(_split_summary_row(row) for row in rows))
+    assert sorted(shapes) == sorted(_SUMMARY_ROW_SHAPES)
+    assert sorted(field_cells) == sorted(_SUMMARY_FIELD_CELLS)
+
+
+def test_qualifier_is_what_reordered_the_change_summary() -> None:
+    """Names the cause of the reorder, so a future reorder is not mistaken for it.
+
+    The tiered row sorts after the base row for exactly one reason: the sort
+    key is the displayed field text and `"output"` is a prefix of
+    `"output (min_prompt_tokens=200000)"`. Both rows belong to the same model
+    and the same category, so nothing else in the key can separate them.
+    """
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="html",
+        provider_results=characterization_scan_result(),
+    )
+    field_cells = [_split_summary_row(row)[1] for row in _summary_rows(report)]
+    assert field_cells.index("Output") < field_cells.index("Output (min_prompt_tokens=200000)")
+    assert "Output".casefold() < "Output (min_prompt_tokens=200000)".casefold()
 
 
 def test_characterization_text() -> None:

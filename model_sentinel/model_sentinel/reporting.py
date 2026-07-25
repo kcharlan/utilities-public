@@ -12,6 +12,16 @@ from typing import Any, Literal
 # `classify_change` once per field change and format the result, instead of
 # re-deriving price/count/numeric/list classification per output format.
 #
+# FIELD NAMES: every renderer here prints `RenderedChange.display_label`, NEVER
+# `RenderedChange.label`. `label` is the field-label registry's lookup result
+# with any bracketed segment already stripped, so it does not identify a row on
+# its own: `pricing.prompt` and
+# `pricing.overrides[min_prompt_tokens=200000].prompt` both resolve to `Input`.
+# `display_label` re-attaches the stripped segment as a parenthetical, in one
+# place, for all six renderers. JSON does not go through any of this --
+# `_delta_to_json` serialises `FieldChange` and its raw dotted paths directly.
+# `tests/test_reporting.py::test_no_renderer_prints_a_bare_label` pins it.
+#
 # `_classify_field`, `_is_price_amount_field`, and `_numeric_value` are still
 # called directly here -- by the category grouping helpers and by
 # `_price_movement_kind`, neither of which is a per-field renderer -- so they
@@ -1532,10 +1542,10 @@ def _render_change_text(rendered: RenderedChange) -> str:
             # two conditions cannot come apart here.
             old_hint = "null" if rendered.old_raw is None else f"{rendered.old_raw} ({rendered.old_display} / 1M)"
             new_hint = "null" if rendered.new_raw is None else f"{rendered.new_raw} ({rendered.new_display} / 1M)"
-            return f"{rendered.label}: {old_hint} \u2192 {new_hint}"
+            return f"{rendered.display_label}: {old_hint} \u2192 {new_hint}"
         price_hint = f"{rendered.old_display} \u2192 {rendered.new_display} / 1M"
         suffix = f", {rendered.pct_display}" if rendered.pct_display else ""
-        return f"{rendered.label}: {rendered.old_raw} \u2192 {rendered.new_raw} ({price_hint}{suffix})"
+        return f"{rendered.display_label}: {rendered.old_raw} \u2192 {rendered.new_raw} ({price_hint}{suffix})"
 
     if rendered.kind in ("count", "numeric"):
         # A two-sided `count` is rendered EXACTLY like `numeric` -- same
@@ -1545,8 +1555,8 @@ def _render_change_text(rendered: RenderedChange) -> str:
         # count guard comment in change_render.py. Emitting `unit` here, or
         # giving `count` its own suffix, would silently change output.
         if _is_one_sided(rendered):
-            return f"{rendered.label}: {rendered.old_display} \u2192 {rendered.new_display}"
-        body = f"{rendered.label}: {rendered.old_display} \u2192 {rendered.new_display}"
+            return f"{rendered.display_label}: {rendered.old_display} \u2192 {rendered.new_display}"
+        body = f"{rendered.display_label}: {rendered.old_display} \u2192 {rendered.new_display}"
         if rendered.pct_display:
             return f"{body} ({rendered.delta_display}, {rendered.pct_display})"
         return f"{body} ({rendered.delta_display})"
@@ -1563,7 +1573,7 @@ def _render_change_text(rendered: RenderedChange) -> str:
     #
     # scalar/noop: `old_display`/`new_display` are produced by
     # change_render._scalar_display, which matches _render_value.
-    return f"{rendered.label}: {rendered.old_display} \u2192 {rendered.new_display}"
+    return f"{rendered.display_label}: {rendered.old_display} \u2192 {rendered.new_display}"
 
 
 def _render_list_diff_text(rendered: RenderedChange) -> str:
@@ -1575,8 +1585,8 @@ def _render_list_diff_text(rendered: RenderedChange) -> str:
     # old_display/new_display carry the raw member counts for `list` changes.
     count_str = f"({rendered.old_display} \u2192 {rendered.new_display})"
     if parts:
-        return f"{rendered.label}: {'; '.join(parts)} {count_str}"
-    return f"{rendered.label}: {count_str}"
+        return f"{rendered.display_label}: {'; '.join(parts)} {count_str}"
+    return f"{rendered.display_label}: {count_str}"
 
 
 def _render_bulk_list_diff_text(rendered: RenderedChange) -> str:
@@ -1612,7 +1622,7 @@ def _render_bulk_list_diff_text(rendered: RenderedChange) -> str:
         *(f"+{item}" for item in rendered.list_added),
         *(f"-{item}" for item in rendered.list_removed),
     ]
-    return f"{rendered.label}: {'; '.join(operations) if operations else 'membership changed'}"
+    return f"{rendered.display_label}: {'; '.join(operations) if operations else 'membership changed'}"
 
 
 def _bulk_hidden_entries(
@@ -2413,7 +2423,7 @@ def _build_summary_entries_from_fc(
         # `pricing.overrides[min_prompt_tokens=200000].completion` are built
         # from provider payload values.
         change_desc = _render_change_text(rendered).split(": ", 1)
-        field_part = change_desc[0] if len(change_desc) > 1 else rendered.label
+        field_part = change_desc[0] if len(change_desc) > 1 else rendered.display_label
         detail_part = change_desc[1] if len(change_desc) > 1 else change_desc[0]
         entries.append(_SummaryEntry(category, provider_label, model_id, field_part, detail_part))
     return entries
@@ -2975,7 +2985,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         else:
             delta_cls, delta_text = "delta-neutral", "\u2014"
         return _html_change_row(
-            label=rendered.label,
+            label=rendered.display_label,
             old_cell=old_str,
             new_cell=new_str,
             delta_cls=delta_cls,
@@ -2987,7 +2997,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
             ("delta-increase", "added") if rendered.direction == "added" else ("delta-decrease", "removed")
         )
         return _html_change_row(
-            label=rendered.label,
+            label=rendered.display_label,
             old_cell=h(rendered.old_display),
             new_cell=h(rendered.new_display),
             delta_cls=delta_cls,
@@ -3009,7 +3019,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         else:
             delta_cls = "delta-increase"
         return _html_change_row(
-            label=rendered.label,
+            label=rendered.display_label,
             old_cell=h(rendered.old_display),
             new_cell=h(rendered.new_display),
             delta_cls=delta_cls,
@@ -3024,7 +3034,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         # "" for a zero basis, so the old numeric path left this cell blank on
         # every `0 -> 1` flag.
         return _html_change_row(
-            label=rendered.label,
+            label=rendered.display_label,
             old_cell=h(rendered.old_display),
             new_cell=h(rendered.new_display),
             delta_cls="delta-decrease" if rendered.direction in ("down", "removed") else "delta-increase",
@@ -3032,7 +3042,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         )
 
     return _html_change_row(
-        label=rendered.label,
+        label=rendered.display_label,
         old_cell=h(rendered.old_display),
         new_cell=h(rendered.new_display),
         delta_cls="delta-neutral",
@@ -3043,7 +3053,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
 def _render_html_list_diff(rendered: RenderedChange) -> str:
     h = html_module.escape
     parts = ['<div class="list-diff">']
-    parts.append(f'<span class="field-name">{h(rendered.label)}</span> ')
+    parts.append(f'<span class="field-name">{h(rendered.display_label)}</span> ')
     # old_display/new_display carry the raw member counts for `list` changes.
     parts.append(f'<span class="list-count">({rendered.old_display} \u2192 {rendered.new_display})</span>')
     if rendered.list_added:
@@ -3065,7 +3075,7 @@ def _render_html_bulk_list_diff(rendered: RenderedChange) -> str:
     # _render_bulk_list_diff_text's docstring for what that unified.
     h = html_module.escape
     added, removed = rendered.list_added, rendered.list_removed
-    parts = [f'<div class="list-diff"><span class="field-name">{h(rendered.label)}</span>']
+    parts = [f'<div class="list-diff"><span class="field-name">{h(rendered.display_label)}</span>']
     if added:
         parts.append('<div class="list-added">')
         parts.extend(f'&nbsp;&nbsp;+ {h(item)}' for item in added)

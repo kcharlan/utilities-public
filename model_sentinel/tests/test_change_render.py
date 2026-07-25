@@ -38,6 +38,7 @@ from model_sentinel.change_render import (
     _prettify_leaf,
     _split_field_path,
     classify_change,
+    format_qualified_label,
     resolve_field_label,
 )
 from model_sentinel.models import FieldChange
@@ -1051,6 +1052,115 @@ def test_unbracketed_paths_have_no_qualifier():
     for path in ("pricing.prompt", "context_length", "top_provider.max_prompt_images"):
         assert _split_field_path(path) == (path, None)
         assert classify_change(FieldChange(path, 1, 2)).qualifier is None
+
+
+# ---------------------------------------------------------------------------
+# display_label: the label a renderer actually prints.
+#
+# `label` is the registry lookup with the bracketed segment REMOVED, so it does
+# not identify a row on its own. Every non-JSON renderer reads `display_label`.
+# ---------------------------------------------------------------------------
+
+
+def test_display_label_is_the_bare_label_when_there_is_no_qualifier():
+    """No brackets in the path means no parenthetical -- not an empty one."""
+    result = classify_change(FieldChange("pricing.prompt", "0.000001", "0.000002"))
+    assert result.qualifier is None
+    assert result.display_label == "Input"
+    assert result.display_label == result.label
+
+
+def test_display_label_distinguishes_a_base_price_from_a_conditional_tier():
+    """THE regression. `label` alone collapses two different fields into one row.
+
+    `pricing.prompt` and `pricing.overrides[...].prompt` are different prices
+    on the same model: the base rate and a high-context tier. The registry
+    labels both `Input`, by design -- the leaf names the field wherever it
+    appears -- so the QUALIFIER is the only thing left that tells the two rows
+    apart. A renderer printing `label` shows a reader two identical `Input`
+    rows and no way to know which tier moved.
+    """
+    base = classify_change(FieldChange("pricing.prompt", "0.000001", "0.000002"))
+    tier = classify_change(
+        FieldChange("pricing.overrides[min_prompt_tokens=200000].prompt", "0.000004", "0.000005")
+    )
+
+    assert base.label == tier.label == "Input"
+    assert base.display_label != tier.display_label
+    assert base.display_label == "Input"
+    assert tier.display_label == "Input (min_prompt_tokens=200000)"
+
+
+def test_condition_qualifier_renders_literally():
+    """The design's spelling: a parenthetical carrying the condition verbatim.
+
+    Turning `min_prompt_tokens=200000` into prose ("above 200K prompt tokens")
+    is explicitly out of scope, so the rendered text must be the raw predicate.
+    """
+    assert format_qualified_label("Output", "min_prompt_tokens=200000") == (
+        "Output (min_prompt_tokens=200000)"
+    )
+    assert format_qualified_label("Input", "utc_start=30,utc_end=1630") == (
+        "Input (utc_start=30,utc_end=1630)"
+    )
+
+
+def test_index_qualifier_renders_as_an_ordinal():
+    """DECISION: a list index gets "#", a condition does not.
+
+    The two producers are told apart exactly, not by guesswork:
+    `_pricing_override_path` builds every segment as `key=value`, so a segment
+    of nothing but decimal digits cannot have come from it, while
+    `_flatten_one_sided_structure` interpolates `enumerate` output and emits
+    nothing else.
+
+    They are treated differently because a bare `Weight (0)` sits one column
+    away from the old/new value columns and reads as a value -- reintroducing,
+    in a new spelling, exactly the ambiguity the qualifier exists to remove.
+    `Weight (#0)` reads as "the zeroth member".
+    """
+    assert format_qualified_label("Weight", "0") == "Weight (#0)"
+    assert format_qualified_label("Name", "11") == "Name (#11)"
+
+    result = classify_change(FieldChange("architecture.tier_profiles[0].weight", None, 1))
+    assert result.qualifier == "0", "the stored qualifier stays the literal segment"
+    assert result.display_label == "Weight (#0)"
+
+
+def test_two_list_members_contributing_the_same_leaf_stay_distinguishable():
+    """The index form has the same collapse failure mode as the condition form."""
+    first = classify_change(FieldChange("new_payload.tiers[0].label", None, "small"))
+    second = classify_change(FieldChange("new_payload.tiers[1].label", None, "large"))
+
+    assert first.label == second.label == "Label"
+    assert first.display_label == "Label (#0)"
+    assert second.display_label == "Label (#1)"
+    assert first.display_label != second.display_label
+
+
+def test_each_bracket_group_is_formatted_independently():
+    """A nested path carries both producers' segments; each keeps its own form.
+
+    `_split_field_path` joins bracket groups with ", ", and the formatter must
+    decide per group -- not once for the joined string -- or a mixed path gets
+    one rule applied to both segments.
+    """
+    path = "pricing.overrides[min_prompt_tokens=200000].tiers[0].prompt"
+    result = classify_change(FieldChange(path, "0.000001", "0.000002"))
+
+    assert result.qualifier == "min_prompt_tokens=200000, 0"
+    assert result.display_label == "Input (min_prompt_tokens=200000, #0)"
+
+
+def test_display_label_is_derived_not_stored():
+    """It must not become an 11th thing every construction site has to set.
+
+    `classify_change` builds a RenderedChange at ~10 sites. A stored display
+    string would have to be kept in step at every one of them; a property
+    cannot fall out of step with the `label`/`qualifier` it reads.
+    """
+    assert "display_label" not in {f.name for f in dataclasses.fields(RenderedChange)}
+    assert isinstance(RenderedChange.display_label, property)
 
 
 # ---------------------------------------------------------------------------

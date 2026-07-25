@@ -1,6 +1,13 @@
 import json
+import re
+from pathlib import Path
 
-from model_sentinel.change_render import classify_change, resolve_field_label
+from model_sentinel import reporting
+from model_sentinel.change_render import (
+    classify_change,
+    format_qualified_label,
+    resolve_field_label,
+)
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
 from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
@@ -862,9 +869,13 @@ def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() ->
         provider_results=[_scan_result(changed)],
     )
 
-    assert "Output: null \u2192 0.0000225 ($22.50 / 1M)" in text_report
-    assert "Cache read: null \u2192 0.0000006 ($0.60 / 1M)" in text_report
-    assert "Min prompt tokens: null \u2192 200,000" in text_report
+    # `pricing.overrides` arrives one-sided, so `_flatten_one_sided_structure`
+    # (not `_pricing_override_path`) supplies the bracketed segment and the
+    # qualifier is a LIST INDEX. It renders "#0" so the parenthetical reads as
+    # an ordinal rather than as a stray value in a row full of values.
+    assert "Output (#0): null \u2192 0.0000225 ($22.50 / 1M)" in text_report
+    assert "Cache read (#0): null \u2192 0.0000006 ($0.60 / 1M)" in text_report
+    assert "Min prompt tokens (#0): null \u2192 200,000" in text_report
     assert "$200" not in text_report
     assert "Input" in html_report
     assert "$6.00 / 1M" in html_report
@@ -932,9 +943,14 @@ def test_existing_pricing_override_tiers_render_only_changed_leaves() -> None:
     field_name = "pricing.overrides[min_prompt_tokens=200000].input_cache_read"
     label, qualifier = resolve_field_label(field_name)
     assert (label, qualifier) == ("Cache read", "min_prompt_tokens=200000")
-    expected = f"{label}: 0.000001 \u2192 0.0000006 ($1.00 \u2192 $0.60 / 1M, \u2193 40.0%)"
+    # The qualifier is what tells this tier's "Cache read" apart from the base
+    # `pricing.input_cache_read`, so the rendered row must carry it. A
+    # `_pricing_override_path` condition renders LITERALLY, per the design.
+    display_label = format_qualified_label(label, qualifier)
+    assert display_label == "Cache read (min_prompt_tokens=200000)"
+    expected = f"{display_label}: 0.000001 \u2192 0.0000006 ($1.00 \u2192 $0.60 / 1M, \u2193 40.0%)"
     assert expected in text_report
-    assert label in html_report
+    assert display_label in html_report
     assert "$1.00 \u2192 $0.60 / 1M" in html_report
     assert "Conditional pricing (2 \u2192 2)" not in text_report
     assert "utc_start=30" not in text_report
@@ -965,13 +981,142 @@ def test_pricing_override_tier_addition_and_removal_render_as_semantic_tiers() -
         provider_results=[_scan_result(changed)],
     )
 
-    assert "Input: 0.000004 ($4.00 / 1M) \u2192 null" in report
-    assert "Input: null \u2192 0.000005 ($5.00 / 1M)" in report
-    assert "Min prompt tokens: 200,000 \u2192 null" in report
-    assert "Min prompt tokens: null \u2192 300,000" in report
+    # Both tiers carry the same two leaves, so the tier condition is the ONLY
+    # thing separating the removed tier's rows from the added tier's.
+    assert "Input (min_prompt_tokens=200000): 0.000004 ($4.00 / 1M) \u2192 null" in report
+    assert "Input (min_prompt_tokens=300000): null \u2192 0.000005 ($5.00 / 1M)" in report
+    assert "Min prompt tokens (min_prompt_tokens=200000): 200,000 \u2192 null" in report
+    assert "Min prompt tokens (min_prompt_tokens=300000): null \u2192 300,000" in report
 
 
-def test_unmatchable_pricing_overrides_keep_full_fidelity_list_fallback() -> None:
+# ---------------------------------------------------------------------------
+# REGRESSION: a base price and a conditional-pricing tier must not collapse.
+#
+# The field-label registry resolves `pricing.prompt` and
+# `pricing.overrides[min_prompt_tokens=200000].prompt` to the SAME label,
+# `Input` -- deliberately, since the leaf names the field wherever it appears.
+# It also records the bracketed condition as `qualifier`. While no renderer
+# read `qualifier`, a model with tiered pricing showed two rows both spelled
+# `Input` and a reader could not tell the base rate from the tier. The raw
+# dotted paths had distinguished them before the registry existed, so this was
+# information the registry removed.
+#
+# One fixture, three human formats. The assertion is not "the qualifier
+# appears" but "the two rows differ", which is the property that was lost.
+# ---------------------------------------------------------------------------
+
+_TIERED_PRICING_MODEL = ModelDelta(
+    "changed",
+    "synth/model-tiered",
+    "Synth Tiered",
+    (
+        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+        FieldChange(
+            "pricing.overrides",
+            [{"min_prompt_tokens": 200000, "prompt": "0.000004"}],
+            [{"min_prompt_tokens": 200000, "prompt": "0.000005"}],
+        ),
+    ),
+)
+
+
+def _tiered_pricing_report(format_name: str) -> str:
+    return render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name=format_name,
+        provider_results=[_scan_result((_TIERED_PRICING_MODEL,))],
+    )
+
+
+def test_base_price_and_conditional_tier_render_distinguishably_in_text() -> None:
+    report = _tiered_pricing_report("text")
+
+    base = "Input: 0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)"
+    tier = "Input (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)"
+    assert base in report
+    assert tier in report
+
+    # The rows must not merely both exist -- they must READ differently. Count
+    # the rendered field labels: exactly one bare `Input` row, exactly one
+    # qualified row. A bare-`label` renderer produces two of the former.
+    labels = [line.strip().split(":", 1)[0] for line in report.splitlines() if "→" in line]
+    assert sorted(labels) == ["Input", "Input (min_prompt_tokens=200000)"]
+    assert labels.count("Input") == 1
+
+
+def test_base_price_and_conditional_tier_render_distinguishably_in_markdown() -> None:
+    report = _tiered_pricing_report("markdown")
+
+    assert "  - `Input: 0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)`" in report
+    assert (
+        "  - `Input (min_prompt_tokens=200000): "
+        "0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`"
+    ) in report
+
+    labels = [
+        line.strip().removeprefix("- `").split(":", 1)[0]
+        for line in report.splitlines()
+        if line.strip().startswith("- `") and "→" in line
+    ]
+    assert sorted(labels) == ["Input", "Input (min_prompt_tokens=200000)"]
+
+
+def test_base_price_and_conditional_tier_render_distinguishably_in_html() -> None:
+    report = _tiered_pricing_report("html")
+
+    # Change table (the per-model card).
+    field_cells = re.findall(r'<td class="field-name">(.*?)</td>', report)
+    assert sorted(field_cells) == ["Input", "Input (min_prompt_tokens=200000)"]
+
+    # Change Summary (the other HTML path). Same requirement, separate renderer
+    # input: the summary splits the already-formatted text line.
+    start = report.index('<section class="summary-section">')
+    summary = report[start : report.index("</section>", start)]
+    assert "<td>Input</td>" in summary
+    assert "<td>Input (min_prompt_tokens=200000)</td>" in summary
+
+
+def test_tiered_pricing_json_keeps_raw_paths_and_is_unaffected() -> None:
+    """JSON is the audit path: raw `field_name`s, no labels, no qualifiers.
+
+    `_delta_to_json` serialises `FieldChange` directly and never consults the
+    registry, so this payload is byte-for-byte what b94a9d3 produced -- and
+    what every commit before the registry produced.
+    """
+    payload = json.loads(_tiered_pricing_report("json"))
+    field_changes = payload["providers"][0]["changed"][0]["field_changes"]
+
+    assert field_changes == [
+        {"field_name": "pricing.prompt", "old_value": "0.000001", "new_value": "0.000002"},
+        {
+            "field_name": "pricing.overrides",
+            "old_value": [{"min_prompt_tokens": 200000, "prompt": "0.000004"}],
+            "new_value": [{"min_prompt_tokens": 200000, "prompt": "0.000005"}],
+        },
+    ]
+    # No display vocabulary at all: not the label, not the qualifier, and not
+    # the expanded per-tier path the human renderers derive.
+    raw = _tiered_pricing_report("json")
+    assert "Input" not in raw
+    assert "(min_prompt_tokens=200000)" not in raw
+    assert "pricing.overrides[" not in raw
+
+
+def test_no_renderer_prints_a_bare_label() -> None:
+    """The parenthetical lives in ONE place; five copies would rot separately.
+
+    `RenderedChange.label` is the registry lookup with the bracketed segment
+    already stripped, so it cannot identify a row on its own. Every non-JSON
+    renderer must read `display_label`. This asserts the FIX -- that no
+    `rendered.label` spelling survives in reporting.py -- rather than only its
+    symptom, because a sixth renderer added later would reintroduce the
+    collapse silently and no output golden would cover it until someone wrote
+    a fixture for it.
+    """
+    source = (Path(reporting.__file__)).read_text(encoding="utf-8")
+    assert "rendered.display_label" in source
+    assert "rendered.label" not in source
     changed = (
         ModelDelta(
             "changed",
@@ -1024,8 +1169,13 @@ def test_generic_new_structured_key_expands_recursively() -> None:
         provider_results=[_scan_result(changed)],
     )
 
-    assert "Label: null \u2192 small" in report
-    assert "Limit: null \u2192 20" in report
+    # Two list members contribute the same two leaf names. Without the index
+    # qualifier the report shows "Label" twice and "Limit" twice with nothing
+    # tying a row to the member it came from.
+    assert "Label (#0): null \u2192 small" in report
+    assert "Label (#1): null \u2192 large" in report
+    assert "Limit (#0): null \u2192 10" in report
+    assert "Limit (#1): null \u2192 20" in report
     assert 'new_payload: null \u2192 {"tiers"' not in report
 
 

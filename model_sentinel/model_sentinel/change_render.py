@@ -260,6 +260,62 @@ def resolve_field_label(field_path: str) -> tuple[str, str | None]:
     return label, qualifier
 
 
+# `_split_field_path` joins multiple bracket groups with this exact separator,
+# and `format_qualified_label` splits on it to recover them. The two must stay
+# in step, so the string lives in one place rather than being spelled twice.
+QUALIFIER_SEPARATOR = ", "
+
+
+def _format_qualifier_part(part: str) -> str:
+    """Render ONE bracketed segment for display.
+
+    Two producers emit bracketed segments (see `_split_field_path`) and they
+    are told apart EXACTLY, not heuristically:
+
+      * `_pricing_override_path` builds its condition as
+        `",".join(f"{key}={value}")`, so every segment it emits contains at
+        least one "=" and can never consist solely of decimal digits.
+      * `_flatten_one_sided_structure` interpolates `enumerate` output, so
+        every segment it emits is exactly `str(int)`.
+
+    An all-digits segment therefore cannot have come from the condition
+    producer. That is a property of how the paths are constructed, not a guess
+    about what the text means.
+
+    A condition is rendered LITERALLY (`min_prompt_tokens=200000`) as the
+    design requires. A list index gets a "#" so the parenthetical reads as an
+    ordinal: `Weight (#0)`, not `Weight (0)` -- a bare number in parentheses
+    sitting one column away from the old/new value columns reads as a value,
+    which is precisely the ambiguity a qualifier exists to remove.
+    """
+    if part.isascii() and part.isdigit():
+        return f"#{part}"
+    return part
+
+
+def format_qualified_label(label: str, qualifier: str | None) -> str:
+    """THE single implementation of "label plus its bracketed qualifier".
+
+    Every non-JSON renderer -- text, markdown, both HTML paths and the changes
+    report -- reads `RenderedChange.display_label`, which is this function.
+    There is deliberately no per-renderer copy: the previous shape of this code
+    populated `qualifier` and left every renderer printing a bare `label`, so
+    `pricing.prompt` and `pricing.overrides[min_prompt_tokens=200000].prompt`
+    both rendered as `Input` and a tiered model showed two indistinguishable
+    rows. Five copies of the parenthetical would be five places for that to
+    regress again.
+
+    JSON does NOT route through here. `_delta_to_json` serialises `FieldChange`
+    directly and keeps raw dotted field paths.
+    """
+    if not qualifier:
+        return label
+    parts = QUALIFIER_SEPARATOR.join(
+        _format_qualifier_part(part) for part in qualifier.split(QUALIFIER_SEPARATOR)
+    )
+    return f"{label} ({parts})"
+
+
 @dataclass(frozen=True)
 class RenderedChange:
     kind: Literal["price", "count", "numeric", "boolean", "list", "scalar", "noop"]
@@ -307,6 +363,21 @@ class RenderedChange:
                 f"pct_basis_zero=True requires pct_display=None for field "
                 f"{self.field_path!r}, got pct_display={self.pct_display!r}"
             )
+
+    @property
+    def display_label(self) -> str:
+        """The field name every non-JSON renderer prints.
+
+        `label` is the registry lookup and `qualifier` is the instance that
+        lookup discarded; neither alone identifies the row. Renderers must read
+        THIS, never `label`, or two tiers of a conditionally priced field
+        collapse into two identical rows.
+
+        A property, not a field: `dataclasses.fields(RenderedChange)` stays the
+        classification contract, and there is no ~10-construction-site
+        obligation to keep a derived string in step with its inputs.
+        """
+        return format_qualified_label(self.label, self.qualifier)
 
 
 # ---------------------------------------------------------------------------
