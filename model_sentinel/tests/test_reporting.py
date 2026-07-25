@@ -1,6 +1,8 @@
 import json
 import re
 
+from tests.html_probe import absent_side_cells
+
 from model_sentinel import reporting
 from model_sentinel.change_render import (
     classify_change,
@@ -1174,11 +1176,20 @@ def test_card_list_members_keep_red_and_green_for_money() -> None:
 def test_one_html_document_spells_an_absent_side_one_way() -> None:
     """Fix pass 1, finding 3. The card said `—` and the summary said `null`.
 
-    Asserted over the WHOLE document rather than on the two cells that
-    prompted it: any renderer that later reintroduces `null` for an absent side
-    anywhere in the HTML report fails here, which is the property the report
-    actually needs. Text and markdown are asserted to still say `null`, so this
-    cannot pass by having quietly changed the shared text line.
+    Asserted over every cell that can carry a side of a change -- the card's
+    value cells and each Change Summary row's change cell -- rather than over
+    the two cells that prompted it, so a renderer that later reintroduces
+    `null` for an absent side anywhere in this document still fails here.
+
+    Fix pass 2, finding 4: the assertion used to be `"null" not in
+    html_report`, which was right for this fixture and wrong as a rule. A model
+    id, a provider label or a genuine string value of `"null"` would have
+    tripped it, and the failure would have named the absent-side spelling while
+    pointing at something else entirely. `absent_side_cells` is the scoping,
+    shared with the `changes` report's characterization module.
+
+    Text and markdown are asserted to still say `null`, so this cannot pass by
+    having quietly changed the shared text line.
     """
     changed = (
         ModelDelta(
@@ -1199,7 +1210,13 @@ def test_one_html_document_spells_an_absent_side_one_way() -> None:
     }
     html_report = render_scan_report(format_name="html", **kwargs)
 
-    assert "null" not in html_report
+    cells = absent_side_cells(html_report)
+    # Precondition: the probe found the cells it is meant to police. Without
+    # this, a regex that matched nothing would satisfy the loop below vacuously.
+    assert len(cells) == 9, cells
+    for cell in cells:
+        assert "null" not in cell, cell
+
     for cell in ("<td>— → 0.00000005 ($0.05 / 1M)</td>", "<td>8,192 → —</td>", "<td>— → 2030-12-31</td>"):
         assert cell in html_report, cell
     for row_label in ("Cache read", "Max output", "Expiration date"):

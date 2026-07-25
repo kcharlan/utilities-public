@@ -788,6 +788,32 @@ def _normalize_price(raw_value: float, multiplier: int, divisor: int) -> float:
 # ---------------------------------------------------------------------------
 
 
+# THE two spellings of a side that is absent, both owned here because this
+# module is what puts them into `old_display`/`new_display`. Consumers import
+# them rather than respelling the literal:
+#
+#   ABSENT_DISPLAY      the `—` a one-sided BOOLEAN already carries, and the
+#                       spelling every HTML surface uses for any absent side;
+#   ABSENT_TEXT_DISPLAY the `null` a one-sided price, count or scalar carries
+#                       in the shared text line, and therefore in the text and
+#                       markdown reports built from it. (JSON never routes
+#                       through here at all -- `_delta_to_json` serialises
+#                       `FieldChange` directly -- so neither spelling can reach
+#                       the audit output.)
+#
+# The split is historical and is preserved on purpose: respelling
+# `ABSENT_TEXT_DISPLAY` here would move the text and markdown characterization
+# goldens. HTML closes it at the renderer, keyed on `raw is None`.
+#
+# `ABSENT_TEXT_DISPLAY` is a constant because `reporting.py` must RECOGNISE the
+# token in order to respell it (`_summary_detail_with_absent_sides`), and the
+# token had ten independent literals across the two modules before this. A
+# producer that changed its literal while that consumer kept matching the old
+# one would revert the HTML spelling silently, with no test failing.
+ABSENT_DISPLAY = "—"
+ABSENT_TEXT_DISPLAY = "null"
+
+
 def _raw_value(value: Any) -> str | None:
     return None if value is None else str(value)
 
@@ -802,7 +828,7 @@ def _scalar_display(value: Any) -> str:
     module is wired into the renderers.
     """
     if value is None:
-        return "null"
+        return ABSENT_TEXT_DISPLAY
     if isinstance(value, (dict, list)):
         return json.dumps(value, sort_keys=True, ensure_ascii=True)
     return str(value)
@@ -935,12 +961,6 @@ def _bool_state(value: Any) -> Literal["on", "off"] | None:
 # ---------------------------------------------------------------------------
 # Per-kind classification helpers.
 # ---------------------------------------------------------------------------
-
-
-# Rendered in place of a value that is absent on one side of a change. The
-# design's uniform treatment of one-sided changes; `null`/`None` must not leak
-# into a rendered flag.
-ABSENT_DISPLAY = "—"
 
 
 def _classify_boolean(field_change: FieldChange) -> RenderedChange:
@@ -1081,14 +1101,14 @@ def _classify_price(
     # format a price is to have named its precision at the call site.
     if old_numeric is None:
         one_sided_direction: Literal["added", "removed"] = "added"
-        old_display = "null"
+        old_display = ABSENT_TEXT_DISPLAY
         norm_only = _normalize_price(new_numeric, price_multiplier, price_divisor)
         new_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
     else:
         one_sided_direction = "removed"
         norm_only = _normalize_price(old_numeric, price_multiplier, price_divisor)
         old_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
-        new_display = "null"
+        new_display = ABSENT_TEXT_DISPLAY
 
     return RenderedChange(
         kind="price",
@@ -1154,12 +1174,12 @@ def _classify_count(
 
     if old_numeric is None:
         one_sided_direction: Literal["added", "removed"] = "added"
-        old_display = "null"
+        old_display = ABSENT_TEXT_DISPLAY
         new_display = _fmt_int(new_numeric)
     else:
         one_sided_direction = "removed"
         old_display = _fmt_int(old_numeric)
-        new_display = "null"
+        new_display = ABSENT_TEXT_DISPLAY
 
     return RenderedChange(
         kind="count",

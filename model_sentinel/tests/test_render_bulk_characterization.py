@@ -418,7 +418,8 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 <tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="architecture.tier_profiles[0].name">Name (#0)</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">gamma</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
 <tr class="row-alt"><td></td><td class="field-name" title="architecture.tier_profiles[0].weight">Weight (#0)</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">5</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
 </tbody></table></div>
-</div></section>"""
+</div></section>
+"""
 
 
 # Exact summary table. Bulk entries collapse the model column into a
