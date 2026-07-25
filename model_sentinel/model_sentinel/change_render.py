@@ -97,6 +97,16 @@ class RenderedChange:
     # Sorting only -- never format this for display.
     delta_abs: float | None
     pct_display: str | None
+    # True when a percent change was applicable to this kind but could not be
+    # computed because the basis (the old value) was 0. This is the CAUSE, not
+    # a re-derivation of `pct_display is None`: renderers that want "no
+    # percentage is meaningful here" must read this field rather than infer it
+    # from `pct_display` being absent, so that a future task suppressing
+    # `pct_display` for some other reason (rounding, thresholds, ...) does not
+    # silently change their behavior. False for every kind that never computes
+    # a percentage (list/boolean/scalar/noop) and for one-sided price/count
+    # changes, which have no basis to compare against.
+    pct_basis_zero: bool
     direction: Literal["up", "down", "added", "removed", "none"]
     semantic: Literal["cost", "capacity", "capability", "coverage", "neutral"]
     list_added: tuple[str, ...]
@@ -324,6 +334,7 @@ def _classify_boolean(field_change: FieldChange) -> RenderedChange:
         delta_display=delta_display,
         delta_abs=None,
         pct_display=None,
+        pct_basis_zero=False,
         direction=direction,
         semantic="capability",
         list_added=(),
@@ -368,6 +379,7 @@ def _classify_price(
             delta_display=delta_display,
             delta_abs=delta_norm,
             pct_display=pct_display,
+            pct_basis_zero=old_numeric == 0,
             direction=direction,
             semantic="cost",
             list_added=(),
@@ -396,6 +408,7 @@ def _classify_price(
         delta_display=None,
         delta_abs=None,
         pct_display=None,
+        pct_basis_zero=False,
         direction=one_sided_direction,
         semantic="coverage",
         list_added=(),
@@ -436,6 +449,7 @@ def _classify_count(
             delta_display=delta_display,
             delta_abs=delta,
             pct_display=pct_display,
+            pct_basis_zero=old_numeric == 0,
             direction=direction,
             semantic="capacity",
             list_added=(),
@@ -464,6 +478,7 @@ def _classify_count(
         delta_display=None,
         delta_abs=None,
         pct_display=None,
+        pct_basis_zero=False,
         direction=one_sided_direction,
         semantic="coverage",
         list_added=(),
@@ -500,6 +515,7 @@ def _classify_numeric(field_change: FieldChange) -> RenderedChange:
         delta_display=delta_display,
         delta_abs=delta,
         pct_display=pct_display,
+        pct_basis_zero=old_f == 0,
         direction=direction,
         semantic="neutral",
         list_added=(),
@@ -536,6 +552,7 @@ def classify_change(
             delta_display=None,
             delta_abs=None,
             pct_display=None,
+            pct_basis_zero=False,
             direction="none",
             semantic="neutral",
             list_added=(),
@@ -564,6 +581,7 @@ def classify_change(
             delta_display=None,
             delta_abs=None,
             pct_display=None,
+            pct_basis_zero=False,
             direction="none",
             semantic="capability",
             list_added=added,
@@ -645,6 +663,7 @@ def classify_change(
         delta_display=None,
         delta_abs=None,
         pct_display=None,
+        pct_basis_zero=False,
         direction="none",
         semantic="neutral",
         list_added=(),

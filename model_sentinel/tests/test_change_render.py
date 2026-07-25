@@ -69,6 +69,7 @@ def test_rendered_change_is_frozen_with_expected_fields():
         "delta_display",
         "delta_abs",
         "pct_display",
+        "pct_basis_zero",
         "direction",
         "semantic",
         "list_added",
@@ -295,6 +296,79 @@ def test_unclassified_numeric_fallback():
     assert result.direction == "up"
     assert result.semantic == "neutral"
     assert result.delta_abs == 10.0
+
+
+# ---------------------------------------------------------------------------
+# 5b. pct_basis_zero -- the explicit "no percentage is defined" signal that
+# _render_html_table_row reads when choosing a delta CSS class. It replaced an
+# inference over `pct_display is None`; these tests pin that it tracks the
+# CAUSE (a zero old value) and not any of the nearby signals a future refactor
+# might be tempted to substitute for it.
+# ---------------------------------------------------------------------------
+
+
+def test_pct_basis_zero_true_when_old_value_is_zero():
+    for field, old, new, kind in (
+        ("some.arbitrary.metric", 0, 20, "numeric"),
+        ("top_provider.context_length", 0, 4096, "count"),
+        ("pricing.completion", 0, 0.000002, "price"),
+    ):
+        result = classify_change(FieldChange(field, old, new))
+        assert result.kind == kind, field
+        assert result.pct_basis_zero is True, field
+        assert result.pct_display is None, field
+
+
+def test_pct_basis_zero_false_when_old_value_is_nonzero():
+    for field, old, new, kind in (
+        ("some.arbitrary.metric", 10, 20, "numeric"),
+        ("top_provider.context_length", 4096, 8192, "count"),
+        ("pricing.completion", 0.000002, 0.000003, "price"),
+    ):
+        result = classify_change(FieldChange(field, old, new))
+        assert result.kind == kind, field
+        assert result.pct_basis_zero is False, field
+        assert result.pct_display is not None, field
+
+
+def test_pct_basis_zero_is_not_the_same_signal_as_direction_none():
+    """`direction == "none"` is NOT a valid substitute for `pct_basis_zero`.
+
+    The two come apart in both directions, which is why the HTML delta-class
+    branch needs a dedicated field:
+
+    * `0 -> 20` has no percentage basis but moved up, so `direction == "up"`.
+    * `"5" -> 5` is not caught by the noop branch (`"5" == 5` is False) yet has
+      a zero delta, so `direction == "none"` while a percentage is still
+      defined and displayed.
+    """
+    no_basis_but_moved = classify_change(FieldChange("some.arbitrary.metric", 0, 20))
+    assert no_basis_but_moved.pct_basis_zero is True
+    assert no_basis_but_moved.direction == "up"
+
+    zero_delta_with_basis = classify_change(FieldChange("some.arbitrary.metric", "5", 5))
+    assert zero_delta_with_basis.direction == "none"
+    assert zero_delta_with_basis.pct_basis_zero is False
+    assert zero_delta_with_basis.pct_display is not None
+
+
+def test_pct_basis_zero_false_for_kinds_that_never_compute_a_percentage():
+    # One-sided price/count have no basis to compare against, and
+    # list/scalar/noop never compute a percentage at all. All must report
+    # False so a renderer reading this field does not mistake them for a
+    # zero-basis numeric move.
+    cases = (
+        FieldChange("pricing.completion", None, 0.000002),
+        FieldChange("pricing.completion", 0.000002, None),
+        FieldChange("top_provider.max_completion_tokens", None, 16384),
+        FieldChange("top_provider.max_completion_tokens", 8192, None),
+        FieldChange("supported_parameters", ["tools"], ["tools", "logit_bias"]),
+        FieldChange("expiration_date", None, "2030-12-31"),
+        FieldChange("expiration_date", None, None),
+    )
+    for field_change in cases:
+        result = classify_change(field_change)
+        assert result.pct_basis_zero is False, field_change.field_name
 
 
 # ---------------------------------------------------------------------------

@@ -1260,8 +1260,22 @@ def _render_bulk_list_diff_text(fc: FieldChange) -> str:
     branch uses plain `str(x)`. For a list of dicts the two disagree
     (`{"a": 1}` vs `{'a': 1}`), so switching here would change output for
     bulk groups over structured lists. The group card must also keep showing
-    the exact membership its grouping key was computed from. Reconciling the
-    two stringifications is a separate, deliberate change.
+    the exact membership its grouping key was computed from.
+
+    MEASURED (task 3b): unifying the two conventions on `_list_item_text` --
+    i.e. changing `classify_change`'s list branch to JSON-encode dict/list
+    members -- is NOT behavior-neutral. It changes three of the eight goldens
+    in tests/test_render_characterization.py
+    (`test_characterization_{text,markdown,html}_detail_all`), because that
+    module's `benchmarks.example_suite` case is a two-sided list of dicts and
+    its goldens pin today's `str(x)` spelling `{'score': 2}`. Unifying in the
+    other direction (`_list_item_text` -> `str(x)`) leaves those goldens
+    intact but changes bulk output instead, and additionally re-keys
+    `_bulk_change_signature`. Either direction is a deliberate, user-visible
+    output change that needs golden updates in both characterization modules;
+    it is NOT something to slip into a refactor billed as neutral. Both
+    spellings are pinned side by side in
+    tests/test_render_bulk_characterization.py.
     """
     field_name, added, removed = _list_change_signature(fc)
     operations = [*(f"+{item}" for item in added), *(f"-{item}" for item in removed)]
@@ -2609,12 +2623,15 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
             delta_cell=delta_text,
         )
 
-    if rendered.kind == "numeric" or rendered.kind == "count":
+    if rendered.kind in ("count", "numeric"):
         # Two-sided `count` renders exactly like `numeric` -- see the matching
         # note in _render_change_text and the count guard in change_render.py.
-        # `pct_display is None` <=> the old value was 0, which is the only case
-        # the percentage cell is blank and the delta reads as neutral.
-        if rendered.pct_display is None:
+        # A zero basis means no percentage is defined, so the delta cell is
+        # blank and reads as neutral regardless of which way the value moved.
+        # Read `pct_basis_zero` (the cause) rather than inferring it from
+        # `pct_display is None` (a derived display signal that a later change
+        # could blank for unrelated reasons).
+        if rendered.pct_basis_zero:
             delta_cls = "delta-neutral"
         elif rendered.direction == "down":
             delta_cls = "delta-decrease"
