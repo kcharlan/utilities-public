@@ -2171,7 +2171,7 @@ function DetailPanel({ job, initialTab, onClose, addToast, runAction }) {
         body: JSON.stringify({ content: plistContent }),
       });
       setModified(false);
-      await api('/jobs/' + encoded + '/reload', { method: 'POST' });
+      await apiJobAction(job.label, 'reload');
       addToast('success', 'Saved and reloading ' + job.label + '...');
     } catch (err) {
       addToast('error', 'Save & reload failed: ' + err.message);
