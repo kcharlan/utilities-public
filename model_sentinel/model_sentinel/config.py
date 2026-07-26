@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .envfile import EnvFileError, parse_env_file
+from .provider_profiles import OPENROUTER_PROFILE
 
 
 class ConfigError(ValueError):
@@ -258,17 +259,14 @@ def load_settings(path: Path, *, runtime_home: Path) -> Settings:
     report_show_fields = _parse_csv_patterns(
         raw.get(
             "MODEL_SENTINEL_REPORT_SHOW_FIELDS",
-            (
-                "pricing.*,context_length,top_provider.context_length,"
-                "top_provider.max_completion_tokens,supported_parameters,"
-                "default_parameters,default_parameters.*,architecture.*,reasoning,"
-                "reasoning.*,expiration_date,status,deprecated,knowledge_cutoff,"
-                "top_provider.is_moderated"
-            ),
+            ",".join(OPENROUTER_PROFILE.default_show_fields),
         )
     )
     report_squelch_fields = _parse_csv_patterns(
-        raw.get("MODEL_SENTINEL_REPORT_SQUELCH_FIELDS", "benchmarks,benchmarks.*")
+        raw.get(
+            "MODEL_SENTINEL_REPORT_SQUELCH_FIELDS",
+            ",".join(OPENROUTER_PROFILE.default_squelch_fields),
+        )
     )
     unclassified_raw = raw.get("MODEL_SENTINEL_REPORT_UNCLASSIFIED_LIMIT", "20").strip()
     try:

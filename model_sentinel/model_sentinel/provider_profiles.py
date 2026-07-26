@@ -1,0 +1,353 @@
+"""Provider-specific schema and rendering knowledge.
+
+Profiles are selected by ``ProviderConfig.kind`` and carry the vocabulary and
+schema choices that differ between providers. The default price/count
+predicates intentionally call :func:`default_categorize` directly. A custom
+profile that overrides ``categorize`` and wants those predicates to follow the
+override must provide matching predicate callables as well.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
+
+
+PathCandidates = tuple[tuple[str, ...], ...]
+
+
+def default_categorize(field_name: str) -> str:
+    lower = field_name.lower()
+    if any(p in lower for p in ("pricing.", "price", "cost", "_rate")):
+        return "Pricing"
+    if any(
+        p in lower
+        for p in (
+            "context_length",
+            "context_window",
+            "max_completion",
+            "max_tokens",
+            "max_output",
+        )
+    ):
+        return "Context & Limits"
+    if "supported_parameters" in lower or lower == "parameters":
+        return "Parameters"
+    if any(
+        p in lower
+        for p in (
+            "vision",
+            "audio",
+            "image",
+            "tool",
+            "reasoning",
+            "structured",
+            "modality",
+        )
+    ):
+        return "Capabilities"
+    if lower.startswith("benchmarks.") or lower == "benchmarks":
+        return "Benchmarks"
+    return "Other"
+
+
+def default_is_price_amount_field(field_name: str) -> bool:
+    """Distinguish monetary leaves from thresholds nested under pricing."""
+    if default_categorize(field_name) != "Pricing":
+        return False
+    leaf = field_name.rsplit(".", 1)[-1]
+    leaf = leaf.split("[", 1)[0]
+    return "token" not in leaf.lower()
+
+
+def default_is_count_field(field_name: str) -> bool:
+    lower = field_name.lower()
+    leaf = lower.rsplit(".", 1)[-1].split("[", 1)[0]
+    return "token" in leaf or default_categorize(field_name) == "Context & Limits"
+
+
+@dataclass(frozen=True)
+class ProviderProfile:
+    """Provider-specific behavior bound to one provider configuration.
+
+    Profiles contain mappings and callables and therefore are not hashable.
+    Never use a profile as a dictionary key or set member.
+    """
+
+    kind: str
+    price_multiplier: int = 1
+    price_divisor: int = 1
+    envelope_keys: tuple[str, ...] = ("data", "models", "result", "results")
+    normalized_fields: Mapping[str, PathCandidates] = field(default_factory=dict)
+    field_path_labels: Mapping[str, str] = field(default_factory=dict)
+    field_leaf_labels: Mapping[str, str] = field(default_factory=dict)
+    known_boolean_fields: frozenset[str] = frozenset()
+    categorize: Callable[[str], str] = default_categorize
+    is_price_amount_field: Callable[[str], bool] = default_is_price_amount_field
+    is_count_field: Callable[[str], bool] = default_is_count_field
+    pricing_override_condition_fields: tuple[str, ...] = (
+        "min_prompt_tokens",
+        "utc_start",
+        "utc_end",
+    )
+    default_show_fields: tuple[str, ...] = ()
+    default_squelch_fields: tuple[str, ...] = ()
+
+    def with_pricing(self, multiplier: int, divisor: int) -> ProviderProfile:
+        return replace(
+            self,
+            price_multiplier=multiplier,
+            price_divisor=divisor,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Field label registry
+#
+# `RenderedChange.label` is the human-readable name every non-JSON renderer
+# prints; `field_path` keeps the raw dotted path because the HTML tooltips and
+# the JSON payload are audit surfaces. JSON never routes through here at all --
+# `_delta_to_json` serialises `FieldChange` directly -- so labelling cannot
+# change the machine-readable output.
+#
+# TWO PLAIN DICTS, ON PURPOSE. Adding, removing, or renaming a field label is a
+# one-line edit to one of the literals below; there is no derivation, no
+# decorator, and no ordering dependency between them. Each label lives in
+# exactly one table so a rename is never a two-place edit.
+#
+# WHICH TABLE DOES A NAME GO IN?
+#
+#   field_path_labels -- keyed by the FULL dotted path. THE DEFAULT. A path key
+#   labels exactly the field it names and nothing else.
+#
+#   field_leaf_labels -- keyed by the LAST segment. A LAST RESORT, used ONLY
+#   when the field's parent is dynamic and therefore cannot be spelled in a
+#   fixed path. Two producers create that situation, both in reporting.py:
+#   `_pricing_override_path` emits
+#   `pricing.overrides[min_prompt_tokens=200000].completion`, and
+#   `_diff_structured_values` emits `default_parameters.<leaf>`. The pricing
+#   money leaves and the six `default_parameters` leaves are leaf-keyed for
+#   that reason and no other.
+#
+#   A leaf key is a claim over EVERY path in the product that ends in that
+#   segment, including nested homonyms nobody has written yet. `name` was
+#   leaf-keyed once; that made `architecture.tier_profiles[0].name` -- a tier's
+#   name, filed under category "Other" -- carry the registry's label for the
+#   MODEL's name. The raw path had conveyed the difference; the leaf key
+#   asserted a false equivalence. Prefer a path key unless a dynamic parent
+#   makes one impossible.
+#
+# Lookup order is exact path -> leaf -> prettified leaf. `resolve_field_label`
+# is the only consumer.
+#
+# Seeded from every distinct non-benchmark field path observed in the history
+# database. `test_registry_covers_every_seeded_field_name` pins the complete
+# key/label set.
+_OPENROUTER_FIELD_PATH_LABELS: dict[str, str] = {
+    # Pricing. Only the money leaves conditional pricing has been OBSERVED to
+    # relocate are leaf-keyed (see below); these four are spelled in full.
+    #
+    # `pricing.audio`, `pricing.image` and `pricing.request` are path-keyed
+    # because no recorded override tier has ever carried them -- an observation
+    # about provider payloads, NOT a property of this code.
+    # `_expand_pricing_override_changes` walks every key of a matched tier
+    # through `_diff_structured_values`, so
+    # `pricing.overrides[<condition>].request` is constructible the moment a
+    # provider emits one.
+    #
+    # If that ever happens the three behave differently, and only one of them
+    # visibly: `_prettify_leaf` spells `audio` and `image` exactly as the
+    # registry does ("Audio", "Image"), so their tiered form reads correctly by
+    # coincidence, while `request` falls back to "Request" and a single card
+    # would show "Per request" at the base rate beside "Request
+    # (min_prompt_tokens=...)" for the same money leaf. The fix at that point
+    # is a leaf key for `request` -- deliberately NOT added ahead of the
+    # evidence, because a leaf key claims every path in the product ending in
+    # that segment (`provider_metadata.request` and any future homonym would
+    # inherit "Per request", which for a non-pricing field is a false claim,
+    # where "Request" is merely a plainer spelling of a true one).
+    #
+    # `pricing.overrides` is matched as a literal exact string -- it is never
+    # itself a leaf under a dynamic parent, only the container that creates one.
+    "pricing.audio": "Audio",
+    "pricing.image": "Image",
+    "pricing.request": "Per request",
+    "pricing.overrides": "Conditional pricing",
+    # Context & limits.
+    #
+    # `context_length` and `top_provider.context_length` are DISTINCT fields
+    # that both occur in the history database, and the design requires they not
+    # share a label verbatim or the report becomes ambiguous about which one
+    # moved. Both are exact-path keys, so neither shadows the other and neither
+    # depends on lookup order; the "(model)" disambiguator is a reader-facing
+    # requirement, not a lookup mechanism, and survives on its own merits.
+    "context_length": "Context length (model)",
+    "top_provider.context_length": "Context length",
+    "top_provider.max_completion_tokens": "Max output",
+    # Capabilities.
+    "reasoning": "Reasoning",
+    "reasoning.default_enabled": "Reasoning default",
+    "reasoning.default_effort": "Reasoning effort",
+    "reasoning.supported_efforts": "Supported efforts",
+    "reasoning.mandatory": "Reasoning required",
+    "supported_parameters": "Supported parameters",
+    "supported_voices": "Supported voices",
+    "architecture.modality": "Modality",
+    "architecture.input_modalities": "Input modalities",
+    "architecture.instruct_type": "Instruct type",
+    # Metadata.
+    "top_provider.is_moderated": "Moderated",
+    "knowledge_cutoff": "Knowledge cutoff",
+    "expiration_date": "Expiration date",
+    "description": "Description",
+    "name": "Name",
+    "created": "Created",
+    "links": "Links",
+    "hugging_face_id": "Hugging Face ID",
+    # Default parameters. The container is path-keyed; its six leaves cannot
+    # be, see below.
+    "default_parameters": "Default parameters",
+}
+
+# Keyed by leaf segment. Consulted only when no full-path entry matched.
+#
+# EVERY entry here exists because its parent is dynamic and cannot be spelled
+# as a fixed path. Nothing else belongs in this table -- a leaf key claims
+# every path in the product ending in that segment.
+_OPENROUTER_FIELD_LEAF_LABELS: dict[str, str] = {
+    # Pricing money leaves. `_pricing_override_path` relocates these same
+    # leaves under `pricing.overrides[<condition>]`, so one leaf key labels
+    # both `pricing.completion` and every conditional-tier form of it.
+    "prompt": "Input",
+    "completion": "Output",
+    "input_cache_read": "Cache read",
+    "input_cache_write": "Cache write",
+    "input_cache_write_1h": "Cache write (1h)",
+    "input_audio_cache": "Audio cache",
+    "audio_output": "Audio output",
+    "image_output": "Image output",
+    "web_search": "Web search",
+    "internal_reasoning": "Internal reasoning",
+    # Default parameters. The design specifies these as leaves because the
+    # payload nests them one level below `default_parameters`.
+    "frequency_penalty": "Frequency penalty",
+    "presence_penalty": "Presence penalty",
+    "repetition_penalty": "Repetition penalty",
+    "temperature": "Temperature",
+    "top_k": "Top-K",
+    "top_p": "Top-P",
+}
+
+# Fields whose recorded values are 0/1 (not real Python bool) but are
+# semantically flags, not magnitudes. Seeded from the boolean-valued fields
+# observed in the history database (`top_provider.is_moderated`,
+# `reasoning.default_enabled`, `reasoning.mandatory`) plus `deprecated`, which
+# is not observed in any recorded change but appears in the default report
+# show fields and is included as a forward guard.
+#
+# This set is a restriction, not a convenience: `default_parameters.top_p`,
+# `default_parameters.temperature`, and `default_parameters.repetition_penalty`
+# also hold 0/1 values in the history database, but they are genuinely numeric
+# (a temperature of `1` is a magnitude, not a flag) and must never be treated
+# as boolean.
+_OPENROUTER_KNOWN_BOOLEAN_FIELDS = frozenset(
+    {
+        "top_provider.is_moderated",
+        "reasoning.default_enabled",
+        "reasoning.mandatory",
+        "deprecated",
+    }
+)
+
+_OPENROUTER_DEFAULT_SHOW_FIELDS = (
+    "pricing.*",
+    "context_length",
+    "top_provider.context_length",
+    "top_provider.max_completion_tokens",
+    "supported_parameters",
+    "default_parameters",
+    "default_parameters.*",
+    "architecture.*",
+    "reasoning",
+    "reasoning.*",
+    "expiration_date",
+    "status",
+    "deprecated",
+    "knowledge_cutoff",
+    "top_provider.is_moderated",
+)
+
+_OPENROUTER_DEFAULT_SQUELCH_FIELDS = (
+    "benchmarks",
+    "benchmarks.*",
+)
+
+_DEFAULT_NORMALIZED_FIELDS: Mapping[str, PathCandidates] = {
+    "provider_model_id": (("id",), ("model",), ("name",)),
+    "display_name": (("name",), ("display_name",)),
+    "description": (("description",), ("short_description",)),
+    "model_family": (("family",), ("developer",)),
+    "created_at_provider": (("created",), ("created_at",)),
+    "context_window": (
+        ("context_length",),
+        ("limit", "context"),
+        ("context_window",),
+    ),
+    "max_output_tokens": (
+        ("top_provider", "max_completion_tokens"),
+        ("limit", "output"),
+        ("max_output_tokens",),
+    ),
+    "input_price": (
+        ("pricing", "input"),
+        ("pricing", "prompt"),
+        ("cost", "input"),
+        ("input_token_rate",),
+    ),
+    "output_price": (
+        ("pricing", "output"),
+        ("pricing", "completion"),
+        ("cost", "output"),
+        ("output_token_rate",),
+    ),
+    "cache_read_price": (
+        ("pricing", "input_cache_read"),
+        ("pricing", "cache_read"),
+    ),
+    "cache_write_price": (
+        ("pricing", "input_cache_write"),
+        ("pricing", "cache_write"),
+    ),
+}
+
+
+GENERIC_PROFILE = ProviderProfile(
+    kind="generic",
+    normalized_fields=_DEFAULT_NORMALIZED_FIELDS,
+)
+
+OPENROUTER_PROFILE = ProviderProfile(
+    kind="openrouter",
+    envelope_keys=("data",),
+    normalized_fields=_DEFAULT_NORMALIZED_FIELDS,
+    field_path_labels=_OPENROUTER_FIELD_PATH_LABELS,
+    field_leaf_labels=_OPENROUTER_FIELD_LEAF_LABELS,
+    known_boolean_fields=_OPENROUTER_KNOWN_BOOLEAN_FIELDS,
+    default_show_fields=_OPENROUTER_DEFAULT_SHOW_FIELDS,
+    default_squelch_fields=_OPENROUTER_DEFAULT_SQUELCH_FIELDS,
+)
+
+PROFILE_REGISTRY: dict[str, ProviderProfile] = {
+    "openrouter": OPENROUTER_PROFILE,
+}
+
+
+def resolve_profile(
+    kind: str,
+    *,
+    price_multiplier: int = 1,
+    price_divisor: int = 1,
+) -> ProviderProfile:
+    """Resolve ``kind`` with a generic fallback and bind pricing factors."""
+    profile = PROFILE_REGISTRY.get(kind.lower(), GENERIC_PROFILE)
+    return profile.with_pricing(price_multiplier, price_divisor)

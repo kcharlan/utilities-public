@@ -9,6 +9,7 @@ from model_sentinel.config import (
     missing_credentials,
     validate_selected_providers,
 )
+from model_sentinel.reporting import DEFAULT_REPORT_SHOW_FIELDS
 
 
 def _write_config_files(root: Path) -> Path:
@@ -55,7 +56,7 @@ def test_load_config_parses_providers_and_settings(tmp_path: Path, monkeypatch) 
     assert loaded.settings.notify_sound == "default"
     assert loaded.settings.terminal_notifier_path is None
     assert loaded.settings.report_detail == "default"
-    assert "pricing.*" in loaded.settings.report_show_fields
+    assert loaded.settings.report_show_fields == DEFAULT_REPORT_SHOW_FIELDS
     assert loaded.settings.report_squelch_fields == ("benchmarks", "benchmarks.*")
     assert loaded.settings.report_unclassified_limit == 20
     assert loaded.providers[0].price_multiplier == 1

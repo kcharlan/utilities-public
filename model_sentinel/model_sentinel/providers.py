@@ -7,13 +7,20 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .config import ProviderConfig
+from .provider_profiles import ProviderProfile
 
 
 class ProviderFetchError(RuntimeError):
     """Raised when a provider fetch fails."""
 
 
-def fetch_raw_models(provider: ProviderConfig, api_key: str, *, timeout: float = 30.0) -> list[dict[str, Any]]:
+def fetch_raw_models(
+    provider: ProviderConfig,
+    api_key: str,
+    profile: ProviderProfile,
+    *,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
     request = Request(
         provider.models_url,
         headers={
@@ -35,15 +42,19 @@ def fetch_raw_models(provider: ProviderConfig, api_key: str, *, timeout: float =
         raise ProviderFetchError(f"{provider.label} request failed: {exc.reason}") from exc
     except json.JSONDecodeError as exc:
         raise ProviderFetchError(f"{provider.label} returned invalid JSON") from exc
-    return extract_model_list(provider, payload)
+    return extract_model_list(provider, payload, profile)
 
 
-def extract_model_list(provider: ProviderConfig, payload: Any) -> list[dict[str, Any]]:
+def extract_model_list(
+    provider: ProviderConfig,
+    payload: Any,
+    profile: ProviderProfile,
+) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return _ensure_model_dicts(provider, payload)
     if not isinstance(payload, dict):
         raise ProviderFetchError(f"{provider.label} returned an unsupported payload shape")
-    for key in ("data", "models", "result", "results"):
+    for key in profile.envelope_keys:
         candidate = payload.get(key)
         if isinstance(candidate, list):
             return _ensure_model_dicts(provider, candidate)
@@ -59,4 +70,3 @@ def _ensure_model_dicts(provider: ProviderConfig, models: list[Any]) -> list[dic
             )
         normalized.append(model)
     return normalized
-

@@ -25,10 +25,10 @@ zero basis, so the HTML delta cell came out blank.
 Putting `boolean` first is what makes the branch reachable. Its correctness
 therefore rests entirely on `_is_boolean_change` being narrow: a false
 positive there now *shadows* the numeric branch rather than being shadowed by
-it, so a genuinely numeric field must never satisfy it. That is why
-KNOWN_BOOLEAN_FIELDS is a restriction rather than a convenience, and why
-`_bool_state` returns `None` for anything that is not a real bool or an
-integer-coded 0/1.
+it, so a genuinely numeric field must never satisfy it. That is why a
+profile's `known_boolean_fields` is a restriction rather than a convenience,
+and why `_bool_state` returns `None` for anything that is not a real bool or
+an integer-coded 0/1.
 
 ONE-SIDED BOOLEANS (Task 4 decision): a boolean-ish value paired with `None`
 classifies as `boolean` with `direction="added"`/`"removed"` and
@@ -51,170 +51,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .models import FieldChange
-
-# Fields whose recorded values are 0/1 (not real Python bool) but are
-# semantically flags, not magnitudes. Seeded from the boolean-valued fields
-# observed in the history database (`top_provider.is_moderated`,
-# `reasoning.default_enabled`, `reasoning.mandatory`) plus `deprecated`, which
-# is not observed in any recorded change but appears in
-# `DEFAULT_REPORT_SHOW_FIELDS` (reporting.py) and is included as a forward
-# guard.
-#
-# This set is a restriction, not a convenience: `default_parameters.top_p`,
-# `default_parameters.temperature`, and `default_parameters.repetition_penalty`
-# also hold 0/1 values in the history database, but they are genuinely
-# numeric (a temperature of `1` is a magnitude, not a flag) and must never be
-# treated as boolean.
-KNOWN_BOOLEAN_FIELDS = frozenset(
-    {
-        "top_provider.is_moderated",
-        "reasoning.default_enabled",
-        "reasoning.mandatory",
-        "deprecated",
-    }
-)
-
-
-# ---------------------------------------------------------------------------
-# Field label registry
-#
-# `RenderedChange.label` is the human-readable name every non-JSON renderer
-# prints; `field_path` keeps the raw dotted path because the HTML tooltips and
-# the JSON payload are audit surfaces. JSON never routes through here at all --
-# `_delta_to_json` serialises `FieldChange` directly -- so labelling cannot
-# change the machine-readable output.
-#
-# TWO PLAIN DICTS, ON PURPOSE. Adding, removing, or renaming a field label is a
-# one-line edit to one of the literals below; there is no derivation, no
-# decorator, and no ordering dependency between them. Each label lives in
-# exactly one table so a rename is never a two-place edit.
-#
-# WHICH TABLE DOES A NAME GO IN?
-#
-#   FIELD_PATH_LABELS -- keyed by the FULL dotted path. THE DEFAULT. A path key
-#   labels exactly the field it names and nothing else.
-#
-#   FIELD_LEAF_LABELS -- keyed by the LAST segment. A LAST RESORT, used ONLY
-#   when the field's parent is dynamic and therefore cannot be spelled in a
-#   fixed path. Two producers create that situation, both in reporting.py:
-#   `_pricing_override_path` emits
-#   `pricing.overrides[min_prompt_tokens=200000].completion`, and
-#   `_diff_structured_values` emits `default_parameters.<leaf>`. The pricing
-#   money leaves and the six `default_parameters` leaves are leaf-keyed for
-#   that reason and no other.
-#
-#   A leaf key is a claim over EVERY path in the product that ends in that
-#   segment, including nested homonyms nobody has written yet. `name` was
-#   leaf-keyed once; that made `architecture.tier_profiles[0].name` -- a tier's
-#   name, filed under category "Other" -- carry the registry's label for the
-#   MODEL's name. The raw path had conveyed the difference; the leaf key
-#   asserted a false equivalence. Prefer a path key unless a dynamic parent
-#   makes one impossible.
-#
-# Lookup order is exact path -> leaf -> prettified leaf. `resolve_field_label`
-# is the only consumer.
-#
-# Seeded from the design's "Initial registry contents": every distinct
-# non-benchmark `field_name` observed in the history database (42 names).
-# `tests/test_change_render.py::test_registry_covers_every_seeded_field_name`
-# pins all 42 key/label pairs.
-
-# Keyed by full dotted path. Consulted FIRST, and the default table.
-FIELD_PATH_LABELS: dict[str, str] = {
-    # Pricing. Only the money leaves conditional pricing has been OBSERVED to
-    # relocate are leaf-keyed (see below); these four are spelled in full.
-    #
-    # `pricing.audio`, `pricing.image` and `pricing.request` are path-keyed
-    # because no recorded override tier has ever carried them -- an observation
-    # about provider payloads, NOT a property of this code. `_diff_pricing_
-    # overrides` walks every key of a matched tier through
-    # `_diff_structured_values` (reporting.py), so
-    # `pricing.overrides[<condition>].request` is constructible the moment a
-    # provider emits one.
-    #
-    # If that ever happens the three behave differently, and only one of them
-    # visibly: `_prettify_leaf` spells `audio` and `image` exactly as the
-    # registry does ("Audio", "Image"), so their tiered form reads correctly by
-    # coincidence, while `request` falls back to "Request" and a single card
-    # would show "Per request" at the base rate beside "Request
-    # (min_prompt_tokens=...)" for the same money leaf. The fix at that point
-    # is a leaf key for `request` -- deliberately NOT added ahead of the
-    # evidence, because a leaf key claims every path in the product ending in
-    # that segment (`provider_metadata.request` and any future homonym would
-    # inherit "Per request", which for a non-pricing field is a false claim,
-    # where "Request" is merely a plainer spelling of a true one).
-    #
-    # `pricing.overrides` is matched as a literal exact string by
-    # `_diff_pricing_overrides` -- it is never itself a leaf under a dynamic
-    # parent, only the container that creates one.
-    "pricing.audio": "Audio",
-    "pricing.image": "Image",
-    "pricing.request": "Per request",
-    "pricing.overrides": "Conditional pricing",
-    # Context & limits.
-    #
-    # `context_length` and `top_provider.context_length` are DISTINCT fields
-    # that both occur in the history database, and the design requires they not
-    # share a label verbatim or the report becomes ambiguous about which one
-    # moved. Both are exact-path keys, so neither shadows the other and neither
-    # depends on lookup order; the "(model)" disambiguator is a reader-facing
-    # requirement, not a lookup mechanism, and survives on its own merits.
-    "context_length": "Context length (model)",
-    "top_provider.context_length": "Context length",
-    "top_provider.max_completion_tokens": "Max output",
-    # Capabilities.
-    "reasoning": "Reasoning",
-    "reasoning.default_enabled": "Reasoning default",
-    "reasoning.default_effort": "Reasoning effort",
-    "reasoning.supported_efforts": "Supported efforts",
-    "reasoning.mandatory": "Reasoning required",
-    "supported_parameters": "Supported parameters",
-    "supported_voices": "Supported voices",
-    "architecture.modality": "Modality",
-    "architecture.input_modalities": "Input modalities",
-    "architecture.instruct_type": "Instruct type",
-    # Metadata.
-    "top_provider.is_moderated": "Moderated",
-    "knowledge_cutoff": "Knowledge cutoff",
-    "expiration_date": "Expiration date",
-    "description": "Description",
-    "name": "Name",
-    "created": "Created",
-    "links": "Links",
-    "hugging_face_id": "Hugging Face ID",
-    # Default parameters. The container is path-keyed; its six leaves cannot
-    # be, see below.
-    "default_parameters": "Default parameters",
-}
-
-# Keyed by leaf segment. Consulted only when no full-path entry matched.
-#
-# EVERY entry here exists because its parent is dynamic and cannot be spelled
-# as a fixed path. Nothing else belongs in this table -- a leaf key claims
-# every path in the product ending in that segment.
-FIELD_LEAF_LABELS: dict[str, str] = {
-    # Pricing money leaves. `_pricing_override_path` relocates these same
-    # leaves under `pricing.overrides[<condition>]`, so one leaf key labels
-    # both `pricing.completion` and every conditional-tier form of it.
-    "prompt": "Input",
-    "completion": "Output",
-    "input_cache_read": "Cache read",
-    "input_cache_write": "Cache write",
-    "input_cache_write_1h": "Cache write (1h)",
-    "input_audio_cache": "Audio cache",
-    "audio_output": "Audio output",
-    "image_output": "Image output",
-    "web_search": "Web search",
-    "internal_reasoning": "Internal reasoning",
-    # Default parameters. The design specifies these as leaves because the
-    # payload nests them one level below `default_parameters`.
-    "frequency_penalty": "Frequency penalty",
-    "presence_penalty": "Presence penalty",
-    "repetition_penalty": "Repetition penalty",
-    "temperature": "Temperature",
-    "top_k": "Top-K",
-    "top_p": "Top-P",
-}
+from .provider_profiles import ProviderProfile
 
 
 def _split_field_path(field_path: str) -> tuple[str, str | None]:
@@ -276,7 +113,10 @@ def _prettify_leaf(leaf: str) -> str:
     return words[0].upper() + words[1:]
 
 
-def resolve_field_label(field_path: str) -> tuple[str, str | None]:
+def resolve_field_label(
+    field_path: str,
+    profile: ProviderProfile,
+) -> tuple[str, str | None]:
     """Return `(label, qualifier)` for a raw field path.
 
     Lookup order -- exact full path, then leaf segment, then prettified leaf.
@@ -289,10 +129,10 @@ def resolve_field_label(field_path: str) -> tuple[str, str | None]:
     HTML tooltips and the JSON payload render the raw path.
     """
     bare_path, qualifier = _split_field_path(field_path)
-    label = FIELD_PATH_LABELS.get(bare_path)
+    label = profile.field_path_labels.get(bare_path)
     if label is None:
         leaf = bare_path.rsplit(".", 1)[-1]
-        label = FIELD_LEAF_LABELS.get(leaf, _prettify_leaf(leaf))
+        label = profile.field_leaf_labels.get(leaf, _prettify_leaf(leaf))
     return label, qualifier
 
 
@@ -422,21 +262,6 @@ class RenderedChange:
 # ---------------------------------------------------------------------------
 
 
-def _classify_field(field_name: str) -> str:
-    lower = field_name.lower()
-    if any(p in lower for p in ("pricing.", "price", "cost", "_rate")):
-        return "Pricing"
-    if any(p in lower for p in ("context_length", "context_window", "max_completion", "max_tokens", "max_output")):
-        return "Context & Limits"
-    if "supported_parameters" in lower or lower == "parameters":
-        return "Parameters"
-    if any(p in lower for p in ("vision", "audio", "image", "tool", "reasoning", "structured", "modality")):
-        return "Capabilities"
-    if lower.startswith("benchmarks.") or lower == "benchmarks":
-        return "Benchmarks"
-    return "Other"
-
-
 def _both_numeric(a: Any, b: Any) -> bool:
     if a is None or b is None:
         return False
@@ -455,21 +280,6 @@ def _numeric_value(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _is_price_amount_field(field_name: str) -> bool:
-    """Distinguish monetary leaves from thresholds nested under pricing."""
-    if _classify_field(field_name) != "Pricing":
-        return False
-    leaf = field_name.rsplit(".", 1)[-1]
-    leaf = leaf.split("[", 1)[0]
-    return "token" not in leaf.lower()
-
-
-def _is_count_field(field_name: str) -> bool:
-    lower = field_name.lower()
-    leaf = lower.rsplit(".", 1)[-1].split("[", 1)[0]
-    return "token" in leaf or _classify_field(field_name) == "Context & Limits"
 
 
 # ---------------------------------------------------------------------------
@@ -927,23 +737,30 @@ def _is_integer_like(value: Any) -> bool:
     return False
 
 
-def _is_boolean_side(field_name: str, value: Any) -> bool:
+def _is_boolean_side(
+    field_name: str,
+    value: Any,
+    profile: ProviderProfile,
+) -> bool:
     """True if one side of a change is a value that means on/off, not a number.
 
     A real `bool` always qualifies. A plain `0`/`1` qualifies ONLY when the
-    field is in `KNOWN_BOOLEAN_FIELDS`: gating on the value alone would
+    field is in `profile.known_boolean_fields`: gating on the value alone would
     capture `default_parameters.top_p: 0 -> 1`, a magnitude, and -- since the
     boolean branch now runs before the numeric one -- render it as a toggle.
     The restriction is what keeps that branch from over-reaching.
     """
     if isinstance(value, bool):
         return True
-    if field_name in KNOWN_BOOLEAN_FIELDS:
+    if field_name in profile.known_boolean_fields:
         return _is_integer_like(value)
     return False
 
 
-def _is_boolean_change(field_change: FieldChange) -> bool:
+def _is_boolean_change(
+    field_change: FieldChange,
+    profile: ProviderProfile,
+) -> bool:
     """True if this change should be presented as a flag rather than a number.
 
     Two-sided: BOTH sides must be boolean-ish, so a mixed pair such as
@@ -959,10 +776,14 @@ def _is_boolean_change(field_change: FieldChange) -> bool:
     if old_value is None and new_value is None:
         return False
     if old_value is None:
-        return _is_boolean_side(field_name, new_value)
+        return _is_boolean_side(field_name, new_value, profile)
     if new_value is None:
-        return _is_boolean_side(field_name, old_value)
-    return _is_boolean_side(field_name, old_value) and _is_boolean_side(field_name, new_value)
+        return _is_boolean_side(field_name, old_value, profile)
+    return _is_boolean_side(
+        field_name,
+        old_value,
+        profile,
+    ) and _is_boolean_side(field_name, new_value, profile)
 
 
 def _bool_state(value: Any) -> Literal["on", "off"] | None:
@@ -992,7 +813,10 @@ def _bool_state(value: Any) -> Literal["on", "off"] | None:
 # ---------------------------------------------------------------------------
 
 
-def _classify_boolean(field_change: FieldChange) -> RenderedChange:
+def _classify_boolean(
+    field_change: FieldChange,
+    profile: ProviderProfile,
+) -> RenderedChange:
     """Build the `boolean` RenderedChange for a two-sided or one-sided flag.
 
     Precondition: `_is_boolean_change(field_change)`. Enforced rather than
@@ -1001,7 +825,7 @@ def _classify_boolean(field_change: FieldChange) -> RenderedChange:
     display field (e.g. `top_p: False -> 0.9` reported as a disable).
     """
     field_path = field_change.field_name
-    label, qualifier = resolve_field_label(field_path)
+    label, qualifier = resolve_field_label(field_path, profile)
     old_value, new_value = field_change.old_value, field_change.new_value
     old_state = _bool_state(old_value)
     new_state = _bool_state(new_value)
@@ -1075,16 +899,23 @@ def _classify_price(
     field_change: FieldChange,
     old_numeric: float | None,
     new_numeric: float | None,
-    price_multiplier: int,
-    price_divisor: int,
+    profile: ProviderProfile,
 ) -> RenderedChange:
     field_path = field_change.field_name
-    label, qualifier = resolve_field_label(field_path)
+    label, qualifier = resolve_field_label(field_path, profile)
     old_value, new_value = field_change.old_value, field_change.new_value
 
     if old_numeric is not None and new_numeric is not None:
-        norm_old = _normalize_price(old_numeric, price_multiplier, price_divisor)
-        norm_new = _normalize_price(new_numeric, price_multiplier, price_divisor)
+        norm_old = _normalize_price(
+            old_numeric,
+            profile.price_multiplier,
+            profile.price_divisor,
+        )
+        norm_new = _normalize_price(
+            new_numeric,
+            profile.price_multiplier,
+            profile.price_divisor,
+        )
         delta_norm = norm_new - norm_old
         direction: Literal["up", "down", "none"]
         if delta_norm > 0:
@@ -1131,11 +962,19 @@ def _classify_price(
     if old_numeric is None:
         one_sided_direction: Literal["added", "removed"] = "added"
         old_display = ABSENT_TEXT_DISPLAY
-        norm_only = _normalize_price(new_numeric, price_multiplier, price_divisor)
+        norm_only = _normalize_price(
+            new_numeric,
+            profile.price_multiplier,
+            profile.price_divisor,
+        )
         new_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
     else:
         one_sided_direction = "removed"
-        norm_only = _normalize_price(old_numeric, price_multiplier, price_divisor)
+        norm_only = _normalize_price(
+            old_numeric,
+            profile.price_multiplier,
+            profile.price_divisor,
+        )
         old_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
         new_display = ABSENT_TEXT_DISPLAY
 
@@ -1164,9 +1003,10 @@ def _classify_count(
     field_change: FieldChange,
     old_numeric: float | None,
     new_numeric: float | None,
+    profile: ProviderProfile,
 ) -> RenderedChange:
     field_path = field_change.field_name
-    label, qualifier = resolve_field_label(field_path)
+    label, qualifier = resolve_field_label(field_path, profile)
     old_value, new_value = field_change.old_value, field_change.new_value
 
     if old_numeric is not None and new_numeric is not None:
@@ -1231,9 +1071,12 @@ def _classify_count(
     )
 
 
-def _classify_numeric(field_change: FieldChange) -> RenderedChange:
+def _classify_numeric(
+    field_change: FieldChange,
+    profile: ProviderProfile,
+) -> RenderedChange:
     field_path = field_change.field_name
-    label, qualifier = resolve_field_label(field_path)
+    label, qualifier = resolve_field_label(field_path, profile)
     old_value, new_value = field_change.old_value, field_change.new_value
     old_f = float(old_value)
     new_f = float(new_value)
@@ -1272,8 +1115,7 @@ def _classify_numeric(field_change: FieldChange) -> RenderedChange:
 def classify_change(
     field_change: FieldChange,
     *,
-    price_multiplier: int = 1,
-    price_divisor: int = 1,
+    profile: ProviderProfile,
 ) -> RenderedChange:
     """Classify a single field change into a structured `RenderedChange`.
 
@@ -1282,7 +1124,7 @@ def classify_change(
     scalar.
     """
     field_path = field_change.field_name
-    label, qualifier = resolve_field_label(field_path)
+    label, qualifier = resolve_field_label(field_path, profile)
     old_value, new_value = field_change.old_value, field_change.new_value
 
     # 1. noop
@@ -1348,8 +1190,8 @@ def classify_change(
     # subclass, so every guard below accepts a real bool pair and would
     # classify a flag as a magnitude; that is the defect this ordering fixes.
     # See the module docstring.
-    if _is_boolean_change(field_change):
-        return _classify_boolean(field_change)
+    if _is_boolean_change(field_change, profile):
+        return _classify_boolean(field_change, profile)
 
     old_numeric = _numeric_value(old_value)
     new_numeric = _numeric_value(new_value)
@@ -1358,12 +1200,12 @@ def classify_change(
     # _render_smart_change_text (permits one-sided None, rejects non-numeric
     # strings).
     if (
-        _is_price_amount_field(field_path)
+        profile.is_price_amount_field(field_path)
         and (old_numeric is not None or new_numeric is not None)
         and (old_value is None or old_numeric is not None)
         and (new_value is None or new_numeric is not None)
     ):
-        return _classify_price(field_change, old_numeric, new_numeric, price_multiplier, price_divisor)
+        return _classify_price(field_change, old_numeric, new_numeric, profile)
 
     # 5. count -- same numeric-shape guard as price (permits one-sided None,
     # rejects non-numeric strings), with one deliberate difference from
@@ -1390,18 +1232,18 @@ def classify_change(
     # test_change_render.py, which pins the delta/pct fields a renderer needs
     # to reproduce numeric's exact output from a `count` RenderedChange.
     if (
-        _is_count_field(field_path)
+        profile.is_count_field(field_path)
         and (old_numeric is not None or new_numeric is not None)
         and (old_value is None or old_numeric is not None)
         and (new_value is None or new_numeric is not None)
     ):
-        return _classify_count(field_change, old_numeric, new_numeric)
+        return _classify_count(field_change, old_numeric, new_numeric, profile)
 
     # 6. numeric -- both numeric, no category match. Real bool pairs and
     # known-boolean integer-coded pairs no longer reach here: step 3 claims
     # them first.
     if _both_numeric(old_value, new_value):
-        return _classify_numeric(field_change)
+        return _classify_numeric(field_change, profile)
 
     # 7. scalar fallback
     return RenderedChange(

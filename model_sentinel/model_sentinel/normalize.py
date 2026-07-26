@@ -5,49 +5,47 @@ from typing import Any
 
 from .config import ProviderConfig
 from .models import NormalizedModel, canonical_json
+from .provider_profiles import ProviderProfile
 
 
-def normalize_models(provider: ProviderConfig, raw_models: list[dict[str, Any]]) -> list[NormalizedModel]:
+def normalize_models(
+    provider: ProviderConfig,
+    raw_models: list[dict[str, Any]],
+    profile: ProviderProfile,
+) -> list[NormalizedModel]:
     normalized: list[NormalizedModel] = []
     for raw_model in raw_models:
         provider_model_id = _coerce_str(
-            raw_model.get("id")
-            or raw_model.get("model")
-            or raw_model.get("name")
+            _profile_field(raw_model, profile, "provider_model_id")
         )
         if not provider_model_id:
             raise ValueError(f"Provider {provider.provider_id} returned a model without a stable id")
-        display_name = _coerce_str(raw_model.get("name") or raw_model.get("display_name") or provider_model_id)
+        display_name = _coerce_str(
+            _profile_field(raw_model, profile, "display_name")
+            or provider_model_id
+        )
         input_price = _normalize_price(
-            provider,
+            profile,
             _coerce_float(
-                _nested_get(raw_model, "pricing", "input")
-                or _nested_get(raw_model, "pricing", "prompt")
-                or _nested_get(raw_model, "cost", "input")
-                or raw_model.get("input_token_rate")
+                _profile_field(raw_model, profile, "input_price")
             ),
         )
         output_price = _normalize_price(
-            provider,
+            profile,
             _coerce_float(
-                _nested_get(raw_model, "pricing", "output")
-                or _nested_get(raw_model, "pricing", "completion")
-                or _nested_get(raw_model, "cost", "output")
-                or raw_model.get("output_token_rate")
+                _profile_field(raw_model, profile, "output_price")
             ),
         )
         cache_read_price = _normalize_price(
-            provider,
+            profile,
             _coerce_float(
-                _nested_get(raw_model, "pricing", "input_cache_read")
-                or _nested_get(raw_model, "pricing", "cache_read")
+                _profile_field(raw_model, profile, "cache_read_price")
             ),
         )
         cache_write_price = _normalize_price(
-            provider,
+            profile,
             _coerce_float(
-                _nested_get(raw_model, "pricing", "input_cache_write")
-                or _nested_get(raw_model, "pricing", "cache_write")
+                _profile_field(raw_model, profile, "cache_write_price")
             ),
         )
         normalized.append(
@@ -56,18 +54,20 @@ def normalize_models(provider: ProviderConfig, raw_models: list[dict[str, Any]])
                 provider_label=provider.label,
                 provider_model_id=provider_model_id,
                 display_name=display_name,
-                description=_coerce_str(raw_model.get("description") or raw_model.get("short_description")),
-                model_family=_coerce_str(raw_model.get("family") or raw_model.get("developer")),
-                created_at_provider=_coerce_str(raw_model.get("created") or raw_model.get("created_at")),
+                description=_coerce_str(
+                    _profile_field(raw_model, profile, "description")
+                ),
+                model_family=_coerce_str(
+                    _profile_field(raw_model, profile, "model_family")
+                ),
+                created_at_provider=_coerce_str(
+                    _profile_field(raw_model, profile, "created_at_provider")
+                ),
                 context_window=_coerce_int(
-                    raw_model.get("context_length")
-                    or _nested_get(raw_model, "limit", "context")
-                    or raw_model.get("context_window")
+                    _profile_field(raw_model, profile, "context_window")
                 ),
                 max_output_tokens=_coerce_int(
-                    _nested_get(raw_model, "top_provider", "max_completion_tokens")
-                    or _nested_get(raw_model, "limit", "output")
-                    or raw_model.get("max_output_tokens")
+                    _profile_field(raw_model, profile, "max_output_tokens")
                 ),
                 input_price=input_price,
                 output_price=output_price,
@@ -110,6 +110,24 @@ def _nested_get(mapping: dict[str, Any], *keys: str) -> Any:
             return None
         current = current.get(key)
     return current
+
+
+def _profile_field(
+    raw_model: dict[str, Any],
+    profile: ProviderProfile,
+    field_name: str,
+) -> Any:
+    """Return the first truthy configured candidate, matching old ``or`` chains.
+
+    Explicit but falsy values (``0``, ``""``, ``False``, and ``None``) are
+    skipped exactly as they were before profiles moved the candidate paths out
+    of this module.
+    """
+    for path in profile.normalized_fields.get(field_name, ()):
+        value = _nested_get(raw_model, *path)
+        if value:
+            return value
+    return None
 
 
 def _supports_parameter(raw_model: dict[str, Any], token: str) -> bool | None:
@@ -169,10 +187,13 @@ def _coerce_float(value: Any) -> float | None:
         return None
 
 
-def _normalize_price(provider: ProviderConfig, value: float | None) -> float | None:
+def _normalize_price(
+    profile: ProviderProfile,
+    value: float | None,
+) -> float | None:
     if value is None:
         return None
-    return (value * provider.price_multiplier) / provider.price_divisor
+    return (value * profile.price_multiplier) / profile.price_divisor
 
 
 def _coerce_bool(value: Any) -> bool | None:

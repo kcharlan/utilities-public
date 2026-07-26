@@ -123,7 +123,10 @@ def test_initial_saved_scan_reports_all_models_as_added(tmp_path: Path, monkeypa
     monkeypatch.setattr(
         cli,
         "fetch_raw_models",
-        lambda provider, api_key: [{"id": "alpha", "name": "Alpha"}, {"id": "beta", "name": "Beta"}],
+        lambda provider, api_key, profile: [
+            {"id": "alpha", "name": "Alpha"},
+            {"id": "beta", "name": "Beta"},
+        ],
     )
 
     exit_code = cli.main(["scan", "--save"])
@@ -153,7 +156,11 @@ def test_scan_writes_full_html_companion_report(tmp_path: Path, monkeypatch, cap
             [{"id": "alpha", "name": "Alpha", "benchmarks": {"design_arena": [{"elo": 2}]}}],
         ]
     )
-    monkeypatch.setattr(cli, "fetch_raw_models", lambda provider, api_key: next(payloads))
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
 
     assert cli.main(["scan", "--save"]) == 0
     assert cli.main(["scan", "--save"]) == 0
@@ -193,7 +200,11 @@ def test_changes_writes_its_html_companion_when_a_model_was_added(
             ],
         ]
     )
-    monkeypatch.setattr(cli, "fetch_raw_models", lambda provider, api_key: next(payloads))
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
 
     assert cli.main(["scan", "--save"]) == 0
     # beta added, gamma removed, alpha's benchmarks change squelched
@@ -657,3 +668,38 @@ def test_healthcheck_reports_distinct_provider_labels_as_ok(tmp_path: Path, monk
     assert "WARN" not in captured.out
     assert "Duplicate provider label" not in captured.out
     assert "config_load" not in captured.out
+
+
+def test_healthcheck_warns_when_provider_kind_has_no_registered_profile(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    providers_path = runtime_home / "providers.env"
+    providers_path.write_text(
+        providers_path.read_text(encoding="utf-8")
+        + "MODEL_SENTINEL_PROVIDER_SYNTHETIC_ENABLED=0\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHETIC_LABEL=Synthetic Provider\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHETIC_KIND=synthetic\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHETIC_BASE_URL=https://synthetic.invalid/v1\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHETIC_MODELS_PATH=/models\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHETIC_API_KEY_ENV=SYNTHETIC_API_KEY\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHETIC_PRICE_MULTIPLIER=1\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHETIC_PRICE_DIVISOR=1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    exit_code = cli.main(["healthcheck"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "WARN    provider_profile" in captured.out
+    assert (
+        "Provider 'synthetic' kind 'synthetic' has no registered profile; "
+        "using the generic profile (labels and price-field detection will be "
+        "best-effort)."
+    ) in captured.out
+    assert "Provider 'openrouter'" not in captured.out

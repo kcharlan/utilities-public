@@ -110,6 +110,11 @@ The live config files are stored in the runtime home:
 
 `providers.env` defines which providers exist, whether they are enabled, which environment variable each provider uses for credentials, and how provider-returned pricing is converted into Model Sentinel's canonical unit of price per 1M tokens.
 
+Each provider's `KIND` selects a provider profile for its payload envelope,
+field mapping, labels, classification rules, and report behavior. Unregistered
+kinds remain usable through a flexible generic profile; `healthcheck` emits a
+non-fatal warning that their labels and price-field detection are best-effort.
+
 `settings.env` defines runtime behavior such as:
 
 - log rotation size
@@ -136,10 +141,10 @@ After running setup:
 5. create the first baseline with `./model-sentinel scan --save`
 
 `MODEL_SENTINEL_PROVIDER_<ID>_LABEL` is display text only; `<ID>` is the
-provider's identity and is what reports group by. Labels must be unique across
-all providers, enabled or not. A duplicate label is rejected when the config
-loads, and `healthcheck` reports it as a failed `config_load` check naming both
-providers.
+provider's identity and is what reports group by. Labels should be unique
+across all providers, enabled or not. A duplicate remains safe because reports
+disambiguate by provider ID; `healthcheck` emits a non-fatal warning naming
+both providers so the display text can be cleaned up.
 
 Each provider entry in `providers.env` must now include:
 

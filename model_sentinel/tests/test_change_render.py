@@ -24,21 +24,17 @@ from unittest.mock import patch
 import pytest
 
 from model_sentinel.change_render import (
-    FIELD_LEAF_LABELS,
-    FIELD_PATH_LABELS,
     INT_FRACTION_PRECISION,
-    KNOWN_BOOLEAN_FIELDS,
     PCT_PRECISION,
     PRICE_MAX_PRECISION,
     PRICE_MIN_PRECISION,
     RenderedChange,
     _bool_state,
     _both_numeric,
-    _classify_boolean,
+    _classify_boolean as _classify_boolean_with_profile,
     _fmt_int,
     _fmt_price_per_m,
-    _is_boolean_change,
-    _is_count_field,
+    _is_boolean_change as _is_boolean_change_with_profile,
     _list_diff_members,
     _list_item_text,
     _normalize_price,
@@ -49,23 +45,56 @@ from model_sentinel.change_render import (
     _significant_decimals,
     _smallest_printable,
     _split_field_path,
-    classify_change,
+    classify_change as classify_change_with_profile,
     format_qualified_label,
-    resolve_field_label,
+    resolve_field_label as resolve_field_label_with_profile,
 )
 from model_sentinel.models import FieldChange
+from model_sentinel.provider_profiles import (
+    GENERIC_PROFILE,
+    OPENROUTER_PROFILE,
+    default_categorize as _classify_field,
+    default_is_price_amount_field as _is_price_amount_field,
+)
 
-# Still re-exported from reporting.py because non-renderer call sites there
-# (category grouping, _price_movement_kind) call them directly. The six other
-# primitives that moved to change_render.py lost their reporting.py call sites
-# when Task 3 rewired the renderers onto RenderedChange, so their transitional
-# re-export shims were dropped and they are imported above from their real home.
+# The list-signature and numeric helpers remain reporting implementation
+# details. Provider-specific field/category predicates now come from profiles.
 from model_sentinel.reporting import (
-    _classify_field,
-    _is_price_amount_field,
     _list_change_signature,
     _numeric_value,
 )
+
+FIELD_PATH_LABELS = OPENROUTER_PROFILE.field_path_labels
+FIELD_LEAF_LABELS = OPENROUTER_PROFILE.field_leaf_labels
+KNOWN_BOOLEAN_FIELDS = OPENROUTER_PROFILE.known_boolean_fields
+_is_count_field = OPENROUTER_PROFILE.is_count_field
+
+
+def classify_change(
+    field_change: FieldChange,
+    *,
+    price_multiplier: int = 1,
+    price_divisor: int = 1,
+) -> RenderedChange:
+    return classify_change_with_profile(
+        field_change,
+        profile=OPENROUTER_PROFILE.with_pricing(
+            price_multiplier,
+            price_divisor,
+        ),
+    )
+
+
+def resolve_field_label(field_path: str) -> tuple[str, str | None]:
+    return resolve_field_label_with_profile(field_path, OPENROUTER_PROFILE)
+
+
+def _is_boolean_change(field_change: FieldChange) -> bool:
+    return _is_boolean_change_with_profile(field_change, OPENROUTER_PROFILE)
+
+
+def _classify_boolean(field_change: FieldChange) -> RenderedChange:
+    return _classify_boolean_with_profile(field_change, OPENROUTER_PROFILE)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +146,16 @@ def test_equal_values_is_noop():
     assert result.kind == "noop"
     assert result.direction == "none"
     assert result.semantic == "neutral"
+
+
+def test_generic_profile_uses_honest_fallback_label_with_shared_heuristics():
+    result = classify_change_with_profile(
+        FieldChange("pricing.prompt", "0.000002", "0.000003"),
+        profile=GENERIC_PROFILE,
+    )
+
+    assert result.label == "Prompt"
+    assert result.kind == "price"
 
 
 # ---------------------------------------------------------------------------
