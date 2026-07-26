@@ -162,6 +162,49 @@ run_git_capture() {
   return 1
 }
 
+run_zipinfo_capture() {
+  local output_file="$1"
+  shift
+  local error_file="$AUDIT_TMP/zipinfo-command.stderr"
+
+  /usr/bin/env -i \
+    HOME="$HOME" \
+    PATH="$PATH" \
+    LC_ALL=C \
+    ZIPOPT= \
+    ZIPINFOOPT= \
+    UNZIPOPT= \
+    zipinfo "$@" \
+    </dev/null > "$output_file" 2> "$error_file"
+}
+
+stream_archive_entry() {
+  setopt localoptions pipefail
+  local archive_file="$1"
+  local entry_name="$2"
+  local byte_limit="$3"
+  local output_file="$4"
+  local unzip_error="$AUDIT_TMP/unzip-command.stderr"
+  local sink_error="$AUDIT_TMP/archive-sink.stderr"
+  local -a stream_statuses
+
+  /usr/bin/env -i \
+    HOME="$HOME" \
+    PATH="$PATH" \
+    LC_ALL=C \
+    ZIPOPT= \
+    ZIPINFOOPT= \
+    UNZIPOPT= \
+    unzip -p "$archive_file" "$entry_name" \
+    </dev/null 2> "$unzip_error" |
+    /usr/bin/head -c "$byte_limit" \
+      > "$output_file" 2> "$sink_error"
+  stream_statuses=("${pipestatus[@]}")
+  (( ${#stream_statuses[@]} == 2 &&
+      stream_statuses[1] == 0 &&
+      stream_statuses[2] == 0 ))
+}
+
 typeset -a direct_source_paths audited_scopes index_paths
 typeset -a invalid_index_paths pending_deletion_paths model_module_paths
 typeset -A index_membership index_modes index_oids
@@ -601,45 +644,201 @@ else
 fi
 
 if [[ "$model_can_inspect" == true ]]; then
-  verify_dir="$AUDIT_TMP/model-extract"
-  mkdir -m 700 -- "$verify_dir"
-  if ! unzip -q "$model_zipapp" -d "$verify_dir" </dev/null; then
-    report_failure "model-sentinel is not a readable zipapp"
+  model_preamble_expected="$AUDIT_TMP/model-preamble-expected"
+  model_preamble_actual="$AUDIT_TMP/model-preamble-actual"
+  printf '#!/usr/bin/env python3\nPK\003\004' > "$model_preamble_expected"
+  if ! /usr/bin/head -c 27 "$model_zipapp" \
+      > "$model_preamble_actual" 2> "$AUDIT_TMP/model-preamble.stderr" ||
+      ! compare_bytes "$model_preamble_expected" "$model_preamble_actual"; then
+    report_failure "model-sentinel zipapp has an invalid executable preamble"
     model_zipapp_ok=false
-  else
-    if [[ "$model_source_ok" == true ]]; then
-      if compare_bytes \
-        "$verify_dir/__main__.py" \
-        "$REPO_ROOT/model_sentinel/__main__.py"; then
-        :
-      else
-        comparison_status=$?
-        if (( comparison_status == 1 )); then
-          report_failure "model-sentinel __main__.py is stale"
-        else
-          report_failure "model-sentinel __main__.py comparison failed"
-        fi
+  fi
+
+  model_inventory_ok="$model_source_ok"
+  typeset -a expected_archive_entries expected_regular_entries
+  typeset -A expected_archive_sources expected_archive_types
+  typeset -A expected_archive_sizes archive_inventory_counts
+  expected_archive_entries=(__main__.py model_sentinel/)
+  expected_regular_entries=(__main__.py)
+  expected_archive_sources[__main__.py]=model_sentinel/__main__.py
+  expected_archive_types[__main__.py]=file
+  expected_archive_types[model_sentinel/]=directory
+  expected_archive_sizes[model_sentinel/]=0
+
+  for model_module_path in "${model_module_paths[@]}"; do
+    archive_entry="model_sentinel/${model_module_path:t}"
+    expected_archive_entries+=("$archive_entry")
+    expected_regular_entries+=("$archive_entry")
+    expected_archive_sources[$archive_entry]="$model_module_path"
+    expected_archive_types[$archive_entry]=file
+  done
+
+  expected_total_size=0
+  if [[ "$model_source_ok" == true ]]; then
+    for archive_entry in "${expected_regular_entries[@]}"; do
+      archive_source="$REPO_ROOT/${expected_archive_sources[$archive_entry]}"
+      archive_source_size=
+      if ! archive_source_size="$(file_size "$archive_source" 2>/dev/null)" ||
+          [[ "$archive_source_size" != <-> ]]; then
+        report_failure "model-sentinel source size inspection failed"
         model_zipapp_ok=false
-      fi
-    fi
-    for model_module_path in "${model_module_paths[@]}"; do
-      source_file="$REPO_ROOT/$model_module_path"
-      archive_module="$verify_dir/model_sentinel/${model_module_path:t}"
-      if [[ -n "${source_state_invalid[$model_module_path]-}" ]]; then
+        model_inventory_ok=false
         continue
-      elif [[ ! -f "$archive_module" || -L "$archive_module" ]]; then
-        report_failure \
-          "model-sentinel module ${model_module_path:t} is missing from the archive"
-        model_zipapp_ok=false
-      elif compare_bytes "$source_file" "$archive_module"; then
-        :
-      else
-        comparison_status=$?
-        if (( comparison_status == 1 )); then
-          report_failure "model-sentinel module ${model_module_path:t} is stale"
+      fi
+      expected_archive_sizes[$archive_entry]="$archive_source_size"
+      expected_total_size=$((expected_total_size + archive_source_size))
+    done
+  fi
+
+  inventory_list="$AUDIT_TMP/model-inventory.list"
+  if ! run_zipinfo_capture "$inventory_list" -1 "$model_zipapp"; then
+    report_failure "model-sentinel archive inventory could not be read"
+    model_zipapp_ok=false
+    model_inventory_ok=false
+  else
+    inventory_unexpected=false
+    while IFS= read -r inventory_entry ||
+        [[ -n "$inventory_entry" ]]; do
+      if [[ -z "${expected_archive_types[$inventory_entry]-}" ]]; then
+        inventory_unexpected=true
+        continue
+      fi
+      archive_inventory_counts[$inventory_entry]=$((\
+        ${archive_inventory_counts[$inventory_entry]:-0} + 1))
+    done < "$inventory_list"
+
+    if [[ "$inventory_unexpected" == true ]]; then
+      report_failure "model-sentinel archive contains unexpected entries"
+      model_zipapp_ok=false
+      model_inventory_ok=false
+    fi
+    for archive_entry in "${expected_archive_entries[@]}"; do
+      inventory_count="${archive_inventory_counts[$archive_entry]:-0}"
+      if (( inventory_count == 0 )); then
+        if [[ "$archive_entry" == __main__.py ]]; then
+          report_failure "model-sentinel __main__.py is missing from the archive"
+        elif [[ "$archive_entry" == model_sentinel/ ]]; then
+          report_failure "model-sentinel package directory entry is missing"
         else
           report_failure \
-            "model-sentinel module ${model_module_path:t} comparison failed"
+            "model-sentinel module ${archive_entry:t} is missing from the archive"
+        fi
+        model_zipapp_ok=false
+        model_inventory_ok=false
+      elif (( inventory_count != 1 )); then
+        report_failure "model-sentinel archive contains duplicate entries"
+        model_zipapp_ok=false
+        model_inventory_ok=false
+      fi
+    done
+  fi
+
+  advertised_total_size=0
+  if [[ "$model_inventory_ok" == true ]]; then
+    archive_detail_number=0
+    for archive_entry in "${expected_archive_entries[@]}"; do
+      archive_detail_number=$((archive_detail_number + 1))
+      detail_file="$AUDIT_TMP/model-detail-$archive_detail_number"
+      verbose_file="$AUDIT_TMP/model-verbose-$archive_detail_number"
+      if ! run_zipinfo_capture \
+        "$detail_file" -l "$model_zipapp" "$archive_entry"; then
+        report_failure "model-sentinel archive entry metadata could not be read"
+        model_zipapp_ok=false
+        model_inventory_ok=false
+        continue
+      fi
+
+      detail_records=0
+      detail_permissions=
+      advertised_size=
+      while IFS= read -r detail_line ||
+          [[ -n "$detail_line" ]]; do
+        if [[ "$detail_line" == [-d]* ]]; then
+          detail_fields=(${=detail_line})
+          if (( ${#detail_fields[@]} < 10 )); then
+            detail_records=99
+            break
+          fi
+          detail_records=$((detail_records + 1))
+          detail_permissions="${detail_fields[1]}"
+          advertised_size="${detail_fields[4]}"
+        fi
+      done < "$detail_file"
+      expected_type="${expected_archive_types[$archive_entry]}"
+      expected_size="${expected_archive_sizes[$archive_entry]}"
+      if (( detail_records != 1 )) ||
+          [[ "$advertised_size" != <-> ]] ||
+          { [[ "$expected_type" == file ]] &&
+            [[ "${detail_permissions[1]}" != - ]]; } ||
+          { [[ "$expected_type" == directory ]] &&
+            [[ "${detail_permissions[1]}" != d ]]; } ||
+          [[ "$advertised_size" != "$expected_size" ]]; then
+        report_failure "model-sentinel archive entry type or size is invalid"
+        model_zipapp_ok=false
+        model_inventory_ok=false
+        continue
+      fi
+      advertised_total_size=$((advertised_total_size + advertised_size))
+
+      if ! run_zipinfo_capture \
+        "$verbose_file" -v "$model_zipapp" "$archive_entry"; then
+        report_failure "model-sentinel archive security metadata could not be read"
+        model_zipapp_ok=false
+        model_inventory_ok=false
+        continue
+      fi
+      security_count="$(grep -Fc \
+        'file security status:                           not encrypted' \
+        "$verbose_file" || true)"
+      if [[ "$security_count" != 1 ]]; then
+        report_failure "model-sentinel archive entry encryption state is invalid"
+        model_zipapp_ok=false
+        model_inventory_ok=false
+      fi
+    done
+    if (( advertised_total_size != expected_total_size )); then
+      report_failure "model-sentinel archive total advertised size is invalid"
+      model_zipapp_ok=false
+      model_inventory_ok=false
+    fi
+  fi
+
+  if [[ "$model_inventory_ok" == true ]]; then
+    stream_number=0
+    for archive_entry in "${expected_regular_entries[@]}"; do
+      stream_number=$((stream_number + 1))
+      expected_size="${expected_archive_sizes[$archive_entry]}"
+      streamed_file="$AUDIT_TMP/model-entry-$stream_number"
+      if ! stream_archive_entry \
+        "$model_zipapp" \
+        "$archive_entry" \
+        "$((expected_size + 1))" \
+        "$streamed_file"; then
+        report_failure "model-sentinel archive entry streaming failed"
+        model_zipapp_ok=false
+        continue
+      fi
+      streamed_size=
+      if ! streamed_size="$(file_size "$streamed_file" 2>/dev/null)" ||
+          [[ "$streamed_size" != "$expected_size" ]]; then
+        report_failure "model-sentinel archive entry streamed size is invalid"
+        model_zipapp_ok=false
+        continue
+      fi
+      archive_source="$REPO_ROOT/${expected_archive_sources[$archive_entry]}"
+      if compare_bytes "$archive_source" "$streamed_file"; then
+        :
+      else
+        comparison_status=$?
+        if [[ "$archive_entry" == __main__.py ]]; then
+          artifact_label="model-sentinel __main__.py"
+        else
+          artifact_label="model-sentinel module ${archive_entry:t}"
+        fi
+        if (( comparison_status == 1 )); then
+          report_failure "$artifact_label is stale"
+        else
+          report_failure "$artifact_label comparison failed"
         fi
         model_zipapp_ok=false
       fi

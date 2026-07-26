@@ -156,6 +156,15 @@ build_model_zipapp() {
   chmod 755 "$target"
 }
 
+install_fixture_archive() {
+  local archive="$1"
+  local target="$FIXTURE_SCRIPTS/model-sentinel"
+  printf '#!/usr/bin/env python3\n' > "$target"
+  /bin/cat "$archive" >> "$target"
+  zip -q -A "$target"
+  chmod 755 "$target"
+}
+
 new_fixture() {
   fixture_counter=$((fixture_counter + 1))
   FIXTURE_ROOT="$SUITE_ROOT/fixture-$fixture_counter"
@@ -1025,6 +1034,213 @@ test_shallow_history_fails_coverage() {
   assert_not_contains "$AUDIT_STDOUT" "Local deployment audit: PASS"
 }
 
+test_model_archive_rejects_untracked_extra_module() {
+  new_fixture
+  write_synthetic_file \
+    "$FIXTURE_REPO/model_sentinel/model_sentinel/extra.py" \
+    "untracked extra archive module"
+  build_model_zipapp
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "untracked extra archive module"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel archive contains unexpected entries"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_rejects_deleted_index_module() {
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q \
+    model_sentinel/model_sentinel/audit.py
+  git -C "$FIXTURE_REPO" commit -qm "delete synthetic model module"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "deleted module remains in archive"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel archive contains unexpected entries"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_requires_exact_preamble() {
+  new_fixture
+  local zipapp="$FIXTURE_SCRIPTS/model-sentinel"
+  local remainder="$FIXTURE_ROOT/model-remainder"
+  /usr/bin/tail -c +2 "$zipapp" > "$remainder"
+  printf '?' > "$zipapp"
+  /bin/cat "$remainder" >> "$zipapp"
+  chmod 755 "$zipapp"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "incorrect model zipapp preamble"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel zipapp has an invalid executable preamble"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_content_mismatches() {
+  new_fixture
+  local source="$FIXTURE_REPO/model_sentinel/__main__.py"
+  local changed="$FIXTURE_ROOT/changed-entrypoint"
+  /usr/bin/tr 's' 'S' < "$source" > "$changed"
+  mv "$changed" "$source"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" "model entrypoint content mismatch"
+  assert_contains "$AUDIT_STDERR" "model-sentinel __main__.py is stale"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+
+  new_fixture
+  source="$FIXTURE_REPO/model_sentinel/model_sentinel/audit.py"
+  changed="$FIXTURE_ROOT/changed-module"
+  /usr/bin/tr 's' 'S' < "$source" > "$changed"
+  mv "$changed" "$source"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" "model module content mismatch"
+  assert_contains "$AUDIT_STDERR" "model-sentinel module audit.py is stale"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_rejects_duplicate_entry() {
+  new_fixture
+  local staging="$FIXTURE_ROOT/model-staging"
+  local archive="$FIXTURE_ROOT/duplicate.zip"
+  (
+    cd "$staging"
+    /usr/bin/tar --no-recursion -acf "$archive" \
+      __main__.py \
+      model_sentinel/ \
+      model_sentinel/__init__.py \
+      model_sentinel/audit.py \
+      __main__.py
+  )
+  install_fixture_archive "$archive"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "duplicate archive entry"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel archive contains duplicate entries"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_rejects_traversal_entry_without_writes() {
+  new_fixture
+  local staging="$FIXTURE_ROOT/model-staging"
+  local archive="$FIXTURE_ROOT/traversal.zip"
+  local outside="$FIXTURE_ROOT/escape"
+  print -r -- "must not be written" > "$outside"
+  (
+    cd "$staging"
+    zip -q -X "$archive" \
+      __main__.py \
+      model_sentinel/ \
+      model_sentinel/*.py \
+      ../escape
+  )
+  install_fixture_archive "$archive"
+  local before_digest
+  before_digest="$(shasum -a 256 "$outside")"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "archive traversal entry"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel archive contains unexpected entries"
+  [[ "$(shasum -a 256 "$outside")" == "$before_digest" ]] ||
+    fail "archive traversal test changed an external file"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_rejects_expected_symlink_entry() {
+  new_fixture
+  local staging="$FIXTURE_ROOT/model-staging"
+  local archive="$FIXTURE_ROOT/symlink.zip"
+  rm "$staging/model_sentinel/audit.py"
+  ln -s __init__.py "$staging/model_sentinel/audit.py"
+  (
+    cd "$staging"
+    zip -q -X -y "$archive" \
+      __main__.py \
+      model_sentinel/ \
+      model_sentinel/*.py
+  )
+  install_fixture_archive "$archive"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "archive symlink entry"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel archive entry type or size is invalid"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_rejects_encrypted_entries() {
+  new_fixture
+  local staging="$FIXTURE_ROOT/model-staging"
+  local archive="$FIXTURE_ROOT/encrypted.zip"
+  (
+    cd "$staging"
+    zip -q -X -P conspicuously-synthetic-password "$archive" \
+      __main__.py \
+      model_sentinel/ \
+      model_sentinel/*.py
+  )
+  install_fixture_archive "$archive"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "encrypted archive entries"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel archive entry encryption state is invalid"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_rejects_truncation() {
+  new_fixture
+  local zipapp="$FIXTURE_SCRIPTS/model-sentinel"
+  local truncated="$FIXTURE_ROOT/truncated"
+  local current_size
+  current_size="$(stat -f '%z' "$zipapp")"
+  /usr/bin/head -c "$((current_size - 12))" "$zipapp" > "$truncated"
+  mv "$truncated" "$zipapp"
+  chmod 755 "$zipapp"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "truncated archive"
+  assert_contains "$AUDIT_STDERR" "model-sentinel archive inventory could not be read"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_bounds_streamed_output() {
+  new_fixture
+  local shim_dir="$FIXTURE_ROOT/shims"
+  mkdir -p "$shim_dir"
+  {
+    print '#!/bin/zsh'
+    printf 'fixture_repo=%q\n' "$FIXTURE_REPO"
+    print 'entry="${3:-}"'
+    print 'if [[ "$entry" == __main__.py ]]; then'
+    print '  /bin/cat "$fixture_repo/model_sentinel/__main__.py"'
+    print 'else'
+    print '  /bin/cat "$fixture_repo/model_sentinel/model_sentinel/${entry:t}"'
+    print 'fi'
+    print "printf 'X'"
+  } > "$shim_dir/unzip"
+  chmod 755 "$shim_dir/unzip"
+  run_audit "$shim_dir"
+
+  assert_status 1 "$AUDIT_STATUS" "archive decompression overrun"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel archive entry streamed size is invalid"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+  if find "$FIXTURE_TMP" -mindepth 1 -print -quit | grep -q .; then
+    fail "bounded archive stream left audit temporary files behind"
+  fi
+}
+
 test_passing_baseline
 test_missing_direct_copy
 test_project_byte_drift
@@ -1062,5 +1278,15 @@ test_untracked_ignore_sources_are_not_authoritative
 test_side_branch_only_deletion_is_excluded
 test_stale_pathname_with_spaces_is_not_printed
 test_shallow_history_fails_coverage
+test_model_archive_rejects_untracked_extra_module
+test_model_archive_rejects_deleted_index_module
+test_model_archive_requires_exact_preamble
+test_model_archive_content_mismatches
+test_model_archive_rejects_duplicate_entry
+test_model_archive_rejects_traversal_entry_without_writes
+test_model_archive_rejects_expected_symlink_entry
+test_model_archive_rejects_encrypted_entries
+test_model_archive_rejects_truncation
+test_model_archive_bounds_streamed_output
 
 print -- "check_local_deployments tests: PASS"
