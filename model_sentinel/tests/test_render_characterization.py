@@ -198,9 +198,12 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
        this fixture: it is the only one whose price moved. Each card header
        gains a dim `↑` back-link to `#price-movement`;
     3. R1 -- a price cell's `title` grew from the bare raw value to the whole
-       derivation, `2.0e-6 · 2e-06 × 1,000,000 = $2.00`. The scientific
+       derivation, `2e-06 (2.0e-6) × 1,000,000 = $2.00`. The scientific
        notation is built from `Decimal` on the provider's own string, so it is
-       exact rather than rounded;
+       exact rather than rounded, and it is PARENTHESISED rather than joined to
+       the raw value by a middle dot -- `2.0e-6 · 2e-06 × ...` read as a
+       product of the mantissa and the raw value, an expression whose stated
+       left side does not equal its right;
     4. R3 -- each price row gains a `<tr class="raw-line">` sub-line holding
        `old_raw → new_raw`, hidden by CSS until the header's new
        `Show raw values` checkbox is ticked. The checkbox is CHECKED by default
@@ -939,6 +942,12 @@ h3 {
   from { background: var(--accent-amber-dim); }
   to { background: var(--bg-card); }
 }
+/* The landing flash is a nicety; the amber border already says "you are here".
+   A reader who has asked the OS to reduce motion keeps the border and loses
+   the 1.8s fade. */
+@media (prefers-reduced-motion: reduce) {
+  .model-card:target { animation: none; }
+}
 .model-card-header {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
@@ -1123,9 +1132,17 @@ td.delta-price-coverage { color: var(--accent-blue); }
 }
 .card-table tr.raw-line { display: none; }
 body:has(#show-raw:checked) .card-table tr.raw-line { display: table-row; }
+/* Structural, so it covers the leading spacer cell too: without `padding-top`
+   on BOTH cells the empty first column would set a taller row than the values
+   it sits beside. */
 .card-table tr.raw-line td {
   border-top: 1px solid transparent;
   padding-top: 0;
+}
+/* Presentational, and scoped to the cell that actually holds the text. The
+   point of R3 is a value you can drag-select and paste, so the class naming
+   that cell is the class carrying its rule rather than a bare test hook. */
+.card-table tr.raw-line td.raw-values {
   color: var(--text-dim);
   font-size: 0.75rem;
   user-select: text;
@@ -1260,13 +1277,13 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card" id="m-synth-model-core">
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><span class="hidden-count" title="1 squelched">+1 hidden</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2.0e-6 · 2e-06 × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-6 · 3.5e-06 × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="4.0e-6 · 0.000004 × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="5.0e-6 · 0.000005 × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
-<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5.0e-8 · 5e-08 × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">— → 5e-08</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9.0e-8 · 9e-08 × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">9e-08 → —</td></tr>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val num">131,072</td><td class="arrow">→</td><td class="new-val num">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
 <tr class="group-start row-alt"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
@@ -1375,13 +1392,13 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card" id="m-synth-model-core">
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2.0e-6 · 2e-06 × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-6 · 3.5e-06 × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="4.0e-6 · 0.000004 × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="5.0e-6 · 0.000005 × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
-<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5.0e-8 · 5e-08 × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">— → 5e-08</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9.0e-8 · 9e-08 × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">9e-08 → —</td></tr>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val num">131,072</td><td class="arrow">→</td><td class="new-val num">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
 <tr class="group-start row-alt"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
@@ -2156,7 +2173,7 @@ def test_a_price_below_the_columns_resolution_bounds_itself_in_every_format() ->
         #   decrease panel is omitted rather than rendered empty. Task 10 (R1)
         #   added the last two: each price cell's `title` now ends `= <the
         #   cell's own display>`, so a bounded cell has a bounded right-hand
-        #   side (`1.0e-6 · 1e-06 = <$0.0001`, which is the bound restated, not
+        #   side (`1e-06 (1.0e-6) = <$0.0001`, which is the bound restated, not
         #   a second claim).
         expected_sentinels = 10 if format_name == "html" else 2
         assert report.count(_sentinel(format_name, "<$0.0001")) == expected_sentinels, format_name

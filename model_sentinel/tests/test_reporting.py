@@ -1594,7 +1594,7 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
     # magnitude, the literal provider value, and the arithmetic behind the
     # figure in the cell.
     assert (
-        '<td class="new-val num" title="3.0e-7 · 0.0000003 × 1,000,000 = $0.30">$0.30</td>'
+        '<td class="new-val num" title="0.0000003 (3.0e-7) × 1,000,000 = $0.30">$0.30</td>'
     ) in row
     assert '<td class="old-val num">\u2014</td>' in row
     assert '<td class="unit">/1M</td>' in row
@@ -1890,10 +1890,10 @@ def test_a_long_scalar_value_is_not_promised_nowrap_by_the_card() -> None:
     # ...while both price cells do. (R1 widened the tooltip; the `num` class,
     # which is what this test is about, is unchanged.)
     assert (
-        '<td class="old-val num" title="2.0e-6 · 0.000002 × 1,000,000 = $2.00">$2.00</td>'
+        '<td class="old-val num" title="0.000002 (2.0e-6) × 1,000,000 = $2.00">$2.00</td>'
     ) in price_row
     assert (
-        '<td class="new-val num" title="3.5e-6 · 0.0000035 × 1,000,000 = $3.50">$3.50</td>'
+        '<td class="new-val num" title="0.0000035 (3.5e-6) × 1,000,000 = $3.50">$3.50</td>'
     ) in price_row
 
     # And `nowrap` is scoped to that class, with the wrapping cells given an
@@ -2052,9 +2052,14 @@ def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
     -- fails here without anyone having to remember to extend the test.
 
     R1 turned that tooltip from the bare raw value into the whole derivation --
-    `<scientific> · <raw> × <factor> = <display>` -- so the invariant is now
+    `<raw> (<scientific>) × <factor> = <display>` -- so the invariant is now
     parsed out of the title rather than read off it whole, and it got stronger
     in the process: the arithmetic is CHECKED here, not merely present.
+
+    The scientific notation is PARENTHESISED, not joined to the raw value by a
+    middle dot. That is what makes the title a single readable equation: the
+    only operator between the leading operand and the `=` is the conversion
+    factor's, so the left side really does evaluate to the right side.
     """
     changed = (
         ModelDelta(
@@ -2087,9 +2092,15 @@ def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
             continue
         assert shown.startswith("$"), cells
         assert title, cells
-        scientific, _, rest = title.partition(" · ")
-        raw, _, product = rest.partition(" × ")
-        factor, _, result = product.partition(" = ")
+        raw, opened, rest = title.partition(" (")
+        scientific, closed, product = rest.partition(") ")
+        factor, equals, result = product.partition("× ")
+        factor, _, result = result.partition(" = ")
+        # The shape itself, so a title that lost its parentheses -- or went back
+        # to a middle dot -- fails here rather than parsing into empty strings
+        # that quietly satisfy the comparisons below.
+        assert opened and closed and equals, title
+        assert factor and result, title
         # The tooltip is the PROVIDER's number, not a second copy of the
         # normalized one -- a title echoing the cell would be no audit trail.
         assert raw != shown, cells
@@ -2103,10 +2114,10 @@ def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
 
     row = _card_row(report, "Input")
     assert (
-        '<td class="old-val num" title="2.0e-6 · 0.000002 × 1,000,000 = $2.00">$2.00</td>'
+        '<td class="old-val num" title="0.000002 (2.0e-6) × 1,000,000 = $2.00">$2.00</td>'
     ) in row
     assert (
-        '<td class="new-val num" title="3.5e-6 · 0.0000035 × 1,000,000 = $3.50">$3.50</td>'
+        '<td class="new-val num" title="0.0000035 (3.5e-6) × 1,000,000 = $3.50">$3.50</td>'
     ) in row
 
 
@@ -2209,7 +2220,7 @@ def test_price_delta_column_renders_a_bounded_sentinel_rather_than_a_false_zero(
     #
     # FIVE since R1, not three, and the two new ones are in the price cells'
     # `title`s: that tooltip now ends `= <the cell's own display>`, so a bounded
-    # cell carries a bounded right-hand side. `1.0e-6 · 1e-06 = <$0.0001` reads
+    # cell carries a bounded right-hand side. `1e-06 (1.0e-6) = <$0.0001` reads
     # as "equals less than $0.0001", which is what the bound asserts -- the
     # tooltip's job is the derivation, and the exact operand is right there in
     # it. Pinned exactly rather than loosened to `>= 3`: the note on the
@@ -4786,17 +4797,48 @@ def test_price_cell_tooltips_carry_the_scientific_notation_and_the_conversion() 
     html = _navigation_report()
     row = _card_row(html, "Input")
     assert (
-        '<td class="old-val num" title="1.0e-6 · 0.000001 × 1,000,000 = $1.00">$1.00</td>'
+        '<td class="old-val num" title="0.000001 (1.0e-6) × 1,000,000 = $1.00">$1.00</td>'
     ) in row
     assert (
-        '<td class="new-val num" title="2.0e-6 · 0.000002 × 1,000,000 = $2.00">$2.00</td>'
+        '<td class="new-val num" title="0.000002 (2.0e-6) × 1,000,000 = $2.00">$2.00</td>'
     ) in row
+
+
+def test_a_price_tooltip_never_separates_its_operands_with_a_middle_dot() -> None:
+    """The tooltip must not read as an arithmetic expression it does not satisfy.
+
+    `2.0e-6 · 0.000002 × 1,000,000 = $2.00` puts a multiplication sign between
+    a mantissa and the raw value, so the stated left side evaluates to 4e-6 and
+    the equation is false on its face. Parenthesising the magnitude makes it an
+    aside rather than an operand.
+
+    Asserted over every price `title` in the report and by the ABSENCE of the
+    dot, so restoring the old separator anywhere -- including in a row this
+    module does not spell out -- fails here.
+    """
+    for html in (_navigation_report(), _unscaled_price_report("2.5", "3.5")):
+        titles = [title for title, _ in _PRICE_VALUE_CELL.findall(html) if title]
+        assert titles
+        for title in titles:
+            assert " · " not in title, title
+            raw, opened, rest = title.partition(" (")
+            scientific, closed, _ = rest.partition(")")
+            assert opened and closed, title
+            # The parenthetical restates the leading operand, which is the whole
+            # reason it is safe to bracket it out of the arithmetic.
+            assert float(scientific) == float(raw), title
 
 
 def test_a_price_tooltip_states_no_conversion_when_the_provider_needs_none() -> None:
-    """A `× 1` would read as a conversion where there is not one."""
+    """A `× 1` would read as a conversion where there is not one.
+
+    With no factor the title is `2.5 (2.5e0) = $2.50`: one operand, its
+    magnitude, and the figure in the cell. The old `2.5e0 · 2.5 = $2.50` was a
+    bare `A · B = C` in which C was neither A, B, nor their product.
+    """
     row = _card_row(_unscaled_price_report("2.5", "3.5"), "Input")
-    assert '<td class="old-val num" title="2.5e0 · 2.5 = $2.50">$2.50</td>' in row
+    assert '<td class="old-val num" title="2.5 (2.5e0) = $2.50">$2.50</td>' in row
+    assert '<td class="new-val num" title="3.5 (3.5e0) = $3.50">$3.50</td>' in row
     assert "× 1 " not in row
 
 

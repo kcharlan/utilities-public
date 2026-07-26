@@ -2450,6 +2450,12 @@ h3 {
   from { background: var(--accent-amber-dim); }
   to { background: var(--bg-card); }
 }
+/* The landing flash is a nicety; the amber border already says "you are here".
+   A reader who has asked the OS to reduce motion keeps the border and loses
+   the 1.8s fade. */
+@media (prefers-reduced-motion: reduce) {
+  .model-card:target { animation: none; }
+}
 .model-card-header {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
@@ -2634,9 +2640,17 @@ td.delta-price-coverage { color: var(--accent-blue); }
 }
 .card-table tr.raw-line { display: none; }
 body:has(#show-raw:checked) .card-table tr.raw-line { display: table-row; }
+/* Structural, so it covers the leading spacer cell too: without `padding-top`
+   on BOTH cells the empty first column would set a taller row than the values
+   it sits beside. */
 .card-table tr.raw-line td {
   border-top: 1px solid transparent;
   padding-top: 0;
+}
+/* Presentational, and scoped to the cell that actually holds the text. The
+   point of R3 is a value you can drag-select and paste, so the class naming
+   that cell is the class carrying its rule rather than a bare test hook. */
+.card-table tr.raw-line td.raw-values {
   color: var(--text-dim);
   font-size: 0.75rem;
   user-select: text;
@@ -3554,21 +3568,29 @@ def _card_raw_title(
 ) -> str:
     """R1: a price cell's `title`, showing the whole derivation, else `""`.
 
-    `2.0e-6 · 0.000002 × 1,000,000 = $2.00` -- magnitude, the literal provider
-    value, and the arithmetic that produced the figure in the cell. The title
-    used to be the raw value alone, which answered "what did the provider say"
-    but left "is this really $2.00 and not $0.20" to be done in the reader's
-    head against a number with six leading zeros.
+    `0.000002 (2.0e-6) × 1,000,000 = $2.00` -- the literal provider value, its
+    magnitude as a parenthetical aside, and the arithmetic that produced the
+    figure in the cell. The title used to be the raw value alone, which answered
+    "what did the provider say" but left "is this really $2.00 and not $0.20" to
+    be done in the reader's head against a number with six leading zeros.
+
+    The scientific notation is parenthesised rather than joined with a middle
+    dot. `2.0e-6 · 0.000002 × 1,000,000 = $2.00` reads as a product of a
+    mantissa and the raw value -- an expression that evaluates to 4e-6, not
+    $2.00 -- and with no conversion factor it degrades to `2.5e0 · 2.5 = $2.50`,
+    a bare `A · B = C` whose C is neither. A tooltip that exists so a reader can
+    check a price without doing arithmetic cannot use a separator that can be
+    read as an operator.
 
     Absent sides carry no tooltip: there is no raw value to show, and an empty
     `title` is a tooltip that opens onto nothing. A provider whose prices are
     already per-1M (`multiplier == divisor == 1`) gets no factor clause rather
-    than a `× 1` that would read as a conversion.
+    than a `× 1` that would read as a conversion, leaving `2.5 (2.5e0) = $2.50`.
     """
     if rendered.kind != "price" or raw is None:
         return ""
     scientific = _scientific_notation(raw)
-    lead = f"{scientific} · {raw}" if scientific is not None else raw
+    lead = f"{raw} ({scientific})" if scientific is not None else raw
     factor = _price_conversion_factor(price_multiplier, price_divisor)
     derivation = f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
     return f' title="{html_module.escape(derivation)}"'
@@ -4132,6 +4154,35 @@ def _split_provider_tiers(
     )
 
 
+def _model_card_html(
+    item: _PlannedModelChange,
+    anchor: str,
+    result: ProviderScanResult,
+    policy: ReportDetailPolicy,
+    *,
+    back_link: bool,
+) -> str:
+    """One model's card, discarding the squelch count `_render_html_model_changes` also returns.
+
+    Module level, taking `result` as an argument, rather than a closure defined
+    inside `_build_scan_change_tiers`'s per-provider loop. The closure read
+    `result` from the enclosing scope, which was correct only because every call
+    happened in the iteration that bound it -- the late-binding shape ruff's
+    B023 flags, and one refactor away from a card rendered against the wrong
+    provider's price scale.
+    """
+    card, _ = _render_html_model_changes(
+        item.delta,
+        result.price_multiplier,
+        result.price_divisor,
+        policy,
+        display_plan=item.display,
+        anchor=anchor,
+        back_link=back_link,
+    )
+    return card
+
+
 def _build_scan_change_tiers(
     planned_results: list[tuple[ProviderScanResult, _ProviderChangePlan]],
     policy: ReportDetailPolicy,
@@ -4190,23 +4241,14 @@ def _build_scan_change_tiers(
     for split, primary_ids, secondary_ids in zip(splits, primary_anchors, secondary_anchors):
         result, provider_plan = split.result, split.plan
 
-        def _card(item: _PlannedModelChange, anchor: str) -> str:
-            card, _ = _render_html_model_changes(
-                item.delta,
-                result.price_multiplier,
-                result.price_divisor,
-                policy,
-                display_plan=item.display,
-                anchor=anchor,
-                back_link=back_link,
-            )
-            return card
-
-        ranked = [_card(item, anchor) for item, anchor in zip(split.primary, primary_ids)]
+        ranked = [
+            _model_card_html(item, anchor, result, policy, back_link=back_link)
+            for item, anchor in zip(split.primary, primary_ids)
+        ]
         deferred = [
             _render_html_bulk_changes(item, policy)
             if isinstance(item, _BulkChangeGroup)
-            else _card(item, anchor)
+            else _model_card_html(item, anchor, result, policy, back_link=back_link)
             for item, anchor in zip(split.secondary, secondary_ids)
         ]
 
