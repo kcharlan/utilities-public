@@ -237,7 +237,7 @@ def _split_field_path(field_path: str) -> tuple[str, str | None]:
     Scans character by character tracking bracket depth rather than splitting
     on "." first. That is not defensiveness for its own sake:
     `_pricing_override_path` interpolates the condition value through
-    `_render_value`, so a non-integer threshold puts a "." INSIDE the brackets
+    `_scalar_display`, so a non-integer threshold puts a "." INSIDE the brackets
     and a naive `field_path.split(".")` would tear the segment in half, losing
     both the label and the qualifier.
     """
@@ -830,11 +830,13 @@ def _normalize_price(raw_value: float, multiplier: int, divisor: int) -> float:
 # `ABSENT_TEXT_DISPLAY` here would move the text and markdown characterization
 # goldens. HTML closes it at the renderer, keyed on `raw is None`.
 #
-# `ABSENT_TEXT_DISPLAY` is a constant because `reporting.py` must RECOGNISE the
-# token in order to respell it (`_summary_detail_with_absent_sides`), and the
-# token had ten independent literals across the two modules before this. A
-# producer that changed its literal while that consumer kept matching the old
-# one would revert the HTML spelling silently, with no test failing.
+# `ABSENT_TEXT_DISPLAY` is a constant because the token had ten independent
+# literals across the two modules before this, and the text renderers still
+# emit it while the HTML ones must not. It is no longer RECOGNISED anywhere:
+# `_summary_detail_with_absent_sides`, which respelled the token after the fact
+# in the Change Summary, is gone -- the summary composes its cell from
+# `RenderedChange` through `_html_side_display`, so `null` is never produced on
+# an HTML path rather than produced and then replaced.
 ABSENT_DISPLAY = "—"
 ABSENT_TEXT_DISPLAY = "null"
 
@@ -844,13 +846,15 @@ def _raw_value(value: Any) -> str | None:
 
 
 def _scalar_display(value: Any) -> str:
-    """Match reporting.py's `_render_value` exactly (behavior-preserving).
+    """THE scalar spelling for every renderer (behavior-preserving).
 
-    `_render_value` special-cases `dict`/`list` through
+    `dict`/`list` are special-cased through
     `json.dumps(value, sort_keys=True, ensure_ascii=True)` (e.g. a one-sided
     list scalar renders as `["a", "b"]`, not Python's `str([...])` ->
-    `['a', 'b']`). Any divergence here is a silent neutrality break once this
-    module is wired into the renderers.
+    `['a', 'b']`). This body started as a copy of reporting.py's
+    `_render_value`, which was kept alive as an alias to this function and has
+    since been deleted outright; its call sites now call this directly, so
+    there is no second name left for the two spellings to drift between.
     """
     if value is None:
         return ABSENT_TEXT_DISPLAY
@@ -1322,7 +1326,14 @@ def classify_change(
             new_display=str(len(new_value)),
             old_raw=_raw_value(old_value),
             new_raw=_raw_value(new_value),
-            unit="items",
+            # `None`, not "items". Every renderer that prints `unit` prints it
+            # beside a pair of operands -- the card's unit column, the price
+            # headline, the Change Summary's `old → new unit` -- and a list
+            # change has no operand row: its counts live inside the parenthesis
+            # `(1 → 2)` beside the member names. "items" was set at
+            # construction, read by nothing, and would have read as
+            # `+logit_bias (1 → 2) items` the moment anything did read it.
+            unit=None,
             delta_display=None,
             delta_abs=None,
             pct_display=None,

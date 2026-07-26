@@ -546,7 +546,7 @@ def _pricing_override_path(
     field_name: str,
     identity: tuple[tuple[str, Any], ...],
 ) -> str:
-    condition = ",".join(f"{key}={_render_value(value)}" for key, value in identity)
+    condition = ",".join(f"{key}={_scalar_display(value)}" for key, value in identity)
     return f"{field_name}[{condition}]"
 
 
@@ -898,14 +898,6 @@ def _hidden_rollup_cards(
     return cards
 
 
-def _append_hidden_rollup_html(
-    parts: list[str],
-    rollups: _HiddenRollups,
-    policy: ReportDetailPolicy,
-) -> None:
-    parts.extend(_hidden_rollup_cards(rollups, policy))
-
-
 def _field_changes_from_change_rows(model_changes: list[dict[str, Any]]) -> tuple[FieldChange, ...]:
     field_changes = []
     for change in model_changes:
@@ -1187,7 +1179,7 @@ def render_history_report(
         for event in _visible_history_events(events, detail_policy):
             lines.append(
                 f"| {to_local_human(event.detected_at)} | {event.change_kind} | {event.field_name or ''} | "
-                f"{_render_value(event.old_value)} | {_render_value(event.new_value)} |"
+                f"{_scalar_display(event.old_value)} | {_scalar_display(event.new_value)} |"
             )
         lines.extend(_history_summary_markdown(events, detail_policy))
         return "\n".join(lines)
@@ -1209,7 +1201,7 @@ def render_history_report(
     for event in _visible_history_events(events, detail_policy):
         lines.append(
             f"- {to_local_human(event.detected_at)} [{event.change_kind}] "
-            f"{event.field_name or ''} {_render_value(event.old_value)} -> {_render_value(event.new_value)}"
+            f"{event.field_name or ''} {_scalar_display(event.old_value)} -> {_scalar_display(event.new_value)}"
         )
     lines.extend(_history_summary_text(events, detail_policy))
     return "\n".join(lines)
@@ -1537,13 +1529,6 @@ _SUMMARY_CATEGORY_ORDER = [*_CATEGORY_ORDER, "Added", "Removed", "Squelched"]
 _SUMMARY_CATEGORY_RANK = {category: index for index, category in enumerate(_SUMMARY_CATEGORY_ORDER)}
 
 
-def _group_field_changes(field_changes: tuple[FieldChange, ...]) -> list[tuple[str, list[FieldChange]]]:
-    grouped: dict[str, list[FieldChange]] = defaultdict(list)
-    for fc in field_changes:
-        grouped[_classify_field(fc.field_name)].append(fc)
-    return [(cat, grouped[cat]) for cat in _CATEGORY_ORDER if cat in grouped]
-
-
 def _price_movement_kind(
     field_change: FieldChange,
 ) -> Literal["higher", "lower", "added", "removed"] | None:
@@ -1815,11 +1800,19 @@ def _render_change_text(rendered: RenderedChange) -> str:
     # reachable either -- `pct_display` is always None for this kind.
     #
     # scalar/noop: `old_display`/`new_display` are produced by
-    # change_render._scalar_display, which matches _render_value.
+    # change_render._scalar_display, which every other renderer also calls.
     return f"{rendered.display_label}: {rendered.old_display} \u2192 {rendered.new_display}"
 
 
-def _render_list_diff_text(rendered: RenderedChange) -> str:
+def _list_diff_body(rendered: RenderedChange) -> str:
+    """A list change WITHOUT its label -- `+logit_bias (1 \u2192 2)`.
+
+    Split out of `_render_list_diff_text` so the Change Summary can ask for the
+    body directly instead of building the labelled line and splitting it back
+    apart on `": "`. That split was never safe: a dynamic field path such as
+    `pricing.overrides[min_prompt_tokens=200000].completion` puts provider
+    payload text into the label, and `": "` is not reserved there.
+    """
     parts = []
     if rendered.list_added:
         parts.append(", ".join(f"+{item}" for item in rendered.list_added))
@@ -1828,8 +1821,12 @@ def _render_list_diff_text(rendered: RenderedChange) -> str:
     # old_display/new_display carry the raw member counts for `list` changes.
     count_str = f"({rendered.old_display} \u2192 {rendered.new_display})"
     if parts:
-        return f"{rendered.display_label}: {'; '.join(parts)} {count_str}"
-    return f"{rendered.display_label}: {count_str}"
+        return f"{'; '.join(parts)} {count_str}"
+    return count_str
+
+
+def _render_list_diff_text(rendered: RenderedChange) -> str:
+    return f"{rendered.display_label}: {_list_diff_body(rendered)}"
 
 
 def _render_bulk_list_diff_text(rendered: RenderedChange) -> str:
@@ -1861,11 +1858,21 @@ def _render_bulk_list_diff_text(rendered: RenderedChange) -> str:
     both empty -- reachable when multiplicity or order changed but the set did
     not, e.g. `["a", "a", "b"] -> ["a", "b", "b"]`.
     """
+    return f"{rendered.display_label}: {_bulk_list_diff_body(rendered)}"
+
+
+def _bulk_list_diff_body(rendered: RenderedChange) -> str:
+    """A bulk list change WITHOUT its label -- `+seed; -logprobs`.
+
+    Same split, and for the same reason, as `_list_diff_body`: the Change
+    Summary wants the body and used to obtain it by splitting the labelled line
+    on `": "`, a token a dynamic path's qualifier is free to contain.
+    """
     operations = [
         *(f"+{item}" for item in rendered.list_added),
         *(f"-{item}" for item in rendered.list_removed),
     ]
-    return f"{rendered.display_label}: {'; '.join(operations) if operations else 'membership changed'}"
+    return "; ".join(operations) if operations else "membership changed"
 
 
 def _bulk_hidden_entries(
@@ -2568,12 +2575,13 @@ a.model-link:hover code {
 td.old-val { color: var(--text-dim); }
 td.new-val { color: var(--text-bright); }
 td.change-delta { font-weight: 600; }
-td.delta-decrease { color: var(--accent-red); }
-td.delta-increase { color: var(--accent-green); }
-td.delta-neutral { color: var(--accent-amber); }
-td.delta-price-higher { color: var(--accent-red); }
-td.delta-price-lower { color: var(--accent-green); }
-td.delta-price-coverage { color: var(--accent-blue); }
+/* The `changes` table's Change cell takes its colour from the `sem-*` rules
+   below, the same ones the scan card's delta and percent cells take theirs
+   from. The six `delta-increase`/`delta-decrease`/`delta-neutral`/
+   `delta-price-*` rules that used to sit here are deleted, not merely unused:
+   they were a second colour vocabulary keyed on DIRECTION, and leaving them in
+   the stylesheet would leave the next renderer a working way to paint a bigger
+   context window green. */
 .card-table {
   width: 100%;
   border-collapse: collapse;
@@ -2655,8 +2663,6 @@ body:has(#show-raw:checked) .card-table tr.raw-line { display: table-row; }
   font-size: 0.75rem;
   user-select: text;
 }
-.card-table .list-added { color: var(--accent-blue); }
-.card-table .list-removed { color: var(--text-dim); }
 td.sem-cost-up { color: var(--accent-red); }
 td.sem-cost-down { color: var(--accent-green); }
 td.sem-capacity { color: var(--accent-amber); }
@@ -2669,8 +2675,24 @@ td.sem-neutral { color: var(--text-dim); }
   font-size: 0.82rem;
   padding: 0.35rem 0;
 }
-.list-added { color: var(--accent-green); }
-.list-removed { color: var(--accent-red); }
+/* Membership takes `capability`'s pair -- blue for a member arriving, dim for
+   one leaving -- matching the `sem-capability` / `sem-capability-off` cells
+   beside it, because a list gaining `logit_bias` IS a capability change. The
+   `+` and `−` glyphs already carry the add-vs-remove distinction, so losing the
+   green/red contrast costs nothing.
+
+   ONE rule, global. Fix pass 3, blocker 1(b): the blue/dim pair used to be a
+   `.card-table` override sitting above a green/red global, so the same
+   membership change read blue inside a model card and GREEN inside a
+   bulk-change card in the same document -- the same green the Price Movement
+   card two screens up uses for a price cut -- and green/red again in the
+   `changes` report's standalone list-diff block. Scoping the fix per card type
+   would have meant a third copy of one decision and would still have left the
+   `changes` report out; there is no card type or document for which green here
+   is correct, so the global rule carries the colour and no override exists to
+   drift from it. */
+.list-added { color: var(--accent-blue); }
+.list-removed { color: var(--text-dim); }
 .list-count { color: var(--text-dim); font-size: 0.8rem; }
 .secondary-changes {
   margin-top: 2.5rem;
@@ -3048,8 +3070,8 @@ def _squelched_summary_entry(
     """One provider-level row accounting for squelched field changes.
 
     `None` when nothing was squelched, so callers append conditionally. This
-    mirrors the provider-level squelched rollup card `_append_hidden_rollup_html`
-    already emits into the body of both reports.
+    mirrors the provider-level squelched rollup card `_hidden_rollup_cards`
+    already builds for the body of both reports.
     """
     count, model_ids = _summarize_field_changes(squelched)
     if not count:
@@ -3072,44 +3094,68 @@ def _build_summary_entries_from_bulk(
     """Rows for one bulk-change group: one per shared visible field change."""
     entries = []
     for field_change in group.visible:
-        rendered = _render_bulk_list_diff_text(classify_change(field_change)).split(": ", 1)
+        rendered = classify_change(field_change)
         entries.append(_SummaryEntry(
             _classify_field(field_change.field_name),
             provider_label,
             group.label,
-            rendered[0],
-            rendered[1] if len(rendered) > 1 else "membership changed",
+            rendered.display_label,
+            _bulk_list_diff_body(rendered),
             tuple(sorted(group.model_ids)),
         ))
     return entries
 
 
-def _summary_detail_with_absent_sides(detail: str, rendered: RenderedChange) -> str:
-    """The summary's change text, spelling an absent side the way the card does.
+def _summary_change_detail(rendered: RenderedChange) -> str:
+    """The Change Summary's `Change` cell: `old → new unit (delta, pct)`.
 
-    Fix pass 1, finding 3. The concise HTML report printed `— → $0.05` in the
-    model card and `null → 5e-08 ($0.05 / 1M)` in the Change Summary a few
-    inches below it -- one document, two spellings of the same absence.
+    Fix pass 3, blocker 2. This cell used to be built by rendering the TEXT
+    report's line and splitting it on `": "`, which imported the text report's
+    A1-free convention wholesale: the concise HTML report showed
+    `$2.00 → $3.00  /1M  +$1.00  ↑ 50.0%` in the model card and
+    `2e-06 → 3e-06 ($2.00 → $3.00 / 1M, ↑ 50.0%)` in the summary index a few
+    inches below it. The six-leading-zero figure A1 exists to demote led the
+    row -- unconditionally, with no relationship to the "Show raw values"
+    toggle that governs every other appearance of a raw value in this document.
+    A concise report that hides raw values in the card and prints them in the
+    index is not concise; it is inconsistent.
 
-    Guarded on `raw is None`, the same signal `_html_side_display` reads, NOT on
-    the string `"null"`: a provider that ships the literal string `"null"` as a
-    value has a real value, and its side must keep printing `null`. `_SummaryEntry`
-    feeds `_build_html_summary_table` and nothing else, so this is confined to
-    HTML; the text, markdown and JSON renderers still spell `null` from
-    `_render_change_text` and their goldens do not move.
+    So the cell is composed from `RenderedChange` instead, from the same
+    operands and in the same order as the card's columns:
 
-    The token is `change_render.ABSENT_TEXT_DISPLAY`, imported rather than
-    respelled: this function has to RECOGNISE what the producer emitted, so a
-    local literal would stop matching the moment the producer changed and the
-    summary would silently revert to `null` with nothing failing.
+    * the sides through `_html_side_display`, which is what makes an absent
+      side read `—` here (the reason `_summary_detail_with_absent_sides` --
+      which respelled `null` after the fact -- is gone rather than adapted:
+      composing from the operands means the token is never produced);
+    * `unit` in the card's unit position;
+    * the delta through `_card_delta_cell`, so a one-sided change reads
+      `added` / `removed` exactly as the card's delta column does;
+    * `pct_display` last.
+
+    The parenthetical is dropped when it would be empty, and `_card_delta_cell`'s
+    em-dash fallback is filtered rather than printed -- a scalar change has no
+    delta, and `alpha → beta (—)` states nothing.
+
+    A `list` change keeps its own spelling, from `_list_diff_body`: its operands
+    are member COUNTS, so the generic form would render `1 → 2` and drop the
+    member names that are the whole content of the row. It carries no raw
+    provider value either, so blocker 2 does not reach it.
+
+    Text, markdown and JSON are deliberately untouched -- `_SummaryEntry` feeds
+    `_build_html_summary_table` and nothing else. See the design's Amendment 8.
     """
-    leading = f"{ABSENT_TEXT_DISPLAY} →"
-    trailing = f"→ {ABSENT_TEXT_DISPLAY}"
-    if rendered.old_raw is None and detail.startswith(leading):
-        detail = ABSENT_DISPLAY + detail[len(ABSENT_TEXT_DISPLAY):]
-    if rendered.new_raw is None and detail.endswith(trailing):
-        detail = detail[: -len(ABSENT_TEXT_DISPLAY)] + ABSENT_DISPLAY
-    return detail
+    if rendered.kind == "list":
+        return _list_diff_body(rendered)
+    old = _html_side_display(rendered.old_display, rendered.old_raw)
+    new = _html_side_display(rendered.new_display, rendered.new_raw)
+    unit = f" {rendered.unit}" if rendered.unit else ""
+    annotations = [
+        part
+        for part in (_card_delta_cell(rendered), rendered.pct_display)
+        if part and part != ABSENT_DISPLAY
+    ]
+    suffix = f" ({', '.join(annotations)})" if annotations else ""
+    return f"{old} → {new}{unit}{suffix}"
 
 
 def _build_summary_entries_from_fc(
@@ -3133,16 +3179,22 @@ def _build_summary_entries_from_fc(
     for fc in field_changes:
         rendered = classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
         category = _classify_field(rendered.field_path)
-        # Split the already-formatted line rather than assuming the label never
-        # contains ": " -- dynamic paths such as
-        # `pricing.overrides[min_prompt_tokens=200000].completion` are built
-        # from provider payload values.
-        change_desc = _render_change_text(rendered).split(": ", 1)
-        field_part = change_desc[0] if len(change_desc) > 1 else rendered.display_label
-        detail_part = change_desc[1] if len(change_desc) > 1 else change_desc[0]
-        detail_part = _summary_detail_with_absent_sides(detail_part, rendered)
+        # Both cells come from the classification, not from splitting a
+        # rendered line: `display_label` IS the Field cell, and
+        # `_summary_change_detail` composes the Change cell from the same
+        # operands the card's columns use. The split this replaced also had to
+        # guess where the label ended, on paths such as
+        # `pricing.overrides[min_prompt_tokens=200000].completion` whose text
+        # comes from a provider payload.
         entries.append(
-            _SummaryEntry(category, provider_label, model_id, field_part, detail_part, anchor=anchor)
+            _SummaryEntry(
+                category,
+                provider_label,
+                model_id,
+                rendered.display_label,
+                _summary_change_detail(rendered),
+                anchor=anchor,
+            )
         )
     return entries
 
@@ -3475,7 +3527,11 @@ def _html_side_display(display: str, raw: str | None) -> str:
     layout: `changes` HTML = yes"), so widening the helper closes a gap rather
     than papering over one.
 
-    Text and markdown are deliberately NOT changed here -- see the task report.
+    Text and markdown are deliberately NOT changed here. They are the formats
+    whose goldens are the audit trail for this branch, `null` is what
+    `change_render` produces for an absent side, and respelling it in the text
+    renderer would move every text and markdown golden for a fix whose whole
+    scope is HTML. See the design's Amendment 8.
     """
     return ABSENT_DISPLAY if raw is None else display
 
@@ -3781,11 +3837,17 @@ def _render_html_card_row(
 # the same decision in all three places, and a list that disagreed with the
 # chip beside it is precisely the class of defect D3 exists to remove.
 #
+# FOURTH BUCKET, WHERE THE DESIGN SPECIFIES THREE (design Amendment 7).
 # `coverage` is deliberately kept alongside the design's three directional
-# buckets. A model whose only price change is a field appearing or disappearing
-# has no direction, and dropping its bucket would drop the model from the list
-# while still counting it in "N MODELS" -- a total that does not match the rows
-# beneath it. See the task report's Deviations.
+# buckets (`↑ Higher only`, `↓ Lower only`, `↕ Both directions`). A model whose
+# only price change is a field appearing or disappearing has no direction, so
+# the design's three columns have nowhere to put it -- and dropping its bucket
+# would drop the model from the affected-model list while still counting it in
+# the "N MODELS" tally directly above, leaving a total that does not match the
+# rows beneath it. `_price_movement_verdict` carries the matching fourth
+# outcome, `price fields added/removed`, for the same reason: a report whose
+# every price change is a coverage change has no direction to be "mixed" about,
+# and "mixed" would assert one.
 _PRICE_MOVEMENT_BUCKETS = (
     ("higher", "\u2191 Higher only", "\u2191 {count} higher", "price-higher"),
     ("lower", "\u2193 Lower only", "\u2193 {count} lower", "price-lower"),
@@ -3829,7 +3891,8 @@ def _price_movement_outcome(summary: _PriceMovementSummary) -> tuple[str, str]:
     down is not "mostly higher — 1 up", it is `higher — 1 up`, and
     five models up with nothing falling is no less unanimous for being larger.
     The qualifier returns the moment any other bucket holds a model. This is a
-    deliberate amendment to the approved design; see the task report.
+    deliberate amendment to the approved design (design Amendment 3), as is the
+    coverage-only verdict above (design Amendment 7).
     """
     buckets = [
         ("up", len(summary.models_in("higher")), "price-higher"),
@@ -4634,7 +4697,7 @@ def _render_changes_html(
             )
             if squelched_entry:
                 summary_entries.append(squelched_entry)
-            _append_hidden_rollup_html(parts, provider_plan.rollups, detail_policy)
+            parts.extend(_hidden_rollup_cards(provider_plan.rollups, detail_policy))
             provider_parts.extend(parts)
 
         if not provider_parts:
@@ -4687,22 +4750,32 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
     contradicted itself. Escaping is applied AFTER the helper rather than before
     because `html.escape` leaves an em dash untouched, which lets one call site
     spell both outcomes.
+
+    COLOUR COMES FROM `_card_semantic_class`, not from this function. Until fix
+    pass 3 the branches below each picked their own class from a private
+    `delta-increase`/`delta-decrease`/`delta-neutral` set whose meaning was
+    DIRECTION, so this document painted a context window growing green, a max
+    output shrinking red, and an informational scalar amber -- while the scan
+    report's card, three files' worth of tests away, painted the same three
+    changes amber, amber and dim. B1 says colour carries cost and nothing else,
+    so the one table that maps a change onto a colour has to be the one table,
+    and the direction-named classes are gone rather than left as a second
+    vocabulary for a future branch to reach for. Only the delta TEXT is decided
+    here; that genuinely differs between the two documents, because this table
+    has one Change column where the card has separate delta and percent columns.
     """
     h = html_module.escape
+    delta_cls = _card_semantic_class(rendered)
 
     if rendered.kind == "price":
         old_str = h(_html_raw_and_normalized(rendered.old_raw, rendered.old_display))
         new_str = h(_html_raw_and_normalized(rendered.new_raw, rendered.new_display))
-        if rendered.direction == "added":
-            delta_cls, delta_text = "delta-price-coverage", "added"
-        elif rendered.direction == "removed":
-            delta_cls, delta_text = "delta-price-coverage", "removed"
-        elif rendered.direction == "up":
-            delta_cls, delta_text = "delta-price-higher", rendered.pct_display or ""
-        elif rendered.direction == "down":
-            delta_cls, delta_text = "delta-price-lower", rendered.pct_display or ""
+        if rendered.direction in ("added", "removed"):
+            delta_text = rendered.direction
+        elif rendered.direction in ("up", "down"):
+            delta_text = rendered.pct_display or ""
         else:
-            delta_cls, delta_text = "delta-neutral", "\u2014"
+            delta_text = "\u2014"
         return _html_change_row(
             label=rendered.display_label,
             old_cell=old_str,
@@ -4712,31 +4785,22 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         )
 
     if rendered.kind == "count" and _is_one_sided(rendered):
-        delta_cls, delta_text = (
-            ("delta-increase", "added") if rendered.direction == "added" else ("delta-decrease", "removed")
-        )
         return _html_change_row(
             label=rendered.display_label,
             old_cell=h(_html_side_display(rendered.old_display, rendered.old_raw)),
             new_cell=h(_html_side_display(rendered.new_display, rendered.new_raw)),
             delta_cls=delta_cls,
-            delta_cell=delta_text,
+            delta_cell=h(rendered.direction),
         )
 
     if rendered.kind in ("count", "numeric"):
         # Two-sided `count` renders exactly like `numeric` -- see the matching
         # note in _render_change_text and the count guard in change_render.py.
         # A zero basis means no percentage is defined, so the delta cell is
-        # blank and reads as neutral regardless of which way the value moved.
-        # Read `pct_basis_zero` (the cause) rather than inferring it from
-        # `pct_display is None` (a derived display signal that a later change
-        # could blank for unrelated reasons).
-        if rendered.pct_basis_zero:
-            delta_cls = "delta-neutral"
-        elif rendered.direction == "down":
-            delta_cls = "delta-decrease"
-        else:
-            delta_cls = "delta-increase"
+        # blank. It is no longer RE-COLOURED for that: `pct_basis_zero` says
+        # the percentage is undefined, which is a fact about the arithmetic and
+        # not about what kind of change this is, and the amber it used to force
+        # collided with capacity's amber for a reason a reader could not see.
         return _html_change_row(
             label=rendered.display_label,
             old_cell=h(_html_side_display(rendered.old_display, rendered.old_raw)),
@@ -4756,7 +4820,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
             label=rendered.display_label,
             old_cell=h(_html_side_display(rendered.old_display, rendered.old_raw)),
             new_cell=h(_html_side_display(rendered.new_display, rendered.new_raw)),
-            delta_cls="delta-decrease" if rendered.direction in ("down", "removed") else "delta-increase",
+            delta_cls=delta_cls,
             delta_cell=h(rendered.delta_display or ""),
         )
 
@@ -4764,7 +4828,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         label=rendered.display_label,
         old_cell=h(_html_side_display(rendered.old_display, rendered.old_raw)),
         new_cell=h(_html_side_display(rendered.new_display, rendered.new_raw)),
-        delta_cls="delta-neutral",
+        delta_cls=delta_cls,
         delta_cell="\u2014",
     )
 
@@ -4817,15 +4881,6 @@ def _render_html_bulk_list_diff(rendered: RenderedChange) -> str:
 # ---------------------------------------------------------------------------
 # Shared utility helpers
 # ---------------------------------------------------------------------------
-
-
-# `_render_value` was a byte-identical copy of change_render._scalar_display.
-# Keeping two bodies made silent drift between them a neutrality hazard: the
-# rewired renderers emit RenderedChange.old_display/new_display for scalar and
-# noop changes, and those are produced by _scalar_display, so the two MUST
-# agree. Aliasing collapses them to one implementation instead of a convention.
-# The name stays for the history-report and pricing-override-path call sites.
-_render_value = _scalar_display
 
 
 def _group_models_by_prefix(models: tuple[dict[str, Any], ...]) -> list[tuple[str | None, list[dict[str, Any]]]]:

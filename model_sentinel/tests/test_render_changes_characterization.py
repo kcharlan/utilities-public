@@ -29,7 +29,7 @@ where an absent side is spelled twice, a few inches apart.
 WHAT THE FIXTURE COVERS. One provider, one date, and a change of every shape
 that can reach `_render_html_table_row` or the list-diff block beside it:
 
-  * two-sided price (`pricing.prompt`) -- the delta-price-higher branch;
+  * two-sided price (`pricing.prompt`) -- the `sem-cost-up` branch;
   * ONE-SIDED price added (`pricing.input_cache_read`, `null` old side);
   * ONE-SIDED price removed under a DYNAMIC path
     (`pricing.overrides[min_prompt_tokens=200000].completion`), which also pins
@@ -58,6 +58,26 @@ TEXT IS PINNED HERE TOO, and deliberately: it is the control. The text report
 must still say `null` on all four absent sides. If a future change closes the
 split in `change_render` rather than in the HTML renderers, this golden fails
 and says so, instead of the HTML goldens quietly agreeing with each other.
+
+WHAT FIX PASS 3 MOVED (both HTML goldens; the text golden is byte-unchanged,
+which is the evidence that both changes are HTML-scoped):
+
+  * B1 finally reaches this document. Every `<td class="change-delta ...">`
+    class changed from the direction-keyed `delta-*` set to the semantic
+    `sem-*` set the scan card already used. Four rows change MEANING, not just
+    spelling: `Context length` ↑ 100.0% was GREEN (`delta-increase`) and is now
+    amber (`sem-capacity`); `Max output` removed was RED (`delta-decrease`) and
+    is now coverage blue; `Moderated` enabled was green and is now capability
+    blue; `Expiration date` was amber (`delta-neutral`) and is now dim
+    (`sem-neutral`). The two price rows and the two price-coverage rows keep
+    their colours and change class name only -- `delta-price-higher` and
+    `sem-cost-up` were always the same red.
+  * A1 reaches the Change Summary. Its `Change` cells were built by splitting
+    the TEXT renderer's line, so they led with the raw provider value; they are
+    now composed from `RenderedChange` as `old → new unit (delta, pct)`. The
+    four-column table above keeps its `raw (normalized / 1M)` value cells, so
+    this document deliberately spells a price two ways -- audit form in the
+    table, A1 form in the index -- and the two goldens pin both.
 
 DELIBERATELY NOT COVERED HERE: the full HTML document envelope (`<!DOCTYPE>`,
 the `<style>` block) is already pinned byte-for-byte by
@@ -230,15 +250,15 @@ EXPECTED_HTML_BODY = """<section class="provider-section"><h2 class="date-headin
 <div class="model-card-header"><code>synth/model-changes</code><span class="display-name">Synth Changes</span></div>
 <div class="change-category"><div class="category-label">Pricing</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Input</td><td class="old-val">0.000001 ($1.00 / 1M)</td><td class="new-val">0.000002 ($2.00 / 1M)</td><td class="change-delta delta-price-higher">↑ 100.0%</td></tr>
-<tr><td class="field-name">Cache read</td><td class="old-val">—</td><td class="new-val">0.00000005 ($0.05 / 1M)</td><td class="change-delta delta-price-coverage">added</td></tr>
-<tr><td class="field-name">Output (min_prompt_tokens=200000)</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">—</td><td class="change-delta delta-price-coverage">removed</td></tr>
+<tr><td class="field-name">Input</td><td class="old-val">0.000001 ($1.00 / 1M)</td><td class="new-val">0.000002 ($2.00 / 1M)</td><td class="change-delta sem-cost-up">↑ 100.0%</td></tr>
+<tr><td class="field-name">Cache read</td><td class="old-val">—</td><td class="new-val">0.00000005 ($0.05 / 1M)</td><td class="change-delta sem-coverage">added</td></tr>
+<tr><td class="field-name">Output (min_prompt_tokens=200000)</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">—</td><td class="change-delta sem-coverage">removed</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Max output</td><td class="old-val">8,192</td><td class="new-val">—</td><td class="change-delta delta-decrease">removed</td></tr>
-<tr><td class="field-name">Context length</td><td class="old-val">131,072</td><td class="new-val">262,144</td><td class="change-delta delta-increase">↑ 100.0%</td></tr>
+<tr><td class="field-name">Max output</td><td class="old-val">8,192</td><td class="new-val">—</td><td class="change-delta sem-coverage">removed</td></tr>
+<tr><td class="field-name">Context length</td><td class="old-val">131,072</td><td class="new-val">262,144</td><td class="change-delta sem-capacity">↑ 100.0%</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Parameters</div>
@@ -252,8 +272,8 @@ EXPECTED_HTML_BODY = """<section class="provider-section"><h2 class="date-headin
 </div>
 <div class="change-category"><div class="category-label">Other</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta delta-increase">enabled</td></tr>
-<tr><td class="field-name">Expiration date</td><td class="old-val">—</td><td class="new-val">2030-12-31</td><td class="change-delta delta-neutral">—</td></tr>
+<tr><td class="field-name">Moderated</td><td class="old-val">off</td><td class="new-val">on</td><td class="change-delta sem-capability">enabled</td></tr>
+<tr><td class="field-name">Expiration date</td><td class="old-val">—</td><td class="new-val">2030-12-31</td><td class="change-delta sem-neutral">—</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Squelched</div>
@@ -273,14 +293,14 @@ EXPECTED_HTML_BODY = """<section class="provider-section"><h2 class="date-headin
 # within a category, with the presence rows and the provider-level squelched
 # rollup last. The three `—` sides here are the ones the body above must agree
 # with.
-EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Cache read</td><td>— → 0.00000005 ($0.05 / 1M)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Input</td><td>0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 ($4.00 / 1M) → —</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Max output</td><td>8,192 → —</td></tr>
+EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Input</td><td>$1.00 → $2.00 /1M (+$1.00, ↑ 100.0%)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → — /1M (removed)</td></tr>
+<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
+<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Max output</td><td>8,192 → — tok (removed)</td></tr>
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Supported parameters</td><td>+seed (2 → 3)</td></tr>
 <tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Moderated</td><td>off → on</td></tr>
+<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Moderated</td><td>off → on (enabled)</td></tr>
 <tr><td>Added</td><td>Synth Provider</td><td><code>synth/model-arrived</code></td><td colspan="2">Synth Arrived</td></tr>
 <tr><td>Removed</td><td>Synth Provider</td><td><code>synth/model-departed</code></td><td colspan="2">Synth Departed</td></tr>
 <tr><td>Squelched</td><td>Synth Provider</td><td><details class="summary-models"><summary>1 models</summary><div class="summary-model-list"><code>synth/model-changes</code></div></details></td><td>benchmarks, benchmarks.*</td><td>1 field change hidden by report detail policy</td></tr></tbody></table></section>"""
@@ -347,9 +367,13 @@ def test_the_changes_card_and_its_summary_agree_on_an_absent_side() -> None:
         assert "null" not in cell, cell
 
     # The specific pair that was contradictory: the same field, spelled in the
-    # card and in the summary of the same document.
+    # card and in the summary of the same document. The two cells no longer
+    # spell the VALUE identically -- the summary leads with the normalized
+    # figure per fix pass 3's blocker 2, while this document's four-column
+    # table keeps its `raw (normalized / 1M)` cell -- but the ABSENT side,
+    # which is what this test is about, is `—` in both.
     assert '<td class="old-val">—</td><td class="new-val">0.00000005 ($0.05 / 1M)</td>' in html
-    assert "<td>— → 0.00000005 ($0.05 / 1M)</td>" in html
+    assert "<td>— → $0.05 /1M (added)</td>" in html
 
     # Exactly four cells are NOTHING BUT an em dash: the card's four absent
     # sides, produced by three different branches of `_render_html_table_row`

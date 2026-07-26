@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -175,28 +176,37 @@ def load_provider_configs(path: Path) -> tuple[ProviderConfig, ...]:
                 enabled=enabled,
             )
         )
-    _reject_duplicate_labels(providers, path)
     return tuple(providers)
 
 
-def _reject_duplicate_labels(providers: list[ProviderConfig], path: Path) -> None:
-    """Refuse a providers.env in which two providers claim the same label.
+def describe_duplicate_labels(
+    providers: Sequence[ProviderConfig], path: Path | None = None
+) -> str | None:
+    """Duplicate provider labels as an advisory string, or `None` if there are none.
 
-    A label is display text; `provider_id` is identity. Reports key on identity
-    and disambiguate a shared label as `Label (provider_id)`, so a collision is
-    no longer a correctness problem -- but it is still a config authoring
-    mistake that makes every report, notification and summary row ambiguous
-    about which provider it is talking about, and the user owns the file that
-    fixes it.
+    ADVISORY, NOT FATAL. This used to raise `ConfigError` from inside
+    `_parse_providers`, which made a label collision halt `scan`, `changes`,
+    `history` and `providers` alike. Two things make that the wrong severity:
 
-    Raised, not warned, because `ConfigError` is the only validation mechanism
-    this module has: every other invalid value here (a bad boolean, a
-    non-positive price divisor, an unknown detail mode) already halts the load.
-    `healthcheck` catches `ConfigError` and renders it as a failed `config_load`
-    check, so the one command a user runs to diagnose config keeps working and
-    names the problem exactly.
+    * it is redundant. A label is display text; `provider_id` is identity.
+      Reports group on `provider_id` and disambiguate a shared label as
+      `Label (provider_id)`, so the ambiguity the check exists to prevent is
+      already prevented -- and prevented for HISTORICAL rows written under a
+      label this file no longer contains, which a config-time check cannot see
+      at all. Two mechanisms for one problem, and only one of them is complete.
+    * the cost of a false alarm is unbounded. A hard error stops a scheduled
+      overnight scan on a config that worked yesterday, and the report the user
+      would have got is not merely uglier without this check -- it does not
+      exist. Refusing to run is a strictly worse outcome than running with two
+      providers whose display labels match and whose rows say which is which.
 
-    Comparison is exact. Labels differing in case or spacing are still
+    So it is surfaced by `healthcheck` -- the command whose job is to tell the
+    user what to fix -- as a `warn`, which does not move the exit code. The user
+    still owns the file, and the message still names both offenders and the key
+    to edit.
+
+    `path` is the file to name in the message, omitted when the caller has none
+    to name. Comparison is exact: labels differing in case or spacing are still
     distinguishable to a reader; only identical spellings are not.
     """
     by_label: dict[str, list[str]] = {}
@@ -206,12 +216,14 @@ def _reject_duplicate_labels(providers: list[ProviderConfig], path: Path) -> Non
         (label, ids) for label, ids in by_label.items() if len(ids) > 1
     )
     if not collisions:
-        return
+        return None
     detail = "; ".join(f"{label!r} used by {', '.join(sorted(ids))}" for label, ids in collisions)
-    raise ConfigError(
-        f"Duplicate provider label{'s' if len(collisions) != 1 else ''} in {path}: {detail}. "
-        "Provider labels must be unique; give each provider a distinct "
-        "MODEL_SENTINEL_PROVIDER_<ID>_LABEL."
+    location = f" in {path}" if path is not None else ""
+    return (
+        f"Duplicate provider label{'s' if len(collisions) != 1 else ''}{location}: {detail}. "
+        "Reports disambiguate these as 'Label (provider_id)', so nothing is "
+        "mis-attributed; give each provider a distinct "
+        "MODEL_SENTINEL_PROVIDER_<ID>_LABEL to make them readable."
     )
 
 

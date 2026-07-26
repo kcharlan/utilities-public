@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from tests.html_probe import absent_side_cells
+from tests.html_probe import absent_side_cells, summary_change_cells
 
 from model_sentinel import reporting
 from model_sentinel.change_render import (
@@ -1602,8 +1602,17 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
 
     # Fix pass 1, finding 3: the Change Summary is in the SAME document, and it
     # spelled this absence `null` while the card above it spelled it `\u2014`.
-    assert "<td>\u2014 \u2192 0.0000003 ($0.30 / 1M)</td>" in html_report
+    #
+    # Fix pass 3, blocker 2: it also spelled the VALUE differently. The card
+    # above leads with `$0.30` and hides `0.0000003`; the summary led with
+    # `0.0000003` regardless of the "Show raw values" toggle, which is the
+    # original complaint A1 exists to answer, surviving in the index. The cell
+    # is now composed in the card's own column order.
+    assert "<td>\u2014 \u2192 $0.30 /1M (added)</td>" in html_report
     assert "<td>null \u2192" not in html_report
+    # The raw value is reachable from the card (tooltip and raw-value row) and
+    # from the audit formats above; it must not LEAD the summary row.
+    assert "<td>0.0000003" not in html_report
 
 
 def _mixed_direction_card_html() -> str:
@@ -1911,33 +1920,39 @@ def test_a_long_scalar_value_is_not_promised_nowrap_by_the_card() -> None:
     assert "overflow-x: auto;" in css
 
 
-def test_card_list_members_keep_red_and_green_for_money() -> None:
-    """Fix pass 1, finding 4. B1's stated effect was false inside a card.
+def test_list_members_keep_red_and_green_for_money_in_every_card_type() -> None:
+    """Fix pass 1, finding 4, then fix pass 3, blocker 1(b).
 
     `+ logit_bias` rendered green and `− seed` red, so the two colours that mean
     "a price went up" and "a price went down" also meant "a member arrived" and
-    "a member left" in the same card. The card now re-colours them to the
-    `capability` pair (blue on, dim off); the `+`/`−` glyphs carry the
-    add-vs-remove distinction, which is why losing the green/red contrast costs
-    nothing here.
+    "a member left". Membership takes the `capability` pair instead (blue on,
+    dim off); the `+`/`−` glyphs carry the add-vs-remove distinction, which is
+    why losing the green/red contrast costs nothing here.
 
-    Scoped to `.card-table`, so the `changes` report and the bulk cards -- which
-    are not this task's document -- keep the global rules untouched.
+    DELIBERATELY INVERTED. This test used to assert the OPPOSITE of its own
+    title -- a blue/dim `.card-table` override *plus* an untouched green/red
+    global, on the reasoning that the bulk cards and the `changes` report "are
+    not this task's document". They are the same document: a bulk-change card
+    sits inside the very scan report whose model cards had just been recoloured,
+    so one page showed the same membership change blue in one card and green in
+    the next, in the same green the Price Movement card uses for a price cut.
+    The two assertions naming the green/red globals were pinning that, so they
+    are replaced rather than deleted, and the scoping is now global.
     """
     report = _list_and_scalar_card_html()
     css = report.split("<style>", 1)[1].split("</style>", 1)[0]
 
-    # The two-class descendant form is load-bearing and is why these assertions
-    # name the selector rather than just the colour: `.card-table .list-added`
-    # is specificity (0,2,0) against the global rule's (0,1,0), so it wins
-    # WHEREVER it sits in the stylesheet. A single-class card override would
-    # tie and silently depend on source order.
-    assert ".card-table .list-added { color: var(--accent-blue); }" in css
-    assert ".card-table .list-removed { color: var(--text-dim); }" in css
-    # The global rules survive untouched, which is what keeps this change
-    # inside the card: the `changes` report and the bulk cards still use them.
-    assert ".list-added { color: var(--accent-green); }" in css
-    assert ".list-removed { color: var(--accent-red); }" in css
+    # ONE rule per state, at single-class specificity, with no descendant
+    # override anywhere: that is what makes the colour independent of which
+    # card type the member happens to be sitting in.
+    assert ".list-added { color: var(--accent-blue); }" in css
+    assert ".list-removed { color: var(--text-dim); }" in css
+    assert ".list-added { color: var(--accent-green); }" not in css
+    assert ".list-removed { color: var(--accent-red); }" not in css
+    # No surviving override -- a `.card-table` or `.bulk-change-card` prefixed
+    # rule would reintroduce exactly the per-card-type divergence above.
+    assert ".card-table .list-" not in css
+    assert ".bulk-change-card .list-" not in css
 
     # No `sem-cost-*` class reaches a membership row: the money colours stay on
     # the money columns.
@@ -1990,7 +2005,12 @@ def test_one_html_document_spells_an_absent_side_one_way() -> None:
     for cell in cells:
         assert "null" not in cell, cell
 
-    for cell in ("<td>— → 0.00000005 ($0.05 / 1M)</td>", "<td>8,192 → —</td>", "<td>— → 2030-12-31</td>"):
+    # Fix pass 3, blocker 2: these three summary cells are now composed from
+    # `RenderedChange` in the card's column order rather than split out of the
+    # text renderer's line, so the price cell leads with `$0.05` and carries
+    # its unit and its coverage pill, and the count cell carries its `tok`.
+    # The scalar is unchanged -- it has no unit, no delta and no percent.
+    for cell in ("<td>— → $0.05 /1M (added)</td>", "<td>8,192 → — tok (removed)</td>", "<td>— → 2030-12-31</td>"):
         assert cell in html_report, cell
     for row_label in ("Cache read", "Max output", "Expiration date"):
         assert "—" in _card_row(html_report, row_label), row_label
@@ -2284,7 +2304,13 @@ def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() ->
     # passes whether or not the HTML renderer qualified the row, which makes it
     # weaker than its three text siblings above rather than merely shorter.
     assert "Input (#0)" in html_report
-    assert "$6.00 / 1M" in html_report
+    # `$6.00` with `/1M` in the adjacent unit cell, in the card; `$6.00 /1M` in
+    # the Change Summary. The text form `$6.00 / 1M` this asserted is A1's
+    # PARENTHETICAL, and after fix pass 3's blocker 2 it survives only in the
+    # text and markdown reports -- so asserting it of the HTML document had
+    # stopped testing the HTML renderer and started testing the text one.
+    assert '<td class="new-val num" title="0.000006 (6.0e-6) × 1,000,000 = $6.00">$6.00</td>' in html_report
+    assert "<td>— → $6.00 /1M (added)</td>" in html_report
     assert '"field_name": "pricing.overrides"' in json_report
     assert '"field_name": "pricing.overrides[0].prompt"' not in json_report
 
@@ -2357,7 +2383,12 @@ def test_existing_pricing_override_tiers_render_only_changed_leaves() -> None:
     expected = f"{display_label}: 0.000001 \u2192 0.0000006 ($1.00 \u2192 $0.60 / 1M, \u2193 40.0%)"
     assert expected in text_report
     assert display_label in html_report
-    assert "$1.00 \u2192 $0.60 / 1M" in html_report
+    # Same substitution as the sibling test above: `$1.00 \u2192 $0.60 / 1M` is the
+    # TEXT report's parenthetical. HTML puts the two prices in their own cells
+    # with the unit in a third, and spells the summary row in that same order.
+    assert '<td class="old-val num" title="0.000001 (1.0e-6) \u00d7 1,000,000 = $1.00">$1.00</td>' in html_report
+    assert '<td class="new-val num" title="0.0000006 (6.0e-7) \u00d7 1,000,000 = $0.60">$0.60</td>' in html_report
+    assert "<td>$1.00 \u2192 $0.60 /1M (-$0.40, \u2193 40.0%)</td>" in html_report
     assert "Conditional pricing (2 \u2192 2)" not in text_report
     assert "utc_start=30" not in text_report
     assert '"field_name": "pricing.overrides"' in json_report
@@ -2575,6 +2606,11 @@ def test_changes_report_carries_the_shared_price_precision() -> None:
     follows" is an argument, not evidence. `0.15` renders at four places
     because the other operand needs four -- in the changes report's text, its
     per-model HTML table and its HTML Change Summary alike.
+
+    The two HTML surfaces now spell the pair differently from the text one, and
+    from each other, which is the point of asserting all three: the table keeps
+    the `changes` report's `raw (normalized / 1M)` cell, the summary leads with
+    the normalized figure per blocker 2, and both must still carry FOUR places.
     """
     text = _sub_cent_changes_report("text")
     assert "($0.1500 → $0.1425 / 1M" in text
@@ -2583,7 +2619,7 @@ def test_changes_report_carries_the_shared_price_precision() -> None:
     assert '<td class="old-val">0.00000015 ($0.1500 / 1M)</td>' in html
     assert '<td class="new-val">0.0000001425 ($0.1425 / 1M)</td>' in html
     summary = html[html.index('<section class="summary-section">') :]
-    assert "($0.1500 → $0.1425 / 1M" in summary
+    assert "<td>$0.1500 → $0.1425 /1M (-$0.0075, ↓ 5.0%)</td>" in summary
 
     # The audit path is untouched: raw values, no formatted price anywhere.
     payload = json.loads(_sub_cent_changes_report("json"))
@@ -3947,13 +3983,18 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     # The Change Summary is built from the same per-provider factors, and keeps
     # the two providers apart by the disambiguated label.
     summary = html.split('<section class="summary-section">', 1)[1]
+    # Blocker 2: the summary leads with the normalized figure now, which makes
+    # the two providers' conversions MORE legible here, not less -- $100.00 and
+    # $0.0001 are the first thing in each cell rather than the parenthetical
+    # after a shared raw pair. The identical raw values `0.0001 → 0.0002` are
+    # still asserted, in the table cells above.
     assert (
         f"<td>{_SHARED_LABEL} (synthprov-a)</td><td><code>synth/shared-model</code></td>"
-        "<td>Input</td><td>0.0001 → 0.0002 ($100.00 → $200.00 / 1M, ↑ 100.0%)</td>"
+        "<td>Input</td><td>$100.00 → $200.00 /1M (+$100.00, ↑ 100.0%)</td>"
     ) in summary
     assert (
         f"<td>{_SHARED_LABEL} (synthprov-b)</td><td><code>synth/shared-model</code></td>"
-        "<td>Input</td><td>0.0001 → 0.0002 ($0.0001 → $0.0002 / 1M, ↑ 100.0%)</td>"
+        "<td>Input</td><td>$0.0001 → $0.0002 /1M (+$0.0001, ↑ 100.0%)</td>"
     ) in summary
 
 
@@ -4936,3 +4977,404 @@ def test_the_raw_value_toggle_starts_checked_in_all_detail_mode() -> None:
     # Same document otherwise: the audit view is not a second renderer.
     assert '<td class="raw-values" colspan="7">' in concise
     assert '<td class="raw-values" colspan="7">' in audit
+
+
+# ---------------------------------------------------------------------------
+# B1 across ALL THREE HTML documents (fix pass 3, blocker 1)
+#
+# The branch's second stated problem was "red/green means cost direction in one
+# table and capacity direction in the next". Two surfaces still had it after
+# ten tasks, and nothing failed, because every existing colour assertion was
+# scoped to the document it was written for: the scan card's tests never looked
+# at the `changes` table, and the card's list-member test asserted -- in so many
+# words -- that the bulk cards kept their green.
+#
+# So the assertions below are deliberately CROSS-DOCUMENT and derive the truth
+# from `classify_change` rather than restating it. `_semantic_colour_matrix`
+# renders one field change of every semantic/direction shape through BOTH HTML
+# change renderers and compares them to each other; `_all_html_documents`
+# renders the three documents this branch produces and asserts over every
+# coloured cell in each.
+# ---------------------------------------------------------------------------
+
+# One field change per (semantic, direction) pair reachable in HTML, named by
+# the real field path that produces it. Not a hand-written class table: the
+# expectation is that the two renderers AGREE, so a wrong entry here cannot
+# make a broken renderer pass -- it can only make a working pair fail.
+_SEMANTIC_SHAPES = (
+    ("pricing.prompt", "0.000001", "0.000002"),          # cost / up
+    ("pricing.completion", "0.000002", "0.000001"),      # cost / down
+    ("pricing.input_cache_read", None, "0.00000005"),    # coverage / added
+    ("pricing.input_cache_write", "0.00000009", None),   # coverage / removed
+    ("top_provider.context_length", 131072, 262144),     # capacity / up
+    ("top_provider.max_completion_tokens", 16384, 8192),  # capacity / down
+    ("top_provider.max_completion_tokens", None, 16384),  # coverage / added
+    ("top_provider.is_moderated", False, True),          # capability / up
+    ("reasoning.required", True, False),                 # capability / down
+    ("instruct_type", "alpha", "beta"),                  # neutral / none
+    ("default_parameters.temperature", 0, 1),            # neutral / up
+)
+
+# Every class either HTML change renderer is allowed to put on a coloured cell.
+# A closed set, so a renderer that invents a class fails here rather than
+# silently falling back to an undefined colour.
+_SEMANTIC_CLASSES = frozenset(
+    {
+        "sem-cost-up",
+        "sem-cost-down",
+        "sem-capacity",
+        "sem-capability",
+        "sem-capability-off",
+        "sem-coverage",
+        "sem-neutral",
+    }
+)
+_COST_CLASSES = frozenset({"sem-cost-up", "sem-cost-down"})
+
+# `<td class="delta sem-...">` / `<td class="pct sem-...">` in the scan card,
+# `<td class="change-delta sem-...">` in the `changes` table.
+# Only `sem-*` and the retired `delta-*` classes are captured. A card's list
+# row also carries `<td class="delta list-count">`, which is a member count in
+# a dim cell rather than a colour claim about a change, and folding it in would
+# have made the closed-vocabulary assertion below fail for the wrong reason.
+_COLOURED_CELL_RE = re.compile(r'<td class="(?:delta|pct|change-delta) ((?:sem|delta)-[a-z-]+)"')
+
+
+def _colour_classes(html: str) -> list[str]:
+    return _COLOURED_CELL_RE.findall(html)
+
+
+def test_both_html_change_renderers_give_a_change_the_same_colour() -> None:
+    """The scan card and the `changes` table must not disagree about a change.
+
+    This is blocker 1(a) stated as a property. `_render_html_table_row` chose
+    its class from a private direction-keyed vocabulary, so a context window
+    doubling was amber in the card and GREEN in the `changes` table, and a max
+    output shrinking was amber in one and RED in the other -- the same
+    `RenderedChange`, two answers, in two documents a user reads side by side.
+
+    Falsifiable by construction: restore any of the `delta-increase` /
+    `delta-decrease` / `delta-neutral` / `delta-price-*` literals in
+    `_render_html_table_row` and the shape that reaches it fails here by name.
+    """
+    for field_path, old_value, new_value in _SEMANTIC_SHAPES:
+        rendered = classify_change(
+            FieldChange(field_path, old_value, new_value),
+            price_multiplier=1000000,
+            price_divisor=1,
+        )
+        card = reporting._render_html_card_row(rendered, category="Pricing")
+        table = reporting._render_html_table_row(rendered)
+
+        card_classes = set(_colour_classes(card))
+        table_classes = set(_colour_classes(table))
+        shape = f"{field_path} {old_value!r} -> {new_value!r} ({rendered.semantic}/{rendered.direction})"
+
+        # Precondition: both renderers actually emitted a coloured cell, so a
+        # regex that stopped matching cannot make the comparison vacuous.
+        assert card_classes, shape
+        assert table_classes, shape
+        assert card_classes == table_classes, shape
+        assert card_classes <= _SEMANTIC_CLASSES, shape
+
+        # And the cost colours are on cost, in both. Read from the semantic the
+        # classifier assigned, not from the field name, so a reclassification
+        # moves the expectation with it instead of breaking this test.
+        if rendered.semantic == "cost":
+            assert card_classes <= _COST_CLASSES, shape
+        else:
+            assert not (card_classes & _COST_CLASSES), shape
+
+
+def _every_semantic_scan_result() -> list[ProviderScanResult]:
+    """One model carrying every shape in `_SEMANTIC_SHAPES`, plus a list change."""
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-semantics",
+            "Synth Semantics",
+            tuple(FieldChange(*shape) for shape in _SEMANTIC_SHAPES)
+            + (FieldChange("supported_parameters", ["temperature"], ["temperature", "seed"]),),
+        ),
+    )
+    return [_scan_result(changed)]
+
+
+def _all_html_documents() -> dict[str, str]:
+    """The three HTML documents this branch produces, from one shared fixture.
+
+    `_full.html` is the `mode="all"` render of the same renderer (design
+    Amendment 1), so all three are reachable from here without invoking `cli`.
+    """
+    kwargs = {
+        "generated_at": "2026-07-25T13:05:00+00:00",
+        "command": "scan",
+        "format_name": "html",
+        "provider_results": _every_semantic_scan_result(),
+    }
+    changes_rows = [
+        {
+            "detected_at": "2026-07-25T09:00:00+00:00",
+            "provider_id": "synthprov",
+            "provider_label": "Synth Provider",
+            "provider_model_id": "synth/model-semantics",
+            "display_name": "Synth Semantics",
+            "change_kind": "field_changed",
+            "field_name": field_path,
+            "old_value": old_value,
+            "new_value": new_value,
+        }
+        for field_path, old_value, new_value in (
+            *_SEMANTIC_SHAPES,
+            ("supported_parameters", ["temperature"], ["temperature", "seed"]),
+        )
+    ]
+    return {
+        "scan": render_scan_report(**kwargs),
+        "scan_full": render_scan_report(**{**kwargs, "detail_policy": make_report_detail_policy(mode="all")}),
+        "changes": render_changes_report(
+            format_name="html",
+            provider_id=None,
+            since="2026-07-01",
+            until=None,
+            changes=changes_rows,
+            provider_pricing={"synthprov": (1000000, 1)},
+        ),
+    }
+
+
+def test_no_html_document_paints_a_non_cost_change_with_a_money_colour() -> None:
+    """Red and green mean cost, in every HTML document this branch produces.
+
+    The document-level half of blocker 1: the test above proves the two
+    renderers agree, and this proves the agreed vocabulary is the only one that
+    reaches a page. The retired direction-keyed classes are asserted absent from
+    the MARKUP AND the stylesheet -- a rule that survives unused is a working
+    way to reintroduce the defect, and `--accent-green` on `.delta-increase` is
+    exactly the rule that produced it.
+    """
+    for name, html in _all_html_documents().items():
+        classes = _colour_classes(html)
+        # Precondition: this fixture reaches every semantic, so the subset
+        # assertions below are not passing over an empty list.
+        assert set(classes) >= {
+            "sem-cost-up",
+            "sem-cost-down",
+            "sem-capacity",
+            "sem-capability",
+            "sem-capability-off",
+            "sem-coverage",
+            "sem-neutral",
+        }, (name, sorted(set(classes)))
+        assert set(classes) <= _SEMANTIC_CLASSES, (name, sorted(set(classes)))
+
+        css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+        # The retired rules are gone from the STYLESHEET, not merely unused by
+        # the markup: a working `td.delta-increase { color: var(--accent-green) }`
+        # is a working way to reintroduce the defect. Matched as a selector
+        # (`td.<name> {`) rather than as a bare substring, so the stylesheet's
+        # own comment naming what it deleted does not trip its own assertion.
+        for retired in (
+            "delta-increase",
+            "delta-decrease",
+            "delta-neutral",
+            "delta-price-higher",
+            "delta-price-lower",
+            "delta-price-coverage",
+        ):
+            assert f"td.{retired} {{" not in css, (name, retired)
+
+        # Only two rules in the whole stylesheet may pair a change class with
+        # the money colours, and they are the two cost classes.
+        money_rules = [
+            line
+            for line in css.splitlines()
+            if ("var(--accent-red)" in line or "var(--accent-green)" in line) and "sem-" in line
+        ]
+        assert money_rules == [
+            "td.sem-cost-up { color: var(--accent-red); }",
+            "td.sem-cost-down { color: var(--accent-green); }",
+        ], (name, money_rules)
+
+
+def test_list_membership_reads_the_same_in_every_card_type_and_document() -> None:
+    """Blocker 1(b), asserted over rendered markup rather than over the CSS alone.
+
+    A bulk-change card and a model card sit in the SAME scan report, and the
+    `changes` report's standalone list-diff block is a third home for the same
+    `<div class="list-added">`. One global rule is what makes those three read
+    alike; a `.card-table`-scoped override -- which is what shipped -- made the
+    first blue and the other two green, in the green the Price Movement card
+    uses for a price cut.
+    """
+    for name, html in _all_html_documents().items():
+        css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+        # Exactly one rule per membership state, at single-class specificity.
+        assert css.count(".list-added { color:") == 1, name
+        assert css.count(".list-removed { color:") == 1, name
+        assert ".list-added { color: var(--accent-blue); }" in css, name
+        assert ".list-removed { color: var(--text-dim); }" in css, name
+        # No descendant override can reintroduce a per-card-type divergence.
+        assert ".card-table .list-" not in css, name
+        assert ".bulk-change-card .list-" not in css, name
+        # And the members are actually on the page, so the CSS is not being
+        # asserted about a document that has no list change in it.
+        assert '<div class="list-added">' in html, name
+
+
+# ---------------------------------------------------------------------------
+# A1 in the Change Summary (fix pass 3, blocker 2)
+# ---------------------------------------------------------------------------
+
+
+def test_no_summary_row_leads_with_a_raw_provider_value() -> None:
+    """The user's original complaint, in the place it survived longest.
+
+    The concise report hid `2e-06` in the card -- that is what A1 is for -- and
+    printed it in the Change Summary index a few inches below, unconditionally
+    and outside the "Show raw values" toggle that governs every other raw value
+    in the document. The summary cell is now composed from `RenderedChange`.
+
+    Asserted against the raw strings the CLASSIFIER produced for this fixture,
+    not against a literal list, so a fixture change cannot quietly narrow it.
+    Scoped to PRICE rows, because a scalar's raw value and its display are
+    legitimately the same string and excluding it would be excluding nothing.
+    """
+    price_raws = set()
+    for field_path, old_value, new_value in _SEMANTIC_SHAPES:
+        rendered = classify_change(
+            FieldChange(field_path, old_value, new_value),
+            price_multiplier=1000000,
+            price_divisor=1,
+        )
+        if rendered.kind == "price":
+            price_raws.update(raw for raw in (rendered.old_raw, rendered.new_raw) if raw)
+    # Precondition: the fixture really does carry price rows with raw values
+    # distinguishable from their displays.
+    assert price_raws == {"0.000001", "0.000002", "0.00000005", "0.00000009"}, price_raws
+
+    for name, html in _all_html_documents().items():
+        cells = summary_change_cells(html)
+        assert cells, name
+        for cell in cells:
+            for raw in price_raws:
+                assert raw not in cell, (name, raw, cell)
+
+    # And the normalized figure IS there -- otherwise "no raw value" could be
+    # satisfied by a summary that had stopped saying anything.
+    scan = _all_html_documents()["scan"]
+    assert "<td>$1.00 → $2.00 /1M (+$1.00, ↑ 100.0%)</td>" in scan
+    assert "<td>— → $0.05 /1M (added)</td>" in scan
+
+
+def test_the_summary_cell_and_the_card_row_state_the_same_operands() -> None:
+    """One document, one spelling. The summary indexes the card; it cannot disagree.
+
+    Built from `RenderedChange` on both sides, so this is checking that the two
+    call sites read the same fields in the same order rather than that two
+    hand-written formats happen to match today.
+    """
+    rendered = classify_change(
+        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+        price_multiplier=1000000,
+        price_divisor=1,
+    )
+    detail = reporting._summary_change_detail(rendered)
+    assert detail == "$1.00 → $2.00 /1M (+$1.00, ↑ 100.0%)"
+
+    card = reporting._render_html_card_row(rendered, category="Pricing")
+    # Every operand in the summary cell appears in the card's own cells.
+    for operand in ("$1.00", "$2.00", "/1M", "+$1.00", "↑ 100.0%"):
+        assert f">{operand}<" in card, operand
+
+
+def test_a_list_summary_row_keeps_its_member_names() -> None:
+    """The one kind the generic form would have destroyed.
+
+    `old_display`/`new_display` for a list change are member COUNTS, so
+    `old → new unit (delta, pct)` would render `1 → 2` and drop the names that
+    are the entire content of the row.
+    """
+    rendered = classify_change(
+        FieldChange("supported_parameters", ["temperature"], ["temperature", "seed"])
+    )
+    assert reporting._summary_change_detail(rendered) == "+seed (1 → 2)"
+    # And no unit is appended -- `unit` is `None` for a list change.
+    assert "items" not in reporting._summary_change_detail(rendered)
+
+
+def test_the_summary_cell_drops_an_empty_parenthetical() -> None:
+    """A scalar has no delta and no percent; `alpha → beta (—)` states nothing.
+
+    `_card_delta_cell`'s em-dash fallback is filtered rather than printed, and
+    this is the assertion that stops a refactor from letting it through.
+    """
+    rendered = classify_change(FieldChange("instruct_type", "alpha", "beta"))
+    assert reporting._summary_change_detail(rendered) == "alpha → beta"
+
+
+def test_the_summary_cell_survives_a_label_containing_the_old_split_token() -> None:
+    """The `.split(": ", 1)` this replaced guessed where the label ended.
+
+    A dynamic path's qualifier is provider payload text, so `": "` is not
+    reserved there. This asserts on a field whose DISPLAY LABEL contains the
+    token, which the old implementation would have split inside.
+    """
+    rendered = classify_change(
+        FieldChange("pricing.overrides[note=see: this].completion", "0.000002", "0.000003"),
+        price_multiplier=1000000,
+        price_divisor=1,
+    )
+    assert ": " in rendered.display_label
+    entries = reporting._build_summary_entries_from_fc(
+        provider_label="Synth Provider",
+        model_id="synth/model-semantics",
+        display_name="Synth Semantics",
+        field_changes=[FieldChange("pricing.overrides[note=see: this].completion", "0.000002", "0.000003")],
+        price_multiplier=1000000,
+        price_divisor=1,
+    )
+    assert len(entries) == 1
+    # The whole label in the Field cell, the whole change in the Change cell --
+    # neither truncated at the token inside the qualifier.
+    assert entries[0].field == rendered.display_label
+    assert entries[0].detail == "$2.00 → $3.00 /1M (+$1.00, ↑ 50.0%)"
+
+
+def test_a_bulk_summary_row_survives_a_label_containing_the_old_split_token() -> None:
+    """The same fragility, in the bulk constructor beside the per-model one.
+
+    `_build_summary_entries_from_bulk` split `_render_bulk_list_diff_text`'s
+    line on `": "` exactly as its sibling did, so it is fixed the same way
+    rather than left as the one remaining place the token can truncate a label.
+    """
+    field_change = FieldChange(
+        "pricing.overrides[note=see: this].supported_parameters", ["temperature"], ["temperature", "seed"]
+    )
+    rendered = classify_change(field_change)
+    assert ": " in rendered.display_label
+
+    # Built from the real dataclasses -- `_BulkChangeGroup` derives `visible`,
+    # `model_ids` and `label` from its members, so a stand-in would be asserting
+    # against a shape production does not have.
+    members = tuple(
+        reporting._PlannedModelChange(
+            delta=ModelDelta("changed", model_id, model_id.title(), (field_change,)),
+            display=reporting._FieldDisplayPlan(
+                visible=(field_change,),
+                squelched=(),
+                hidden_unclassified=(),
+                hidden_non_squelched=(),
+                unclassified_used=0,
+            ),
+        )
+        for model_id in ("synth/model-a", "synth/model-b", "synth/model-c")
+    )
+    entries = reporting._build_summary_entries_from_bulk(
+        provider_label="Synth Provider",
+        group=reporting._BulkChangeGroup(members=members),
+    )
+
+    assert len(entries) == 1
+    assert entries[0].field == rendered.display_label
+    assert entries[0].detail == "+seed"

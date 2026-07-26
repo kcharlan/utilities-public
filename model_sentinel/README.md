@@ -266,7 +266,9 @@ Built-in help is intended to be complete:
 
 Scan reports use smart, field-type-aware formatting:
 
-- **Pricing fields** lead with the normalized `$X.XX` per-1M figure, with the unit in its own column and the provider's raw value available on demand (see the raw-value toggle below). Newly added and removed prices are included.
+- **Pricing fields** are normalized to a `$X.XX` per-1M figure alongside the provider's raw value. Newly added and removed prices are included.
+  - **In HTML only,** the normalized figure *leads*: it is the value in the cell, the unit moves to its own column, and the raw provider value is available on demand — in the cell's tooltip, and inline via the page's "Show raw values" toggle (see below), which is on by default in the full-detail companion. The HTML Change Summary follows the same order.
+  - **Text and markdown still lead with the raw value**, in the form `2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`, and have no toggle. They are the audit formats; the literal value a provider published is what they exist to record.
 - **New structured fields** expand nested objects and object lists into readable leaf-level changes in human reports
 - **List fields** (e.g., supported parameters) show added/removed items instead of dumping full arrays
 - **Context and limit fields** use human-readable number formatting
@@ -278,9 +280,11 @@ Scan reports use smart, field-type-aware formatting:
 
 ### Color Semantics
 
-Color carries one meaning and only one: **cost**. Red/salmon marks a price going up, green a price going down. Nothing else in the report is allowed to borrow those two colors, so a red cell always means "this got more expensive" and a green cell always means "this got cheaper" — a reader never has to check which axis a color is on.
+**Wherever an HTML report states a field change, color carries one meaning and only one: cost.** Red/salmon marks a price going up, green a price going down. Nothing that reports a change is allowed to borrow those two colors, so a red change cell always means "this got more expensive" and a green one always means "this got cheaper" — a reader never has to check which axis a color is on. This holds in all three HTML documents: the scan report's model cards, its automatically generated `_full.html` companion, and the standalone `changes` report's change table — plus the Price Movement card and the Change Summary in each.
 
-Everything else takes a non-cost color: capacity changes (context windows, output limits) are amber, capability changes are blue, a disabled capability and purely informational changes are dim, and a price field appearing or disappearing is the neutral coverage blue — coverage is not a direction, and painting an added price red would claim a price rise that was never measured.
+Everything else takes a non-cost color: capacity changes (context windows, output limits) are amber, capability changes are blue, a disabled capability and purely informational changes are dim, list membership is blue for a member arriving and dim for one leaving (in every card type and in the `changes` report alike), and a price field appearing or disappearing is the neutral coverage blue — coverage is not a direction, and painting an added price red would claim a price rise that was never measured.
+
+Two things outside that vocabulary still use red and green, and neither reports a field change: **run status** — a provider card and its badge are green when clean and red when the fetch failed, and an error message is red — and the **added/removed model lists**, where a whole model arriving is green and one departing is red. Both are presence-or-health signals about the scan itself rather than statements about a value moving, and neither appears in a change table, a model card row, or the Change Summary.
 
 Bulk consolidation applies only to the default human-readable report. `--detail all`, the automatically generated full-detail HTML companion, and JSON output remain ungrouped and full fidelity.
 

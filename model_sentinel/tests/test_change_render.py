@@ -131,7 +131,15 @@ def test_list_membership_change():
     assert result.kind == "list"
     assert result.direction == "none"
     assert result.semantic == "capability"
-    assert result.unit == "items"
+    # `None`, not "items". Every renderer that prints `unit` prints it beside a
+    # pair of operands -- the card's unit column, the price headline, the
+    # Change Summary's `old → new unit` -- and a list change has no operand
+    # row: its counts live inside the `(1 → 2)` parenthesis beside the member
+    # names. "items" was set here and read by NOTHING, and the moment the
+    # Change Summary started composing from `RenderedChange` it would have
+    # rendered `+stop; -logprobs (2 → 2) items`. Asserted rather than dropped
+    # so a future construction site cannot quietly reinstate it.
+    assert result.unit is None
     assert result.list_added == ("stop",)
     assert result.list_removed == ("logprobs",)
 
@@ -1736,11 +1744,11 @@ def test_unclassified_scalar():
     assert result.new_display == "deprecated"
 
 
-def test_one_sided_list_scalar_matches_render_value_json_form():
+def test_one_sided_list_scalar_uses_the_json_form():
     """Finding 4 fix: a one-sided list (old_value is None, so classify_change's
     list branch -- which requires BOTH sides to be `list` -- never engages)
     must format through the scalar fallback exactly like reporting.py's
-    `_render_value`: `json.dumps(value, sort_keys=True, ensure_ascii=True)`
+    `_scalar_display`: `json.dumps(value, sort_keys=True, ensure_ascii=True)`
     for dict/list, not Python's `str(value)`. `str(['a', 'b'])` would give
     `"['a', 'b']"` (single quotes) -- a silent divergence from production's
     `'["a", "b"]'` (double quotes) once this module is wired into a renderer.
@@ -1835,7 +1843,7 @@ def test_dynamic_path_qualifier_survives_a_condition_value_containing_a_dot():
     """The bracket stripper must not be a naive split on ".".
 
     `_pricing_override_path` interpolates the condition value through
-    `_render_value`, so a non-integer threshold puts a "." INSIDE the
+    `_scalar_display`, so a non-integer threshold puts a "." INSIDE the
     brackets. A segment-wise splitter that tokenizes on "." first would tear
     `min_prompt_tokens=1.5` into two bogus segments and lose both the label
     and the qualifier.

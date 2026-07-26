@@ -146,10 +146,12 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
        `supported_parameters` scalar widened the column until the card
        overflowed sideways. Right-alignment still applies to every value cell
        -- that shared right edge IS the alignment;
-    3. `list-added`/`list-removed` are re-coloured INSIDE the card only (blue
-       and dim, matching `capability` up/down) so that red and green mean money
-       and nothing else there. The global rules are untouched, so the `changes`
-       report and the bulk cards keep their green/red membership glyphs;
+    3. `list-added`/`list-removed` are re-coloured (blue and dim, matching
+       `capability` up/down) so that red and green mean money and nothing else.
+       ~~INSIDE the card only; the global rules are untouched, so the `changes`
+       report and the bulk cards keep their green/red membership glyphs~~ --
+       that scoping was itself the defect, and fix pass 3 replaced the override
+       with one global rule. See the fix-pass-3 entry at the end of this list;
     4. the Change Summary now spells an absent side `—`, matching the card
        three inches above it in the same document. `_SummaryEntry` feeds the
        HTML summary table and nothing else, so text, markdown and JSON still
@@ -213,6 +215,32 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
     5. CSS -- `.model-card:target` and its `@keyframes`, `.raw-toggle`,
        `.raw-line`, `.card-back` and `a.model-link`. No JavaScript and no new
        colour values: every rule reuses an existing `--accent-*`/`--text-*`.
+
+* Fix pass 3 closed the last two places B1 and A1 had not reached. Again only
+  the two HTML goldens in this module moved; text, markdown and JSON are
+  byte-identical, and so is every golden in
+  `test_render_bulk_characterization.py`. Three classes of diff, and the CARD
+  rows are not among them -- they already carried `sem-*`:
+    1. CSS -- the six direction-keyed `delta-increase` / `delta-decrease` /
+       `delta-neutral` / `delta-price-*` rules are DELETED. They coloured the
+       `changes` report's four-column table, which is why that document painted
+       a doubling context window green; it now takes the same `sem-*` classes
+       the card does. Deleting rather than orphaning them is deliberate: an
+       unused rule that still works is a working way to reintroduce the defect;
+    2. CSS -- `.card-table .list-added` / `.list-removed` are gone and the
+       GLOBAL `.list-added` / `.list-removed` carry blue and dim instead of
+       green and red. The override meant a membership change read blue in a
+       model card and green in a bulk-change card of the SAME document. Item 3
+       of the Task 7 entry above is struck through accordingly;
+    3. every Change Summary `Change` cell. The cells were built by splitting
+       the text renderer's line, so a price row led with the raw provider value
+       (`2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`) while the card three
+       inches above led with `$2.00` -- A1 demoted in the card and undone in
+       the index, outside the "Show raw values" toggle that governs every other
+       raw value here. Composed from `RenderedChange` in the card's own column
+       order they read `$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)`, which also brings
+       in the unit, the absolute delta, and the `added`/`removed`/`enabled`/
+       `disabled` pill. List and plain-scalar rows are unchanged.
 
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
@@ -1060,12 +1088,13 @@ a.model-link:hover code {
 td.old-val { color: var(--text-dim); }
 td.new-val { color: var(--text-bright); }
 td.change-delta { font-weight: 600; }
-td.delta-decrease { color: var(--accent-red); }
-td.delta-increase { color: var(--accent-green); }
-td.delta-neutral { color: var(--accent-amber); }
-td.delta-price-higher { color: var(--accent-red); }
-td.delta-price-lower { color: var(--accent-green); }
-td.delta-price-coverage { color: var(--accent-blue); }
+/* The `changes` table's Change cell takes its colour from the `sem-*` rules
+   below, the same ones the scan card's delta and percent cells take theirs
+   from. The six `delta-increase`/`delta-decrease`/`delta-neutral`/
+   `delta-price-*` rules that used to sit here are deleted, not merely unused:
+   they were a second colour vocabulary keyed on DIRECTION, and leaving them in
+   the stylesheet would leave the next renderer a working way to paint a bigger
+   context window green. */
 .card-table {
   width: 100%;
   border-collapse: collapse;
@@ -1147,8 +1176,6 @@ body:has(#show-raw:checked) .card-table tr.raw-line { display: table-row; }
   font-size: 0.75rem;
   user-select: text;
 }
-.card-table .list-added { color: var(--accent-blue); }
-.card-table .list-removed { color: var(--text-dim); }
 td.sem-cost-up { color: var(--accent-red); }
 td.sem-cost-down { color: var(--accent-green); }
 td.sem-capacity { color: var(--accent-amber); }
@@ -1161,8 +1188,24 @@ td.sem-neutral { color: var(--text-dim); }
   font-size: 0.82rem;
   padding: 0.35rem 0;
 }
-.list-added { color: var(--accent-green); }
-.list-removed { color: var(--accent-red); }
+/* Membership takes `capability`'s pair -- blue for a member arriving, dim for
+   one leaving -- matching the `sem-capability` / `sem-capability-off` cells
+   beside it, because a list gaining `logit_bias` IS a capability change. The
+   `+` and `−` glyphs already carry the add-vs-remove distinction, so losing the
+   green/red contrast costs nothing.
+
+   ONE rule, global. Fix pass 3, blocker 1(b): the blue/dim pair used to be a
+   `.card-table` override sitting above a green/red global, so the same
+   membership change read blue inside a model card and GREEN inside a
+   bulk-change card in the same document -- the same green the Price Movement
+   card two screens up uses for a price cut -- and green/red again in the
+   `changes` report's standalone list-diff block. Scoping the fix per card type
+   would have meant a third copy of one decision and would still have left the
+   `changes` report out; there is no card type or document for which green here
+   is correct, so the global rule carries the colour and no override exists to
+   drift from it. */
+.list-added { color: var(--accent-blue); }
+.list-removed { color: var(--text-dim); }
 .list-count { color: var(--text-dim); font-size: 0.8rem; }
 .secondary-changes {
   margin-top: 2.5rem;
@@ -1336,23 +1379,23 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
 </div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → 5e-08 ($0.05 / 1M)</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>$0.09 → — /1M (removed)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td></tr>
 <tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
-<tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → —</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
+<tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384 tok (added)</td></tr>
+<tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → — tok (removed)</td></tr>
 <tr class="summary-group"><td colspan="3">Parameters</td></tr>
 <tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
 <tr class="summary-group"><td colspan="3">Capabilities</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Reasoning default</td><td>off → on</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Reasoning default</td><td>off → on (enabled)</td></tr>
 <tr class="summary-group"><td colspan="3">Other</td></tr>
 <tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on</td></tr>
-<tr class="row-alt"><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
-<tr><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on (enabled)</td></tr>
+<tr class="row-alt"><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on (added)</td></tr>
+<tr><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off (disabled)</td></tr>
 <tr class="row-alt"><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr>
 <tr class="summary-group"><td colspan="3">Squelched</td></tr>
 <tr><td><details class="summary-models"><summary>1 models</summary><div class="summary-model-list"><code>synth/model-core</code></div></details></td><td>benchmarks, benchmarks.*</td><td>1 field change hidden by report detail policy</td></tr></tbody></table></details></details>
@@ -1446,25 +1489,25 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
 </div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → 5e-08 ($0.05 / 1M)</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>$0.09 → — /1M (removed)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td></tr>
 <tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
-<tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → —</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
+<tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384 tok (added)</td></tr>
+<tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → — tok (removed)</td></tr>
 <tr class="summary-group"><td colspan="3">Parameters</td></tr>
 <tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
 <tr class="summary-group"><td colspan="3">Capabilities</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Reasoning default</td><td>off → on</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Reasoning default</td><td>off → on (enabled)</td></tr>
 <tr class="summary-group"><td colspan="3">Benchmarks</td></tr>
 <tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Example suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
 <tr class="summary-group"><td colspan="3">Other</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on</td></tr>
-<tr><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
-<tr class="row-alt"><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on (enabled)</td></tr>
+<tr><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on (added)</td></tr>
+<tr class="row-alt"><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off (disabled)</td></tr>
 <tr><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr></tbody></table></details></details>
 <footer>Generated by Model Sentinel</footer>
 </body>
@@ -1872,20 +1915,29 @@ _SUMMARY_CORE = (
     "<code>synth/model-core</code></a></td>"
 )
 
+# Fix pass 3 (blocker 2) rewrote every Change cell below. They were built by
+# splitting the TEXT renderer's line, so a price row led with the provider's
+# raw per-token value -- the exact presentation A1 exists to demote, printed
+# unconditionally in the concise report's index while the card three inches
+# above showed `$2.00`. They are now composed from `RenderedChange` in the
+# card's own column order, `old → new unit (delta, pct)`, which also brings in
+# the unit (`/1M`, `tok`), the absolute delta on a price row, and the
+# `added`/`removed`/`enabled`/`disabled` pill the card's delta column carries.
+# The list and the plain-scalar rows are unchanged.
 _SUMMARY_ROW_SHAPES = (
-    f"{_SUMMARY_CORE}<td>— → 5e-08 ($0.05 / 1M)</td>",
-    f"{_SUMMARY_CORE}<td>9e-08 ($0.09 / 1M) → —</td>",
-    f"{_SUMMARY_CORE}<td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td>",
-    f"{_SUMMARY_CORE}<td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td>",
-    f"{_SUMMARY_CORE}<td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td>",
-    "<td><code>synth/model-limit-add</code></td><td>— → 16,384</td>",
-    "<td><code>synth/model-limit-remove</code></td><td>8,192 → —</td>",
+    f"{_SUMMARY_CORE}<td>— → $0.05 /1M (added)</td>",
+    f"{_SUMMARY_CORE}<td>$0.09 → — /1M (removed)</td>",
+    f"{_SUMMARY_CORE}<td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td>",
+    f"{_SUMMARY_CORE}<td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td>",
+    f"{_SUMMARY_CORE}<td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td>",
+    "<td><code>synth/model-limit-add</code></td><td>— → 16,384 tok (added)</td>",
+    "<td><code>synth/model-limit-remove</code></td><td>8,192 → — tok (removed)</td>",
     f"{_SUMMARY_CORE}<td>+logit_bias (1 → 2)</td>",
-    f"{_SUMMARY_CORE}<td>off → on</td>",
+    f"{_SUMMARY_CORE}<td>off → on (enabled)</td>",
     f"{_SUMMARY_CORE}<td>— → 2030-12-31</td>",
-    f"{_SUMMARY_CORE}<td>off → on</td>",
-    "<td><code>synth/model-moderation-added</code></td><td>— → on</td>",
-    "<td><code>synth/model-moderation-off</code></td><td>on → off</td>",
+    f"{_SUMMARY_CORE}<td>off → on (enabled)</td>",
+    "<td><code>synth/model-moderation-added</code></td><td>— → on (added)</td>",
+    "<td><code>synth/model-moderation-off</code></td><td>on → off (disabled)</td>",
     "<td><code>synth/model-temp-toggle</code></td><td>0 → 1 (+1)</td>",
     '<td><details class="summary-models">'
     '<summary>1 models</summary><div class="summary-model-list">'
@@ -2163,19 +2215,22 @@ def test_a_price_below_the_columns_resolution_bounds_itself_in_every_format() ->
         #
         # text/markdown = 2: one line, `raw → raw ($old → $new / 1M, pct)`,
         #   both price operands bounded and no delta term at all.
-        # html = 10: the card's `old-val`, `new-val` and `delta` cells (the
+        # html = 11: the card's `old-val`, `new-val` and `delta` cells (the
         #   delta column is Task 7's, and it bounds too), plus the Change
-        #   Summary's copy of the text line, which carries both operands, plus
-        #   Task 8's Price Movement headline panel, which is a FOURTH home for
-        #   this row -- it prints the same three bounded figures (both operands
-        #   and the delta) because this fixture's only price move is also its
-        #   biggest. One panel, not two: nothing here got cheaper, so the
-        #   decrease panel is omitted rather than rendered empty. Task 10 (R1)
-        #   added the last two: each price cell's `title` now ends `= <the
-        #   cell's own display>`, so a bounded cell has a bounded right-hand
-        #   side (`1e-06 (1.0e-6) = <$0.0001`, which is the bound restated, not
-        #   a second claim).
-        expected_sentinels = 10 if format_name == "html" else 2
+        #   Summary's row, plus Task 8's Price Movement headline panel, which
+        #   is a FOURTH home for this row -- it prints the same three bounded
+        #   figures (both operands and the delta) because this fixture's only
+        #   price move is also its biggest. One panel, not two: nothing here
+        #   got cheaper, so the decrease panel is omitted rather than rendered
+        #   empty. Task 10 (R1) added two more: each price cell's `title` now
+        #   ends `= <the cell's own display>`, so a bounded cell has a bounded
+        #   right-hand side (`1e-06 (1.0e-6) = <$0.0001`, which is the bound
+        #   restated, not a second claim). Fix pass 3 (blocker 2) added the
+        #   eleventh: the summary row used to be the text line's copy, with two
+        #   bounded operands and NO delta term; composed from `RenderedChange`
+        #   it now carries the delta column too, so it bounds three figures like
+        #   the card it indexes.
+        expected_sentinels = 11 if format_name == "html" else 2
         assert report.count(_sentinel(format_name, "<$0.0001")) == expected_sentinels, format_name
         # The false spelling, in every delimiter. `$0.0000` cannot appear at
         # all here: no cell in this row is allowed to print a zero price.

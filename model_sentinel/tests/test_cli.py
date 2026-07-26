@@ -596,15 +596,15 @@ def test_history_with_unknown_provider_exits_cleanly(tmp_path: Path, monkeypatch
 
 # ---------------------------------------------------------------------------
 # A colliding provider label has to be visible where the user goes looking for
-# config problems. `run_healthcheck` already catches `ConfigError` from
-# `load_config` and renders it as a failed `config_load` check, so the
-# uniqueness rule needed no new mechanism -- but that path has to be pinned,
-# because it is the whole justification for making the rule a hard error: the
-# one command that diagnoses config keeps working and names the problem.
+# config problems -- and NOWHERE ELSE. It used to be a `ConfigError` raised
+# from `load_config`, which made it visible everywhere by halting every
+# command; design Amendment 9 downgraded it to a `provider_labels` check with
+# status `warn` in `healthcheck` alone. Both halves are pinned below: the
+# warning is emitted and named, and it does not move the exit code.
 # ---------------------------------------------------------------------------
 
 
-def test_healthcheck_reports_a_duplicate_provider_label(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_healthcheck_warns_about_a_duplicate_provider_label(tmp_path: Path, monkeypatch, capsys) -> None:
     runtime_home = _write_config_files(tmp_path)
     providers_path = runtime_home / "providers.env"
     providers_path.write_text(
@@ -626,17 +626,25 @@ def test_healthcheck_reports_a_duplicate_provider_label(tmp_path: Path, monkeypa
     exit_code = cli.main(["healthcheck"])
     captured = capsys.readouterr()
 
-    assert exit_code == 1
-    assert "config_load" in captured.out
-    assert "ERROR" in captured.out
-    # The message the user acts on, not just a generic failure.
+    # DELIBERATELY INVERTED: this asserted `exit_code == 1` and a failed
+    # `config_load` check. A duplicate label no longer fails anything -- the
+    # config loads, every command runs, and the exit code stays 0. An exit code
+    # of 1 here would mean a scheduled `healthcheck` had started paging someone
+    # about a cosmetic problem.
+    assert exit_code == 0
+    assert "config_load" not in captured.out
+    assert "WARN    provider_labels" in captured.out
+    # The message the user acts on, not just a generic warning.
     assert "Duplicate provider label" in captured.out
     assert "'OpenRouter'" in captured.out
     assert "openrouter, synthtwin" in captured.out
+    # And it says the reports are still correct, so the user can schedule the
+    # edit rather than treat it as an outage.
+    assert "Label (provider_id)" in captured.out
 
 
-def test_healthcheck_passes_config_load_with_distinct_labels(tmp_path: Path, monkeypatch, capsys) -> None:
-    """Control: the check is silent on the shipped single-provider fixture."""
+def test_healthcheck_reports_distinct_provider_labels_as_ok(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Control: the check passes, visibly, on the shipped single-provider fixture."""
     runtime_home = _write_config_files(tmp_path)
     monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
     monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
@@ -645,5 +653,7 @@ def test_healthcheck_passes_config_load_with_distinct_labels(tmp_path: Path, mon
     captured = capsys.readouterr()
 
     assert exit_code == 0
+    assert "OK      provider_labels" in captured.out
+    assert "WARN" not in captured.out
     assert "Duplicate provider label" not in captured.out
     assert "config_load" not in captured.out

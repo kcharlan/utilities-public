@@ -70,7 +70,23 @@ def absent_side_cells(html: str) -> list[str]:
     Returns raw inner HTML, not text: a caller asserting on the escaped form of
     a value wants to see it exactly as the document spells it.
     """
-    cells = [match.group(1) for match in _VALUE_CELL_RE.finditer(html)]
+    return [match.group(1) for match in _VALUE_CELL_RE.finditer(html)] + summary_change_cells(html)
+
+
+def summary_change_cells(html: str) -> list[str]:
+    """The CHANGE cell -- the last `<td>` -- of every Change Summary data row.
+
+    Split out of `absent_side_cells` rather than copied beside it. A caller
+    asking "does any summary row lead with a raw provider value" must see the
+    summary rows ALONE: the `changes` report's four-column table deliberately
+    keeps `raw (normalized / 1M)` in its value cells, so a probe that folded
+    those in would report a violation on every one of them.
+
+    A last cell carrying `colspan` is skipped -- that is the model-arrived /
+    model-departed row, whose merged cell holds a display name rather than a
+    side of anything.
+    """
+    cells: list[str] = []
     for section in _SUMMARY_SECTION_RE.finditer(html):
         for row in _SUMMARY_ROW_RE.finditer(section.group(2)):
             row_cells = _SUMMARY_CELL_RE.findall(row.group(1))
