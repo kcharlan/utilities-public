@@ -53,6 +53,8 @@ from model_sentinel.models import FieldChange
 from model_sentinel.provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
+    default_categorize as _classify_field,
+    default_is_price_amount_field as _is_price_amount_field,
 )
 
 # Still re-exported from reporting.py because non-renderer call sites there
@@ -61,8 +63,6 @@ from model_sentinel.provider_profiles import (
 # when Task 3 rewired the renderers onto RenderedChange, so their transitional
 # re-export shims were dropped and they are imported above from their real home.
 from model_sentinel.reporting import (
-    _classify_field,
-    _is_price_amount_field,
     _list_change_signature,
     _numeric_value,
 )

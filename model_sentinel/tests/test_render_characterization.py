@@ -252,6 +252,7 @@ import re
 import time
 
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
+from model_sentinel.provider_profiles import OPENROUTER_PROFILE
 from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     ReportDetailPolicy,
@@ -420,8 +421,7 @@ def characterization_scan_result() -> list[ProviderScanResult]:
             removed=(),
             changed=changed,
             error_message=None,
-            price_multiplier=1000000,
-            price_divisor=1,
+            profile=OPENROUTER_PROFILE.with_pricing(1000000, 1),
         )
     ]
 
@@ -2083,8 +2083,7 @@ def _sub_cent_price_scan_result() -> list[ProviderScanResult]:
                 ),
             ),
             error_message=None,
-            price_multiplier=1000000,
-            price_divisor=1,
+            profile=OPENROUTER_PROFILE.with_pricing(1000000, 1),
         )
     ]
 
@@ -2170,8 +2169,7 @@ def _below_resolution_price_scan_result() -> list[ProviderScanResult]:
                 ),
             ),
             error_message=None,
-            price_multiplier=1,
-            price_divisor=1,
+            profile=OPENROUTER_PROFILE.with_pricing(1, 1),
         )
     ]
 
@@ -2288,8 +2286,7 @@ def _vanishing_delta_price_scan_result() -> list[ProviderScanResult]:
                 ),
             ),
             error_message=None,
-            price_multiplier=1,
-            price_divisor=1,
+            profile=OPENROUTER_PROFILE.with_pricing(1, 1),
         )
     ]
 
@@ -2381,8 +2378,7 @@ def _fractional_numeric_scan_result() -> list[ProviderScanResult]:
                 ),
             ),
             error_message=None,
-            price_multiplier=1,
-            price_divisor=1,
+            profile=OPENROUTER_PROFILE.with_pricing(1, 1),
         )
     ]
 
@@ -2464,8 +2460,7 @@ def _vanishing_percent_scan_result() -> list[ProviderScanResult]:
                 ),
             ),
             error_message=None,
-            price_multiplier=1,
-            price_divisor=1,
+            profile=OPENROUTER_PROFILE.with_pricing(1, 1),
         )
     ]
 

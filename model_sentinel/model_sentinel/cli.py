@@ -20,6 +20,7 @@ from .diffing import compare_models
 from .models import BaselineInfo, ModelDelta, ProviderScanResult
 from .normalize import normalize_models
 from .notifications import send_notification
+from .provider_profiles import resolve_profile
 from .providers import ProviderFetchError, fetch_raw_models
 from .reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
@@ -234,6 +235,11 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
 
     for provider in selected:
         started = _now()
+        profile = resolve_profile(
+            provider.kind,
+            price_multiplier=provider.price_multiplier,
+            price_divisor=provider.price_divisor,
+        )
         baseline = _resolve_baseline(store, provider.provider_id, args)
         if isinstance(baseline, str):
             result = ProviderScanResult(
@@ -248,6 +254,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 added=(),
                 removed=(),
                 changed=(),
+                profile=profile,
             )
             provider_results.append(result)
             continue
@@ -304,8 +311,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 added=tuple(added),
                 removed=tuple(removed),
                 changed=tuple(changed),
-                price_multiplier=provider.price_multiplier,
-                price_divisor=provider.price_divisor,
+                profile=profile,
             )
             provider_results.append(result)
         except (ProviderFetchError, ValueError) as exc:
@@ -333,9 +339,8 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 added=(),
                 removed=(),
                 changed=(),
+                profile=profile,
                 error_message=str(exc),
-                price_multiplier=provider.price_multiplier,
-                price_divisor=provider.price_divisor,
             )
             provider_results.append(result)
             logger.error("%s failed: %s", provider.provider_id, exc)
@@ -391,7 +396,16 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
 
 
 def run_history(*, args: argparse.Namespace, loaded, store: Store) -> int:
-    validate_selected_providers(loaded.providers, provider_id=args.provider)
+    selected = validate_selected_providers(
+        loaded.providers,
+        provider_id=args.provider,
+    )
+    provider = selected[0]
+    profile = resolve_profile(
+        provider.kind,
+        price_multiplier=provider.price_multiplier,
+        price_divisor=provider.price_divisor,
+    )
     if args.since and args.until and args.since > args.until:
         raise SystemExit("--since cannot be later than --until")
     if args.pattern and args.model != "list":
@@ -431,6 +445,7 @@ def run_history(*, args: argparse.Namespace, loaded, store: Store) -> int:
         last_seen=last_seen,
         events=events,
         latest_model=latest_model,
+        profile=profile,
         detail_policy=_report_detail_policy(args=args, loaded=loaded),
     )
     _emit_output(report, output_path=args.output)
@@ -470,8 +485,12 @@ def run_changes(*, args: argparse.Namespace, loaded, store: Store) -> int:
         since=args.since,
         until=args.until,
     )
-    provider_pricing = {
-        p.provider_id: (p.price_multiplier, p.price_divisor)
+    provider_profiles = {
+        p.provider_id: resolve_profile(
+            p.kind,
+            price_multiplier=p.price_multiplier,
+            price_divisor=p.price_divisor,
+        )
         for p in loaded.providers
     }
     since_iso = args.since.isoformat() if args.since else None
@@ -482,7 +501,7 @@ def run_changes(*, args: argparse.Namespace, loaded, store: Store) -> int:
         since=since_iso,
         until=until_iso,
         changes=changes,
-        provider_pricing=provider_pricing,
+        provider_profiles=provider_profiles,
         detail_policy=_report_detail_policy(args=args, loaded=loaded),
     )
 
@@ -503,7 +522,7 @@ def run_changes(*, args: argparse.Namespace, loaded, store: Store) -> int:
                 since=since_iso,
                 until=until_iso,
                 changes=changes,
-                provider_pricing=provider_pricing,
+                provider_profiles=provider_profiles,
                 detail_policy=_report_detail_policy(args=args, loaded=loaded),
             )
             html_path = text_path.with_suffix(".html")

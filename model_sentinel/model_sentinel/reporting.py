@@ -31,11 +31,9 @@ from typing import Any, Literal
 # discovers the `render_*_report` inventory from this module, so a seventh
 # renderer cannot be added without being triaged.
 #
-# `_classify_field`, `_is_price_amount_field`, and `_numeric_value` are still
-# called directly here -- by the category grouping helpers and by
-# `_price_movement_kind`, neither of which is a per-field renderer -- so they
-# stay imported (and therefore re-exported for external call sites that
-# imported them from reporting.py before the move to change_render.py).
+# `_numeric_value` is still called directly here by price-movement helpers.
+# Provider-specific category and monetary-field decisions come from the
+# profile carried by the enclosing scan/report context.
 # `_list_diff_members` is imported for `_list_change_signature`, the bulk
 # grouping key, which must share one member-stringification and one set
 # difference with `classify_change`'s list branch without inheriting the
@@ -52,44 +50,18 @@ from .change_render import (
     _list_diff_members,
     _numeric_value,
     _scalar_display,
-    classify_change as _classify_change_with_profile,
+    classify_change,
     signed_pct_change,
 )
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
 from .provider_profiles import (
-    OPENROUTER_PROFILE,
-    default_categorize,
-    default_is_price_amount_field,
+    GENERIC_PROFILE,
+    ProviderProfile,
 )
 from .time_utils import to_local_human, to_local_iso
 
-_classify_field = default_categorize
-_is_price_amount_field = default_is_price_amount_field
-
-
-def classify_change(
-    field_change: FieldChange,
-    *,
-    price_multiplier: int = 1,
-    price_divisor: int = 1,
-) -> RenderedChange:
-    """Compatibility adapter while report call sites are profile-threaded."""
-    return _classify_change_with_profile(
-        field_change,
-        profile=OPENROUTER_PROFILE.with_pricing(
-            price_multiplier,
-            price_divisor,
-        ),
-    )
-
 REPORT_DETAIL_MODES = ("default", "all", "squelched")
 BULK_CHANGE_MIN_MODELS = 3
-
-_PRICING_OVERRIDE_CONDITION_FIELDS = (
-    "min_prompt_tokens",
-    "utc_start",
-    "utc_end",
-)
 
 DEFAULT_REPORT_SHOW_FIELDS = (
     "pricing.*",
@@ -375,7 +347,10 @@ def _matches_any(field_name: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatchcase(field_name, pattern) for pattern in patterns)
 
 
-def _drop_noop_changes(field_changes: tuple[FieldChange, ...]) -> tuple[FieldChange, ...]:
+def _drop_noop_changes(
+    field_changes: tuple[FieldChange, ...],
+    profile: ProviderProfile,
+) -> tuple[FieldChange, ...]:
     """THE render-time no-op filter (E1). One implementation, one call site.
 
     A change whose two sides are semantically identical -- both `null`, or
@@ -406,7 +381,11 @@ def _drop_noop_changes(field_changes: tuple[FieldChange, ...]) -> tuple[FieldCha
     kept: list[FieldChange] = []
     dropped: list[FieldChange] = []
     for field_change in field_changes:
-        target = dropped if classify_change(field_change).kind == "noop" else kept
+        target = (
+            dropped
+            if classify_change(field_change, profile=profile).kind == "noop"
+            else kept
+        )
         target.append(field_change)
     return tuple(kept), tuple(dropped)
 
@@ -414,6 +393,7 @@ def _drop_noop_changes(field_changes: tuple[FieldChange, ...]) -> tuple[FieldCha
 def _field_display_plan(
     field_changes: tuple[FieldChange, ...],
     policy: ReportDetailPolicy,
+    profile: ProviderProfile,
     *,
     unclassified_remaining: int | None = None,
 ) -> _FieldDisplayPlan:
@@ -423,7 +403,10 @@ def _field_display_plan(
     # policy. The filter sits above the `mode == "all"` early return on
     # purpose: E1 is a correctness fix, not a verbosity setting, so the
     # full-detail audit view drops them too.
-    field_changes, noop = _drop_noop_changes(_expand_structured_field_changes(field_changes))
+    field_changes, noop = _drop_noop_changes(
+        _expand_structured_field_changes(field_changes, profile),
+        profile,
+    )
     if policy.mode == "all":
         return _FieldDisplayPlan(field_changes, (), (), (), 0, noop)
 
@@ -462,6 +445,7 @@ def _field_display_plan(
 
 def _expand_structured_field_changes(
     field_changes: tuple[FieldChange, ...],
+    profile: ProviderProfile,
 ) -> tuple[FieldChange, ...]:
     """Expand newly added or removed JSON objects into readable leaf changes.
 
@@ -473,11 +457,14 @@ def _expand_structured_field_changes(
     """
     expanded: list[FieldChange] = []
     for field_change in field_changes:
-        expanded.extend(_expand_structured_field_change(field_change))
+        expanded.extend(_expand_structured_field_change(field_change, profile))
     return tuple(expanded)
 
 
-def _expand_structured_field_change(field_change: FieldChange) -> tuple[FieldChange, ...]:
+def _expand_structured_field_change(
+    field_change: FieldChange,
+    profile: ProviderProfile,
+) -> tuple[FieldChange, ...]:
     old_value = field_change.old_value
     new_value = field_change.new_value
 
@@ -490,6 +477,7 @@ def _expand_structured_field_change(field_change: FieldChange) -> tuple[FieldCha
             field_change.field_name,
             old_value,
             new_value,
+            profile,
         )
         if expanded is not None:
             return expanded
@@ -515,6 +503,7 @@ def _expand_pricing_override_changes(
     field_name: str,
     old_value: list[Any],
     new_value: list[Any],
+    profile: ProviderProfile,
 ) -> tuple[FieldChange, ...] | None:
     """Compare conditional-pricing tiers without treating dictionaries as list members.
 
@@ -523,8 +512,8 @@ def _expand_pricing_override_changes(
     not create noise. If the payload cannot be matched safely, return ``None`` and let
     the existing full-list fallback preserve the upstream values.
     """
-    old_by_identity = _index_pricing_overrides(old_value)
-    new_by_identity = _index_pricing_overrides(new_value)
+    old_by_identity = _index_pricing_overrides(old_value, profile)
+    new_by_identity = _index_pricing_overrides(new_value, profile)
     if old_by_identity is None or new_by_identity is None:
         return None
 
@@ -548,6 +537,7 @@ def _expand_pricing_override_changes(
 
 def _index_pricing_overrides(
     value: list[Any],
+    profile: ProviderProfile,
 ) -> dict[tuple[tuple[str, Any], ...], dict[str, Any]] | None:
     indexed: dict[tuple[tuple[str, Any], ...], dict[str, Any]] = {}
     for item in value:
@@ -555,7 +545,7 @@ def _index_pricing_overrides(
             return None
         identity = tuple(
             (field, item[field])
-            for field in _PRICING_OVERRIDE_CONDITION_FIELDS
+            for field in profile.pricing_override_condition_fields
             if field in item and not isinstance(item[field], (dict, list))
         )
         if not identity or identity in indexed:
@@ -652,6 +642,7 @@ def _bulk_change_signature(plan: _FieldDisplayPlan) -> tuple[tuple[str, tuple[st
 def _plan_provider_changes(
     changed: tuple[ModelDelta, ...],
     policy: ReportDetailPolicy,
+    profile: ProviderProfile,
 ) -> _ProviderChangePlan:
     planned: list[_PlannedModelChange] = []
     unclassified_remaining = policy.unclassified_limit
@@ -659,6 +650,7 @@ def _plan_provider_changes(
         display = _field_display_plan(
             delta.field_changes,
             policy,
+            profile,
             unclassified_remaining=unclassified_remaining,
         )
         unclassified_remaining = max(0, unclassified_remaining - display.unclassified_used)
@@ -968,6 +960,7 @@ class _ChangesProviderPlan:
 def _plan_changes_report_provider(
     models: dict[str, list[dict[str, Any]]],
     policy: ReportDetailPolicy,
+    profile: ProviderProfile,
 ) -> _ChangesProviderPlan:
     """Plan one provider block of the `changes` report, for text and HTML alike.
 
@@ -1004,7 +997,12 @@ def _plan_changes_report_provider(
         field_changes = _field_changes_from_change_rows(field_rows)
         if not field_changes:
             continue
-        plan = _field_display_plan(field_changes, policy, unclassified_remaining=unclassified_remaining)
+        plan = _field_display_plan(
+            field_changes,
+            policy,
+            profile,
+            unclassified_remaining=unclassified_remaining,
+        )
         unclassified_remaining = max(0, unclassified_remaining - plan.unclassified_used)
         planned_displays.append((model_id, plan))
         if not _renders_anything(plan):
@@ -1094,13 +1092,14 @@ def _history_summary_markdown(events: tuple[HistoryEvent, ...], policy: ReportDe
 def _group_field_changes_for_detail(
     field_changes: tuple[FieldChange, ...],
     policy: ReportDetailPolicy,
+    profile: ProviderProfile,
 ) -> list[tuple[str, list[FieldChange]]]:
     grouped: dict[str, list[FieldChange]] = defaultdict(list)
     category_order = [*_CATEGORY_ORDER]
     if "Unclassified" not in category_order:
         category_order.append("Unclassified")
     for fc in field_changes:
-        category = _classify_field(fc.field_name)
+        category = profile.categorize(fc.field_name)
         if policy.mode == "default" and classify_detail_visibility(fc.field_name, policy) == "unclassified":
             category = "Unclassified"
         grouped[category].append(fc)
@@ -1156,6 +1155,7 @@ def render_history_report(
     first_seen: str | None,
     last_seen: str | None,
     events: tuple[HistoryEvent, ...],
+    profile: ProviderProfile,
     latest_model: dict[str, Any] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
 ) -> str:
@@ -1386,7 +1386,7 @@ def render_changes_report(
     since: str | None,
     until: str | None,
     changes: tuple[dict[str, Any], ...],
-    provider_pricing: dict[str, tuple[int, int]] | None = None,
+    provider_profiles: dict[str, ProviderProfile] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
 ) -> str:
     detail_policy = detail_policy or make_report_detail_policy()
@@ -1443,7 +1443,7 @@ def render_changes_report(
             since=since,
             until=until,
             total_changes=len(changes),
-            provider_pricing=provider_pricing,
+            provider_profiles=provider_profiles,
             detail_policy=detail_policy,
         )
 
@@ -1469,14 +1469,21 @@ def render_changes_report(
         # emitted only if something survives beneath them.
         date_lines: list[str] = []
         for group_provider_id, models in providers.items():
-            plan = _plan_changes_report_provider(models, detail_policy)
+            profile = (provider_profiles or {}).get(
+                group_provider_id,
+                GENERIC_PROFILE,
+            )
+            plan = _plan_changes_report_provider(
+                models,
+                detail_policy,
+                profile,
+            )
             if plan.renders_nothing:
                 continue
             date_lines.append(f"    {display_labels.get(group_provider_id, group_provider_id)}")
             # Conversion factors come from the group key, i.e. from the provider
             # whose rows these are -- not from `rows[0]`, which only happened to
             # agree while the grouping key was the label.
-            pm, pd = (provider_pricing or {}).get(group_provider_id, (1, 1))
             for entry in plan.entries:
                 if entry.kind == "added":
                     date_lines.append(f"      + {entry.model_id} ({entry.display_name})")
@@ -1486,7 +1493,11 @@ def render_changes_report(
                     continue
                 assert entry.display is not None  # `changed` entries always carry a plan
                 date_lines.append(f"      * {entry.model_id} ({entry.display_name})")
-                grouped = _group_field_changes_for_detail(entry.display.visible, detail_policy)
+                grouped = _group_field_changes_for_detail(
+                    entry.display.visible,
+                    detail_policy,
+                    profile,
+                )
                 for category, fcs in grouped:
                     if len(grouped) > 1 or category == "Unclassified":
                         date_lines.append(f"          [{category}]")
@@ -1494,7 +1505,9 @@ def render_changes_report(
                     else:
                         indent = "          "
                     for fc in fcs:
-                        date_lines.append(f"{indent}{_render_smart_change_text(fc, pm, pd)}")
+                        date_lines.append(
+                            f"{indent}{_render_smart_change_text(fc, profile)}"
+                        )
                 date_lines.extend(
                     _hidden_change_summary_lines(
                         entry.display, indent="          ", model_ids=(entry.model_id,)
@@ -1553,8 +1566,9 @@ _SUMMARY_CATEGORY_RANK = {category: index for index, category in enumerate(_SUMM
 
 def _price_movement_kind(
     field_change: FieldChange,
+    profile: ProviderProfile,
 ) -> Literal["higher", "lower", "added", "removed"] | None:
-    if not _is_price_amount_field(field_change.field_name):
+    if not profile.is_price_amount_field(field_change.field_name):
         return None
 
     old_numeric = _numeric_value(field_change.old_value)
@@ -1589,7 +1603,7 @@ def _collect_price_movement_summary(
         for item in provider_plan.planned:
             key = (result.provider_id, item.delta.provider_model_id)
             for field_change in item.display.visible:
-                movement = _price_movement_kind(field_change)
+                movement = _price_movement_kind(field_change, result.profile)
                 if movement is None:
                     continue
                 identities[key] = (
@@ -1611,8 +1625,7 @@ def _collect_price_movement_summary(
                 # `delta_abs`, so it is counted and then skipped here.
                 rendered = classify_change(
                     field_change,
-                    price_multiplier=result.price_multiplier,
-                    price_divisor=result.price_divisor,
+                    profile=result.profile,
                 )
                 slot = _PRICE_MOVEMENT_SLOTS.get(rendered.direction)
                 if slot is None or rendered.delta_abs is None:
@@ -1698,8 +1711,7 @@ class _ModelImpact:
 def _model_price_impact(
     item: _PlannedModelChange,
     *,
-    price_multiplier: int,
-    price_divisor: int,
+    profile: ProviderProfile,
 ) -> _ModelImpact | None:
     """F2's sort key for one planned model, or `None` if it has no price move.
 
@@ -1723,7 +1735,7 @@ def _model_price_impact(
     coverage = 0
     moved = False
     for field_change in item.display.visible:
-        movement = _price_movement_kind(field_change)
+        movement = _price_movement_kind(field_change, profile)
         if movement is None:
             continue
         moved = True
@@ -1732,8 +1744,7 @@ def _model_price_impact(
             continue
         rendered = classify_change(
             field_change,
-            price_multiplier=price_multiplier,
-            price_divisor=price_divisor,
+            profile=profile,
         )
         # `_price_movement_kind` returned a two-sided direction, so both
         # operands are numeric and `signed_pct_change` can only be `None`
@@ -1762,10 +1773,11 @@ def _is_one_sided(rendered: RenderedChange) -> bool:
     return rendered.direction in ("added", "removed")
 
 
-def _render_smart_change_text(fc: FieldChange, price_multiplier: int = 1, price_divisor: int = 1) -> str:
-    return _render_change_text(
-        classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
-    )
+def _render_smart_change_text(
+    fc: FieldChange,
+    profile: ProviderProfile,
+) -> str:
+    return _render_change_text(classify_change(fc, profile=profile))
 
 
 def _render_change_text(rendered: RenderedChange) -> str:
@@ -1911,6 +1923,7 @@ def _bulk_hidden_entries(
 def _bulk_group_text_lines(
     group: _BulkChangeGroup,
     policy: ReportDetailPolicy,
+    profile: ProviderProfile,
     *,
     indent: str,
 ) -> list[str]:
@@ -1919,11 +1932,14 @@ def _bulk_group_text_lines(
         f"{indent}* {group.label}",
         f"{indent}  models: {_format_model_list(model_ids, limit=12)}",
     ]
-    grouped = _group_field_changes_for_detail(group.visible, policy)
+    grouped = _group_field_changes_for_detail(group.visible, policy, profile)
     for category, changes in grouped:
         lines.append(f"{indent}  [{category}]")
         for field_change in changes:
-            lines.append(f"{indent}    {_render_bulk_list_diff_text(classify_change(field_change))}")
+            lines.append(
+                f"{indent}    "
+                f"{_render_bulk_list_diff_text(classify_change(field_change, profile=profile))}"
+            )
 
     squelched = _bulk_hidden_entries(group, "squelched")
     count, affected_models = _summarize_field_changes(squelched)
@@ -1940,16 +1956,25 @@ def _bulk_group_text_lines(
     return lines
 
 
-def _bulk_group_markdown_lines(group: _BulkChangeGroup, policy: ReportDetailPolicy) -> list[str]:
+def _bulk_group_markdown_lines(
+    group: _BulkChangeGroup,
+    policy: ReportDetailPolicy,
+    profile: ProviderProfile,
+) -> list[str]:
     model_ids = tuple(sorted(group.model_ids))
     lines = [
         f"- **{group.label}**",
         f"  - Models: `{_format_model_list(model_ids, limit=12)}`",
     ]
-    for category, changes in _group_field_changes_for_detail(group.visible, policy):
+    for category, changes in _group_field_changes_for_detail(
+        group.visible,
+        policy,
+        profile,
+    ):
         lines.append(f"  - **{category}**")
         for field_change in changes:
-            lines.append(f"    - `{_render_bulk_list_diff_text(classify_change(field_change))}`")
+            rendered = classify_change(field_change, profile=profile)
+            lines.append(f"    - `{_render_bulk_list_diff_text(rendered)}`")
     squelched = _bulk_hidden_entries(group, "squelched")
     count, affected_models = _summarize_field_changes(squelched)
     if count:
@@ -2005,26 +2030,45 @@ def _render_scan_text(
         # are accounted for by the rollup lines below, exactly as squelched
         # rows always have been.
         lines.append(f"  changed: {len(result.changed)}")
-        provider_plan = _plan_provider_changes(result.changed, detail_policy)
+        provider_plan = _plan_provider_changes(
+            result.changed,
+            detail_policy,
+            result.profile,
+        )
         for item in provider_plan.items:
             if isinstance(item, _BulkChangeGroup):
-                lines.extend(_bulk_group_text_lines(item, detail_policy, indent="    "))
+                lines.extend(
+                    _bulk_group_text_lines(
+                        item,
+                        detail_policy,
+                        result.profile,
+                        indent="    ",
+                    )
+                )
                 continue
             delta, plan = item.delta, item.display
             lines.append(f"    * {delta.provider_model_id} ({delta.display_name})")
             if not plan.visible:
                 lines.extend(_hidden_change_summary_lines(plan, indent="      ", model_ids=(delta.provider_model_id,)))
                 continue
-            grouped = _group_field_changes_for_detail(plan.visible, detail_policy)
-            pm, pd = result.price_multiplier, result.price_divisor
+            grouped = _group_field_changes_for_detail(
+                plan.visible,
+                detail_policy,
+                result.profile,
+            )
             if len(grouped) == 1 and len(grouped[0][1]) == 1 and grouped[0][0] != "Unclassified":
                 # Single change — no category header needed
-                lines.append(f"      {_render_smart_change_text(grouped[0][1][0], pm, pd)}")
+                lines.append(
+                    f"      "
+                    f"{_render_smart_change_text(grouped[0][1][0], result.profile)}"
+                )
             else:
                 for category, changes in grouped:
                     lines.append(f"      [{category}]")
                     for fc in changes:
-                        lines.append(f"        {_render_smart_change_text(fc, pm, pd)}")
+                        lines.append(
+                            f"        {_render_smart_change_text(fc, result.profile)}"
+                        )
             lines.extend(_hidden_change_summary_lines(plan, indent="      ", model_ids=(delta.provider_model_id,)))
         lines.extend(_hidden_rollup_lines(provider_plan.rollups, detail_policy, indent="  "))
         lines.append("")
@@ -2107,15 +2151,27 @@ def _render_scan_markdown(
         lines.append("")
         changed_lines: list[str] = []
         if result.changed:
-            provider_plan = _plan_provider_changes(result.changed, detail_policy)
+            provider_plan = _plan_provider_changes(
+                result.changed,
+                detail_policy,
+                result.profile,
+            )
             for item in provider_plan.items:
                 if isinstance(item, _BulkChangeGroup):
-                    changed_lines.extend(_bulk_group_markdown_lines(item, detail_policy))
+                    changed_lines.extend(
+                        _bulk_group_markdown_lines(
+                            item,
+                            detail_policy,
+                            result.profile,
+                        )
+                    )
                     continue
                 delta, plan = item.delta, item.display
                 changed_lines.append(f"- `{delta.provider_model_id}` - {delta.display_name}")
                 for field_change in plan.visible:
-                    changed_lines.append(f"  - `{_render_smart_change_text(field_change, result.price_multiplier, result.price_divisor)}`")
+                    changed_lines.append(
+                        f"  - `{_render_smart_change_text(field_change, result.profile)}`"
+                    )
                 if plan.squelched:
                     changed_lines.append(f"  - Squelched: `{len(plan.squelched)}` field change(s) hidden by report detail policy")
                 if plan.hidden_unclassified:
@@ -3112,13 +3168,14 @@ def _build_summary_entries_from_bulk(
     *,
     provider_label: str,
     group: _BulkChangeGroup,
+    profile: ProviderProfile,
 ) -> list[_SummaryEntry]:
     """Rows for one bulk-change group: one per shared visible field change."""
     entries = []
     for field_change in group.visible:
-        rendered = classify_change(field_change)
+        rendered = classify_change(field_change, profile=profile)
         entries.append(_SummaryEntry(
-            _classify_field(field_change.field_name),
+            profile.categorize(field_change.field_name),
             provider_label,
             group.label,
             rendered.display_label,
@@ -3186,8 +3243,7 @@ def _build_summary_entries_from_fc(
     model_id: str,
     display_name: str,
     field_changes: list[FieldChange],
-    price_multiplier: int,
-    price_divisor: int,
+    profile: ProviderProfile,
     anchor: str = "",
 ) -> list[_SummaryEntry]:
     """Rows for one model's visible field changes, one per change.
@@ -3199,8 +3255,8 @@ def _build_summary_entries_from_fc(
     """
     entries = []
     for fc in field_changes:
-        rendered = classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
-        category = _classify_field(rendered.field_path)
+        rendered = classify_change(fc, profile=profile)
+        category = profile.categorize(rendered.field_path)
         # Both cells come from the classification, not from splitting a
         # rendered line: `display_label` IS the Field cell, and
         # `_summary_change_detail` composes the Change cell from the same
@@ -3223,8 +3279,7 @@ def _build_summary_entries_from_fc(
 
 def _render_html_model_changes(
     delta: ModelDelta,
-    price_multiplier: int = 1,
-    price_divisor: int = 1,
+    profile: ProviderProfile,
     detail_policy: ReportDetailPolicy | None = None,
     unclassified_remaining: int | None = None,
     display_plan: _FieldDisplayPlan | None = None,
@@ -3247,6 +3302,7 @@ def _render_html_model_changes(
     plan = display_plan or _field_display_plan(
         delta.field_changes,
         policy,
+        profile,
         unclassified_remaining=unclassified_remaining,
     )
     back = (
@@ -3267,9 +3323,8 @@ def _render_html_model_changes(
     # tables size their columns independently, which is why a card's decimal
     # points did not line up from one category to the next.
     table_html = _render_html_card_table(
-        _group_field_changes_for_detail(plan.visible, policy),
-        price_multiplier,
-        price_divisor,
+        _group_field_changes_for_detail(plan.visible, policy, profile),
+        profile,
     )
     if table_html:
         parts.append(f'<div class="card-table-wrap">{table_html}</div>')
@@ -3332,16 +3387,28 @@ def _html_model_details(label: str, model_ids: tuple[str, ...], *, preview_limit
     )
 
 
-def _render_html_bulk_changes(group: _BulkChangeGroup, policy: ReportDetailPolicy) -> str:
+def _render_html_bulk_changes(
+    group: _BulkChangeGroup,
+    policy: ReportDetailPolicy,
+    profile: ProviderProfile,
+) -> str:
     parts = [
         '<div class="model-card bulk-change-card">',
         f'<div class="model-card-header"><code>{html_module.escape(group.label)}</code></div>',
         _html_model_details("Models", group.model_ids, preview_limit=12),
     ]
-    for category, changes in _group_field_changes_for_detail(group.visible, policy):
+    for category, changes in _group_field_changes_for_detail(
+        group.visible,
+        policy,
+        profile,
+    ):
         parts.append(f'<div class="change-category"><div class="category-label">{html_module.escape(category)}</div>')
         for field_change in changes:
-            parts.append(_render_html_bulk_list_diff(classify_change(field_change)))
+            parts.append(
+                _render_html_bulk_list_diff(
+                    classify_change(field_change, profile=profile)
+                )
+            )
         parts.append('</div>')
 
     squelched = _bulk_hidden_entries(group, "squelched")
@@ -3420,8 +3487,7 @@ def _append_html_provider_summary(
 def _append_html_field_changes(
     parts: list[str],
     field_changes: list[FieldChange],
-    price_multiplier: int,
-    price_divisor: int,
+    profile: ProviderProfile,
 ) -> None:
     """Append HTML for a group of field changes (table rows + list diffs) to parts.
 
@@ -3434,7 +3500,7 @@ def _append_html_field_changes(
     what differs is markup.
     """
     rendered_changes = [
-        classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
+        classify_change(fc, profile=profile)
         for fc in field_changes
     ]
     list_changes = [rendered for rendered in rendered_changes if rendered.kind == "list"]
@@ -3622,17 +3688,17 @@ def _scientific_notation(raw: str) -> str | None:
     return f"{'-' if sign else ''}{mantissa}e{adjusted}"
 
 
-def _price_conversion_factor(price_multiplier: int, price_divisor: int) -> str:
+def _price_conversion_factor(profile: ProviderProfile) -> str:
     """`× 1,000,000`, `÷ 1,000`, both, or `""` when the provider needs neither.
 
     Thousands-separated because the whole point of R1 is that the reader should
     not have to count zeros -- including the zeros in the factor.
     """
     parts = []
-    if price_multiplier != 1:
-        parts.append(f"× {price_multiplier:,}")
-    if price_divisor != 1:
-        parts.append(f"÷ {price_divisor:,}")
+    if profile.price_multiplier != 1:
+        parts.append(f"× {profile.price_multiplier:,}")
+    if profile.price_divisor != 1:
+        parts.append(f"÷ {profile.price_divisor:,}")
     return " ".join(parts)
 
 
@@ -3641,8 +3707,7 @@ def _card_raw_title(
     raw: str | None,
     display: str,
     *,
-    price_multiplier: int,
-    price_divisor: int,
+    profile: ProviderProfile,
 ) -> str:
     """R1: a price cell's `title`, showing the whole derivation, else `""`.
 
@@ -3669,7 +3734,7 @@ def _card_raw_title(
         return ""
     scientific = _scientific_notation(raw)
     lead = f"{raw} ({scientific})" if scientific is not None else raw
-    factor = _price_conversion_factor(price_multiplier, price_divisor)
+    factor = _price_conversion_factor(profile)
     derivation = f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
     return f' title="{html_module.escape(derivation)}"'
 
@@ -3686,8 +3751,7 @@ def _pricing_rows_by_impact(rendered_changes: list[RenderedChange]) -> list[Rend
 
 def _render_html_card_table(
     grouped: list[tuple[str, list[FieldChange]]],
-    price_multiplier: int,
-    price_divisor: int,
+    profile: ProviderProfile,
 ) -> str:
     """C1: one `<table>` for a whole model card, grouped by category.
 
@@ -3708,7 +3772,7 @@ def _render_html_card_table(
     field_row_index = 0
     for category, field_changes in grouped:
         rendered_changes = [
-            classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
+            classify_change(fc, profile=profile)
             for fc in field_changes
         ]
         if category == "Pricing":
@@ -3719,8 +3783,7 @@ def _render_html_card_table(
                     rendered,
                     category=category if index == 0 else None,
                     alternate=field_row_index % 2 == 1,
-                    price_multiplier=price_multiplier,
-                    price_divisor=price_divisor,
+                    profile=profile,
                 )
             )
             field_row_index += 1
@@ -3769,8 +3832,7 @@ def _render_html_card_row(
     *,
     category: str | None,
     alternate: bool = False,
-    price_multiplier: int = 1,
-    price_divisor: int = 1,
+    profile: ProviderProfile,
 ) -> str:
     """One field's `<tr>` -- plus a members `<tr>` for a list change.
 
@@ -3830,15 +3892,13 @@ def _render_html_card_row(
         rendered,
         rendered.old_raw,
         rendered.old_display,
-        price_multiplier=price_multiplier,
-        price_divisor=price_divisor,
+        profile=profile,
     )
     new_title = _card_raw_title(
         rendered,
         rendered.new_raw,
         rendered.new_display,
-        price_multiplier=price_multiplier,
-        price_divisor=price_divisor,
+        profile=profile,
     )
     field_row = (
         f'<tr{row_class}>{chip}{label}'
@@ -4219,8 +4279,7 @@ def _split_provider_tiers(
             continue
         impact = _model_price_impact(
             item,
-            price_multiplier=result.price_multiplier,
-            price_divisor=result.price_divisor,
+            profile=result.profile,
         )
         if impact is None:
             deferred.append((item.delta.provider_model_id.casefold(), item))
@@ -4258,8 +4317,7 @@ def _model_card_html(
     """
     card, _ = _render_html_model_changes(
         item.delta,
-        result.price_multiplier,
-        result.price_divisor,
+        result.profile,
         policy,
         display_plan=item.display,
         anchor=anchor,
@@ -4331,7 +4389,7 @@ def _build_scan_change_tiers(
             for item, anchor in zip(split.primary, primary_ids)
         ]
         deferred = [
-            _render_html_bulk_changes(item, policy)
+            _render_html_bulk_changes(item, policy, result.profile)
             if isinstance(item, _BulkChangeGroup)
             else _model_card_html(item, anchor, result, policy, back_link=back_link)
             for item, anchor in zip(split.secondary, secondary_ids)
@@ -4480,7 +4538,14 @@ def _render_scan_html(
     h = html_module.escape
     timestamp = h(to_local_human(generated_at))
     planned_results = [
-        (result, _plan_provider_changes(result.changed, detail_policy))
+        (
+            result,
+            _plan_provider_changes(
+                result.changed,
+                detail_policy,
+                result.profile,
+            ),
+        )
         for result in provider_results
     ]
 
@@ -4535,18 +4600,19 @@ def _render_scan_html(
     summary_entries: list[_SummaryEntry] = []
     for result, provider_plan in planned_results:
         prov = result.provider_label
-        pm, pd = result.price_multiplier, result.price_divisor
         for item in provider_plan.items:
             if isinstance(item, _BulkChangeGroup):
                 summary_entries.extend(_build_summary_entries_from_bulk(
-                    provider_label=prov, group=item,
+                    provider_label=prov,
+                    group=item,
+                    profile=result.profile,
                 ))
                 continue
             delta, plan = item.delta, item.display
             summary_entries.extend(_build_summary_entries_from_fc(
                 provider_label=prov, model_id=delta.provider_model_id,
                 display_name=delta.display_name, field_changes=list(plan.visible),
-                price_multiplier=pm, price_divisor=pd,
+                profile=result.profile,
                 anchor=anchors.link(result.provider_id, delta.provider_model_id),
             ))
         squelched_entry = _squelched_summary_entry(
@@ -4623,7 +4689,7 @@ def _render_changes_html(
     since: str | None,
     until: str | None,
     total_changes: int,
-    provider_pricing: dict[str, tuple[int, int]] | None = None,
+    provider_profiles: dict[str, ProviderProfile] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
 ) -> str:
     h = html_module.escape
@@ -4646,13 +4712,18 @@ def _render_changes_html(
         # date whose every model was suppressed emits no section at all.
         provider_parts: list[str] = []
         for group_provider_id, models in providers.items():
-            provider_plan = _plan_changes_report_provider(models, detail_policy)
+            profile = (provider_profiles or {}).get(
+                group_provider_id,
+                GENERIC_PROFILE,
+            )
+            provider_plan = _plan_changes_report_provider(
+                models,
+                detail_policy,
+                profile,
+            )
             if provider_plan.renders_nothing:
                 continue
             provider_label = display_labels.get(group_provider_id, group_provider_id)
-            # From the group key, so a provider's own conversion factors are the
-            # ones its prices are rendered with -- see `render_changes_report`.
-            pm, pd = (provider_pricing or {}).get(group_provider_id, (1, 1))
             parts: list[str] = [f'<h3>{h(provider_label)}</h3>']
             added_models = []
             removed_models = []
@@ -4695,10 +4766,14 @@ def _render_changes_html(
                     f'<div class="model-card-header"><code>{h(model_id)}</code>'
                     f'<span class="display-name">{h(display_name)}</span></div>'
                 )
-                grouped = _group_field_changes_for_detail(plan.visible, detail_policy)
+                grouped = _group_field_changes_for_detail(
+                    plan.visible,
+                    detail_policy,
+                    profile,
+                )
                 for category, fcs in grouped:
                     parts.append(f'<div class="change-category"><div class="category-label">{h(category)}</div>')
-                    _append_html_field_changes(parts, fcs, pm, pd)
+                    _append_html_field_changes(parts, fcs, profile)
                     parts.append('</div>')
                 _append_html_hidden_summary(parts, plan, model_ids=(model_id,))
                 parts.append('</div>')
@@ -4707,7 +4782,7 @@ def _render_changes_html(
                 summary_entries.extend(_build_summary_entries_from_fc(
                     provider_label=provider_label, model_id=model_id,
                     display_name=display_name, field_changes=list(plan.visible),
-                    price_multiplier=pm, price_divisor=pd,
+                    profile=profile,
                 ))
             # Squelched changes are accounted for once per provider, from the
             # same rollup the body's squelched card is built from -- not once

@@ -112,6 +112,7 @@ import os
 import time
 
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
+from model_sentinel.provider_profiles import OPENROUTER_PROFILE
 from model_sentinel.reporting import (
     BULK_CHANGE_MIN_MODELS,
     make_report_detail_policy,
@@ -239,9 +240,8 @@ def scan_result(changed: tuple[ModelDelta, ...]) -> list[ProviderScanResult]:
             added=(),
             removed=(),
             changed=tuple(changed),
+            profile=OPENROUTER_PROFILE.with_pricing(1_000_000, 1),
             error_message=None,
-            price_multiplier=1000000,
-            price_divisor=1,
         )
     ]
 

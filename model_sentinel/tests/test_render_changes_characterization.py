@@ -102,6 +102,7 @@ import time
 from tests.html_probe import absent_side_cells
 
 from model_sentinel.reporting import render_changes_report
+from model_sentinel.provider_profiles import OPENROUTER_PROFILE
 
 # Pin the process timezone to UTC before any golden constant below is defined,
 # for the same reason as the other two characterization modules -- and with one
@@ -179,7 +180,12 @@ def render(format_name: str) -> str:
         since=SINCE,
         until=None,
         changes=CHANGES_ROWS,
-        provider_pricing={"synthprov": (PRICE_MULTIPLIER, PRICE_DIVISOR)},
+        provider_profiles={
+            "synthprov": OPENROUTER_PROFILE.with_pricing(
+                PRICE_MULTIPLIER,
+                PRICE_DIVISOR,
+            )
+        },
     )
 
 

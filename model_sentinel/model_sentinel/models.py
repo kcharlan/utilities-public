@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .provider_profiles import ProviderProfile
+
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -72,9 +74,8 @@ class ProviderScanResult:
     added: tuple[ModelDelta, ...]
     removed: tuple[ModelDelta, ...]
     changed: tuple[ModelDelta, ...]
+    profile: ProviderProfile
     error_message: str | None = None
-    price_multiplier: int = 1
-    price_divisor: int = 1
 
     @property
     def change_count(self) -> int:
@@ -88,4 +89,3 @@ class HistoryEvent:
     field_name: str | None
     old_value: Any
     new_value: Any
-

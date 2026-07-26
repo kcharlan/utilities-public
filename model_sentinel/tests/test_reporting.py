@@ -23,8 +23,8 @@ from model_sentinel.reporting import (
     ReportDetailPolicy,
     _list_change_signature,
     make_report_detail_policy,
-    render_changes_report,
-    render_history_report,
+    render_changes_report as render_changes_report_with_profiles,
+    render_history_report as render_history_report_with_profile,
     render_scan_report,
 )
 from model_sentinel.provider_profiles import OPENROUTER_PROFILE
@@ -47,6 +47,28 @@ def classify_change(
 
 def resolve_field_label(field_path: str) -> tuple[str, str | None]:
     return resolve_field_label_with_profile(field_path, OPENROUTER_PROFILE)
+
+
+def render_history_report(**kwargs):
+    kwargs.setdefault("profile", OPENROUTER_PROFILE)
+    return render_history_report_with_profile(**kwargs)
+
+
+def render_changes_report(
+    *,
+    provider_pricing=None,
+    provider_profiles=None,
+    **kwargs,
+):
+    if provider_profiles is None and provider_pricing is not None:
+        provider_profiles = {
+            provider_id: OPENROUTER_PROFILE.with_pricing(multiplier, divisor)
+            for provider_id, (multiplier, divisor) in provider_pricing.items()
+        }
+    return render_changes_report_with_profiles(
+        provider_profiles=provider_profiles,
+        **kwargs,
+    )
 
 
 # The baseline every real scan carries. `storage.py` builds a `BaselineInfo`
@@ -79,9 +101,8 @@ def _scan_result(
         added=(),
         removed=(),
         changed=changed,
+        profile=OPENROUTER_PROFILE.with_pricing(1_000_000, 1),
         error_message=error_message,
-        price_multiplier=1000000,
-        price_divisor=1,
     )
 
 
@@ -1005,7 +1026,10 @@ def test_price_movement_kind_and_classify_change_agree_on_direction() -> None:
 
     observed = set()
     for field_change in cases:
-        kind = reporting._price_movement_kind(field_change)
+        kind = reporting._price_movement_kind(
+            field_change,
+            OPENROUTER_PROFILE,
+        )
         observed.add(kind)
         for multiplier, divisor in normalizations:
             rendered = classify_change(
@@ -2191,9 +2215,8 @@ def _unscaled_price_report(old_value: str, new_value: str) -> str:
                         (FieldChange("pricing.prompt", old_value, new_value),),
                     ),
                 ),
+                profile=OPENROUTER_PROFILE,
                 error_message=None,
-                price_multiplier=1,
-                price_divisor=1,
             )
         ],
     )
@@ -2616,6 +2639,20 @@ def _sub_cent_changes_report(format_name: str) -> str:
         changes=_sub_cent_changes_rows(),
         provider_pricing={"synthprov": (1000000, 1)},
     )
+
+
+def test_deconfigured_provider_history_uses_generic_profile_labels() -> None:
+    report = render_changes_report_with_profiles(
+        format_name="text",
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=_sub_cent_changes_rows(),
+        provider_profiles=None,
+    )
+
+    assert "Prompt:" in report
+    assert "Input:" not in report
 
 
 def test_changes_report_carries_the_shared_price_precision() -> None:
@@ -5083,7 +5120,11 @@ def test_both_html_change_renderers_give_a_change_the_same_colour() -> None:
             price_multiplier=1000000,
             price_divisor=1,
         )
-        card = reporting._render_html_card_row(rendered, category="Pricing")
+        card = reporting._render_html_card_row(
+            rendered,
+            category="Pricing",
+            profile=OPENROUTER_PROFILE.with_pricing(1_000_000, 1),
+        )
         table = reporting._render_html_table_row(rendered)
 
         card_classes = set(_colour_classes(card))
@@ -5302,7 +5343,11 @@ def test_the_summary_cell_and_the_card_row_state_the_same_operands() -> None:
     detail = reporting._summary_change_detail(rendered)
     assert detail == "$1.00 → $2.00 /1M (+$1.00, ↑ 100.0%)"
 
-    card = reporting._render_html_card_row(rendered, category="Pricing")
+    card = reporting._render_html_card_row(
+        rendered,
+        category="Pricing",
+        profile=OPENROUTER_PROFILE.with_pricing(1_000_000, 1),
+    )
     # Every operand in the summary cell appears in the card's own cells.
     for operand in ("$1.00", "$2.00", "/1M", "+$1.00", "↑ 100.0%"):
         assert f">{operand}<" in card, operand
@@ -5351,8 +5396,7 @@ def test_the_summary_cell_survives_a_label_containing_the_old_split_token() -> N
         model_id="synth/model-semantics",
         display_name="Synth Semantics",
         field_changes=[FieldChange("pricing.overrides[note=see: this].completion", "0.000002", "0.000003")],
-        price_multiplier=1000000,
-        price_divisor=1,
+        profile=OPENROUTER_PROFILE.with_pricing(1_000_000, 1),
     )
     assert len(entries) == 1
     # The whole label in the Field cell, the whole change in the Change cell --
@@ -5393,6 +5437,7 @@ def test_a_bulk_summary_row_survives_a_label_containing_the_old_split_token() ->
     entries = reporting._build_summary_entries_from_bulk(
         provider_label="Synth Provider",
         group=reporting._BulkChangeGroup(members=members),
+        profile=OPENROUTER_PROFILE,
     )
 
     assert len(entries) == 1
