@@ -3,9 +3,11 @@ from __future__ import annotations
 import fnmatch
 import html as html_module
 import json
+import re
 from collections import OrderedDict, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 # Renderers in this module are pure formatters over `RenderedChange`: they call
@@ -183,6 +185,14 @@ class _SummaryEntry:
     field: str
     detail: str
     grouped_model_ids: tuple[str, ...] = ()
+    # N1: the card id this row's Model cell links to, or `""` for none. Empty
+    # for every row of the `changes` report (which has no model cards at all),
+    # for a grouped/presence/squelched row (which names no single card), and --
+    # the load-bearing case -- for a scan-report row whose model card is in
+    # TIER 2, because a fragment pointing inside a closed `<details>` is not
+    # reliably navigable. Defaulted so the `changes` report's constructors need
+    # not mention it and its output cannot move.
+    anchor: str = ""
 
 
 @dataclass(frozen=True)
@@ -2151,6 +2161,17 @@ header h1 .count {
   margin-top: 0.4rem;
   font-family: var(--font-mono);
 }
+.raw-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.raw-toggle input { cursor: pointer; }
 .provider-cards {
   display: flex;
   gap: 1rem;
@@ -2421,6 +2442,14 @@ h3 {
   margin-bottom: 1rem;
   overflow: hidden;
 }
+.model-card:target {
+  border-color: var(--accent-amber);
+  animation: card-landing 1.8s ease-out 1;
+}
+@keyframes card-landing {
+  from { background: var(--accent-amber-dim); }
+  to { background: var(--bg-card); }
+}
 .model-card-header {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
@@ -2430,13 +2459,27 @@ h3 {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
-.model-card-header .hidden-count {
+.model-card-header .hidden-count,
+.model-card-header .card-back {
   margin-left: auto;
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: 0.75rem;
   white-space: nowrap;
 }
+.model-card-header .card-back { text-decoration: none; }
+.model-card-header .card-back:hover { color: var(--text-bright); }
+.model-card-header .hidden-count + .card-back { margin-left: 0; }
+a.model-link { color: inherit; text-decoration: none; }
+a.model-link code {
+  text-decoration: underline dotted var(--border-accent);
+  text-underline-offset: 0.18em;
+}
+a.model-link:hover code {
+  color: var(--text-bright);
+  text-decoration-color: var(--text-bright);
+}
+.price-headline a.model-link { display: block; }
 .model-card-header code {
   font-family: var(--font-mono);
   font-size: 0.9rem;
@@ -2589,6 +2632,15 @@ td.delta-price-coverage { color: var(--accent-blue); }
   border-top: 1px solid transparent;
   padding-top: 0;
 }
+.card-table tr.raw-line { display: none; }
+body:has(#show-raw:checked) .card-table tr.raw-line { display: table-row; }
+.card-table tr.raw-line td {
+  border-top: 1px solid transparent;
+  padding-top: 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  user-select: text;
+}
 .card-table .list-added { color: var(--accent-blue); }
 .card-table .list-removed { color: var(--text-dim); }
 td.sem-cost-up { color: var(--accent-red); }
@@ -2719,6 +2771,117 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
 </html>"""
 
 
+# ---------------------------------------------------------------------------
+# N1: anchors and the links into them
+#
+# The whole navigation feature is three strings -- a card `id`, an `href` that
+# names it, and the back-link -- and every one of them is minted here so the
+# report cannot end up with a link whose target does not exist, or two cards
+# claiming the same fragment.
+# ---------------------------------------------------------------------------
+
+# The Price Movement card's own id, and the target of every card's back-link.
+# Not slugified from anything: it is a fixed landmark, so it is spelled once and
+# read by both the section that carries it and the links that point at it.
+PRICE_MOVEMENT_ANCHOR = "price-movement"
+
+# The raw-value checkbox's id. Read by `_HTML_CSS` (`body:has(#show-raw:checked)`)
+# and emitted by the scan header. R3 is CSS-only, so this id IS the wiring: a
+# rename in one place and not the other silently turns the toggle into a
+# checkbox that does nothing, with no error anywhere.
+_RAW_TOGGLE_ID = "show-raw"
+
+# Every run of characters that cannot appear in a fragment identifier we are
+# willing to hand-write. Model ids carry `/`, `.`, `:` and `~`, and a run of
+# them collapses to ONE `-` so `a//b` and `a/b` do not differ by a hyphen that
+# carries no meaning.
+_ANCHOR_SEPARATOR_RUN = re.compile(r"[^a-z0-9]+")
+
+
+def _model_anchor_base(model_id: str) -> str:
+    """A model id's slug, BEFORE collision handling.
+
+    Lowercase, every non-alphanumeric run to `-`, stripped of leading and
+    trailing `-`, prefixed `m-`. The prefix is not decoration: a slug that
+    began with a digit would be a valid fragment but an invalid CSS identifier,
+    so `#m-4o` can be selected and `#4o` cannot.
+
+    This deliberately maps `~vendor/model-latest` and `vendor/model-latest` to
+    the SAME string. Providers emit `~`-prefixed alias entries alongside their
+    base ids, so both appear in one report; the collision is resolved by
+    `_CardAnchors`, in render order, rather than by inventing a rule that
+    encodes `~` and would have to be re-invented for the next punctuation mark.
+
+    A model id with no alphanumeric character at all would strip to nothing, so
+    it falls back to `m-model` and is then disambiguated like any other repeat.
+    """
+    slug = _ANCHOR_SEPARATOR_RUN.sub("-", model_id.lower()).strip("-")
+    return f"m-{slug or 'model'}"
+
+
+class _CardAnchors:
+    """The one place a model card's `id` is minted, and the tier it landed in.
+
+    Two questions, one object, because they have to agree: "what fragment does
+    this card carry" and "may anything link to it". The second is N1's hard
+    constraint -- fragment navigation INTO a closed `<details>` is unreliable
+    across browsers, so nothing may link to a tier-2 card -- and a renderer
+    that answered it from its own notion of tiering could drift from the
+    renderer that decided the tiering.
+
+    `assign` mints a slug that is unique within the report by construction: the
+    used set is checked before the slug is handed out, so the second and later
+    occurrences of a colliding base get `-2`, `-3`, ... in the order they were
+    assigned. Callers must render the slug `assign` RETURNS rather than looking
+    it up afterwards, so that even a repeated `(provider_id, model_id)` key --
+    which would be a defect elsewhere -- cannot produce two cards with one id.
+    """
+
+    def __init__(self) -> None:
+        self._assigned: dict[tuple[str, str], tuple[str, int]] = {}
+        self._used: set[str] = set()
+
+    def assign(self, provider_id: str, model_id: str, *, tier: int) -> str:
+        """Mint and record this card's id. Returns the id to render."""
+        base = _model_anchor_base(model_id)
+        slug = base
+        occurrence = 1
+        while slug in self._used:
+            occurrence += 1
+            slug = f"{base}-{occurrence}"
+        self._used.add(slug)
+        self._assigned.setdefault((provider_id, model_id), (slug, tier))
+        return slug
+
+    def link(self, provider_id: str, model_id: str) -> str:
+        """The id a link may point at, or `""` when it may not.
+
+        Empty for an unknown model (nothing to point at) and for a TIER-2 one
+        (the target is inside a closed disclosure). Callers render plain text
+        on `""` rather than an `href` that lands nowhere.
+        """
+        entry = self._assigned.get((provider_id, model_id))
+        return entry[0] if entry is not None and entry[1] == 1 else ""
+
+
+def _model_code_link(model_id: str, anchor: str, *, css_class: str = "") -> str:
+    """A model id as `<code>`, wrapped in a link to its card when it has one.
+
+    THE spelling of every into-a-card link in the report -- the Price Movement
+    headline panels, its affected-model list, and the Change Summary's Model
+    column. Written once because "link when there is a target, plain text when
+    there is not" is the rule N1's tier-2 constraint turns on, and three copies
+    of it would be three places for one of them to start emitting a link into
+    the disclosure.
+    """
+    h = html_module.escape
+    attrs = f' class="{css_class}"' if css_class else ""
+    code = f'<code{attrs}>{h(model_id)}</code>'
+    if not anchor:
+        return code
+    return f'<a class="model-link" href="#{h(anchor)}">{code}</a>'
+
+
 def _build_html_summary_table(
     entries: list[_SummaryEntry],
     *,
@@ -2769,7 +2932,7 @@ def _build_html_summary_table(
                 f'<div class="summary-model-list">{model_list}</div></details>'
             )
         else:
-            model_cell = f'<code>{h(entry.model_id)}</code>'
+            model_cell = _model_code_link(entry.model_id, entry.anchor)
         cells = [] if concise else [f'<td>{h(entry.category)}</td>']
         if show_provider:
             cells.append(f'<td>{h(entry.provider)}</td>')
@@ -2913,8 +3076,15 @@ def _build_summary_entries_from_fc(
     field_changes: list[FieldChange],
     price_multiplier: int,
     price_divisor: int,
+    anchor: str = "",
 ) -> list[_SummaryEntry]:
-    """Rows for one model's visible field changes, one per change."""
+    """Rows for one model's visible field changes, one per change.
+
+    `anchor` is N1's link target for this model's card, already reduced to `""`
+    by `_CardAnchors.link` when the card is in tier 2. This constructor does
+    not decide that -- it only carries what the caller was given -- so the
+    tier-2 rule stays in the one object that knows the tiering.
+    """
     entries = []
     for fc in field_changes:
         rendered = classify_change(fc, price_multiplier=price_multiplier, price_divisor=price_divisor)
@@ -2927,7 +3097,9 @@ def _build_summary_entries_from_fc(
         field_part = change_desc[0] if len(change_desc) > 1 else rendered.display_label
         detail_part = change_desc[1] if len(change_desc) > 1 else change_desc[0]
         detail_part = _summary_detail_with_absent_sides(detail_part, rendered)
-        entries.append(_SummaryEntry(category, provider_label, model_id, field_part, detail_part))
+        entries.append(
+            _SummaryEntry(category, provider_label, model_id, field_part, detail_part, anchor=anchor)
+        )
     return entries
 
 
@@ -2938,7 +3110,20 @@ def _render_html_model_changes(
     detail_policy: ReportDetailPolicy | None = None,
     unclassified_remaining: int | None = None,
     display_plan: _FieldDisplayPlan | None = None,
+    anchor: str = "",
+    back_link: bool = False,
 ) -> tuple[str, _FieldDisplayPlan]:
+    """One model's card. `anchor` is its N1 id; `back_link` adds the `↑`.
+
+    Both default off so a caller that has no anchor registry -- and no Price
+    Movement card to point back at -- renders exactly the card it rendered
+    before. `back_link` is a separate flag rather than being inferred from
+    `anchor`, because the two answer different questions: `anchor` is "can this
+    card be linked TO", and `back_link` is "does the document contain the
+    landmark this card would link FROM". A report with no price change at all
+    still gives its cards ids and must not sprout a link to a `#price-movement`
+    section that was never rendered.
+    """
     h = html_module.escape
     policy = detail_policy or make_report_detail_policy()
     plan = display_plan or _field_display_plan(
@@ -2946,11 +3131,18 @@ def _render_html_model_changes(
         policy,
         unclassified_remaining=unclassified_remaining,
     )
+    back = (
+        f'<a class="card-back" href="#{PRICE_MOVEMENT_ANCHOR}" '
+        f'title="Back to price movement">↑</a>'
+        if back_link
+        else ""
+    )
+    card_id = f' id="{h(anchor)}"' if anchor else ""
     parts = [
-        '<div class="model-card">',
+        f'<div class="model-card"{card_id}>',
         f'<div class="model-card-header"><code>{h(delta.provider_model_id)}</code>'
         f'<span class="display-name">{h(delta.display_name)}</span>'
-        f'{_html_hidden_chip(plan)}</div>',
+        f'{_html_hidden_chip(plan)}{back}</div>',
     ]
 
     # C1: ONE table for the whole card, not one per category. Per-category
@@ -3161,15 +3353,19 @@ _CARD_TABLE_COLGROUP = (
     '</colgroup>'
 )
 
-# A list change's members are a full-width CONTINUATION row under their label
-# row, spanning every column except the category chip's. Fix pass 1: they used
-# to be an inline `(1 -> 2)` count plus a BLOCK-level `<div>` crammed into one
+# A CONTINUATION row sits under its field's label row and spans every column
+# except the category chip's. Fix pass 1: a list change's members used to be an
+# inline `(1 -> 2)` count plus a BLOCK-level `<div>` crammed into one
 # `colspan="6"` cell starting at the `old` column, so the members began
 # mid-table, left-aligned under the right-aligned numeric columns of the rows
 # above and below. No CSS fixes that -- the shape was wrong. The label row now
 # stays in the grid (chip + label + the count in the DELTA column, where it
 # lands under the other deltas) and the members get a band of their own.
-_CARD_LIST_MEMBERS_SPAN = 7
+#
+# Named for the SHAPE rather than for list members because R3's raw-value
+# sub-line is the second row to take it, and a second literal `7` beside this
+# one would be a second place to change when the colgroup does.
+_CARD_CONTINUATION_SPAN = 7
 
 # The kinds whose value cells hold a number, and so may be `nowrap`. Opt-IN on
 # purpose: `scalar` values are arbitrary-length provider strings (a real
@@ -3275,15 +3471,77 @@ def _card_delta_cell(rendered: RenderedChange) -> str:
     return ABSENT_DISPLAY
 
 
-def _card_raw_title(rendered: RenderedChange, raw: str | None) -> str:
-    """A `title="<raw provider value>"` attribute for a price cell, else `""`.
+def _scientific_notation(raw: str) -> str | None:
+    """`0.000002` -> `2.0e-6`. `None` when `raw` is not a finite number.
+
+    Built from `Decimal`, not `float`, and from the STRING the provider sent:
+    `Decimal("0.0000035")` is exact where `float` is not, and no formatting
+    spec (`:.1e`, `:e`) is used, so nothing here can round a raw value into a
+    mantissa that disagrees with the literal value printed beside it in the
+    same tooltip. R1 exists to remove zero-counting, and a lossy rendering of
+    the magnitude would replace one arithmetic hazard with another.
+
+    Always one digit after the point at minimum (`2.0e-6`, not `2e-6`) so a
+    column of tooltips has one shape.
+    """
+    try:
+        value = Decimal(raw)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if not value.is_finite():
+        return None
+    sign, digits, exponent = value.normalize().as_tuple()
+    mantissa_digits = "".join(str(digit) for digit in digits)
+    # `normalize` strips trailing zeros, so `digits` is the significand and
+    # `exponent` places its LAST digit. The scientific exponent places its
+    # first, which is `len(digits) - 1` places further left.
+    adjusted = int(exponent) + len(mantissa_digits) - 1
+    mantissa = f"{mantissa_digits[0]}.{mantissa_digits[1:] or '0'}"
+    return f"{'-' if sign else ''}{mantissa}e{adjusted}"
+
+
+def _price_conversion_factor(price_multiplier: int, price_divisor: int) -> str:
+    """`× 1,000,000`, `÷ 1,000`, both, or `""` when the provider needs neither.
+
+    Thousands-separated because the whole point of R1 is that the reader should
+    not have to count zeros -- including the zeros in the factor.
+    """
+    parts = []
+    if price_multiplier != 1:
+        parts.append(f"× {price_multiplier:,}")
+    if price_divisor != 1:
+        parts.append(f"÷ {price_divisor:,}")
+    return " ".join(parts)
+
+
+def _card_raw_title(
+    rendered: RenderedChange,
+    raw: str | None,
+    display: str,
+    *,
+    price_multiplier: int,
+    price_divisor: int,
+) -> str:
+    """R1: a price cell's `title`, showing the whole derivation, else `""`.
+
+    `2.0e-6 · 0.000002 × 1,000,000 = $2.00` -- magnitude, the literal provider
+    value, and the arithmetic that produced the figure in the cell. The title
+    used to be the raw value alone, which answered "what did the provider say"
+    but left "is this really $2.00 and not $0.20" to be done in the reader's
+    head against a number with six leading zeros.
 
     Absent sides carry no tooltip: there is no raw value to show, and an empty
-    `title` is a tooltip that opens onto nothing.
+    `title` is a tooltip that opens onto nothing. A provider whose prices are
+    already per-1M (`multiplier == divisor == 1`) gets no factor clause rather
+    than a `× 1` that would read as a conversion.
     """
     if rendered.kind != "price" or raw is None:
         return ""
-    return f' title="{html_module.escape(raw)}"'
+    scientific = _scientific_notation(raw)
+    lead = f"{scientific} · {raw}" if scientific is not None else raw
+    factor = _price_conversion_factor(price_multiplier, price_divisor)
+    derivation = f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
+    return f' title="{html_module.escape(derivation)}"'
 
 
 def _pricing_rows_by_impact(rendered_changes: list[RenderedChange]) -> list[RenderedChange]:
@@ -3331,6 +3589,8 @@ def _render_html_card_table(
                     rendered,
                     category=category if index == 0 else None,
                     alternate=field_row_index % 2 == 1,
+                    price_multiplier=price_multiplier,
+                    price_divisor=price_divisor,
                 )
             )
             field_row_index += 1
@@ -3343,11 +3603,44 @@ def _render_html_card_table(
     )
 
 
+def _card_raw_line_row(rendered: RenderedChange, *, alternate: bool) -> str:
+    """R3: the selectable `old -> new` raw sub-line under a price row, or `""`.
+
+    Always emitted for a price row that has a raw value on either side, and
+    hidden by CSS until the header's checkbox is ticked. It exists because a
+    `title` cannot be selected or copied: R1's tooltip is for reading, this row
+    is for pasting into a spreadsheet, and the two are not substitutes.
+
+    Rendered rather than toggled by script -- the report has no JavaScript, and
+    the `<tr>` has to be in the document for `:has()` to reveal it.
+
+    Takes its LABEL row's stripe, for the same reason the list-members row
+    does: the two rows are one field, and shading them differently splits the
+    band. Absent sides are spelled through `_html_side_display`, so this line
+    and the value cell above it cannot disagree about what "absent" looks like.
+    """
+    if rendered.kind != "price":
+        return ""
+    if rendered.old_raw is None and rendered.new_raw is None:
+        return ""
+    h = html_module.escape
+    old = _html_side_display(rendered.old_raw or "", rendered.old_raw)
+    new = _html_side_display(rendered.new_raw or "", rendered.new_raw)
+    row_class = "raw-line row-alt" if alternate else "raw-line"
+    return (
+        f'<tr class="{row_class}"><td></td>'
+        f'<td class="raw-values" colspan="{_CARD_CONTINUATION_SPAN}">'
+        f'{h(old)} → {h(new)}</td></tr>'
+    )
+
+
 def _render_html_card_row(
     rendered: RenderedChange,
     *,
     category: str | None,
     alternate: bool = False,
+    price_multiplier: int = 1,
+    price_divisor: int = 1,
 ) -> str:
     """One field's `<tr>` -- plus a members `<tr>` for a list change.
 
@@ -3389,7 +3682,7 @@ def _render_html_card_row(
         members_class = "list-members row-alt" if alternate else "list-members"
         return (
             f'{label_row}\n<tr class="{members_class}"><td></td>'
-            f'<td colspan="{_CARD_LIST_MEMBERS_SPAN}">{members}</td></tr>'
+            f'<td colspan="{_CARD_CONTINUATION_SPAN}">{members}</td></tr>'
         )
 
     semantic_cls = _card_semantic_class(rendered)
@@ -3403,9 +3696,21 @@ def _render_html_card_row(
     # other kind already prints its value verbatim, and a tooltip repeating it
     # would be noise. The whole raw value is available in `_full.html`, JSON and
     # the text report regardless.
-    old_title = _card_raw_title(rendered, rendered.old_raw)
-    new_title = _card_raw_title(rendered, rendered.new_raw)
-    return (
+    old_title = _card_raw_title(
+        rendered,
+        rendered.old_raw,
+        rendered.old_display,
+        price_multiplier=price_multiplier,
+        price_divisor=price_divisor,
+    )
+    new_title = _card_raw_title(
+        rendered,
+        rendered.new_raw,
+        rendered.new_display,
+        price_multiplier=price_multiplier,
+        price_divisor=price_divisor,
+    )
+    field_row = (
         f'<tr{row_class}>{chip}{label}'
         f'<td class="old-val{value_cls}"{old_title}>{h(_html_side_display(rendered.old_display, rendered.old_raw))}</td>'
         f'<td class="arrow">→</td>'
@@ -3414,6 +3719,8 @@ def _render_html_card_row(
         f'<td class="delta {semantic_cls}">{h(_card_delta_cell(rendered))}</td>'
         f'<td class="pct {semantic_cls}">{h(rendered.pct_display or "")}</td></tr>'
     )
+    raw_row = _card_raw_line_row(rendered, alternate=alternate)
+    return f"{field_row}\n{raw_row}" if raw_row else field_row
 
 
 # The four model buckets, each with the label its column in the affected-model
@@ -3503,6 +3810,7 @@ def _render_price_movement_headline(
     *,
     label: str,
     css_class: str,
+    anchor: str = "",
 ) -> str:
     """One headline mover panel: who moved, on what field, and by how much.
 
@@ -3518,7 +3826,7 @@ def _render_price_movement_headline(
     return (
         f'<div class="price-headline">'
         f'<div class="price-headline-label {css_class}">{h(label)}</div>'
-        f'<code class="price-headline-model">{h(model.provider_model_id)}</code>'
+        f'{_model_code_link(model.provider_model_id, anchor, css_class="price-headline-model")}'
         f'<div class="price-headline-field" title="{h(rendered.field_path)}">'
         f'{h(rendered.display_label)}</div>'
         f'<div class="price-headline-values">'
@@ -3532,17 +3840,30 @@ def _render_price_movement_headline(
     )
 
 
-def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
+def _render_html_price_movement_summary(
+    summary: _PriceMovementSummary,
+    anchors: _CardAnchors | None = None,
+) -> str:
     """D1 + D3: the report's price triage card.
 
     Order: verdict, the two headline movers, the two tallies, then the
     affected-model list. Dollars first, counts second, names last -- the
     reverse of what this card used to lead with.
+
+    N1: every model named here links to its card, via `anchors`. Every model
+    this card can name is in TIER 1 by construction -- `_model_price_impact`
+    promotes a card on exactly the predicate (`_price_movement_kind`) that puts
+    a model in this summary -- so the links are into the open part of the page.
+    That is an invariant of two functions agreeing, not of this one, so the
+    lookup still goes through `_CardAnchors.link`, which returns `""` for a
+    tier-2 or unknown model and makes the entry plain text. If the two ever
+    disagree, this card loses a link; it cannot gain a broken one.
     """
     if not summary.models:
         return ""
 
     h = html_module.escape
+    registry = anchors or _CardAnchors()
 
     headline_parts = []
     for headline, label, css_class in (
@@ -3556,7 +3877,13 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
             continue
         model, rendered = headline
         headline_parts.append(
-            _render_price_movement_headline(model, rendered, label=label, css_class=css_class)
+            _render_price_movement_headline(
+                model,
+                rendered,
+                label=label,
+                css_class=css_class,
+                anchor=registry.link(model.provider_id, model.provider_model_id),
+            )
         )
 
     # E5: the provider label is noise when every affected model came from the
@@ -3590,7 +3917,11 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
                 if show_provider
                 else ""
             )
-            + f'<code>{h(model.provider_model_id)}</code></div>'
+            + _model_code_link(
+                model.provider_model_id,
+                registry.link(model.provider_id, model.provider_model_id),
+            )
+            + '</div>'
             for model in models
         )
         group_parts.append(
@@ -3609,7 +3940,7 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
     field_suffix = "" if summary.field_total == 1 else "s"
     outcome, outcome_class = _price_movement_outcome(summary)
     return (
-        '<section class="price-movement-summary">'
+        f'<section class="price-movement-summary" id="{PRICE_MOVEMENT_ANCHOR}">'
         f'<div class="price-movement-title">PRICE MOVEMENT '
         f'<span class="outcome {outcome_class}">{h(outcome)}</span></div>'
         + (
@@ -3701,11 +4032,75 @@ def _presence_list_html(heading: str, css_class: str, deltas: tuple[ModelDelta, 
     return parts
 
 
+@dataclass(frozen=True)
+class _ProviderTierSplit:
+    """One provider's cards, partitioned and ordered but not yet rendered.
+
+    N1 forced the split into two passes. Ids have to be handed out in DOCUMENT
+    order -- every provider's tier-1 cards, then every provider's tier-2 cards,
+    which is how the page lays them out -- while rendering is naturally
+    per-provider. Partitioning first, assigning ids across all providers, then
+    rendering is the only order in which a report with two providers gets its
+    `-2` suffixes in the sequence a reader meets the cards.
+    """
+
+    result: ProviderScanResult
+    plan: _ProviderChangePlan
+    primary: tuple[_PlannedModelChange, ...]
+    """Tier-1 model cards, already in F2's impact order."""
+    secondary: tuple[_PlannedModelChange | _BulkChangeGroup, ...]
+    """Tier-2 cards and bulk groups, already alphabetical."""
+
+
+def _split_provider_tiers(
+    result: ProviderScanResult,
+    provider_plan: _ProviderChangePlan,
+) -> _ProviderTierSplit:
+    """Partition one provider's items into F1's two tiers, each in its order.
+
+    The gate is `_model_price_impact` returning `None`, unchanged: "has no
+    price movement" is both the tier test and the sort key, so the two cannot
+    answer from different notions of a price change.
+
+    A bulk-change group is always secondary. Groups are formed only from models
+    whose every visible change is a list diff (`_bulk_change_signature`), so a
+    group can never hold a price change and can never earn tier 1.
+    """
+    ranked: list[tuple[tuple[float, float, int, str], _PlannedModelChange]] = []
+    deferred: list[tuple[str, _PlannedModelChange | _BulkChangeGroup]] = []
+    for item in provider_plan.items:
+        if isinstance(item, _BulkChangeGroup):
+            deferred.append((item.label.casefold(), item))
+            continue
+        impact = _model_price_impact(
+            item,
+            price_multiplier=result.price_multiplier,
+            price_divisor=result.price_divisor,
+        )
+        if impact is None:
+            deferred.append((item.delta.provider_model_id.casefold(), item))
+        else:
+            ranked.append((impact.sort_key, item))
+    # Keyed sorts, not tuple comparisons: the second element is a dataclass
+    # with no ordering, so a tie on the key would raise rather than fall
+    # through to it.
+    ranked.sort(key=lambda entry: entry[0])
+    deferred.sort(key=lambda entry: entry[0])
+    return _ProviderTierSplit(
+        result=result,
+        plan=provider_plan,
+        primary=tuple(item for _, item in ranked),
+        secondary=tuple(item for _, item in deferred),
+    )
+
+
 def _build_scan_change_tiers(
     planned_results: list[tuple[ProviderScanResult, _ProviderChangePlan]],
     policy: ReportDetailPolicy,
     *,
     show_provider: bool,
+    anchors: _CardAnchors,
+    back_link: bool,
 ) -> _ScanChangeTiers:
     """Render every provider's changes, split into F1's two tiers.
 
@@ -3715,43 +4110,67 @@ def _build_scan_change_tiers(
     two or more providers it comes back, because a bare list of model ids from
     two providers is ambiguous.
 
-    A bulk-change group is always secondary. Groups are formed only from models
-    whose every visible change is a list diff (`_bulk_change_signature`), so a
-    group can never hold a price change and can never earn tier 1.
+    `anchors` is filled in here and read afterwards by the Price Movement card
+    and the Change Summary, which is why this runs BEFORE either of them: a
+    link can only be minted once its target exists.
+
+    `back_link` says whether the document will contain a Price Movement card
+    for the cards to point back at.
     """
+    splits = [
+        _split_provider_tiers(result, provider_plan)
+        for result, provider_plan in planned_results
+        if result.change_count or result.status == "error"
+    ]
+
+    # N1's id pass, in DOCUMENT order: all of tier 1, then all of tier 2. The
+    # `~vendor/model` and `vendor/model` alias collision resolves in the order
+    # a reader meets the two cards, so the card that reads `-2` is the second
+    # one down the page rather than the second one this loop happened to reach.
+    # Bulk groups are skipped: they name a set of models, not one card, and
+    # nothing links to them.
+    primary_anchors = [
+        [anchors.assign(split.result.provider_id, item.delta.provider_model_id, tier=1)
+         for item in split.primary]
+        for split in splits
+    ]
+    secondary_anchors = [
+        [
+            anchors.assign(split.result.provider_id, item.delta.provider_model_id, tier=2)
+            if isinstance(item, _PlannedModelChange)
+            else ""
+            for item in split.secondary
+        ]
+        for split in splits
+    ]
+
     primary_sections: list[str] = []
     secondary_sections: list[str] = []
     secondary_cards = 0
     secondary_rollups = 0
 
-    for result, provider_plan in planned_results:
-        if result.change_count == 0 and result.status != "error":
-            continue
+    for split, primary_ids, secondary_ids in zip(splits, primary_anchors, secondary_anchors):
+        result, provider_plan = split.result, split.plan
 
-        ranked: list[tuple[tuple[float, float, int, str], str]] = []
-        deferred: list[tuple[str, str]] = []
-        for item in provider_plan.items:
-            if isinstance(item, _BulkChangeGroup):
-                deferred.append((item.label.casefold(), _render_html_bulk_changes(item, policy)))
-                continue
+        def _card(item: _PlannedModelChange, anchor: str) -> str:
             card, _ = _render_html_model_changes(
                 item.delta,
                 result.price_multiplier,
                 result.price_divisor,
                 policy,
                 display_plan=item.display,
+                anchor=anchor,
+                back_link=back_link,
             )
-            impact = _model_price_impact(
-                item,
-                price_multiplier=result.price_multiplier,
-                price_divisor=result.price_divisor,
-            )
-            if impact is None:
-                deferred.append((item.delta.provider_model_id.casefold(), card))
-            else:
-                ranked.append((impact.sort_key, card))
-        ranked.sort(key=lambda entry: entry[0])
-        deferred.sort(key=lambda entry: entry[0])
+            return card
+
+        ranked = [_card(item, anchor) for item, anchor in zip(split.primary, primary_ids)]
+        deferred = [
+            _render_html_bulk_changes(item, policy)
+            if isinstance(item, _BulkChangeGroup)
+            else _card(item, anchor)
+            for item, anchor in zip(split.secondary, secondary_ids)
+        ]
 
         rollup_cards = _hidden_rollup_cards(provider_plan.rollups, policy)
 
@@ -3766,7 +4185,7 @@ def _build_scan_change_tiers(
         # neither tier can end up with a heading over nothing.
         if ranked:
             primary_parts.append('<h3>Changed</h3>')
-            primary_parts.extend(card for _, card in ranked)
+            primary_parts.extend(ranked)
         # A provider heading with nothing beneath it is not a section. Error
         # providers are the exception: the provider card above says ERROR and
         # this section is where a reader looks for the message.
@@ -3783,7 +4202,7 @@ def _build_scan_change_tiers(
                 secondary_parts.append(
                     f'<h3>{html_module.escape(result.provider_label)}</h3>'
                 )
-            secondary_parts.extend(card for _, card in deferred)
+            secondary_parts.extend(deferred)
             secondary_parts.extend(rollup_cards)
             secondary_cards += len(deferred)
             secondary_rollups += len(rollup_cards)
@@ -3913,8 +4332,19 @@ def _render_scan_html(
         1 for result in provider_results
         if result.change_count or result.status == "error"
     )
+    # N1 fixes the order of the next three statements. The movement summary is
+    # collected first because whether it produces a card decides whether the
+    # cards get a back-link; the tiers are built second because that is where
+    # ids are assigned; the card itself is rendered last, once there are ids
+    # for it to link to.
+    movement = _collect_price_movement_summary(planned_results)
+    anchors = _CardAnchors()
     tiers = _build_scan_change_tiers(
-        planned_results, detail_policy, show_provider=contributing > 1
+        planned_results,
+        detail_policy,
+        show_provider=contributing > 1,
+        anchors=anchors,
+        back_link=bool(movement.models),
     )
 
     # Summary entries
@@ -3933,6 +4363,7 @@ def _render_scan_html(
                 provider_label=prov, model_id=delta.provider_model_id,
                 display_name=delta.display_name, field_changes=list(plan.visible),
                 price_multiplier=pm, price_divisor=pd,
+                anchor=anchors.link(result.provider_id, delta.provider_model_id),
             ))
         squelched_entry = _squelched_summary_entry(
             provider_label=prov, squelched=provider_plan.rollups.squelched, policy=detail_policy,
@@ -3958,15 +4389,24 @@ def _render_scan_html(
     if counts and squelched:
         counts += f" \u00b7 {_plural(squelched, 'field change')} squelched"
     count_span = f'<span class="count">\u2014 {counts}</span>' if counts else ""
+    # R3, plus the controller decision the `_full.html` report forced. `cli.py`
+    # builds that document by calling THIS renderer with `mode="all"`, so it
+    # inherits A1's move of raw provider values into tooltips -- a real loss for
+    # an audit view, where the raw numbers are the point. Rather than a second
+    # renderer or a new flag, the toggle starts CHECKED whenever the detail
+    # policy is the full-detail one, so the audit report shows raw values inline
+    # by default and the concise report does not. Inferred from the mode so the
+    # two documents cannot be configured inconsistently by a caller.
+    raw_checked = " checked" if detail_policy.mode == "all" else ""
     header_html = (
         f'<header>\n'
         f'  <h1>Model Sentinel {count_span}</h1>\n'
         f'  <div class="meta">{timestamp} &middot; {h(command)}</div>\n'
+        f'  <label class="raw-toggle"><input type="checkbox" id="{_RAW_TOGGLE_ID}"'
+        f'{raw_checked}> Show raw values</label>\n'
         f'</header>'
     )
-    price_movement_html = _render_html_price_movement_summary(
-        _collect_price_movement_summary(planned_results)
-    )
+    price_movement_html = _render_html_price_movement_summary(movement, anchors)
     body_html = (
         f'<div class="provider-cards">\n  {"".join(provider_cards)}\n</div>\n\n'
         + (f'{price_movement_html}\n\n' if price_movement_html else "")

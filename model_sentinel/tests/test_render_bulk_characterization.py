@@ -398,40 +398,40 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 </div>
 </div>
 </div>
-<div class="model-card">
+<div class="model-card" id="m-synth-model-list-added">
 <div class="model-card-header"><code>synth/model-list-added</code><span class="display-name">Synth List Added</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">[&quot;tools&quot;, &quot;logit_bias&quot;]</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
 </tbody></table></div>
 </div>
-<div class="model-card">
+<div class="model-card" id="m-synth-model-list-removed">
 <div class="model-card-header"><code>synth/model-list-removed</code><span class="display-name">Synth List Removed</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td class="old-val">[&quot;tools&quot;, &quot;logit_bias&quot;]</td><td class="arrow">→</td><td class="new-val">—</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
 </tbody></table></div>
 </div>
-<div class="model-card">
+<div class="model-card" id="m-synth-model-pair-x">
 <div class="model-card-header"><code>synth/model-pair-x</code><span class="display-name">Synth Pair X</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
 <tr class="list-members"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ seed</div></td></tr>
 </tbody></table></div>
 </div>
-<div class="model-card">
+<div class="model-card" id="m-synth-model-pair-y">
 <div class="model-card-header"><code>synth/model-pair-y</code><span class="display-name">Synth Pair Y</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
 <tr class="list-members"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ seed</div></td></tr>
 </tbody></table></div>
 </div>
-<div class="model-card">
+<div class="model-card" id="m-synth-model-solo-struct">
 <div class="model-card-header"><code>synth/model-solo-struct</code><span class="display-name">Synth Solo Struct</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="architecture.tier_profiles">Tier profiles</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 1)</td><td class="pct"></td></tr>
 <tr class="list-members"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}</div><div class="list-removed">&nbsp;&nbsp;− {&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3}</div></td></tr>
 </tbody></table></div>
 </div>
-<div class="model-card">
+<div class="model-card" id="m-synth-model-struct-added">
 <div class="model-card-header"><code>synth/model-struct-added</code><span class="display-name">Synth Struct Added</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="architecture.tier_profiles[0].name">Name (#0)</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">gamma</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>

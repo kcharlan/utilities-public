@@ -73,7 +73,11 @@ def _card_row(html: str, label: str) -> str:
     return matches[0]
 
 
-_PRICE_MOVEMENT_OPEN = '<section class="price-movement-summary">'
+# N1 gave the card an `id` so everything else can link to it, so the landmark
+# now carries an attribute. Spelled with the id rather than matched loosely: the
+# id IS the target of every card's back-link, and a card that lost it would
+# leave every one of those links pointing at nothing.
+_PRICE_MOVEMENT_OPEN = '<section class="price-movement-summary" id="price-movement">'
 
 
 def _price_movement_card(html: str) -> str:
@@ -508,8 +512,8 @@ def test_html_price_movement_summary_uses_exclusive_model_buckets() -> None:
     for model_id in ("higher-model", "lower-model", "mixed-model", "coverage-model"):
         assert movement.count(f"<code>{model_id}</code>") == 1
 
-    assert report.index('<div class="provider-cards">') < report.index('<section class="price-movement-summary">')
-    assert report.index('<section class="price-movement-summary">') < report.index('<section class="provider-section">')
+    assert report.index('<div class="provider-cards">') < report.index(_PRICE_MOVEMENT_OPEN)
+    assert report.index(_PRICE_MOVEMENT_OPEN) < report.index('<section class="provider-section">')
     # F2, not fixture order. All four models moved by the same $100,000/1M, so
     # the primary key ties at cents and the percent tiebreaker decides:
     # higher-model and mixed-model both peak at 100%, and higher-model's added
@@ -587,7 +591,12 @@ def test_html_price_movement_list_omits_the_provider_when_only_one_has_price_cha
     movement = _price_movement_card(report)
     assert "price-movement-provider" not in movement
     assert "OpenRouter" not in movement
-    assert '<div class="price-movement-model"><code>priced-model</code></div>' in movement
+    # N1: the entry links to the model's card, which is in tier 1 because it is
+    # the price change that put it in this list.
+    assert (
+        '<div class="price-movement-model">'
+        '<a class="model-link" href="#m-priced-model"><code>priced-model</code></a></div>'
+    ) in movement
 
 
 def test_html_price_movement_summary_omits_zero_categories() -> None:
@@ -1563,7 +1572,12 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
     # raw value in the cell's tooltip; the absent side is an em dash, not
     # `null`.
     row = _card_row(html_report, "Audio cache")
-    assert '<td class="new-val num" title="0.0000003">$0.30</td>' in row
+    # R1 widened that tooltip from the bare raw value to the whole derivation:
+    # magnitude, the literal provider value, and the arithmetic behind the
+    # figure in the cell.
+    assert (
+        '<td class="new-val num" title="3.0e-7 · 0.0000003 × 1,000,000 = $0.30">$0.30</td>'
+    ) in row
     assert '<td class="old-val num">\u2014</td>' in row
     assert '<td class="unit">/1M</td>' in row
     assert '<td class="delta sem-coverage">added</td>' in row
@@ -1648,7 +1662,10 @@ def test_html_card_emits_exactly_one_table_for_a_multi_category_model() -> None:
     the card, one `<colgroup>`, and the category names become row-group chips.
     """
     report = _mixed_direction_card_html()
-    card = report[report.index('<div class="model-card">') : report.index(_SCAN_SUMMARY_OPEN)]
+    # Sliced on the tag PREFIX: N1 gave every card an `id`, so the opening tag
+    # is `<div class="model-card" id="...">` and an exact match would raise
+    # `ValueError` from the slice rather than fail an assertion.
+    card = report[report.index('<div class="model-card') : report.index(_SCAN_SUMMARY_OPEN)]
 
     assert card.count("<table") == 1
     assert card.count("<colgroup>") == 1
@@ -1852,9 +1869,14 @@ def test_a_long_scalar_value_is_not_promised_nowrap_by_the_card() -> None:
     assert '<td class="new-val">' in scalar_row
     assert "num" not in scalar_row
     assert "logit_bias" in scalar_row
-    # ...while both price cells do.
-    assert '<td class="old-val num" title="0.000002">$2.00</td>' in price_row
-    assert '<td class="new-val num" title="0.0000035">$3.50</td>' in price_row
+    # ...while both price cells do. (R1 widened the tooltip; the `num` class,
+    # which is what this test is about, is unchanged.)
+    assert (
+        '<td class="old-val num" title="2.0e-6 · 0.000002 × 1,000,000 = $2.00">$2.00</td>'
+    ) in price_row
+    assert (
+        '<td class="new-val num" title="3.5e-6 · 0.0000035 × 1,000,000 = $3.50">$3.50</td>'
+    ) in price_row
 
     # And `nowrap` is scoped to that class, with the wrapping cells given an
     # explicit break rule. Asserted on the stylesheet because the class is only
@@ -2010,6 +2032,11 @@ def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
     two spelled out below: a row added later that showed a normalized price
     with no raw behind it -- or a raw with no normalized figure in front of it
     -- fails here without anyone having to remember to extend the test.
+
+    R1 turned that tooltip from the bare raw value into the whole derivation --
+    `<scientific> · <raw> × <factor> = <display>` -- so the invariant is now
+    parsed out of the title rather than read off it whole, and it got stronger
+    in the process: the arithmetic is CHECKED here, not merely present.
     """
     changed = (
         ModelDelta(
@@ -2034,22 +2061,35 @@ def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
     assert len(price_rows) == 3
     cells = [match for row in price_rows for match in _PRICE_VALUE_CELL.findall(row)]
     assert len(cells) == 6, cells
-    for raw, shown in cells:
+    for title, shown in cells:
         if shown == "—":
             # The absent side of a one-sided change: nothing to show, and so
             # nothing to put in a tooltip either.
-            assert raw == "", cells
+            assert title == "", cells
             continue
         assert shown.startswith("$"), cells
-        assert raw, cells
+        assert title, cells
+        scientific, _, rest = title.partition(" · ")
+        raw, _, product = rest.partition(" × ")
+        factor, _, result = product.partition(" = ")
         # The tooltip is the PROVIDER's number, not a second copy of the
         # normalized one -- a title echoing the cell would be no audit trail.
         assert raw != shown, cells
-        float(raw)
+        # The three claims the tooltip makes, each checked against the others:
+        # the scientific notation is the raw value, the factor is this
+        # provider's, and the product really is the figure in the cell.
+        assert float(scientific) == float(raw), cells
+        assert factor == "1,000,000", cells
+        assert result == shown, cells
+        assert f"${float(raw) * 1_000_000:,.2f}" == shown, cells
 
     row = _card_row(report, "Input")
-    assert '<td class="old-val num" title="0.000002">$2.00</td>' in row
-    assert '<td class="new-val num" title="0.0000035">$3.50</td>' in row
+    assert (
+        '<td class="old-val num" title="2.0e-6 · 0.000002 × 1,000,000 = $2.00">$2.00</td>'
+    ) in row
+    assert (
+        '<td class="new-val num" title="3.5e-6 · 0.0000035 × 1,000,000 = $3.50">$3.50</td>'
+    ) in row
 
 
 def _unscaled_price_report(old_value: str, new_value: str) -> str:
@@ -2148,7 +2188,16 @@ def test_price_delta_column_renders_a_bounded_sentinel_rather_than_a_false_zero(
     assert "+<$0.0001" not in report
     # The operands bound themselves at the same precision, and the percentage
     # is a real one -- the movement is reported, just not overstated.
-    assert row.count("&lt;$0.0001") == 3
+    #
+    # FIVE since R1, not three, and the two new ones are in the price cells'
+    # `title`s: that tooltip now ends `= <the cell's own display>`, so a bounded
+    # cell carries a bounded right-hand side. `1.0e-6 · 1e-06 = <$0.0001` reads
+    # as "equals less than $0.0001", which is what the bound asserts -- the
+    # tooltip's job is the derivation, and the exact operand is right there in
+    # it. Pinned exactly rather than loosened to `>= 3`: the note on the
+    # characterization module's copy of this count records that a `>=` here
+    # silently absorbed a real change for a whole task.
+    assert row.count("&lt;$0.0001") == 5
     assert '<td class="pct sem-cost-up">↑ 100.0%</td>' in row
     assert "$0.0000" not in report
 
@@ -4144,10 +4193,14 @@ def test_a_squelched_card_gets_a_hidden_chip_and_no_squelch_section() -> None:
         provider_results=[_scan_result(changed)],
     )
     primary, _ = _scan_tiers(html)
+    # The back-link follows the chip, which is also the assertion that the two
+    # right-aligned header elements keep their order (N1's `↑` last, per the
+    # design's header sequence) rather than merely both being present.
     assert (
         '<div class="model-card-header"><code>synth/model-core</code>'
         '<span class="display-name">Core</span>'
-        '<span class="hidden-count" title="2 squelched">+2 hidden</span></div>'
+        '<span class="hidden-count" title="2 squelched">+2 hidden</span>'
+        '<a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>'
     ) in primary
     # The per-card section is gone from the CARD. The provider-level rollup
     # still exists and still says `Squelched`, so the assertion is scoped to
@@ -4270,3 +4323,353 @@ def test_the_changes_report_keeps_its_own_summary_table() -> None:
     ) in html
     assert _SECONDARY_OPEN not in html
     assert _SCAN_SUMMARY_OPEN not in html
+
+
+# ---------------------------------------------------------------------------
+# Task 10: navigation and raw values (N1, R1-R3)
+#
+# The two properties this section exists to hold are structural, and both are
+# asserted over the WHOLE document rather than over the strings this task
+# happened to add:
+#
+#   * every generated `href="#..."` resolves to an id that exists, and
+#   * no generated link targets an id inside tier 2.
+#
+# The second is N1's hard constraint -- fragment navigation into a closed
+# `<details>` is unreliable across browsers -- and it is the one a later change
+# is most likely to break, because breaking it requires nothing more than
+# passing a non-empty anchor to a Change Summary row.
+# ---------------------------------------------------------------------------
+
+_HREF_RE = re.compile(r'href="#([^"]+)"')
+_ID_RE = re.compile(r'\bid="([^"]+)"')
+
+
+def _link_targets(html: str) -> list[str]:
+    return _HREF_RE.findall(html)
+
+
+def _element_ids(html: str) -> list[str]:
+    return _ID_RE.findall(html)
+
+
+def _alias_pair_report(**kwargs) -> str:
+    """A provider that ships a `~`-prefixed alias beside its base model id.
+
+    THE collision case. Both ids slugify to `m-synthvendor-model-latest`, and
+    both models carry a price change so both cards land in tier 1, where the
+    ids are handed out first. Deliberately ordered so the base id sorts second
+    by impact -- the alias moves further -- which is why the suffix lands on
+    the plain id rather than on the `~` one: assignment follows DOCUMENT order,
+    not the order the fixture lists them in.
+    """
+    changed = (
+        _priced("synthvendor/model-latest", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+        _priced("~synthvendor/model-latest", FieldChange("pricing.prompt", "0.000001", "0.000009")),
+    )
+    return render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+        **kwargs,
+    )
+
+
+def _navigation_report(**kwargs) -> str:
+    """One report containing every shape a link or an id can take.
+
+    Two providers (so a model id repeats ACROSS providers as well as within
+    one), a tier-1 priced card, a tier-2 card with no price change, a bulk
+    group, and a squelched rollup.
+    """
+    first = _scan_result(
+        (
+            _priced("shared/model", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+            _priced("synth/model-quiet", FieldChange("context_length", 1000, 2000)),
+            _priced(
+                "synth/model-benched",
+                FieldChange("benchmarks.design_arena", [{"elo": 1}], [{"elo": 2}]),
+            ),
+        ),
+        provider_id="pa",
+        provider_label="Provider A",
+    )
+    second = _scan_result(
+        (
+            _priced("shared/model", FieldChange("pricing.completion", "0.000004", "0.000003")),
+            _priced("synth/model-also-quiet", FieldChange("context_length", 4000, 8000)),
+        ),
+        provider_id="pb",
+        provider_label="Provider B",
+    )
+    return render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[first, second],
+        **kwargs,
+    )
+
+
+def test_model_card_ids_are_unique_including_the_tilde_alias_collision() -> None:
+    """N1's collision case, which providers produce and naive slugging loses.
+
+    `~synthvendor/model-latest` and `synthvendor/model-latest` differ by one
+    character that slugification necessarily discards, so they arrive at the
+    same base. Both cards must still be independently addressable.
+    """
+    html = _alias_pair_report()
+    ids = _element_ids(html)
+    assert len(ids) == len(set(ids)), ids
+
+    card_ids = [element_id for element_id in ids if element_id.startswith("m-")]
+    assert card_ids == ["m-synthvendor-model-latest", "m-synthvendor-model-latest-2"]
+    # Both cards are present and both are in tier 1, so the suffix is carried
+    # by the SECOND card down the page -- the alias moved $8.00 and leads.
+    primary, _ = _scan_tiers(html)
+    assert _model_card_order(primary) == [
+        "~synthvendor/model-latest",
+        "synthvendor/model-latest",
+    ]
+
+
+def test_every_generated_link_resolves_to_an_id_in_the_document() -> None:
+    """A link that lands nowhere is worse than no link: it looks like a bug."""
+    for html in (_navigation_report(), _alias_pair_report(), _tiering_report()):
+        ids = set(_element_ids(html))
+        targets = _link_targets(html)
+        assert targets, "expected at least one generated link"
+        assert set(targets) <= ids, sorted(set(targets) - ids)
+
+
+def test_no_generated_link_targets_an_id_inside_tier_two() -> None:
+    """N1's hard constraint, asserted from the document rather than the code.
+
+    Tier 2 is one `<details>`, closed by default, and Chrome/Firefox/Safari do
+    not agree on whether a fragment inside a closed disclosure is navigable. So
+    the rule is that nothing links into it -- not that it usually works.
+
+    Checked over a report that HAS both tiers, both a repeated model id and a
+    bulk group, and a Change Summary naming tier-2 models; a report with an
+    empty tier 2 would satisfy this vacuously.
+    """
+    for html in (_navigation_report(), _tiering_report()):
+        primary, secondary = _scan_tiers(html)
+        assert secondary, "fixture must have a tier 2 for this to mean anything"
+        secondary_ids = set(_element_ids(secondary))
+        assert secondary_ids, "fixture must have addressable tier-2 cards"
+        assert secondary_ids & set(_link_targets(html)) == set()
+
+
+def test_change_summary_links_tier_one_models_and_leaves_tier_two_as_text() -> None:
+    """Both halves of the rule, in the one place that renders rows for both."""
+    html = _navigation_report()
+    _, summary = _scan_detail_and_summary(html)
+    # `shared/model` has a price change under both providers, so both cards are
+    # in tier 1 and both rows link -- to DIFFERENT ids, because the two cards
+    # are two cards.
+    assert '<a class="model-link" href="#m-shared-model"><code>shared/model</code></a>' in summary
+    assert '<a class="model-link" href="#m-shared-model-2"><code>shared/model</code></a>' in summary
+    # The quiet models are tier 2, so their rows are plain text.
+    assert "<td><code>synth/model-quiet</code></td>" in summary
+    assert "<td><code>synth/model-also-quiet</code></td>" in summary
+    assert "synth/model-quiet</code></a>" not in summary
+
+
+def test_price_movement_entries_link_into_their_tier_one_cards() -> None:
+    """Both link sites on the card: the headline panels and the model list."""
+    html = _navigation_report()
+    movement = _price_movement_card(html)
+    # Two headline panels -- one model got dearer, the other cheaper -- and
+    # each names a model, so each is a link.
+    assert movement.count('<a class="model-link"') == 4
+    assert (
+        '<a class="model-link" href="#m-shared-model">'
+        '<code class="price-headline-model">shared/model</code></a>'
+    ) in movement
+    assert (
+        '<a class="model-link" href="#m-shared-model-2">'
+        '<code class="price-headline-model">shared/model</code></a>'
+    ) in movement
+    # And once more in the affected-model list beneath the tallies.
+    models_list = movement.split('<div class="price-movement-model-groups">', 1)[1]
+    assert models_list.count('<a class="model-link"') == 2
+
+
+def test_every_card_header_carries_a_back_link_to_the_price_movement_card() -> None:
+    """Discoverability, per N1. The browser's back button already works."""
+    html = _navigation_report()
+    back = '<a class="card-back" href="#price-movement" title="Back to price movement">↑</a>'
+    # One per real model card. The provider-level rollup pseudo-cards are not
+    # model cards and are rendered by a different function, so they have none.
+    assert html.count(back) == 4
+    assert html.count(_PRICE_MOVEMENT_OPEN) == 1
+
+
+def test_no_back_link_is_generated_without_a_price_movement_card() -> None:
+    """The landmark is conditional, so the link to it has to be as well.
+
+    A report with no price change renders no Price Movement card at all, and a
+    card pointing at `#price-movement` in that document would be the one link
+    this task must never produce -- one whose target does not exist.
+    """
+    changed = (_priced("synth/model-quiet", FieldChange("context_length", 1000, 2000)),)
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    assert _PRICE_MOVEMENT_OPEN not in html
+    # Scoped to the BODY: `_HTML_CSS` names `.price-movement-summary` and
+    # `.card-back` in every document, whether or not the elements are rendered.
+    body = html.split("</style>", 1)[1]
+    assert "price-movement" not in body
+    assert "card-back" not in body
+    # The card still gets its id: addressability does not depend on the
+    # existence of anything to link back to.
+    assert '<div class="model-card" id="m-synth-model-quiet">' in html
+
+
+def test_the_landing_highlight_is_a_target_rule_in_the_stylesheet() -> None:
+    """N1's landing feedback. Cards look alike; the jump has to be visible."""
+    css = _navigation_report().split("<style>", 1)[1].split("</style>", 1)[0]
+    assert ".model-card:target {" in css
+    target_rule = css.split(".model-card:target {", 1)[1].split("}", 1)[0]
+    assert "animation: card-landing" in target_rule
+    assert "@keyframes card-landing {" in css
+
+
+def test_the_report_contains_no_javascript() -> None:
+    """Everything this task added -- toggle included -- is CSS or markup.
+
+    Asserted over both detail modes and over the `changes` report, because they
+    share `_HTML_CSS` and the page shell.
+    """
+    documents = [
+        _navigation_report(),
+        _navigation_report(detail_policy=make_report_detail_policy(mode="all")),
+        _mixed_changes_report("html"),
+    ]
+    for html in documents:
+        assert "<script" not in html
+        assert "javascript:" not in html
+        # Every inline handler attribute, not just `onclick`: the rule is "no
+        # script", and naming one attribute would let the next one through.
+        assert re.findall(r"<[^>]*\son[a-z]+=", html) == []
+
+
+def test_price_cell_tooltips_carry_the_scientific_notation_and_the_conversion() -> None:
+    """R1. The three claims, in order, on both operands of a two-sided row."""
+    html = _navigation_report()
+    row = _card_row(html, "Input")
+    assert (
+        '<td class="old-val num" title="1.0e-6 · 0.000001 × 1,000,000 = $1.00">$1.00</td>'
+    ) in row
+    assert (
+        '<td class="new-val num" title="2.0e-6 · 0.000002 × 1,000,000 = $2.00">$2.00</td>'
+    ) in row
+
+
+def test_a_price_tooltip_states_no_conversion_when_the_provider_needs_none() -> None:
+    """A `× 1` would read as a conversion where there is not one."""
+    row = _card_row(_unscaled_price_report("2.5", "3.5"), "Input")
+    assert '<td class="old-val num" title="2.5e0 · 2.5 = $2.50">$2.50</td>' in row
+    assert "× 1 " not in row
+
+
+def test_field_labels_carry_their_full_dotted_path() -> None:
+    """R2. The label is a registry lookup; the path is what it was looked up
+    from, and a reader checking a value against the provider's payload needs
+    the latter."""
+    changed = (
+        _priced(
+            "synth/model-labelled",
+            FieldChange("pricing.prompt", "0.000001", "0.000002"),
+            FieldChange("context_length", 1000, 2000),
+            FieldChange("top_provider.is_moderated", False, True),
+        ),
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    for label, path in (
+        ("Input", "pricing.prompt"),
+        ("Context length (model)", "context_length"),
+        ("Moderated", "top_provider.is_moderated"),
+    ):
+        assert f'<td class="field-name" title="{path}">{label}</td>' in _card_row(html, label)
+
+
+def test_the_raw_value_toggle_is_a_css_only_checkbox_unchecked_by_default() -> None:
+    """R3. `title` text cannot be selected or copied; this row can."""
+    html = _navigation_report()
+    # The id is read from the module, and BOTH sides of the wiring are asserted
+    # against it. The markup emits it from `_RAW_TOGGLE_ID` while `_HTML_CSS`
+    # spells it literally -- a stylesheet is not an f-string -- so a rename
+    # that touched one and not the other would leave a checkbox that silently
+    # does nothing. Deriving both from the constant here is what makes that a
+    # failure instead of a shrug.
+    toggle_id = reporting._RAW_TOGGLE_ID
+    assert (
+        f'<label class="raw-toggle"><input type="checkbox" id="{toggle_id}"> '
+    ) in html
+    assert f'id="{toggle_id}" checked' not in html
+    # The sub-line exists in the document, hidden by CSS rather than by being
+    # absent -- there is no script to add it later.
+    assert '<tr class="raw-line"><td></td><td class="raw-values" colspan="7">' in html
+    css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert ".card-table tr.raw-line { display: none; }" in css
+    assert (
+        f"body:has(#{toggle_id}:checked) .card-table tr.raw-line {{ display: table-row; }}"
+    ) in css
+
+
+def test_the_raw_sub_line_shows_the_provider_values_of_a_price_row() -> None:
+    """Including a one-sided row, which spells its absent side the way the
+    value cell above it does rather than inventing a second token."""
+    changed = (
+        _priced(
+            "synth/model-prices",
+            FieldChange("pricing.prompt", "0.000002", "0.0000035"),
+            FieldChange("pricing.input_cache_read", None, "0.00000005"),
+            FieldChange("context_length", 1000, 2000),
+        ),
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    assert (
+        '<tr class="raw-line"><td></td><td class="raw-values" colspan="7">'
+        "0.000002 → 0.0000035</td></tr>"
+    ) in html
+    assert '<td class="raw-values" colspan="7">— → 0.00000005</td>' in html
+    # PRICE rows only. A count row already prints its provider value in the
+    # cell, so a sub-line repeating it would be noise.
+    assert html.count('class="raw-values"') == 2
+
+
+def test_the_raw_value_toggle_starts_checked_in_all_detail_mode() -> None:
+    """The controller decision behind `_full.html`.
+
+    `cli.py` builds the audit document by calling this renderer with
+    `mode="all"`, so it inherits A1's move of raw values into tooltips -- a
+    real loss for the one report whose purpose is the raw numbers. The toggle
+    defaults on there and off in the concise report, which is one renderer and
+    no new flag. Both defaults are asserted, from output, in one test so they
+    cannot drift apart.
+    """
+    concise = _navigation_report()
+    audit = _navigation_report(detail_policy=make_report_detail_policy(mode="all"))
+    assert '<input type="checkbox" id="show-raw"> Show raw values' in concise
+    assert '<input type="checkbox" id="show-raw" checked> Show raw values' in audit
+    # Same document otherwise: the audit view is not a second renderer.
+    assert '<td class="raw-values" colspan="7">' in concise
+    assert '<td class="raw-values" colspan="7">' in audit
