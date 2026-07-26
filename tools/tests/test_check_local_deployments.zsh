@@ -816,6 +816,215 @@ test_git_index_collection_failure_suppresses_dependent_ok() {
   assert_contains "$AUDIT_STDERR" "Local deployment audit failed:"
 }
 
+commit_project_file() {
+  local relative="$1"
+  local label="$2"
+  write_synthetic_file "$FIXTURE_REPO/$relative" "$label"
+  mkdir -p "$FIXTURE_LOCAL/${relative:h}"
+  cp -p "$FIXTURE_REPO/$relative" "$FIXTURE_LOCAL/$relative"
+  git -C "$FIXTURE_REPO" add "$relative"
+  git -C "$FIXTURE_REPO" commit -qm "add $label"
+}
+
+delete_project_source() {
+  local relative="$1"
+  git -C "$FIXTURE_REPO" rm -q "$relative"
+  git -C "$FIXTURE_REPO" commit -qm "delete synthetic project source"
+}
+
+test_genuine_stale_project_file() {
+  new_fixture
+  local relative="docker/docs/retired-synthetic.md"
+  commit_project_file "$relative" "retired synthetic documentation"
+  delete_project_source "$relative"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "genuine stale project file"
+  assert_contains "$AUDIT_STDERR" "docker deployment drift"
+  assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 1"
+  assert_not_contains "$AUDIT_STDOUT" "$relative"
+  assert_not_contains "$AUDIT_STDERR" "$relative"
+}
+
+test_deleted_and_absent_is_not_stale() {
+  new_fixture
+  local relative="docker/docs/removed-everywhere.md"
+  commit_project_file "$relative" "removed synthetic documentation"
+  delete_project_source "$relative"
+  rm "$FIXTURE_LOCAL/$relative"
+  run_audit
+
+  assert_status 0 "$AUDIT_STATUS" "deleted and absent project file"
+  assert_contains "$AUDIT_STDOUT" "OK: ~/docker tracked files"
+}
+
+test_tracked_gitignore_suppresses_intentional_local_transition() {
+  new_fixture
+  local relative="docker/output/generated-synthetic.json"
+  commit_project_file "$relative" "generated synthetic output"
+  git -C "$FIXTURE_REPO" rm -q "$relative"
+  print -r -- "/output/generated-synthetic.json" \
+    > "$FIXTURE_REPO/docker/.gitignore"
+  git -C "$FIXTURE_REPO" add docker/.gitignore
+  git -C "$FIXTURE_REPO" commit -qm "make synthetic output local-only"
+  cp -p \
+    "$FIXTURE_REPO/docker/.gitignore" \
+    "$FIXTURE_LOCAL/docker/.gitignore"
+  run_audit
+
+  assert_status 0 "$AUDIT_STATUS" "intentional local transition"
+  assert_contains "$AUDIT_STDOUT" "OK: ~/docker tracked files"
+}
+
+test_untracked_same_path_does_not_hide_stale_file() {
+  new_fixture
+  local relative="docker/docs/untracked-collision.md"
+  commit_project_file "$relative" "untracked collision source"
+  delete_project_source "$relative"
+  write_synthetic_file "$FIXTURE_REPO/$relative" "untracked replacement"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "untracked same-path collision"
+  assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 1"
+}
+
+test_indexed_readd_suppresses_historical_deletion() {
+  new_fixture
+  local relative="docker/docs/readded-synthetic.md"
+  commit_project_file "$relative" "initial re-add source"
+  delete_project_source "$relative"
+  write_synthetic_file "$FIXTURE_REPO/$relative" "current indexed re-add"
+  git -C "$FIXTURE_REPO" add "$relative"
+  cp -p "$FIXTURE_REPO/$relative" "$FIXTURE_LOCAL/$relative"
+  run_audit
+
+  assert_status 0 "$AUDIT_STATUS" "indexed source re-add"
+  assert_contains "$AUDIT_STDOUT" "OK: ~/docker tracked files"
+}
+
+test_duplicate_deletion_history_counts_once() {
+  new_fixture
+  local relative="docker/docs/deleted-twice.md"
+  commit_project_file "$relative" "first delete source"
+  delete_project_source "$relative"
+  write_synthetic_file "$FIXTURE_REPO/$relative" "second delete source"
+  git -C "$FIXTURE_REPO" add "$relative"
+  git -C "$FIXTURE_REPO" commit -qm "re-add synthetic source"
+  git -C "$FIXTURE_REPO" rm -q "$relative"
+  git -C "$FIXTURE_REPO" commit -qm "delete synthetic source again"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "duplicate deletion history"
+  assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 1"
+  assert_not_contains "$AUDIT_STDERR" "stale formerly tracked files: 2"
+}
+
+test_rename_origin_is_stale() {
+  new_fixture
+  local old_relative="docker/docs/old-synthetic-name.md"
+  local new_relative="docker/docs/new-synthetic-name.md"
+  commit_project_file "$old_relative" "renamed synthetic source"
+  mkdir -p "$FIXTURE_REPO/${new_relative:h}"
+  git -C "$FIXTURE_REPO" mv "$old_relative" "$new_relative"
+  git -C "$FIXTURE_REPO" commit -qm "rename synthetic source"
+  cp -p "$FIXTURE_REPO/$new_relative" "$FIXTURE_LOCAL/$new_relative"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "rename-origin stale path"
+  assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 1"
+}
+
+test_ignore_negation_does_not_hide_stale_file() {
+  new_fixture
+  local relative="docker/docs/negated-synthetic.md"
+  commit_project_file "$relative" "negated ignore source"
+  git -C "$FIXTURE_REPO" rm -q "$relative"
+  {
+    print -r -- "docker/docs/*.md"
+    print -r -- "!docker/docs/negated-synthetic.md"
+  } > "$FIXTURE_REPO/.gitignore"
+  git -C "$FIXTURE_REPO" add .gitignore
+  git -C "$FIXTURE_REPO" commit -qm "re-include synthetic stale path"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "winning ignore negation"
+  assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 1"
+}
+
+test_untracked_ignore_sources_are_not_authoritative() {
+  local ignore_kind
+  for ignore_kind in nested info global; do
+    new_fixture
+    local relative="docker/docs/non-authoritative-$ignore_kind.md"
+    commit_project_file "$relative" "non-authoritative ignore source"
+    delete_project_source "$relative"
+    case "$ignore_kind" in
+      nested)
+        mkdir -p "$FIXTURE_REPO/docker/docs"
+        print -r -- "non-authoritative-nested.md" \
+          > "$FIXTURE_REPO/docker/docs/.gitignore"
+        ;;
+      info)
+        print -r -- "$relative" \
+          >> "$FIXTURE_REPO/.git/info/exclude"
+        ;;
+      global)
+        local global_ignore="$FIXTURE_HOME/global-ignore"
+        print -r -- "$relative" > "$global_ignore"
+        git -C "$FIXTURE_REPO" config core.excludesFile "$global_ignore"
+        ;;
+    esac
+    run_audit
+
+    assert_status 1 "$AUDIT_STATUS" "non-authoritative $ignore_kind ignore"
+    assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 1"
+  done
+}
+
+test_side_branch_only_deletion_is_excluded() {
+  new_fixture
+  local main_branch
+  main_branch="$(git -C "$FIXTURE_REPO" symbolic-ref --short HEAD)"
+  git -C "$FIXTURE_REPO" switch -q -c synthetic-side-branch
+  local relative="docker/docs/side-branch-only.md"
+  commit_project_file "$relative" "side branch only source"
+  delete_project_source "$relative"
+  git -C "$FIXTURE_REPO" switch -q "$main_branch"
+  run_audit
+
+  assert_status 0 "$AUDIT_STATUS" "side-branch-only deletion"
+  assert_contains "$AUDIT_STDOUT" "OK: ~/docker tracked files"
+}
+
+test_stale_pathname_with_spaces_is_not_printed() {
+  new_fixture
+  local relative="docker/docs/retired synthetic name.md"
+  commit_project_file "$relative" "spaced stale pathname"
+  delete_project_source "$relative"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "stale pathname with spaces"
+  assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 1"
+  assert_not_contains "$AUDIT_STDOUT" "$relative"
+  assert_not_contains "$AUDIT_STDERR" "$relative"
+}
+
+test_shallow_history_fails_coverage() {
+  new_fixture
+  local source_repo="$FIXTURE_REPO"
+  local shallow_repo="$FIXTURE_ROOT/shallow-repo"
+  git clone -q --depth=1 "file://$source_repo" "$shallow_repo"
+  FIXTURE_REPO="$shallow_repo"
+  AUDIT_STDOUT="$FIXTURE_ROOT/shallow-audit.stdout"
+  AUDIT_STDERR="$FIXTURE_ROOT/shallow-audit.stderr"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "shallow Git history"
+  assert_contains "$AUDIT_STDERR" "shallow Git history"
+  assert_contains "$AUDIT_STDERR" "stale-file audit is incomplete"
+  assert_not_contains "$AUDIT_STDOUT" "Local deployment audit: PASS"
+}
+
 test_passing_baseline
 test_missing_direct_copy
 test_project_byte_drift
@@ -841,5 +1050,17 @@ test_missing_tracked_sources_fail
 test_staged_project_deletion_fails_source_state
 test_tracked_source_symlink_rejected
 test_git_index_collection_failure_suppresses_dependent_ok
+test_genuine_stale_project_file
+test_deleted_and_absent_is_not_stale
+test_tracked_gitignore_suppresses_intentional_local_transition
+test_untracked_same_path_does_not_hide_stale_file
+test_indexed_readd_suppresses_historical_deletion
+test_duplicate_deletion_history_counts_once
+test_rename_origin_is_stale
+test_ignore_negation_does_not_hide_stale_file
+test_untracked_ignore_sources_are_not_authoritative
+test_side_branch_only_deletion_is_excluded
+test_stale_pathname_with_spaces_is_not_printed
+test_shallow_history_fails_coverage
 
 print -- "check_local_deployments tests: PASS"

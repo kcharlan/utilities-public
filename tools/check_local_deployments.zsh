@@ -166,6 +166,7 @@ typeset -a direct_source_paths audited_scopes index_paths
 typeset -a invalid_index_paths pending_deletion_paths model_module_paths
 typeset -A index_membership index_modes index_oids
 typeset -A invalid_index_membership source_state_invalid pending_deletions
+typeset -A stale_counts stale_history_operational_errors
 
 for mapping in "${copy_mappings[@]}"; do
   direct_source_paths+=("${mapping%%|*}")
@@ -284,6 +285,154 @@ if [[ "$git_snapshot_ok" == true && "$git_head_ok" == true ]]; then
   else
     git_snapshot_ok=false
   fi
+fi
+
+stale_history_available=true
+shallow_file="$AUDIT_TMP/git-shallow"
+if [[ "$git_snapshot_ok" == true && "$git_head_ok" == true ]]; then
+  if run_git_capture \
+    "shallow-history detection failed" \
+    "$shallow_file" \
+    rev-parse --is-shallow-repository; then
+    shallow_value=
+    IFS= read -r shallow_value < "$shallow_file" || true
+    if [[ "$shallow_value" == true ]]; then
+      report_failure \
+        "shallow Git history detected; stale-file audit is incomplete"
+      stale_history_available=false
+    elif [[ "$shallow_value" != false ]]; then
+      report_failure "shallow-history detection returned an invalid result"
+      stale_history_available=false
+    fi
+  else
+    stale_history_available=false
+  fi
+else
+  stale_history_available=false
+fi
+
+check_repository_ignore() {
+  local candidate="$1"
+  local input_file="$2"
+  local output_file="$3"
+  local error_file="$AUDIT_TMP/check-ignore.stderr"
+
+  print -rn -- "$candidate"$'\0' > "$input_file"
+  if /usr/bin/env -i \
+    HOME="$HOME" \
+    PATH="$PATH" \
+    LC_ALL=C \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_OPTIONAL_LOCKS=0 \
+    git -C "$REPO_ROOT" \
+      -c core.excludesFile=/dev/null \
+      check-ignore --no-index -z -v --stdin \
+      < "$input_file" > "$output_file" 2> "$error_file"; then
+    return 0
+  else
+    local ignore_status=$?
+  fi
+  if (( ignore_status == 1 )); then
+    : > "$output_file"
+    return 1
+  fi
+  : > "$output_file"
+  return "$ignore_status"
+}
+
+if [[ "$stale_history_available" == true ]]; then
+  history_number=0
+  for project in "${home_projects[@]}"; do
+    stale_counts[$project]=0
+    stale_history_operational_errors[$project]=0
+    history_number=$((history_number + 1))
+    history_file="$AUDIT_TMP/history-$history_number"
+    if ! run_git_capture \
+      "$project stale-file history collection failed" \
+      "$history_file" \
+      log --first-parent --diff-merges=first-parent --no-renames \
+      --diff-filter=D --format= --name-only -z HEAD -- "$project"; then
+      stale_history_operational_errors[$project]=1
+      continue
+    fi
+
+    typeset -A project_deleted_paths
+    project_deleted_paths=()
+    while IFS= read -r -d '' deleted_path; do
+      [[ -n "$deleted_path" ]] || continue
+      project_deleted_paths[$deleted_path]=1
+    done < "$history_file"
+
+    history_candidate_number=0
+    for deleted_path in "${(k)project_deleted_paths[@]}"; do
+      if [[ -n "${pending_deletions[$deleted_path]-}" ||
+            -n "${index_membership[$deleted_path]-}" ]]; then
+        continue
+      fi
+
+      deployed_candidate="$LOCAL_ROOT/$deleted_path"
+      ignore_candidate="$deleted_path"
+      if [[ ! -L "$deployed_candidate" && -d "$deployed_candidate" ]]; then
+        ignore_candidate="$deleted_path/"
+      fi
+      history_candidate_number=$((history_candidate_number + 1))
+      ignore_input="$AUDIT_TMP/ignore-$history_number-$history_candidate_number.in"
+      ignore_output="$AUDIT_TMP/ignore-$history_number-$history_candidate_number.out"
+
+      ignored_by_repository=false
+      if check_repository_ignore \
+        "$ignore_candidate" \
+        "$ignore_input" \
+        "$ignore_output"; then
+        typeset -a ignore_fields
+        ignore_fields=()
+        while IFS= read -r -d '' ignore_field; do
+          ignore_fields+=("$ignore_field")
+        done < "$ignore_output"
+        if (( ${#ignore_fields[@]} != 4 )); then
+          report_failure "$project ignore classification output is malformed"
+          stale_history_operational_errors[$project]=$((stale_history_operational_errors[$project] + 1))
+          continue
+        fi
+        ignore_source="${ignore_fields[1]}"
+        ignore_pattern="${ignore_fields[3]}"
+        ignore_returned="${ignore_fields[4]}"
+        if [[ "$ignore_returned" != "$ignore_candidate" ]]; then
+          report_failure "$project ignore classification pathname mismatch"
+          stale_history_operational_errors[$project]=$((stale_history_operational_errors[$project] + 1))
+          continue
+        fi
+        if [[ -n "$ignore_source" &&
+              "$ignore_source" != /* &&
+              "$ignore_source" != ../* &&
+              "$ignore_source" == *.gitignore &&
+              -n "${index_membership[$ignore_source]-}" &&
+              "$ignore_pattern" != '!'* ]]; then
+          ignored_by_repository=true
+        fi
+      else
+        ignore_status=$?
+        if (( ignore_status > 1 )); then
+          report_failure "$project ignore classification command failed"
+          stale_history_operational_errors[$project]=$((stale_history_operational_errors[$project] + 1))
+          continue
+        fi
+      fi
+
+      if [[ "$ignored_by_repository" == true ]]; then
+        continue
+      fi
+      if [[ -e "$deployed_candidate" || -L "$deployed_candidate" ]]; then
+        stale_counts[$project]=$((stale_counts[$project] + 1))
+      fi
+    done
+  done
+else
+  for project in "${home_projects[@]}"; do
+    stale_counts[$project]=0
+    stale_history_operational_errors[$project]=1
+  done
 fi
 
 for mapping in "${copy_mappings[@]}"; do
@@ -506,12 +655,14 @@ for project in "${home_projects[@]}"; do
   project_type_failures=0
   project_byte_differences=0
   project_mode_differences=0
-  project_stale=0
+  project_stale="${stale_counts[$project]:-0}"
   project_source_state_failures=0
-  project_operational_errors=0
+  project_operational_errors="${stale_history_operational_errors[$project]:-0}"
 
   if [[ "$git_snapshot_ok" != true ]]; then
-    project_operational_errors=1
+    if (( project_operational_errors == 0 )); then
+      project_operational_errors=1
+    fi
   else
     for tracked_file in "${index_paths[@]}"; do
       if [[ "$tracked_file" != "$project"/* ]]; then
