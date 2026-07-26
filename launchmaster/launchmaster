@@ -533,6 +533,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .job-table thead th:hover { color: var(--text-secondary); }
   .job-table thead th.sorted { color: var(--accent); }
+  .job-table thead th.actions-col {
+    right: 0;
+    z-index: 11;
+  }
   .job-table thead th .sort-arrow {
     display: inline-block;
     margin-left: 4px;
@@ -666,11 +670,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   .row-actions {
     display: flex;
+    justify-content: flex-end;
     gap: 2px;
-    opacity: 0;
+    opacity: 0.6;
     transition: opacity 0.15s;
   }
   .job-table tbody tr:hover .row-actions { opacity: 1; }
+
+  .job-table td.actions-cell {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--bg-surface);
+    box-shadow: -10px 0 10px -10px rgba(0,0,0,0.5);
+  }
+  .job-table tbody tr:hover td.actions-cell { background: var(--bg-hover); }
+  .job-table tbody tr.selected td.actions-cell { background: var(--accent-bg); }
+  .job-table tbody tr.status-failed td.actions-cell { background: rgba(255,23,68,0.03); }
+  .job-table tbody tr.status-failed:hover td.actions-cell { background: rgba(255,23,68,0.06); }
+  .job-table tbody tr.apple-row td.actions-cell { background: rgba(232,160,48,0.05); }
+  .job-table tbody tr.apple-row:hover td.actions-cell { background: rgba(232,160,48,0.10); }
 
   .row-action-btn {
     display: inline-flex;
@@ -687,6 +706,53 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .row-action-btn:hover { background: var(--bg-active); color: var(--text-primary); }
   .row-action-btn.danger:hover { color: var(--status-failed); background: var(--danger-bg); }
   .row-action-btn svg { width: 13px; height: 13px; }
+
+  /* ---- Job Action Menu ---- */
+  .job-action-menu {
+    position: fixed;
+    z-index: 350;
+    width: 190px;
+    padding: 5px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    box-shadow: 0 14px 34px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,171,0,0.04);
+  }
+  .job-action-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 30px;
+    padding: 6px 9px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .job-action-menu-item:hover,
+  .job-action-menu-item:focus-visible {
+    background: var(--bg-active);
+    color: var(--text-primary);
+    outline: none;
+  }
+  .job-action-menu-item.danger { color: var(--status-failed); }
+  .job-action-menu-item.danger:hover,
+  .job-action-menu-item.danger:focus-visible { background: var(--danger-bg); }
+  .job-action-menu-item svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+  .job-action-menu-separator {
+    height: 1px;
+    margin: 4px 5px;
+    background: var(--border-default);
+  }
 
   /* Checkbox */
   .checkbox {
@@ -1169,7 +1235,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useEffect, useRef, useMemo, useCallback } = React;
+const { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } = React;
 
 // ---- API helper ----
 async function api(path, options = {}) {
@@ -1457,6 +1523,103 @@ function ConfirmDialog({ title, message, onConfirm, onCancel, danger = false }) 
   );
 }
 
+// ---- Shared per-job action menu ----
+function JobActionMenu({ job, x, y, onClose, runAction, openDetail }) {
+  const menuRef = useRef(null);
+  const [position, setPosition] = useState(null);
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    let left = x;
+    let top = y;
+    if (rect.bottom > window.innerHeight) top = y - rect.height;
+    if (rect.right > window.innerWidth) left = x - rect.width;
+    left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
+    top = Math.max(8, Math.min(top, window.innerHeight - rect.height - 8));
+    setPosition({ left, top });
+  }, [x, y]);
+
+  useEffect(() => {
+    const handleOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        onClose();
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape' || document.querySelector('.confirm-dialog')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('scroll', onClose, true);
+    window.addEventListener('resize', onClose);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('scroll', onClose, true);
+      window.removeEventListener('resize', onClose);
+    };
+  }, [onClose]);
+
+  const actionGroups = [
+    ['start', 'stop', 'run-now', 'reload'],
+    [job.enabled ? 'disable' : 'enable', job.loaded ? 'unload' : 'load'],
+    ['edit', 'logs', 'info'],
+    ['export'],
+    ['delete'],
+  ];
+
+  const dispatch = (actionId) => {
+    onClose();
+    const action = JOB_ACTIONS[actionId];
+    if (action.kind === 'nav') {
+      openDetail(job, action.tab);
+      return;
+    }
+    runAction(job, actionId);
+  };
+
+  return ReactDOM.createPortal(
+    <div
+      ref={menuRef}
+      className="job-action-menu"
+      role="menu"
+      aria-label={'Actions for ' + job.label}
+      style={{
+        left: position ? position.left : x,
+        top: position ? position.top : y,
+        visibility: position ? 'visible' : 'hidden',
+      }}
+    >
+      {actionGroups.map((group, groupIndex) => (
+        <React.Fragment key={groupIndex}>
+          {groupIndex > 0 && <div className="job-action-menu-separator" role="separator" />}
+          {group.map(actionId => {
+            const action = JOB_ACTIONS[actionId];
+            return (
+              <button
+                type="button"
+                role="menuitem"
+                className={'job-action-menu-item' + (action.danger ? ' danger' : '')}
+                key={actionId}
+                onClick={() => dispatch(actionId)}
+              >
+                <Icon name={action.icon} size={14} />
+                <span>{action.label}</span>
+              </button>
+            );
+          })}
+        </React.Fragment>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
 // ---- Status Cards ----
 function StatusCards({ jobs, activeFilter, setActiveFilter }) {
   const counts = useMemo(() => {
@@ -1701,7 +1864,7 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
 // ---- Job Table ----
 const PAGE_SIZE = 25;
 
-function JobTable({ jobs, selected, setSelected, onRowClick, showApple, runAction }) {
+function JobTable({ jobs, selected, setSelected, onRowClick, showApple, runAction, openActionMenu }) {
   const [sortCol, setSortCol] = useState('status');
   const [sortAsc, setSortAsc] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
@@ -1770,7 +1933,7 @@ function JobTable({ jobs, selected, setSelected, onRowClick, showApple, runActio
             <th style={{ width: 180 }}>Schedule</th>
             <th style={{ width: 70 }}>PID</th>
             <SortHeader col="exit" style={{ width: 80 }}>Last Exit</SortHeader>
-            <th style={{ width: 180, textAlign: 'right' }}>Actions</th>
+            <th className="actions-col" style={{ width: 110, textAlign: 'right' }}>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -1814,31 +1977,25 @@ function JobTable({ jobs, selected, setSelected, onRowClick, showApple, runActio
                     </span>
                   ) : '\u2014'}
                 </td>
-                <td style={{ textAlign: 'right' }}>
+                <td className="actions-cell" style={{ textAlign: 'right' }}>
                   <div className="row-actions">
-                    <button className="row-action-btn" title="Start (s)" onClick={e => { e.stopPropagation(); runAction(job, 'start'); }}>
-                      <Icon name="play" size={13} />
+                    <button className="row-action-btn" title="Run Now (one-shot)" onClick={e => { e.stopPropagation(); runAction(job, 'run-now'); }}>
+                      <Icon name="zap" size={13} />
                     </button>
                     <button className="row-action-btn" title="Stop (x)" onClick={e => { e.stopPropagation(); runAction(job, 'stop'); }}>
                       <Icon name="square" size={13} />
                     </button>
-                    <button className="row-action-btn" title="Run Now (one-shot)" onClick={e => { e.stopPropagation(); runAction(job, 'run-now'); }}>
-                      <Icon name="zap" size={13} />
-                    </button>
-                    <button className="row-action-btn" title="Reload (r)" onClick={e => { e.stopPropagation(); runAction(job, 'reload'); }}>
-                      <Icon name="refresh-cw" size={13} />
-                    </button>
-                    <button className="row-action-btn" title="Edit (e)" onClick={e => { e.stopPropagation(); runAction(job, 'edit'); }}>
-                      <Icon name="pencil" size={13} />
-                    </button>
-                    <button className="row-action-btn" title="Logs (l)" onClick={e => { e.stopPropagation(); runAction(job, 'logs'); }}>
-                      <Icon name="file-text" size={13} />
-                    </button>
-                    <button className="row-action-btn" title="Export" onClick={e => { e.stopPropagation(); runAction(job, 'export'); }}>
-                      <Icon name="download" size={13} />
-                    </button>
-                    <button className="row-action-btn danger" title="Delete" onClick={e => { e.stopPropagation(); runAction(job, 'delete'); }}>
-                      <Icon name="trash-2" size={13} />
+                    <button
+                      className="row-action-btn"
+                      title="More actions"
+                      aria-label="More actions"
+                      onClick={e => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        openActionMenu(job, rect.left, rect.bottom + 4);
+                      }}
+                    >
+                      <Icon name="more-vertical" size={13} />
                     </button>
                   </div>
                 </td>
@@ -2755,6 +2912,7 @@ function App() {
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showConfirm, setShowConfirm] = useState(null);
+  const [actionMenu, setActionMenu] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [settings, setSettings] = useState({
     poll_interval: 5,
@@ -2875,6 +3033,18 @@ function App() {
     setDetailJob(job);
   };
 
+  const openActionMenu = useCallback((job, x, y) => {
+    setActionMenu({ label: job.label, x, y });
+  }, []);
+
+  const closeActionMenu = useCallback(() => {
+    setActionMenu(null);
+  }, []);
+
+  const actionMenuJob = actionMenu
+    ? jobs.find(job => job.label === actionMenu.label)
+    : null;
+
   const runAction = useJobActions({
     addToast,
     presentConfirm,
@@ -2890,6 +3060,11 @@ function App() {
         if (showConfirmRef.current) {
           e.preventDefault();
           cancelConfirm();
+          return;
+        }
+        if (actionMenu) {
+          e.preventDefault();
+          setActionMenu(null);
           return;
         }
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
@@ -2909,7 +3084,7 @@ function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cancelConfirm, detailJob, selected, showCreate, showSettings]);
+  }, [actionMenu, cancelConfirm, detailJob, selected, showCreate, showSettings]);
 
   return (
     <div className="app-shell">
@@ -2984,8 +3159,22 @@ function App() {
           onRowClick={handleRowClick}
           showApple={showApple}
           runAction={runAction}
+          openActionMenu={openActionMenu}
         />
       </div>
+
+      {/* Shared row action menu (portaled to document.body) */}
+      {actionMenu && actionMenuJob && (
+        <JobActionMenu
+          key={actionMenu.label + ':' + actionMenu.x + ':' + actionMenu.y}
+          job={actionMenuJob}
+          x={actionMenu.x}
+          y={actionMenu.y}
+          onClose={closeActionMenu}
+          runAction={runAction}
+          openDetail={handleRowClick}
+        />
+      )}
 
       {/* Detail Panel */}
       {detailJob && (

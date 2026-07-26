@@ -327,6 +327,119 @@ class TestConfirmationPolicy:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Always-visible row actions and kebab menu
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestRowActionsAndKebab:
+    def test_kebab_is_visible_without_hover(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+
+        expect(
+            row.get_by_role("button", name="More actions")
+        ).to_be_visible()
+
+    def test_actions_column_is_on_screen_without_horizontal_scroll(
+        self, server, page
+    ):
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+        kebab = row.get_by_role("button", name="More actions")
+
+        assert page.locator(".job-table-container").evaluate(
+            "el => el.scrollLeft"
+        ) == 0
+        box = kebab.bounding_box()
+        assert box is not None
+        assert box["x"] >= 0
+        assert box["x"] + box["width"] <= page.viewport_size["width"]
+
+    def test_kebab_menu_has_grouped_state_aware_actions_and_closes_outside(
+        self, server, page
+    ):
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+        row.get_by_role("button", name="More actions").click()
+
+        menu = page.locator(".job-action-menu")
+        expect(menu).to_be_visible()
+        assert menu.locator(".job-action-menu-item").all_text_contents() == [
+            "Start",
+            "Stop",
+            "Run Now",
+            "Reload",
+            "Disable",
+            "Unload",
+            "Edit",
+            "Logs",
+            "Details",
+            "Export",
+            "Delete",
+        ]
+        expect(menu.locator(".job-action-menu-separator")).to_have_count(4)
+        delete_item = menu.get_by_role("menuitem", name="Delete")
+        expect(delete_item).to_have_class(re.compile(r"\bdanger\b"))
+        assert delete_item.evaluate(
+            "el => getComputedStyle(el).color"
+        ) == "rgb(255, 23, 68)"
+
+        page.locator(".topbar-brand").click()
+        expect(menu).to_have_count(0)
+
+    def test_menu_delete_uses_confirmation_policy(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+        row.get_by_role("button", name="More actions").click()
+        page.locator(".job-action-menu").get_by_role(
+            "menuitem", name="Delete"
+        ).click()
+
+        expect(page.locator(".job-action-menu")).to_have_count(0)
+        dialog = page.locator(".confirm-dialog")
+        expect(dialog).to_contain_text("unload and remove the plist file")
+        dialog.get_by_role("button", name="Cancel").click()
+        expect(dialog).to_have_count(0)
+
+    def test_menu_run_now_uses_intercepted_endpoint_and_closes(
+        self, server, page
+    ):
+        calls = []
+
+        def intercept(route):
+            calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(
+            re.compile(
+                r".*/api/jobs/com\.example\.synthetic-idle/run-now$"
+            ),
+            intercept,
+        )
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+        row.get_by_role("button", name="More actions").click()
+        page.locator(".job-action-menu").get_by_role(
+            "menuitem", name="Run Now"
+        ).click()
+
+        expect(page.locator(".job-action-menu")).to_have_count(0)
+        expect(page.locator(".toast.success")).to_contain_text(
+            "Running com.example.synthetic-idle"
+        )
+        assert len(calls) == 1
+
+    def test_each_row_has_exactly_three_action_buttons(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+
+        expect(row.locator(".row-actions button")).to_have_count(3)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 1. Page Load & CDN Dependencies
 # ═══════════════════════════════════════════════════════════════════════════════
 
