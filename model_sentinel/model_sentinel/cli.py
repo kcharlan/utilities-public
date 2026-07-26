@@ -259,7 +259,11 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
             provider_results.append(result)
             continue
         try:
-            raw_models = fetch_raw_models(provider, os.environ[provider.credential_env_var])
+            raw_models = fetch_raw_models(
+                provider,
+                os.environ[provider.credential_env_var],
+                profile,
+            )
             normalized_models = normalize_models(provider, raw_models)
             current_map = {model.provider_model_id: model for model in normalized_models}
             if baseline:

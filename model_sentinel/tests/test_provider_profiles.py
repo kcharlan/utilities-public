@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from model_sentinel.config import ProviderConfig
 from model_sentinel.provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
@@ -9,6 +10,22 @@ from model_sentinel.provider_profiles import (
     default_is_price_amount_field,
     resolve_profile,
 )
+from model_sentinel.providers import ProviderFetchError, extract_model_list
+
+
+@pytest.fixture
+def synthetic_provider() -> ProviderConfig:
+    return ProviderConfig(
+        provider_id="synthetic",
+        label="Synthetic Provider",
+        kind="synthetic",
+        base_url="https://synthetic.invalid/v1",
+        models_path="/models",
+        credential_env_var="SYNTHETIC_API_KEY",
+        price_multiplier=1,
+        price_divisor=1,
+        enabled=True,
+    )
 
 
 def test_resolve_openrouter_profile_with_bound_pricing() -> None:
@@ -52,3 +69,43 @@ def test_openrouter_profile_contains_provider_vocabulary() -> None:
 def test_default_heuristics_preserve_existing_behavior() -> None:
     assert default_categorize("pricing.prompt") == "Pricing"
     assert default_is_price_amount_field("input_token_rate") is False
+
+
+def test_generic_profile_accepts_guessed_models_envelope(
+    synthetic_provider: ProviderConfig,
+) -> None:
+    models = [{"id": "synthetic/model-a"}]
+
+    assert extract_model_list(
+        synthetic_provider,
+        {"models": models},
+        GENERIC_PROFILE,
+    ) == models
+
+
+def test_openrouter_profile_only_accepts_its_data_envelope(
+    synthetic_provider: ProviderConfig,
+) -> None:
+    models = [{"id": "synthetic/model-a"}]
+
+    assert extract_model_list(
+        synthetic_provider,
+        {"data": models},
+        OPENROUTER_PROFILE,
+    ) == models
+    with pytest.raises(ProviderFetchError, match="Synthetic Provider"):
+        extract_model_list(
+            synthetic_provider,
+            {"models": models},
+            OPENROUTER_PROFILE,
+        )
+
+
+@pytest.mark.parametrize("profile", (GENERIC_PROFILE, OPENROUTER_PROFILE))
+def test_top_level_model_list_bypasses_envelope_search(
+    synthetic_provider: ProviderConfig,
+    profile,
+) -> None:
+    models = [{"id": "synthetic/model-a"}]
+
+    assert extract_model_list(synthetic_provider, models, profile) == models

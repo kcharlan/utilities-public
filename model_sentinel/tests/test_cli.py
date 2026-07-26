@@ -123,7 +123,10 @@ def test_initial_saved_scan_reports_all_models_as_added(tmp_path: Path, monkeypa
     monkeypatch.setattr(
         cli,
         "fetch_raw_models",
-        lambda provider, api_key: [{"id": "alpha", "name": "Alpha"}, {"id": "beta", "name": "Beta"}],
+        lambda provider, api_key, profile: [
+            {"id": "alpha", "name": "Alpha"},
+            {"id": "beta", "name": "Beta"},
+        ],
     )
 
     exit_code = cli.main(["scan", "--save"])
@@ -153,7 +156,11 @@ def test_scan_writes_full_html_companion_report(tmp_path: Path, monkeypatch, cap
             [{"id": "alpha", "name": "Alpha", "benchmarks": {"design_arena": [{"elo": 2}]}}],
         ]
     )
-    monkeypatch.setattr(cli, "fetch_raw_models", lambda provider, api_key: next(payloads))
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
 
     assert cli.main(["scan", "--save"]) == 0
     assert cli.main(["scan", "--save"]) == 0
@@ -193,7 +200,11 @@ def test_changes_writes_its_html_companion_when_a_model_was_added(
             ],
         ]
     )
-    monkeypatch.setattr(cli, "fetch_raw_models", lambda provider, api_key: next(payloads))
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
 
     assert cli.main(["scan", "--save"]) == 0
     # beta added, gamma removed, alpha's benchmarks change squelched
