@@ -217,6 +217,19 @@ class TestPlistPaths:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Export endpoint
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestExport:
+    def test_get_export_for_unknown_job_returns_404(self, server_url):
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(
+                f"{server_url}/api/jobs/com.example.does-not-exist/export"
+            )
+        assert exc_info.value.code == 404
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Settings endpoint
 # ═══════════════════════════════════════════════════════════════════════════════
 

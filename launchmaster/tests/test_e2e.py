@@ -19,6 +19,7 @@ import json
 import os
 import re
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +37,294 @@ except ImportError:
     )
 
 pytestmark = pytest.mark.e2e
+LAUNCHMASTER_SCRIPT = Path(__file__).resolve().parents[1] / "launchmaster"
+
+
+def _put_settings(server, updates):
+    request = urllib.request.Request(
+        f"{server}/api/settings",
+        data=json.dumps(updates).encode(),
+        headers={"Content-Type": "application/json"},
+        method="PUT",
+    )
+    with urllib.request.urlopen(request):
+        pass
+
+
+def _job_row(page, label, *, show_apple=False):
+    if show_apple:
+        toggle = page.locator(".filter-toggle:has-text('Apple')")
+        if "active" not in (toggle.get_attribute("class") or ""):
+            toggle.click()
+    page.locator(".filter-search").fill(label)
+    row = page.locator(".job-table tbody tr").filter(has_text=label)
+    expect(row).to_be_visible()
+    return row
+
+
+def _open_job_detail(page, label, *, show_apple=False):
+    row = _job_row(page, label, show_apple=show_apple)
+    row.click()
+    panel = page.locator(".detail-panel.open")
+    expect(panel).to_be_visible()
+    return panel
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 0. Deterministic Synthetic Harness
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestSyntheticHarness:
+    def test_synthetic_jobs_survive_poll_refresh(
+        self, server, page, restore_settings
+    ):
+        """Synthetic jobs render and remain after build_job_list runs again."""
+        settings_request = urllib.request.Request(
+            f"{server}/api/settings",
+            data=json.dumps({"poll_interval": 1}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        urllib.request.urlopen(settings_request).close()
+
+        page.goto(server, wait_until="networkidle")
+        apple_toggle = page.locator(".filter-toggle:has-text('Apple')")
+        apple_toggle.click()
+        page.locator(".filter-search").fill("synthetic")
+
+        labels = page.locator(".job-table tbody .job-label-text")
+        for label in (
+            "com.example.synthetic-idle",
+            "com.apple.example-synthetic",
+            "com.example.synthetic-failed",
+        ):
+            expect(labels.filter(has_text=label)).to_be_visible()
+
+        page.wait_for_timeout(1500)
+        for label in (
+            "com.example.synthetic-idle",
+            "com.apple.example-synthetic",
+            "com.example.synthetic-failed",
+        ):
+            expect(labels.filter(has_text=label)).to_be_visible()
+
+    def test_synthetic_failed_job_appears_in_failed_panel(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        expect(
+            page.locator(".failed-panel .failed-job-label").filter(
+                has_text="com.example.synthetic-failed"
+            )
+        ).to_be_visible()
+
+    def test_synthetic_orphan_apple_job_is_searchable(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.locator(".filter-toggle:has-text('Apple')").click()
+        page.locator(".filter-search").fill("com.apple.example-synthetic")
+        expect(
+            page.locator(".job-table tbody .job-label-text").filter(
+                has_text="com.apple.example-synthetic"
+            )
+        ).to_be_visible()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Shared actions and confirmation policy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestSharedActions:
+    def test_row_stop_calls_stop_endpoint(self, server, page):
+        calls = []
+
+        def intercept(route):
+            calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(re.compile(r".*/api/jobs/.*/stop$"), intercept)
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+        row.hover()
+        row.locator("button[title^='Stop']").click()
+        expect(page.locator(".toast.success")).to_be_visible()
+        assert len(calls) == 1
+
+    def test_no_duplicate_action_fetch_logic(self):
+        src = LAUNCHMASTER_SCRIPT.read_text()
+        job_table = src.split("function JobTable", 1)[1].split(
+            "// ---- Bulk Action Bar", 1
+        )[0]
+        detail_panel = src.split("function DetailPanel", 1)[1].split(
+            "// ---- Create Job Modal", 1
+        )[0]
+        app = src.split("function App()", 1)[1].split(
+            "ReactDOM.createRoot", 1
+        )[0]
+
+        assert "handleRowAction" not in job_table
+        assert "const handleAction =" not in detail_panel
+        assert "const handleDelete =" not in detail_panel
+        assert "const handleExport =" not in detail_panel
+        assert "onReload={async" not in app
+
+    def test_success_false_response_shows_error_toast(self, server, page):
+        def intercept(route):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "success": False,
+                    "message": "boot-out failed",
+                }),
+            )
+
+        page.route(re.compile(r".*/api/jobs/.*/stop$"), intercept)
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+        row.hover()
+        row.locator("button[title^='Stop']").click()
+
+        expect(page.locator(".toast.error")).to_contain_text("boot-out failed")
+        expect(page.locator(".toast.success")).to_have_count(0)
+
+    def test_detail_export_uses_get_download_route(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+
+        with page.expect_download() as download_info:
+            panel.get_by_role("button", name="Export Plist").click()
+
+        download = download_info.value
+        assert download.failure() is None
+        assert download.url.endswith(
+            "/api/jobs/com.example.synthetic-idle/export"
+        )
+        with urllib.request.urlopen(download.url) as response:
+            assert response.status == 200
+            assert "attachment" in response.headers[
+                "Content-Disposition"
+            ].lower()
+
+    def test_detail_closes_after_successful_delete(self, server, page):
+        calls = []
+
+        def intercept(route):
+            calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(
+            re.compile(r".*/api/jobs/com\.example\.synthetic-idle$"),
+            intercept,
+        )
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+        panel.get_by_role("button", name="Delete Job").click()
+        page.locator(".confirm-dialog").get_by_role(
+            "button", name="Delete"
+        ).click()
+
+        expect(page.locator(".detail-panel.open")).to_have_count(0)
+        assert len(calls) == 1
+
+
+class TestConfirmationPolicy:
+    def test_delete_escape_cancels_without_request(self, server, page):
+        calls = []
+        page.route(
+            re.compile(r".*/api/jobs/com\.example\.synthetic-idle$"),
+            lambda route: calls.append(route.request.url),
+        )
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+        panel.get_by_role("button", name="Delete Job").click()
+
+        expect(page.locator(".confirm-dialog")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(page.locator(".confirm-dialog")).to_have_count(0)
+        assert calls == []
+
+    def test_cancel_button_has_focus(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+        panel.get_by_role("button", name="Delete Job").click()
+
+        expect(
+            page.locator(".confirm-dialog").get_by_role(
+                "button", name="Cancel"
+            )
+        ).to_be_focused()
+
+    def test_destructive_confirmation_can_be_disabled(
+        self, server, page, restore_settings
+    ):
+        _put_settings(server, {"confirm_destructive": False})
+        calls = []
+
+        def intercept(route):
+            calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(
+            re.compile(r".*/api/jobs/com\.example\.synthetic-idle$"),
+            intercept,
+        )
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+        panel.get_by_role("button", name="Delete Job").click()
+
+        expect(page.locator(".confirm-dialog")).to_have_count(0)
+        expect(page.locator(".detail-panel.open")).to_have_count(0)
+        assert len(calls) == 1
+
+    def test_orphan_apple_job_requires_confirmation(self, server, page):
+        calls = []
+        page.route(
+            re.compile(r".*/api/jobs/.*/stop$"),
+            lambda route: calls.append(route.request.url),
+        )
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(
+            page, "com.apple.example-synthetic", show_apple=True
+        )
+        panel.get_by_role("button", name="Stop", exact=True).click()
+
+        dialog = page.locator(".confirm-dialog")
+        expect(dialog).to_contain_text("Apple")
+        dialog.get_by_role("button", name="Cancel").click()
+        assert calls == []
+
+    def test_escape_clears_selection(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+        row.locator(".checkbox").click()
+        expect(page.locator(".bulk-bar")).to_be_visible()
+
+        page.keyboard.press("Escape")
+        expect(page.locator(".bulk-bar")).to_have_count(0)
+
+    def test_show_apple_setting_sets_startup_filter(
+        self, server, page, restore_settings
+    ):
+        _put_settings(server, {"show_apple_jobs": True})
+        page.goto(server, wait_until="networkidle")
+        page.locator(".filter-search").fill("com.apple.example-synthetic")
+
+        expect(
+            page.locator(".job-table tbody tr").filter(
+                has_text="com.apple.example-synthetic"
+            )
+        ).to_be_visible()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. Page Load & CDN Dependencies
@@ -336,6 +625,33 @@ class TestSettingsModal:
         modal = page.locator(".modal")
         expect(modal).to_be_visible()
         expect(modal.locator(".modal-title")).to_contain_text("Settings")
+
+    def test_poll_interval_is_saved_as_number(self, server, page):
+        request_bodies = []
+
+        def intercept(route):
+            if route.request.method != "PUT":
+                route.continue_()
+                return
+            request_bodies.append(route.request.post_data_json)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "saved"}),
+            )
+
+        page.route(re.compile(r".*/api/settings$"), intercept)
+        page.goto(server, wait_until="networkidle")
+        page.locator(".topbar-right .icon-btn").last.click()
+        modal = page.locator(".modal")
+        modal.locator("input[type='number']").fill("7")
+        modal.get_by_role("button", name="Save & Close").click()
+
+        expect(page.locator(".toast.success")).to_contain_text(
+            "Settings saved"
+        )
+        assert request_bodies[0]["poll_interval"] == 7
+        assert isinstance(request_bodies[0]["poll_interval"], int)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

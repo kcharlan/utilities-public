@@ -9,6 +9,7 @@ Test categories:
 
 import json
 import os
+import plistlib
 import signal
 import socket
 import subprocess
@@ -50,13 +51,95 @@ def _wait_for_server(port, timeout=15):
     return False
 
 
+def _synthetic_job(
+    label: str,
+    *,
+    plist_path: str | None,
+    domain: str,
+    is_apple: bool,
+    last_exit: int,
+) -> Dict[str, Any]:
+    """Build a complete, conspicuously fake launchd job response."""
+    job = {
+        "label": label,
+        "plist_path": plist_path,
+        "domain": domain,
+        "is_apple": is_apple,
+        "parse_error": None,
+        "pid": None,
+        "last_exit": last_exit,
+        "loaded": True,
+        "disabled": False,
+        "enabled": True,
+        "program": "/usr/bin/true" if plist_path else None,
+        "program_arguments": ["/usr/bin/true"] if plist_path else None,
+        "run_at_load": False,
+        "keep_alive": False,
+        "start_interval": None,
+        "start_calendar_interval": None,
+        "watch_paths": None,
+        "stdout_path": None,
+        "stderr_path": None,
+        "working_directory": None,
+        "environment_variables": None,
+        "schedule_human": "Manual" if plist_path else "Unknown (no plist)",
+    }
+    job["status"] = "failed" if last_exit else "idle"
+    return job
+
+
+def _write_synthetic_jobs(runtime_home: Path) -> Path:
+    """Create the E2E-only job manifest and its exportable fake plist."""
+    plist_path = runtime_home / "com.example.synthetic-idle.plist"
+    with plist_path.open("wb") as f:
+        plistlib.dump(
+            {
+                "Label": "com.example.synthetic-idle",
+                "ProgramArguments": ["/usr/bin/true"],
+            },
+            f,
+        )
+
+    synthetic_jobs = [
+        _synthetic_job(
+            "com.example.synthetic-idle",
+            plist_path=str(plist_path),
+            domain="user-agent",
+            is_apple=False,
+            last_exit=0,
+        ),
+        _synthetic_job(
+            "com.apple.example-synthetic",
+            plist_path=None,
+            domain="unknown",
+            is_apple=True,
+            last_exit=0,
+        ),
+        _synthetic_job(
+            "com.example.synthetic-failed",
+            plist_path=None,
+            domain="user-agent",
+            is_apple=False,
+            last_exit=78,
+        ),
+    ]
+    manifest_path = runtime_home / "synthetic-jobs.json"
+    manifest_path.write_text(json.dumps(synthetic_jobs, indent=2) + "\n")
+    return manifest_path
+
+
 @contextmanager
-def _running_server(runtime_home: Path):
+def _running_server(runtime_home: Path, *, with_synthetic_jobs: bool = False):
     """Run one isolated launchmaster server and always terminate it."""
     port = _find_free_port()
     env = dict(os.environ)
     env["UTILITIES_TESTING"] = "1"
     env["LAUNCHMASTER_HOME"] = str(runtime_home)
+    env.pop("LAUNCHMASTER_SYNTHETIC_JOBS", None)
+    if with_synthetic_jobs:
+        env["LAUNCHMASTER_SYNTHETIC_JOBS"] = str(
+            _write_synthetic_jobs(runtime_home)
+        )
 
     proc = subprocess.Popen(
         [sys.executable, str(LAUNCHMASTER_SCRIPT), "--port", str(port), "--no-browser"],
@@ -96,8 +179,31 @@ def server_url(tmp_path_factory):
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
     """Run a separate E2E server so browser tests cannot share API-suite state."""
-    with _running_server(tmp_path_factory.mktemp("launchmaster-e2e-home")) as url:
+    with _running_server(
+        tmp_path_factory.mktemp("launchmaster-e2e-home"),
+        with_synthetic_jobs=True,
+    ) as url:
         yield url
+
+
+@pytest.fixture
+def restore_settings(server):
+    """Restore the module-scoped E2E server settings after a mutating test."""
+    import urllib.request
+
+    with urllib.request.urlopen(f"{server}/api/settings") as response:
+        snapshot = json.loads(response.read().decode())
+    try:
+        yield snapshot
+    finally:
+        request = urllib.request.Request(
+            f"{server}/api/settings",
+            data=json.dumps(snapshot).encode(),
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        with urllib.request.urlopen(request):
+            pass
 
 
 @pytest.fixture(scope="session")

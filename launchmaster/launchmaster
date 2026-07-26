@@ -1181,7 +1181,11 @@ async function api(path, options = {}) {
     const text = await resp.text();
     throw new Error(text || resp.statusText);
   }
-  return resp.json();
+  const data = await resp.json();
+  if (data && data.success === false) {
+    throw new Error(data.message || 'Operation failed');
+  }
+  return data;
 }
 
 // ---- WebSocket hook for live data ----
@@ -1251,6 +1255,161 @@ function isAppleDomain(domain) {
   return domain === 'apple-agent' || domain === 'apple-daemon' || (domain && domain.startsWith('apple'));
 }
 
+function isAppleJob(job) {
+  return job.is_apple === true || isAppleDomain(job.domain);
+}
+
+const JOB_ACTIONS = {
+  'start':    { label: 'Start',    icon: 'play',         kind: 'api', mutating: true },
+  'stop':     { label: 'Stop',     icon: 'square',       kind: 'api', mutating: true },
+  'run-now':  { label: 'Run Now',  icon: 'zap',          kind: 'api', mutating: true },
+  'reload':   { label: 'Reload',   icon: 'refresh-cw',   kind: 'api', mutating: true },
+  'enable':   { label: 'Enable',   icon: 'toggle-left',  kind: 'api', mutating: true },
+  'disable':  { label: 'Disable',  icon: 'toggle-right', kind: 'api', mutating: true },
+  'load':     { label: 'Load',     icon: 'log-in',       kind: 'api', mutating: true },
+  'unload':   { label: 'Unload',   icon: 'log-out',      kind: 'api', mutating: true },
+  'edit':     { label: 'Edit',     icon: 'pencil',       kind: 'nav', tab: 'edit' },
+  'logs':     { label: 'Logs',     icon: 'file-text',    kind: 'nav', tab: 'logs' },
+  'info':     { label: 'Details',  icon: 'info',         kind: 'nav', tab: 'info' },
+  'export':   { label: 'Export',   icon: 'download',     kind: 'export' },
+  'delete':   { label: 'Delete',   icon: 'trash-2',      kind: 'api', mutating: true, danger: true },
+};
+
+async function apiJobAction(label, actionId) {
+  const action = JOB_ACTIONS[actionId];
+  if (!action || action.kind !== 'api') {
+    throw new Error('Unsupported API action: ' + actionId);
+  }
+  const encoded = encodeURIComponent(label);
+  if (actionId === 'delete') {
+    return api('/jobs/' + encoded, { method: 'DELETE' });
+  }
+  return api('/jobs/' + encoded + '/' + actionId, { method: 'POST' });
+}
+
+function confirmationFor(job, actionId, settings) {
+  const action = JOB_ACTIONS[actionId];
+  if (!action || !action.mutating) return null;
+
+  const deleting = actionId === 'delete';
+  const destructiveGuard = deleting && settings.confirm_destructive;
+  const appleGuard = isAppleJob(job) && settings.confirm_apple_modify;
+  if (!destructiveGuard && !appleGuard) return null;
+
+  if (deleting) {
+    let message = 'Are you sure you want to delete "' + job.label + '"? This will unload and remove the plist file.';
+    if (appleGuard) {
+      message += ' This is an Apple system job.';
+    }
+    return { title: 'Delete Job', message, danger: true };
+  }
+
+  return {
+    title: 'Modify Apple System Job',
+    message: '"' + job.label + '" is an Apple system job. Are you sure you want to ' + action.label.toLowerCase() + ' it?',
+    danger: false,
+  };
+}
+
+function bulkConfirmationFor(labels, jobs, actionId, settings) {
+  const action = JOB_ACTIONS[actionId];
+  if (!action || !action.mutating) return null;
+
+  const selected = jobs.filter(job => labels.includes(job.label));
+  const appleCount = selected.filter(isAppleJob).length;
+  const deleting = actionId === 'delete';
+  const destructiveGuard = deleting && settings.confirm_destructive;
+  const appleGuard = appleCount > 0 && settings.confirm_apple_modify;
+  if (!destructiveGuard && !appleGuard) return null;
+
+  const jobWord = labels.length === 1 ? 'job' : 'jobs';
+  if (deleting) {
+    let message = 'Are you sure you want to delete ' + labels.length + ' selected ' + jobWord + '? This will unload and remove the plist files.';
+    if (appleGuard) {
+      message += ' ' + appleCount + ' selected ' + (appleCount === 1 ? 'job is an Apple system job.' : 'jobs are Apple system jobs.');
+    }
+    return {
+      title: 'Delete ' + labels.length + ' Jobs',
+      message,
+      danger: true,
+    };
+  }
+
+  return {
+    title: action.label + ' Apple System Jobs',
+    message: appleCount + ' selected ' + (appleCount === 1 ? 'job is an Apple system job.' : 'jobs are Apple system jobs.') + ' Are you sure you want to continue?',
+    danger: false,
+  };
+}
+
+function actionSuccessMessage(job, actionId) {
+  if (actionId === 'start') return 'Started ' + job.label;
+  if (actionId === 'stop') return 'Stopped ' + job.label;
+  if (actionId === 'run-now') return 'Running ' + job.label + ' (one-shot)...';
+  if (actionId === 'reload') return 'Reloading ' + job.label + '...';
+  if (actionId === 'enable') return 'Enabled ' + job.label;
+  if (actionId === 'disable') return 'Disabled ' + job.label;
+  if (actionId === 'load') return 'Loaded ' + job.label;
+  if (actionId === 'unload') return 'Unloaded ' + job.label;
+  if (actionId === 'delete') return 'Deleted ' + job.label;
+  return JOB_ACTIONS[actionId].label + ' completed for ' + job.label;
+}
+
+function useJobActions({ addToast, presentConfirm, settings, openDetail }) {
+  return useCallback(async (job, actionId) => {
+    const action = JOB_ACTIONS[actionId];
+    if (!action) {
+      addToast('error', 'Unknown action: ' + actionId);
+      return { ok: false };
+    }
+
+    const confirmation = confirmationFor(job, actionId, settings);
+    if (confirmation) {
+      const confirmed = await new Promise(resolve => {
+        let settled = false;
+        const settle = value => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        presentConfirm({
+          ...confirmation,
+          onConfirm: () => settle(true),
+          onCancel: () => settle(false),
+        });
+      });
+      if (!confirmed) return { ok: false, cancelled: true };
+    }
+
+    if (action.kind === 'nav') {
+      openDetail(job, action.tab);
+      return { ok: true };
+    }
+
+    if (action.kind === 'export') {
+      const encoded = encodeURIComponent(job.label);
+      const anchor = document.createElement('a');
+      anchor.href = '/api/jobs/' + encoded + '/export';
+      anchor.download = job.label + '.plist';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      addToast('success', 'Exported ' + job.label + '.plist');
+      return { ok: true };
+    }
+
+    try {
+      await apiJobAction(job.label, actionId);
+      addToast('success', actionSuccessMessage(job, actionId));
+      return { ok: true };
+    } catch (err) {
+      const prefix = actionId === 'delete' ? 'Failed to delete' : actionId + ' failed';
+      addToast('error', prefix + ': ' + err.message);
+      return { ok: false };
+    }
+  }, [addToast, openDetail, presentConfirm, settings]);
+}
+
 // ---- Toast system ----
 function ToastContainer({ toasts, removeToast }) {
   return (
@@ -1274,11 +1433,21 @@ function ToastContainer({ toasts, removeToast }) {
 function ConfirmDialog({ title, message, onConfirm, onCancel, danger = false }) {
   return (
     <div className="confirm-overlay" onClick={onCancel}>
-      <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
+      <div
+        className="confirm-dialog"
+        onClick={e => e.stopPropagation()}
+        onKeyDown={e => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            onCancel();
+          }
+        }}
+      >
         <div className="confirm-title">{title}</div>
         <div className="confirm-message">{message}</div>
         <div className="confirm-actions">
-          <button className="btn" onClick={onCancel}>Cancel</button>
+          <button className="btn" onClick={onCancel} autoFocus>Cancel</button>
           <button className={'btn ' + (danger ? 'btn-danger' : 'btn-accent')} onClick={onConfirm}>
             {danger ? 'Delete' : 'Confirm'}
           </button>
@@ -1532,7 +1701,7 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
 // ---- Job Table ----
 const PAGE_SIZE = 25;
 
-function JobTable({ jobs, selected, setSelected, onRowClick, showApple, addToast, setShowConfirm }) {
+function JobTable({ jobs, selected, setSelected, onRowClick, showApple, runAction }) {
   const [sortCol, setSortCol] = useState('status');
   const [sortAsc, setSortAsc] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
@@ -1573,52 +1742,6 @@ function JobTable({ jobs, selected, setSelected, onRowClick, showApple, addToast
   const page = Math.min(currentPage, totalPages);
   const paginatedJobs = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // ---- Row action handlers ----
-  const handleRowAction = async (e, job, action) => {
-    e.stopPropagation();
-    const label = encodeURIComponent(job.label);
-    try {
-      if (action === 'start') {
-        await api('/jobs/' + label + '/start', { method: 'POST' });
-        addToast('success', 'Started ' + job.label);
-      } else if (action === 'stop') {
-        await api('/jobs/' + label + '/stop', { method: 'POST' });
-        addToast('success', 'Stopped ' + job.label);
-      } else if (action === 'run-now') {
-        await api('/jobs/' + label + '/run-now', { method: 'POST' });
-        addToast('success', 'Running ' + job.label + ' (one-shot)...');
-      } else if (action === 'reload') {
-        await api('/jobs/' + label + '/reload', { method: 'POST' });
-        addToast('success', 'Reloading ' + job.label + '...');
-      } else if (action === 'export') {
-        // Trigger file download
-        const a = document.createElement('a');
-        a.href = '/api/jobs/' + label + '/export';
-        a.download = job.label + '.plist';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        addToast('success', 'Exported ' + job.label + '.plist');
-      } else if (action === 'delete') {
-        setShowConfirm({
-          title: 'Delete Job',
-          message: 'Are you sure you want to delete "' + job.label + '"? This will unload and remove the plist file.',
-          danger: true,
-          onConfirm: async () => {
-            try {
-              await api('/jobs/' + label, { method: 'DELETE' });
-              addToast('success', 'Deleted ' + job.label);
-            } catch (err) {
-              addToast('error', 'Failed to delete: ' + err.message);
-            }
-          }
-        });
-      }
-    } catch (err) {
-      addToast('error', action + ' failed: ' + err.message);
-    }
-  };
-
   const SortHeader = ({ col, children, style }) => (
     <th
       className={sortCol === col ? 'sorted' : ''}
@@ -1653,7 +1776,7 @@ function JobTable({ jobs, selected, setSelected, onRowClick, showApple, addToast
         <tbody>
           {paginatedJobs.map((job, i) => {
             const status = getJobStatus(job);
-            const apple = isAppleDomain(job.domain);
+            const apple = isAppleJob(job);
             return (
               <tr
                 key={job.label}
@@ -1693,28 +1816,28 @@ function JobTable({ jobs, selected, setSelected, onRowClick, showApple, addToast
                 </td>
                 <td style={{ textAlign: 'right' }}>
                   <div className="row-actions">
-                    <button className="row-action-btn" title="Start (s)" onClick={e => handleRowAction(e, job, 'start')}>
+                    <button className="row-action-btn" title="Start (s)" onClick={e => { e.stopPropagation(); runAction(job, 'start'); }}>
                       <Icon name="play" size={13} />
                     </button>
-                    <button className="row-action-btn" title="Stop (x)" onClick={e => handleRowAction(e, job, 'stop')}>
+                    <button className="row-action-btn" title="Stop (x)" onClick={e => { e.stopPropagation(); runAction(job, 'stop'); }}>
                       <Icon name="square" size={13} />
                     </button>
-                    <button className="row-action-btn" title="Run Now (one-shot)" onClick={e => handleRowAction(e, job, 'run-now')}>
+                    <button className="row-action-btn" title="Run Now (one-shot)" onClick={e => { e.stopPropagation(); runAction(job, 'run-now'); }}>
                       <Icon name="zap" size={13} />
                     </button>
-                    <button className="row-action-btn" title="Reload (r)" onClick={e => handleRowAction(e, job, 'reload')}>
+                    <button className="row-action-btn" title="Reload (r)" onClick={e => { e.stopPropagation(); runAction(job, 'reload'); }}>
                       <Icon name="refresh-cw" size={13} />
                     </button>
-                    <button className="row-action-btn" title="Edit (e)" onClick={e => { e.stopPropagation(); onRowClick(job, 'edit'); }}>
+                    <button className="row-action-btn" title="Edit (e)" onClick={e => { e.stopPropagation(); runAction(job, 'edit'); }}>
                       <Icon name="pencil" size={13} />
                     </button>
-                    <button className="row-action-btn" title="Logs (l)" onClick={e => { e.stopPropagation(); onRowClick(job, 'logs'); }}>
+                    <button className="row-action-btn" title="Logs (l)" onClick={e => { e.stopPropagation(); runAction(job, 'logs'); }}>
                       <Icon name="file-text" size={13} />
                     </button>
-                    <button className="row-action-btn" title="Export" onClick={e => handleRowAction(e, job, 'export')}>
+                    <button className="row-action-btn" title="Export" onClick={e => { e.stopPropagation(); runAction(job, 'export'); }}>
                       <Icon name="download" size={13} />
                     </button>
-                    <button className="row-action-btn danger" title="Delete" onClick={e => handleRowAction(e, job, 'delete')}>
+                    <button className="row-action-btn danger" title="Delete" onClick={e => { e.stopPropagation(); runAction(job, 'delete'); }}>
                       <Icon name="trash-2" size={13} />
                     </button>
                   </div>
@@ -1738,19 +1861,14 @@ function JobTable({ jobs, selected, setSelected, onRowClick, showApple, addToast
 }
 
 // ---- Bulk Action Bar ----
-function BulkBar({ count, onClear, selectedLabels, addToast, setShowConfirm }) {
+function BulkBar({ count, onClear, selectedLabels, jobs, addToast, presentConfirm, settings }) {
 
   const bulkAction = async (action, label) => {
     let successes = 0;
     let failures = 0;
     for (const jobLabel of selectedLabels) {
       try {
-        const encoded = encodeURIComponent(jobLabel);
-        if (action === 'delete') {
-          await api('/jobs/' + encoded, { method: 'DELETE' });
-        } else {
-          await api('/jobs/' + encoded + '/' + action, { method: 'POST' });
-        }
+        await apiJobAction(jobLabel, action);
         successes++;
       } catch (err) {
         failures++;
@@ -1764,24 +1882,32 @@ function BulkBar({ count, onClear, selectedLabels, addToast, setShowConfirm }) {
     onClear();
   };
 
+  const requestBulkAction = (actionId, successLabel) => {
+    const confirmation = bulkConfirmationFor(
+      selectedLabels, jobs, actionId, settings
+    );
+    if (!confirmation) {
+      bulkAction(actionId, successLabel);
+      return;
+    }
+    presentConfirm({
+      ...confirmation,
+      onConfirm: () => bulkAction(actionId, successLabel),
+      onCancel: () => {},
+    });
+  };
+
   if (count === 0) return null;
   return (
     <div className="bulk-bar">
       <span className="bulk-bar-count">{count} selected</span>
       <div className="bulk-bar-divider" />
-      <button className="btn btn-sm" onClick={() => bulkAction('start', 'Started')}><Icon name="play" size={12} /> Start All</button>
-      <button className="btn btn-sm" onClick={() => bulkAction('stop', 'Stopped')}><Icon name="square" size={12} /> Stop All</button>
-      <button className="btn btn-sm" onClick={() => bulkAction('reload', 'Reloaded')}><Icon name="refresh-cw" size={12} /> Reload All</button>
-      <button className="btn btn-sm" onClick={() => bulkAction('enable', 'Enabled')}><Icon name="toggle-left" size={12} /> Enable</button>
-      <button className="btn btn-sm" onClick={() => bulkAction('disable', 'Disabled')}><Icon name="toggle-right" size={12} /> Disable</button>
-      <button className="btn btn-sm btn-danger" onClick={() => {
-        setShowConfirm({
-          title: 'Delete ' + count + ' Jobs',
-          message: 'Are you sure you want to delete ' + count + ' selected job' + (count !== 1 ? 's' : '') + '? This will unload and remove the plist files.',
-          danger: true,
-          onConfirm: () => bulkAction('delete', 'Deleted'),
-        });
-      }}><Icon name="trash-2" size={12} /> Delete</button>
+      <button className="btn btn-sm" onClick={() => requestBulkAction('start', 'Started')}><Icon name="play" size={12} /> Start All</button>
+      <button className="btn btn-sm" onClick={() => requestBulkAction('stop', 'Stopped')}><Icon name="square" size={12} /> Stop All</button>
+      <button className="btn btn-sm" onClick={() => requestBulkAction('reload', 'Reloaded')}><Icon name="refresh-cw" size={12} /> Reload All</button>
+      <button className="btn btn-sm" onClick={() => requestBulkAction('enable', 'Enabled')}><Icon name="toggle-left" size={12} /> Enable</button>
+      <button className="btn btn-sm" onClick={() => requestBulkAction('disable', 'Disabled')}><Icon name="toggle-right" size={12} /> Disable</button>
+      <button className="btn btn-sm btn-danger" onClick={() => requestBulkAction('delete', 'Deleted')}><Icon name="trash-2" size={12} /> Delete</button>
       <div style={{ flex: 1 }} />
       <button className="btn btn-sm btn-ghost" onClick={onClear}>Clear Selection</button>
     </div>
@@ -1789,7 +1915,7 @@ function BulkBar({ count, onClear, selectedLabels, addToast, setShowConfirm }) {
 }
 
 // ---- Detail Panel ----
-function DetailPanel({ job, initialTab, onClose, addToast, setShowConfirm }) {
+function DetailPanel({ job, initialTab, onClose, addToast, runAction }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'info');
   const [logTab, setLogTab] = useState('stderr');
   const [logContent, setLogContent] = useState('');
@@ -1852,15 +1978,6 @@ function DetailPanel({ job, initialTab, onClose, addToast, setShowConfirm }) {
   const status = getJobStatus(job);
   const encoded = encodeURIComponent(job.label);
 
-  const handleAction = async (action) => {
-    try {
-      await api('/jobs/' + encoded + '/' + action, { method: 'POST' });
-      addToast('success', (action === 'start' ? 'Started ' : action === 'stop' ? 'Stopped ' : action === 'run-now' ? 'Running ' : action === 'reload' ? 'Reloading ' : action === 'enable' ? 'Enabled ' : action === 'disable' ? 'Disabled ' : action === 'load' ? 'Loaded ' : 'Unloaded ') + job.label);
-    } catch (err) {
-      addToast('error', action + ' failed: ' + err.message);
-    }
-  };
-
   const handleSavePlist = async () => {
     try {
       await api('/jobs/' + encoded + '/plist', {
@@ -1888,33 +2005,6 @@ function DetailPanel({ job, initialTab, onClose, addToast, setShowConfirm }) {
     }
   };
 
-  const handleExport = () => {
-    const a = document.createElement('a');
-    a.href = '/api/jobs/' + encoded + '/export';
-    a.download = job.label + '.plist';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    addToast('success', 'Exported ' + job.label + '.plist');
-  };
-
-  const handleDelete = () => {
-    setShowConfirm({
-      title: 'Delete Job',
-      message: 'Are you sure you want to delete "' + job.label + '"? This will unload and remove the plist file.',
-      danger: true,
-      onConfirm: async () => {
-        try {
-          await api('/jobs/' + encoded, { method: 'DELETE' });
-          addToast('success', 'Deleted ' + job.label);
-          onClose();
-        } catch (err) {
-          addToast('error', 'Delete failed: ' + err.message);
-        }
-      }
-    });
-  };
-
   return (
     <>
       <div className={'panel-overlay' + (job ? ' visible' : '')} onClick={onClose} />
@@ -1925,16 +2015,16 @@ function DetailPanel({ job, initialTab, onClose, addToast, setShowConfirm }) {
             {job.label}
           </div>
           <div className="panel-header-actions">
-            <button className="btn btn-sm" onClick={() => handleAction('start')}>
+            <button className="btn btn-sm" onClick={() => runAction(job, 'start')}>
               <Icon name="play" size={12} /> Start
             </button>
-            <button className="btn btn-sm" onClick={() => handleAction('stop')}>
+            <button className="btn btn-sm" onClick={() => runAction(job, 'stop')}>
               <Icon name="square" size={12} /> Stop
             </button>
-            <button className="btn btn-sm" onClick={() => handleAction('run-now')} title="One-shot execution via kickstart">
+            <button className="btn btn-sm" onClick={() => runAction(job, 'run-now')} title="One-shot execution via kickstart">
               <Icon name="zap" size={12} /> Run Now
             </button>
-            <button className="btn btn-sm btn-accent" onClick={() => handleAction('reload')}>
+            <button className="btn btn-sm btn-accent" onClick={() => runAction(job, 'reload')}>
               <Icon name="refresh-cw" size={12} /> Reload
             </button>
             <button className="icon-btn" onClick={onClose}>
@@ -2014,16 +2104,19 @@ function DetailPanel({ job, initialTab, onClose, addToast, setShowConfirm }) {
               </div>
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-                <button className="btn" onClick={() => handleAction(job.enabled ? 'disable' : 'enable')}>
+                <button className="btn" onClick={() => runAction(job, job.enabled ? 'disable' : 'enable')}>
                   <Icon name="toggle-left" size={14} /> {job.enabled ? 'Disable' : 'Enable'}
                 </button>
-                <button className="btn" onClick={() => handleAction(job.loaded ? 'unload' : 'load')}>
+                <button className="btn" onClick={() => runAction(job, job.loaded ? 'unload' : 'load')}>
                   <Icon name={job.loaded ? 'log-out' : 'log-in'} size={14} /> {job.loaded ? 'Unload' : 'Load'}
                 </button>
-                <button className="btn" onClick={handleExport}>
+                <button className="btn" onClick={() => runAction(job, 'export')}>
                   <Icon name="download" size={14} /> Export Plist
                 </button>
-                <button className="btn btn-danger" onClick={handleDelete}><Icon name="trash-2" size={14} /> Delete Job</button>
+                <button className="btn btn-danger" onClick={async () => {
+                  const result = await runAction(job, 'delete');
+                  if (result.ok) onClose();
+                }}><Icon name="trash-2" size={14} /> Delete Job</button>
               </div>
             </div>
           )}
@@ -2579,8 +2672,8 @@ function SettingsModal({ onClose, settings, setSettings, addToast }) {
               <input
                 className="form-input"
                 type="number"
-                value={settings.pollInterval}
-                onChange={e => setSettings(s => ({ ...s, pollInterval: e.target.value }))}
+                value={settings.poll_interval}
+                onChange={e => setSettings(s => ({ ...s, poll_interval: Number(e.target.value) }))}
                 style={{ width: 120 }}
               />
               <div className="form-hint">How often to refresh job status via WebSocket</div>
@@ -2592,15 +2685,15 @@ function SettingsModal({ onClose, settings, setSettings, addToast }) {
             <div className="toggle-row">
               <span className="toggle-row-label">Show Apple System Jobs</span>
               <div
-                className={'toggle-switch' + (settings.showApple ? ' on' : '')}
-                onClick={() => setSettings(s => ({ ...s, showApple: !s.showApple }))}
+                className={'toggle-switch' + (settings.show_apple_jobs ? ' on' : '')}
+                onClick={() => setSettings(s => ({ ...s, show_apple_jobs: !s.show_apple_jobs }))}
               />
             </div>
             <div className="toggle-row">
               <span className="toggle-row-label">Dark Mode</span>
               <div
-                className={'toggle-switch' + (settings.darkMode ? ' on' : '')}
-                onClick={() => setSettings(s => ({ ...s, darkMode: !s.darkMode }))}
+                className={'toggle-switch' + (settings.dark_mode ? ' on' : '')}
+                onClick={() => setSettings(s => ({ ...s, dark_mode: !s.dark_mode }))}
               />
             </div>
           </div>
@@ -2610,15 +2703,15 @@ function SettingsModal({ onClose, settings, setSettings, addToast }) {
             <div className="toggle-row">
               <span className="toggle-row-label">Confirm before destructive actions</span>
               <div
-                className={'toggle-switch' + (settings.confirmDestructive ? ' on' : '')}
-                onClick={() => setSettings(s => ({ ...s, confirmDestructive: !s.confirmDestructive }))}
+                className={'toggle-switch' + (settings.confirm_destructive ? ' on' : '')}
+                onClick={() => setSettings(s => ({ ...s, confirm_destructive: !s.confirm_destructive }))}
               />
             </div>
             <div className="toggle-row">
               <span className="toggle-row-label">Confirm before modifying Apple jobs</span>
               <div
-                className={'toggle-switch' + (settings.confirmApple ? ' on' : '')}
-                onClick={() => setSettings(s => ({ ...s, confirmApple: !s.confirmApple }))}
+                className={'toggle-switch' + (settings.confirm_apple_modify ? ' on' : '')}
+                onClick={() => setSettings(s => ({ ...s, confirm_apple_modify: !s.confirm_apple_modify }))}
               />
             </div>
           </div>
@@ -2664,14 +2757,15 @@ function App() {
   const [showConfirm, setShowConfirm] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [settings, setSettings] = useState({
-    pollInterval: 5,
-    showApple: false,
-    darkMode: true,
-    confirmDestructive: true,
-    confirmApple: true,
+    poll_interval: 5,
+    show_apple_jobs: false,
+    dark_mode: true,
+    confirm_destructive: true,
+    confirm_apple_modify: true,
   });
 
   const toastId = useRef(0);
+  const showConfirmRef = useRef(null);
 
   const addToast = useCallback((type, message) => {
     const id = ++toastId.current;
@@ -2681,6 +2775,29 @@ function App() {
 
   const removeToast = useCallback((id) => {
     setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const presentConfirm = useCallback((spec) => {
+    const displaced = showConfirmRef.current;
+    if (displaced && displaced.onCancel) displaced.onCancel();
+    showConfirmRef.current = spec;
+    setShowConfirm(spec);
+  }, []);
+
+  const cancelConfirm = useCallback(() => {
+    const current = showConfirmRef.current;
+    if (!current) return;
+    showConfirmRef.current = null;
+    setShowConfirm(null);
+    if (current.onCancel) current.onCancel();
+  }, []);
+
+  const confirmCurrent = useCallback(() => {
+    const current = showConfirmRef.current;
+    if (!current) return;
+    showConfirmRef.current = null;
+    setShowConfirm(null);
+    if (current.onConfirm) current.onConfirm();
   }, []);
 
   // Load settings from backend on mount
@@ -2694,9 +2811,15 @@ function App() {
 
   // Apply theme
   useEffect(() => {
-    if (settings.darkMode) document.documentElement.classList.add('dark');
+    if (settings.dark_mode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
-  }, [settings.darkMode]);
+  }, [settings.dark_mode]);
+
+  // The persisted setting supplies the startup default; the filter chip remains
+  // a session-local override until settings are loaded or changed again.
+  useEffect(() => {
+    setShowApple(Boolean(settings.show_apple_jobs));
+  }, [settings.show_apple_jobs]);
 
   // Keep detail panel job data fresh from WS updates
   useEffect(() => {
@@ -2711,10 +2834,10 @@ function App() {
   // Filter jobs
   const filteredJobs = useMemo(() => {
     return jobs.filter(j => {
-      if (!showApple && isAppleDomain(j.domain)) return false;
+      if (!showApple && isAppleJob(j)) return false;
       if (domainFilter !== 'all') {
         if (domainFilter === 'apple') {
-          if (!isAppleDomain(j.domain)) return false;
+          if (!isAppleJob(j)) return false;
         } else if (j.domain !== domainFilter) return false;
       }
       if (statusFilter && getJobStatus(j) !== statusFilter) return false;
@@ -2752,16 +2875,32 @@ function App() {
     setDetailJob(job);
   };
 
+  const runAction = useJobActions({
+    addToast,
+    presentConfirm,
+    settings,
+    openDetail: handleRowClick,
+  });
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e) => {
       // Allow Esc from input fields to clear/blur
       if (e.key === 'Escape') {
+        if (showConfirmRef.current) {
+          e.preventDefault();
+          cancelConfirm();
+          return;
+        }
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
           // Let the FilterBar's own Esc handler run first for search
           return;
         }
-        setDetailJob(null); setShowCreate(false); setShowSettings(false);
+        if (detailJob || showCreate || showSettings) {
+          setDetailJob(null); setShowCreate(false); setShowSettings(false);
+          return;
+        }
+        if (selected.length > 0) setSelected([]);
         return;
       }
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
@@ -2770,7 +2909,7 @@ function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
+  }, [cancelConfirm, detailJob, selected, showCreate, showSettings]);
 
   return (
     <div className="app-shell">
@@ -2818,14 +2957,7 @@ function App() {
           onOpenDetail={(j) => { setDetailInitialTab('info'); setDetailJob(j); }}
           onOpenLogs={(j) => { setDetailInitialTab('logs'); setDetailJob(j); }}
           onOpenEdit={(j) => { setDetailInitialTab('edit'); setDetailJob(j); }}
-          onReload={async (j) => {
-            try {
-              await api('/jobs/' + encodeURIComponent(j.label) + '/reload', { method: 'POST' });
-              addToast('success', 'Reloading ' + j.label + '...');
-            } catch (err) {
-              addToast('error', 'Reload failed: ' + err.message);
-            }
-          }}
+          onReload={(j) => runAction(j, 'reload')}
         />
 
         <FilterBar
@@ -2839,8 +2971,10 @@ function App() {
           count={selected.length}
           onClear={() => setSelected([])}
           selectedLabels={selected}
+          jobs={jobs}
           addToast={addToast}
-          setShowConfirm={setShowConfirm}
+          presentConfirm={presentConfirm}
+          settings={settings}
         />
 
         <JobTable
@@ -2849,8 +2983,7 @@ function App() {
           setSelected={setSelected}
           onRowClick={handleRowClick}
           showApple={showApple}
-          addToast={addToast}
-          setShowConfirm={setShowConfirm}
+          runAction={runAction}
         />
       </div>
 
@@ -2861,7 +2994,7 @@ function App() {
           initialTab={detailInitialTab}
           onClose={() => setDetailJob(null)}
           addToast={addToast}
-          setShowConfirm={setShowConfirm}
+          runAction={runAction}
         />
       )}
 
@@ -2886,8 +3019,8 @@ function App() {
           title={showConfirm.title}
           message={showConfirm.message}
           danger={showConfirm.danger}
-          onConfirm={() => { showConfirm.onConfirm(); setShowConfirm(null); }}
-          onCancel={() => setShowConfirm(null)}
+          onConfirm={confirmCurrent}
+          onCancel={cancelConfirm}
         />
       )}
 
@@ -3140,7 +3273,29 @@ def build_job_list(include_apple: bool = False) -> List[Dict[str, Any]]:
             continue
         jobs_by_label[label] = orphan
 
-    return list(jobs_by_label.values())
+    jobs = list(jobs_by_label.values())
+
+    # Test-only deterministic fixtures. Production runs never set this variable.
+    synthetic_jobs_path = os.environ.get("LAUNCHMASTER_SYNTHETIC_JOBS")
+    if synthetic_jobs_path:
+        try:
+            with open(synthetic_jobs_path, "r", encoding="utf-8") as f:
+                synthetic_jobs = json.load(f)
+            if not isinstance(synthetic_jobs, list):
+                raise ValueError("synthetic jobs file must contain a JSON list")
+            for synthetic_job in synthetic_jobs:
+                if not isinstance(synthetic_job, dict) or not synthetic_job.get("label"):
+                    raise ValueError(
+                        "each synthetic job must be an object with a label"
+                    )
+                if synthetic_job.get("is_apple", False) and not include_apple:
+                    continue
+                jobs.append(dict(synthetic_job))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("Unable to load synthetic jobs from %s: %s",
+                           synthetic_jobs_path, exc)
+
+    return jobs
 
 
 def get_job_status(job: Dict[str, Any]) -> str:
@@ -3641,6 +3796,17 @@ def _load_config() -> Dict[str, Any]:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
+            legacy_keys = {
+                "pollInterval": "poll_interval",
+                "showApple": "show_apple_jobs",
+                "darkMode": "dark_mode",
+                "confirmDestructive": "confirm_destructive",
+                "confirmApple": "confirm_apple_modify",
+            }
+            for legacy_key, canonical_key in legacy_keys.items():
+                if canonical_key not in data and legacy_key in data:
+                    data[canonical_key] = data[legacy_key]
+                data.pop(legacy_key, None)
             merged = dict(defaults)
             merged.update(data)
             return merged
@@ -3892,7 +4058,7 @@ async def api_save_plist(label: str, request: Request):
     return result
 
 
-@app.post("/api/jobs/{label:path}/export")
+@app.get("/api/jobs/{label:path}/export")
 async def api_export_job(label: str):
     label = unquote(label)
     job = _find_job(label)
