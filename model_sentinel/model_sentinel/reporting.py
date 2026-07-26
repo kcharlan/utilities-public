@@ -1698,8 +1698,9 @@ def _model_price_impact(
 
     The gate is `_price_movement_kind`, the SAME predicate the Price Movement
     card counts with, so the set of cards promoted to tier 1 is exactly the set
-    of models that card names. Deciding it here on `_is_price_amount_field`
-    alone would promote a model whose price field was rewritten without moving.
+    of models that card names. Deciding it here on
+    `profile.is_price_amount_field` alone would promote a model whose price
+    field was rewritten without moving.
 
     A one-sided addition or removal carries no `delta_abs` (there is no second
     operand to subtract), so it contributes to `coverage` and leaves the

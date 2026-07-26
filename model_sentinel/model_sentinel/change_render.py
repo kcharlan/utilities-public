@@ -25,10 +25,10 @@ zero basis, so the HTML delta cell came out blank.
 Putting `boolean` first is what makes the branch reachable. Its correctness
 therefore rests entirely on `_is_boolean_change` being narrow: a false
 positive there now *shadows* the numeric branch rather than being shadowed by
-it, so a genuinely numeric field must never satisfy it. That is why
-KNOWN_BOOLEAN_FIELDS is a restriction rather than a convenience, and why
-`_bool_state` returns `None` for anything that is not a real bool or an
-integer-coded 0/1.
+it, so a genuinely numeric field must never satisfy it. That is why a
+profile's `known_boolean_fields` is a restriction rather than a convenience,
+and why `_bool_state` returns `None` for anything that is not a real bool or
+an integer-coded 0/1.
 
 ONE-SIDED BOOLEANS (Task 4 decision): a boolean-ish value paired with `None`
 classifies as `boolean` with `direction="added"`/`"removed"` and

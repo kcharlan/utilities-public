@@ -292,6 +292,43 @@ The summary is built from the same visible field display plan used by the model 
 
 The affected-model lists are collapsed by default and preserve provider labels so identical model IDs on different providers remain distinct. The summary uses words and symbols in addition to color. Higher prices use red/salmon, lower prices use green, mixed movement uses amber, and price-field coverage changes use a neutral blue. Generic non-price numeric colors retain their existing semantics.
 
+## 8.4 Provider Profiles
+
+Provider-specific schema and presentation knowledge lives in immutable
+`ProviderProfile` values rather than in the fetch, normalization, diff, or
+rendering modules. `ProviderConfig.kind` selects a registered profile by
+lowercased kind; an unregistered kind resolves to `GENERIC_PROFILE` and
+`healthcheck` emits a non-fatal advisory.
+
+A profile owns:
+
+- model-list envelope keys and normalized-field candidate paths
+- price conversion factors bound from the provider configuration
+- exact-path and dynamic-leaf label tables
+- known boolean paths and field classification predicates
+- conditional-pricing identity fields
+- canonical default report show/squelch patterns
+
+Shared mechanics remain normal code. Examples include nested-path traversal,
+truthy candidate selection (preserving the original `or`-chain semantics),
+capability/modality detection, scalar formatting, precision/sentinel rules,
+and the classification cascade order.
+
+Profile parameters are required at classification, fetch, normalization, and
+human-report boundaries. There is intentionally no implicit generic or
+OpenRouter default: a missing argument should fail during development instead
+of silently removing labels or reintroducing OpenRouter coupling. Historical
+rows for a provider no longer present in configuration use the generic profile,
+which preserves raw field paths and applies best-effort labels/classification.
+
+Profiles contain mappings and callables. Although the dataclass is frozen,
+those members make profile values unsuitable as dictionary keys or set
+members; code must key registries by the lowercase kind string instead.
+
+Stored `field_changes.field_name` values remain immutable raw dotted paths.
+Profiles affect human interpretation only. They never rename historical data,
+rewrite SQLite rows, or enter the JSON output contract.
+
 ## 9. Schema Outline
 
 The exact schema can change during implementation, but the v1 design should resemble:

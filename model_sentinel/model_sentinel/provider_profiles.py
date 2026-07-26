@@ -101,34 +101,86 @@ class ProviderProfile:
         )
 
 
+# ---------------------------------------------------------------------------
 # Field label registry
 #
-# ``RenderedChange.label`` is the human-readable name every non-JSON renderer
-# prints; the raw dotted path remains the audit and JSON contract.
+# `RenderedChange.label` is the human-readable name every non-JSON renderer
+# prints; `field_path` keeps the raw dotted path because the HTML tooltips and
+# the JSON payload are audit surfaces. JSON never routes through here at all --
+# `_delta_to_json` serialises `FieldChange` directly -- so labelling cannot
+# change the machine-readable output.
 #
-# TWO PLAIN DICTS, ON PURPOSE. Each label lives in exactly one table.
+# TWO PLAIN DICTS, ON PURPOSE. Adding, removing, or renaming a field label is a
+# one-line edit to one of the literals below; there is no derivation, no
+# decorator, and no ordering dependency between them. Each label lives in
+# exactly one table so a rename is never a two-place edit.
 #
 # WHICH TABLE DOES A NAME GO IN?
 #
-# ``field_path_labels`` is keyed by the FULL dotted path and is the default.
-# A path key labels exactly the field it names and nothing else.
+#   field_path_labels -- keyed by the FULL dotted path. THE DEFAULT. A path key
+#   labels exactly the field it names and nothing else.
 #
-# ``field_leaf_labels`` is keyed by the LAST segment and is a last resort used
-# only when the field's parent is dynamic. Conditional-pricing paths and
-# ``default_parameters.<leaf>`` create that situation.
+#   field_leaf_labels -- keyed by the LAST segment. A LAST RESORT, used ONLY
+#   when the field's parent is dynamic and therefore cannot be spelled in a
+#   fixed path. Two producers create that situation, both in reporting.py:
+#   `_pricing_override_path` emits
+#   `pricing.overrides[min_prompt_tokens=200000].completion`, and
+#   `_diff_structured_values` emits `default_parameters.<leaf>`. The pricing
+#   money leaves and the six `default_parameters` leaves are leaf-keyed for
+#   that reason and no other.
 #
-# A leaf key is a claim over EVERY path ending in that segment, including
-# nested homonyms nobody has written yet. Prefer a path key unless a dynamic
-# parent makes one impossible. Lookup order is exact path, leaf, prettified
-# leaf.
+#   A leaf key is a claim over EVERY path in the product that ends in that
+#   segment, including nested homonyms nobody has written yet. `name` was
+#   leaf-keyed once; that made `architecture.tier_profiles[0].name` -- a tier's
+#   name, filed under category "Other" -- carry the registry's label for the
+#   MODEL's name. The raw path had conveyed the difference; the leaf key
+#   asserted a false equivalence. Prefer a path key unless a dynamic parent
+#   makes one impossible.
+#
+# Lookup order is exact path -> leaf -> prettified leaf. `resolve_field_label`
+# is the only consumer.
+#
+# Seeded from every distinct non-benchmark field path observed in the history
+# database. `test_registry_covers_every_seeded_field_name` pins the complete
+# key/label set.
 _OPENROUTER_FIELD_PATH_LABELS: dict[str, str] = {
-    # Pricing. Only money leaves observed under conditional pricing are
-    # leaf-keyed; these paths are intentionally exact.
+    # Pricing. Only the money leaves conditional pricing has been OBSERVED to
+    # relocate are leaf-keyed (see below); these four are spelled in full.
+    #
+    # `pricing.audio`, `pricing.image` and `pricing.request` are path-keyed
+    # because no recorded override tier has ever carried them -- an observation
+    # about provider payloads, NOT a property of this code.
+    # `_expand_pricing_override_changes` walks every key of a matched tier
+    # through `_diff_structured_values`, so
+    # `pricing.overrides[<condition>].request` is constructible the moment a
+    # provider emits one.
+    #
+    # If that ever happens the three behave differently, and only one of them
+    # visibly: `_prettify_leaf` spells `audio` and `image` exactly as the
+    # registry does ("Audio", "Image"), so their tiered form reads correctly by
+    # coincidence, while `request` falls back to "Request" and a single card
+    # would show "Per request" at the base rate beside "Request
+    # (min_prompt_tokens=...)" for the same money leaf. The fix at that point
+    # is a leaf key for `request` -- deliberately NOT added ahead of the
+    # evidence, because a leaf key claims every path in the product ending in
+    # that segment (`provider_metadata.request` and any future homonym would
+    # inherit "Per request", which for a non-pricing field is a false claim,
+    # where "Request" is merely a plainer spelling of a true one).
+    #
+    # `pricing.overrides` is matched as a literal exact string -- it is never
+    # itself a leaf under a dynamic parent, only the container that creates one.
     "pricing.audio": "Audio",
     "pricing.image": "Image",
     "pricing.request": "Per request",
     "pricing.overrides": "Conditional pricing",
-    # Context & limits. These two context paths are intentionally distinct.
+    # Context & limits.
+    #
+    # `context_length` and `top_provider.context_length` are DISTINCT fields
+    # that both occur in the history database, and the design requires they not
+    # share a label verbatim or the report becomes ambiguous about which one
+    # moved. Both are exact-path keys, so neither shadows the other and neither
+    # depends on lookup order; the "(model)" disambiguator is a reader-facing
+    # requirement, not a lookup mechanism, and survives on its own merits.
     "context_length": "Context length (model)",
     "top_provider.context_length": "Context length",
     "top_provider.max_completion_tokens": "Max output",
@@ -152,12 +204,20 @@ _OPENROUTER_FIELD_PATH_LABELS: dict[str, str] = {
     "created": "Created",
     "links": "Links",
     "hugging_face_id": "Hugging Face ID",
-    # The container is path-keyed; its dynamic children are leaf-keyed.
+    # Default parameters. The container is path-keyed; its six leaves cannot
+    # be, see below.
     "default_parameters": "Default parameters",
 }
 
+# Keyed by leaf segment. Consulted only when no full-path entry matched.
+#
+# EVERY entry here exists because its parent is dynamic and cannot be spelled
+# as a fixed path. Nothing else belongs in this table -- a leaf key claims
+# every path in the product ending in that segment.
 _OPENROUTER_FIELD_LEAF_LABELS: dict[str, str] = {
-    # Pricing money leaves move below conditional-tier paths.
+    # Pricing money leaves. `_pricing_override_path` relocates these same
+    # leaves under `pricing.overrides[<condition>]`, so one leaf key labels
+    # both `pricing.completion` and every conditional-tier form of it.
     "prompt": "Input",
     "completion": "Output",
     "input_cache_read": "Cache read",
@@ -168,7 +228,8 @@ _OPENROUTER_FIELD_LEAF_LABELS: dict[str, str] = {
     "image_output": "Image output",
     "web_search": "Web search",
     "internal_reasoning": "Internal reasoning",
-    # Default-parameter leaves have a dynamic parent.
+    # Default parameters. The design specifies these as leaves because the
+    # payload nests them one level below `default_parameters`.
     "frequency_penalty": "Frequency penalty",
     "presence_penalty": "Presence penalty",
     "repetition_penalty": "Repetition penalty",
@@ -177,6 +238,18 @@ _OPENROUTER_FIELD_LEAF_LABELS: dict[str, str] = {
     "top_p": "Top-P",
 }
 
+# Fields whose recorded values are 0/1 (not real Python bool) but are
+# semantically flags, not magnitudes. Seeded from the boolean-valued fields
+# observed in the history database (`top_provider.is_moderated`,
+# `reasoning.default_enabled`, `reasoning.mandatory`) plus `deprecated`, which
+# is not observed in any recorded change but appears in the default report
+# show fields and is included as a forward guard.
+#
+# This set is a restriction, not a convenience: `default_parameters.top_p`,
+# `default_parameters.temperature`, and `default_parameters.repetition_penalty`
+# also hold 0/1 values in the history database, but they are genuinely numeric
+# (a temperature of `1` is a magnitude, not a flag) and must never be treated
+# as boolean.
 _OPENROUTER_KNOWN_BOOLEAN_FIELDS = frozenset(
     {
         "top_provider.is_moderated",

@@ -57,11 +57,8 @@ from model_sentinel.provider_profiles import (
     default_is_price_amount_field as _is_price_amount_field,
 )
 
-# Still re-exported from reporting.py because non-renderer call sites there
-# (category grouping, _price_movement_kind) call them directly. The six other
-# primitives that moved to change_render.py lost their reporting.py call sites
-# when Task 3 rewired the renderers onto RenderedChange, so their transitional
-# re-export shims were dropped and they are imported above from their real home.
+# The list-signature and numeric helpers remain reporting implementation
+# details. Provider-specific field/category predicates now come from profiles.
 from model_sentinel.reporting import (
     _list_change_signature,
     _numeric_value,
