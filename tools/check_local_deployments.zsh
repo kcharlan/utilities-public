@@ -129,6 +129,163 @@ copy_mappings=(
   'worktree-helper/worktree|worktree'
 )
 
+home_projects=(
+  apple-health-extract
+  docker
+  mem_snapshots
+  mls-tracker
+  tax2
+  transcription
+  vid-compiler
+  video-scenes
+)
+
+run_git_capture() {
+  local label="$1"
+  local output_file="$2"
+  shift 2
+  local error_file="$AUDIT_TMP/git-command.stderr"
+
+  if /usr/bin/env -i \
+    HOME="$HOME" \
+    PATH="$PATH" \
+    LC_ALL=C \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_OPTIONAL_LOCKS=0 \
+    git -C "$REPO_ROOT" "$@" \
+    > "$output_file" 2> "$error_file"; then
+    return 0
+  fi
+  : > "$output_file"
+  report_failure "$label"
+  return 1
+}
+
+typeset -a direct_source_paths audited_scopes index_paths
+typeset -a invalid_index_paths pending_deletion_paths model_module_paths
+typeset -A index_membership index_modes index_oids
+typeset -A invalid_index_membership source_state_invalid pending_deletions
+
+for mapping in "${copy_mappings[@]}"; do
+  direct_source_paths+=("${mapping%%|*}")
+done
+audited_scopes=(
+  "${direct_source_paths[@]}"
+  model_sentinel/__main__.py
+  model_sentinel/model_sentinel
+  ':(glob)**/.gitignore'
+  "${home_projects[@]}"
+)
+
+git_snapshot_ok=true
+git_head_ok=true
+git_top_file="$AUDIT_TMP/git-top-level"
+if run_git_capture \
+  "repository top-level resolution failed" \
+  "$git_top_file" \
+  rev-parse --show-toplevel; then
+  resolved_git_top=
+  IFS= read -r resolved_git_top < "$git_top_file" || true
+  if [[ -z "$resolved_git_top" || "${resolved_git_top:A}" != "$REPO_ROOT" ]]; then
+    report_failure "repository top-level does not match the audit source root"
+    git_snapshot_ok=false
+  fi
+else
+  git_snapshot_ok=false
+fi
+
+git_head_file="$AUDIT_TMP/git-head"
+if [[ "$git_snapshot_ok" == true ]]; then
+  if ! run_git_capture \
+    "committed baseline required for deployment audit" \
+    "$git_head_file" \
+    rev-parse --verify HEAD; then
+    git_snapshot_ok=false
+    git_head_ok=false
+  fi
+else
+  git_head_ok=false
+fi
+
+index_snapshot="$AUDIT_TMP/index-snapshot"
+if [[ "$git_snapshot_ok" == true ]]; then
+  if run_git_capture \
+    "validated Git index snapshot collection failed" \
+    "$index_snapshot" \
+    ls-files --stage --sparse -z -- "${audited_scopes[@]}"; then
+    while IFS= read -r -d '' index_record; do
+      if [[ "$index_record" != *$'\t'* ]]; then
+        report_failure "validated Git index snapshot is malformed"
+        git_snapshot_ok=false
+        break
+      fi
+      index_metadata="${index_record%%$'\t'*}"
+      index_pathname="${index_record#*$'\t'}"
+      index_mode_value="${index_metadata%% *}"
+      index_remainder="${index_metadata#* }"
+      index_oid_value="${index_remainder%% *}"
+      index_stage_value="${index_remainder##* }"
+      if [[ -z "$index_pathname" ||
+            "$index_mode_value" != <-> ||
+            "$index_stage_value" != <-> ||
+            -z "$index_oid_value" ||
+            "$index_oid_value" == *[^0-9a-f]* ]]; then
+        report_failure "validated Git index snapshot is malformed"
+        git_snapshot_ok=false
+        break
+      fi
+      if [[ "$index_stage_value" != 0 ||
+            ( "$index_mode_value" != 100644 &&
+              "$index_mode_value" != 100755 ) ]]; then
+        if [[ -z "${invalid_index_membership[$index_pathname]-}" ]]; then
+          invalid_index_membership[$index_pathname]=1
+          invalid_index_paths+=("$index_pathname")
+        fi
+        continue
+      fi
+      index_membership[$index_pathname]=1
+      index_modes[$index_pathname]="$index_mode_value"
+      index_oids[$index_pathname]="$index_oid_value"
+      index_paths+=("$index_pathname")
+    done < "$index_snapshot"
+  else
+    git_snapshot_ok=false
+  fi
+fi
+
+if [[ "$git_snapshot_ok" == true ]]; then
+  for indexed_path in "${index_paths[@]}"; do
+    indexed_source="$REPO_ROOT/$indexed_path"
+    if [[ -L "$indexed_source" || ! -f "$indexed_source" ]]; then
+      source_state_invalid[$indexed_path]=1
+    fi
+  done
+fi
+
+pending_snapshot="$AUDIT_TMP/pending-deletions"
+if [[ "$git_snapshot_ok" == true && "$git_head_ok" == true ]]; then
+  if run_git_capture \
+    "pending source deletion collection failed" \
+    "$pending_snapshot" \
+    diff --cached --no-renames --diff-filter=D --name-only -z \
+    HEAD -- "${audited_scopes[@]}"; then
+    while IFS= read -r -d '' pending_path; do
+      if [[ -z "$pending_path" ]]; then
+        report_failure "pending source deletion collection is malformed"
+        git_snapshot_ok=false
+        break
+      fi
+      if [[ -z "${pending_deletions[$pending_path]-}" ]]; then
+        pending_deletions[$pending_path]=1
+        pending_deletion_paths+=("$pending_path")
+      fi
+    done < "$pending_snapshot"
+  else
+    git_snapshot_ok=false
+  fi
+fi
+
 for mapping in "${copy_mappings[@]}"; do
   source_relative="${mapping%%|*}"
   deployed_name="${mapping#*|}"
@@ -136,7 +293,22 @@ for mapping in "${copy_mappings[@]}"; do
   deployed_file="$SCRIPTS_DIR/$deployed_name"
   artifact_ok=true
 
-  if [[ ! -e "$deployed_file" && ! -L "$deployed_file" ]]; then
+  if [[ "$git_snapshot_ok" != true ]]; then
+    continue
+  elif [[ -n "${pending_deletions[$source_relative]-}" ]]; then
+    report_failure \
+      "$deployed_name source is pending deletion: $source_relative"
+    continue
+  elif [[ -n "${invalid_index_membership[$source_relative]-}" ||
+          -z "${index_membership[$source_relative]-}" ]]; then
+    report_failure \
+      "$deployed_name source is not a supported stage-0 index file: $source_relative"
+    continue
+  elif [[ -n "${source_state_invalid[$source_relative]-}" ]]; then
+    report_failure \
+      "$deployed_name source is missing or unsupported: $source_relative"
+    continue
+  elif [[ ! -e "$deployed_file" && ! -L "$deployed_file" ]]; then
     report_failure "$deployed_name is missing"
     artifact_ok=false
   elif [[ -L "$deployed_file" || ! -f "$deployed_file" ]]; then
@@ -183,6 +355,71 @@ done
 model_zipapp="$SCRIPTS_DIR/model-sentinel"
 model_zipapp_ok=true
 model_can_inspect=false
+model_source_ok=true
+if [[ "$git_snapshot_ok" != true ]]; then
+  model_zipapp_ok=false
+  model_source_ok=false
+elif [[ -n "${pending_deletions[model_sentinel/__main__.py]-}" ]]; then
+  report_failure "model-sentinel __main__.py source is pending deletion"
+  model_zipapp_ok=false
+  model_source_ok=false
+elif [[ -n "${invalid_index_membership[model_sentinel/__main__.py]-}" ||
+        -z "${index_membership[model_sentinel/__main__.py]-}" ]]; then
+  report_failure \
+    "model-sentinel __main__.py is not a supported stage-0 index file"
+  model_zipapp_ok=false
+  model_source_ok=false
+elif [[ -n "${source_state_invalid[model_sentinel/__main__.py]-}" ]]; then
+  report_failure "model-sentinel __main__.py source is missing or unsupported"
+  model_zipapp_ok=false
+  model_source_ok=false
+fi
+
+if [[ "$git_snapshot_ok" == true ]]; then
+  for indexed_path in "${index_paths[@]}"; do
+    if [[ "$indexed_path" == model_sentinel/model_sentinel/*.py ]]; then
+      model_relative="${indexed_path#model_sentinel/model_sentinel/}"
+      if [[ "$model_relative" == */* ]]; then
+        continue
+      fi
+      model_stem="${model_relative%.py}"
+      if [[ "$model_relative" != *.py ||
+            -z "$model_stem" ||
+            "${model_stem[1]}" != [A-Za-z_] ||
+            "$model_stem" == *[^A-Za-z0-9_]* ]]; then
+        report_failure \
+          "model-sentinel module has unsupported source pathname"
+        model_zipapp_ok=false
+        model_source_ok=false
+        continue
+      fi
+      model_module_paths+=("$indexed_path")
+      if [[ -n "${source_state_invalid[$indexed_path]-}" ]]; then
+        report_failure \
+          "model-sentinel module ${indexed_path:t} source is missing or unsupported"
+        model_zipapp_ok=false
+        model_source_ok=false
+      fi
+    fi
+  done
+  for invalid_path in "${invalid_index_paths[@]}"; do
+    if [[ "$invalid_path" == model_sentinel/model_sentinel/* ]]; then
+      report_failure \
+        "model-sentinel module ${invalid_path:t} has unsupported index type or stage"
+      model_zipapp_ok=false
+      model_source_ok=false
+    fi
+  done
+  for pending_path in "${pending_deletion_paths[@]}"; do
+    if [[ "$pending_path" == model_sentinel/model_sentinel/*.py ]]; then
+      report_failure \
+        "model-sentinel module ${pending_path:t} source is pending deletion"
+      model_zipapp_ok=false
+      model_source_ok=false
+    fi
+  done
+fi
+
 if [[ ! -e "$model_zipapp" && ! -L "$model_zipapp" ]]; then
   report_failure "model-sentinel zipapp is missing"
   model_zipapp_ok=false
@@ -221,31 +458,39 @@ if [[ "$model_can_inspect" == true ]]; then
     report_failure "model-sentinel is not a readable zipapp"
     model_zipapp_ok=false
   else
-    if compare_bytes \
-      "$verify_dir/__main__.py" \
-      "$REPO_ROOT/model_sentinel/__main__.py"; then
-      :
-    else
-      comparison_status=$?
-      if (( comparison_status == 1 )); then
-        report_failure "model-sentinel __main__.py is stale"
-      else
-        report_failure "model-sentinel __main__.py comparison failed"
-      fi
-      model_zipapp_ok=false
-    fi
-    for source_file in "$REPO_ROOT"/model_sentinel/model_sentinel/*.py; do
+    if [[ "$model_source_ok" == true ]]; then
       if compare_bytes \
-        "$source_file" \
-        "$verify_dir/model_sentinel/${source_file:t}"; then
+        "$verify_dir/__main__.py" \
+        "$REPO_ROOT/model_sentinel/__main__.py"; then
         :
       else
         comparison_status=$?
         if (( comparison_status == 1 )); then
-          report_failure "model-sentinel module ${source_file:t} is stale"
+          report_failure "model-sentinel __main__.py is stale"
+        else
+          report_failure "model-sentinel __main__.py comparison failed"
+        fi
+        model_zipapp_ok=false
+      fi
+    fi
+    for model_module_path in "${model_module_paths[@]}"; do
+      source_file="$REPO_ROOT/$model_module_path"
+      archive_module="$verify_dir/model_sentinel/${model_module_path:t}"
+      if [[ -n "${source_state_invalid[$model_module_path]-}" ]]; then
+        continue
+      elif [[ ! -f "$archive_module" || -L "$archive_module" ]]; then
+        report_failure \
+          "model-sentinel module ${model_module_path:t} is missing from the archive"
+        model_zipapp_ok=false
+      elif compare_bytes "$source_file" "$archive_module"; then
+        :
+      else
+        comparison_status=$?
+        if (( comparison_status == 1 )); then
+          report_failure "model-sentinel module ${model_module_path:t} is stale"
         else
           report_failure \
-            "model-sentinel module ${source_file:t} comparison failed"
+            "model-sentinel module ${model_module_path:t} comparison failed"
         fi
         model_zipapp_ok=false
       fi
@@ -256,17 +501,6 @@ if [[ "$model_zipapp_ok" == true ]]; then
   print -- "OK: model-sentinel zipapp"
 fi
 
-home_projects=(
-  apple-health-extract
-  docker
-  mem_snapshots
-  mls-tracker
-  tax2
-  transcription
-  vid-compiler
-  video-scenes
-)
-
 for project in "${home_projects[@]}"; do
   project_missing=0
   project_type_failures=0
@@ -276,47 +510,65 @@ for project in "${home_projects[@]}"; do
   project_source_state_failures=0
   project_operational_errors=0
 
-  while IFS= read -r -d '' tracked_file; do
-    source_file="$REPO_ROOT/$tracked_file"
-    [[ -f "$source_file" ]] || continue
-    deployed_file="$LOCAL_ROOT/$tracked_file"
-    if [[ ! -e "$deployed_file" && ! -L "$deployed_file" ]]; then
-      project_missing=$((project_missing + 1))
-      continue
-    fi
-    if [[ -L "$deployed_file" || ! -f "$deployed_file" ]]; then
-      project_type_failures=$((project_type_failures + 1))
-      continue
-    fi
+  if [[ "$git_snapshot_ok" != true ]]; then
+    project_operational_errors=1
+  else
+    for tracked_file in "${index_paths[@]}"; do
+      if [[ "$tracked_file" != "$project"/* ]]; then
+        continue
+      fi
+      source_file="$REPO_ROOT/$tracked_file"
+      if [[ -n "${source_state_invalid[$tracked_file]-}" ]]; then
+        project_source_state_failures=$((project_source_state_failures + 1))
+        continue
+      fi
+      deployed_file="$LOCAL_ROOT/$tracked_file"
+      if [[ ! -e "$deployed_file" && ! -L "$deployed_file" ]]; then
+        project_missing=$((project_missing + 1))
+        continue
+      fi
+      if [[ -L "$deployed_file" || ! -f "$deployed_file" ]]; then
+        project_type_failures=$((project_type_failures + 1))
+        continue
+      fi
 
-    if compare_bytes "$source_file" "$deployed_file"; then
-      :
-    else
-      comparison_status=$?
-      if (( comparison_status == 1 )); then
-        project_byte_differences=$((project_byte_differences + 1))
+      if compare_bytes "$source_file" "$deployed_file"; then
+        :
       else
+        comparison_status=$?
+        if (( comparison_status == 1 )); then
+          project_byte_differences=$((project_byte_differences + 1))
+        else
+          project_operational_errors=$((project_operational_errors + 1))
+        fi
+      fi
+
+      source_mode=
+      deployed_mode=
+      if ! source_mode="$(full_mode "$source_file" 2>/dev/null)"; then
         project_operational_errors=$((project_operational_errors + 1))
       fi
-    fi
+      if ! deployed_mode="$(full_mode "$deployed_file" 2>/dev/null)"; then
+        project_operational_errors=$((project_operational_errors + 1))
+      fi
+      if [[ -n "$source_mode" &&
+            -n "$deployed_mode" &&
+            "$source_mode" != "$deployed_mode" ]]; then
+        project_mode_differences=$((project_mode_differences + 1))
+      fi
+    done
 
-    source_mode=
-    deployed_mode=
-    if ! source_mode="$(full_mode "$source_file" 2>/dev/null)"; then
-      project_operational_errors=$((project_operational_errors + 1))
-    fi
-    if ! deployed_mode="$(full_mode "$deployed_file" 2>/dev/null)"; then
-      project_operational_errors=$((project_operational_errors + 1))
-    fi
-    if [[ -n "$source_mode" &&
-          -n "$deployed_mode" &&
-          "$source_mode" != "$deployed_mode" ]]; then
-      project_mode_differences=$((project_mode_differences + 1))
-    fi
-  done < <(
-    git -C "$REPO_ROOT" \
-      ls-files --cached --others --exclude-standard -z -- "$project"
-  )
+    for invalid_path in "${invalid_index_paths[@]}"; do
+      if [[ "$invalid_path" == "$project"/* ]]; then
+        project_source_state_failures=$((project_source_state_failures + 1))
+      fi
+    done
+    for pending_path in "${pending_deletion_paths[@]}"; do
+      if [[ "$pending_path" == "$project"/* ]]; then
+        project_source_state_failures=$((project_source_state_failures + 1))
+      fi
+    done
+  fi
 
   if (( project_missing ||
         project_type_failures ||

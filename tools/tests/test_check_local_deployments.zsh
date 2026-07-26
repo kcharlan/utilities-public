@@ -672,6 +672,150 @@ test_tmp_cleanup_after_chmod_failure() {
   fi
 }
 
+test_untracked_project_source_ignored() {
+  new_fixture
+  write_synthetic_file \
+    "$FIXTURE_REPO/tax2/untracked-local.txt" \
+    "untracked project source"
+  run_audit
+
+  assert_status 0 "$AUDIT_STATUS" "untracked project source"
+  assert_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
+}
+
+test_staged_project_addition_audited() {
+  new_fixture
+  write_synthetic_file \
+    "$FIXTURE_REPO/tax2/staged-addition.txt" \
+    "staged project addition"
+  git -C "$FIXTURE_REPO" add tax2/staged-addition.txt
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "staged project addition"
+  assert_contains "$AUDIT_STDERR" "tax2 deployment drift"
+  assert_contains "$AUDIT_STDERR" "missing files: 1"
+  assert_not_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
+}
+
+test_direct_source_requires_index_membership() {
+  new_fixture
+  local source="$FIXTURE_REPO/abacus usage/de-abacus.py"
+  local saved="$FIXTURE_ROOT/de-abacus.source"
+  cp -p "$source" "$saved"
+  git -C "$FIXTURE_REPO" rm -q "abacus usage/de-abacus.py"
+  git -C "$FIXTURE_REPO" commit -qm "remove synthetic direct source"
+  mkdir -p "${source:h}"
+  cp -p "$saved" "$source"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "unindexed direct source"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: de-abacus.py source is not a supported stage-0 index file"
+  assert_not_contains "$AUDIT_STDOUT" "OK: de-abacus.py"
+}
+
+test_untracked_model_module_excluded() {
+  new_fixture
+  write_synthetic_file \
+    "$FIXTURE_REPO/model_sentinel/model_sentinel/untracked.py" \
+    "untracked model module"
+  print -r -- "model_sentinel/model_sentinel/untracked.py" \
+    > "$FIXTURE_REPO/.gitignore"
+  git -C "$FIXTURE_REPO" add .gitignore
+  git -C "$FIXTURE_REPO" commit -qm "ignore synthetic model module"
+  run_audit
+
+  assert_status 0 "$AUDIT_STATUS" "untracked model module"
+  assert_occurrences "$AUDIT_STDOUT" 1 "OK: model-sentinel zipapp"
+}
+
+test_staged_model_module_audited() {
+  new_fixture
+  write_synthetic_file \
+    "$FIXTURE_REPO/model_sentinel/model_sentinel/staged_module.py" \
+    "staged model module"
+  git -C "$FIXTURE_REPO" add \
+    model_sentinel/model_sentinel/staged_module.py
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "staged model module"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel module staged_module.py is missing from the archive"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_missing_tracked_sources_fail() {
+  new_fixture
+  rm "$FIXTURE_REPO/tax2/synthetic-placeholder.txt"
+  rm "$FIXTURE_REPO/model_sentinel/model_sentinel/audit.py"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "missing tracked working-tree sources"
+  assert_contains "$AUDIT_STDERR" "tax2 deployment drift"
+  assert_contains "$AUDIT_STDERR" "source-state failures: 1"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel module audit.py source is missing or unsupported"
+  assert_not_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_staged_project_deletion_fails_source_state() {
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q tax2/synthetic-placeholder.txt
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "staged project deletion"
+  assert_contains "$AUDIT_STDERR" "tax2 deployment drift"
+  assert_contains "$AUDIT_STDERR" "source-state failures: 1"
+  assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 0"
+  assert_not_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
+}
+
+test_tracked_source_symlink_rejected() {
+  new_fixture
+  local target="$FIXTURE_ROOT/synthetic-source-target"
+  write_synthetic_file "$target" "source symlink target"
+  rm "$FIXTURE_REPO/tax2/synthetic-placeholder.txt"
+  ln -s "$target" "$FIXTURE_REPO/tax2/synthetic-placeholder.txt"
+  git -C "$FIXTURE_REPO" add tax2/synthetic-placeholder.txt
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "tracked source symlink"
+  assert_contains "$AUDIT_STDERR" "tax2 deployment drift"
+  assert_contains "$AUDIT_STDERR" "source-state failures: 1"
+  assert_not_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
+}
+
+test_git_index_collection_failure_suppresses_dependent_ok() {
+  new_fixture
+  local shim_dir="$FIXTURE_ROOT/shims"
+  mkdir -p "$shim_dir"
+  {
+    print '#!/bin/zsh'
+    print 'if [[ "$*" == *"ls-files --stage"* ]]; then'
+    print '  exit 128'
+    print 'fi'
+    print 'exec /usr/bin/git "$@"'
+  } > "$shim_dir/git"
+  chmod 755 "$shim_dir/git"
+  run_audit "$shim_dir"
+
+  assert_status 1 "$AUDIT_STATUS" "Git index collection failure"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: validated Git index snapshot collection failed"
+  assert_not_contains "$AUDIT_STDOUT" "OK: de-abacus.py"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+  assert_not_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
+  assert_contains \
+    "$AUDIT_STDOUT" \
+    "Local-only legacy launchers (not compared):"
+  assert_contains "$AUDIT_STDERR" "Local deployment audit failed:"
+}
+
 test_passing_baseline
 test_missing_direct_copy
 test_project_byte_drift
@@ -688,5 +832,14 @@ test_stat_operational_error
 test_protected_modes_and_types
 test_hostile_mktemp_targets_rejected
 test_tmp_cleanup_after_chmod_failure
+test_untracked_project_source_ignored
+test_staged_project_addition_audited
+test_direct_source_requires_index_membership
+test_untracked_model_module_excluded
+test_staged_model_module_audited
+test_missing_tracked_sources_fail
+test_staged_project_deletion_fails_source_state
+test_tracked_source_symlink_rejected
+test_git_index_collection_failure_suppresses_dependent_ok
 
 print -- "check_local_deployments tests: PASS"
