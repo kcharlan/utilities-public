@@ -49,16 +49,38 @@ from .change_render import (
     ABSENT_DISPLAY,
     ABSENT_TEXT_DISPLAY,
     RenderedChange,
-    _classify_field,
-    _is_price_amount_field,
     _list_diff_members,
     _numeric_value,
     _scalar_display,
-    classify_change,
+    classify_change as _classify_change_with_profile,
     signed_pct_change,
 )
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
+from .provider_profiles import (
+    OPENROUTER_PROFILE,
+    default_categorize,
+    default_is_price_amount_field,
+)
 from .time_utils import to_local_human, to_local_iso
+
+_classify_field = default_categorize
+_is_price_amount_field = default_is_price_amount_field
+
+
+def classify_change(
+    field_change: FieldChange,
+    *,
+    price_multiplier: int = 1,
+    price_divisor: int = 1,
+) -> RenderedChange:
+    """Compatibility adapter while report call sites are profile-threaded."""
+    return _classify_change_with_profile(
+        field_change,
+        profile=OPENROUTER_PROFILE.with_pricing(
+            price_multiplier,
+            price_divisor,
+        ),
+    )
 
 REPORT_DETAIL_MODES = ("default", "all", "squelched")
 BULK_CHANGE_MIN_MODELS = 3

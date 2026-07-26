@@ -7,9 +7,9 @@ from tests.html_probe import absent_side_cells, summary_change_cells
 
 from model_sentinel import reporting
 from model_sentinel.change_render import (
-    classify_change,
+    classify_change as classify_change_with_profile,
     format_qualified_label,
-    resolve_field_label,
+    resolve_field_label as resolve_field_label_with_profile,
 )
 from model_sentinel.models import (
     BaselineInfo,
@@ -27,6 +27,26 @@ from model_sentinel.reporting import (
     render_history_report,
     render_scan_report,
 )
+from model_sentinel.provider_profiles import OPENROUTER_PROFILE
+
+
+def classify_change(
+    field_change: FieldChange,
+    *,
+    price_multiplier: int = 1,
+    price_divisor: int = 1,
+):
+    return classify_change_with_profile(
+        field_change,
+        profile=OPENROUTER_PROFILE.with_pricing(
+            price_multiplier,
+            price_divisor,
+        ),
+    )
+
+
+def resolve_field_label(field_path: str) -> tuple[str, str | None]:
+    return resolve_field_label_with_profile(field_path, OPENROUTER_PROFILE)
 
 
 # The baseline every real scan carries. `storage.py` builds a `BaselineInfo`
