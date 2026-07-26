@@ -20,7 +20,7 @@ from .diffing import compare_models
 from .models import BaselineInfo, ModelDelta, ProviderScanResult
 from .normalize import normalize_models
 from .notifications import send_notification
-from .provider_profiles import resolve_profile
+from .provider_profiles import PROFILE_REGISTRY, resolve_profile
 from .providers import ProviderFetchError, fetch_raw_models
 from .reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
@@ -566,6 +566,21 @@ def run_healthcheck(*, args: argparse.Namespace, project_root: Path) -> int:
     else:
         checks.append(
             {"check": "provider_labels", "status": "ok", "detail": "Every provider label is distinct"}
+        )
+
+    for provider in loaded.providers:
+        if provider.kind.lower() in PROFILE_REGISTRY:
+            continue
+        checks.append(
+            {
+                "check": "provider_profile",
+                "status": "warn",
+                "detail": (
+                    f"Provider '{provider.provider_id}' kind '{provider.kind}' has no "
+                    "registered profile; using the generic profile (labels and "
+                    "price-field detection will be best-effort)."
+                ),
+            }
         )
 
     selected = tuple(provider for provider in loaded.providers if provider.enabled)

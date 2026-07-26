@@ -56,6 +56,7 @@ from .change_render import (
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
 from .provider_profiles import (
     GENERIC_PROFILE,
+    OPENROUTER_PROFILE,
     ProviderProfile,
 )
 from .time_utils import to_local_human, to_local_iso
@@ -63,28 +64,8 @@ from .time_utils import to_local_human, to_local_iso
 REPORT_DETAIL_MODES = ("default", "all", "squelched")
 BULK_CHANGE_MIN_MODELS = 3
 
-DEFAULT_REPORT_SHOW_FIELDS = (
-    "pricing.*",
-    "context_length",
-    "top_provider.context_length",
-    "top_provider.max_completion_tokens",
-    "supported_parameters",
-    "default_parameters",
-    "default_parameters.*",
-    "architecture.*",
-    "reasoning",
-    "reasoning.*",
-    "expiration_date",
-    "status",
-    "deprecated",
-    "knowledge_cutoff",
-    "top_provider.is_moderated",
-)
-
-DEFAULT_REPORT_SQUELCH_FIELDS = (
-    "benchmarks",
-    "benchmarks.*",
-)
+DEFAULT_REPORT_SHOW_FIELDS = OPENROUTER_PROFILE.default_show_fields
+DEFAULT_REPORT_SQUELCH_FIELDS = OPENROUTER_PROFILE.default_squelch_fields
 
 
 @dataclass(frozen=True)
