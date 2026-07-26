@@ -391,7 +391,7 @@ Executor: before relying on this, read the launcher's module-level code and conf
 - [x] **Step 4: Manual smoke** in a sandboxed instance (`LAUNCHMASTER_HOME=$(mktemp -d) ./launchmaster --no-browser`): kebab + context menu + delete-cancel on a real (Apple-filtered-out) row at 1100px and 1600px widths; verify sticky column (including the header corner when scrolled both axes) and menu flip.
 - [x] **Step 5: Tracking check** (on `codex/job-actions-ui`): `git ls-files launchmaster tests docs | sort` — confirm `tests/test_delete_job.py` and this plan are tracked; `git diff --stat main...HEAD` matches the files this plan names (three-dot diff against the merge base — valid because all work is on the feature branch, never on `main`).
 - [x] **Step 6: Commit** any doc updates. `git commit -m "docs: check off job actions UI plan"`
-- [ ] **Step 7: Hand off for merge.** Push the branch and open a PR to `main` (repo convention: squash-merge after review, as with prior `codex/...` branches). Do not merge without Kevin's review.
+- [x] **Step 7: Hand off for merge.** Push the branch and open a PR to `main` (repo convention: squash-merge after review, as with prior `codex/...` branches). Do not merge without Kevin's review.
 
 ---
 
