@@ -19,13 +19,13 @@ A walkthrough for tracking MLS playoff races, analyzing scenarios, and understan
 ./mls_tracker --no-browser
 ```
 
-MLS Tracker starts a local web server and opens your browser to `http://127.0.0.1:8501`.
+MLS Tracker starts a local web server bound to `127.0.0.1` and opens the corresponding browser URL. The default is `http://127.0.0.1:8501`; `--port` changes it.
 
 ### First-Time Setup
 
-On first run, the script creates a private virtual environment at `~/.mls_tracker_venv` and installs its dependencies (FastAPI, uvicorn, httpx). This happens once — subsequent launches start instantly.
+Install [uv](https://docs.astral.sh/uv/) first (`brew install uv`). The launcher declares Python 3.12+ and its runtime dependencies (FastAPI, uvicorn, and requests) in a PEP 723 header. On first launch, uv resolves them into its shared cache; later launches reuse that cache.
 
-**Requirements:** Python 3.8+ and an internet connection (data is fetched live from the ESPN API; CDN resources for React, Tailwind, and fonts).
+**Requirements:** uv and an internet connection. The backend fetches data from ESPN, while the browser loads React, Babel, Tailwind CSS, Lucide Icons, and Google Fonts from CDNs.
 
 ### Data Source
 
@@ -45,7 +45,7 @@ A sticky bar across the top of the page with backdrop blur. It contains all cont
 
 | Control | Description |
 |---------|-------------|
-| **Live indicator** | Green pulsing dot confirming data connection |
+| **Live indicator** | Green pulsing marker identifying the live-data view; fetch failures are reported separately in the error banner |
 | **Conference** | Dropdown: Eastern or Western |
 | **Team** | Dropdown: all teams in the selected conference (sorted alphabetically) |
 | **Season** | Dropdown: current year and previous 2 years |
@@ -70,14 +70,16 @@ Below the header, a banner immediately communicates the team's playoff status. T
 
 | Status | Color | Icon | Meaning |
 |--------|-------|------|---------|
-| **Playoffs Clinched** | Green | Trophy | The team's points exceed the cutoff team's maximum possible points — playoffs are guaranteed |
-| **In The Hunt** | Team color | Zap | The team controls its own destiny — results on the pitch determine playoff fate |
-| **Need Help From Other Results** | Orange | AlertTriangle | The team cannot clinch on its own — the cutoff team's results also matter |
-| **Mathematically Eliminated** | Red | XCircle | Even winning all remaining games cannot overtake the cutoff position |
+| **Playoffs Clinched** | Green | Trophy | The team's current points exceed the selected cutoff team's maximum possible points |
+| **In The Hunt** | Team color | Zap | None of the other three conditions in this cutoff-team model applies |
+| **Need Help From Other Results** | Orange | AlertTriangle | The team's maximum possible points are below the cutoff team's projected total |
+| **Mathematically Eliminated** | Red | XCircle | The team's maximum possible points are below the cutoff team's current points |
 
 ### Need Help Details
 
 When a team needs help, the banner shows a dynamic message explaining what the cutoff team must do (e.g., "Team X must earn no more than Y points in Z games").
+
+These labels compare the selected team only with the team currently at the chosen cutoff position. The model assumes a 34-game season and does not simulate other teams, remaining fixtures, or MLS tiebreakers. Treat it as an exploratory projection, not an official league determination.
 
 ---
 
@@ -130,13 +132,13 @@ Two side-by-side cards (stacked on mobile) break down the paths to the playoffs:
 
 ### Worst Case
 
-Minimizes ties and maximizes wins needed. Shows:
+Uses wins only (with all other remaining matches counted as losses) to get one point above the cutoff team's projected total. Shows:
 - **Wins** / **Ties** / **Losses** / **Final Points**
 - "Not Possible" badge if the scenario is unachievable with remaining games
 
 ### Easiest Path
 
-Maximizes ties and minimizes wins needed. Shows the same breakdown — this is the path requiring the fewest outright wins.
+Maximizes ties while finding a combination that gets one point above the cutoff team's projected total. Shows the same breakdown.
 
 Each card has a colored header bar (team secondary color for Worst Case, team primary for Easiest Path) with an icon (Flame / Route).
 
@@ -166,7 +168,7 @@ A collapsible section at the bottom (starts collapsed). Click to expand and see:
 - **Standings and teams API URLs**
 - **Cache TTL:** 5 minutes
 - **Clinch logic formula:** `target_pts > cutoff_max_possible`
-- **Last refresh timestamp**
+- A client-side timestamp labeled **Last Refresh**
 
 ---
 
@@ -193,7 +195,7 @@ While refreshing, the refresh button icon spins and the button is disabled.
 
 ### Errors
 
-If something goes wrong (network issue, ESPN API down), a red banner appears below the header with:
+If something goes wrong (network issue, ESPN API down), a red banner appears beneath the settings bar with:
 - An error icon and message
 - A **Retry** button to attempt the fetch again
 
@@ -221,7 +223,9 @@ A React error boundary also catches UI crashes and shows a full-page error overl
 | **Clinched** | Team's current points > cutoff team's maximum possible points |
 | **Eliminated** | Team's maximum possible points < cutoff team's current points |
 | **Need Help** | Team's maximum possible points < cutoff team's projected points |
-| **In The Hunt** | None of the above — team controls its own fate |
+| **In The Hunt** | None of the other three cutoff-team conditions applies |
+
+The cutoff projection is `cutoff current points + (cutoff games remaining × cutoff current PPG)`. Scenario cards target the next whole point above that projection. The model does not apply MLS tiebreakers or account for movement by teams other than the current cutoff occupant.
 
 ### Color Legend
 

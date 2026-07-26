@@ -10,14 +10,19 @@ Start RouterView from the project directory or through a symlink:
 ./routerview
 ```
 
-On first launch RouterView will (via [uv](https://docs.astral.sh/uv/), `brew install uv`):
+On first launch, assuming the default runtime location, RouterView will:
 
-1. Create `~/.routerview/`
-2. Resolve its dependencies into uv's shared cache (may briefly hit the network on the first run)
-3. Start the local server, defaulting to `http://127.0.0.1:8100`
-4. Open the dashboard in your browser
+1. Use [uv](https://docs.astral.sh/uv/) (`brew install uv`) to resolve its Python dependencies into uv's shared cache (this may briefly hit the network)
+2. Create `~/.routerview/`
+3. Create or open `~/.routerview/routerview.db`
+4. Start the local server, defaulting to `http://127.0.0.1:8100`
+5. Open the dashboard in your browser
 
 If port `8100` is busy, RouterView automatically picks the next free port and prints the change.
+
+Set `ROUTERVIEW_HOME` before launch to use a runtime directory other than `~/.routerview/`. Use `--db` to select a different SQLite database path.
+
+The dashboard loads its JavaScript and CSS libraries from public CDNs, so the browser needs network access unless those assets are already cached. RouterView has no authentication; keep the default `127.0.0.1` bind address unless you intentionally want to expose it to a trusted network.
 
 ## Importing OpenRouter Data
 
@@ -44,11 +49,19 @@ This is intended for repeated imports of overlapping OpenRouter exports.
 
 ## Daily Summary Refresh
 
-RouterView rebuilds daily summaries after each successful CSV import. The admin refresh controls remain available in Settings if you want to recompute summaries later.
+RouterView rebuilds all daily summaries after each successful CSV import and refreshes its in-memory anomaly baselines. Settings also has a **Refresh Stats** action that recomputes the most recent two days.
+
+## Repairing Imported Timestamps
+
+Use **Settings → Rebuild Timestamps** only when previously imported rows have incorrect UTC timestamps. RouterView first writes a point-in-time database backup under `<runtime-home>/backups/`, then:
+
+- derives timestamps from OpenRouter generation IDs that contain a recoverable Unix epoch
+- leaves rows without a recoverable epoch unchanged
+- rebuilds summaries and anomaly baselines if any rows changed
 
 ## Purging Old Data
 
-Use **Settings → Purge Data** to delete all generations and daily summaries before a chosen date.
+Use **Settings → Purge Data** to delete all generations and daily summaries strictly before a chosen date. Rows on the chosen date are retained.
 
 ## Troubleshooting
 
@@ -73,3 +86,5 @@ Start it with:
 ```
 
 RouterView will still fall forward if that port is already in use.
+
+It checks up to 20 consecutive ports, starting with the requested port, and exits with an error if none is available.

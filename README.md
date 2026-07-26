@@ -5,26 +5,26 @@
 
 Use conspicuously synthetic public fixtures. Keep operational configuration and mutable state in the tool's documented user-home runtime directory. Before every commit, review the complete staged diff and file list specifically for sensitive content.
 
-Personal collection of automation scripts, data tooling, and local web apps that back day‑to‑day workflows. Each directory contains an isolated project with its own runtime model — increasingly a [uv](https://docs.astral.sh/uv/)-managed launcher (PEP 723 inline metadata) backed by a dedicated home-directory runtime under `~/.projectname/` so copied or symlinked installs keep working without manual setup.
+Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Seventeen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
 
 ## Flagship Utilities
 
 The most polished and feature-complete tools in the collection — each is a uv-managed, zero-setup application with a professional-grade web UI.
 
 ### cognitive_switchyard
-Single-user, local-first task orchestration engine that coordinates parallel execution of arbitrary workloads through a multi-phase pipeline. Work items drop into an intake directory as markdown files, then flow through LLM-driven planning, dependency resolution, constraint-aware parallel dispatch to worker slots, verification, and bounded auto-fix — all visible in a real-time React dashboard. Runner packs make the engine workload-agnostic: the built-in `claude-code` pack turns it into a parallel coding agent orchestrator, but the same pipeline handles any CLI-driven workload. Sessions support git worktree isolation, idempotent crash recovery, streaming phase logs, and a three-trigger verification system (interval, task-driven, and mandatory final). The web UI provides setup, live monitoring with pipeline strip and worker cards, session history, and global settings management.
+Single-user, local-first task orchestration engine that coordinates parallel CLI work through a multi-phase pipeline. Work items flow from Markdown intake through LLM-driven planning, dependency resolution, constraint-aware worker dispatch, verification, and bounded auto-fix, with progress shown in a React dashboard. Runner packs define workload-specific hooks and shell commands; the built-in coding packs support Claude Code and Codex-oriented workflows. Sessions support isolation, crash recovery, streaming phase logs, and interval, task-driven, and final verification.
 
 ### routerview
 Self-hosted OpenRouter analytics dashboard for CSV imports. It stores imported OpenRouter Activity exports in local SQLite and serves a React dashboard with KPI cards, timeseries charts, breakdown panels, a usage heatmap, and a full generation log viewer. Calendar-aligned comparisons, cumulative cost tracking, saved views, multi-dimensional filtering, and CSV/PNG/SVG/JPG export make it a focused local replacement for the official Activity page without any live observability setup.
 
 ### git-multirepo-dashboard (Git Fleet)
-Local multi-repo git dashboard built for monorepos and multi-project setups. Register a directory of repos and get a fleet overview with activity sparklines, branch staleness tracking, and full dependency health scanning across Python, Node, Go, Rust, Ruby, and PHP ecosystems. Dependency detection walks subdirectories up to three levels deep, so monorepos with scattered manifest files are fully covered — each dependency tracks exactly which sub-project it belongs to. A full scan aggregates commit history into daily stats, lists all branches with stale/active badges, and runs ecosystem-specific outdated and vulnerability checks. Real-time SSE progress streaming, a built-in directory browser for repo registration, and fleet-wide analytics (commit heatmaps, time allocation, cross-repo dependency overlap) round out the feature set.
+Local multi-repo git dashboard for monorepos and multi-project setups. Register repository roots to get activity sparklines, branch staleness, commit history, dependency-health checks across six ecosystems, real-time SSE scan progress, a directory browser, and fleet analytics. Manifest discovery covers nested projects, with documented deduplication limits for repositories that expose the same project through overlapping roots.
 
 ### harscope
-HAR file analyzer and sanitizer built for developers and security reviewers who need to understand, inspect, and safely share HTTP Archive captures. It renders a full waterfall timeline of network requests, lets you drill into individual request/response pairs with an interactive inspector, and runs value-first secret detection to flag leaked credentials or tokens. Sequence diagrams and dashboard summaries give you a high-level picture at a glance, while inline keyboard-driven redaction lets you surgically sanitize sensitive data before export. Output formats include cleaned HAR, CSV, Markdown, and self-contained HTML reports.
+HAR file analyzer and sanitizer built for developers and security reviewers who need to understand, inspect, and safely share HTTP Archive captures. It renders a waterfall timeline, provides request/response inspection, runs value-first secret detection, creates sequence and dashboard views, and supports keyboard-driven redaction. Six export formats cover sanitized archives, findings, tabular data, and shareable reports.
 
 ### editdb
-Professional-grade, local web-based SQLite database manager that brings an Airtable-style editing experience to any `.db` file. Point it at a database from the command line and get a high-performance React data grid with sticky headers, inline editing, and paginated browsing. The schema designer handles column additions, type changes, and renames through automated migrations, while a built-in SQL console with query history covers ad-hoc exploration. Import and export support CSV and JSON, and the whole tool runs localhost-only with SQL injection protection baked in — no cloud, no accounts, no setup beyond running the script.
+Local web-based SQLite database manager with a React data grid, inline editing, paginated browsing, schema changes, a raw SQL console, and CSV/JSON import and export. It binds to loopback by default and is intended for trusted local use; it has no authentication, and schema rebuilds can discard constraints, indexes, and triggers that the editor does not recreate.
 
 ### jtree
 Interactive JSON viewer and editor that renders any JSON document as a pannable, zoomable node-graph mind map. Instead of scrolling through collapsed trees in a text editor, you explore data spatially — clicking nodes to expand branches, dragging to reposition, and using a minimap for orientation in large documents. Full CRUD editing is built in: add, rename, delete, copy/paste nodes, reorder arrays, and undo/redo up to 50 operations. Search filters across keys, values, or both, and finished visualizations export to SVG, PNG, or JPEG for documentation or presentations.
@@ -43,7 +43,7 @@ Fully local document conversion pipeline that turns PDF, DOCX, PPTX, HTML, and X
 Local OneDrive expense intake console for accountants-and-spreadsheet workflows that still need proper file handling. It authenticates against personal Microsoft accounts via Graph, creates `YYYY/YYYY-MM` receipt folders on demand inside a shared OneDrive expense root, uploads receipts with normalized filenames, creates anonymous read-only share links, then downloads and rewrites the Excel tracker in-memory with a new expense row. A focused React workspace separates submission, setup, retry queue, and workbook lookup views, while a persistent status bar keeps auth/config health visible at all times.
 
 ### mls-tracker
-Live MLS playoff race dashboard that pulls standings from ESPN's public API and layers on clinch/elimination logic, configurable cutoff position analysis, and playoff scenario breakdowns. It shows worst-case and easiest-path projections, identifies which results a team needs from other matches, and dynamically sources team branding (colors and logos) so the display stays current. Built for the stretch run of the season when every match matters and the scenarios get complicated.
+Exploratory MLS playoff-race dashboard that pulls standings and branding from ESPN's public API. It models a configurable cutoff using a 34-game season, current points-per-game projections, wins-only paths, maximum-tie paths, and best/worst case summaries. The labels are planning aids rather than official clinch/elimination determinations: fixtures, tiebreakers, and movement by other teams are not modeled.
 
 ## Projects At A Glance
 
@@ -59,12 +59,13 @@ Live MLS playoff race dashboard that pulls standings from ESPN's public API and 
 - `div_conv` – Privacy-safe standalone converter for supported Fidelity dividend and Vanguard activity CSV exports, using local-only account/security mappings to produce cooked CSV and QIF output.
 - `dloc` – Daily Lines of Code utility that parses git history to report insertions, deletions, and net changes by date.
 - `docker` – Grouped home for containerized utilities (see `docker/README.md`).
-- `docker/actual-data` – Docker configuration and data for Actual Budget, a local-first personal finance application.
+- `docker/actual-data` – Docker Compose configuration for Actual Budget; private application data lives in untracked runtime directories.
 - `docker/docker-disk-compact` – macOS Zsh utility for reclaiming Docker Desktop disk space and measuring the real physical size of `Docker.raw`.
 - `docker/excalidraw` – Docker Compose setup for a local Excalidraw whiteboard instance.
 - `docker/llm_collector` - Tooling for collecting LLM usage data, including the browser extension, collector service, and Docker runtime.
 - `docker/llm_proxy` – Modular, stateless proxy that makes non-standard LLM provider APIs speak the OpenAI `/v1/chat/completions` protocol. Bridges T3.chat and ChatJimmy with streaming SSE translation, tool-calling format conversion, dynamic model discovery, and BYOK auto-retry.
 - `docker/mermaid` – Scripts to run a local instance of the Mermaid Live Editor using Docker.
+- `docker/n8n-poc` – Loopback-only n8n proof-of-concept stack with private environment configuration and persistent state outside Git.
 - `docker/webserver` - Local Docker Compose web stack with Nginx, FastAPI, Express, and a configurable file browser/reverse proxy.
 - `doc_linearizer` – Command-line tool that flattens multi-page HTML documentation sites into a single Markdown file, preserving TOC order, numbering, and assets.
 - `docpipe` – Fully local document conversion pipeline. Converts PDF, DOCX, PPTX, HTML, and XLSX to canonical Markdown + JSON for model ingestion.
@@ -79,7 +80,7 @@ Live MLS playoff race dashboard that pulls standings from ESPN's public API and 
 - `md-autotax` – Streamlit + CLI tools that use a private local tax table and private QIF label mappings to generate estimated-tax transactions without tracking jurisdiction or account details.
 - `md-json` – Moneydance JSON export to CSV converter with account hierarchy resolution and split transaction handling.
 - `media-dater` – CLI wrapper for `exiftool` that safely renames image and video files by their creation date with collision handling and dry-run support.
-- `mem_snapshots` – Small shell helpers that snapshot macOS memory stats on reboot for later comparison.
+- `mem_snapshots` – Two manual shell commands for capturing macOS memory and process snapshots; scheduling is optional and not included.
 - `model_sentinel` – Local CLI tracker for authenticated LLM model lists across providers. Stores saved snapshots in SQLite, diffs adds/removes/metadata drift over time, supports history queries, and can run on a schedule via user-level `launchd`.
 - `mls-tracker` – uv-managed FastAPI + React SPA playoff tracker for both MLS conferences, with dynamic ESPN-sourced team branding, configurable cutoff position, and clinch/elimination logic.
 - `moneydance backup rotation` – Standalone shell script that prunes NAS-hosted Moneydance backups by retention day, with optional file and syslog logging.
@@ -89,15 +90,16 @@ Live MLS playoff race dashboard that pulls standings from ESPN's public API and 
 - `storage_monitor` – Local-first macOS disk-usage and cleanup console. Scans APFS volumes, local snapshots, caches, model stores, and large files, then serves a React dashboard with treemap breakdowns, drill-down directory exploration (with file/folder icons, on-demand scanning, Reveal in Finder, and per-directory Rescan), watchlist-based cleanup actions, and snapshot management.
 - `reversible-skew` – Burrows-Wheeler/Move-to-Front experiment with reversible block-wise compression and passthrough heuristics.
 - `tax2` – Full rules-driven tax engine with FastAPI + React SPA UI, CLI table generation, and QIF export pipelines.
-- `toggle_wifi` – Post-wake automation that briefly toggles Wi-Fi to recover network connectivity on macOS.
+- `toggle_wifi` – macOS helper that briefly toggles Wi-Fi when invoked; wake detection or scheduling must be configured separately.
 - `transcription` – Whisper-backed Streamlit console for bulk transcription with meticulous session/lifetime counters and batching helpers.
+- `trim_last` – FFmpeg-based CLI for trimming a configurable duration from the end of one or more media files.
 - `usage-monthly-csv` – Standalone Zsh utility that runs `ccusage_csv` and `cusage_csv` for the current month, automatically includes the prior month near month boundaries, and writes `MMYY`-suffixed CSV reports to Downloads by default.
 - `vid-compiler` – MoviePy-based sampler that stitches highlight reels and tail segments from long raw footage.
-- `video-scenes` – Quick reference commands for Detectron-based `scenedetect` workflows.
+- `video-scenes` – Setup and command reference for PySceneDetect scene-boundary workflows.
 - `web_games/gorilla` – Modern browser remake of the classic QBasic **Gorilla.BAS** artillery game with AI opponents and local multiplayer.
 - `web_games/multibody_sim` – Browser-based N-body gravity sandbox/screensaver with user setup mode, collision merges, trails/leads, and JSON save/load.
 - `web_games/rps_screen` – A browser-based Rock Paper Scissors particle simulation with elastic collision physics, auto-restart "screensaver" mode, and customizable game rules.
-- `worktree-helper` – Single-file, dependency-free Python utility for managing `git worktree` with a keyboard-driven TUI and full CLI flags. Supports create, delete, list, status, prune, open, cd, lock, unlock, move, repair, and doctor commands.
+- `worktree-helper` – Single-file, standard-library Python utility for managing `git worktree` through a curses TUI or CLI. The documented branch-based create flows work; orphan creation is currently unavailable because of a validation conflict.
 
 The runnable projects listed above include a local README with setup and usage guidance; nested example, test, and reference directories may also carry more narrowly scoped READMEs.
 

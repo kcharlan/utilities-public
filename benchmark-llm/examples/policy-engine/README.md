@@ -9,7 +9,7 @@ It is meant to be both runnable and readable:
 
 The bundled `bench.yaml` is configured to:
 
-- write run artifacts to `~/Downloads/benchmark-llm`
+- write run artifacts to the synthetic placeholder `/Users/example/Documents/benchmark-llm`
 - run each requested model `3` times
 - use `breadth` ordering so the batch cycles across models before starting the next pass
 
@@ -21,26 +21,28 @@ Point the benchmark at the repo you want to evaluate:
 export BENCH_POLICY_ENGINE_SOURCE_REPO=/absolute/path/to/policy-engine
 ```
 
+The source repository needs at least one commit because the runner creates git worktrees from `HEAD`. Before running, replace the synthetic `output_dir` in `bench.yaml` with an absolute or `~`-relative writable path on your machine.
+
 The included invocation script is wired for `opencode`:
 
 ```bash
-bench run examples/policy-engine -m openrouter/qwen/qwen3.6-plus
+./bench run examples/policy-engine -m openrouter/qwen/qwen3.6-plus
 ```
 
 For repeated benchmark sweeps, you can use a model list file instead:
 
 ```bash
-bench run examples/policy-engine -m @models.txt
+./bench run examples/policy-engine -m @examples/policy-engine/models-openrouter.txt
 ```
 
-Each successful run lands under `~/Downloads/benchmark-llm/<run-id>/`. After the batch finishes, the benchmark launches one final adjudicator pass and writes `~/Downloads/benchmark-llm/summary.md`.
+Each successful run lands under `<output_dir>/<run-id>/`. After the batch finishes, the benchmark launches one final adjudicator pass and writes `<output_dir>/summary.md`.
 That final report is structured for reading, not just archival: an executive summary first, then a benchmark-run overview, a synthesized narrative, model-level commentary aggregated across each model's runs, and the detailed per-run topline table at the end.
 
 By default the adjudication step uses `cx` (your `codex` wrapper), but it is a separate shell step and can use the same or a different model:
 
 ```bash
 export BENCH_POLICY_ENGINE_ADJUDICATOR_MODEL=openrouter/gpt-5
-bench run examples/policy-engine -m openrouter/qwen/qwen3.6-plus
+./bench run examples/policy-engine -m openrouter/qwen/qwen3.6-plus
 ```
 
 The default script invokes Codex non-interactively with `exec` and feeds the adjudication prompt on stdin. It launches the adjudicator through `zsh -lic` so shell-defined wrappers such as `cx` from your `~/.zshrc` resolve the same way they do in an interactive terminal. When the adjudicator bin is `cx` or `codex`, the script uses that wrapper's configured default model unless you explicitly set `BENCH_POLICY_ENGINE_ADJUDICATOR_MODEL`. To use a different CLI binary for adjudication, set `BENCH_POLICY_ENGINE_ADJUDICATOR_BIN` or edit `scripts/adjudicate.sh`. The framework keeps the result branch either way because adjudication is just another benchmark-owned step running after validation, and the same script also handles the final cross-run `summary.md` synthesis pass once the batch is complete. Successful worktree checkouts are cleaned up automatically once each run is recorded.
@@ -49,7 +51,7 @@ The default script invokes Codex non-interactively with `exec` and feeds the adj
 
 The model execution step itself receives a scrubbed environment with neutral task inputs such as `MODEL_ID`, `WORKSPACE_ROOT`, and `TASK_PROMPT_PATH`. Framework-owned `BENCH_*` variables stay available to the non-model steps like prepare, validate, and adjudicate.
 
-If the `opencode` wrapper can recover usage data, it can write a JSON payload to `TASK_METRICS_PATH` during the execute step. The same pattern works for adjudication or validation steps through `BENCH_COMMAND_METRICS_PATH`.
+The `opencode` invocation script attempts to recover usage data from the session export and writes a JSON payload to `TASK_METRICS_PATH` during the execute step. The same pattern works for adjudication or validation steps through `BENCH_COMMAND_METRICS_PATH`.
 
 ## Layout
 

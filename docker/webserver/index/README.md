@@ -11,7 +11,8 @@ This directory contains a Node.js application built with Fastify that provides a
 
 ### File Browser (`/files`)
 
-1.  **Scanning `webroot`:** Reads the contents of the `/mnt/webroot` directory (mounted from your host's `~/webroot`).
+1. **Scanning `webroot`:** Reads `/mnt/webroot`, mounted from the absolute
+   `WEBROOT_PATH` configured in the project's ignored `.env`.
 2.  **Inferring Titles:** For HTML files, extracts the content of the `<title>` tag to provide a more descriptive link in the index.
 3.  **Generating HTML Index:** Dynamically creates an HTML page listing directories and files, with links to navigate through the `webroot` structure.
 
@@ -22,7 +23,11 @@ A built-in control panel for creating and managing reverse-proxy endpoints witho
 *   **CRUD operations:** Create, read, update, and delete endpoints via a REST API at `/configure/api/endpoints`.
 *   **Live editing:** Changes take effect on the very next request without container restarts.
 *   **Path validation:** Reserved prefixes (`/files`, `/configure`, `/api/py`, `/api/node`) are blocked to protect built-in routes.
-*   **Persistence:** Configuration is saved as JSON to `endpoints.json` under the `CONFIG_ROOT` mount (default: `~/webroot/.webserver`).
+- **Persistence:** Configuration is saved as `endpoints.json` under the
+  `CONFIG_ROOT` mount. Compose maps `$WEBROOT_PATH/.webserver` there.
+- **Trust boundary:** The endpoint-management API is unauthenticated. Keep the
+  Nginx host port loopback-only unless an external access-control layer is
+  added.
 
 ### Dynamic Reverse Proxy
 
@@ -31,7 +36,9 @@ A built-in control panel for creating and managing reverse-proxy endpoints witho
 *   **Host access:** Targets using `localhost` or `127.0.0.1` are automatically rewritten to `host.docker.internal` (or the value of `HOST_DOCKER_GATEWAY`) so containers can reach host-side services.
 *   **Sticky routing:** When an app served via a stripped-path alias makes follow-up requests to absolute paths (e.g., `/search`), the proxy remembers the client (5 minutes per IP+User-Agent) and continues routing to the same upstream.
 
-This service runs on port `3000` within its Docker container and is accessed by Nginx as the fallback for requests where no static file is found.
+This service runs on port `3000` within its Docker container. Nginx uses it for
+the root fallback and for missing paths not captured by Nginx's common
+static-asset location.
 
 ## Environment Variables
 
@@ -48,7 +55,8 @@ In `docker-compose.yml`:
 
 *   The `index` service is built from `index/Dockerfile` using the `node:24-alpine` base.
 *   The image installs production dependencies and copies `server.js` at build time; source and `node_modules` are not host-mounted.
-*   It mounts your host's `~/webroot` to `/mnt/webroot` (read-only) and `~/webroot/.webserver` to `/mnt/config` (read-write for persistence).
+- It mounts `$WEBROOT_PATH` to `/mnt/webroot` read-only and
+  `$WEBROOT_PATH/.webserver` to `/mnt/config` read-write.
 *   npm is removed from the final image after dependencies are installed, and the service starts with `node server.js`.
 *   Port `3000` is exposed internally for Nginx to access.
 
@@ -61,7 +69,8 @@ The dynamic index uses inline CSS and a basic HTML structure. To customize its a
 1.  **Edit `server.js`:**
     *   Locate the large HTML template string within the file browser route.
     *   You can directly modify the `<style>` block to change fonts, colors, layout, etc.
-    *   For more advanced theming, you could add a link to an external CSS file placed in your `~/webroot` directory.
+    * For more advanced theming, add an external CSS file under
+      `$WEBROOT_PATH`.
 
 2.  **Rebuild and Restart `index` service:**
     After making changes to `server.js` or `package.json`, you need to rebuild the `index` service to apply them:
@@ -79,4 +88,8 @@ The dynamic index uses inline CSS and a basic HTML structure. To customize its a
 *   `fastify`: A fast and low-overhead web framework for Node.js.
 *   `@fastify/reply-from`: Fastify plugin for proxying requests to upstream services (powers the dynamic reverse proxy).
 *   `cheerio`: Used for parsing and manipulating HTML, specifically to infer titles from HTML files.
-*   `mime`: MIME type lookup for serving correct content types.
+- `mime`: MIME type lookup for serving correct content types.
+
+`package-lock.json` records a resolved graph for local tooling, but the current
+Dockerfile deliberately installs compatible dependency ranges from
+`package.json` with `--no-package-lock`.

@@ -67,8 +67,16 @@ Both scripts output an export line like:
 export T3_CHAT_CREDS='eyJjb29raWVzIjoi...'
 ```
 
-Add this to your `~/.zshrc` or `~/.bashrc`, then reload your shell (`source ~/.zshrc`). OpenCode reads `$T3_CHAT_CREDS` from the environment and sends it as the Bearer token on every request.
+Treat the generated value as a credential: base64 is encoding, not encryption.
+Add it to a private shell configuration or secret manager, then start OpenCode
+from an environment where `T3_CHAT_CREDS` is available. Never commit the cURL
+capture, raw cookies, or generated export line.
 
 ## Credential Rotation
 
-T3.chat rotates the `wos-session` cookie periodically. The proxy handles this automatically — it calls T3's `auth.getActiveSessions` endpoint before each request and updates the session cookie if it has rotated. However, if your cookies expire entirely (e.g. you log out or clear browser data), you'll need to re-run the extraction script.
+T3.chat rotates the `wos-session` cookie periodically. Before each chat request,
+the adapter asks T3 for the current session token and uses that refreshed cookie
+for the upstream request. The proxy does not persist or return the refreshed
+credential, so each later request starts from the bearer payload supplied by
+the client and refreshes again. If the browser session expires entirely (for
+example, after logout or clearing browser data), re-run extraction.

@@ -6,17 +6,21 @@ A self-hosted OpenRouter analytics dashboard for CSV imports. Import OpenRouter 
 
 RouterView runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using a PEP 723 inline-metadata header. No manual environment setup is required to run it.
 
-1. Optional global symlink:
+1. Start the app from this directory:
    ```zsh
-   ln -s "$(pwd)/routerview" /usr/local/bin/routerview
+   ./routerview
    ```
-2. Start the app:
-   ```zsh
-   routerview
-   ```
-3. Open Settings in the UI and import an OpenRouter Activity CSV export.
+2. Open Settings in the UI and import an OpenRouter Activity CSV export.
 
 On first run RouterView creates its runtime home at `~/.routerview/`; uv resolves the dependencies (fastapi, uvicorn[standard], aiosqlite, python-multipart) into its shared cache — that first invocation may briefly hit the network. No virtual environment is written to your home directory.
+
+The dashboard loads React, Babel, Tailwind CSS, PropTypes, and Recharts from public CDNs, so the browser needs network access unless those assets are already cached.
+
+To make `routerview` available on your `PATH`, create an optional symlink from this directory:
+
+```zsh
+ln -s "$(pwd)/routerview" /usr/local/bin/routerview
+```
 
 ## CLI
 
@@ -45,9 +49,9 @@ The dashboard refreshes immediately after a successful CSV import, including the
 - KPI cards, timeseries charts, heatmap, and breakdown panels
 - Multi-dimensional filters for model, provider, API key, origin, and finish reason
 - Paginated generation log with search, sorting, and row expansion
-- CSV and image export from dashboard views
+- CSV export for the generation log and breakdown panels; SVG, PNG, and JPG chart export
 - Saved views and keyboard shortcuts
-- Local SQLite retention under your home directory
+- Local SQLite retention in a configurable runtime directory
 
 ## Architecture
 
@@ -61,25 +65,23 @@ The current design is documented in [docs/DESIGN.md](docs/DESIGN.md).
 
 - [Design Document](docs/DESIGN.md) - current CSV-only architecture and data flow
 - [Setup Guide](docs/SETUP_GUIDE.md) - first-run and CSV import workflow
-- [Delivered Reference](docs/DELIVERED.md) - current feature and endpoint reference
 
 ## Data Storage
 
-RouterView stores runtime state under `~/.routerview/`:
+RouterView stores runtime state under `~/.routerview/` by default. Set `ROUTERVIEW_HOME` to use a different runtime directory.
 
-- `routerview.db` SQLite database
-- `attribute_mapping.json` local attribute mapping overrides
-- `last_port` last bound port
+- `routerview.db` SQLite database, unless `--db` selects another path
+- `last_port` last port selected at startup
 - `backups/` point-in-time SQLite backups created before timestamp rebuilds
 
-The runtime directory and its subdirectories use owner-only permissions (`0700`); the database, SQLite sidecars, port file, mapping file, backups, and other mutable runtime files use `0600`. RouterView hardens existing more-permissive state on startup and refuses symbolic links inside the runtime tree rather than following or changing their targets.
+The runtime directory and its subdirectories use owner-only permissions (`0700`); the database, SQLite sidecars, port file, backup files, and other mutable runtime files use `0600`. RouterView hardens existing more-permissive state on startup and refuses symbolic links inside the runtime tree rather than following or changing their targets.
 
 Python dependencies are managed by uv (declared in the launcher's PEP 723 header) and cached in uv's shared cache — not under `~/.routerview/`.
 
 ## Tests
 
 ```bash
-cd /Users/example/source/utilities/routerview
+cd /path/to/utilities-public/routerview
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q

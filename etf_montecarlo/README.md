@@ -3,7 +3,7 @@
 > [!WARNING]
 > This public project contains no portfolio data. Never put real symbols, holdings, share counts, balances, output paths, or finance exports in this repository. Keep them only in your private local config.
 
-`etf_montecarlo` downloads dividend-payment history for a privately configured portfolio, bootstraps one representative year of payments for each holding, and reports annual dividend-income percentiles per share and scaled by the configured share count. With more than one holding it also reports an aggregate portfolio-income distribution.
+`etf_montecarlo` downloads dividend-payment history from Yahoo Finance for a privately configured portfolio, bootstraps one representative year of payments for each holding, and reports annual dividend-income percentiles per share and scaled by the configured share count. Every run also reports an aggregate portfolio-income distribution, including when the portfolio contains only one holding.
 
 ## Run
 
@@ -21,9 +21,9 @@ The launcher never imports adjacent or legacy configuration. A copied launcher t
 
 [`config.example.json`](config.example.json) documents the schema with only `SYNTH1` and `SYNTH2` and zero placeholder shares. It is deliberately unusable: replace both symbols and every zero or blank setting only in your private `~/.etf_montecarlo/config.json`. Do not copy an edited config back into the repository.
 
-- `holdings`: one or more unique `symbol` and positive `shares` entries.
-- `history.years`: positive number of trailing calendar years of dividend payments to use.
-- `simulation.trials`: positive number of simulated annual-income draws.
+- `holdings`: 1–100 unique `symbol` and positive `shares` entries. Symbols are normalized to uppercase and may contain 1–32 letters, digits, `.`, `^`, `=`, or `-`; shares may not exceed 1 trillion.
+- `history.years`: 1–100 trailing years of dividend payments to use.
+- `simulation.trials`: 1–1,000,000 simulated annual-income draws. The holding count multiplied by the trial count may not exceed 50,000,000.
 - `simulation.seed`: whole number from 0 through 4,294,967,295 for reproducible output, or `null` for a fresh random stream.
 - `output.results_csv`: optional private path for the percentile summary. A relative path is resolved from the private config directory; an empty string prints only the summary.
 
@@ -31,7 +31,7 @@ Configuration is validated in full before network access. Boolean schema version
 
 ## Method and limitations
 
-For each holding, the launcher keeps dividend payments dated within the configured trailing calendar window. It counts payments in each represented calendar year and uses the median annual count as the number of payments in a simulated year. Every trial samples that many payment amounts with replacement from the holding's filtered empirical history. The P5, P25, P50, P75, and P95 annual-income results are reported per share and after multiplication by the private share count.
+For each holding, the launcher keeps dividend payments dated within the configured trailing date window, ending on the day the command runs. It counts payments in each represented calendar year and uses the rounded median annual count as the number of payments in a simulated year. Every trial samples that many payment amounts with replacement from the holding's filtered empirical history. The P5, P25, P50, P75, and P95 annual-income results are reported per share and after multiplication by the private share count.
 
 Holdings are bootstrapped independently; the aggregate portfolio distribution sums their trial-level scaled income. The model therefore does not preserve cross-holding dividend timing or dependence. It also does not model taxes, fees, dividend growth, cuts outside the observed history, reinvestment, or price returns. This is a historical bootstrap, not a forecast or financial advice.
 

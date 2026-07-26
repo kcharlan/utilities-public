@@ -10,32 +10,36 @@ You can use the provided helper scripts to manage the container:
 - **Stop Excalidraw:** `./down.sh`
 - **Refresh the image and recreate the service:** `./update.sh`
 
-Once started, the application will be available at: **[http://localhost:5010](http://localhost:5010)**
+Once started, the application will be available at:
+**[http://localhost:5010](http://localhost:5010)**.
 
 ## Configuration Details
 
 The setup uses Docker Compose with the following parameters:
 
 - **Image:** `excalidraw/excalidraw:latest`
-- **Port Mapping:** Host port `5010` is mapped to container port `80`.
+- **Port Mapping:** Host port `5010` on all interfaces is mapped to container
+  port `80`. The service may therefore be reachable from the local network,
+  subject to the host firewall.
 - **Restart Policy:** Set to `unless-stopped`, ensuring the whiteboard is available after system reboots or Docker restarts.
 
 ### Manual Commands
 
 If you prefer using Docker Compose directly:
 
-```bash
+```sh
 # Start the service
-docker compose up -d
+docker-compose up --build -d
 
 # Stop the service
-docker compose down
+docker-compose down -v
 ```
 
 ## Scripts
 
-- `up.sh`: Navigates to the directory and runs `docker-compose up --build -d`.
-- `down.sh`: Navigates to the directory and runs `docker-compose down -v` (removes Compose-managed volumes; this stack currently defines none).
+- `up.sh`: Runs `docker-compose up --build -d`.
+- `down.sh`: Runs `docker-compose down -v` (the stack currently defines no
+  Compose-managed volumes).
 - `update.sh`: Pulls the latest Excalidraw image, force-recreates the service, waits for readiness, and prints Compose status.
 
 ## Customization

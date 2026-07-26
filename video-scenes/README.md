@@ -1,36 +1,56 @@
 # Video Scene Detection Cheatsheet
-Notes and helpers for running `PySceneDetect` on long-form footage. Useful for quickly splitting a video into individual scenes or exporting representative frames.
 
-## Environment
+This directory contains a small helper for installing
+[PySceneDetect](https://www.scenedetect.com/) and a few common commands for
+detecting cuts, splitting videos, and exporting scene previews.
+
+## Requirements
+
+- `python3.12` must be available on `PATH`.
+- `ffmpeg` must be available on `PATH` to use `split-video`.
+
+## Setup
+
+Run the setup script from this directory:
 
 ```bash
+cd video-scenes
 ./setup.sh
 source venv/bin/activate
 ```
 
-`setup.sh` installs `scenedetect[opencv]` plus the OpenCV wheel and dependencies required for the command-line interface.
+The script deletes and recreates `video-scenes/venv`, then installs PySceneDetect,
+OpenCV, and the CLI dependencies into it. Do not keep anything important in that
+directory.
 
 ## Common Commands
 
 ```bash
-# Split input video at sharp content cuts (default content detector)
+# Detect cuts with the default detector and write one clip per scene.
 scenedetect -i video.mp4 split-video
 
-# Save keyframes from each detected scene into the current directory
+# Save three representative frames per detected scene.
 scenedetect -i video.mp4 save-images
 
-# Skip the first 10 seconds before detecting scenes
-scenedetect -i video.mp4 time -s 10s split-video
+# Analyze from 10 seconds onward, then split the detected scenes.
+scenedetect -i video.mp4 time --start 10s split-video
 
-# Use perceptual hash-based detection with a custom threshold
+# Use perceptual hash detection with a custom threshold.
 scenedetect -i video.mp4 detect-hash -t 0.16 split-video
 ```
 
-See `quick-start.txt` for the raw command references captured while experimenting.
-
 ## Tips
 
-- Add `--min-scene-len 2s` (or similar) to prevent over-fragmenting short clips.
-- Combine detectors: `detect-content` (default) works well for hard cuts, while `detect-threshold` or `detect-hash` catch lighting changes or fades.
-- When saving images, append `--output /path/to/stills` to keep your working directory tidy.
-- Use the `time` subcommand to trim or window the video before running additional detectors—everything after `time` is treated as a nested command.
+- Put global options before commands. For example, use
+  `scenedetect -i video.mp4 --output ./stills save-images`.
+- Add `--min-scene-len 2.0` before the detector or output commands to merge cuts
+  that would create shorter scenes.
+- Use `detect-content` or `detect-adaptive` for fast cuts,
+  `detect-threshold` for fades, and `detect-hash` for perceptual hash
+  comparisons.
+- Use `time --start`, `--end`, or `--duration` to restrict the analyzed range.
+- Run `scenedetect --help` for the global options, or
+  `scenedetect help <command>` for command-specific options.
+
+See the [PySceneDetect CLI reference](https://www.scenedetect.com/docs/latest/cli.html)
+for complete command and detector documentation.

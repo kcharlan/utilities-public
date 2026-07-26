@@ -164,7 +164,7 @@ session end. Clear, actionable content here saves the operator time.
 
 ### Questions for Review section (only for plans sent to review/)
 
-When you send a plan to `review/` instead of `ready/`, add this section at
+When you send a plan to `review/` instead of `staging/`, add this section at
 the TOP of the plan, before the implementation steps:
 
 ```

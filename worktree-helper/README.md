@@ -1,12 +1,12 @@
 # worktree-helper
 
-`worktree-helper` is a single-file, dependency-free Python utility for managing `git worktree` without having to remember the syntax.
+`worktree-helper` is a single-file Python utility for managing `git worktree` without having to remember the syntax. It uses only the Python standard library.
 
 The executable itself is named `worktree`. It supports:
 
 - A keyboard-driven TUI when launched with no flags
 - Full CLI flags for headless or repeatable automation
-- Copy/paste command hints after every normal action
+- Copy/paste command hints after normal actions (except raw-path output)
 - Folder browsing for repo and target selection
 - Branch browsing for existing branches and new branch creation
 
@@ -19,9 +19,9 @@ Git worktrees are useful, but the command surface is not memorable:
 - `git worktree prune ...`
 - `git worktree repair ...`
 - branch rules around existing checkouts
-- detached vs orphan vs new-branch flows
+- detached vs new-branch flows
 
-This utility wraps those flows into a friendlier interface while still exposing the exact CLI you can reuse later.
+This utility wraps those flows in a friendlier interface and prints a reusable CLI command after each normal action.
 
 ## Features
 
@@ -42,7 +42,8 @@ This utility wraps those flows into a friendlier interface while still exposing 
 
 - Python 3.9+
 - Git on `PATH`
-- A real terminal for the TUI mode
+- A real terminal with Python's `curses` module for the TUI mode
+- macOS or a system with `xdg-open` for the `open` action
 
 No third-party Python packages are required.
 
@@ -62,7 +63,7 @@ cp worktree ~/Library/Scripts/worktree
 Or symlink it during development:
 
 ```zsh
-ln -sf /Users/example/source/utilities/worktree-helper/worktree ~/Library/Scripts/worktree
+ln -sf "$PWD/worktree" ~/Library/Scripts/worktree
 ```
 
 ## State Storage
@@ -149,7 +150,7 @@ The wizard can:
 - let you type a full path when that is faster
 - browse existing local branches
 - create new branches from a selected base ref
-- choose detached or orphan flows
+- create reset branches or detached worktrees
 
 ## Command Reference
 
@@ -193,14 +194,13 @@ worktree --doctor
 
 ### Create Modes
 
-Use exactly one of these for non-interactive create:
+Use exactly one of these working modes for non-interactive create. `--from` is optional; Git uses its normal default start point when it is omitted.
 
 ```zsh
 --branch NAME
---new-branch NAME --from REF
---reset-branch NAME --from REF
---detach --from REF
---orphan --new-branch NAME
+--new-branch NAME [--from REF]
+--reset-branch NAME [--from REF]
+--detach [--from REF]
 ```
 
 Other create-related flags:
@@ -210,6 +210,8 @@ Other create-related flags:
 --lock-on-create
 --lock-reason TEXT
 ```
+
+The `--orphan` option appears in version 0.1.0's CLI and TUI, but its current validation conflicts with the required `--new-branch` or `--reset-branch` option. Orphan creation therefore does not currently complete; use `git worktree add --orphan` directly until that implementation is fixed.
 
 ### Prune Flags
 
@@ -264,21 +266,3 @@ cwt --repo ~/src/myapp --worktree ~/worktrees/myapp-auth
 - `prune` cleans stale metadata, not live worktree directories.
 - `repair` is for cases where paths were moved manually outside Git.
 - The main working tree cannot be removed with `git worktree remove`.
-
-## Validation Performed
-
-The script has been smoke-tested against a temporary repository for:
-
-- create
-- lock
-- unlock
-- move
-- repair
-- status
-- delete
-- prune
-
-## Files
-
-- [`worktree`](./worktree)
-- [`README.md`](./README.md)

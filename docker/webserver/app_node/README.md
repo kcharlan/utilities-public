@@ -5,7 +5,11 @@ This directory contains a simple Node.js application built with Express.js. It s
 ## Overview
 
 *   **`api.js`**: The main application file, defining an Express server with ES module syntax and a single API endpoint.
-*   **`package.json`**: Defines project metadata and dependencies (Express.js `^5.2.1`). Uses `"type": "module"` for ES module imports.
+- **`package.json`**: Defines project metadata and the Express.js dependency.
+  It uses `"type": "module"` for ES module imports.
+- **`package-lock.json`**: Records a resolved dependency graph for local tooling,
+  but the current Dockerfile intentionally installs from the compatible range
+  in `package.json` with `--no-package-lock`.
 
 ## Functionality
 
@@ -48,7 +52,7 @@ In `docker-compose.yml`:
         ```
 
 3.  **Rebuild and Restart:**
-    After making changes to `api.js` or `package.json`, you need to rebuild the `app_node` service to apply them:
+    After changing `api.js` or dependencies, rebuild the `app_node` image:
     ```bash
     docker compose up -d --build app_node
     ```

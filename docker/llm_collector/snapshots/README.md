@@ -1,17 +1,23 @@
 # Snapshots
 
-This directory contains snapshots of the collected LLM usage data. Snapshots are created automatically by the data collection server whenever the `/reset` endpoint is called.
+This tracked directory contains the rollup utility, tests, and the snapshot
+format reference. With the recommended Docker setup, live snapshot JSON,
+`snapshots.csv`, and `.bak` files are stored in the external
+`LLM_COLLECTOR_DATA_DIR/snapshots` directory, not in this public source tree.
 
 ## Rollup Script
 
-The `rollup_snapshots.py` script is designed to process the individual JSON snapshot files and aggregate them into a single `snapshots.csv` file. This CSV file provides a daily summary of LLM usage. New snapshots include explicit `daily_totals` buckets from the collector, so usage is attributed by the original `/add` timestamp date instead of the reset time.
+The collector's `/reset` handler automatically applies the same rollup logic to
+the configured external snapshot directory. The standalone
+`rollup_snapshots.py` utility processes snapshot files located beside the
+script; it is primarily for legacy/local-development data and tests.
 
 ### Usage
 
-To run the script, execute the following command in your terminal:
+From the project root, run it with the project's virtual environment:
 
 ```sh
-python3 rollup_snapshots.py
+.venv/bin/python snapshots/rollup_snapshots.py
 ```
 
 The script supports a command-line argument to control how dates are calculated for legacy snapshots that do not include `daily_totals`.
@@ -29,10 +35,13 @@ date,chat.openai.com,bard.google.com,...
 YYYY-MM-DD,12345,67890,...
 ```
 
+These values are request counts, not token counts.
+
 Where:
 
 *   `date`: The daily bucket date. For new snapshots this comes from the collector's `BUCKET_TIMEZONE`; for legacy snapshots it is derived from the snapshot filename timestamp and `--cutoff-hour`.
-*   `chat.openai.com`, `bard.google.com`, etc.: Columns for each hostname, containing the total token counts for that day.
+- `chat.openai.com`, `gemini.google.com`, etc.: Columns for each hostname,
+  containing the request count for that day.
 
 ## Filename Convention
 

@@ -7,7 +7,9 @@ The setup is intentionally split into two steps:
 1. seed runtime-home launchd files from the repo
 2. edit and re-run the runtime-home installer whenever you want to change the job
 
-This keeps the editable automation files in `~/.model_sentinel/` alongside the rest of the tool's local state.
+This keeps the editable automation files in `~/.model_sentinel/` alongside the
+rest of the tool's local state. Set `MODEL_SENTINEL_HOME` before running the
+setup and installer commands to use a different runtime home.
 
 ## Files
 
@@ -36,6 +38,16 @@ cd model_sentinel
 ```
 
 This does not overwrite existing runtime-home launchd files.
+
+The seeded installer captures the absolute repository path at this moment, and
+the generated runner executes the repo-local `model-sentinel` launcher from
+that path. Keep the checkout there. If it moves, edit `PROJECT_DIR` in the
+runtime installer or remove the seeded installer and rerun
+`./setup_launchd.sh` from the new checkout.
+
+The standalone zipapp installer does not change this LaunchAgent target or
+seed `install_launchd.sh`; using the standalone executable for scheduled runs
+requires setting `PROJECT_DIR`/the runner command accordingly.
 
 ## 2. Edit `launchd.env`
 
@@ -149,6 +161,8 @@ That removes the LaunchAgent from `~/Library/LaunchAgents/` but keeps the runtim
 ## Notes
 
 - The scheduled job uses `MODEL_SENTINEL_HOME` pointing at `~/.model_sentinel/`.
+- The generated runner depends on the repository path captured when
+  `setup_launchd.sh` seeded the runtime installer.
 - If credentials are missing in `launchd.env`, the run will fail just like a manual invocation.
 - Notifications behave the same as manual runs.
 - Click-to-open notifications require `terminal-notifier`.

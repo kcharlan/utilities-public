@@ -1,141 +1,180 @@
-# Tax App (rules-based + QIF export)
+# Tax2
 
-A rules-driven tax calculator with optional pre-generated tables and **byte-compatible QIF export**. Uses a uv-managed FastAPI backend with an embedded React SPA (no Streamlit, no Node.js tooling). You can run the web UI, batch-generate tax tables via CLI, and export Quicken-ready transactions from the same codebase.
+Tax2 is a rules-driven federal and state estimated-tax calculator with an
+embedded React web UI, table generation, table lookup, and QIF export. The
+executable is a uv-managed Python script that serves a local FastAPI app; the UI
+does not require Node.js or a separate frontend build.
 
-## Quick Start
+Tax2 currently includes federal rules for 2025 and 2026, Georgia rules for 2025
+and 2026, and Pennsylvania rules for 2026. The checked-in rules are application
+inputs, not tax advice; verify rates and eligibility rules before relying on the
+results.
+
+## Quick start
+
+Install [uv](https://docs.astral.sh/uv/), then run:
 
 ```bash
-# No setup required - just run
 ./tax2
+```
 
-# Or with custom port
+The launcher resolves its PEP 723 dependencies through uv, starts the server at
+`http://127.0.0.1:8000`, and opens that address in the default browser. The first
+run may access the network while uv fills its shared cache. Tax2 also creates a
+preference file at `~/.tax2/config.yaml`, or at
+`$TAX2_HOME/config.yaml` when `TAX2_HOME` is set.
+
+Useful options:
+
+```bash
 ./tax2 --port 9000
-
-# Don't auto-open browser
 ./tax2 --no-browser
-
-# Optional custom rules directory
-./tax2 /path/to/rules
-
-# CLI mode for table generation (uses uv with the pinned requirements)
-uv run --with-requirements requirements.txt cli.py generate-combined --year 2026
+./tax2 --help
 ```
 
-The `tax2` launcher requires [uv](https://docs.astral.sh/uv/) (`brew install uv`) and declares its dependencies in a PEP 723 inline-metadata header. On first run:
-- uv resolves the dependencies (FastAPI, uvicorn, pandas, pyyaml, etc.) into its shared cache — that invocation may briefly hit the network
-- the web server starts on port 8000 and your browser opens
+The preferred port is not selected automatically. If it is occupied, choose a
+different port with `--port`.
 
-Subsequent runs start instantly. No virtual environment or state files are written to your home directory.
+## Web UI
 
-> `requirements.txt` is retained for the repo's dev venv (`.venv`) and the CLI examples above; the launcher no longer reads it — the PEP 723 header in `tax2` is authoritative for the web app's dependencies.
+The UI:
 
-## Features
+- separates monthly earned and unearned income;
+- computes federal tax once on the total income;
+- discovers available states from `rules/states/`;
+- supports one or more independently allocated states;
+- calculates from YAML rules or generated lookup tables; and
+- exports the displayed monthly estimates as one QIF bundle.
 
-- **Rules Engine** – Parse YAML rules describing brackets, deductions, and credits for both federal and state systems. Supports tiered rates, phase outs, and standard deduction logic.
-- **Dynamic Year Selection** – Automatically defaults to the current tax year. Allows manual selection of other available years and falls back to the latest rules if the current year's rules are missing.
-- **Table Lookup** – Load precomputed CSV/Parquet tables to bypass runtime calculations or to cross-check the rules engine for regressions.
-- **QIF Export** – Emit bundled transactions (federal expense/transfer plus one expense/transfer pair per selected state) that import cleanly into Quicken or Moneydance.
-- **Consistency Check** – UI mode that compares live rule calculations to table lookup values and flags drift.
+The selected year defaults to the current year when federal rules exist,
+otherwise to the latest available federal year. A state still needs a rules
+file, or a generated table in table mode, for the selected year. For example,
+Pennsylvania has no 2025 rules and returns a clear error if selected for 2025.
 
-## Project Layout
+State allocations range from 0% to 100% and are independent. GA at 100% and PA
+at 100% is valid; Tax2 does not normalize the values or require them to total
+100%. In rules mode, each state computes tax on its allocated share of earned
+and unearned income. In table mode, the allocation is applied before the
+nearest-income row is selected.
 
-```
-tax2                # uv-managed entry point (FastAPI server + embedded React SPA)
-cli.py              # Typer CLI for table generation (tablegen, generate-combined)
-taxkit/             # Core library (engine, rules loader, table generation, QIF writer, utils)
-rules/              # YAML rulesets
-  federal/          #   Federal brackets (2025.yaml, 2026.yaml)
-  states/GA/        #   Georgia state rules (2025.yaml, 2026.yaml)
-  states/PA/        #   Pennsylvania state rules (2026.yaml)
-tables/             # Output location for generated tables (Parquet + CSV)
-tests/              # Unit, API, rules, table-generation, and QIF regression tests
-docs/               # Design docs (Tech_migration.md, UI_Design_Reference.html, Usage.md)
-archive/            # Previous Streamlit version (archive/streamlit_version/)
-```
+Generated tables treat all income as unearned. Use rules mode when an
+earned-only component, such as Pennsylvania local EIT, is enabled.
 
-### Key Modules in `taxkit`
+## Generate lookup tables
 
-- `engine.py` – Evaluates income against rules to compute per-period tax owed.
-- `rules_loader.py` – Validates and parses YAML into typed models (`models.py`).
-- `tablegen.py` – Sweeps an income grid and records monthly/annual obligations.
-- `qif.py` – Builds transaction text blocks with consistent memo/ledger structure.
-- `utils.py` – Handles year selection and rule path resolution logic.
-
-## Running the Web UI
+The CLI uses `requirements.txt` because `typer` is not needed by the web
+launcher:
 
 ```bash
-./tax2
-```
-
-The embedded React SPA communicates with the FastAPI backend via `/api/*` JSON endpoints. Available modes:
-
-1. **Rules Compute** – Select a tax year (defaults to current), filing status, earned/unearned monthly income, and one or more states to compute monthly obligations on the fly.
-2. **Table Lookup** – Load a pre-generated combined CSV table and inspect values.
-3. **Cross-Check** – Run both engines simultaneously and view deltas.
-4. **QIF Export** – Choose income, number of months, and target ledger names to download QIF entries.
-
-State allocation percentages are independent. GA at 100% and PA at 100% is valid and computes full tax for both states; percentages are never normalized or forced to sum to 100.
-
-## Generating Tables from Rules
-
-To generate both Federal and State tables and merge them into a single CSV (replaces the old `generate_tables.sh` script):
-
-```bash
-# Generate for the current year
-uv run --with-requirements requirements.txt cli.py generate-combined
-
-# Generate for a specific year and multiple states
 uv run --with-requirements requirements.txt cli.py generate-combined --year 2026 --states GA,PA
 ```
 
-This will produce:
-- `tables/federal_YYYY.parquet`
-- `tables/ga_YYYY.parquet`
-- `tables/pa_YYYY.parquet`
-- `tables/combined_YYYY_GA.csv`
-- `tables/combined_YYYY_PA.csv`
-- `tables/combined_YYYY.csv` (legacy alias for the configured default state)
+`--states` accepts a comma-separated list. Without it, the command uses
+`default_states` from the runtime config. The deprecated `--state` option still
+accepts one state.
 
+For each requested state with rules for the selected year, the command writes:
 
-
-## Table Format Expectations
-
-- Per-state combined table: `MonthlyIncome`, `FederalMonthlyTax`, `StateMonthlyTax`.
-- Individual tables: `MonthlyIncome`, `MonthlyTax` (federal) and the same for state.
-- All amounts are monthly; annual values are derived in the UI when needed.
-- Table generation treats all income as unearned. Rules mode is authoritative for earned-only components such as PA local EIT.
-
-## QIF Output
-
-- Each payment cycle generates two federal transactions plus two transactions per selected state:
-  1. Expense: `Tax:Federal Income Tax Estimated Paid`
-  2. Transfer: `[Federal Income Taxes]`
-  3. State expense: defaults from the state YAML `qif.state_expense`
-  4. State transfer: defaults from the state YAML `qif.state_transfer`
-- Dates follow `MM/DD/YY` format inside QIF while memo lines keep `MM/DD/YYYY`.
-- Output is byte-compatible with the earlier `md-autotax` tooling.
-
-## Runtime Config
-
-User preferences live at `~/.tax2/config.yaml` or `$TAX2_HOME/config.yaml` when `TAX2_HOME` is set. The config stores `default_states`, `legacy_combined_alias`, and optional per-state QIF account overrides. Tax rates, brackets, and local tax details stay in repo YAML rules only.
-
-## Rules Components
-
-Rules may use a v2 `components` list. Each component has a generic `name`, optional display `label`, `enabled`, `applies_to` (`earned`, `unearned`, or both), `standard_deduction`, and `brackets`. Component names are engine identifiers; locality names and rates belong in YAML labels and bracket data, not Python code.
-
-## Testing
-
-Create the tracked test environment and run the full suite:
-
-```bash
-cd /Users/example/source/utilities/tax2
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
+```text
+tables/federal_YYYY.parquet
+tables/{state}_YYYY.parquet
+tables/combined_YYYY_STATE.csv
 ```
 
-## Extending
+It also copies the configured `legacy_combined_alias` state's combined CSV to
+`tables/combined_YYYY.csv` when that state was generated. Combined CSVs contain
+`MonthlyIncome`, `FederalMonthlyTax`, and `StateMonthlyTax`. Generated table
+files are ignored by Git.
 
-- Add new states by dropping YAML files under `rules/states/{STATE}/{YEAR}.yaml`.
-- Introduce additional credit/phase-out models by expanding `taxkit.models` and updating the engine dispatcher.
-- To support other export formats, create new writers alongside `taxkit.qif` and wire them into the UI download options.
+For lower-level table generation from a single rules file or directory:
+
+```bash
+uv run --with-requirements requirements.txt cli.py tablegen \
+  --rules rules/federal --year 2026 --out tables/federal_2026.parquet
+```
+
+## QIF export
+
+Each exported payment bundle contains two federal transactions followed by two
+transactions for every selected state:
+
+1. an expense transaction with a negative amount; and
+2. a transfer transaction with the corresponding positive amount.
+
+The default expense categories and transfer accounts come from the state YAML
+`qif` block and can be edited in the UI. Dates use `MM/DD/YY` on QIF date lines
+and `MM/DD/YYYY` in memos. A single-state Georgia export retains compatibility
+with the previous Tax2/`md-autotax` transaction text; multi-state memos include
+the state code.
+
+## Runtime configuration
+
+The generated YAML config contains preferences only:
+
+```yaml
+default_states:
+  - GA
+legacy_combined_alias: GA
+qif_overrides: {}
+```
+
+Selecting states in the UI updates `default_states`. `legacy_combined_alias`
+controls the state represented by `combined_YYYY.csv`. Optional per-state
+`qif_overrides` are read when populating QIF fields. Tax rates, brackets, and
+local-tax details belong in repository rule files, never in this config.
+
+## Rules model
+
+Legacy federal and Georgia YAML files define top-level
+`standard_deduction` and `brackets`; the loader normalizes them to one component.
+A v2 rules file can instead define a `components` list. Each component supports:
+
+- a generic `name` and optional display `label`;
+- `enabled`;
+- `applies_to` (`earned`, `unearned`, or both);
+- per-filing-status `standard_deduction`; and
+- per-filing-status `brackets`.
+
+Do not combine top-level brackets with `components` in one file. Component names
+are engine identifiers; locality names and rates belong in labels and bracket
+data rather than Python code.
+
+## Project layout
+
+```text
+tax2                  uv-managed FastAPI server and embedded React SPA
+cli.py                Typer table-generation CLI
+taxkit/               rules loader, engine, table generator, QIF, and config
+rules/federal/        federal YAML rules
+rules/states/         state YAML rules organized by state code
+tables/               generated lookup tables (ignored except legacy fixtures)
+tests/                unit, API, CLI, config, and regression tests
+docs/Usage.md         detailed operating guide
+docs/multi_state_design.md
+                      durable multi-state design and invariants
+docs/UI_Design_Reference.html
+                      visual reference for the embedded UI
+```
+
+## Tests
+
+Create an isolated development environment and run the complete project suite:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
+
+When a launcher header changes, also run the repository-level uv header guard:
+
+```bash
+uv run --script ../tools/check_uv_headers.py
+```
+
+## Adding rules
+
+Add a year by creating the corresponding federal and state YAML files. Add a
+state by creating `rules/states/{STATE}/{YEAR}.yaml`; the UI discovers state
+directories automatically. See [docs/Usage.md](docs/Usage.md) for the workflow
+and Pennsylvania-specific limitations.

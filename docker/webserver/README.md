@@ -109,7 +109,10 @@ Once the services are running, you can access the web server and APIs:
 *   **Index service environment:** The `index` service reads environment variables to locate volumes and gateway behavior:
     * `WEBROOT=/mnt/webroot` – where the file browser reads from (must match the volume).
     * `CONFIG_ROOT=/mnt/config` – where the endpoint config JSON is stored.
-    * `HOST_DOCKER_GATEWAY=host.docker.internal` – loopback remap target so containers can reach `localhost` services on the host. Set to a custom gateway name or leave unset to use the default.
+    * `HOST_DOCKER_GATEWAY=host.docker.internal` – optional loopback remap
+      target for upstream URLs that use `localhost` or `127.0.0.1`. The current
+      Compose file does not set it, so the application default is used. To
+      override it, add the variable under the `index` service's `environment`.
 
 ### `nginx/default.conf`
 
@@ -120,7 +123,10 @@ This file configures how Nginx routes requests.
     *   `location /api/py/`: Routes requests to the Python FastAPI service (now on port 80).
     *   `location /api/node/`: Routes requests to the Node.js Express service.
     *   `location = /` returns `index.html` when present and only falls back to the file browser when no static landing page exists.
-    *   `location /` and `location @dynamic_index`: Route requests for any other missing static asset to the Node.js file browser service.
+    * `location /` and `location @dynamic_index`: Serve existing paths
+      statically and send other missing paths to the Node.js service. Missing
+      common asset extensions (CSS, JavaScript, images, and fonts) are handled
+      by a more specific location and return 404 instead of falling back.
 
     You can modify these `location` blocks to change API paths, add new proxy rules, or adjust caching headers. After modifying, you'll need to restart the `web` service:
     ```bash
@@ -135,7 +141,10 @@ When adjusting routing or the index service, keep these invariants intact:
 * **`/files` as the browser entry point:** The file browser treats `/files` as an alias for the webroot. Do not create a real `webroot/files` directory or change the alias path without updating the breadcrumb/link builder logic in `index/server.js`.
 * **Fallback ordering matters:** The catch-all `location /` block must keep `try_files $uri @dynamic_index;` so that real assets (like the calculators and bingo app) are served by Nginx, while missing paths fall back to the browser. Reversing the order or adding additional rewrites ahead of this block can break static asset delivery.
 * **Shared volume expectations:** Both Nginx and the index service read from the same `WEBROOT_PATH` mount. The single local `.env` value feeds both services so the browser and Nginx cannot drift to different host directories.
-* **Config persistence:** The `/configure` UI writes to `/mnt/config/endpoints.json`. Mount a host folder you trust (default: `~/webroot/.webserver`) so custom routes survive container rebuilds.
+* **Config persistence:** The `/configure` UI writes to
+  `/mnt/config/endpoints.json`, backed by
+  `$WEBROOT_PATH/.webserver/endpoints.json`, so custom routes survive container
+  rebuilds.
 
 ### Dynamic Endpoint Manager (`/configure`)
 
@@ -144,11 +153,16 @@ Use the built-in control panel at `http://localhost:7711/configure` to create or
 * **Live editing:** Adds, edits, or toggles endpoints in place. Changes take effect on the very next request without restarts.
 * **Path handling:** Each entry can strip or preserve the public prefix when forwarding traffic. This makes it easy to host apps that expect to live at `/` as well as those that are path-aware.
 * **Validation rails:** Reserved prefixes like `/files`, `/configure`, `/api/py`, and `/api/node` are blocked to protect the built-in routes.
-* **Persistence:** Configuration is saved as JSON under `~/webroot/.webserver/endpoints.json`, so version it or back it up like any other project asset.
+* **Persistence:** Configuration is saved as JSON under
+  `$WEBROOT_PATH/.webserver/endpoints.json`. Back it up with the rest of the
+  private webroot; do not commit private hostnames or routes to this public
+  repository.
 * **Host access:** Targets that use `http://localhost` or `http://127.0.0.1` automatically resolve to `host.docker.internal` so containers can proxy to apps running on your host OS. Override this mapping by setting `HOST_DOCKER_GATEWAY` on the `index` service if your Docker host exposes a different gateway name.
 * **Transparent proxying:** Common request bodies (including `application/x-www-form-urlencoded`) are streamed through without server-side parsing, preserving full POST/PUT behavior for upstream apps.
 * **Sticky routing for absolute paths:** When an app served from `/your-alias` makes follow-up requests to absolute paths (e.g., `/search`) while `Strip path` is enabled, the proxy remembers the client for a short window (5 minutes per IP+User-Agent) and continues routing those requests to the same upstream.
-> **Future opportunities:** Now that a UI and API exist, it's straightforward to add niceties such as per-route auth, health checks, or custom header overrides in a follow-up phase.
+* **Trust boundary:** The configuration API has no authentication. The default
+  Nginx binding is loopback-only; do not expose the stack to an untrusted
+  network without adding an access-control layer.
 
 ### `app_node_Dockerfile`
 
@@ -190,7 +204,8 @@ Simply place your HTML, CSS, JavaScript, images, and other static assets directl
 *   **"Page not found" or Nginx 502 Bad Gateway:**
     *   Check if all Docker containers are running: `docker compose ps`
     *   Check the logs for the relevant service (e.g., `web`, `index`, `app_py`, `app_node`) for errors: `docker compose logs <service_name>`
-    *   Ensure the `webroot` path in `docker-compose.yml` is correct and the directory exists on your host machine.
+    * Ensure `WEBROOT_PATH` in the ignored `.env` is an absolute existing host
+      directory.
     *   Verify Nginx configuration syntax: `docker compose exec web nginx -t`
 
 *   **Changes to static files not showing up:**

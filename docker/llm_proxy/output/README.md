@@ -14,8 +14,14 @@ This directory is volume-mounted from the Docker container (`./output:/output`).
 
 ### Prerequisites
 
-1. The proxy container is running (`docker compose up -d`)
-2. To use T3 Chat, you have `T3_CHAT_CREDS` exported in your shell (see [`../scripts/README.md`](../scripts/README.md)); ChatJimmy itself does not require credentials
+1. The proxy container is running (`docker compose up -d`).
+2. To use T3 Chat, `T3_CHAT_CREDS` is exported in the environment that starts
+   OpenCode (see [`../scripts/README.md`](../scripts/README.md)).
+
+ChatJimmy's upstream does not require credentials. Its generated OpenCode
+entry still contains the uniform `{env:CHATJIMMY_CREDS}` API-key field; if your
+client requires that variable to resolve, set it to an obviously non-secret
+placeholder.
 
 ### 1. Merge models into OpenCode
 
@@ -84,10 +90,11 @@ curl -X POST http://localhost:4141/t3chat/v1/chat/completions \
 
 ## Refreshing Models
 
-If an upstream provider adds or removes models, restart the container to re-run discovery:
+If an upstream provider adds or removes models, recreate the container to
+re-run its startup lifecycle and discovery:
 
 ```bash
-docker compose restart
+docker compose up -d --force-recreate
 ```
 
 The output files are regenerated on every startup. Run `update_opencode_config.sh` again afterward to sync the new model list into OpenCode.

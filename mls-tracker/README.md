@@ -1,6 +1,6 @@
 # MLS Tracker
 
-A dashboard for tracking MLS playoff races across both conferences. Pulls live standings from the ESPN public API, dynamically applies team branding (colors, logos), and computes playoff scenarios against a configurable cutoff position.
+A local dashboard for exploring MLS playoff races across both conferences. It pulls standings from the ESPN public API, applies team branding (colors and logos), and computes simplified scenarios by comparing a selected team with the team currently at a configurable cutoff position.
 
 ## Running
 
@@ -9,6 +9,8 @@ A dashboard for tracking MLS playoff races across both conferences. Pulls live s
 ```
 
 Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`); the launcher uses a PEP 723 inline-metadata header. The first run resolves its dependencies (fastapi, uvicorn, requests) into uv's shared cache — that invocation may briefly hit the network; subsequent runs are fast. A browser tab opens automatically to `http://127.0.0.1:8501`.
+
+The dashboard also needs internet access while running: the backend calls ESPN, and the frontend loads React, Babel, Tailwind CSS, Lucide Icons, and Google Fonts from CDNs.
 
 ### Options
 
@@ -19,14 +21,16 @@ Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`); the launcher uses
 
 ## Features
 
-- **Both conferences**: Eastern and Western Conference standings with full team rosters.
+- **Both conferences**: Eastern and Western Conference standings tables.
 - **Dynamic team theming**: Colors and logos fetched from ESPN's teams API — no hardcoded team configs.
 - **Configurable playoff cutoff**: Analyze scenarios against any position (default: 9th).
-- **Clinch/elimination logic**: Clinched if target points exceed cutoff's maximum possible points; eliminated if max possible target points fall below cutoff's current points.
-- **Playoff scenarios**: Worst Case (wins only) and Easiest Path (maximum ties) breakdowns.
-- **Need help analysis**: When needing help from other results, shows what the cutoff team must do.
+- **Cutoff-team status model**: Labels the target as clinched if its current points exceed the selected cutoff team's maximum, or eliminated if its own maximum falls below that team's current points.
+- **Playoff scenarios**: Shows a wins-only path and a maximum-ties path to finish one point above the cutoff team's projected total.
+- **Need-help analysis**: When the target's maximum is below the cutoff team's projected total, shows how many additional points that cutoff team can earn.
 - **Dark mode**: Toggle or auto-detect from system preference, persisted in localStorage.
 - **5-minute data cache** with manual refresh button.
+
+The scenario model assumes a 34-game season and projects only the team currently occupying the selected cutoff position at its current points-per-game rate. It does not model the rest of the conference, MLS tiebreakers, schedule interactions, or competition-rule changes, so its status labels are exploratory rather than official clinch/elimination determinations.
 
 ## Architecture
 
@@ -50,8 +54,8 @@ POST /api/refresh                   → Invalidate data cache
 ## Tests
 
 ```bash
-cd /Users/example/source/utilities/mls-tracker
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
+cd /path/to/utilities-public/mls-tracker
+uv venv .venv --python 3.12
+uv pip install --python .venv/bin/python -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```

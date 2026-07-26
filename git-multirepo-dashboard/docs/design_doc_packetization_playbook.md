@@ -1,5 +1,7 @@
 # Design Doc Packetization Playbook
 
+> **Scope:** Reusable planning guidance, not an active Git Fleet implementation plan. The completed Git Fleet packet files and status/audit artifacts have been removed.
+
 ## Purpose
 
 This playbook tells a planning agent how to convert a large design document into an implementation process that weaker coding agents can execute reliably.

@@ -14,18 +14,25 @@ If a later version finds that an entire registered brokerage section is absent, 
 
 ## Usage
 
+Install [uv](https://docs.astral.sh/uv/) first. From this directory, invoke the
+executable launcher directly; no project environment or dependency-install step is
+required:
+
 ```sh
-div_conv --help
-div_conv export.csv
-div_conv --brokerage fidelity 'exports/*.csv'
-div_conv --output-dir /path/to/local/output export-1.csv export-2.csv
+./div_conv --help
+./div_conv export.csv
+./div_conv --brokerage fidelity 'exports/*.csv'
+./div_conv --output-dir /path/to/local/output export-1.csv export-2.csv
 ```
+
+If the launcher is placed or linked on `PATH`, the same commands may use
+`div_conv` instead of `./div_conv`.
 
 Quote glob patterns when the launcher should expand them. A batch must contain one brokerage only. Without `--brokerage`, every header is checked against all registered adapters and an ambiguous union header is rejected. `--brokerage` checks only the selected adapter’s contract, so it can intentionally resolve such ambiguity while still rejecting files that do not contain that adapter’s required headers. Files are fully validated before any output is committed.
 
 Each input produces `<input-stem>.cooked.csv` and `<input-stem>.qif`. Existing regular-file output is refused unless `--overwrite` is supplied; directories, special files, and symbolic links are never valid output targets. Every artifact for the invocation is staged and synced before commit, then installed only if its target name is still unclaimed. A failed stage or commit removes new outputs and restores files replaced by `--overwrite`, leaving a clean retry. A target created by another writer during commit is preserved rather than replaced. If the filesystem also refuses a backup restore, the backup is preserved and the error names both the backup and intended destination for manual recovery. Cleanup failures never replace the original transaction error or turn already-installed outputs into a reported failure. The console lists every generated transaction with its source row, date, normalized action, mapped security, and amount before reporting file count, transaction count, and total amount.
 
-Generated QIF files begin with `!Type:Invst` and deliberately contain no embedded `!Account` block. Choose the destination investment account during import. This prevents the import from targeting the configured account name and creating an unwanted aggregate transfer. Vanguard withdrawal rows still produce their explicit per-row `XOut` transactions; no synthetic total or balancing transaction is generated.
+Generated QIF files with at least one transaction begin with `!Type:Invst` and deliberately contain no embedded `!Account` block. An input containing only headers or skipped actions produces an empty QIF file alongside its cooked CSV. Choose the destination investment account during import. This prevents the import from targeting the configured account name and creating an unwanted aggregate transfer. Vanguard withdrawal rows still produce their explicit per-row `XOut` transactions; no synthetic total or balancing transaction is generated.
 
 All output paths are planned invocation-wide before staging. An output may never resolve to any input path, even with `--overwrite`, and two inputs may not resolve to the same output. This protects source exports from accidental replacement.
 
@@ -72,7 +79,7 @@ The two contracts are registered as separate adapters. Each adapter owns its req
 
 Blank rows are ignored. Dates may use ISO `YYYY-MM-DD` or Fidelity's `MM/DD/YYYY`; both are normalized before rendering in Moneydance form `M/D'YY`. Amounts use strict financial-number syntax: optional leading sign and dollar sign, correctly grouped thousands commas, decimal fraction, or surrounding parentheses for a negative amount. Forms such as `-$1,234.56`, `$-1,234.56`, and `($1,234.56)` are accepted; misplaced currency signs or malformed comma grouping are rejected instead of being stripped. Amounts must be finite and are bounded to 100 significant digits and 100 integer digits so formatting cannot allocate unbounded output or fail during rendering. Every processed source account and dividend security must have an exact local mapping. Unsupported actions and unmapped values stop the whole batch before outputs are written.
 
-Generated QIF fields reject CR, LF, and other control characters instead of allowing record injection. Text written to cooked CSV also rejects values whose first non-space character is `=`, `+`, `-`, or `@`, because spreadsheet applications may interpret those values as formulas. Rename an unsafe source filename or change the named local mapping and retry; the launcher does not silently rewrite identifiers.
+Generated QIF fields reject CR, LF, and other control characters instead of allowing record injection. Non-numeric, non-date fields written to cooked CSV also reject values whose first non-space character is `=`, `+`, `-`, or `@`, because spreadsheet applications may interpret those values as formulas. Numeric and date columns are exempt so legitimate signed values and dates remain valid; the transaction date and amount are parsed strictly, while other numeric/date source columns pass through unchanged (apart from Fidelity's date and integral-quantity normalization described above). Rename an unsafe source filename, correct an unsafe source value, or change the named local mapping and retry; the launcher does not silently rewrite identifiers.
 
 ## Configuration contract
 

@@ -1,61 +1,38 @@
-# Test Coverage Improvements -- Nice-to-Have
+# Test Coverage Improvements
 
-These are lower-priority test gaps identified during a test suite audit (2026-03-10).
-They improve confidence but are not blocking production correctness.
+**Status:** Active, non-blocking backlog
+**Last reconciled with tests:** 2026-07-26
 
----
+These are confirmed gaps in the current suite. Completed items from the original 2026-03-10 audit were removed: requirements-file includes, slash-containing branch names, branch snapshot replacement, schema foreign keys, prerelease severity handling, and scan-global fixture isolation now have coverage.
 
-- [ ] **Schema constraint validation**
+- [ ] **Schema constraints and defaults**
   - File: `tests/test_packet_00.py`
-  - Area: DB schema setup (`ensure_schema` in `git_dashboard.py`)
-  - Current tests verify column existence but not column types, NOT NULL constraints, DEFAULT values, or FOREIGN KEY relationships.
+  - Current tests verify exact column names and the presence of repository foreign keys, but do not assert declared types, `NOT NULL`, default values, primary-key composition, or `ON DELETE CASCADE`.
 
-- [ ] **`parse_requirements_txt` with `-r` includes and extras syntax**
+- [ ] **Requirements extras syntax**
   - File: `tests/test_dep_detection_parsing.py`
-  - Area: `parse_requirements_txt()` in `git_dashboard.py`
-  - Edge cases like `-r other.txt` (recursive includes) and `requests[security]>=2.0` (extras syntax) are untested.
+  - Requirements includes are covered, but a line such as `requests[security]>=2.0` is not directly tested to prove that the normalized package name is `requests`.
 
-- [ ] **`parse_package_json` with malformed JSON**
+- [ ] **Malformed `package.json`**
   - File: `tests/test_dep_detection_parsing.py`
-  - Area: `parse_package_json()` in `git_dashboard.py`
-  - No test for truncated or invalid JSON input.
+  - Add a truncated/invalid JSON case that asserts an empty result and no exception.
 
-- [ ] **`parse_branches` with slash-containing branch names**
-  - File: `tests/test_branch_scan.py`
-  - Area: `parse_branches()` in `git_dashboard.py`
-  - `feature/login` style branch names are common but untested.
-
-- [ ] **HTML template validity**
+- [ ] **HTML structural validity**
   - File: `tests/test_html_shell.py`
-  - Area: HTML template rendering in `git_dashboard.py`
-  - No test that the template produces valid HTML (unclosed tags, matching quotes). Current tests only check string presence.
+  - Existing tests verify required strings and components, not balanced/valid document structure.
 
-- [ ] **`compute_sparklines` edge cases**
+- [ ] **Sparkline date boundaries**
   - File: `tests/test_sparklines_progress.py`
-  - Area: `compute_sparklines()` in `git_dashboard.py`
-  - No test for all-zero weeks or future-dated stats.
+  - Add explicit all-zero and future-dated-stat cases. Empty input and data older than the 91-day window are already covered.
 
-- [ ] **`upsert_branches` stale branch removal**
-  - File: `tests/test_branch_scan.py`
-  - Area: `upsert_branches()` in `git_dashboard.py`
-  - Code deletes all branches before reinserting, but no test verifies that branches removed from git are removed from the DB.
-
-- [ ] **`run_dep_scan_for_repo` TOCTOU**
+- [ ] **Dependency-scan path removal race**
   - File: `tests/test_dep_scan_orchestration.py`
-  - Area: `run_dep_scan_for_repo()` in `git_dashboard.py`
-  - No test for the race where a repo path is deleted between dep file detection and health check subprocess execution.
+  - Cover a repository or manifest disappearing between discovery and the ecosystem health subprocess.
 
-- [ ] **SSE client disconnect during scan**
+- [ ] **SSE client disconnect cleanup**
   - File: `tests/test_full_scan_sse.py`
-  - Area: `_scan_queues` management in `git_dashboard.py`
-  - No test for orphaned queues in `_scan_queues` when an SSE client disconnects mid-stream.
+  - Queue production and scan cleanup are covered, but there is no direct streaming-client test proving `_scan_queues` is released when a client disconnects before the final event.
 
-- [ ] **`classify_severity` with non-semver versions**
-  - File: `tests/test_python_dep_health.py`, `tests/test_node_dep_health.py`, `tests/test_remaining_dep_health.py`
-  - Area: `classify_severity()` in `git_dashboard.py`
-  - Version strings like `1.0.0rc1`, `2024.1.1`, or CalVer formats are untested.
-
-- [ ] **Cross-test state isolation for module-level globals**
-  - File: `tests/test_full_scan_sse.py`, `tests/test_dep_scan_orchestration.py`
-  - Area: `_active_scan_id`, `_scan_queues`, `_scan_task` globals in `git_dashboard.py`
-  - These are module-level mutable state not explicitly reset in teardown, risking cross-test contamination.
+- [ ] **Additional non-standard version formats**
+  - Files: `tests/test_python_dep_health.py`, `tests/test_node_dep_health.py`, `tests/test_remaining_dep_health.py`
+  - Prerelease handling is covered. Add explicit CalVer and invalid/non-PEP-440 strings to document the intended fail-open classification behavior.

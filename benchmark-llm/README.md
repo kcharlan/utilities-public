@@ -345,6 +345,7 @@ For `visibility.expose` and `visibility.hide`, the runtime strips the static pat
 ## Examples
 
 - [examples/logic-mini](./examples/logic-mini/README.md)
+- [examples/cron-eval](./examples/cron-eval/README.md)
 - [examples/policy-engine](./examples/policy-engine/README.md)
 - [examples/plugin-advanced](./examples/plugin-advanced/README.md)
 
@@ -364,5 +365,6 @@ As a quick uv-managed equivalent, run `uv run --extra dev pytest`.
 ## Current Constraints
 
 - The built-in runtime supports `git_worktree` for repo tasks. Container isolation is intentionally deferred.
+- Manifest environment expansion supports `$NAME` and `${NAME}`. Shell parameter forms such as `${NAME:-default}` are not supported.
 - There is no web UI. Reports are static files.
 - Archiving and garbage-collection commands are not currently implemented.

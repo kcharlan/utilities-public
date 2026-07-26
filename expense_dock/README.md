@@ -20,17 +20,22 @@ The expense workbook is an Excel file with five worksheets. A schema template is
 
 **Expense Log** -- the main data table. Each row is one expense with columns for ID, Date, Vendor, Amount, Category, Business Purpose, Paid By, Payment Method, Reimbursable flag, Reimbursement Status, Receipt Link, Receipt Filename, and Notes. Filters are enabled on the header row. Expense Dock appends new rows here automatically.
 
-**Categories** -- lookup values that drive the dropdowns in the app and in the Entry Form worksheet. Four columns: Categories, Payment Methods, Paid By (people/entities), and Reimbursement Status. The tracked values are intentionally unusable `SYNTHETIC` placeholders; replace them only in your private operational copy.
+**Categories** -- lookup values that drive the dropdowns in the app and in the Entry Form worksheet. Four columns: Categories, Payment Methods, Paid By (people/entities), and Reimbursement Status. The tracked values are intentionally unusable `SYNTHETIC` placeholders; replace them only in your private operational copy. See the lookup-row constraint under Workbook Configuration before connecting that copy to the app.
 
-**Summary** -- auto-calculated totals and a category-by-category spending breakdown. All formulas reference the Expense Log, so this stays current as rows are added.
+**Summary** -- preconfigured totals and two synthetic category-summary rows. The formulas cover Expense Log rows 2 through 1001; extend the ranges and category rows if the operational workbook grows beyond those bounds.
 
 **Entry Form** -- a manual data-entry form for use when working directly in Excel (without the Expense Dock app). Fill in the yellow input cells, then copy the green "Ready to Copy" row into the Expense Log. See the form for step-by-step instructions.
 
-**Guidelines** -- detailed setup and usage documentation covering OneDrive folder structure, receipt naming conventions, how to use the Entry Form, and how to customize the tracker. Read this worksheet first if you are setting up the system for the first time or onboarding someone new.
+**Guidelines** -- privacy-safe setup reminders for creating a private copy, replacing placeholders, preserving the required schema, using the Entry Form, and keeping operational data out of this repository.
 
 ## Quick Start
 
-Run the entrypoint directly:
+Prerequisites:
+
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`)
+- A browser that can reach the frontend CDNs used by the embedded UI (unpkg, Tailwind's CDN, and Google Fonts)
+
+From this project directory, run the entrypoint directly:
 
 ```zsh
 ./expense_dock
@@ -43,7 +48,9 @@ ln -s "$(pwd)/expense_dock" /usr/local/bin/expense_dock
 expense_dock
 ```
 
-Expense Dock runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using a PEP 723 inline-metadata header. On first run it creates its runtime home at `~/.expense_dock/` and writes a default `config.json`; uv resolves the dependencies (fastapi, uvicorn[standard], python-multipart, httpx, msal, openpyxl) into its shared cache — that first invocation may briefly hit the network. No manual `pip install` and no virtual environment in your home directory are required.
+Expense Dock runs via uv using a PEP 723 inline-metadata header. On first run it creates its runtime home at `~/.expense_dock/` and writes a default `config.json`; uv resolves the dependencies (fastapi, uvicorn[standard], python-multipart, httpx, msal, openpyxl) into its shared cache — that first invocation may briefly hit the network. No manual `pip install` and no virtual environment in your home directory are required.
+
+The preferred port is `8420`. If it is occupied, Expense Dock scans through port `8439` and opens the first free port. Use `--port` to choose a different starting port and `--no-browser` to suppress automatic browser launch.
 
 ## App Interface
 
@@ -80,9 +87,9 @@ Expense Dock expects the workbook to follow the layout in the template ([`docs/E
   Receipt Filename, Notes
   ```
 
-- Lookup worksheet named `Categories` with four columns: Categories (A), Payment Methods (B), Paid By (C), Reimbursement Status (D)
+- Lookup worksheet named `Categories` with Categories in column A, Payment Methods in B, Paid By in C, and Reimbursement Status in D. The app reads every nonblank cell in those columns from row 2 downward; it does not detect or skip a lookup header row. The public template includes explanatory labels and privacy text in that scanned area, so remove non-choice cells from columns A:D in the private operational copy before refreshing app lookups. If you move the template's choices from rows 4–25, also update the Entry Form data-validation ranges.
 
-The workbook file should be located at the shared OneDrive root (e.g. `Business Expenses/Expense_Tracker.xlsx`). Configure the exact filename and path in the Setup panel.
+The workbook must be a direct child of the shared OneDrive folder (for example, share `Business Expenses` when the workbook is `Business Expenses/Expense_Tracker.xlsx`). In Setup, configure the folder's share URL and the workbook filename separately; nested workbook paths are not supported. Receipt year folders are also created directly under this shared folder.
 
 ## Runtime State
 
@@ -93,6 +100,8 @@ State files live under `~/.expense_dock/`:
 - `pending/*.json` -- queued retry records for workbook append failures
 - `last_port` -- most recent port used
 
+Set `EXPENSE_DOCK_HOME` to use a different runtime directory.
+
 The runtime directory and `pending/` are enforced as mode `0700`; configuration, token cache, queue records, and other runtime files are atomically written or hardened to mode `0600`. Symlinked sensitive runtime paths are refused.
 
 ## Operational Notes
@@ -101,6 +110,7 @@ The runtime directory and `pending/` are enforced as mode `0700`; configuration,
 - If the normalized receipt filename already exists in the target month folder, Expense Dock reuses it instead of uploading again
 - If the workbook already contains the same receipt link or receipt filename, the submission is treated as already logged (no duplicate row)
 - Large files use a resumable upload session; small files use a direct upload
+- Receipt uploads are limited to 100 MB
 - OneDrive operations target resolved shared-drive item IDs, not a local OneDrive sync folder
 - Help and instructions are available in the in-app Help modal
 - Action results appear as toast notifications; failures with a CSV fallback expose that directly in the toast and retry queue
@@ -110,7 +120,7 @@ The runtime directory and `pending/` are enforced as mode `0700`; configuration,
 Create the tracked test environment and run the full suite:
 
 ```zsh
-cd /Users/example/source/utilities/expense_dock
+cd /path/to/utilities-public/expense_dock
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q

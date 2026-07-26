@@ -1,8 +1,8 @@
 # docpipe
 
-A fully local, free document conversion pipeline for macOS. Converts PDF, DOCX, PPTX, HTML, and XLSX into a canonical, model-friendly representation (Markdown + structured JSON).
+A fully local document conversion pipeline for macOS. Converts PDF, DOCX, PPTX, HTML, and XLSX into a canonical, model-friendly representation (Markdown + structured JSON).
 
-Python setup requires only [uv](https://docs.astral.sh/uv/) (`brew install uv`) — the launcher uses a PEP 723 inline-metadata header, and uv resolves its Python packages into the shared cache on first run. PDF conversion additionally requires Poppler; Pandoc enables fallback paths, as detailed below.
+Python setup requires only [uv](https://docs.astral.sh/uv/) (`brew install uv`) — the launcher uses a PEP 723 inline-metadata header, and uv resolves its Python packages into the shared cache on first run. Meaningful PDF conversion additionally requires Poppler; Pandoc enables fallback paths, as detailed below.
 
 ## Environment Dependencies
 
@@ -16,7 +16,7 @@ These are external CLI tools that docpipe shells out to. If missing, docpipe war
 
 | Tool | Install command | What it enables |
 |------|----------------|-----------------|
-| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`), PDF page-to-image rendering (`pdftoppm`), PDF metadata (`pdfinfo`). **Required for PDF conversion.** |
+| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.0 does not emit its metadata. **Required for useful PDF output.** |
 | **pandoc** | `brew install pandoc` | Fallback HTML→Markdown conversion. Primary path uses the Python `markdownify` library (auto-installed), so Pandoc is only needed if markdownify fails on a particular HTML file. Also used as DOCX fallback if `python-docx` errors. |
 
 Install both in one shot:
@@ -40,7 +40,6 @@ These are declared in the launcher's PEP 723 header and resolved by uv on first 
 | `python-docx` | DOCX text + table extraction |
 | `python-pptx` | PPTX slide text, tables, speaker notes |
 | `openpyxl` | XLSX sheet extraction |
-| `pandas` | DataFrame/CSV support for XLSX |
 | `beautifulsoup4` + `lxml` | HTML parsing |
 | `readability-lxml` | HTML main-content extraction |
 | `markdownify` | HTML→Markdown conversion (primary path) |
@@ -63,7 +62,7 @@ brew install poppler pandoc
 # JSON output only
 ./docpipe convert --input /path/to/file.xlsx --out /path/to/output/ --format json
 
-# Strict mode: fail if any fallback/degraded warning occurs
+# Strict mode: fail if conversion produces any warning
 ./docpipe convert --input /path/to/file.html --out /path/to/output/ --strict
 ```
 
@@ -71,13 +70,13 @@ On first run, uv resolves the dependencies into its shared cache (may briefly hi
 
 ## Supported Formats
 
-| Format | Text | Tables | Images | Notes |
-|--------|------|--------|--------|-------|
-| PDF | Yes (`pdftotext`) | Layout-preserved | Optional (`pdftoppm`) | Best for born-digital PDFs |
-| DOCX | Yes (`python-docx`) | Yes (CSV/Markdown) | Embedded extraction | Pandoc fallback on error |
-| PPTX | Yes (`python-pptx`) | Yes (shape tables) | Not supported | Includes speaker notes |
-| HTML | Yes (Readability) | Yes (via markdownify) | Not extracted | markdownify primary, Pandoc fallback |
-| XLSX | Yes (`openpyxl`) | Yes (CSV per sheet) | Not supported | `data_only=True` for computed values |
+| Format | Text | Structured tables | Images/assets | Notes |
+|--------|------|-------------------|---------------|-------|
+| PDF | Yes (`pdftotext -layout`) | No | Page renders with `--images` (`pdftoppm`) | Born-digital PDFs only; no OCR |
+| DOCX | Yes (`python-docx`) | CSV | Embedded images with `--images` | Pandoc text fallback on `python-docx` error |
+| PPTX | Yes (`python-pptx`) | CSV from table shapes | Not supported | Includes speaker notes |
+| HTML | Yes (Readability + markdownify) | CSV from HTML tables | Not supported | Pandoc, then plain text, are fallback paths |
+| XLSX | Yes (`openpyxl`) | CSV per sheet | Not supported | Reads cached formula values with `data_only=True` |
 | XLS | Not supported | — | — | Convert to XLSX manually |
 
 ## Output Structure
@@ -88,7 +87,7 @@ For an input `MyFile.pdf`, produces:
 output_dir/
 ├── MyFile.opencode.md      # Markdown body with headings, tables, image refs
 ├── MyFile.opencode.json    # Structured JSON: metadata, segments, tables, assets
-└── MyFile.assets/          # Extracted images (only if --images flag used)
+└── MyFile.assets/          # Extracted images (supported formats with --images)
     ├── page-001.png
     ├── page-002.png
     └── ...
@@ -108,20 +107,20 @@ docpipe convert --input PATH --out DIR [OPTIONS]
 | `--format` | `md+json` | Output format: `md`, `json`, or `md+json` |
 | `--max-page-images` | `50` | Max PDF pages to render as images |
 | `--xlsx-max-cells` | `2000000` | Safety cap on cells extracted from XLSX |
-| `--strict` | `false` | Treat warnings as errors (exit non-zero, no output files written) |
+| `--strict` | `false` | Treat conversion warnings as errors (exit 2 without writing Markdown/JSON; an image-cap warning can occur after assets are created) |
 | `--verbose` | `false` | Show detailed logging and tracebacks on error |
 
 ## Environment Prep Checklist
 
 ```bash
-# 1) Verify Python
-python3 --version
+# 1) Verify uv
+uv --version
 
 # 2) Install external tools (recommended)
 brew install poppler pandoc
 
 # 3) Verify external tools
-which pdftotext pdftoppm pdfinfo pandoc
+command -v pdftotext pdftoppm pdfinfo pandoc
 
 # 4) Run smoke help (first run resolves the uv environment)
 ./docpipe convert --help
@@ -139,13 +138,13 @@ docpipe includes a custom tool definition for [OpenCode](https://opencode.ai) so
    ```bash
    cd /path/to/your/project
    mkdir -p .opencode/tools
-   cp /Users/example/source/utilities/docpipe/opencode_tool/convert_document.ts .opencode/tools/convert_document.ts
+   cp /path/to/utilities-public/docpipe/opencode_tool/convert_document.ts .opencode/tools/convert_document.ts
    ```
 
    **Global copy** (tool available in all OpenCode sessions):
    ```bash
    mkdir -p ~/.config/opencode/tools
-   cp /Users/example/source/utilities/docpipe/opencode_tool/convert_document.ts ~/.config/opencode/tools/convert_document.ts
+   cp /path/to/utilities-public/docpipe/opencode_tool/convert_document.ts ~/.config/opencode/tools/convert_document.ts
    ```
 
    If you use a symlink, OpenCode may resolve the file from its real path and fail module resolution for `@opencode-ai/plugin`. Copying avoids that issue.
@@ -164,26 +163,8 @@ docpipe includes a custom tool definition for [OpenCode](https://opencode.ai) so
 
 ### Requirements for the OpenCode tool
 
-- The `docpipe` executable must be accessible at the path specified in the tool file. By default it resolves to `<worktree>/docpipe/docpipe`. If you've placed docpipe elsewhere, edit the `docpipePath` line in `convert_document.ts`.
+- The `docpipe` executable must resolve through one of the locations in the tool file: its configured preferred path, `<current-worktree>/docpipe/docpipe`, or `docpipe` on `PATH`. For a global OpenCode installation used outside this repository, set `preferredPath` in `convert_document.ts` to this launcher's absolute path or make `docpipe` available on `PATH`.
 - OpenCode uses [Bun](https://bun.sh) as its runtime, which is installed with OpenCode. No additional Bun/Node setup is needed.
-
-### Alternative: MCP server (future)
-
-For a more structured integration, docpipe could be exposed as an MCP server. This would require adding a `mcp-serve` subcommand that speaks JSON-RPC over stdio, then configuring it in `opencode.json`:
-
-```json
-{
-  "mcp": {
-    "docpipe": {
-      "type": "local",
-      "command": ["/path/to/docpipe", "mcp-serve"],
-      "enabled": true
-    }
-  }
-}
-```
-
-This is not implemented in v1 but is a natural extension.
 
 ## Troubleshooting
 
@@ -195,14 +176,14 @@ This is not implemented in v1 but is a natural extension.
 
 **First run is slow** — Normal. uv is resolving and caching the dependencies. Subsequent runs are instant.
 
-**Reset the runtime** — If something goes wrong with the Python environment, clear uv's cache for the script with `uv cache clean` and run docpipe again.
+**Reset cached dependencies** — If the uv-managed environment appears corrupt, `uv cache clean` clears uv's shared cache; run docpipe again to resolve dependencies. This affects uv's cache beyond docpipe.
 
 ## Tests (pytest)
 
 Unit tests cover CLI parser + strict-mode behavior.
 
 ```bash
-cd /Users/example/source/utilities/docpipe
+cd /path/to/utilities-public/docpipe
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q

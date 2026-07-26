@@ -1,113 +1,152 @@
 # LLM Token Analyzer & Format Converter
 
-This project provides a dual-interface utility for analyzing and converting text data formats, with a focus on token count efficiency for Large Language Model (LLM) prompts. It includes a standalone web interface and a Python-based command-line interface (CLI).
+This project has two independent interfaces:
 
-## Features
+- `web/index.html` converts pasted structured data in the browser and compares
+  the rendered formats with a token-count estimate.
+- `src/data_convert.py` converts files from the command line. It does not count
+  tokens.
 
-- **Convert Data:** Seamlessly convert between JSON (pretty/compact), XML, YAML, TOML, and TOON formats.
-- **Analyze Token Counts:** Compare token counts across different formats using either the official OpenAI API or a local fallback estimator.
-- **Dual Interface:**
-    - **Web Tool:** A single HTML file for copy-paste analysis and conversion; it loads TOML/YAML helpers and fonts from public CDNs, so network access is required when the page loads unless those resources are already cached.
-    - **CLI Tool:** A Python script for file-based data conversion.
+The structured formats are pretty JSON, compact JSON, XML, YAML, TOON, and
+TOML. The web page also has a raw-text, count-only input.
 
----
+## Web interface
 
-## Web Interface
+Open `web/index.html` in a modern browser. Paste data into a panel and select
+**Calculate & Convert**. Valid structured input is parsed into a JavaScript
+object, rendered into every structured format, and added to the comparison
+table. The raw-text panel only estimates the pasted text; it does not convert
+or clear the structured inputs.
 
-The web interface is a standalone HTML file whose conversion logic runs in your browser. No local installation is required, but the page imports `@iarna/toml`, `js-yaml`, and fonts from CDNs and therefore is not fully offline.
+The page has no backend and does not upload pasted data to this repository. It
+does, however, load the following resources from public CDNs:
 
-### Usage
+- the `@iarna/toml` parser and serializer;
+- `js-yaml`;
+- Google Fonts.
 
-1.  Open the `web/index.html` file in a modern web browser.
-2.  Enter your data into one of the text boxes (e.g., paste JSON into the "JSON (Pretty)" box).
-3.  Click the **"Calculate & Convert"** button for that format.
-4.  The tool will:
-    - Validate your input.
-    - Convert the data to all other supported formats and populate the other text boxes.
-    - Calculate the token count for each format.
-    - Display a comparison table showing the most token-efficient format.
+Network access is therefore required on first load unless those resources are
+already cached. The selected theme is the only value saved to browser
+`localStorage`.
 
-### Using the OpenAI API for Tokenization
+### Token counts
 
-The web tool can attempt a legacy OpenAI Completions request to obtain the API-reported prompt-token count. If that request is unavailable, rejected, or times out, it automatically uses the local four-characters-per-token estimate.
+Without an API key, the page uses a simple local estimate:
 
-1.  **Get an API Key:** You need a valid API key from [OpenAI](https://platform.openai.com/account/api-keys).
-2.  **Set the API Key:** Before using the tool, open your browser's developer console (usually by pressing `F12` or `Ctrl+Shift+I`) and enter the following command:
-    ```javascript
-    window.OPENAI_API_KEY = "YOUR_API_KEY_HERE"; // pragma: allowlist secret
-    ```
-    Replace `"YOUR_API_KEY_HERE"` with your actual key.
-3.  **Verification:** When you calculate tokens, a green "✅ API" chip appears only if the request succeeds. Otherwise the tool uses the local estimator, indicated by a yellow "⚙️ Local" chip. Avoid exposing a valuable API key in a shared browser profile or screen recording.
+```text
+ceil(number of characters / 4)
+```
 
----
+This is useful for relative comparisons, but it is not a model tokenizer and
+must not be treated as an exact billable-token count.
 
-## Command-Line Interface (CLI)
+If `window.OPENAI_API_KEY` is set, the current implementation first attempts a
+three-second request to the legacy OpenAI Completions endpoint using
+`gpt-3.5-turbo-instruct` and reads `usage.prompt_tokens`. Any missing key,
+request error, rejection, or timeout falls back silently to the local estimate.
+The status chip reports `✅ API` only when that request succeeds and
+`⚙️ Local` otherwise.
 
-The CLI tool `data_convert.py` allows for file-based conversion between supported formats. It does not perform token analysis.
+To try the API path, set the key in the browser developer console before
+calculating:
+
+```javascript
+window.OPENAI_API_KEY = "YOUR_API_KEY_HERE"; // pragma: allowlist secret
+```
+
+Putting an API key in a browser exposes it to that page and to anyone who can
+inspect the browser session. Use a restricted, disposable key if you enable
+this optional path.
+
+### Web conversion limits
+
+- The browser TOON implementation is a small key/value subset. It is separate
+  from the Python CLI's `toon-format` library and is not a general-purpose TOON
+  parser.
+- Generated XML uses a synthetic `<root>` element around the common object.
+  XML attributes are not preserved, and numeric/boolean-looking element text
+  is converted to JavaScript number/boolean values when parsed.
+- TOML cannot represent `null`; if any converted value is `null`, the
+  structured conversion run reports an error.
+- The browser code currently has no automated test suite. The Python tests do
+  not validate the HTML/JavaScript implementation.
+
+## Command-line interface
 
 ### Setup
 
-1.  **Prerequisites:** Python 3.10+ is required.
-2.  **Create a Virtual Environment:** It is highly recommended to use a virtual environment to manage dependencies.
-    ```sh
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
-3.  **Install Dependencies:** Install the required Python packages from `requirements.txt`. This will also install the `toon-format` library directly from its GitHub repository.
-    ```sh
-    pip install -r requirements.txt
-    ```
+Python 3.10 or newer is required. From this directory, create and activate a
+virtual environment, then install the project requirements:
+
+```sh
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+`requirements.txt` installs the TOON implementation directly from its GitHub
+repository, so the initial installation requires network access.
 
 ### Usage
 
-The CLI tool follows a simple syntax:
-
 ```sh
-python src/data_convert.py --input <path_to_input_file> --to <format> [--output <path_to_output_file>]
+python src/data_convert.py \
+  --input <input-file> \
+  --to <json|jsonc|xml|toon|yaml|toml> \
+  [--output <output-file>]
 ```
 
--   `--input`: The path to the source file. The tool auto-detects the format from the file extension (`.json`, `.xml`, `.toon`, `.yaml`, `.yml`, `.toml`).
--   `--to`: The target format. Must be one of `json`, `jsonc` (compact JSON), `xml`, `toon`, `yaml`, or `toml`.
+Input format is selected from the filename extension:
 
-TOML does not represent `null`/`None` values per its specification. If your data set contains nulls, the converter will raise a descriptive error instead of silently changing the payload.
--   `--output` (Optional): The path for the output file. If omitted, the output will be saved in the current directory with a name derived from the input file (e.g., `input.json` converted to XML becomes `input.xml`).
+| Extension | Input format |
+| --- | --- |
+| `.json` | JSON |
+| `.xml` | XML |
+| `.toon` | TOON |
+| `.yaml`, `.yml` | YAML |
+| `.toml` | TOML |
+| anything else | JSON |
 
-### Examples
+`json` emits indented JSON and `jsonc` emits compact JSON. When `--output` is
+omitted, the file is written to the current directory using the input basename
+and target extension. Both JSON targets use `.json`.
 
-**Example 1: Convert JSON to XML**
+Examples:
+
 ```sh
 python src/data_convert.py --input tests/data/sample.json --to xml --output converted.xml
-```
-
-**Example 2: Convert XML to Compact JSON (with default output name)**
-```sh
 python src/data_convert.py --input tests/data/sample.xml --to jsonc
-```
-This will create a file named `sample.json` in your current directory.
-
-**Example 3: Convert YAML to TOON**
-```sh
 python src/data_convert.py --input tests/data/sample.yaml --to toon --output from_yaml.toon
-```
-
-**Example 4: Convert TOML to Pretty JSON**
-```sh
 python src/data_convert.py --input tests/data/sample.toml --to json
 ```
 
----
+Important conversion behavior:
+
+- JSON output is key-sorted. YAML preserves the parsed mapping order. XML
+  output sorts mapping keys.
+- XML requires one root element. Non-single-key data is wrapped in `<root>`
+  when converting to XML.
+- XML element values load as strings through `xmltodict`; an XML round trip may
+  therefore not preserve scalar Python types.
+- TOML conversion fails with exit code `4` when the data contains `null`/`None`.
+- Parse/input errors use exit code `3`, conversion errors use `4`, output-write
+  errors use `5`, and `argparse` usage errors use `2`. Runtime error details are
+  emitted as one-line JSON on standard error.
 
 ## Testing
 
-The project includes a comprehensive test suite for the CLI tool, which can be run using `pytest`.
+With the project virtual environment active:
 
-1.  **Activate your virtual environment:**
-    ```sh
-    source venv/bin/activate
-    ```
-2.  **Run the tests:**
-    ```sh
-    python3 -m pytest
-    ```
+```sh
+python3 -m pytest
+```
 
-The round-trip matrix includes every meaningful cross-format conversion. Same-format pairs are not tests, and data containing `null` is not sent through TOML because TOML cannot represent that value.
+The pytest suite covers each Python converter, CLI success/error paths, default
+output naming, and cross-format round trips. TOML pairs containing null values
+are intentionally excluded because TOML has no null value. There are currently
+no automated browser tests.
+
+## Design references
+
+- [Product requirements](docs/LLM_Token_Analyzer_PRD.md)
+- [Technical specification](docs/llm_token_analyzer_technical_spec_v_1.md)

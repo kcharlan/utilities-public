@@ -1,16 +1,38 @@
 # Video Compiler
-Batch tool that samples highlight clips from long-form footage and appends a tail segment, producing shareable recaps in one pass. Relies on MoviePy with optional multiprocessing.
 
-## Environment
+`video_compiler.py` creates a recap for each video matched by an input path or
+glob. Each recap contains sampled clips followed by the requested segment from
+the end of the source video. Multiple input files are processed concurrently.
+
+## Requirements
+
+- Python 3.12
+- FFmpeg with the `h264_videotoolbox` encoder
+
+The provided setup script recreates `vid-compiler/venv` and installs MoviePy,
+NumPy, and tqdm. Run it from this directory:
 
 ```bash
 ./setup.sh
 source venv/bin/activate
 ```
 
-`moviepy` pulls in `ffmpeg` wrappers, but you still need FFmpeg installed on your system (Homebrew: `brew install ffmpeg`).
+`setup.sh` deletes any existing `venv` directory before creating the new
+environment. MoviePy obtains an FFmpeg binary through ImageIO automatically,
+but that binary must provide the fixed `h264_videotoolbox` encoder used by this
+script. To use Homebrew's FFmpeg build on macOS:
+
+```bash
+brew install ffmpeg
+export FFMPEG_BINARY="$(brew --prefix)/bin/ffmpeg"
+```
+
+The codec choice makes the current script macOS-oriented. The command fails for
+an FFmpeg build that does not provide the encoder.
 
 ## Usage
+
+Run the command from `vid-compiler` with the virtual environment activated:
 
 ```bash
 python video_compiler.py \
@@ -23,30 +45,41 @@ python video_compiler.py \
   --max_workers 8
 ```
 
-Arguments:
+Keep glob patterns quoted so the script, rather than the shell, expands them.
 
-- `--input` – Single file path or glob pattern (`"*.mp4"`). Each match is processed independently.
-- `--output_dir` – Folder for compiled clips (created if missing).
-- `--samples` – Number of samples to grab from the first portion of the video.
-- `--sample_length` – Duration (seconds) of each sample clip.
-- `--tail_length` – Seconds from the end of the video to append verbatim.
-- `--sampling` – `even` (linspace across the eligible segment) or `random`.
-- `--max_workers` – Parallel workers for ProcessPoolExecutor; default uses all cores.
-- `--verbose` – Print sample ranges while processing.
+| Argument | Required | Default | Description |
+| --- | --- | --- | --- |
+| `--input` | Yes | — | One file path or a glob pattern. Each match is processed independently. |
+| `--output_dir` | No | `outputs` | Output directory, created when necessary. Relative paths are resolved from the current working directory. |
+| `--samples` | No | `10` | Requested number of sample clips. |
+| `--sample_length` | No | `10` | Length of each sample clip, in seconds. |
+| `--tail_length` | No | `90` | Length of the final segment, in seconds. |
+| `--sampling` | No | `even` | `even` for evenly spaced start times or `random` for randomly selected start times. |
+| `--max_workers` | No | Executor default | Maximum number of concurrent worker processes. |
+| `--verbose` | No | Off | Print sample ranges while processing. |
+
+If the glob has no matches, the script prints `No matching files found.` and
+exits without creating a video.
 
 ## Output
 
-Each input file produces `<basename>_compilation.mp4` in the output directory. Encoding uses `h264_videotoolbox` on Apple Silicon with AAC audio for fast hardware-assisted exports.
+Each input file produces `<basename>_compilation.mp4` in the output directory.
+The result is re-encoded with `h264_videotoolbox` video and AAC audio.
 
-## Implementation Notes
+Input files from different directories that share the same base name map to the
+same output path. Use separate runs or output directories to avoid collisions.
 
-- `sample_start_times` avoids exceeding the tail segment by constraining the sampling range.
-- Videos shorter than the requested tail length automatically shrink the tail to fit.
-- Errors within a worker process are surfaced on stdout; the main thread keeps the progress bar moving via `tqdm`.
+## Behavior and limitations
 
-## Tips
+- A requested tail longer than the video is reduced to the video's duration.
+- Sampling start times are chosen from the portion before the tail. If that
+  portion is shorter than `--sample_length`, samples can overlap the appended
+  tail; multiple even samples can also repeat the same start time.
+- Clips are concatenated with MoviePy's `compose` method, which accommodates
+  different clip sizes at the cost of additional processing.
+- A processing error is printed for the affected input and the remaining files
+  continue. The script does not currently return a failing exit status for
+  those per-file errors.
 
-- Use `--sampling random` when you want varied highlight reels from the same source footage.
-- Reduce `--max_workers` if you hit system resource limits (MoviePy spawns FFmpeg subprocesses under the hood).
-- Concatenated clips use `method="compose"` to handle mismatched resolutions; resize upstream for faster exports.
-
+Use `--sampling random` for different selections across runs. Reduce
+`--max_workers` if concurrent FFmpeg processes exhaust system resources.

@@ -1,134 +1,163 @@
 # Git Fleet
 
-A local multi-repo git dashboard built for monorepos and multi-project setups. Track working state, commit history, branch staleness, and dependency health across all your projects from a single browser tab.
+Git Fleet is a local browser dashboard for tracking many Git repositories. It combines live working-tree state with stored commit, branch, and dependency data so a collection of projects can be reviewed from one place.
 
-## Quick Start
+## Quick start
+
+Git Fleet is a [uv](https://docs.astral.sh/uv/) script and requires Python 3.12 or newer.
 
 ```bash
 ./git_dashboard.py
 ```
 
-Git Fleet runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using a PEP 723 inline-metadata header. On first run it creates its runtime home at `~/.git_dashboard/`; uv resolves the dependencies (fastapi, uvicorn[standard], aiosqlite, packaging, pydantic) into its shared cache — that first invocation may briefly hit the network. No manual setup and no virtual environment in your home directory are required. The dashboard opens in your browser at `http://localhost:8300`.
-
-To register a directory of repos on launch:
+On Windows, or on Unix systems where the executable bit is unavailable:
 
 ```bash
-./git_dashboard.py --scan ~/source/my-projects
+uv run --script git_dashboard.py
 ```
+
+The first run may download the declared Python dependencies into uv's shared cache. Git Fleet creates `~/.git_dashboard/dashboard.db`, selects the first free loopback port from 8300 through 8319, and opens the dashboard in the default browser.
+
+To discover and register Git repositories below a directory before startup:
+
+```bash
+./git_dashboard.py --scan ~/source
+```
+
+`--scan` registers repositories. The browser's initial fleet request then performs the live quick scan; use **Full Scan** to populate history, branches, and dependency health.
 
 ## Requirements
 
-- **[uv](https://docs.astral.sh/uv/)** (`brew install uv`) — manages the Python interpreter and dependencies
-- **git** in PATH
+- [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS)
+- Git in `PATH`
+- Network access on first launch and when loading the browser UI, which uses pinned React, Babel, Recharts, and font CDN assets
 
-Optional ecosystem tools enable dependency health checking. Git Fleet launches silently without them — missing tools are detected per-repo at scan time and flagged in the UI only when relevant:
+Git Fleet also requires at least one installed dependency-analysis tool from the ecosystems below. It starts when some tools are missing and shows their availability in the UI; it exits if none of the primary tools or `pip-audit` can be found.
 
-| Ecosystem | Outdated checks | Vulnerability scanning |
-|-----------|-----------------|------------------------|
-| Python    | PyPI JSON API (built-in) | `pip-audit` |
-| Node.js   | `npm outdated` | `npm audit` |
-| Go        | `go list -m -u` | `govulncheck` |
-| Rust      | `cargo-outdated` | `cargo-audit` |
-| Ruby      | `bundle outdated` | `bundler-audit` |
-| PHP       | `composer outdated` | `composer audit` |
+| Ecosystem | Outdated check | Vulnerability check |
+| --- | --- | --- |
+| Python | PyPI JSON API (no extra CLI) | `pip-audit` |
+| Node.js | `npm outdated` | `npm audit` |
+| Go | `go list -m -u` | `govulncheck` |
+| Rust | `cargo-outdated` | `cargo-audit` |
+| Ruby | `bundle outdated` | `bundler-audit` |
+| PHP | `composer outdated` | `composer audit` |
 
-## Features
+## What it shows
 
-### Fleet Overview
-Browse all registered repos at a glance. Each card shows current branch, last commit, uncommitted change counts, dependency status (with a green/amber coverage dot indicating tool completeness), and a 13-week activity sparkline. KPI tiles summarize fleet-wide commit velocity, branch health, and dependency status — hover any KPI for a description. Cards with missing disk paths or scan errors are flagged visually.
+### Fleet overview
 
-### Directory Browser
-A built-in file browser lets you navigate your filesystem and register directories without touching the command line. Git repos are identified with visual indicators. Click **Scan Dir** in the header to open.
+The overview quick-scans up to eight registered repositories concurrently whenever it loads. Cards show the current branch, most recent commit, staged/modified/untracked counts, dependency summary, branch health, and a 13-week activity sparkline. Fleet KPIs summarize repository state, recent commits and line changes, stale branches, and dependency findings.
 
-### Full Scan
-Runs three passes across all registered repos:
+The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry.
 
-1. **History scan** — aggregates `git log` into daily commit/insertion/deletion stats (incremental; only fetches new data on subsequent runs)
-2. **Branch scan** — lists all local branches, marks stale branches (>30 days since last commit), identifies the default branch
-3. **Dependency scan** — detects manifest files (`requirements.txt`, `package.json`, `go.mod`, `Cargo.toml`, `Gemfile`, `composer.json`) up to 3 directories deep, parses dependencies, and runs ecosystem health checks
+### Full scan
 
-Progress streams in real time via SSE to a toast notification in the UI.
+A full scan processes registered repositories sequentially and stores three kinds of data:
 
-### Monorepo Support
-Dependency detection walks subdirectories (up to 3 levels), so monorepos with multiple projects are fully supported. Each dependency tracks its `source_path` — the relative path to the manifest file it came from (e.g., `web_games/multibody_sim/package.json`). The Dependencies tab groups packages by manifest location so you can tell exactly which sub-project owns each dependency.
+1. Commit history, aggregated by day. Later scans are incremental from `last_full_scan_at`.
+2. Local branches, including default/stale status. A non-default branch is stale after 30 days without a commit.
+3. Dependencies and health results for supported manifests.
 
-### Repo Detail View
-Click any repo card to drill into four sub-tabs:
+Progress is streamed to the browser with server-sent events. Only one fleet scan may run at a time. Missing paths and per-repository scan failures are retained as visible error state.
 
-- **Activity** — daily commit chart with configurable time ranges (30d / 90d / 180d / 1y / All)
-- **Dependencies** — packages grouped by ecosystem and source path, with an **Attention Required** section that surfaces vulnerable, major, and outdated packages at the top. Includes **Export MD** and **Export JSON** buttons for offline reporting and a **Check Now** button for on-demand re-scan. When analysis tools are missing for a repo's ecosystem, an amber notice identifies exactly which tools are needed.
-- **Branches** — all local branches with commits ahead, +/− line stats, files changed (vs default branch), last commit date, and stale/active/default badges. Click any branch to select it and auto-navigate to its commits.
-- **Commits** — paginated commit history for the selected branch, with date, message, and diffstat. Branch selection persists across tab switches; the header shows which branch you're viewing.
+### Repository detail
 
-The branch displayed in the repo header is interactive — click it to jump to the Branches tab.
+Each repository has four views:
+
+- **Activity** — commit, insertion, and deletion history for 30 days, 90 days, 180 days, one year, or all stored history.
+- **Dependencies** — packages grouped by ecosystem and manifest path, with vulnerable and outdated packages surfaced first. Results can be rescanned on demand or exported as Markdown or JSON.
+- **Branches** — local branches with default/stale status and live commits-ahead and diff statistics against the default branch.
+- **Commits** — paginated live Git history for all refs or a selected branch.
+
+If a registered repository moves, its path can be repaired from the detail view. Removing a repository cascades to its stored working state, history, branches, and dependency rows.
 
 ### Analytics
-Fleet-wide analytics across all repos:
 
-- **Commit heatmap** — calendar-style daily commit volume
-- **Time allocation** — commit distribution across repos
-- **Dependency overlap** — packages shared across multiple repos with version spread
+Fleet-wide analytics include a one-year commit heatmap, configurable time-allocation charts, and dependency overlap across repositories.
 
-### Delete & Cleanup
-Hover any repo card to reveal the delete button. Removing a repo deletes all associated data (branches, dependencies, scan history) via cascading foreign keys.
+## Dependency discovery
 
-## Usage
+Git Fleet searches the repository root and subdirectories up to three levels deep, while skipping common generated and vendored directories. It recognizes:
 
+- `pyproject.toml` or `requirements.txt`
+- `package.json`
+- `go.mod`
+- `Cargo.toml`
+- `Gemfile`
+- `composer.json`
+
+Within one directory, `pyproject.toml` takes precedence over `requirements.txt`. A dependency row records the manifest path that supplied it. The current schema identifies a package by repository, package manager, and package name, so repeated declarations of the same package within one repository are represented once.
+
+## Command-line options
+
+```text
+usage: git_dashboard [-h] [--port N] [--no-browser] [--scan PATH] [-y]
+
+--port N       Preferred port (default 8300); checks up to 20 consecutive ports
+--no-browser   Do not open a browser tab
+--scan PATH    Discover and register repositories below PATH before serving
+-y, --yes      Accepted for backward compatibility; currently has no effect
 ```
-python git_dashboard.py [options]
 
-Options:
-  --port N       Port to listen on (default: 8300; auto-increments if in use)
-  --no-browser   Skip opening a browser tab on startup
-  --scan PATH    Register and scan a directory on startup
-  --help         Show this message and exit
-```
+`GIT_DASHBOARD_NO_BROWSER=1` also suppresses browser launch. The server binds only to `127.0.0.1`.
 
-## Data Storage
+## Data and configuration
 
-| Item | Location |
-|------|----------|
-| Database | `~/.git_dashboard/dashboard.db` (SQLite, WAL mode) |
+| Item | Default | Override |
+| --- | --- | --- |
+| Runtime home | `~/.git_dashboard/` | `GIT_DASHBOARD_HOME` |
+| SQLite database | `~/.git_dashboard/dashboard.db` | `GIT_DASHBOARD_DB` |
 
-Python dependencies are managed by uv (declared in the launcher's PEP 723 header) and cached in uv's shared cache, not under `~/.git_dashboard/`. The database path can be overridden with the `GIT_DASHBOARD_DB` environment variable.
+SQLite uses WAL mode and enables foreign-key enforcement for application connections. Mutable state stays outside the repository.
 
 ## Architecture
 
-Single-file Python application (`git_dashboard.py`), uv-managed via a PEP 723 header. The backend is FastAPI + uvicorn with aiosqlite for async database access. The frontend is a React 18 SPA loaded via CDN (React, ReactDOM, Babel Standalone, Recharts) — no build step, no `node_modules`. All JSX is embedded in the Python file as a template string served from `GET /`.
+The application intentionally remains one uv-managed Python file:
 
-### Database Schema
+- FastAPI and uvicorn provide the local HTTP server.
+- aiosqlite provides asynchronous database access.
+- Git commands use asynchronous subprocesses without shell interpolation.
+- A React 18 SPA, its CSS, and all JSX are embedded in `git_dashboard.py` and served by `GET /`; there is no frontend build or `node_modules`.
+- Hash routes select the Fleet, Analytics, and repository detail views.
 
-Six tables with cascading foreign keys:
+The six SQLite tables are:
 
-- **repositories** — registered repos with path, detected runtime, default branch
-- **working_state** — current status snapshot (uncommitted changes, current branch, scan errors, missing dependency tools per repo)
-- **daily_stats** — historical commit/insertion/deletion rollups by date
-- **branches** — branch names, last commit dates, staleness flags
-- **dependencies** — parsed manifest entries with version, severity, advisory, and source path
-- **scan_log** — scan execution history (type, status, timing, repos scanned)
+- `repositories` — registered path, runtime classification, default branch, and scan timestamps
+- `working_state` — the latest quick-scan snapshot and error flags
+- `daily_stats` — per-day commit and line-change aggregates
+- `branches` — the latest local branch snapshot
+- `dependencies` — parsed package and health data
+- `scan_log` — fleet scan lifecycle and counts
+
+The maintained design and API reference is [docs/git_dashboard_final_spec.md](docs/git_dashboard_final_spec.md).
 
 ## Development
 
-The tracked test requirements reproduce the launcher imports plus test-only dependencies in a project venv.
+All Python execution must use a virtual environment. The tracked requirements reproduce the launcher dependencies plus unit-test dependencies:
 
 ```bash
-# Create test venv and install deps
 python3 -m venv .venv
 .venv/bin/pip install -r tests/requirements-test.txt
-
-# Run unit tests
 .venv/bin/python -m pytest tests/ --ignore=tests/test_e2e.py -v
+```
 
-# Run E2E tests (requires the Playwright add-on)
+Install the Playwright add-on and browser to run the E2E suite:
+
+```bash
 .venv/bin/pip install playwright pytest-playwright
 .venv/bin/playwright install chromium
 .venv/bin/python -m pytest tests/test_e2e.py -v
 ```
 
-E2E tests must run in a separate pytest invocation from unit tests (Playwright's event loop conflicts with `asyncio.run()`). The E2E test server uses an isolated temp database so test repos never pollute user data.
+Run E2E tests separately from the unit suite because Playwright's event loop conflicts with tests that use `asyncio.run()`. E2E startup uses an isolated temporary database and suppresses automatic browser launch.
 
-## Cross-Platform Notes
+After changing the launcher's PEP 723 header or bootstrap imports, run the repository-wide uv header guard from the monorepo root:
 
-- Works on **Windows 10+**, **macOS 12+**, and **Linux** — uv manages the interpreter and dependencies on every platform.
-- On macOS/Linux invoke as `./git_dashboard.py`; on Windows use `uv run --script git_dashboard.py`.
-- Paths with spaces are handled correctly via `pathlib.Path`.
+```bash
+uv run --script tools/check_uv_headers.py
+```
+
+## Platform notes
+
+The code supports macOS, Linux, and Windows. Unix users can run the executable directly; Windows users should use `uv run --script git_dashboard.py`. Local paths are handled with `pathlib`, and subprocess commands pass arguments directly rather than through a shell.

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-11
 **Target file:** `Calculation tools/drawdown.html` (single-file HTML app; this architecture must be preserved)
-**Status:** Approved design, pending implementation plan
+**Status:** Implemented. Retained as the design rationale and behavior contract for the current pin-editing system.
 
 ## Background
 
@@ -29,10 +29,10 @@ or broken:
    month 35 showed $127,999 and month 36 teleported back to $225,035 (~$97k
    discontinuity from stale frozen state).
 
-This spec covers fixing those defects and extending the pin system with direct
+This design covered fixing those defects and extending the pin system with direct
 cell editing, a read-only adjustments panel, and CSV override notation.
 
-## Scope (build order)
+## Implemented scope
 
 ### 1. Fix phantom overrides
 
@@ -163,11 +163,8 @@ Behavior:
 
 ## Verification criteria
 
-The project has no automated test suite (intentionally simple single-file
-apps; the repo validation matrix specifies smoke-testing HTML calculators in a
-browser). Verification is via Playwright MCP against the served page, per the
-recorded feedback that embedded single-file UIs must be verified in a real
-browser:
+The project has no automated test suite. The behaviors below remain the manual
+browser regression checklist for changes to the pin system:
 
 1. **Phantom-override regression:** open a pin editor at a month with
    fractional baselines (e.g. month 12+), change exactly one field, save →

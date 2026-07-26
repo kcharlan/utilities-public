@@ -1,10 +1,13 @@
 # Collector
 
-This directory contains the Python-based data collection server. It is responsible for receiving and storing LLM usage data from the browser extension.
+This directory contains the Flask collection server. It receives and stores
+hostname/count deltas from the browser extension.
 
 ## Functionality
 
-The collector is a simple Flask server that receives usage data from the browser extension and stores it in a `state.json` file. The server is the single source of truth for all usage data.
+The collector stores request counters, per-day counters, and the last accepted
+sequence for each extension client. It is the source of truth for accepted
+counts. It does not receive prompt text, response text, or token usage.
 
 ## API Endpoints
 
@@ -26,7 +29,7 @@ The `/add` endpoint expects a JSON payload with the following structure:
   "client_id": "<unique_client_id>",
   "seq": <sequence_number>,
   "deltas": {
-    "<hostname>": <token_count>,
+    "<hostname>": <request_count_delta>,
     ...
   },
   "ts": <timestamp_ms_epoch>
@@ -35,14 +38,26 @@ The `/add` endpoint expects a JSON payload with the following structure:
 
 *   `client_id`: A unique identifier for the browser extension instance.
 *   `seq`: A monotonically increasing sequence number for each request from a given client. This is used to ensure that requests are processed in order and to prevent duplicate processing of retried requests.
-*   `deltas`: An object where the keys are hostnames (e.g., `"chat.openai.com"`) and the values are the number of tokens to add to the total for that host.
-*   `ts`: An optional timestamp in milliseconds since the Unix epoch.
+- `deltas`: Positive request-count increments keyed by hostname.
+- `ts`: Optional event timestamp in milliseconds since the Unix epoch. Invalid
+  or missing values are bucketed using the collector's current time.
 
 ## State Management
 
 The collector stores state at `STATE_PATH` (default: `state.json` in the process working directory). The recommended Docker setup sets this to `/var/lib/llm_collector/state.json`, which is bind-mounted from the external `LLM_COLLECTOR_DATA_DIR`; the in-tree `state.json` is legacy/local-development state, not the live Docker source of truth.
 
-Snapshots of the totals are saved under `SNAP_DIR` (default: `snapshots/` in the working directory) whenever the `/reset` endpoint is called. The Docker setup maps that path to the external data directory. The collector also stores `daily_totals` keyed by the event timestamp date, so a reset after midnight can still roll usage into the correct local day. These snapshots can then be rolled up into `snapshots.csv` by `snapshots/rollup_snapshots.py`.
+Snapshots are saved under `SNAP_DIR` (default: `snapshots/` in the working
+directory) whenever `/reset` is called. The Docker setup maps that path to the
+external data directory. The reset handler immediately rolls successfully read
+snapshot JSON into `snapshots.csv` and renames it with a `.bak` suffix.
+
+The collector preserves the extension's idempotency contract:
+
+- `seq <= last_seq` is an acknowledged duplicate and does not reapply deltas.
+- `seq == last_seq + 1` is accepted and persisted.
+- a sequence gap returns HTTP 409 with `expected_next`.
+- `/reset` clears totals, date buckets, and client sequences after snapshotting,
+  so clients realign through `/client_status`.
 
 ## Configuration
 
@@ -54,7 +69,7 @@ When running the collector, the API key is passed to the application via the `AP
 
 If you are running the server directly for development, you can set the environment variable in your shell:
 ```bash
-export API_KEY="your_secret_api_key_here" # pragma: allowlist secret
+    export API_KEY="SYNTHETIC_DEVELOPMENT_KEY" # pragma: allowlist secret
 ```
 
 When running with Docker (the recommended method), `../setup.sh` writes the local secret environment file and `llm_collector_container/up.sh` exports those values for Compose interpolation. Do not put the secret directly in the tracked Compose file.

@@ -2,9 +2,14 @@
 
 ## What this is
 
-A pipelined workflow where planning agents (cc-opus) convert work items into
-implementation plans, and worker agents (cc-sonnet) execute those plans
-sequentially. A bash orchestrator script coordinates the queue.
+A pipelined workflow where planning agents (`claude --model opus`) convert
+work items into implementation plans, a resolver annotates cross-plan
+constraints, and worker agents (`claude --model sonnet`) execute eligible
+plans in parallel git worktrees. A Bash orchestrator coordinates the queue.
+
+This guide describes the retained source-project scaffold. Before using it in
+another repository, read `README.md` and customize its hard-coded test,
+environment, and project-document assumptions.
 
     You (write intake) → plan.sh → review? → stage.sh → orchestrate.sh
            ↓                 ↓         ↓          ↓            ↓
@@ -57,7 +62,7 @@ task_orch/plan.sh 2
 The script launches cc-opus agents that run autonomously. Each planner:
 1. Claims intake items by moving them to `claimed/`
 2. Reads relevant source code
-3. Writes full implementation plans to `ready/` — or to `review/` if there
+3. Writes full implementation plans to `staging/` — or to `review/` if there
    are open questions that would materially affect the implementation
 4. Continues until intake is empty, then stops
 
@@ -121,18 +126,23 @@ MAX_WORKERS=3 FULL_TEST_INTERVAL=5 task_orch/orchestrate.sh
 The orchestrator will:
 1. **Guard:** Refuse to run if the current branch is `main`
 2. **Recover:** Clean up any leftover worktrees/state from a prior crash
-3. **Parse chains:** Read `RESOLUTION.md` for dependency chains
-4. **Dispatch chains in parallel:** Each chain gets its own worker slot and
-   git worktree. Independent chains run simultaneously.
-5. **Merge on completion:** When a worker finishes its chain, the orchestrator
-   merges the worktree branch back to the current branch
+3. **Parse constraints:** Read the `DEPENDS_ON`, `ANTI_AFFINITY`, and
+   `EXEC_ORDER` table in `RESOLUTION.md`
+4. **Dispatch eligible plans:** Each plan gets its own worker slot, temporary
+   branch, and git worktree. Dependencies and anti-affinity determine what may
+   run concurrently.
+5. **Merge on completion:** When a worker finishes a plan, the orchestrator
+   squash-merges the worktree branch back to the current branch
 6. **Run full test suite** every N completed plans (pauses merges, waits for
    active workers to finish first)
-7. **Halt** if full tests fail
-8. **Exit** when all chains are processed
+7. **Auto-fix failures:** Launch an Opus fixer for failed plans and failed
+   full-suite runs, up to `MAX_FIX_ATTEMPTS`
+8. **Halt or block** only after configured auto-fix attempts are exhausted
+9. **Run a final full suite**, generate release notes, and exit after all
+   plans have been processed
 
-Workers within a chain execute plans sequentially (respecting dependencies).
-Chains run in parallel (they touch independent files by construction).
+The constraint table is authoritative. A plan runs only when all hard
+dependencies are in `done/` and none of its anti-affinity peers is active.
 
 ### 6. Monitor progress
 
@@ -142,14 +152,18 @@ Check the auto-generated dashboard:
 cat task_orch/DASHBOARD.md
 ```
 
-Or watch it update:
+Or poll it from a shell:
 
 ```bash
-watch -n 5 cat task_orch/DASHBOARD.md
+while true; do
+  clear
+  cat task_orch/DASHBOARD.md
+  sleep 5
+done
 ```
 
-The dashboard shows each worker slot's current chain assignment, PID, and
-the plans in that chain.
+The dashboard shows queue counts, each worker slot's current plan and PID,
+session statistics, constraints, blocked items, and log commands.
 
 ### 7. Review plans that need human input (ongoing)
 
@@ -247,14 +261,18 @@ If the orchestrator halts due to a full test failure:
 
 ### 10. Restart after a crash
 
-The orchestrator is safe to restart at any time. On startup it:
-1. Removes any leftover `.worktrees/worker_*` directories
-2. Moves any plans stuck in `workers/*/` back to `ready/`
-3. Re-reads `RESOLUTION.md` for chain definitions
-4. Skips chains whose plans are already in `done/`
-5. Resumes with remaining chains
+The orchestrator is restartable, but its recovery policy intentionally
+discards unmerged partial worker work. On startup it:
 
-No manual cleanup needed — just re-run `task_orch/orchestrate.sh`.
+1. Moves assigned plan documents from `workers/*/` back to `ready/`
+2. Removes leftover `.worktrees/worker_*` worktrees and their temporary
+   branches
+3. Re-reads the constraints in `RESOLUTION.md`
+4. Skips plans already in `done/` and resumes the rest
+
+Do not restart if you need to preserve uncommitted work from an interrupted
+worker; recover that worktree first. Otherwise, no manual queue or worktree
+cleanup is needed before re-running `task_orch/orchestrate.sh`.
 
 ## Directory structure reference
 
@@ -286,8 +304,7 @@ task_orch/
       001_something.plan.md
     workers/             # Per-worker slots (parallel mode)
       0/                 # Worker slot 0
-        chain.id         # Chain ID assigned to this worker
-        *.plan.md        # Plans in this chain
+        *.plan.md        # One currently assigned plan
         *.status         # Status sidecars
         *.log            # Worker output
       1/                 # Worker slot 1
@@ -311,6 +328,7 @@ Environment variables for the orchestrator:
 | `POLL_INTERVAL` | `5` | Seconds between worker PID checks |
 | `FIXER_MODEL` | `opus` | Model for auto-fix agents (e.g., opus, sonnet) |
 | `MAX_FIX_ATTEMPTS` | `2` | Auto-fix attempts before blocking/halting |
+| `BSE_DATA_DIR` | `~/Downloads/BSE2` | Source-project data path passed to full tests |
 
 Example:
 
@@ -347,10 +365,10 @@ multiple plans with dependency links.
 |-------|-----------|-----------------|
 | Worker starts a plan | Targeted component tests | Worker agent |
 | Worker finishes a plan | Targeted component tests | Worker agent |
-| Chain merge succeeds | Merge commit on target branch | Orchestrator |
+| Plan merge succeeds | Squash commit on target branch | Orchestrator |
 | Every N completed plans | Full suite (test_all.sh) | Orchestrator |
-| Full suite fails | Queue halts | Orchestrator |
-| High-priority plan completes | Full suite (test_all.sh) | Orchestrator |
+| Full suite fails | Auto-fix, then halt if attempts are exhausted | Orchestrator |
+| Plan has `FULL_TEST_AFTER: yes` | Full suite (test_all.sh) | Orchestrator |
 
 This is relaxed compared to the standard "full suite on every exit" policy.
 The tradeoff: faster throughput, but integration bugs may survive 2–3 plans
@@ -362,9 +380,9 @@ the blast radius.
 - **Start with one planner.** Get the flow working before adding a second.
 - **Front-load intake.** Write 4–8 intake items before launching planners.
   This gives the pipeline something to chew on.
-- **Review plans before they execute.** If you want a human gate, move plans
-  from `ready/` to a `reviewed/` directory, then move approved ones back to
-  `ready/`. Or just review them in `ready/` before starting the orchestrator.
+- **Review plans before they execute.** Stop before launching the orchestrator
+  and inspect plans in `execution/ready/`. The scaffold has no built-in
+  post-resolution approval directory.
 - **Checkpoint your branch.** Before a long orchestrator run, tag or branch
   so you can reset if things go sideways:
   `git tag pipeline-start-$(date +%Y%m%d-%H%M)`

@@ -8,9 +8,7 @@ Provider identity is first-class. OpenRouter and Abacus.AI are tracked independe
 
 ## Status
 
-The initial CLI implementation is in place.
-
-Current scope:
+The CLI is implemented and includes:
 
 - `scan` command with compare-only default behavior
 - explicit `--save` baseline persistence
@@ -19,16 +17,21 @@ Current scope:
 - `changes` cross-provider/cross-model change log with date range filtering
 - `providers` config inspection
 - `healthcheck` runtime/config validation
-- text, JSON, and Markdown output
-- smart report formatting: field-type-aware rendering, pricing normalization to per-1M tokens, list diffing
-- auto-generated HTML companion report when changes are detected (dark-themed, self-contained)
+- text, JSON, and Markdown output for scan, history, provider, and healthcheck
+  reports; the cross-provider `changes` command supports text and JSON
+- smart report formatting: field-type-aware rendering, profile-aware price
+  presentation, and list diffing
+- auto-generated, self-contained HTML reports for detected changes when the
+  command is using the managed report directory
 - configurable report retention with automatic cleanup of old files
 - macOS notifications on changes or actionable errors
 - bounded gzip log rotation
 
 ## Runtime Model
 
-This implementation is stdlib-only at runtime. There is no third-party bootstrap dependency layer to install before the tool can run.
+This implementation requires Python 3.11 or newer and is stdlib-only at
+runtime. There is no third-party bootstrap dependency layer to install before
+the tool can run.
 
 Repo-local usage:
 
@@ -81,7 +84,13 @@ After installation you can run:
 ~/Library/Scripts/model-sentinel healthcheck
 ```
 
-This removes the repo dependency for normal execution. It does not remove the requirement that provider credentials exist in the process environment. If your credentials come from a sourced secrets script, you still need either:
+This removes the repo dependency for normal execution. The repo-provided
+`launchd` installer is separate and embeds the checkout path when it is seeded;
+see [`docs/LAUNCHD.md`](./docs/LAUNCHD.md).
+
+The standalone install does not remove the requirement that provider
+credentials exist in the process environment. If your credentials come from a
+sourced secrets script, you still need either:
 
 - a shell session that already sourced that file
 - a small wrapper script that sources it and then execs the standalone command
@@ -108,7 +117,9 @@ The live config files are stored in the runtime home:
 ~/.model_sentinel/settings.env
 ```
 
-`providers.env` defines which providers exist, whether they are enabled, which environment variable each provider uses for credentials, and how provider-returned pricing is converted into Model Sentinel's canonical unit of price per 1M tokens.
+`providers.env` defines which providers exist, whether they are enabled, which
+environment variable each provider uses for credentials, and the default
+multiplier/divisor used to present provider-returned monetary price fields.
 
 Each provider's `KIND` selects a provider profile for its payload envelope,
 field mapping, labels, classification rules, and report behavior. Unregistered
@@ -146,7 +157,7 @@ across all providers, enabled or not. A duplicate remains safe because reports
 disambiguate by provider ID; `healthcheck` emits a non-fatal warning naming
 both providers so the display text can be cleaned up.
 
-Each provider entry in `providers.env` must now include:
+Each provider entry in `providers.env` must include:
 
 - `MODEL_SENTINEL_PROVIDER_<ID>_PRICE_MULTIPLIER`
 - `MODEL_SENTINEL_PROVIDER_<ID>_PRICE_DIVISOR`
@@ -157,10 +168,13 @@ The conversion rule is:
 canonical_price = raw_provider_price * PRICE_MULTIPLIER / PRICE_DIVISOR
 ```
 
-Example:
-
-- OpenRouter raw per-token pricing: `1000000 / 1`
-- Abacus raw per-1M-token pricing: `1 / 1`
+OpenRouter's registered profile uses `1000000 / 1` because its common token
+prices are returned per token. The Abacus template intentionally retains
+`1 / 1`, but that is not a complete normalization rule: its public schema
+mixes per-token token rates with media prices in other units. Abacus therefore
+uses the generic fallback profile until per-field price rules and the
+authenticated payload are validated. See
+[`docs/provider_schema_notes.md`](./docs/provider_schema_notes.md).
 
 ## Required Credential Environment Variables
 
@@ -169,7 +183,11 @@ The initial providers expect:
 - `OPENROUTER_AI_CREDS`
 - `ABACUS_AI_CREDS`
 
-If an enabled provider's credential environment variable is missing, the tool halts immediately and lists the missing variable names.
+Before a scan, Model Sentinel validates the selected providers' credential
+environment variables and halts before any network request if one is missing.
+`healthcheck` reports missing credentials for enabled providers. The local
+`providers`, `history`, and `changes` queries do not require provider
+credentials.
 
 In your workflow that means the secrets shell alias must already have been invoked before running the utility or any automation around it.
 
@@ -183,24 +201,35 @@ With no subcommand, Model Sentinel behaves like `scan` in compare-only mode:
 ./model-sentinel
 ```
 
-That will:
+For each selected provider with a saved baseline, that will:
 
 - fetch enabled providers
 - compare against the previous saved baseline
 - print a report to stdout
 - not save a new snapshot
 
-If no baseline exists yet, it prints a descriptive message telling you to create one explicitly.
+If a provider has no baseline, compare-only mode reports that condition and
+does not fetch that provider. Create the baseline explicitly with
+`scan --save`.
 
-### Save a Baseline
+### Scan and Save Options
 
 ```bash
 ./model-sentinel scan --save
 ./model-sentinel scan --detail all
 ./model-sentinel scan --detail squelched
+./model-sentinel scan --baseline previous-day
+./model-sentinel scan --baseline-date 2026-07-01
+./model-sentinel scan --provider openrouter
 ```
 
 On the first save, the current results become the initial baseline. Later save runs persist new snapshots and record field-level changes relative to the selected baseline.
+
+The default baseline is the latest saved snapshot for each provider.
+`--baseline previous-day` selects the latest saved snapshot from an earlier
+local calendar day. `--baseline-date YYYY-MM-DD` selects a saved snapshot on
+that local date and, in compare-only mode, reports the nearest surrounding
+saved dates when no exact match exists.
 
 Human-readable scan reports use `--detail default` unless overridden by `MODEL_SENTINEL_REPORT_DETAIL` in `settings.env`. Default detail mode renders configured important fields and unclassified new fields, while summarizing configured noisy fields such as benchmarks. Use `--detail all` to render every field-level change, or `--detail squelched` to inspect only fields matched by the squelch patterns. JSON output remains full fidelity.
 
@@ -212,9 +241,15 @@ When a scan run auto-generates an HTML report because changes were detected, it 
 ./model-sentinel history --provider openrouter --model chatgpt-5.2
 ./model-sentinel history --provider openrouter --model chatgpt-5.2 --since 2025-01-01 --until 2025-12-31
 ./model-sentinel history --provider openrouter --model chatgpt-5.2 --detail all
+./model-sentinel history --provider openrouter --model list
+./model-sentinel history --provider openrouter --model list chatgpt
 ```
 
 `--since` and `--until` are inclusive and can be used together to bracket a date range.
+
+Use the special model value `list` to show known saved model IDs for a
+provider. An optional positional pattern filters that list by partial,
+case-insensitive match against model ID or display name.
 
 ### Query Changes Across Providers
 
@@ -230,6 +265,13 @@ When a scan run auto-generates an HTML report because changes were detected, it 
 Unlike `history` (which targets a single provider/model pair), `changes` gives a cross-cutting view of everything that changed — useful for catching up after missed alerts or reviewing a period of drift.
 
 Human-readable `changes` output honors the same report detail policy as `scan`. Use `--detail all` for full field payloads.
+
+When records exist and `--output` is omitted, `changes` also saves its primary
+output in a timestamped `.txt` artifact plus an HTML report in the configured
+report directory. The primary artifact contains text by default; with
+`--format json`, its contents are JSON even though the managed filename still
+uses `.txt`. Supplying `--output` writes only the requested text or JSON
+artifact.
 
 ### Inspect Configured Providers
 
@@ -249,10 +291,13 @@ This validates:
 
 - `~/.model_sentinel/providers.env`
 - `~/.model_sentinel/settings.env`
-- enabled provider definitions
-- required credential env vars
+- all provider definitions
+- credential env vars for enabled providers
 - runtime directories
 - SQLite readiness
+
+It also emits non-fatal warnings for duplicate display labels and provider
+kinds that are using the generic fallback profile.
 
 ## Help
 
@@ -271,7 +316,11 @@ Built-in help is intended to be complete:
 
 Scan reports use smart, field-type-aware formatting:
 
-- **Pricing fields** are normalized to a `$X.XX` per-1M figure alongside the provider's raw value. Newly added and removed prices are included.
+- **Fields classified as monetary prices** are presented as a normalized
+  `$X.XX` per-1M figure alongside the provider's raw value. Newly added and
+  removed prices are included. For an unregistered, mixed-unit provider this
+  classification and unit are best-effort; see the Abacus caveat under
+  Configuration.
   - **In HTML only,** the normalized figure *leads*: it is the value in the cell, the unit moves to its own column, and the raw provider value is available on demand — in the cell's tooltip, and inline via the page's "Show raw values" toggle (see below), which is on by default in the full-detail companion. The HTML Change Summary follows the same order.
   - **Text and markdown still lead with the raw value**, in the form `2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`, and have no toggle. They are the audit formats; the literal value a provider published is what they exist to record.
 - **New structured fields** expand nested objects and object lists into readable leaf-level changes in human reports
@@ -295,7 +344,10 @@ Bulk consolidation applies only to the default human-readable report. `--detail 
 
 ### HTML Auto-Reports
 
-When a scan detects changes and is writing a report to the configured report directory (notification flow), Model Sentinel automatically generates a self-contained HTML companion report alongside the text file.
+When a scan detects changes and is writing a report to the configured report
+directory (the notification flow), Model Sentinel automatically generates a
+self-contained HTML companion report alongside the primary text, JSON, or
+Markdown report. An explicit `--output` writes only that requested format.
 
 The HTML report uses a dark industrial theme and has no external dependencies and no JavaScript — all CSS is inlined, and every interactive affordance is built from native `<details>`, `:target` and `:has()`.
 
@@ -311,9 +363,13 @@ The HTML report uses a dark industrial theme and has no external dependencies an
 
 **Raw values are available without leaving the page.** Hovering a price cell shows the full derivation — the provider's literal value, its magnitude in scientific notation as a parenthetical, the conversion factor and the resulting figure, e.g. `0.000002 (2.0e-6) × 1,000,000 = $2.00`. Because a tooltip cannot be selected or copied, a `Show raw values` checkbox in the header also reveals a selectable `old → new` sub-line under every price row. That checkbox is **ticked by default in the full-detail companion report**, whose whole purpose is the raw numbers, and unticked in the concise one.
 
-When no changes are detected, only the text report is generated. This gives a quick visual cue in the reports folder: if an `.html` file exists for a run, something changed.
+When no changes are detected, no HTML companion is generated. The requested
+primary format is still emitted to stdout or an explicit `--output`; the
+managed report directory receives no scan artifact unless notification policy
+creates a report path.
 
-Notification clicks point to the HTML file when it exists, falling back to the text report otherwise.
+Notification clicks point to the HTML file when it exists, falling back to the
+primary report otherwise.
 
 Clickable-open support on macOS requires `terminal-notifier`. When it is unavailable, Model Sentinel falls back to an informational AppleScript notification that cannot open the report file on click.
 
@@ -398,7 +454,8 @@ When notifications fire and you did not explicitly supply `--output`, Model Sent
 
 ## Testing
 
-Run the project test suite from this directory:
+Create or activate a project virtual environment, install pytest there, and run
+the complete project test suite from this directory:
 
 ```bash
 pytest
@@ -408,3 +465,5 @@ pytest
 
 - [`docs/DESIGN.md`](./docs/DESIGN.md)
 - [`docs/LAUNCHD.md`](./docs/LAUNCHD.md)
+- [`docs/provider_schema_notes.md`](./docs/provider_schema_notes.md)
+- [`docs/report_readability_redesign_design.md`](./docs/report_readability_redesign_design.md)

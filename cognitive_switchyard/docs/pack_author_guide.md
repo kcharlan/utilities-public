@@ -62,12 +62,14 @@ The scaffold creates:
 | Field | Type | Default | Required when |
 |-------|------|---------|---------------|
 | `enabled` | bool | `true` | Must be `true` |
-| `executor` | string | `shell` | Must be `agent` or `shell` |
+| `executor` | string | `shell` | Schema accepts `agent` or `shell`; use `shell` for executable packs (see note below) |
 | `model` | string | — | Required when `executor: agent` |
 | `reasoning_effort` | string | — | Optional; for shell executors this is exposed via env to the hook |
 | `prompt` | path | — | Required when `executor: agent` |
 | `command` | path | — | Required when `executor: shell` |
 | `max_workers` | int | `2` | — |
+
+The current worker dispatcher launches `phases.execution.command` as a subprocess. Although manifest validation accepts `executor: agent`, direct agent execution is not wired into the worker dispatcher; production packs must currently use `executor: shell` and invoke an agent CLI from that command when needed.
 
 #### `phases.verification` (optional)
 
@@ -223,20 +225,21 @@ Supported conventional hooks:
 - Hook files must stay inside the pack root (no symlinks outside).
 - Hook files must be executable (`chmod +x`).
 - Text hook scripts must have a shebang (`#!/bin/bash` etc.).
-- `scripts/execute` must emit `##PROGRESS##` lines and write a `.status` sidecar next to the task plan file.
+- `scripts/execute` should emit progress lines matching `status.progress_format` and must write a `.status` sidecar next to the task plan file.
 
 ### Hook argument signatures
 
 Hooks receive these arguments and environment variables at runtime:
 
-- **`execute`**: `<plan_path>` — path to the `.plan.md` file to execute
-- **`verify`**: `<session_dir>` — path to the session root directory
-- **`isolate_start`**: `<plan_path>` `<worktree_path>` (for git-worktree isolation)
-- **`isolate_end`**: `<plan_path>` `<worktree_path>` (for git-worktree isolation)
-- **`preflight`**: `<session_dir>`
+- **`execute`**: `<plan_path>` `<workspace_path>`
+- **`isolate_start`**: `<slot_number>` `<task_id>` `<session_root>`; print the workspace path to stdout
+- **`isolate_end`**: `<slot_number>` `<task_id>` `<workspace_path>` `<final_status>`
+- **`preflight`**: no positional arguments; it runs with the effective repository/session environment
+- **`resolve`**: `<session_root>`; read staged plans from the session and write `resolution.json` at the session root
 
-All hooks receive `COGNITIVE_SWITCHYARD_PACK_ROOT` in their environment, set to the absolute path of the runtime pack directory.
-Shell execution hooks also receive `CODEX_WORKER_REASONING_EFFORT` when `phases.execution.reasoning_effort` is set in the manifest.
+The verification command is not a conventional hook. It is the shell string in `phases.verification.command`, runs with the session root as its working directory, and receives the session environment. Built-in `scripts/verify` files accept an optional session-root argument but normally use their working directory.
+
+All orchestrator-launched hooks receive `COGNITIVE_SWITCHYARD_PACK_ROOT`, set to the absolute path of the runtime pack directory. Shell execution hooks also receive `CODEX_WORKER_REASONING_EFFORT` when `phases.execution.reasoning_effort` is set in the manifest.
 
 ## Validation
 

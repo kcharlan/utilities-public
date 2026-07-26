@@ -17,18 +17,27 @@ file names.
 ## Overview
 
 `moneydance_rotate_backups.sh` prunes old Moneydance backup exports on an
-already-mounted NAS share. Retention is expressed in distinct calendar days,
-not file counts, so every export from a retained day is preserved. The mount
-point is resolved from the macOS mount table.
+already-mounted SMB NAS share on macOS. Retention is expressed in distinct
+local calendar days derived from file modification times, not file counts, so
+every eligible export from a retained day is preserved. The mount point is
+resolved from the macOS mount table.
+
+## Requirements
+
+- macOS with Zsh and the standard BSD command-line tools used by the script.
+- The configured SMB share must already be mounted.
+- Read and search access to the backup directory; deletion also requires write
+  access when dry-run mode is disabled.
 
 ## Setup
 
-1. Copy the synthetic example to your private configuration directory:
+1. Copy the synthetic example to the default private configuration directory:
 
    ```bash
-   mkdir -p "$HOME/.config/moneydance-backup-rotation"
-   cp config.example "$HOME/.config/moneydance-backup-rotation/config"
-   chmod 600 "$HOME/.config/moneydance-backup-rotation/config"
+   config_root="${XDG_CONFIG_HOME:-$HOME/.config}"
+   mkdir -p "$config_root/moneydance-backup-rotation"
+   cp config.example "$config_root/moneydance-backup-rotation/config"
+   chmod 600 "$config_root/moneydance-backup-rotation/config"
    ```
 
 2. Edit the private copy. Set `BACKUP_FILENAME_SUFFIX` to the exact extension
@@ -57,6 +66,12 @@ The file format is a deliberately small `KEY=VALUE` format. It is parsed as
 data and is never sourced as shell code. Blank lines and lines beginning with
 `#` are allowed; quoting and inline comments are not supported.
 
+Unless `--config` is supplied, the script looks for
+`$XDG_CONFIG_HOME/moneydance-backup-rotation/config` when `XDG_CONFIG_HOME` is
+set, or `$HOME/.config/moneydance-backup-rotation/config` otherwise. A config
+file is optional only when all required values are supplied through environment
+variables.
+
 | Key | Purpose |
 | --- | --- |
 | `NAS_SERVER` | Required NAS host name or IP address. No default is provided. |
@@ -73,7 +88,8 @@ The required location settings can instead be passed explicitly as
 `MONEYDANCE_BACKUP_DIRECTORY_NAME`; the required suffix uses
 `MONEYDANCE_BACKUP_FILENAME_SUFFIX`. Optional settings use the same prefix, for
 example `MONEYDANCE_MAX_DAYS_TO_KEEP` and `MONEYDANCE_DRY_RUN`. Environment
-variables override values loaded from the config file; `--dry-run` always wins.
+variables with nonempty values override values loaded from the config file;
+`--dry-run` always wins.
 
 ## Command-line options
 
@@ -110,6 +126,10 @@ If reading the mount table fails, the share is not mounted, the directory is
 inaccessible, enumeration or classification fails, or validation fails,
 cleanup does not proceed.
 
+Once deletion begins, an individual removal failure can leave an intentionally
+partial result: successfully removed candidates stay removed, the script
+reports the number of failures, and it exits nonzero.
+
 ## Tests
 
 The test suite uses only temporary synthetic fixtures and mocked command paths;
@@ -121,7 +141,6 @@ it never queries a real share or depends on the repository location:
 
 ## Notes
 
-- The share must already be mounted; this script does not mount it.
 - Running frequently is safe because retention is based on distinct days.
 - On recent macOS versions, the invoking shell may need Full Disk Access for the
   private backup directory.

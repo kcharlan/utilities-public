@@ -1,108 +1,75 @@
-# Design Document: HTML Documentation Linearizer
+# Design: HTML Documentation Linearizer
 
-## 1. Introduction
+## Purpose
 
-This document outlines the design and technical approach for a command-line tool that converts a structured, multi-page HTML documentation site, such as a FHIR Implementation Guide, into a single, linear Markdown document.
+The HTML Documentation Linearizer converts a structured, multi-page HTML documentation site, such as a FHIR Implementation Guide, into one linear Markdown document. The result is portable, searchable, usable offline, and suitable as input to other document-conversion tools.
 
-The primary goal is to create a readable, portable, and easily searchable version of the documentation that can be used offline or converted into other formats like PDF or Word.
+The implementation is a single Python command-line script, `linearize.py`. It uses Beautiful Soup for HTML parsing and `html2text` for final Markdown conversion.
 
-## 2. Requirements
+## Input and output
 
-### Input
+The positional input is the path to a documentation root containing a `site/` subdirectory. The tool reads UTF-8 HTML files from that subdirectory. A root-level redirecting `index.html` is not required or inspected.
 
-The tool will accept a single argument: the path to the root directory of the documentation site. This directory is expected to have the following structure:
+The optional `-o`/`--output` argument selects the Markdown output path and defaults to `linearized_output.md`. The tool also recreates an `assets/` directory beside the output file. Because that directory is deleted before processing and copied files are flattened to base filenames, callers must not keep unrelated files there and should avoid inputs with duplicate asset filenames.
 
-- A root `index.html` that redirects to `site/index.html`.
-- A `site/` subdirectory containing the main `index.html` and all other content HTML pages.
-- All links to content pages are relative and end with `.html`.
+## Processing pipeline
 
-### Output
+The pipeline is **discover → extract and transform → convert → assemble**.
 
-The tool will produce a single Markdown file named `output.md` (or a user-specified name) in the current working directory. This file will contain the concatenated, cleaned content from all HTML pages.
+### Page discovery
 
-### Functional Requirements
+When `site/toc.html` exists and contains `#segment-content .col-12`, its local links ending in `.html` are the authoritative ordered page list. Duplicate links are removed while retaining first occurrence. `index.html` is prepended if absent, and `toc.html` is removed.
 
-- **File Discovery:** The tool must crawl the documentation starting from `site/index.html` to discover all linked content pages.
-- **Content Extraction:** For each HTML page, the tool must extract only the main article content, excluding common elements like headers, footers, and navigation sidebars.
-- **HTML to Markdown Conversion:** The extracted HTML content must be converted into clean, readable Markdown.
-- **Concatenation:** The Markdown content from all pages must be concatenated into a single file in a logical order.
-- **Error Handling:** The tool should handle common errors gracefully, such as missing files or broken links.
+If the ToC is absent or lacks the expected container, recursive glob discovery is used instead. This fallback:
 
-## 3. Technical Design & Approach
+- Includes `site/**/*.html`.
+- Excludes generated `.json.html`, `.xml.html`, and `.ttl.html` asset views.
+- Sorts paths lexically, with `index.html` first when present.
 
-The tool will be designed as a script that follows a three-stage pipeline: **Crawl -> Extract, Convert & Relocate -> Assemble**.
+Discovery is deliberately local and navigation-driven; the tool does not crawl links transitively or fetch remote pages.
 
-We recommend using Python for this task due to its strong ecosystem of libraries for web scraping and data manipulation.
+### Content extraction and cleanup
 
-### Core Components
+For each discovered page, the tool selects `#segment-content .col-12`. If that selector is absent it falls back to `<body>`; a page with neither is skipped with a warning.
 
-#### 3.1. Crawler / File Discovery
+Before conversion, the script mutates the selected HTML:
 
-This component is responsible for identifying which HTML files contain the authored documentation (and in which order they should appear).
+- The first `<h2>` receives a stable page anchor based on the page path.
+- Heading numbers represented only by CSS are made visible in text. The page prefix is read from `--heading-prefix:"…"` in a `<style>` element or `counter-reset: section …` on the selected content element, then counters are applied to `<h2>` through `<h6>`.
+- Buttons, embedded data-URI images, known decorative images, and hierarchy icons are removed.
+- `ipp_` usage controls are removed while matching `ipp2_` content is unhidden and unwrapped.
+- Tables are converted to raw Markdown blocks before `html2text` runs. Dedicated transforms handle `waffle` and `dict` tables; the general transform expands column spans, chooses the first header row (or first row), and escapes pipe characters.
 
-1.  **Strategy:** The tool will parse `site/toc.html` and use the hyperlinks listed in the Table of Contents as the authoritative list of documentation pages. This guarantees that we only process user-facing content and that the final Markdown follows the exact order expected by the authors. If `toc.html` is unavailable we fall back to the glob-based discovery described in the earlier revision of the design.
-2.  **Ordering:** Because we are reading the ToC, the hyperlinks are already in the order the authors intended. If `index.html` is missing from the list we will insert it at the top, and we will never include `toc.html` itself in the processing set.
+The table conversion intentionally favors readable plain text over exact HTML layout. Row spans are not reconstructed, and rich cell markup is reduced to cell text.
 
-- **Technology:** `BeautifulSoup` for parsing `toc.html` and `os.path` for path manipulation.
+### Links and assets
 
-#### 3.2. Content Extractor & Converter
+Links whose path exactly matches an included HTML page are changed to a generated page anchor. External links, same-page fragment links, and local HTML links outside the discovered set are left unchanged.
 
-This component processes each file from the list generated by the crawler.
+Local `<img>` sources are copied to the output assets directory unless they are remote, embedded, or removed as decoration. Local links are copied only when their extension is one of:
 
-1.  **HTML Parsing:** For each file, the tool will parse the HTML content.
-2.  **Content Identification:** The CSS selector `#segment-content .col-12` will be used to target the main content block. A fallback to the `<body>` tag will be used if this selector fails.
-3.  **Heading Number Preservation:** Each page encodes its chapter/section number via CSS counters. We inspect the local CSS (`--heading-prefix` or `counter-reset: section`) and rewrite `<h2>`-`<h6>` text nodes to include the numeric prefix (e.g., `2.1.3`). This ensures the flattened Markdown preserves the numbering seen in the HTML even though those numbers never appear in the source DOM.
-4.  **Table Normalization:** Prior to conversion we rewrite complex tables (`dict`, `waffle`, metadata grids, and any table lacking `<th>` headers) into Markdown-friendly text blocks. Nested or merged cells (including sub headers that span multiple columns) are flattened so they remain readable once converted.
-5.  **Decorative Asset Removal:** UI chrome such as navigation icons, spacer GIFs, and copy buttons are stripped so that the output contains only content a reader would care about. “Show Usage” toggle panes (used around IP statements) are expanded inline so their content is always visible.
-6.  **Internal Link Rewriting:** Before any other conversion, the tool will find all `<a>` tags pointing to other discovered HTML pages and rewrite their `href` attributes to be internal anchor links. (See Internal Link Rewriting section for details).
-7.  **Asset Handling:** The tool will then process `<img>` tags and `<a>` tags pointing to non-HTML assets (e.g. `.json`, `.xml`), copying them to a local `assets` directory and rewriting their links. (See Asset Handling section for details).
-8.  **HTML to Markdown Conversion:** The fully modified HTML block will be passed to a conversion library to produce Markdown.
+`.json`, `.xml`, `.ttl`, `.csv`, `.xlsx`, `.zip`, `.tgz`, `.png`, `.jpg`, `.jpeg`, `.gif`
 
-- **Technology:** `BeautifulSoup` for parsing and content extraction, `shutil` for asset copying, and `html2text` for converting HTML to Markdown.
+Each copied reference is rewritten to `<assets-directory-name>/<base-filename>`. Missing assets produce warnings and retain their original references.
 
-#### 3.3. Internal Link Rewriting
+### Markdown conversion and assembly
 
-To ensure the final document is fully self-contained and navigable, links between the original HTML pages must be converted into internal anchor links.
+The transformed content block is passed to `html2text` with links enabled and line wrapping disabled. Nonempty page results are joined in discovery order with Markdown horizontal rules and written as UTF-8.
 
-1.  **Anchor Generation:** For each processed page (e.g., `artifacts.html`), a predictable Markdown anchor is generated (e.g., `#page-artifactshtml`).
-2.  **Link Discovery:** During the **Extract & Convert** stage, the script will search for all `<a>` tags whose `href` points to another HTML file in the set of discovered pages.
-3.  **Link Rewriting:** The `href` of each discovered internal link is replaced with the corresponding generated anchor. For example, `<a href="artifacts.html">...</a>` becomes `<a href="#page-artifactshtml">...</a>`. This happens *before* the final HTML-to-Markdown conversion.
+## Failure behavior
 
-#### 3.4. Assembler
+The command exits with an error when:
 
-This final component assembles the complete document.
+- The input does not contain a `site/` directory.
+- Discovery returns no pages.
+- The output file cannot be written.
 
-1.  **Concatenation:** The tool will iterate through the sorted list of files, process each one using the Extractor & Converter, and append the resulting Markdown to a single string, separated by a horizontal rule.
-2.  **File Output:** The final, concatenated Markdown string will be written to the specified output file.
+Individual missing pages, missing assets, and pages with no usable content emit warnings so processing can continue.
 
-- **Technology:** Python's standard file I/O operations.
+## Constraints
 
-#### 3.5. Asset Handling (Images and Linked Files)
-
-To prevent broken links in the final output, the tool must process and relocate linked assets.
-
-1.  **Asset Directory:** The tool will create a directory (e.g., `assets/`) in the same location as the output Markdown file.
-2.  **Asset Discovery:** During the **Extract & Convert** stage, the script will search for all `<img>` tags and all `<a>` tags pointing to local, non-HTML files (e.g., `.json`, `.xml`, `.csv`, `.zip`).
-3.  **File Copying:** For each discovered asset, the tool will:
-    a.  Resolve the asset's `src` or `href` path relative to the `site/` directory.
-    b.  Copy the asset file from its source location to the `assets/` directory.
-4.  **Link Rewriting:** The `src` or `href` attribute of the tag will be modified to point to the new relative path (e.g., `src="image.png"` becomes `src="assets/image.png"` and `href="example.json"` becomes `href="assets/example.json"`).
-
-This process occurs *before* the HTML is converted to Markdown.
-
-- **Technology:** Python's `shutil` module for file copying.
-
-## 4. Recommended Technology Stack
-
-- **Language:** Python 3.x
-- **Libraries:**
-    - `beautifulsoup4`: For robust HTML parsing and element selection.
-    - `html2text`: For high-quality HTML-to-Markdown conversion.
-    - `requests` (or standard `urllib`): Although for local files, this isn't strictly necessary, it can be useful if the tool is extended to handle web URLs.
-    - `argparse`: For creating a user-friendly command-line interface.
-
-## 5. Error Handling Strategy
-
-- The script will wrap file-opening and parsing operations in `try...except` blocks.
-- If a file linked from `index.html` is not found, a warning will be printed to the console, and the script will continue to the next file.
-- If the content selector (`#segment-content .col-12`) does not find any content in a file, a warning will be logged, and the file will be skipped.
+- The parser targets the HTML conventions used by the source documentation generator; differently structured sites may fall back to processing the entire body.
+- Asset directory structure is not preserved, so equal base filenames collide.
+- Only the supported linked-asset extensions are relocated.
+- The tool does not download remote content.
+- Page identity and link matching use the literal relative paths discovered from the ToC or glob fallback; no general URL normalization is performed.

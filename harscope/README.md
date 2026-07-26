@@ -4,14 +4,14 @@ HAR (HTTP Archive) file analyzer and sanitizer. Combines rich visualization with
 
 ## Features
 
-- **Waterfall View** - Paginated request timeline with stacked timing bars (blocked/DNS/connect/SSL/send/wait/receive), domain/status/type/search filtering, per-row security indicators (shield icons with red/amber severity coloring)
+- **Waterfall View** - Paginated request timeline with stacked timing bars (blocked/DNS/connect/SSL/send/wait/receive), domain/status/URL search filtering, and per-row security indicators (shield icons with red/amber severity coloring)
 - **Inspector View** - Full request/response detail with headers, cookies, query params, body (JSON syntax-highlighted), timing breakdown, and WebSocket messages. Security findings are surfaced inline: red badges on Request/Response toggles and per sub-tab, flagged headers/cookies highlighted, body keys with findings shown in red with marked values
 - **Security View** - Value-first secret detection across the entire HAR tree. Findings are consolidated per field (multiple detectors on the same value merge into one finding). Severity ratings, per-finding redact toggles, severity/category filtering
 - **Sequence Diagram** - Interactive SVG canvas with pixel-perfect arrows and `<marker>` arrowheads, pan/zoom (scroll, Ctrl/Cmd+scroll, keyboard), minimap with viewport indicator, animated arrow draw-in, hover highlighting of request/response pairs, click-to-inspect navigation, domain/flow filtering, detected patterns (OAuth, redirect chains, API groups), and response toggle
 - **Dashboard** - Summary cards (requests, size, load time, error rate), status code/domain/content type bar charts, timing percentiles
-- **Inline Redaction** - Checkbox toggles on every value in Inspector (headers, cookies, params, JSON body, WebSocket). Four visual states: auto-redact (red/FLAGGED), auto-kept (teal/KEPT), manual redact (amber/MANUAL), normal. Keyboard navigation with arrow keys and spacebar
+- **Inline Redaction** - Checkbox controls for headers, cookies, query parameters, and WebSocket messages, plus clickable keys in JSON bodies and JSON WebSocket payloads. Four visual states: auto-redact (red/FLAGGED), auto-kept (teal/KEPT), manual redact (amber/MANUAL), normal. Keyboard navigation with arrow keys and spacebar
 - **Decisions View** - Table of all redaction decisions (auto + manual) with filters, toggle, and inspect actions
-- **Export** - Sanitized HAR (redacted secrets with full value replacement), Edit Decision List (.edl.json), CSV, Markdown report, HTML report with dark mode (auto-detects system theme, manual toggle, localStorage persistence) and bulk redaction controls
+- **Export** - Sanitized HAR (redacted secrets with full value replacement), Edit Decision List (.edl.json), request-summary CSV, findings CSV, Markdown report, and HTML report with dark mode (system-theme detection, manual toggle, and localStorage persistence). The Export view also provides bulk redaction controls
 - **EDL Validation** - Verify a sanitized HAR against its .edl.json to confirm all redact/keep decisions were applied correctly (GUI + CLI)
 
 ## Documentation
@@ -51,11 +51,11 @@ HAR (HTTP Archive) file analyzer and sanitizer. Combines rich visualization with
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`) — manages the Python interpreter and dependencies
-- Internet connection on first run (downloads React, Tailwind, fonts via CDN)
+- Internet connection to resolve Python dependencies on first run and to load browser assets from CDNs when they are not already cached
 
 ## First-Time Setup
 
-harscope runs via uv using a PEP 723 inline-metadata header. The first run resolves its dependencies (fastapi, uvicorn, python-multipart, pydantic) into uv's shared cache — that invocation may briefly hit the network; subsequent runs start instantly. No virtual environment or state files are written to your home directory.
+harscope runs via uv using a PEP 723 inline-metadata header. The first run resolves its dependencies (fastapi, uvicorn, python-multipart, pydantic) into uv's shared cache — that invocation may briefly hit the network; subsequent runs reuse the cache. harscope does not create its own virtual environment or runtime-state directory; uv manages dependencies in its normal shared cache location.
 
 ## How to Capture a HAR File
 
@@ -83,7 +83,7 @@ Detection is **value-first, not key-first**. Key names boost confidence (lower t
 ### What It Catches
 
 - **Critical**: Authorization headers, session cookies, JWT tokens, Bearer/Basic auth, API keys, sensitive URL parameters, opaque tokens in any field
-- **Warning**: HTTP (non-HTTPS) requests, missing cookie security flags (httpOnly, secure), long opaque tokens without key hints
+- **Warning**: HTTP (non-HTTPS) requests, missing cookie security flags (httpOnly, secure), email addresses, and long opaque tokens without key hints
 - **Info**: Private IP addresses
 
 ### Consolidation
@@ -92,9 +92,9 @@ Multiple detectors flagging the same field (e.g., JWT pattern + token heuristic 
 
 ### Redaction
 
-Redaction replaces the **entire value** with `[REDACTED]` by parsing the body JSON, navigating to the target key, and re-serializing. Previously redacted values (`[REDACTED]`) are skipped on rescan.
+Redaction replaces the **entire targeted value** with `[REDACTED]`. Direct HAR fields are replaced in place; structured JSON bodies are parsed, updated at the target key, and re-serialized. Previously redacted values (`[REDACTED]`) are skipped on rescan.
 
-Review findings in the Security tab, toggle redaction per-finding or in bulk, then export a sanitized HAR from the Export tab. You can also manually redact any value in the Inspector using inline checkboxes, even if the scanner didn't flag it.
+Review findings in the Security tab, toggle redaction per finding, then use the Export tab for bulk controls and sanitized output. You can also manually redact values in the Inspector, even if the scanner did not flag them.
 
 ### Edit Decision List (EDL)
 
@@ -126,7 +126,7 @@ Validation checks:
 ## Architecture
 
 Single-file Python application (uv-managed via a PEP 723 header) with:
-- FastAPI backend with ~20 REST endpoints
+- FastAPI backend with 26 REST routes
 - Embedded React 18 SPA (CDN: React, Babel, Tailwind, Lucide Icons, Google Fonts)
 - No build step, no npm, no node_modules
 - Recursive whole-tree scanner with JSON body parsing, base64 decoding, and WebSocket message inspection
@@ -136,9 +136,9 @@ Single-file Python application (uv-managed via a PEP 723 header) with:
 The full suite exercises the backend API end-to-end: loading HAR files, scanning, toggling redactions, exporting, and validating EDLs.
 
 ```bash
-cd /Users/example/source/utilities/harscope
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
+cd harscope
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
 

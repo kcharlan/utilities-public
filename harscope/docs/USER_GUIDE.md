@@ -23,9 +23,9 @@ harscope starts a local web server and opens your browser automatically. The def
 
 ### First-Time Setup
 
-On first run, harscope creates a private virtual environment at `~/.harscope_venv` and installs its dependencies (FastAPI, uvicorn, python-multipart). This happens once — subsequent launches start instantly.
+The launcher uses uv and its PEP 723 metadata to select Python 3.12+ and resolve FastAPI, uvicorn, python-multipart, and pydantic into uv's shared cache. It does not create a harscope-specific environment or state directory in your home folder.
 
-**Requirements:** Python 3.8+ and an internet connection on first run (CDN resources: React, Tailwind, fonts).
+**Requirements:** [uv](https://docs.astral.sh/uv/) and an internet connection to resolve dependencies on first run. The browser also loads React, Babel, Tailwind, Lucide, and fonts from CDNs whenever those assets are not cached.
 
 ### Loading a HAR File
 
@@ -35,7 +35,9 @@ Three ways to load a file once the browser is open:
 |--------|-----|
 | **CLI argument** | Pass the path when you launch: `./harscope capture.har` |
 | **Drag-and-drop** | Drag a `.har` file onto the welcome screen's drop zone. The border turns blue when hovering. |
-| **File picker** | Click the drop zone to open your OS file browser, or type a full file-system path into the text field and click **Load**. |
+| **File picker** | Click the drop zone to open your OS file browser, or type a full file-system path into the text field and click **Open**. |
+
+HAR uploads are limited to **200 MB**. Files up to 50 MB are read in the browser and sent as JSON; larger files use multipart upload.
 
 ### How to Capture a HAR File
 
@@ -90,25 +92,25 @@ Each bar is a horizontal stack of colored segments:
 
 ### Filtering
 
-Four filters sit above the table. All can be combined — the results are the intersection of all active filters.
+Three filters sit above the table. All can be combined — the results are the intersection of all active filters.
 
 | Filter | Control | What it does |
 |--------|---------|--------------|
 | **Domain** | Dropdown | Show only requests to a specific domain |
 | **Status** | Dropdown | Filter by status group (2xx, 3xx, 4xx, 5xx) |
-| **Type** | Dropdown | Filter by content type (application/json, text/html, etc.) |
-| **Search** | Text input | Case-insensitive full-text search across URL, headers, and body |
+| **Search** | Text input | Case-insensitive search across request URL and method |
 
 Changing any filter resets the page to 1.
 
 ### Security Shield Icons
 
-Every row has a shield icon on the right:
+Rows with findings have a shield icon on the left:
 
-- **Red shield** — critical or warning findings exist for this request
-- **Green shield** — no actionable findings
+- **Red shield** — at least one critical finding exists for this request
+- **Amber shield** — findings exist, but none are critical
+- **No shield** — no findings exist for the request
 
-Hover over the shield to see the count breakdown (e.g., "2 critical, 1 warning").
+Hover over the shield to see the total finding count and, when applicable, the critical count.
 
 ### Clicking a Row
 
@@ -155,7 +157,7 @@ Red badges on sub-tab labels tell you at a glance which sections contain securit
 
 ## 5. Redaction
 
-Redaction is harscope's core workflow. Every value in the Inspector — headers, cookies, query parameters, JSON body keys, and WebSocket messages — has an inline checkbox for toggling redaction.
+Redaction is harscope's core workflow. Headers, cookies, query parameters, and whole WebSocket messages have inline checkboxes. JSON body and JSON WebSocket keys are clickable redaction targets.
 
 ### The 4-State System
 
@@ -183,11 +185,11 @@ Click the checkbox to toggle a value's redaction state. Scanner-detected values 
 
 In the Body sub-tab, JSON is displayed as syntax-highlighted, expandable structure. Keys with security findings appear with a **red background** and the value is visually marked.
 
-Click any JSON key or value to toggle its redaction state. The same 4-state system applies.
+Click a JSON key to toggle its redaction state. The same 4-state system applies.
 
 ### WebSocket Message Redaction
 
-The WebSocket sub-tab lists messages with their data content. JSON-formatted messages are syntax-highlighted and support the same click-to-redact workflow as the Body tab.
+The WebSocket sub-tab lists messages with their data content. You can redact a whole message with its checkbox; expanded JSON messages also support click-to-redact keys.
 
 ### Keyboard Navigation
 
@@ -201,7 +203,7 @@ When a header/cookie/query table has focus:
 
 ### What Redaction Does on Export
 
-When you export a sanitized HAR, every value marked for redaction (FLAGGED or MANUAL) is replaced with `[REDACTED]`. The replacement is done by parsing the body JSON, navigating to the exact key, replacing the full value, and re-serializing. Values already showing `[REDACTED]` are skipped on rescan.
+When you export a sanitized HAR, every targeted value marked for redaction (FLAGGED or MANUAL) is replaced with `[REDACTED]`. Direct HAR fields are replaced in place; structured JSON bodies are parsed, updated at the exact key, and re-serialized. Values already showing `[REDACTED]` are skipped on rescan.
 
 ---
 
@@ -223,8 +225,8 @@ Detection is **value-first, not key-first**. Any sufficiently long, opaque strin
 
 **What gets flagged:**
 - **Critical** — Authorization headers, session cookies, JWT tokens, Bearer/Basic auth, API keys (GitHub, GitLab, npm, Stripe, Slack, Supabase patterns), sensitive URL parameters, CSRF tokens, passwords, opaque tokens
-- **Warning** — HTTP (non-HTTPS) requests, missing cookie security flags (httpOnly, secure), long opaque tokens without key hints
-- **Info** — Private IP addresses (RFC 1918, IPv6 loopback)
+- **Warning** — HTTP (non-HTTPS) requests, missing cookie security flags (httpOnly, secure), email addresses, and long opaque tokens without key hints
+- **Info** — RFC 1918 private IPv4 addresses
 
 Multiple detectors on the same value are consolidated into a single finding with merged descriptions and the highest severity.
 
@@ -241,15 +243,14 @@ Two dropdowns at the top of the Security tab:
 
 Each finding row has a toggle to switch between redact and keep. Toggling a finding here updates the Inspector's inline state and vice versa.
 
-### Bulk Select / Deselect
-
-Buttons at the top let you:
-- **Select All** — mark all visible (filtered) findings for redaction
-- **Deselect All** — mark all visible findings as kept
-
 ### Reset / Reapply
 
-Reset returns all findings to their scanner-default state (auto-redact for critical/warning, keep for info).
+The Security tab provides two state-management actions:
+
+- **Reapply Auto** restores scanner defaults for automatic findings while preserving manual redactions.
+- **Reset All** clears manual redactions and restores scanner defaults for automatic findings.
+
+Scanner defaults redact critical and warning findings and keep info findings. Bulk select/deselect controls for all findings or a single severity are in the Export tab.
 
 ---
 
@@ -259,7 +260,7 @@ The Decisions tab is an audit trail — a table of every redaction decision, bot
 
 ### Columns
 
-Each row shows: entry index, request method and path, location in the HAR (e.g., `request.headers[3].value`), action (redact/keep), source (auto/manual), and the area (headers, cookies, query, body, websocket).
+Each row shows the action, source, key, value preview, request/response side, area, and request context (entry index, status, method, and path).
 
 ### Filters
 
@@ -275,14 +276,14 @@ Three independent filter dropdowns:
 
 Each row has two action buttons:
 
-- **Toggle** — flip the decision between redact and keep
+- **Keep/Redact** — flip an automatic decision; for a manual redaction, **Keep** removes the manual decision
 - **Inspect** — jump to the Inspector with the relevant entry, side, and sub-tab pre-selected
 
 ---
 
 ## 8. Exporting
 
-The Export tab provides five output formats. All exports reflect your current redaction state — what's marked FLAGGED or MANUAL gets redacted, what's KEPT or normal stays.
+The Export tab provides six output formats. The sanitized HAR reflects your current redaction state — what is marked FLAGGED or MANUAL gets redacted, while KEPT and normal values remain unchanged. The EDL, findings CSV, and reports describe the current decisions and findings.
 
 ### Export Formats
 
@@ -290,13 +291,14 @@ The Export tab provides five output formats. All exports reflect your current re
 |--------|-----------|------------------|
 | **Sanitized HAR** | `.har` | A copy of the original HAR with all redacted values replaced by `[REDACTED]`. This is the file you share. |
 | **Edit Decision List** | `.edl.json` | A JSON record of every redaction decision (entry index, location path, action, request context). Used for validation and auditing. |
-| **CSV** | `.csv` | Tabular export of all requests: domain, path, status, timing, size. Good for spreadsheet analysis. |
+| **CSV Requests** | `.csv` | Request summaries including URL, domain, status, content type, timing, size, finding counts, and WebSocket counts. |
+| **CSV Findings** | `.csv` | One row per automatic or manual finding with severity, context, location, action, and source. |
 | **Markdown Report** | `.md` | Analysis summary with stats, finding counts by severity, and a redaction summary. |
-| **HTML Report** | `.html` | Self-contained HTML report with dark mode support (auto-detects system theme, manual sun/moon toggle, preference saved to localStorage), print-safe light forcing, and bulk redaction controls. Shareable as a standalone file. |
+| **HTML Report** | `.html` | Self-contained HTML report with dark mode support (auto-detects system theme, manual sun/moon toggle, preference saved to localStorage) and print-safe styling. Shareable as a standalone file. |
 
 ### Redaction Summary
 
-Each export includes (or references) a summary of what was redacted: how many values were auto-redacted, how many were manually redacted, and how many were kept.
+Before downloading, the Export view shows how many automatic and manual values will be redacted and provides select/deselect controls for all findings or one severity. The EDL and reports include redaction summaries; the CSV files provide request- or finding-level rows.
 
 ---
 
@@ -334,7 +336,7 @@ Results appear immediately:
 | **FAIL** | Decision was NOT applied — the value doesn't match what was expected |
 | **ERROR** | Location not found in the HAR — the path may have changed or the entry is missing |
 
-A summary line shows the count: e.g., "42 pass, 0 fail, 1 error".
+A summary line shows the count, for example: "42 pass, 0 fail, 1 error". EDL uploads are limited to **10 MB**.
 
 ### CLI Validation
 
@@ -348,7 +350,7 @@ Validate without launching the browser:
 ./harscope --validate sanitized.har --edl original.edl.json --format json
 ```
 
-Exit code **0** means all decisions validated. Exit code **1** means failures were found.
+Exit code **0** means all decisions validated. Exit code **1** means validation failed or an input error occurred.
 
 Validation rules:
 - `action: redact` → value in HAR must be `[REDACTED]`
@@ -398,7 +400,7 @@ harscope automatically identifies common flow patterns and groups them:
 
 - **Redirect chains** — sequences of 3xx responses (e.g., "redirect-0")
 - **OAuth flows** — requests hitting `/oauth`, `/authorize`, `/token`, `/callback`, or `/auth/` endpoints, grouped with request count
-- **API groups** — clusters of requests to the same domain prefix
+- **API groups** — three or more requests sharing the same `/api/...` path prefix
 
 **Pagination:** 100 messages per page with Previous/Next controls (floating overlay at bottom center).
 
@@ -420,7 +422,7 @@ Four charts below:
 | **Status Codes** | Horizontal bar | Top 10 by frequency; 2xx=green, 3xx=yellow, 4xx=orange, 5xx=red |
 | **Top Domains** | Horizontal bar | Top 10 domains by request count |
 | **Content Types** | Horizontal bar | Top 10 MIME types, purple bars |
-| **Timing Percentiles** | Text list | p50, p75, p90, p95 response times with average |
+| **Timing Percentiles** | Text list | p50, p75, p90, p95, and p99 response times with average |
 
 ---
 
@@ -448,6 +450,10 @@ Four charts below:
 | **Arrow Down** | Inspector tables | Move focus to next row |
 | **Spacebar** | Inspector tables | Toggle redaction for focused row |
 | **Enter** | File path input | Load the file |
+| **Arrow keys** | Sequence canvas | Pan the diagram |
+| **+ / -** | Sequence canvas | Zoom in/out |
+| **Home** | Sequence canvas | Fit the diagram to the viewport |
+| **0** | Sequence canvas | Reset pan and zoom |
 
 ### Color Legend
 
@@ -492,8 +498,9 @@ Four charts below:
 
 | Icon | Meaning |
 |------|---------|
-| Red shield | Critical or warning findings |
-| Green shield | No actionable findings |
+| Red shield | At least one critical finding |
+| Amber shield | Findings exist, but none are critical |
+| No shield | No findings |
 
 **Validation Results:**
 

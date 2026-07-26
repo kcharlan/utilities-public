@@ -5,6 +5,8 @@
 **Date:** 2026-03-07
 **Status:** Draft -- design review
 
+> This is a reusable, unimplemented product design retained for future orchestration work. It does not describe Git Fleet's runtime architecture or claim that Cognitive Switchyard exists in this directory.
+
 ---
 
 ## 1. What Is Cognitive Switchyard

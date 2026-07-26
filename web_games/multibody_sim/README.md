@@ -1,7 +1,8 @@
 # Multibody Gravity Lab
 
-A browser-based N-body gravity sandbox and screensaver. Bodies attract each other, merge on collision, and leave visual history (trails) plus forward predictions (leads).  
-This project is a single-file app (`index.html`) designed for fast iteration: no build step, no backend, no assets.
+A browser-based N-body gravity sandbox and screensaver. Bodies attract each other, merge on collision, and can show visual history (trails) plus forward predictions (leads).
+
+The runtime is a single-file app (`index.html`): it has no build step, backend, external libraries, or required runtime assets. The other files in this directory are documentation, sample save files, and test tooling.
 
 ## What This Is (General Overview)
 
@@ -10,7 +11,7 @@ Multibody Gravity Lab simulates space-like motion:
 - Each body has mass, position, velocity, and color.
 - Every body pulls on every other body with gravity.
 - When two bodies overlap, they merge into one larger body.
-- The camera auto-frames the system so motion stays visible.
+- The camera auto-frames the system by default so motion stays visible.
 
 Two working modes:
 
@@ -42,8 +43,6 @@ npx http-server -p 4173 -c-1
 
 - `index.html`: complete application (UI, simulation, rendering, persistence). Intentionally a single-file app.
 - `USER_GUIDE.md`: end-user guide for controls, modes, and save/load workflow.
-- `docs/multibody-sim-implementation.md`: implementation notes/spec history.
-- `docs/UI_refactor.md`: UI refactor design notes.
 - `multibody-test-1.json`: sample User setup mode save state for multibody testing.
 - `multibody-test-2.json`: sample User setup mode save state for multibody testing.
 - `multibody-test-3.json`: sample saved setup state for multibody testing.
@@ -54,7 +53,9 @@ npx http-server -p 4173 -c-1
 ## Core Behavior Summary
 
 - Physics integrator: pairwise gravitational acceleration + leapfrog-style velocity half-step integration.
-- Collision model: perfectly inelastic merge (mass and momentum conserved, color mass-weighted blend).
+- Collision model:
+  - regular bodies merge perfectly inelastically, conserving mass and momentum and using a mass-weighted color blend,
+  - singularities use a deliberately stylized effective-mass model, compressed radius growth, and partial absorption of a regular body's displayed mass.
 - UI layout:
   - collapsible sections for `User setup`, `Selected body`, and `Physics`,
   - floating stats overlay with live metrics and screensaver gate status.
@@ -76,7 +77,7 @@ npx http-server -p 4173 -c-1
 
 ## Developer Reference (Detailed)
 
-## Architecture
+### Architecture
 
 Single-file, module-script app:
 
@@ -97,7 +98,7 @@ Important entry points:
 - `generateScreensaverBodies(n)`: spawn + velocity assignment + viability checks.
 - `startSimulation()/pauseSimulation()/resetCurrentMode()`: run controls.
 
-## Data Model
+### Data Model
 
 `Body` shape:
 
@@ -116,11 +117,11 @@ Core unit conventions:
 - Velocity is world-units per simulation second.
 - `timeSpeed` and `timeMultiplier` scale simulation time, not rendering time.
 
-## Modes
+### Modes
 
 `screensaver`:
 
-- always auto-camera,
+- auto-camera by default, with `Full` and `Follow` subject overrides,
 - auto-spawn and auto-restart,
 - boundary tracking and restart gates enabled.
 
@@ -128,11 +129,11 @@ Core unit conventions:
 
 - manual body placement/editing,
 - optional auto-velocity assignment on start,
-- reset restores saved baseline setup,
+- reset restores the in-memory baseline captured by `Start` or `Load`,
 - clear wipes setup,
 - load/save JSON for setup persistence.
 
-## Controls Implemented (Code-Level Summary)
+### Controls Implemented (Code-Level Summary)
 
 Simulation controls:
 
@@ -145,7 +146,7 @@ Simulation controls:
 - `Load` (user only): JSON setup import.
 - `Save` (screensaver + user): JSON setup export.
   - screensaver save exports the current screensaver cycle start (baseline) so it can be loaded into user mode.
-  - user save exports the user setup baseline/editable setup.
+  - user save exports the current scene while paused; while the simulation is running, it exports the baseline captured at the most recent `Start` or `Load`.
 - screensaver mode controls:
   - `Screensaver bodies` default: `5`,
   - `Singularity chance (%)` (0-100),
@@ -161,7 +162,7 @@ Simulation controls:
   - `Velocity (drag x10)` live readout,
   - `Singularity` checkbox (editable while paused).
 
-User setup pointer/keyboard:
+User setup pointer/keyboard (while paused):
 
 - Left click empty canvas: create body.
 - Left drag on body: move body.
@@ -170,7 +171,7 @@ User setup pointer/keyboard:
 - Mouse wheel on body (paused user mode): adjust mass.
 - `Delete`/`Backspace`: remove selected body (when focus is not in an input).
 
-## Save/Load JSON Contract
+### Save/Load JSON Contract
 
 Current payload (`version: 3`):
 
@@ -204,7 +205,7 @@ Save behavior:
 
 - tries `showSaveFilePicker()` first (filename dialog),
 - falls back to download if unavailable.
-- user mode save persists the editable setup baseline (not transient in-run merged state).
+- user mode save persists the current scene while paused. While running, it persists the most recent start/load baseline rather than transient in-run state.
 - screensaver mode save persists the screensaver cycle start baseline (not transient in-run merged state).
 
 Load behavior:
@@ -214,7 +215,9 @@ Load behavior:
 - uses baseline as the active loaded scene (or `bodies[]` when no baseline exists),
 - camera snaps to loaded setup bounds.
 
-## Restart Logic (Screensaver)
+The loader also accepts the included legacy version 2 samples and a bare body array; newly created saves use version 3.
+
+### Restart Logic (Screensaver)
 
 `screensaverRestartRequired()` returns true when any is met:
 
@@ -229,7 +232,7 @@ Notes:
 - Zoom gate is a hard restart requirement.
 - During 1-body hold, camera updates are intentionally frozen to avoid zooming into the final body.
 
-## Spawn and Initial Velocity Strategy
+### Spawn and Initial Velocity Strategy
 
 Screensaver body generation:
 
@@ -249,7 +252,7 @@ Spawn quality gates:
 - `validateScreensaverStart(20)`: rejects too-close/immediately problematic starts.
 - `hasLowBodyInteractionPotential(80, 0.45)` for `n <= 4`: forward simulation check to reject likely “drift away” starts.
 
-## Rendering Layers
+### Rendering Layers
 
 Render order:
 
@@ -266,7 +269,7 @@ Special visual behaviors:
 - lead paths are forward-biased and minimum-visible-length constrained,
 - merge effects interpolate lobe/core blend over `mergeFxDuration`.
 
-## Camera System Notes
+### Camera System Notes
 
 Camera uses bounds fit against view rect that excludes the sidebar area:
 
@@ -288,7 +291,7 @@ Key camera modifiers:
 - screensaver run min span floor:
   - uses `boundaryTrackedExtent * 2 * screensaverMinSpanFactor` to avoid over-zooming on tight interactions.
 
-## Key Config Constants (Magic Numbers to Tune)
+### Key Config Constants (Magic Numbers to Tune)
 
 Physics/integration:
 
@@ -335,7 +338,7 @@ Hard bounds:
 
 - `maxBodiesHard = 50`
 
-## Important State Variables to Understand
+### Important State Variables to Understand
 
 - `timeSinceCollision`: drives quiet restart gate.
 - `boundaryTrackedExtent` / `finalBoundary`: early-run extent tracking used during screensaver settling, camera reference capture, and screensaver minimum camera span floor.
@@ -345,9 +348,9 @@ Hard bounds:
 - `screensaverSetupBaseline`: save anchor for the current screensaver cycle start.
 - `userSetupBaseline`: reset anchor in user mode.
 - `leadDirty` / `leadRefreshClock`: lead recomputation scheduling.
-- `velocityDrag`, `moveDrag`, `pointerWorld`, `pointerScreen`: user interaction state.
+- `velocityDrag`, `massDrag`, `moveDrag`, `pointerWorld`, `pointerScreen`: user interaction state.
 
-## Safe Tuning Workflow
+### Safe Tuning Workflow
 
 When changing behavior constants:
 
@@ -360,7 +363,7 @@ When changing behavior constants:
    - quiet timer,
    - single-body delay and camera freeze.
 
-## Validation Commands
+### Validation Commands
 
 From repo root, `cd web_games/multibody_sim`:
 
@@ -383,7 +386,7 @@ Run Playwright smoke tests (config launches local `http-server` on `127.0.0.1:41
 npm test
 ```
 
-## Known Design Tradeoffs
+### Known Design Tradeoffs
 
 - Single-file architecture is simple and portable but not modular.
 - O(N²) gravity and collision checks scale poorly at high body counts.

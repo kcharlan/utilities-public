@@ -1,10 +1,12 @@
 # Report Readability Redesign — Design
 
-Status: **implemented** on branch `report-readability-redesign`, across an eleven-task plan.
+Status: **implemented** in the current code.
 
 This document has been corrected in place where implementation diverged from the approved design. Nine such divergences are marked inline and recorded under [Amendments during implementation](#amendments-during-implementation). Where the design and the shipped code disagree, **the code is authoritative** — read the amendments before trusting an unmarked passage.
 
-Supersedes the presentation decisions in [`report_detail_policy_plan.md`](./report_detail_policy_plan.md) where they conflict. Detail-policy semantics (squelch patterns, `--detail` modes) are unchanged.
+This design extends the report-detail policy described in
+[`DESIGN.md`](./DESIGN.md). Detail-policy semantics (squelch patterns and
+`--detail` modes) are unchanged.
 
 ## Goal
 
@@ -20,7 +22,12 @@ Three problems drive this work:
 
 - Changing what is collected, stored, or squelched.
 - Changing JSON output shape (full fidelity, unchanged).
-- ~~Changing `_full.html` layout. It keeps today's rendering.~~ **Corrected — see Amendment 1.** `_full.html` is not a separate renderer: [cli.py:363–372](../model_sentinel/cli.py) generates it by calling the same `render_scan_report` with `make_report_detail_policy(mode="all")`. It therefore receives every layout change automatically, and holding its layout back would require building a second renderer that does not exist and was never budgeted.
+- ~~Changing `_full.html` layout. It keeps today's rendering.~~ **Corrected —
+  see Amendment 1.** `_full.html` is not a separate renderer:
+  [`cli.py`](../model_sentinel/cli.py) generates it by calling the same
+  `render_scan_report` with `make_report_detail_policy(mode="all")`. It
+  therefore receives every layout change automatically, and holding its
+  layout back would require building a second renderer that does not exist.
 - Adding runtime dependencies. Reports stay self-contained, single-file, and (except where noted in N3, which is deferred) JavaScript-free.
 
 ---
@@ -51,17 +58,23 @@ Three problems drive this work:
 
 ## Architecture
 
-### The core problem to fix first
+### The core problem the redesign addressed
 
-`_render_smart_change_text` ([reporting.py:1243](../model_sentinel/reporting.py), serves text and markdown) and `_render_html_table_row` ([reporting.py:2617](../model_sentinel/reporting.py)) independently implement the same six-branch classification cascade — list diff, price amount, count field, both-numeric, boolean, fallback — with the guard conditions duplicated verbatim. `_build_summary_entries_from_fc` is a third partial copy. The same split exists for list diffs (`_render_list_diff_text` / `_render_html_list_diff`) and bulk list diffs (`_render_bulk_list_diff_text` / `_render_html_bulk_list_diff`).
+Before the redesign, `_render_smart_change_text` (text and Markdown) and
+`_render_html_table_row` independently implemented the same classification
+cascade, while `_build_summary_entries_from_fc` contained a third partial copy.
+List and bulk-list rendering had the same duplication.
 
-Every fix below (E1, E2, A1, B1, labels, precision) would otherwise have to be applied two or three times. Consolidate first.
+The implemented architecture consolidates that logic so E1, E2, A1, B1,
+labels, and precision have one semantic source.
 
-### New module: `model_sentinel/change_render.py`
+### Shared module: `model_sentinel/change_render.py`
 
 Owns classification, labeling, and value formatting. Format-agnostic — it returns data, never markup.
 
-**Primary entry point:** a function that accepts a `FieldChange` plus the provider's `price_multiplier` and `price_divisor`, and returns a single frozen dataclass instance describing the change in rendered-but-unformatted-for-medium terms.
+**Primary entry point:** `classify_change()` accepts a `FieldChange` and the
+resolved `ProviderProfile`, then returns one frozen dataclass instance
+describing the change in rendered-but-medium-neutral terms.
 
 **The dataclass** (name it `RenderedChange`) carries at minimum:
 
@@ -90,9 +103,12 @@ Owns classification, labeling, and value formatting. Format-agnostic — it retu
 | `_build_summary_entries_from_fc` | Consumes `RenderedChange`; stops re-deriving classification |
 | `_render_list_diff_text` / `_render_html_list_diff` | Consume `list_added` / `list_removed` |
 | `_render_bulk_list_diff_text` / `_render_html_bulk_list_diff` | Same. **Deferred out of step 2, then completed — see Amendment 4.** |
-| `_pct_change`, `_fmt_price_per_m`, `_fmt_int`, `_normalize_price`, `_both_numeric`, `_numeric_value`, `_is_price_amount_field`, `_is_count_field`, `_classify_field` | Move into `change_render.py`. They are the shared primitives; reporting.py imports them |
+| Numeric, percent, price, list, and scalar formatting primitives | Live in `change_render.py`; `reporting.py` consumes their classified result |
+| Field categorization and price/count predicates | Live on `ProviderProfile`, with generic defaults in `provider_profiles.py` |
 
-The percent-when-old-is-zero behavior at [reporting.py:1213](../model_sentinel/reporting.py) — returning `""` — is the root cause of the blank Change cell on `0 → 1` booleans. It is fixed by the boolean branch never reaching percent logic (E2), not by changing `_pct_change` itself.
+The former percent-when-old-is-zero behavior was the root cause of the blank
+Change cell on `0 → 1` booleans. It is fixed by the boolean branch never
+reaching percent logic (E2), not by treating flags as numeric magnitudes.
 
 ---
 
@@ -100,9 +116,11 @@ The percent-when-old-is-zero behavior at [reporting.py:1213](../model_sentinel/r
 
 ### Structure
 
-A module-level mapping in `change_render.py`. **Must be trivially editable** — adding a name is a one-line change.
+Each registered `ProviderProfile` owns two trivially editable mappings in
+`provider_profiles.py`; `change_render.py` resolves labels through the active
+profile. This keeps provider vocabulary out of the shared classifier.
 
-Two-stage lookup, in order:
+Lookup is two-stage, in order:
 
 1. **Exact match** on the full dotted path.
 2. **Suffix match** on the final path segment, so dynamically-generated paths resolve. `pricing.overrides[min_prompt_tokens=200000].completion` has leaf `completion` and resolves to "Output".
@@ -113,7 +131,7 @@ Unmatched fields fall back to a prettified leaf: split on `_`, sentence-case. `h
 
 When a path segment contains a bracketed condition, strip it for label lookup and surface it as `qualifier`. The condition renders as a parenthetical after the label: **Output** *(min_prompt_tokens=200000)*. Formatting the condition into prose is out of scope; render it literally.
 
-### Initial registry contents
+### OpenRouter registry contents
 
 Derived from every distinct non-benchmark `field_name` in the history database, 2026-03-14 through 2026-07-25 (42 names). Seed with these:
 
@@ -227,7 +245,7 @@ Order of elements:
 1. **Header** — "PRICE MOVEMENT" and the verdict.
 2. **Two headline movers**, side by side: biggest increase and biggest decrease. Each shows model ID, the field label, `old → new /1M`, absolute delta at the largest type size in the card, and percent.
 3. **Tally chips**, two labeled groups.
-4. **Collapsed affected-model list**, grouped into three buckets.
+4. **Collapsed affected-model list**, grouped into four buckets.
 
 ### Verdict (D3)
 
@@ -239,13 +257,19 @@ Derived from **model** buckets, matching the tally directly beneath it:
 
 The qualifier is dropped on a unanimous population: five models up and none down reads `higher — 5 up`, not `mostly higher — 5 up`. As originally written the rule hedged a result that had nothing to hedge — "mostly" invites the reader to look for the exception, and there is none. Unanimity is tested by summing every non-leading bucket rather than by checking the runner-up alone, so the check does not lean on the sort order to imply the third bucket is empty too.
 
-The verdict string appends the bucket counts: `mixed — 4 up, 4 down, 3 both`. This is a behavior change: the current implementation derives the verdict from *field* counts while displaying *model* counts, so 2026-07-25 currently reads "mostly lower" despite models being tied 4/4/3. It will now read "mixed". Historical reports are not regenerated.
+The verdict string appends the bucket counts: `mixed — 4 up, 4 down, 3 both`.
+Before the redesign, the verdict was derived from *field* counts while the
+display showed *model* counts, so a 4/4/3 model split could read "mostly
+lower." The implemented model-count rule reads "mixed." Historical reports
+are not regenerated.
 
 ### Headline movers
 
 Selected by largest absolute per-1M delta across all price fields of all affected models — one model for the increase side, one for the decrease side. If no increases exist, that panel is omitted rather than shown empty; same for decreases.
 
-`_PriceMovementSummary` and `_PriceMovementModel` ([reporting.py:81–148](../model_sentinel/reporting.py)) currently store only counts. They must additionally carry, per model, the largest absolute delta and the `RenderedChange` that produced it.
+`_PriceMovementSummary` and `_PriceMovementModel` carry, per model, the largest
+absolute delta and the `RenderedChange` that produced it, in addition to
+counts.
 
 ### Tallies
 
@@ -354,73 +378,15 @@ Which changes apply where. This is the answer to "fix it everywhere, not just fo
 
 JSON is full-fidelity and unchanged in every row, including `noop` entries — audit output must not silently drop records.
 
-**The `_full.html` column reads "yes" throughout, and the original "no"s were wrong.** `_full.html` has no renderer of its own — [cli.py:363–372](../model_sentinel/cli.py) builds it from the same `render_scan_report` with `make_report_detail_policy(mode="all")` — so it inherits A1/B1/C1 and the rest whether or not the design asked it to. The only real question was whether the audit view loses anything by adopting the concise layout, and the answer was raw values: A1 moves the provider's literal number out of the cell and into a tooltip and a hidden sub-line, which is exactly the thing an audit reader came for.
+**The `_full.html` column reads "yes" throughout, and the original "no"s were
+wrong.** `_full.html` has no renderer of its own —
+[`cli.py`](../model_sentinel/cli.py) builds it from the same
+`render_scan_report` with `make_report_detail_policy(mode="all")` — so it
+inherits A1/B1/C1 and the rest. The audit-specific question is raw-value
+visibility: A1 moves the provider's literal number out of the main cell and
+into a tooltip and a toggle-controlled sub-line.
 
 **Resolution implemented:** the R3 "Show raw values" checkbox defaults to **checked** when the detail mode is `"all"`. The audit view therefore renders the new layout with every raw value inline and selectable, and no second renderer is needed. See Amendment 1.
-
----
-
-## Implementation sequencing
-
-Order matters. Steps 1 and 2 are preconditions.
-
-1. **Characterization tests.** Before any behavior change, add tests capturing current text, markdown, HTML, and JSON output for a fixture exercising all six classification branches plus: a price addition, a price removal, a boolean in each direction, a `null → null` pair, a list diff, and a dynamic `pricing.overrides[...]` path. Land these green against unmodified code. Without them the refactor is unverifiable.
-
-2. **Extract `change_render.py`.** Move the shared primitives, introduce `RenderedChange` and the classifier, and rewrite the six render functions to consume it. **No behavior change intended in this step** — the characterization tests must still pass untouched. Any test that needs editing here is a regression, not an expected change.
-
-   Note the ordering trap: the classifier gains the `noop` kind in this step, but renderers must **not** yet skip `noop` entries, and labels must still resolve to the raw dotted path. Suppression (E1) and labeling switch on in step 3. Turning them on early makes step 2 unverifiable, because the characterization tests would then legitimately need edits and could mask a real regression.
-
-3. **Semantic fixes**: E1, E2, field labels, precision rule. Characterization tests are updated deliberately, with the expected new output.
-
-4. **Concise HTML layout**: A1, B1, C1, plus the CSS.
-
-5. **Price Movement card**: D1, D3, including the `_PriceMovementSummary` extension to carry deltas.
-
-6. **Page structure**: E3–E6, F1, F2.
-
-7. **Navigation and raw values**: N1, R1–R3.
-
----
-
-## Test criteria
-
-New tests, beyond the characterization suite:
-
-**Classification** — one test per `kind`. Explicitly: `null → null` classifies as `noop`; a boolean never produces a percent; a price addition produces `direction == "added"` and `semantic == "coverage"`; a `pricing.overrides[cond].completion` path resolves to label "Output" with the condition in `qualifier`.
-
-**Labels** — exact match wins over suffix match; unmatched path falls back to prettified leaf; `field_path` is preserved in every case; `context_length` and `top_provider.context_length` produce distinct labels.
-
-**Precision** — a cents-level change renders 2dp on old, new, and delta; a 4th-decimal change renders 4dp on all three; the three are always consistent with each other.
-
-**Color semantics** — a price increase and a context increase in the same fixture produce different CSS classes. Assert on the class names, so a future change that re-merges them fails.
-
-**Sort** — assert the full four-level ordering, including a constructed case where two models tie after cents-rounding and are separated by percent, and a case separated only by coverage count.
-
-**Verdict** — a 4/4/3 model split yields "mixed", not "mostly lower". This is the regression test for the current defect.
-
-**Anchors** — slugs are unique within a report; `~vendor/model` and `vendor/model` in the same report produce different IDs. Assert no generated link targets an ID inside tier 2.
-
-**Structure** — a card with three categories emits exactly one `<table>`; `null → null` rows are absent from HTML, text, and markdown, and **present** in JSON.
-
-Full suite must pass:
-
-```bash
-pytest
-```
-
-Baseline at design time: 56 passed. By format, existing tests exercise text 15×, HTML 15×, JSON 3×, markdown 2×.
-
----
-
-## Risks
-
-**Markdown is the thin spot.** Only two existing tests exercise markdown, against fifteen each for text and HTML. A markdown regression during step 2 is the most likely failure to escape review. The characterization tests must cover markdown at parity with the others; this is the single highest-value mitigation in the plan.
-
-**`_render_scan_html` is 163 lines and `_render_changes_html` 133.** Both will need restructuring for F1/F2. Neither should grow. If either exceeds its current size after the change, that is a signal the tiering logic belongs in a separate builder function rather than inline.
-
-**The verdict change is user-visible and silent.** Reports generated before and after will disagree on days with tied model buckets. Called out here so it is not mistaken for a bug later.
-
-**Scope.** Roughly 250–300 new lines in `change_render.py`, ~300 lines rewritten across six render functions, plus CSS. reporting.py should shrink from 2,849 lines.
 
 ---
 
@@ -443,7 +409,11 @@ Nine places where the shipped behavior differs from the design above. Each is ma
 
 **Design said:** `_full.html` keeps today's layout and inherits only the semantic fixes (E1, E2, labels, precision).
 
-**Reality:** there is no second renderer to hold back. [cli.py:363–372](../model_sentinel/cli.py) produces `_full.html` from the same `render_scan_report` call with `make_report_detail_policy(mode="all")`, so A1, B1, C1 and everything after them apply to it automatically. Withholding them would have meant *writing* a second renderer — new scope, and a permanent second layout to maintain.
+**Reality:** there is no second renderer to hold back.
+[`cli.py`](../model_sentinel/cli.py) produces `_full.html` from the same
+`render_scan_report` call with `make_report_detail_policy(mode="all")`, so A1,
+B1, C1 and everything after them apply to it automatically. Withholding them
+would have meant writing and maintaining a second renderer.
 
 **Resolution:** let it inherit, and close the one real gap. A1 moves the provider's literal value out of the cell, which is precisely what an audit reader opens `_full.html` for; so the R3 "Show raw values" checkbox **defaults to checked when the detail mode is `"all"`**. The audit view gets the readable layout with every raw value inline and selectable. The cross-renderer matrix's `_full.html` column was corrected from "no" to "yes" throughout.
 

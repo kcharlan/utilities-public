@@ -1,10 +1,12 @@
 # Clean-Room Public Repository Design
 
+**Status:** Implemented. This document preserves the publication boundary and privacy decisions that continue to govern the repository.
+
 ## Decision
 
 The existing `example/utilities` repository remains private and quarantined. It will not be history-rewritten or made public again.
 
-A new repository, `example/utilities-public`, will be built at `/Users/example/source/utilities-public` from an audited, history-free export of tracked source. It starts private and becomes public only after tests, privacy audits, review, and fresh-clone verification succeed.
+This repository was created as `example/utilities-public` from an audited, history-free export of tracked source. It was kept private until tests, privacy audits, review, and fresh-clone verification completed.
 
 ## Why this replaces history rewriting
 
@@ -23,7 +25,7 @@ Never copy:
 - local configuration, runtime state, caches, logs, exports, reports, or virtual environments;
 - any financial utility directory known to contain embedded accounts, holdings, mappings, or transaction data.
 
-The export omits `fid_div_conv/`, `van_div_conv/`, `qif_div_converter/`, and `etf_montecarlo/`. Sanitized `div_conv` and ETF Monte Carlo projects are added later as new code.
+The export omitted `fid_div_conv/`, `van_div_conv/`, and `qif_div_converter/`. Sanitized `div_conv` and `etf_montecarlo` projects were subsequently added as new public-safe code.
 
 ## Configuration model
 
@@ -47,7 +49,7 @@ Targeted `.gitignore` rules prevent project-local runtime files from being stage
 
 ## Verification gates
 
-Before Git initialization and again before every push:
+Before every push:
 
 1. scan all file content against the private literal inventory without printing values;
 2. review filenames, configuration-like files, binaries, and archives;
@@ -56,8 +58,8 @@ Before Git initialization and again before every push:
 5. run every applicable automated test and validation command;
 6. resolve every finding and failure.
 
-After pushing to the new private remote, repeat the same checks from a fresh clone. Public visibility is the final external mutation and occurs only after independent specification, code-quality, and privacy review approve the clone.
+For changes that materially affect the privacy boundary, repeat the checks from a fresh clone before publication.
 
 ## Recovery and deletion
 
-The old repository stays private throughout migration. The restricted literal inventory and recovery mirror remain available until the new public repository is verified. They are deleted only after successful publication. Deleting the old private GitHub repository is a later user decision and is not required for the clean repository to be safe.
+The old repository remains private and outside this repository's trust boundary. Any recovery mirror, literal inventory, or deployment backup is private operational material and must never be copied into this public tree.

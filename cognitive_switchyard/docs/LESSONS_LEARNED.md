@@ -2,9 +2,9 @@
 
 ## YAML Parsing In A Homebrew Python Environment
 
-- What went wrong: Early validation ran outside the project venv, which hid the real dependency path and pushed the implementation toward environment-specific workarounds.
+- What went wrong: Early validation ran against the shell's default Python, which hid the real dependency path and pushed the implementation toward environment-specific workarounds.
 - Pattern that caused it: Assuming the shell's default Python and `pytest` entrypoint were the runtime of record.
-- Pattern to follow instead: Build and validate through the project venv, and keep the runtime bootstrap path aligned with that same dependency set.
+- Pattern to follow instead: Run the product through the uv-managed `switchyard` launcher and run development tests through the project's virtual environment. Never depend on Homebrew or system Python package state.
 
 ## Plan Metadata With Numeric IDs
 

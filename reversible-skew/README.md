@@ -1,66 +1,109 @@
 # Reversible Skew
-Experimentation ground for a reversible Burrows–Wheeler transform (BWT) pipeline with Move-to-Front (MTF) encoding, run-length encoding (RLE), and passthrough fallbacks when compression would expand data.
+
+Experimental command-line tools for a blockwise Burrows–Wheeler transform
+(BWT) pipeline with Move-to-Front (MTF) encoding and run-length encoding
+(RLE). This is a transform rather than a general-purpose compressor: each
+block is stored unchanged when its RLE payload would not be smaller.
 
 ## Scripts
 
-- `rs.py` – Pure-Python implementation with optional `pydivsufsort` acceleration for suffix arrays. Self-validates every block (round-trip reconstruct + compare) before writing. Includes a `selftest` subcommand for quick verification.
-- `rs-big.py` – **(Recommended)** Performance-oriented variant that JIT-compiles the MTF/RLE steps with Numba and skips round-trip validation for speed. No `selftest` subcommand.
-- `setup.sh` – Builds `venv/` with Python 3.12 and installs all dependencies (`pydivsufsort` and `numba`).
+- `rs.py` — Reference implementation. It uses `pydivsufsort` when available
+  and otherwise falls back to a slow pure-Python cyclic-rotation sort. Before
+  writing a transformed block, it reconstructs the block and compares it with
+  the original; a failed check causes that block to be stored raw. It also
+  provides a `selftest` subcommand.
+- `rs-big.py` — Speed-oriented variant. Numba is required and JIT-compiles the
+  MTF/RLE operations. `pydivsufsort` remains optional, but the pure-Python
+  fallback is impractical for large blocks. This variant skips the per-block
+  round-trip check and has no `selftest` subcommand.
+- `setup.sh` — Deletes and recreates `venv/` with `python3.12`, then installs
+  `pydivsufsort` and `numba`.
 
-## Workflow
+Both scripts read and write the same block format, so output from either script
+can be inverted by the other.
 
-1. **Setup the environment**
-   ```bash
-   ./setup.sh
-   source venv/bin/activate
-   ```
+## Setup
 
-2. **Transform a file**
-   ```bash
-   python rs-big.py transform -i input.bin -o output.rsbwt -b 4M --rle-max-run 255 -v
-   ```
-   - Splits the file into fixed-size blocks (`-b`/`--block-size`).
-   - Applies BWT → MTF → RLE and writes the primary index + payload length per block.
-   - If the compressed payload would be larger than the original block, writes the raw block with a sentinel so the inverse can copy it back.
+Python 3.12 is required by the setup script. Run it from this directory:
 
-3. **Invert the transform**
-   ```bash
-   python rs-big.py inverse -i output.rsbwt -o recovered.bin -v
-   ```
-   - Restores the original bytes block-by-block using the stored primary index or passthrough sentinel.
+```bash
+./setup.sh
+source venv/bin/activate
+```
 
-4. **Self-test** (`rs.py` only)
-   ```bash
-   python rs.py selftest
-   ```
-   - Round-trips 1 MiB of random data through transform + inverse and verifies byte-for-byte equality.
+`setup.sh` replaces an existing `venv/`; do not use it for an environment that
+contains packages you need to preserve.
 
-## Options
+`rs.py` can run without installing third-party packages, but its fallback
+cyclic-rotation sort is suitable only for small inputs.
 
-Both scripts accept the same core flags:
+## Usage
+
+Transform a file:
+
+```bash
+python rs.py transform \
+  --input input.bin \
+  --output output.rsbwt \
+  --block-size 4M \
+  --rle-max-run 255 \
+  --verbose
+```
+
+Use `rs-big.py` in the same way when speed is more important than the
+reference implementation's per-block verification.
+
+Recover the original file:
+
+```bash
+python rs.py inverse \
+  --input output.rsbwt \
+  --output recovered.bin \
+  --verbose
+```
+
+Run the reference implementation's built-in check:
+
+```bash
+python rs.py selftest
+```
+
+The self-test generates 1 MiB of random data, transforms it in 64 KiB blocks,
+inverts it, and compares the result byte-for-byte.
+
+### Transform options
 
 | Flag | Description |
 |:---|:---|
-| `-i`/`--input` | Input file path (required) |
-| `-o`/`--output` | Output file path (required) |
-| `-b`/`--block-size` | Block size; accepts raw integers or sizes like `256K`, `4M` (default `4M`) |
-| `--rle-max-run` | Max RLE run length, default 255 (fits one byte) |
-| `-w`/`--whole-file` | Process the entire file as a single block |
-| `-v`/`--verbose` | Print per-block mode (RAW vs XFORM) and payload sizes |
+| `-i`, `--input` | Input file path (required). |
+| `-o`, `--output` | Output file path (required). |
+| `-b`, `--block-size` | Block size as bytes or a `K`, `M`, or `G` value; defaults to `4M`. |
+| `--rle-max-run` | Maximum encoded run length; defaults to 255. Values must fit in the format's one-byte run field (1–255). |
+| `-w`, `--whole-file` | Read the entire input and encode it as one block, ignoring `--block-size`. |
+| `-v`, `--verbose` | Print each block's `RAW` or `XFORM` mode and size information. |
 
-## Dependencies
+### Inverse options
 
-- `pydivsufsort` dramatically speeds up suffix array construction compared to the naive `O(n^2 log n)` rotation sort.
-- `numba` enables the JIT paths in `rs-big.py`. Without it, the script falls back to slower pure-Python loops.
+The inverse command requires `--input` and `--output` and accepts `--verbose`.
+Both scripts also accept `--whole-file` for inverse for CLI symmetry, but the
+flag does not change decoding: block boundaries are already stored in the
+input stream.
 
-## Implementation Notes
+## File Format
 
-- BWT inverse uses LF-mapping with explicit cumulative counts (`C`) and Occurrence tables.
-- Validation in `rs.py` reconstructs each block and compares to the original before writing, guaranteeing reversibility even under rare corner cases.
-- Output format: `[primary_index:uint32][payload_len:uint32][payload_bytes...]` repeated per block. Raw blocks are tagged with `primary_index = 0xFFFFFFFF`.
+The output is a sequence of blocks with no file-level header:
 
-## Ideas for Future Work
+```text
+[primary_index:uint32 big-endian]
+[payload_length:uint32 big-endian]
+[payload bytes]
+```
 
-- Add secondary entropy coding (e.g., `zlib`, `range coding`) on top of the RLE stream.
-- Implement adaptive block sizing based on entropy estimators.
-- Surface compression ratios and timings in the CLI output.
+For transformed blocks, the payload consists of repeated two-byte
+`[MTF index, run length]` pairs. For raw blocks, `primary_index` is
+`0xFFFFFFFF` and the payload is the original block. The format does not include
+a magic number, version, checksum, or original filename; only invert files
+produced by these scripts and use the output filename you want explicitly.
+
+The inverse commands assume a well-formed input stream and are not hardened
+parsers for untrusted or corrupted files.

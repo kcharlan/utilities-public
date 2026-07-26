@@ -8,6 +8,8 @@ It is not the product design for Cognitive Switchyard itself. It is the design f
 
 The goal is to make the automation understandable and maintainable without reverse engineering the shell script from scratch later.
 
+The original Cognitive Switchyard packet run is complete, so its generated plans and audit reports are no longer retained in the repository. If this loop is used for a new delivery effort, it bootstraps a fresh active packet workspace from the design and packetization playbook.
+
 ## Scope
 
 The orchestrator owns:
@@ -31,16 +33,18 @@ It does not own:
 
 ## Inputs
 
-Primary inputs:
+Durable inputs:
 
 - `docs/design_doc_packetization_playbook.md`
 - `docs/cognitive_switchyard_design.md`
+
+Generated working inputs while a packet run is active:
+
 - `docs/implementation_packet_playbook.md`
 - `plans/packet_status.md`
 - `plans/packet_status.json`
 - packet docs under `plans/`
 - current repository state
-- read-only reference material under `reference/work/`
 
 ## High-Level Flow
 
@@ -347,13 +351,13 @@ Operational artifacts are written to:
 - `audits/` for full-suite verification reports
 - `audits/` also stores durable timeout reports and retry scheduler state
 
-The automation log directory is ephemeral run output. The audit directory is part of the durable orchestration record.
+The automation log directory is ephemeral run output. Planning and audit artifacts are durable for the lifetime of an active packet run, but completed packet plans and historical verification reports may be removed after their behavior is fully implemented and the live code, tests, and design references make them redundant.
 
 ## Artifact Tracking Policy
 
 The orchestrator intentionally produces two different artifact classes:
 
-- Durable repo artifacts that should normally be committed:
+- Active-run artifacts that should normally be committed while the packet loop is in progress:
   - `plans/packet_status.md`
   - `plans/packet_status.json`
   - packet docs under `plans/packet_*.md`
@@ -367,8 +371,8 @@ The orchestrator intentionally produces two different artifact classes:
 
 Rationale:
 
-- The `plans/` files are part of the canonical delivery state and must survive branch switches, pauses, and future rebuilds.
-- Audit and verification reports are the durable evidence trail explaining why packets were validated, repaired, or blocked.
+- The `plans/` files are canonical delivery state while a run is active and must survive branch switches and pauses.
+- Audit and verification reports explain why active packets were validated, repaired, or blocked; they are not permanent product documentation after the delivery ladder is complete.
 - `automation_logs/` are high-volume execution traces useful for debugging and profiling, but they are not the canonical record and will overwhelm the repo if committed routinely.
 
 ## Resumability and Idempotency

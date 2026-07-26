@@ -1,4 +1,4 @@
-# harscope Test Plan
+# harscope Real-HAR Integration Test Matrix
 
 ## Overview
 
@@ -8,9 +8,12 @@ No UI interaction is needed — everything is tested through the backend API end
 
 ## Prerequisites
 
-- Python 3.8+
+- [uv](https://docs.astral.sh/uv/) (the harscope launcher resolves Python 3.12+ and its runtime dependencies)
+- The project virtual environment activated so the runner's `python3` calls resolve inside `.venv`
+- `curl`
 - A HAR file with security-relevant content (tokens, session IDs, JWTs, etc.)
 - HAR files with WebSocket messages are needed to test WS-specific redaction
+- The current runner assumes no info-only findings: scanner defaults keep info findings, while Tests 7 and 8 assert that every remaining finding is redacted and a rescan produces zero findings
 
 ## Test Matrix
 
@@ -72,7 +75,7 @@ No UI interaction is needed — everything is tested through the backend API end
 - Reset all (`POST /api/redaction/reset`)
 - Verify: auto findings restored to severity defaults, manual redactions cleared
 - Reapply auto (`POST /api/redaction/reapply-auto`)
-- Verify: all findings redacting again
+- Verify: the runner expects all findings to be redacting (therefore the fixture must have no info-only findings)
 - Covers: State management, reset/reapply workflows
 
 ### Test 8: Full round-trip (sanitized HAR rescan)

@@ -23,12 +23,13 @@ A walkthrough for exploring, editing, and exporting JSON files with jtree's inte
 ```
 
 jtree starts a local web server and opens your browser automatically. The default port is **8100**.
+If that port is occupied, jtree tries the next 19 ports and logs the address it selected.
 
 ### First-Time Setup
 
-On first run, jtree creates a private virtual environment at `~/.jtree_venv` and installs its dependencies (FastAPI, uvicorn). This happens once — subsequent launches start instantly.
+jtree requires [uv](https://docs.astral.sh/uv/) (`brew install uv`). Its PEP 723 metadata asks uv for Python 3.12+ and the FastAPI, uvicorn, and Pydantic dependencies. The first launch may use the network while uv resolves and caches them; later launches reuse uv's shared cache. jtree does not create `~/.jtree_venv` or another tool-specific virtual environment.
 
-**Requirements:** Python 3.8+ and a modern web browser. An internet connection on first run for CDN resources (React, Tailwind, fonts).
+**Requirements:** uv and a modern web browser. The browser loads React, Babel Standalone, Tailwind CSS, Lucide Icons, and fonts from CDNs, so the UI needs network access unless those resources are already cached.
 
 ### Welcome Screen
 
@@ -40,7 +41,7 @@ When launched without a file, jtree shows a welcome screen with a large **Open a
 
 ### Layout
 
-The interface has four main areas:
+The interface has five main areas:
 
 | Area | Position | Purpose |
 |------|----------|---------|
@@ -52,7 +53,7 @@ The interface has four main areas:
 
 ### File Path Display
 
-The toolbar shows the full file path of the loaded file. Click the copy button next to it to copy the path to your clipboard.
+For a file opened by server path, the toolbar shows its full path. For a browser upload, it shows the filename because the browser does not expose the local path. Click the adjacent copy button to copy the displayed value.
 
 ### Dark / Light Mode
 
@@ -71,7 +72,7 @@ JSON is rendered as a horizontal tree: the root node sits on the left, and child
 
 ### Type Color Coding
 
-Every JSON type has a distinct border color and badge:
+Every JSON type has a distinct badge and background accent:
 
 | Type | Color | Badge |
 |------|-------|-------|
@@ -82,11 +83,11 @@ Every JSON type has a distinct border color and badge:
 | **Boolean** | Red | `boolean` |
 | **Null** | Blue-gray | `null` |
 
-Each node has a 4px left border in its type color for quick visual scanning.
+Container cards also have a 4px left border whose color groups parent/child lineages. Leaf cards do not have this lineage border.
 
 ### Expanding and Collapsing
 
-- **Click** a container node (object or array) to toggle it open or closed
+- **Double-click** a container card, click its chevron, or choose **Expand / Collapse** from its context menu
 - **Collapsed nodes** show summaries like `{5 keys}` or `[3 items]`
 - **Containment lanes** — dashed borders visually group expanded children by depth
 
@@ -94,7 +95,7 @@ Each node has a 4px left border in its type color for quick visual scanning.
 
 | Action | How |
 |--------|-----|
-| **Pan** | Click and drag on the canvas background |
+| **Pan** | Click and drag on the canvas background, or scroll without Ctrl/Cmd |
 | **Zoom** | Ctrl/Cmd + scroll wheel (range: 10%–300%) |
 
 A zoom level indicator appears in the bottom-left corner (e.g., "150%").
@@ -124,7 +125,7 @@ The sidebar shows **only container nodes** (objects and arrays) with disclosure 
 
 **Interactions:**
 - Click a disclosure triangle to expand/collapse a subtree in the sidebar
-- Click a node name to pan the canvas to that node (smooth animation)
+- Click a node name to pan the canvas to that node
 - The sidebar auto-reveals ancestors and scrolls to keep the active node visible as you navigate
 
 **Visual indicators:**
@@ -175,14 +176,16 @@ Press **Ctrl/Cmd+S** or click the **Save** button.
 ### Save As
 
 Two methods:
-1. **Browser save** — Click "Choose location..." to use the browser file picker
+1. **Browser save** — Click "Choose location..." to use the browser file picker when supported, or the browser's download fallback
 2. **Server path** — Click "or save to a server path" and type a destination path (supports `~` expansion)
+
+Save As writes a copy. A browser save/download does not attach a server path to the open document. A server-path save attaches that path only when the document originally came from a browser upload; when a server-backed file is already open, its original path remains the active Save target.
 
 ---
 
 ## 6. Editing
 
-All editing operations are disabled in `--readonly` mode. Each edit is recorded in a 50-operation undo stack.
+All editing operations are disabled while the current file is read-only. Each edit is recorded in a 50-operation undo stack.
 
 ### Edit Values
 
@@ -219,12 +222,12 @@ Right-click an object key and choose **Rename Key**. Enter the new key name in t
 | Action | Shortcut | Behavior |
 |--------|----------|----------|
 | **Copy** | Ctrl/Cmd+C | Copies the selected node (and its entire subtree) to an in-memory clipboard |
-| **Paste** | Ctrl/Cmd+V | Pastes into the selected container node |
+| **Paste** | Ctrl/Cmd+V | Pastes into the selected container, or into a selected leaf's parent container |
 
 - **Objects:** Auto-generates unique keys for duplicates (`key_copy1`, `key_copy2`, etc.)
 - **Arrays:** Appends to the end
 - The clipboard survives file switches, enabling cross-file copy/paste workflows
-- Paste is grayed out if the clipboard is empty or the selected node is not a container
+- Context-menu Paste is shown only for containers and is disabled when the clipboard is empty
 
 ### Array Reordering
 
@@ -261,7 +264,7 @@ Right-click any node to open the context menu. Available options depend on the n
 | **Add Child** | Add a new child node |
 | **Copy Node** | Copy entire subtree to clipboard |
 | **Paste** | Paste from clipboard |
-| **Copy Path** | Copy the JSONPath to clipboard |
+| **Copy Path** | Copy jtree's dot-separated node path to clipboard |
 
 ### Leaf Nodes
 
@@ -270,7 +273,7 @@ Right-click any node to open the context menu. Available options depend on the n
 | **Edit Value** | Edit the scalar value |
 | **Copy Node** | Copy to clipboard |
 | **Copy Value** | Copy the scalar value to clipboard |
-| **Copy Path** | Copy the JSONPath to clipboard |
+| **Copy Path** | Copy jtree's dot-separated node path to clipboard |
 
 ### Array Items (additional)
 
@@ -306,7 +309,7 @@ Click the **Export** button in the toolbar to open a dropdown with three formats
 | **PNG** | Raster image at 2x resolution (rendered from SVG) |
 | **JPEG** | Raster image at 2x resolution, 92% quality |
 
-All exports capture the current visible graph (expanded nodes, lanes, edges, and styling). The file downloads to your browser's download folder.
+All exports capture the current visible graph (expanded nodes, lanes, edges, and styling). The browser handles the resulting download according to its download settings.
 
 ---
 
@@ -314,9 +317,15 @@ All exports capture the current visible graph (expanded nodes, lanes, edges, and
 
 - Full JSON is loaded in memory server-side; the frontend fetches slices on demand
 - Handles files up to **50 MB**
-- Large arrays are paginated at **50 items** per expansion
+- Normal container expansion fetches up to **500 immediate children**
+- **Expand All** traverses up to 200 immediate children per container and stops after 5,000 expanded containers
+- Search returns up to **100 matches**
 - Only expanded nodes are rendered — collapsed subtrees have zero rendering cost
 - Lazy loading: children are fetched from the server only when a node is expanded
+
+### Path Limitation
+
+jtree identifies nodes with dot-separated paths. Object keys containing literal periods therefore cannot be navigated or edited reliably.
 
 ---
 
@@ -331,7 +340,7 @@ All exports capture the current visible graph (expanded nodes, lanes, edges, and
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `file.json` | — | *(none)* | JSON file to open (optional) |
-| `--port` | `-p` | 8100 | Server port |
+| `--port` | `-p` | 8100 | Preferred server port; tries the next 19 if occupied |
 | `--readonly` | — | off | Disable all editing |
 
 ### Keyboard Shortcuts
@@ -350,9 +359,9 @@ All exports capture the current visible graph (expanded nodes, lanes, edges, and
 
 ### Color Legend
 
-**Node Types:**
+**Node Type Badges and Accents:**
 
-| Type | Border / Badge Color |
+| Type | Badge / Accent Color |
 |------|---------------------|
 | Object | Cyan |
 | Array | Purple |
@@ -366,6 +375,7 @@ All exports capture the current visible graph (expanded nodes, lanes, edges, and
 | Element | Color | Meaning |
 |---------|-------|---------|
 | Blue outline | Blue | Selected node |
+| Colored left border | Varies by branch | Container lineage grouping |
 | Dashed border | Semi-transparent | Containment lane (depth grouping) |
 | Cyan path segment | Cyan | Key match in search results |
 | Green path segment | Green | Value match in search results |

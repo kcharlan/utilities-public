@@ -8,7 +8,7 @@ The launcher keeps its runtime directory private (`0700`) and its input CSV and 
 
 ## Requirements
 
-Install [uv](https://docs.astral.sh/uv/) once (`brew install uv`). The launcher declares and resolves its own `xlsxwriter` dependency; there is no setup script or project virtual environment.
+Install [uv](https://docs.astral.sh/uv/) once (`brew install uv`). The launcher requests Python 3.12 or newer and declares its own `xlsxwriter` dependency; uv resolves both automatically. There is no setup script or project virtual environment.
 
 ## First Run
 
@@ -34,9 +34,11 @@ Use explicit paths for one-off scenarios or outputs:
   --output /path/to/private/comparison.xlsx
 ```
 
+The options are independent: if only one is supplied, the omitted path still uses the runtime-directory default. Run `./hysa_vs_cd_model.py --help` for the command reference.
+
 The parent directory for an explicit output is created only after input validation succeeds. A missing explicit input path receives the same incomplete-template treatment and never triggers workbook generation.
 
-The CSV must contain exactly these columns:
+The CSV header must contain exactly these columns, in this order:
 
 ```csv
 Parameter,Value
@@ -52,17 +54,20 @@ Required parameters are:
 - `CD Sensitivity`
 - `Total Duration (months)`
 
-Rates may use decimal syntax (`0.00`) or percentage syntax (`0%`). Validation errors identify missing, duplicate, malformed, or out-of-range values before any output is written.
+Numeric values may use ordinary number syntax or a trailing percent sign, which divides the value by 100 (`5%` is `0.05`). Use whole-number syntax for rate-change frequency and total duration. For `CD Sensitivity`, `1` or `100%` means the CD rate moves by the full configured rate step.
 
-Numeric safety limits keep every accepted scenario far below Excel's floating-point ceiling:
+Validation errors identify missing, duplicate, blank, malformed, or out-of-range values before any output is written. The accepted ranges are:
 
-- Initial principal must be at most `1e100`.
-- CD sensitivity must be at most `100`.
-- Duration must be at most `1200` months.
+- Initial principal: `0` through `1e100`.
+- Starting HYSA and CD rates: `0` through `1` (`0%` through `100%`).
+- Rate step per period: `-1` through `1`.
+- Rate-change frequency: a positive whole number of months.
+- CD sensitivity: `0` through `100`.
+- Total duration: `1` through `1200` whole months.
 - The maximum HYSA and CD annual rates projected over the complete cadence and duration must not exceed `100%`.
 - A conservative maximum compounded balance must remain below `1e200`.
 
-These are technical overflow guards, not recommended financial assumptions. Inputs outside a limit are rejected before an output directory or workbook is created.
+The upper bounds are technical overflow guards, not recommended financial assumptions. Inputs outside a limit are rejected before an output directory or workbook is created. The input and output paths must also be different.
 
 ## Workbook
 
@@ -76,6 +81,8 @@ The generated workbook contains:
 Rates step at the configured cadence and floor at zero. CD rates update on rollover and scale rate changes by `CD Sensitivity`. All balance calculations remain Excel formulas so the workbook can be audited and adjusted.
 
 `Total Duration (months)` means the exact number of monthly compounding periods. Month 1 shows principal after Month 1 interest, each following row compounds once from the previous row, and the Output sheet points to the post-month-N balance.
+
+The workbook is first built as a temporary file in the output directory and then moved into place, so an existing output is not modified in place while formulas are being generated.
 
 ## Development
 

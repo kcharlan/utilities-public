@@ -3,7 +3,9 @@
 ## Design Document v0.1
 
 **Date:** 2026-03-07
-**Status:** Draft -- design review
+**Status:** Implemented architecture; retained as the design reference
+
+This document records the system's architectural intent and invariants. For exact current commands, manifest fields, hook signatures, and operator behavior, use `README.md`, `docs/operator_guide.md`, and `docs/pack_author_guide.md`; those guides are maintained against the live implementation.
 
 ---
 
@@ -17,13 +19,13 @@ The engine is workload-agnostic. Workload-specific behavior is defined by **runn
 
 **Separation of concerns:** The orchestrator owns the *when* and *where* of execution. The pack owns the *how*.
 
-**Idempotent restart:** If the orchestrator crashes, is killed, or the machine loses power, the user re-runs the same command and the session resumes from where it left off. No manual cleanup, no data loss, no duplicate work. This applies to every phase -- planning, resolution, and execution. The orchestrator must detect incomplete state on startup and recover automatically.
+**Recoverable restart:** If the orchestrator crashes, is killed, or the machine loses power, the user re-runs the same command and the session reconciles persisted state before resuming incomplete work. This applies to planning, resolution, and execution. Hooks and executors that produce external side effects must provide their own idempotency.
 
 ### What Cognitive Switchyard Is Not
 
 - Not a multi-tenant server. Single user, local machine.
 - Not a credential manager. The user's environment must have CLIs authenticated and tools installed. Cognitive Switchyard validates prerequisites at startup and reports failures -- it does not provision, authenticate, or inject secrets.
-- Not an agent framework. It *uses* agentic CLIs (Claude Code, Codex, Gemini CLI) as executors. It does not implement agent logic itself.
+- Not an agent framework. It *uses* supported agentic CLIs (currently Claude Code and Codex) as executors. It does not implement agent logic itself.
 
 ---
 
@@ -89,7 +91,7 @@ Packs declare which phases they use. All phases are optional except Execution.
 
 **How it works:**
 - User creates `.md` files externally (any editor) and drops them into the intake directory.
-- The UI watches the intake directory via filesystem polling (or inotify if available) and displays new items as they appear.
+- The UI polls the backend for the intake directory contents and displays new items as they appear.
 - Intake items follow a template defined by the pack.
 - No in-UI editor. The UI is a monitor, not an authoring tool.
 
@@ -158,7 +160,7 @@ User-declared dependencies are always honored. The resolver adds to them, never 
 
 **Worker slots:** Configurable count per session. Each slot runs one task at a time. Slots are numbered 0 to N-1.
 
-**Pack declares:** `phases.execution.enabled` (always true), `phases.execution.executor` (agent/shell), `phases.execution.model` (for agent executors), `phases.execution.reasoning_effort` (optional), `phases.execution.prompt` (for agent executors), `phases.execution.command` (for shell executors), `phases.execution.max_workers`.
+**Pack declares:** `phases.execution.enabled` (always true), `phases.execution.executor` (agent/shell), `phases.execution.model` (for agent executors), `phases.execution.reasoning_effort` (optional), `phases.execution.prompt` (for agent executors), `phases.execution.command` (for shell executors), `phases.execution.max_workers`. The current dispatcher implements shell-command execution; agent-backed workers are packaged as shell commands that invoke the desired CLI.
 
 ### 3.5 Verification (optional)
 
@@ -244,7 +246,7 @@ phases:
 
   execution:
     enabled: true               # Always true
-    executor: string            # "agent" | "shell"
+    executor: string            # Schema: "agent" | "shell"; current dispatcher uses "shell"
     model: string               # Model name (for agent executor)
     reasoning_effort: string    # Optional: execution reasoning level
     prompt: path                # Relative path to prompt file (for agent executor)
@@ -274,7 +276,7 @@ prerequisites:                  # List of checks run at session start
     check: string               # Shell command (exit 0 = pass, non-zero = fail)
 
 timeouts:
-  task_idle: integer              # Seconds with no stdout/stderr before killing a task (default: 300)
+  task_idle: integer              # Seconds with no stdout/stderr before killing a task (default: 420)
   task_max: integer               # Max seconds a single task can run before being killed (default: 0 = no limit)
   session_max: integer            # Max seconds for the entire session before aborting (default: 14400 = 4 hours)
 
@@ -311,7 +313,7 @@ Note: verification is **not** a hook script. It is a shell command string config
 - **Arguments:** `$1` = slot number, `$2` = task ID, `$3` = session workspace path
 - **CWD:** session root
 - **Stdout:** Must print the workspace path for the task (e.g., the worktree path, the temp directory path).
-- **Exit code:** 0 = success, non-zero = isolation setup failed (task returns to ready queue).
+- **Exit code:** 0 = success, non-zero = isolation setup failed (task moves to `blocked/`).
 - **Example (git-worktree):** Creates `.worktrees/worker_<slot>` with a new branch, prints the worktree path.
 - **Example (temp-directory):** Creates a temp dir under the session workspace, prints the path.
 
@@ -376,7 +378,7 @@ NOTES: <freeform, optional>
 
 - **Built-in packs** ship with Cognitive Switchyard source.
 - On first run, bootstrap copies built-in packs to `~/.cognitive_switchyard/packs/`.
-- If a pack already exists in the local directory, it is NOT overwritten (user may have customized).
+- Built-in updates replace an unchanged runtime copy. A customized or legacy runtime copy without a trusted built-in hash is preserved; use an explicit reset command to overwrite it.
 - `--reset-pack <name>` restores a single built-in pack to factory default.
 - `--reset-all-packs` restores all built-in packs.
 - Orchestrator loads packs exclusively from `~/.cognitive_switchyard/packs/`. No special built-in path at runtime.
@@ -1139,10 +1141,9 @@ Log streaming is per-slot, opt-in. The main monitor view subscribes to the last 
 
 ```
 cognitive_switchyard/
-  __init__.py              # Package constants: PACKAGE_NAME, RUNTIME_HOME, BOOTSTRAP_VENV
+  __init__.py              # Package constants: PACKAGE_NAME, RUNTIME_HOME
   __main__.py              # CLI entry point, delegates to cli.main()
-  agent_runtime.py         # Claude CLI runtime executor for agent phases
-  bootstrap.py             # Self-bootstrapping venv management
+  agent_runtime.py         # Claude and Codex runtime adapters for agent phases
   cli.py                   # Entry point, argparse subcommands
   config.py                # Global config, runtime paths, session directory structure
   hook_runner.py           # Pack hook execution, preflight checks, script permission validation
@@ -1153,6 +1154,7 @@ cognitive_switchyard/
   parsers.py               # Artifact parsing (plans, resolution graphs, progress, sidecars)
   planning_runtime.py      # Planning and resolution phase execution with concurrent agents
   recovery.py              # Session crash recovery, worker cleanup, task revert
+  runtime_env.py           # Runtime-home initialization and built-in pack sync
   scheduler.py             # Constraint graph, eligibility checking, priority scheduling
   server.py                # FastAPI app, routes, WebSocket handler
   state.py                 # SQLite state store for sessions, tasks, workers, events
@@ -1252,7 +1254,7 @@ Key differences from the initial pseudocode design:
 
 Three independent timeout mechanisms protect against runaway tasks and sessions. All are configurable -- pack.yaml sets defaults, user overrides per session in the Advanced config panel.
 
-**Task idle timeout (`task_idle`, default: 300s).** If a task's subprocess produces no stdout or stderr for this many seconds, the orchestrator kills it (SIGTERM, 5s grace, SIGKILL) and moves it to `blocked/` with a reason like "Killed: no output for 300s." This catches hung processes, deadlocked agents, and network stalls. The "no progress" warning on the worker card fires at 80% of the threshold (240s at default) so the user sees it coming. Any output -- log lines, progress markers, even whitespace -- resets the idle timer.
+**Task idle timeout (`task_idle`, default: 420s).** If a task's subprocess produces no stdout or stderr for this many seconds, the orchestrator kills it (SIGTERM, 5s grace, SIGKILL) and moves it to `blocked/` with a reason like "Killed: no output for 420s." This catches hung processes, deadlocked agents, and network stalls. The "no progress" warning on the worker card fires at 80% of the threshold (336s at default) so the user sees it coming. Any output -- log lines, progress markers, even whitespace -- resets the idle timer.
 
 **Task hard timeout (`task_max`, default: 0 / disabled).** Absolute wall-clock cap on any single task. Useful for workloads with known upper bounds (e.g., "no single transcode should take more than 30 minutes"). When set to 0, tasks can run indefinitely (subject only to the idle timeout and session timeout). Killed tasks go to `blocked/` with reason "Killed: exceeded max task time."
 
@@ -1311,94 +1313,25 @@ Log streaming is per-slot, opt-in. The main monitor view subscribes to the last 
 
 ---
 
-## 8. Implementation Phases
+## 8. Implementation Status
 
-### Phase 1: Core Orchestrator (CLI only, no UI)
-
-**Goal:** Port the bash orchestration logic to Python. Prove the engine works with a trivial test pack.
-
-**Deliverables:**
-- `orchestrator.py`, `scheduler.py`, `worker_manager.py`, `state.py`, `models.py`, `config.py`
-- A "test-echo" pack that executes `echo` commands (no LLM needed)
-- Pack loader that reads pack.yaml and invokes lifecycle hooks
-- SQLite state store
-- CLI interface: `switchyard start --pack test-echo --session test-run`
-- File-as-state directories
-- Constraint enforcement (DEPENDS_ON, ANTI_AFFINITY)
-- Basic session log to stdout
-
-**Tests:** Unit tests for scheduler (eligibility logic), worker manager (slot lifecycle), state store (CRUD). Integration test: run 5 echo tasks with mixed dependencies through the full pipeline.
-
-### Phase 2: Pack Interface + Claude Code Pack
-
-**Goal:** Define the full pack contract and port the existing BSE coding workflow as the reference implementation.
-
-**Deliverables:**
-- pack.yaml schema validation
-- Claude Code pack: prompts (planner, resolver, worker, fixer, system), lifecycle hooks (git-worktree isolation), preflight checks
-- Planning phase (launch planner agents via claude CLI)
-- Resolution phase (launch resolver agent)
-- Auto-fix loop
-- Verification integration
-- `--reset-pack`, `--reset-all-packs` CLI flags
-
-**Tests:** Integration test with Claude Code pack against a small test repo (3 tasks, 1 dependency, 1 anti-affinity pair).
-
-### Phase 3: Web UI
-
-**Goal:** Build the FastAPI server and embedded React SPA.
-
-**Deliverables:**
-- FastAPI server with all REST endpoints
-- WebSocket handler with state broadcasting and log streaming
-- Embedded React SPA with all five views:
-  - Setup View (pack selection, config, preflight, intake monitoring)
-  - Main Monitor View (pipeline strip, worker cards with live tail, task feed)
-  - Task Detail View (plan, status, full streaming log)
-  - DAG View (React Flow interactive graph)
-  - History View (past sessions, final state)
-- Self-bootstrapping entry point
-- Port auto-detection
-
-**Tests:** Manual testing against running orchestrator. Verify WebSocket updates, log streaming, DAG rendering with real constraint data.
-
-### Phase 4: Additional Packs (proof of generality)
-
-**Goal:** Prove the engine is truly generic by implementing non-coding packs.
-
-**Deliverables:**
-- ffmpeg transcode pack (shell executor, temp-directory isolation, ffprobe verification)
-- youtube-dl download pack (shell executor, output-directory isolation, file-exists verification)
-- Documentation: "How to create a pack" guide
-
-**Tests:** End-to-end: run a batch of ffmpeg transcodes through Cognitive Switchyard with dependency constraints.
+The core engine, state store, recovery logic, CLI, FastAPI/WebSocket backend, embedded React UI, pack tooling, and coding packs described by this design are implemented. The bundled `test-echo` pack provides an external-tool-free pipeline check; `claude-code`, `codex-hybrid`, and `codex` provide the supported coding workflows. Non-coding example packs remain future extensions rather than launch requirements.
 
 ---
 
-## 9. Reference: Existing System Mapping
+## 9. Current Implementation Mapping
 
-How the current BSE orchestrator maps to the Cognitive Switchyard design:
-
-| Current (BSE) | Cognitive Switchyard Equivalent |
-|---------------|---------------------|
-| `work/planning/intake/` | Session `intake/` directory |
-| `work/plan.sh` | Orchestrator planning phase + Claude Code pack planner prompt |
-| `work/planning/PLANNER.md` | Pack `prompts/planner.md` |
-| `work/stage.sh` | Orchestrator resolution phase + Claude Code pack resolver prompt |
-| `work/execution/RESOLVER.md` | Pack `prompts/resolver.md` |
-| `work/execution/RESOLUTION.md` | Session `resolution.json` (structured) |
-| `work/orchestrate.sh` | `orchestrator.py` + `scheduler.py` + `worker_manager.py` |
-| `work/execution/WORKER.md` | Pack `prompts/worker.md` |
-| `work/SYSTEM.md` | Pack `prompts/system.md` |
-| `work/DASHBOARD.md` | Web UI Main Monitor View (replaces file-based dashboard) |
-| `cc-opus()` / `cc-sonnet()` | Pack executor config (model + CLI command) |
-| `--dangerously-skip-permissions` | Part of Claude Code pack's execute hook |
-| `--allowedTools` | Part of Claude Code pack's per-phase executor config |
-| `.worktrees/worker_<N>` | Pack isolation hook (git-worktree type) |
-| `FULL_TEST_INTERVAL` | Pack `phases.verification.interval` |
-| `generate_release_notes.sh` | Pack post-session hook (optional, pack-specific) |
-| `NEXT_SEQUENCE` file | Session-level auto-incrementing task ID in SQLite |
-| `##PROGRESS##` markers | Standardized progress format (configurable per pack) |
+| Design area | Primary implementation |
+|-------------|------------------------|
+| Runtime paths and session directories | `config.py`, `runtime_env.py` |
+| Manifest schema and pack discovery | `pack_loader.py`, `models.py` |
+| Artifact formats and constraint parsing | `parsers.py`, `scheduler.py` |
+| Durable state and filesystem projection | `state.py` |
+| Planning and resolution | `planning_runtime.py`, `agent_runtime.py` |
+| Dispatch, worker lifecycle, and recovery | `orchestrator.py`, `worker_manager.py`, `recovery.py` |
+| Verification and auto-fix | `verification_runtime.py`, `orchestrator.py` |
+| HTTP, WebSocket, and UI | `server.py`, `html_template.py` |
+| Pack contracts in practice | `cognitive_switchyard/builtin_packs/`, `docs/pack_author_guide.md` |
 
 ---
 
@@ -1517,33 +1450,19 @@ Pack lifecycle hooks MUST be idempotent:
 
 ---
 
-## 11. Reference Material for Implementing Agents
+## 11. Maintainer References
 
-The `reference/` directory in this project contains the production orchestration system that Cognitive Switchyard was extracted from. It is **read-only reference material** -- do not modify these files. Use them to understand patterns, data formats, edge cases, and battle-tested logic.
+The live implementation and automated tests are the source of truth for current behavior. Start with these references when changing an architectural area:
 
-### Key Reference Files
-
-| File | What to learn from it |
-|------|----------------------|
-| `reference/work/orchestrate.sh` | Dispatch loop, constraint enforcement, worker lifecycle, auto-fix loop, recovery logic. This is 900+ lines of production-tested orchestration. Study the polling loop, how eligibility is checked, how worktrees are managed, and how failures cascade. |
-| `reference/work/planning/PLANNER.md` | Planner agent prompt. Use as template for the Claude Code pack's `prompts/planner.md`. |
-| `reference/work/execution/WORKER.md` | Worker agent prompt. Use as template for the Claude Code pack's `prompts/worker.md`. Note the 5-phase structure and progress marker format. |
-| `reference/work/execution/RESOLVER.md` | Resolver agent prompt. Use as template for the Claude Code pack's `prompts/resolver.md`. |
-| `reference/work/SYSTEM.md` | Shared rules for all agents. Use as template for `prompts/system.md`. |
-| `reference/work/execution/RESOLUTION.md` | Real resolution output from an 8-task batch with complex anti-affinity groups. Use to validate the constraint graph JSON format. |
-| `reference/work/DASHBOARD.md` | Dashboard data structure. Shows what information the UI must display. |
-| `reference/work/execution/done/*.status` | Real status sidecar files. Validate your sidecar parsing against these. |
-| `reference/work/execution/done/*.plan.md` | Real execution plans with metadata headers. Validate your plan parsing against these. |
-| `reference/work/plan.sh` | Planner launcher. Shows how parallel planner agents are spawned and managed. |
-| `reference/work/stage.sh` | Resolver launcher. Shows the staging workflow. |
-| `reference/work/planning/INTAKE_PROMPT.md` | Intake document template and generation prompt. |
-
-### How to Use Reference Material
-
-1. **Before implementing a component**, read the corresponding reference file to understand the production behavior.
-2. **Data format validation**: Parse real `.status`, `.plan.md`, and `RESOLUTION.md` files to ensure your parsers handle actual production data.
-3. **Edge case awareness**: The `orchestrate.sh` handles crash recovery, zombie worktrees, concurrent planner races, and many other edge cases. Port these carefully.
-4. **Prompt engineering**: The prompt files are tuned through many iterations. Start with them as-is for the Claude Code pack, then iterate.
+| Area | Implementation and contract tests |
+|------|-----------------------------------|
+| Pack parsing and hook safety | `pack_loader.py`, `hook_runner.py`, `tests/test_pack_loader.py`, `tests/test_hook_runner.py` |
+| Scheduling and artifact formats | `scheduler.py`, `parsers.py`, `tests/test_scheduler.py`, `tests/test_parsers.py` |
+| Persistence and recovery | `state.py`, `recovery.py`, `tests/test_state_store.py`, `tests/test_recovery.py` |
+| Planning and agent runtimes | `planning_runtime.py`, `agent_runtime.py`, `tests/test_planning_runtime.py`, `tests/test_agent_runtime.py` |
+| Execution and verification | `orchestrator.py`, `worker_manager.py`, `verification_runtime.py`, their corresponding test modules |
+| API and frontend contracts | `server.py`, `html_template.py`, `tests/test_server.py`, `tests/test_html_template.py`, `tests/test_e2e.py` |
+| Built-in pack behavior | `cognitive_switchyard/builtin_packs/`, `tests/test_builtin_verify_scripts.py`, `tests/test_execute_script_code_detection.py` |
 
 ---
 
@@ -1553,7 +1472,7 @@ The `reference/` directory in this project contains the production orchestration
 - Multi-tenant / multi-user support
 - Pack marketplace / sharing
 - CI/CD integration (triggering Cognitive Switchyard from webhooks)
-- Mobile-responsive UI (desktop-only for now)
+- Mobile-first UI support; the current responsive rules are best-effort and the operator console remains desktop-oriented
 
 Note: Remote execution (SSH to other machines) is not an orchestrator concern. A pack's execute hook can SSH, rsync, or do whatever it wants -- the orchestrator just runs the hook and captures output. This is handled at the pack level, not the framework level.
 
@@ -1577,16 +1496,11 @@ React 19 dropped UMD builds entirely. Our architecture depends on UMD (script-ta
 
 **Recommendation:** Build on React 18 now. Pin CDN URLs to exact versions (not `@latest`). Accept the risk. If migration becomes necessary, it is a frontend-only change -- the backend, pack system, and orchestrator are completely unaffected.
 
-### Post-Implementation Deliverables
+### Maintained Delivery Documentation
 
-These documents and tools are required after the core implementation is complete, before Cognitive Switchyard is usable by anyone other than the original developer.
+The implementation ships with the durable documentation and tooling that grew out of this design:
 
-**Pack Author Guide** -- how to create, test, and distribute custom packs. Covers: pack.yaml schema (with annotated examples), lifecycle hook contracts (inputs, outputs, exit codes), the progress protocol, status sidecar format, isolation patterns (git-worktree vs temp-directory vs none), preflight prerequisite checks, idempotency requirements for hooks, and testing a pack locally before use. Should include a tutorial walking through building a simple pack from scratch (e.g., a shell-script-based pack that runs linting on files).
-
-**Pack scaffolding tooling** -- `cognitive-switchyard init-pack <name>` CLI command that generates a skeleton pack directory with a minimal pack.yaml, placeholder scripts, and a README. Lowers the barrier to entry for pack authors. **Implemented** (`cli.py:handle_init_pack`).
-
-**Pack validation tooling** -- `cognitive-switchyard validate-pack <path>` CLI command that checks a pack directory for common errors: missing required fields in pack.yaml, scripts without executable bits, missing shebang lines, referenced files that don't exist, invalid progress_format regex. Can be run before a session to catch pack authoring mistakes early. **Implemented** (`cli.py:handle_validate_pack`, `pack_loader.py:validate_pack_directory`).
-
-**User/Operator Guide** -- how to install, configure, and run Cognitive Switchyard. Covers: bootstrapping, global settings (config.yaml), session lifecycle (setup, start, monitor, completion), the UI (with screenshots), timeout configuration, retention/purge, crash recovery behavior, and troubleshooting common issues.
-
-**Built-in Pack Documentation** -- for each pack that ships with Cognitive Switchyard (starting with the Claude Code pack): what it does, what prerequisites it expects, how to configure it, what the planning/execution prompts look like, and how to customize them after bootstrap copies them to `~/.cognitive_switchyard/packs/`.
+- `docs/operator_guide.md` for bootstrap, session lifecycle, retention, and troubleshooting
+- `docs/pack_author_guide.md` for the manifest schema, hooks, validation, and local iteration
+- `docs/builtin_*_pack.md` plus pack-local READMEs for bundled pack behavior
+- `init-pack` and `validate-pack` CLI commands for scaffolding and validation

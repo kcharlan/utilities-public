@@ -2,6 +2,8 @@
 
 This document captures a practical shape for evolving `router_log_analyze.py` from a NETGEAR-specific ingestion tool into a router-agnostic analyzer without rewriting the learning and anomaly engine.
 
+**Status:** Proposed architecture and roadmap. The current implementation supports NETGEAR-format exports only.
+
 ## Current State
 
 The analyzer has two distinct layers:

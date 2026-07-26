@@ -1,6 +1,6 @@
 # RouterView Design
 
-> Last updated: 2026-04-13
+> Last updated: 2026-07-26
 
 ## Overview
 
@@ -25,6 +25,7 @@ RouterView is now a CSV-only OpenRouter analytics dashboard. The application no 
 - Cloudflare or ngrok tunnel setup
 - OpenRouter API backfill or key management
 - Real-time websocket updates
+- Multi-user access or authentication
 
 ## Architecture
 
@@ -72,14 +73,23 @@ The import endpoint completes its backend recomputation before returning success
 
 That behavior is specifically meant to keep the Today view current without requiring the user to change ranges.
 
+### Timestamp Handling
+
+Imported timestamps are normalized to UTC. An explicit timezone in the CSV takes precedence. For current OpenRouter IDs in the form `gen-<epoch>-<suffix>`, the embedded Unix epoch is used when a naive CSV timestamp disagrees with it; otherwise a naive timestamp is interpreted as UTC.
+
+The Settings panel also exposes an explicit timestamp rebuild for previously imported rows. It creates a point-in-time SQLite backup before deriving timestamps from recoverable generation IDs, leaves IDs without an embedded epoch unchanged, and then refreshes summaries and anomaly baselines when rows changed.
+
 ## Storage
 
-Runtime state lives under `~/.routerview/`:
+Runtime state lives under `~/.routerview/` by default; `ROUTERVIEW_HOME` overrides that directory:
 
-- `routerview.db`
-- `last_port`
+- `routerview.db`, unless the CLI selects another database with `--db`
+- `last_port`, recording the port selected at startup
+- `backups/`, created on demand before timestamp rebuilds
 
 Python dependencies are managed by uv (PEP 723 header) and cached in uv's shared cache, not under the runtime home.
+
+RouterView enforces owner-only permissions on runtime directories (`0700`) and mutable files (`0600`). It rejects symbolic links in the runtime tree rather than following or modifying their targets.
 
 ## Key Tables
 
@@ -108,13 +118,13 @@ Stores named dashboard view configurations.
 The active surface area is intentionally smaller than earlier versions:
 
 - analytics reads: summary, timeseries, breakdown, heatmap, generations, dimensions, export
-- management writes: CSV import, purge, summary rebuild/refresh, saved views
+- management writes: CSV import, purge, summary rebuild/refresh, timestamp rebuild, saved views
 
 There are no live ingestion routes and no websocket route.
 
 ## UX Notes
 
 - The dashboard opens directly; there is no setup wizard.
-- The Settings panel is the import/control surface.
+- The Settings panel is the import and maintenance surface.
 - After import, the import result banner shows inserted vs skipped counts.
 - The header no longer carries a live/disconnected indicator.

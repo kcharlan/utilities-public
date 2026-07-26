@@ -23,13 +23,13 @@ EditDB starts a local web server on `127.0.0.1` and opens your browser automatic
 
 ### First-Time Setup
 
-On first run, EditDB creates a private virtual environment at `~/.editdb_venv` and installs its dependencies (FastAPI, uvicorn). This happens once — subsequent launches start instantly.
+EditDB is a uv-managed script. Install [uv](https://docs.astral.sh/uv/), then run `editdb`; there is no manual virtual-environment or `pip` setup. On first invocation, uv may download a compatible Python 3.12+ interpreter and the dependencies declared in the script. Later launches reuse uv's cache.
 
-**Requirements:** Python 3.8+ and a modern web browser. An internet connection on first run for CDN resources (React, Tailwind, fonts).
+**Requirements:** uv and a modern web browser. The UI loads React, Tailwind CSS, Babel, Lucide, and Inter from CDNs, so the browser needs network access whenever those resources are not already cached.
 
 ### Security
 
-EditDB binds strictly to `127.0.0.1` (localhost only) — it is not accessible from other machines on your network. All SQL identifiers are validated and parameterized to prevent injection.
+EditDB binds strictly to `127.0.0.1` (localhost only) and has no authentication. Do not expose it through a proxy or network listener. Identifiers used by generated table, index, row, and import operations are validated and quoted. The SQL Console intentionally runs the submitted statement directly and should be used only with trusted SQL.
 
 ---
 
@@ -52,13 +52,13 @@ The sidebar shows:
 | **Header** | Database filename and dark mode toggle (sun/moon icon) |
 | **SQL Console** | Link to open the raw query editor |
 | **Tables** | List of all tables with a **+** button to create a new one |
-| **Indexes** | List of all indexes (only shown if indexes exist) with a **+** button to create a new one |
+| **Indexes** | List of indexes and their edit/delete controls. This section, including its **+** button, is only shown if at least one index already exists |
 
 **Table selection:** Click a table name to load it in the content area. The active table is highlighted with a blue left border.
 
 ### Dark / Light Mode
 
-Click the sun/moon icon in the sidebar header. EditDB auto-detects your OS preference on first visit and saves your choice to localStorage. All colors transition smoothly.
+Click the sun/moon icon in the sidebar header. EditDB auto-detects your OS preference on first visit and saves your choice to localStorage.
 
 ### Empty State
 
@@ -76,7 +76,7 @@ An Airtable-style grid with sticky headers. Each column header shows:
 
 | Indicator | Icon | Meaning |
 |-----------|------|---------|
-| **Primary key** | Key (amber) | This column is the primary key |
+| **Primary key** | Key (amber) | This column is the primary key. For a composite key, only its first component is marked |
 | **Foreign key** | Link (blue) | This column references another table |
 | **Type** | Text label | Column type: TEXT, INTEGER, REAL, or BLOB |
 
@@ -101,7 +101,7 @@ Above the grid, action buttons provide table-level operations:
 
 ### Search / Filter
 
-A search box above the grid filters rows in real time (case-insensitive, searches across all columns).
+A search box above the grid filters the rows on the **currently loaded page** in real time (case-insensitive, across all displayed columns). It does not search unloaded pages.
 
 ### Pagination
 
@@ -111,7 +111,7 @@ A search box above the grid filters rows in real time (case-insensitive, searche
 | **Page indicator** | Shows "3 / 10" style page position |
 | **Row range** | Shows "201–300 of 1,245 rows" |
 
-Default page size is **100 rows** (maximum 1,000).
+The UI page size is fixed at **100 rows**. The underlying table API accepts a maximum of 1,000 rows per request.
 
 ---
 
@@ -126,15 +126,19 @@ Default page size is **100 rows** (maximum 1,000).
 | **Save** | Press **Enter** or click away |
 | **Cancel** | Press **Escape** |
 
-Primary key columns are read-only and cannot be edited (shown with a grayed-out background).
+Single-cell updates require the table to have a primary key so EditDB can locate the row. Double-click editing is available on every displayed cell, including a primary-key cell.
 
 ### Edit an Entire Row
 
 Click the **pencil icon** on the left side of a row to enter bulk edit mode. All non-primary-key fields become editable. Click the **check mark** to save all changes at once.
 
+Primary-key fields are disabled in bulk edit mode. Tables without a primary key can be browsed and appended to, but EditDB cannot update or delete their rows through the grid.
+
+The grid does not fully support composite primary keys: it uses only the first key component to locate a row. Updating or deleting through the grid could therefore affect multiple rows that share that value. Use the SQL Console or another SQLite client for those tables.
+
 ### Add a Row
 
-Click the blue **Add Row** button above the grid. A new row is inserted with empty values for all non-primary-key columns.
+Click the blue **Add Row** button above the grid. EditDB submits an empty string for every non-primary-key column. This may fail for schemas whose constraints reject those values, and it does not invoke column defaults.
 
 ### Delete a Row
 
@@ -168,10 +172,12 @@ Click a foreign key hyperlink to open the **FK drawer** — a slide-in panel fro
 | **Header** | Related table name, FK reference, close button |
 | **Breadcrumbs** | Navigation trail when drilling through multiple FK relationships — click any breadcrumb to jump back |
 | **Highlighted row** | The target row pulses with a blue highlight and auto-scrolls into view |
-| **Full table view** | The drawer shows the related table with all the same features: sticky headers, type indicators, FK links |
+| **Related-table preview** | The drawer loads the first 100 rows with sticky headers, type indicators, and FK links |
 | **Stackable** | Click another FK link inside the drawer to drill deeper — breadcrumbs track the full path |
 
 Close the drawer with the **X** button or press **Escape**.
+
+Hover previews look up the foreign-key value against the related table's first primary-key column. The drawer highlights a match only if it is among the first 100 loaded rows. Foreign keys that target a different unique column or a row outside that range may therefore lack the expected preview or highlight.
 
 ---
 
@@ -206,6 +212,8 @@ Click the green **Apply Changes** button. A confirmation dialog appears before t
 3. Drops the old table and renames the new one
 4. All wrapped in a transaction — if anything fails, it rolls back completely
 
+> **Back up the database before applying schema changes.** The current editor rebuilds only column names and the selected declared types. It does not preserve primary keys, `AUTOINCREMENT`, `NOT NULL`, default values, unique or check constraints, foreign-key declarations, indexes, or triggers. Use the SQL Console or another SQLite migration tool when those schema objects must be retained.
+
 ---
 
 ## 7. SQL Console
@@ -217,12 +225,12 @@ Click **SQL Console** in the sidebar to open the raw query editor.
 | Area | Position | Purpose |
 |------|----------|---------|
 | **Query editor** | Left | Textarea for writing SQL |
-| **History sidebar** | Right | Up to 50 recent queries (persisted in localStorage) |
+| **History sidebar** | Right | Up to 50 successful queries (persisted in localStorage) |
 | **Results** | Below | Query output in a scrollable table |
 
 ### Writing and Running Queries
 
-Type any valid SQLite SQL into the editor and click **Run Query** (or use the keyboard).
+Enter one SQLite statement and click **Run Query**.
 
 | Query type | Result |
 |------------|--------|
@@ -233,7 +241,7 @@ Type any valid SQLite SQL into the editor and click **Run Query** (or use the ke
 
 ### Query History
 
-- The right sidebar stores up to **50 queries** in localStorage
+- The right sidebar stores up to **50 successful queries** in localStorage
 - Click any history entry to load it into the editor
 - **Clear History** button removes all entries
 - History persists across sessions
@@ -256,7 +264,7 @@ With a table selected, click the **pencil icon** in the toolbar. Enter the new n
 
 ### Clone a Table
 
-Click the **Clone** button in the toolbar. The table's schema is loaded into the SQL Console as a `CREATE TABLE IF NOT EXISTS` statement with a suggested name. Review, edit, and click **Run Query** to create the clone.
+Click the **Clone** button in the toolbar. The table's `CREATE TABLE` statement is loaded into the SQL Console with a suggested name. Review, edit, and click **Run Query** to create the clone. This clones neither data nor separate indexes and triggers.
 
 ### Delete a Table
 
@@ -274,10 +282,12 @@ Each index shows a **zap icon** (amber) and its name. Hover to see a tooltip wit
 
 ### Create an Index
 
-Click the **+** button next to "INDEXES." Enter:
+Select the target table, then click the **+** button next to "INDEXES." Enter:
 - Index name
 - Columns (comma-separated)
 - Whether it should be unique
+
+The index section is hidden when the database has no indexes, so create the first index with `CREATE INDEX` in the SQL Console. Once an index exists, the section and **+** button become available.
 
 ### Edit an Index
 
@@ -285,7 +295,7 @@ Hover over an index and click the **edit button**. The index SQL is loaded into 
 
 ### Delete an Index
 
-Hover over an index and click the **trash icon**.
+Hover over an index and click the **X icon**.
 
 ---
 
@@ -305,9 +315,11 @@ Buttons above the data grid handle import and export:
 
 | Format | Description |
 |--------|-------------|
-| **CSV** | Upload a CSV file (up to **50 MB**) to import rows into the current table. Data is validated against the table schema. |
+| **CSV** | Upload a UTF-8 CSV file (up to **50 MB**) to import rows into the current table. Headers must be valid identifiers and must name columns accepted by SQLite for the target table |
 
 A success or error message appears after the import completes.
+
+Imports commit every 1,000 rows. If a later batch fails, rows from earlier committed batches remain; retrying the same file can therefore create duplicates.
 
 ---
 
@@ -339,7 +351,8 @@ editdb <path_to_db> [--port PORT]
 | CSV import size | 50 MB |
 | SQL query size | 100 KB |
 | Query result rows | 10,000 |
-| Page size (max) | 1,000 rows |
+| UI page size | 100 rows |
+| Table API page size (max) | 1,000 rows |
 | Query history | 50 entries |
 
 ### Color Legend
@@ -360,4 +373,4 @@ editdb <path_to_db> [--port PORT]
 | Font | Usage |
 |------|-------|
 | **Inter** | All UI text |
-| **Monospace** | SQL editor, identifiers, error messages |
+| **Monospace** | SQL editor, query history, and error messages |

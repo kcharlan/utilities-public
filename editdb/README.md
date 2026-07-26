@@ -1,93 +1,119 @@
-# EditDB: World-Class SQLite Management
+# EditDB
 
-EditDB is a professional-grade, local web-based utility for managing SQLite databases. It combines the power of a Python backend with a high-performance, modern React-based frontend to deliver a "desktop-class" experience in your browser.
+EditDB is a local, browser-based SQLite editor. A single uv-managed Python
+launcher serves a FastAPI backend and an embedded React interface.
 
-## Quick Start (Global Utility)
+## Quick start
 
-EditDB runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using a PEP 723 inline-metadata header. You don't need to manage virtual environments manually.
+Install [uv](https://docs.astral.sh/uv/) and run the launcher from this
+directory:
 
-1. **Make it Global (Optional):**
-   Link the script to your local bin to run it from anywhere:
-   ```zsh
-   ln -s "$(pwd)/editdb" /usr/local/bin/editdb
-   ```
+```zsh
+./editdb data.sqlite
+```
 
-2. **Run:** Just launch it. The first run resolves its dependencies (fastapi, uvicorn, python-multipart, pydantic) into uv's shared cache — that invocation may briefly hit the network; later runs are fast.
-   ```zsh
-   editdb data.sqlite
-   ```
+The database file and missing parent directories are created if necessary.
+The server binds to `127.0.0.1:8000` and opens the default browser. Use a
+different port with:
 
-3. **Options:**
-   ```
-   editdb <path_to_db> [-p <port>]
-   ```
-   - `<path_to_db>` -- path to the SQLite file (created if it doesn't exist)
-   - `-p`, `--port` -- port for the local server (default: 8000)
+```zsh
+./editdb data.sqlite --port 9000
+```
 
-## Homebrew & PEP 668 Friendly
-Because macOS and Homebrew prevent global `pip` installs, uv resolves EditDB's dependencies into its managed shared cache. This ensures:
-- No "Externally Managed Environment" errors.
-- No interference with your system Python.
-- A "just works" experience like a Homebrew-installed binary.
+To invoke EditDB from elsewhere, symlink `editdb/editdb` into a directory on
+your `PATH`.
 
-## Key Features
+The first invocation may access the network while uv resolves a compatible
+Python 3.12+ interpreter and the dependencies declared in the launcher's PEP
+723 header. The browser UI also loads React, Tailwind CSS, Babel, Lucide, and
+Inter from CDNs, so those resources must be available when they are not
+already cached.
 
-- **Airtable-Style Data Grid:** A high-performance grid with sticky headers and intuitive row editing. Paginated with configurable page size (default 100, max 1000 rows per page).
-- **Advanced Schema Designer:** Add, rename, or delete columns and change data types. EditDB handles complex SQLite migrations (shadow-table pattern) automatically with transaction safety and mapping validation.
-- **SQL Console:** A dedicated space for running raw SQL queries with history tracking (stored in localStorage). Results capped at 10,000 rows.
-- **Table Management:** Create, rename, and delete tables. View foreign key relationships.
-- **Index Management:** Create and delete indexes with ease to optimize your query performance.
-- **Data Import/Export:** Export tables as CSV or JSON. Export table schemas as SQL DDL. Import data from CSV files (up to 50 MB).
-- **Row Operations:** Add, edit, and delete individual rows through the grid UI. Row preview on click.
-- **CLI-First Workflow:** Pass a database path directly via the terminal to open it instantly.
-- **Zero-Build Frontend:** The UI is delivered as a single-file SPA using CDN-based React and Tailwind CSS, meaning no `node_modules` or complex build steps for you.
+## Features
 
-## Security & Robustness
+- Browse tables in a grid with a fixed 100-row page size.
+- Filter the rows currently loaded on the active page.
+- Add, edit, and delete rows. Updates and deletes require a primary key.
+- Create, rename, clone, and delete tables.
+- Inspect foreign keys, hover for related-row previews, and follow
+  relationships in a drawer.
+- Add, rename, delete, or change the declared type of columns with the schema
+  editor.
+- Run one raw SQLite statement at a time in the SQL console. Successful
+  statements are stored in browser-local query history.
+- List, create, edit through the SQL console, and delete indexes. If a
+  database has no indexes yet, create the first one in the SQL console because
+  the index controls are only rendered after an index exists.
+- Export all rows from a table as CSV or JSON, export its `CREATE TABLE`
+  statement, and import UTF-8 CSV files up to 50 MB.
+- Switch between light and dark themes; the preference is stored in
+  `localStorage`.
 
-- **Localhost Only:** The server binds strictly to `127.0.0.1` to prevent unauthorized network access.
-- **SQL Injection Protection:** All dynamic SQL identifiers (tables, columns, indexes) are validated against a strict pattern and properly quoted.
-- **Safe Migrations:** Structure changes use a shadow-table migration pattern wrapped in transactions. Column mappings are validated before execution to prevent data corruption.
-- **Resource Limits:** CSV import size cap (50 MB), query size cap (100 KB), query result truncation (10k rows), and SQLite connection timeouts (30 s).
+See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for detailed operation and
+current limitations.
 
-## How It Works
+## Important schema-editor limitation
 
-### The Backend (FastAPI)
-The backend is a lightweight Python server that provides:
-- **REST API:** Endpoints for fetching schemas, rows, executing queries, managing tables/indexes, and import/export.
-- **Shadow-Table Migrations:** Since SQLite's `ALTER TABLE` is limited, EditDB performs migrations by creating a temporary table, copying data, and swapping them -- all within a safe transaction.
-- **Auto-Browser Launch:** Opens the default browser to the local server on startup.
+Back up the database before applying schema-editor changes. The current
+shadow-table migration rebuilds columns from their names and one of four
+declared types (`TEXT`, `INTEGER`, `REAL`, or `BLOB`). It does **not** preserve
+primary keys, `AUTOINCREMENT`, `NOT NULL`, default values, unique or check
+constraints, foreign-key declarations, indexes, or triggers.
 
-### The Frontend (React + Tailwind)
-The UI is built with:
-- **React 18** and **ReactDOM 18** (CDN, no build step).
-- **Tailwind CSS** for styling.
-- **Babel Standalone** for in-browser JSX transpilation.
-- **Lucide Icons** for interface elements.
-- **Single-File Design:** The entire frontend is embedded in the Python script as `HTML_TEMPLATE`.
+The rebuild and data copy are transactional, and source-column mappings are
+validated, but those safeguards do not preserve omitted schema objects. Use
+the SQL console or another SQLite migration tool when those objects matter.
 
-## Developer & Maintainer Notes
+## Security and limits
 
-### Project Structure
-- `editdb` -- The unified entry point (uv-managed via a PEP 723 header). Contains the FastAPI server, CLI harness, and the embedded HTML/React frontend.
-- `editdb_setup.sh` -- Legacy setup script from before the uv-managed launcher. Not needed for normal use.
-- `docs/` -- Contains audit and past-issues documentation for maintainers.
+- The server listens only on `127.0.0.1`; it has no authentication and is not
+  intended to be exposed through a proxy or network listener.
+- Identifiers used by the generated table, index, row, and import operations
+  must match `[A-Za-z_][A-Za-z0-9_]*` and are quoted before use.
+- The SQL console intentionally executes the submitted statement directly. It
+  is for trusted local use and is not restricted to read-only SQL.
+- SQL requests are limited to 100 KB and query results to 10,000 rows.
+- CSV uploads are limited to 50 MB.
+- Table APIs accept at most 1,000 rows per request; the UI requests 100.
+- SQLite connections use 30-second connection and busy timeouts.
 
-### Modifying the UI
-The UI is embedded within the `HTML_TEMPLATE` constant in the `editdb` file. This allows the utility to remain a single-file tool for easy portability while still delivering a complex web interface.
+CSV imports commit every 1,000 rows. If a later batch fails, rows from earlier
+committed batches remain in the database.
 
-### Safety & Transactions
-All schema changes are wrapped in SQLite transactions. If a migration fails during the data-copying phase, the changes are rolled back automatically to prevent data loss.
+The grid only recognizes the first component of a composite primary key when
+locating rows. Use the SQL console or another SQLite client to update or delete
+rows in tables with composite primary keys.
+
+## Architecture
+
+The executable [`editdb`](editdb) contains:
+
+- the uv shebang and dependency metadata;
+- the FastAPI application and SQLite operations;
+- the CLI and server lifecycle; and
+- the complete React/Tailwind interface in `HTML_TEMPLATE`.
+
+The frontend has no local build step or `node_modules`. The launcher opens the
+browser automatically unless `UTILITIES_TESTING` is set to a truthy value.
+
+`editdb_setup.sh` is an obsolete pre-uv setup script and should not be used; it
+references the retired `src/editdb.py` layout. It remains only as a legacy
+artifact.
 
 ## Requirements
-- [uv](https://docs.astral.sh/uv/) (`brew install uv`) — manages the Python interpreter and dependencies
-- Dependencies (`fastapi`, `uvicorn`, `python-multipart`, `pydantic`) resolved automatically by uv on first run
-- A modern web browser
+
+- [uv](https://docs.astral.sh/uv/)
+- A modern browser with access to the UI's CDN dependencies
+
+No manual runtime virtual environment or global `pip` installation is needed.
 
 ## Tests
 
-```bash
-cd /Users/example/source/utilities/editdb
+Development tests use a project-local virtual environment:
+
+```zsh
+cd editdb
 python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```

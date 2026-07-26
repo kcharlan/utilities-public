@@ -1,62 +1,106 @@
 # Transcription Console
-Whisper-powered transcription toolkit with two Streamlit UIs. Tracks session, cumulative, and lifetime durations, supports wildcard ingestion, and preserves counter files across sessions.
 
-## Components
+A local, Whisper-powered transcription toolkit with two Streamlit interfaces. Both accept multiple audio files, transcribe them with a selectable local Whisper model, and track processed audio duration.
 
-- `app.py` – Primary Streamlit console (“Transcription Console”). Features sticky transcripts, upload or wildcard ingestion with a data-grid file picker, per-transcript clipboard buttons, and resettable session/cumulative/lifetime counters. Uses atomic file writes for counter persistence and falls back to the OpenAI API when local Whisper fails.
-- `transcribe.py` – Secondary Streamlit app (“Whisper Transcriber”). Styled interface with drag-and-drop upload or wildcard path input, configurable divider words that split transcripts into sections, and the same three-tier time counters. Uses `librosa` for duration when available, falling back to Whisper’s audio loader.
-- `run.sh`, `m4a-run.sh`, `help.sh` – Legacy shell wrappers that invoke `transcribe.py` with `--file` and `--model` flags. These were written for an earlier CLI version of `transcribe.py` and may not function correctly with the current Streamlit-based implementation.
-- `ui.sh` – Launches `app.py` from the project root.
-- `session_backup.json` – Persists the cumulative counter (`{“cumulative_seconds”: <float>}`).
-- `transcription_odometer.txt` – Persists the lifetime counter (plain-text float).
-- `setup.sh` – Recreates a Python 3.12 venv and installs `openai-whisper` and `streamlit`. The optional OpenAI API fallback also requires the `openai` package.
+`app.py` is the primary interface. `transcribe.py` is an alternate interface for workflows that split transcripts on spoken divider words.
 
-## Environment
+## Requirements
+
+- Python 3.12, as expected by `setup.sh`
+- [FFmpeg](https://ffmpeg.org/) available on `PATH`
+- Enough disk space to download and cache the selected Whisper model on first use
+
+On macOS, install FFmpeg with:
+
+```bash
+brew install ffmpeg
+```
+
+## Setup
+
+Run these commands from this directory:
 
 ```bash
 ./setup.sh
 source venv/bin/activate
 ```
 
-FFmpeg must be installed on your system (`brew install ffmpeg` on macOS). If you plan to use the OpenAI API fallback in `app.py`, export `OPENAI_API_KEY`.
+`setup.sh` deletes and recreates `venv/`, then installs `openai-whisper` and `streamlit`.
 
-For that optional fallback, install the client into the project venv:
+### Optional OpenAI API fallback
+
+Only `app.py` can fall back to the OpenAI transcription API when local Whisper fails. To enable that fallback, install the OpenAI client in the project virtual environment and provide the key through the environment:
 
 ```bash
 venv/bin/pip install openai
+export OPENAI_API_KEY="your-key"
 ```
 
-## Launching the Streamlit UI
+Do not store the key in this repository.
+
+## Run the primary interface
+
+The wrapper changes to the project directory before launching, so its local counter files are stored in the expected location:
 
 ```bash
-streamlit run app.py
-# or
 ./ui.sh
 ```
 
-### app.py Highlights
+The equivalent manual command is:
 
-- Drag-and-drop uploader or wildcard input box for local media files (`mp3`, `wav`, `m4a`, `flac`, `ogg`, `wma`, `mp4`, `aac`).
-- Wildcard paths expand with live preview in an editable data grid where individual files can be unchecked.
-- Option to allow non-audio file extensions for experimental formats.
-- Session, cumulative, and lifetime counters update per-file (only after successful transcription) and persist atomically.
-- Per-transcript “Copy to clipboard” buttons and inline text editing.
-- Resilient error handling around Whisper loading — falls back to OpenAI API if `OPENAI_API_KEY` is set.
+```bash
+source venv/bin/activate
+streamlit run app.py
+```
 
-### transcribe.py Highlights
+The primary interface supports:
 
-- Styled drag-and-drop uploader with optional wildcard/path input (collapsed by default).
-- Configurable divider words (`cut`, `mark`, etc.) that split transcripts into sections.
-- Raw transcript text areas are editable; a “Process Text” button applies divider splitting.
-- Same three-tier time counters (session, cumulative, lifetime) persisted to the shared counter files.
+- Uploading multiple `mp3`, `wav`, `m4a`, `flac`, `ogg`, `wma`, `mp4`, or `aac` files.
+- Selecting local files with an exact path or recursive wildcard pattern.
+- Reviewing wildcard matches in a grid and excluding individual files.
+- Attempting other file extensions when **Allow non-audio file extensions** is enabled.
+- Retaining completed transcripts during the current Streamlit session, with editable text, per-item copy and remove controls, and a clear-all action.
+- Falling back to the OpenAI API when local transcription fails and `OPENAI_API_KEY` plus the `openai` package are available.
+- Updating duration counters only after each file is transcribed successfully.
 
-## Customization
+## Run the divider-word interface
 
-- Adjust default model size in the model selector of either app (both default to `small` in `app.py`, `large` in `transcribe.py`).
-- Modify `process_text_with_dividers` in `transcribe.py` to add Markdown headings or timestamps between sections.
+From this directory:
+
+```bash
+source venv/bin/activate
+streamlit run transcribe.py
+```
+
+This interface supports:
+
+- Uploading multiple `wav`, `mp3`, `m4a`, `ogg`, `flac`, or `aac` files.
+- Selecting files with a path or wildcard pattern.
+- Splitting editable transcript text on configurable divider words such as `cut` or `mark`.
+- Using `librosa` for duration detection when it is separately installed, with Whisper audio loading as the built-in fallback.
+
+This older interface records a file's detected duration before transcription finishes, so a failed transcription can still increase its counters. It does not use the OpenAI API fallback.
+
+## Counters and local state
+
+Both interfaces use three counters:
+
+- **Session**: duration processed in the current browser session or batch.
+- **Cumulative**: resettable total persisted in `session_backup.json`.
+- **Lifetime**: persistent total stored as a number in `transcription_odometer.txt`.
+
+The two persistence files are local runtime state and are ignored by Git. `app.py` writes both files atomically and lets you reset the session and cumulative totals from the interface. The divider-word interface uses ordinary file writes and provides a cumulative reset.
+
+`app.py` also accepts `CUMULATIVE_JSON_PATH` and `LIFETIME_TXT_PATH` environment variables to place these files elsewhere. `transcribe.py` always uses filenames relative to its current working directory.
+
+Back up the files before deleting or replacing them if their history matters.
+
+## Legacy wrappers
+
+`run.sh`, `m4a-run.sh`, and `help.sh` pass obsolete command-line options to `transcribe.py`. The current `transcribe.py` is a Streamlit app and does not implement those options, so these wrappers are not supported launch methods. Use one of the Streamlit commands above.
 
 ## Troubleshooting
 
-- Ensure FFmpeg is installed and on your `PATH` if Whisper complains about audio loading.
-- Large models (e.g., `large`) require several GB of VRAM; switch to `small` or `medium` on constrained GPUs/CPUs.
-- Delete `session_backup.json`/`transcription_odometer.txt` if you want to reset counters — back them up first if the history matters.
+- If Whisper cannot load an audio file, confirm that `ffmpeg` is installed and available on `PATH`.
+- If local transcription is slow or runs out of memory, choose a smaller model in the interface.
+- Run manual Streamlit commands from this directory unless you intentionally override `app.py`'s counter paths.

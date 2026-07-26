@@ -112,7 +112,7 @@ Avoid broad searches or edits in vendored/generated trees unless the task explic
 
 ## Project-Specific Notes
 - `web_games/gorilla/index.html` and `web_games/multibody_sim/index.html` are intentionally single-file apps; preserve this architecture unless instructed otherwise.
-- `web_games/multibody_sim/docs/` contains active implementation and cleanup notes; keep docs in sync when behavior changes.
+- `web_games/multibody_sim/README.md` and `USER_GUIDE.md` are the maintained behavior references; keep them in sync when the single-file app changes.
 - `docker/webserver/README.md` documents routing invariants; preserve static-first routing and `/files`/`/configure` behavior when touching proxy logic.
 
 ## Preferred Patterns for New Projects

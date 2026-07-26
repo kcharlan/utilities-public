@@ -1,73 +1,95 @@
 # Rock Paper Scissors Simulator
 
-A "screen saver" style simulation where Rock, Paper, and Scissors battle for dominance.
+A screensaver-style browser simulation where Rock, Paper, and Scissors battle
+for dominance. When different types collide, the winner normally converts the
+loser according to the standard rules: Rock beats Scissors, Scissors beats
+Paper, and Paper beats Rock.
 
 ## Features
--   **Physics Engine**: Elastic collisions, wall bouncing, and momentum.
--   **Game Logic**: Standard RPS rules (Rock > Scissors > Paper > Rock). Winners convert losers.
--   **Auto-Restart**: Infinite loop mode – the simulation automatically restarts after a winner is declared. Restart delay scales inversely with speed.
--   **Fair Start**: Guaranteed inclusive distribution (min 15% per type) spawned in balanced quadrants to prevent clustering/early wipes.
--   **Customization**:
-    -   **Count**: Adjust population size (2-200).
-    -   **Speed**: Real-time speed adjustment.
-    -   **Size**: Logarithmic scaling for icons.
-    -   **Theme**: Light/Dark/System support.
--   **Advanced Physics**:
-    -   **Pass Thru**: Reduce chaos by allowing same-type items to pass through each other (Default: On).
-    -   **Saving Throws**: Losers have a chance (0-100%) to "reverse" the outcome and convert the winner instead.
--   **Stats & Tracking**:
-    -   **Dynamic Leaderboard**: "Wins" display automatically sorts by win count and breaks ties alphabetically.
-    -   **Kill Counters**: Each item displays a counter showing how many opponents it has converted. Note: Counters reset if an item is converted.
-    -   **MVP Highlight**: At the end of each round, the item(s) with the highest conversion count are highlighted with a gold glow effect.
-    -   **Visual Feedback**:
-        -   Items that successfully perform a "Saving Throw" appear with inverted colors.
-        -   Counters use high-contrast text pathing for readability.
 
-## Project Layout
+- **Physics:** Equal-mass elastic collisions, wall bouncing, and adjustable
+  movement speed.
+- **Auto-restart:** After one type takes over the field, the next round starts
+  automatically. The delay is `10000 / speed` milliseconds.
+- **Fair starts:** Each type receives `floor(count * 0.15)` guaranteed entries;
+  remaining entries are random. Entries of each type rotate through offset
+  quadrants to reduce starting clusters. At very small counts, representation
+  of all three types cannot be guaranteed.
+- **Controls:**
+  - **Count:** Set the population from 2 to 200. A new count takes effect on
+    the next manual or automatic restart.
+  - **Speed:** Adjust movement speed immediately from 1 to 20.
+  - **Size:** Adjust icon and collision size immediately on a logarithmic scale
+    from 1 to 10.
+  - **Theme:** Follow the system color scheme or force light or dark mode.
+  - **Pass Thru:** Let same-type items pass through one another (enabled by
+    default).
+  - **Save %:** Give a loser a 0–100% chance to reverse the result and convert
+    the winner.
+- **Stats and feedback:**
+  - Current populations and elapsed session time.
+  - A cumulative round-wins leaderboard, sorted by wins and then
+    alphabetically.
+  - A per-item conversion counter, reset whenever that item is converted.
+  - Inverted colors on an item converted by a successful saving throw.
+  - A gold MVP glow at round end when one to three items share the highest
+    nonzero conversion count.
+
+## Project layout
+
 - `index.html`: Page structure and controls.
 - `script.js`: Game engine, physics, collision, balancing logic, and rendering.
-- `style.css`: Styling with Light/Dark/System theme support via CSS custom properties.
+- `style.css`: Layout and light/dark/system theme styling.
 - `rock.png`, `paper.png`, `scissors.png`: Item sprites.
 
-## Fairness & Simulation Mechanics
-The simulation employs several layers of logic to ensure games are fair, dynamic, and fun to watch.
+## Simulation mechanics
 
-### 1. Fair Start Mechanics (Population & Distribution)
-At the beginning of every round, we ensure no team starts with an unfair advantage.
-*   **Guaranteed Representation**: The system enforces a minimum population of 15% per type. This prevents RNG from spawning a game with 1 Rock vs 50 Paper.
-*   **Quadrant Spawning**: To preventing immediate team-wipes, units are spawned using a round-robin quadrant system.
-    *   *Example*: Rock #1 spawns Top-Left, Rock #2 Top-Right... while Paper #1 starts Top-Right. This spatial padding gives teams a moment to breathe before chaos ensues.
+### Round initialization
 
-### 2. Dynamic Balancing (The Handicap)
-During the game, it's common for one type to snowball uncontrollably. To prevent boring, instant-win scenarios, we monitor the **Win Ratios** (active counts) of the teams.
+At the start of each round, the simulator builds a shuffled type pool. It adds
+`floor(count * 0.15)` entries for each type, fills the remainder randomly, and
+spreads each type through the four quadrants with a different starting offset.
 
-**The Mechanism**:
-If a team becomes too dominant, a "Handicap" is applied. While handicapped, that team **cannot convert new members**. If they win a fight, the loser is randomized to a neutral type instead of being recruited. This stalls the leader's growth.
+### Round-win handicap
 
-When the handicap is active, there is a banner displayed in red text with the message "Handicap: <Type>". When the handicap is inactive or released (deactivated), the banner is removed.
+The handicap compares **cumulative round-win totals**, not the current
+populations within a round. It is not evaluated until at least 35 rounds have
+finished, and it can activate only after every type has won at least once.
 
-**Trigger Logic (Activation)**:
-The handicap does not become eligible for activation until 35 or more round wins have been recorded. Once that threshold is met, this mechanism becomes available.
+The leading type becomes handicapped when its win total is greater than:
 
-The handicap activates when the dominant team exceeds the weakest team by a margin calculated as the **greater** of:
-*   **Ratio**: 1.5x the weakest team's count.
-*   **Distance**: The weakest team's count + 8.
+- 1.5 times the lowest win total, or
+- the lowest win total plus 8,
 
-`Threshold = Math.max(MinCount * 1.5, MinCount + 8)`
+whichever is greater:
 
-**Release Logic (De-activation)**:
-The handicap releases when the playing field levels out, defined as when the dominant team drops to within the **greater** of:
-*   **Ratio**: 1.2x the weakest team's count.
-*   **Distance**: The weakest team's count + 5.
+```text
+activation threshold = max(lowest wins * 1.5, lowest wins + 8)
+```
 
-`StopThreshold = Math.max(MinCount * 1.2, MinCount + 5)`
+While active, the handicap follows whichever type currently has the most round
+wins. When that type wins a collision and already occupies at least 33% of the
+current field, the loser is assigned one of the other two types instead of
+joining the winner. The red `Handicap: TYPE` indicator shows the affected type.
 
-### 3. Session Timer
-The timer tracks your total viewing session. It persists across auto-restarts and only resets when you manually intervene (Restart/Reload).
+The handicap is released when the leading win total is no greater than:
+
+```text
+release threshold = max(lowest wins * 1.2, lowest wins + 5)
+```
+
+### Session timer and restarts
+
+The timer spans automatic round restarts. Clicking **Restart** starts a new
+session by clearing the timer and round-win totals, then rebuilding the field
+from the current controls. Reloading the page also starts a new session.
 
 ## Running
-Simply open `index.html` in your browser.
+
+Open `index.html` in a browser:
+
 ```bash
-open index.html
+open web_games/rps_screen/index.html
 ```
+
 No build steps or dependencies required.

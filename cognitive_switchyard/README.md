@@ -6,7 +6,7 @@ A single-user, local-first task orchestration engine that coordinates parallel e
 
 **Workload-agnostic.** The engine owns the *when* and *where* of execution. Workload-specific behavior is defined by **runner packs** -- pluggable configuration bundles that specify how each pipeline phase operates for a given task type (coding with Claude Code, video transcoding with ffmpeg, media downloading with youtube-dl, etc.).
 
-**Idempotent restart.** If the orchestrator crashes or the machine loses power, re-running the same command resumes from where it left off. No manual cleanup, no data loss, no duplicate work.
+**Recoverable restart.** If the orchestrator crashes or the machine loses power, re-running the same command reconciles persisted task state and resumes incomplete work. Pack hooks and executors remain responsible for making their own external side effects safe to repeat.
 
 **Not** a multi-tenant server, a credential manager, or an agent framework. It *uses* agentic CLIs as executors -- it does not implement agent logic itself.
 
@@ -62,10 +62,10 @@ When a session is created with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNIT
  +---------+--------+                    |   blocked, logs)|
            |                             +-----------------+
  +---------+---------+
- | Pack Hooks        |
+ | Pack scripts      |
  | (isolate_start,   |
  |  execute,         |
- |  verify,          |
+ |  verify command,  |
  |  isolate_end)     |
  +-------------------+
 ```
@@ -87,9 +87,9 @@ When a session is created with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNIT
 ./switchyard start --session my-session --pack claude-code
 ```
 
-The `serve` command starts a FastAPI server with the embedded React SPA. Sessions are created and managed through the web UI, which provides real-time monitoring of all pipeline stages.
+The `serve` command starts a FastAPI server with the embedded React SPA and opens it in the default browser. Set `COGNITIVE_SWITCHYARD_NO_BROWSER=1` to suppress browser launch. If the requested port is occupied, the server scans the next 19 ports and uses the first available one.
 
-On first run, `./switchyard` (via uv) resolves its dependencies into uv's shared cache, creates the runtime home at `~/.cognitive_switchyard/`, writes a default `config.yaml`, and syncs built-in packs. No virtual environment is written to your home directory.
+On first run, `./switchyard` (via uv) resolves its dependencies into uv's shared cache, creates the runtime home at `~/.cognitive_switchyard/`, writes a default `config.yaml`, and syncs built-in packs. The launcher does not create or maintain a private bootstrap virtual environment.
 
 ## Data Directories
 
@@ -113,6 +113,8 @@ On first run, `./switchyard` (via uv) resolves its dependencies into uv's shared
       done/                             # Completed plans
       blocked/                          # Plans that need operator attention
       logs/                             # Session and worker logs
+        workers/                        # Per-slot logs
+        tasks/                          # Per-task logs
 ```
 
 ## Runner Packs
@@ -165,14 +167,20 @@ Three triggers fire the verification command:
 
 When verification fails, the auto-fix loop runs the fixer agent up to N attempts (configurable, default 2), re-verifying after each fix. If all attempts fail, the session pauses for operator intervention.
 
-## Environment Variables
+## Pack and Server Environment
 
-The orchestrator injects these into hook execution environments:
+Session environment values are configured in the Setup view or inherited by the headless CLI. The orchestrator also supplies pack-specific values where noted:
 
-| Variable | Set by | Description |
+| Variable | Source | Description |
 |----------|--------|-------------|
-| `COGNITIVE_SWITCHYARD_PACK_ROOT` | Orchestrator | Absolute path to the active runtime pack directory. Available in all hooks — used by pack scripts to locate sibling scripts and prompt files. |
-| `CODEX_WORKER_MODEL` | Operator (optional) | Overrides the default worker model for the `codex` pack. Default is `gpt-5.4`. Example: `CODEX_WORKER_MODEL=o3 ./switchyard start ...` |
+| `COGNITIVE_SWITCHYARD_REPO_ROOT` | Session/operator | Repository in which planning, execution, and verification run. For a UI-created isolated session, the backend rewrites this to the session worktree. |
+| `COGNITIVE_SWITCHYARD_BRANCH` | Session/operator | With `COGNITIVE_SWITCHYARD_REPO_ROOT`, requests a session worktree when the session is created through the web backend. |
+| `COGNITIVE_SWITCHYARD_PROJECT_DIR` | Session/operator | Optional repository-relative subdirectory used by the built-in verification scripts in a monorepo. |
+| `COGNITIVE_SWITCHYARD_PACK_ROOT` | Orchestrator | Absolute path to the active runtime pack directory, available to hooks and verification commands. |
+| `COGNITIVE_SWITCHYARD_NO_BROWSER` | Server/operator | Set to a non-empty value to prevent `serve` from opening a browser. |
+| `CLAUDE_CODE_WORKER_MODEL` | Operator (optional) | Overrides the `claude-code` pack's worker model (default `sonnet`). |
+| `CODEX_WORKER_MODEL` | Operator (optional) | Overrides the `codex` and `codex-hybrid` worker model (default `gpt-5.4`). |
+| `CODEX_WORKER_REASONING_EFFORT` | Manifest/orchestrator | Passed to shell execution when `phases.execution.reasoning_effort` is configured. |
 
 ## CLI Reference
 
@@ -182,6 +190,7 @@ The orchestrator injects these into hook execution environments:
 ./switchyard packs                               # List available runtime packs
 ./switchyard sync-packs                          # Sync built-in packs to runtime
 ./switchyard reset-pack <name>                   # Reset a built-in pack to factory
+./switchyard reset-all-packs                     # Reset every built-in pack to factory
 ./switchyard init-pack <name>                    # Scaffold a new custom pack
 ./switchyard validate-pack <path>                # Validate pack structure and config
 ./switchyard start --session <id> --pack <name>  # Start a headless session
@@ -196,13 +205,13 @@ python3 -m venv .venv
 .venv/bin/python -m pytest tests/ -v
 ```
 
-The test suite covers all modules with 490+ tests across unit, integration, and E2E layers. E2E tests require Playwright (`pip install pytest-playwright && playwright install`).
+The suite contains unit, integration, launcher/CLI, and browser E2E tests. The development requirements install Playwright's Python packages; install the Chromium browser once with `.venv/bin/playwright install chromium`. E2E tests start their own Uvicorn server.
 
 ```bash
 # Run unit/integration tests (fast)
 .venv/bin/python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_cli.py
 
-# Run E2E tests (requires Playwright + running server)
+# Run E2E tests (starts its own server)
 .venv/bin/python -m pytest tests/test_e2e.py
 ```
 

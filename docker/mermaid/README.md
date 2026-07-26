@@ -1,10 +1,12 @@
 # Mermaid Live Editor (Docker)
 
-This directory contains scripts to run a local instance of the [Mermaid Live Editor](https://github.com/mermaid-js/mermaid-live-editor) using Docker. This allows you to create and edit Mermaid diagrams offline or without sending data to the public internet.
+This directory contains scripts to run a local instance of the
+[Mermaid Live Editor](https://github.com/mermaid-js/mermaid-live-editor) using
+Docker. The editor is published only on the host loopback interface.
 
 ## Prerequisites
 
-*   **Docker:** You must have Docker installed and running on your machine.
+- **Docker:** Docker must be installed and running.
 
 ## Usage
 
@@ -42,4 +44,7 @@ To pull the latest version of the Mermaid Live Editor image and restart the cont
 
 ## Configuration
 
-The container is configured to run on port `5008` by default to avoid conflicts with other common services. You can modify the port mapping in the `start.sh` and `update.sh` scripts if needed.
+The scripts run `ghcr.io/mermaid-js/mermaid-live-editor` using its implicit
+`latest` tag, bind `127.0.0.1:5008` to container port `8080`, set the restart
+policy to `unless-stopped`, and name the container `mermaid`. Change the port
+mapping in both `start.sh` and `update.sh` if needed.

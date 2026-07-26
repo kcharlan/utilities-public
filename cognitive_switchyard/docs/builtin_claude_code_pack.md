@@ -27,7 +27,10 @@ Typical operator prerequisites:
 
 - Claude CLI available in `PATH`
 - authenticated Claude session
+- `jq` available in `PATH`
 - a valid repository root for git-worktree isolation (when a session branch is selected, `COGNITIVE_SWITCHYARD_REPO_ROOT` will point to the session worktree, not the original repo)
+
+The default execution worker model is `sonnet`. Override it with `CLAUDE_CODE_WORKER_MODEL`.
 
 ## Prompt Files
 

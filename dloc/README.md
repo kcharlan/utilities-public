@@ -1,23 +1,42 @@
 # dloc (Daily Lines of Code)
 
-`dloc` is a simple Python utility that analyzes a Git repository's history to provide a daily summary of lines of code added, removed, and the net change.
+`dloc` summarizes Git's reported insertions and deletions by author date. Despite
+the name, it counts changed lines in tracked files rather than measuring the
+number of source-code lines currently present in a repository.
 
 ## Features
 
-- Extracts statistics from `git log`.
-- Aggregates insertions and deletions by date.
-- Outputs a clean Markdown table.
+- Reads commit statistics from the repository containing the current working
+  directory.
+- Aggregates insertions and deletions across all commits with the same author
+  date.
+- Writes a newest-first Markdown table to standard output.
+
+## Requirements
+
+- Python 3.9 or newer
+- Git
+
+The tool has no third-party Python dependencies.
 
 ## Usage
 
-Run the script from within any Git repository. It uses `git log` in the current working directory, so you must `cd` into the repo first:
+Run the script from within the Git repository you want to analyze:
 
 ```bash
 cd /path/to/your/repo
 /path/to/dloc/dloc
 ```
 
-The script is executable (`#!/usr/bin/env python3`), so it can be invoked directly without `python3`. It has no external dependencies beyond Python 3 and `git`.
+The script accepts no command-line options. Redirect its output to save the
+table:
+
+```bash
+/path/to/dloc/dloc > daily_changes.md
+```
+
+Running it outside a Git repository prints a Git command error to standard
+error and exits with a nonzero status.
 
 ### Example Output
 
@@ -28,4 +47,12 @@ The script is executable (`#!/usr/bin/env python3`), so it can be invoked direct
 
 ## Implementation Details
 
-The tool uses `git log --pretty=format:%ad --date=short --shortstat` to get the raw data and then parses it using regular expressions.
+The tool parses:
+
+```text
+git log --pretty=format:%ad --date=short --shortstat
+```
+
+`Added` and `Removed` are the insertion and deletion totals reported by Git.
+`Net Change` is `Added - Removed`. Binary-file changes and other changes for
+which Git does not report line counts do not contribute to these totals.

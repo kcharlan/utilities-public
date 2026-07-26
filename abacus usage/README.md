@@ -1,39 +1,48 @@
-# Abacus.AI Usage Tracker
+# Abacus.AI Usage Export
 
-This toolkit automates the extraction and processing of ChatLLM credit usage data from the Abacus.AI dashboard. It allows you to easily bypass the web UI's limitations and export your usage logs into clean CSV files for analysis.
+This utility captures ChatLLM credit-usage data from the signed-in Abacus.AI
+Billing/Usage page and converts the downloaded JSON response to CSV.
 
-## 🚀 Quick Start
+The capture bookmarklets call an internal Abacus.AI endpoint, so they may need
+to be updated if the dashboard changes.
 
-1.  **Setup:** Read **[`Operational_Guide.md`](./Operational_Guide.md)** to install the browser bookmarklets.
-2.  **Capture:** Use the bookmarklets on the Abacus.AI dashboard to download JSON logs.
-3.  **Process:** Run the `de-abacus.py` script to convert JSON to CSV.
+## Privacy
+
+Usage exports contain private account and activity data. Keep the downloaded
+JSON and generated CSV files outside this public repository. The repository
+ignores `abacus_usage_*.json` and `abacus_usage_*.csv` in this directory as a
+backup safeguard, but `.gitignore` is not a substitute for storing exports
+elsewhere.
+
+## Quick start
+
+1. Follow [`Operational_Guide.md`](./Operational_Guide.md) to create the two
+   browser bookmarklets.
+2. Use the bookmarklets on the signed-in Abacus.AI Billing/Usage page to
+   download detail or summary JSON.
+3. From this directory, convert a downloaded file:
 
 ```bash
-# Example: Convert a downloaded detail log
-python3 de-abacus.py abacus_usage_detail_2026-01-17.json output.csv
+./de-abacus.py \
+  ~/Downloads/abacus_usage_detail_2030-01-02.json \
+  ~/Downloads/abacus_usage_detail_2030-01-02.csv
 ```
 
-## 📂 Project Structure
+When the output argument is omitted, the script writes a `.csv` beside the
+input file. It requires Python 3 and has no third-party dependencies.
 
-### Documentation
-*   **[`Operational_Guide.md`](./Operational_Guide.md)**: **(Recommended)** The modern guide. Explains how to use JavaScript bookmarklets to one-click capture data.
-*   **`Deprecated - Guide - capture ChatLLM usage.md`**: The original manual method using Browser DevTools. Kept for archival purposes or debugging API changes.
+## Files
 
-### Tools
-*   **[`de-abacus.py`](./de-abacus.py)**: The core utility script.
-    *   **Input:** Raw JSON from the Abacus API.
-    *   **Output:** Flattened CSV with dates as rows and Models/Sources as columns.
-    *   **Features:** Handles dynamic column detection, fills missing values with 0, and rounds currency values.
-    *   **Usage:** `python3 de-abacus.py <input.json> [output.csv]`
+- [`Operational_Guide.md`](./Operational_Guide.md) explains how to install and
+  use the capture bookmarklets.
+- [`de-abacus.py`](./de-abacus.py) converts an Abacus.AI JSON response to CSV.
 
-### Data Files (Examples)
-*   **`abacus_usage_detail_*.json`**: Raw JSON response containing usage broken down by specific LLM (e.g., `CLAUDE_V4_5_SONNET`, `OPENAI_GPT5_2`).
-*   **`abacus_usage_summary_*.json`**: Raw JSON response containing usage grouped by high-level source (e.g., `UI`, `Deep Agent`).
-*   **`*.csv`**: The converted spreadsheet-ready versions of the logs.
+The converter reads the column order from `result.columns`; when that field is
+missing, it infers columns from `result.log`. It places `date` first when
+present, rounds numeric values to two decimal places, ignores row fields that
+are not output columns, and fills missing values with `0` by default.
 
-## 🛠 Script Options
-
-The `de-abacus.py` script includes several safety features and options:
+## Command-line options
 
 ```text
 usage: de-abacus.py [-h] [--no-zeros] [-v] input [output]
@@ -46,4 +55,12 @@ options:
   -h, --help      show this help message and exit
   --no-zeros      Leave missing values empty instead of filling with 0
   -v, --verbose   Enable verbose debug logging
+```
+
+Use `--no-zeros` to leave missing values blank instead:
+
+```bash
+./de-abacus.py --no-zeros \
+  ~/Downloads/abacus_usage_summary_2030-01-02.json \
+  ~/Downloads/abacus_usage_summary_2030-01-02.csv
 ```

@@ -1,213 +1,122 @@
-# LLM Token Analyzer & Format Converter  
-**Version:** 1.1  
-**Author:** Repository maintainers  
-**Date:** 2025-11-11  
+# LLM Token Analyzer & Format Converter — Product Requirements
 
----
+**Status:** Implemented
+**Version:** 1.2
+**Reviewed:** 2026-07-26
 
-## 1. Overview
+## 1. Product summary
 
-This project delivers a dual-interface utility for analyzing and converting text data formats, emphasizing token count efficiency for LLM use. It includes:
+The utility helps a user compare the textual size of common serialization
+formats and convert data between them. It deliberately provides two independent
+experiences:
 
-1. **Web Interface:** a standalone static HTML/JS page for copy-paste analysis and conversion between supported formats.  
-2. **Command Line Interface (CLI):** a Python utility for file-based format conversion only.
+1. A static browser interface for pasted data, format comparison, and token
+   estimates.
+2. A Python CLI for file conversion without token analysis.
 
-Both tools provide insight into how various data structures affect tokenization under **OpenAI GPT-5**.
+The product is intended for local, low-friction experimentation. It is not a
+schema migration tool, an exact model-pricing calculator, or a lossless
+converter for every feature of the supported formats.
 
----
+## 2. Supported formats
 
-## 2. Objectives
+| Format | Web input/conversion | Web count | CLI input/output |
+| --- | --- | --- | --- |
+| Raw text | Count only | Yes | No |
+| JSON, pretty | Yes | Yes | Yes (`json`) |
+| JSON, compact | Yes | Yes | Output (`jsonc`) |
+| XML | Yes | Yes | Yes |
+| YAML | Yes | Yes | Yes |
+| TOON | Limited browser subset | Yes | Yes, via `toon-format` |
+| TOML | Yes, except data containing null | Yes | Yes, except data containing null |
 
-- Quickly compare token counts across formats for LLM prompt optimization.  
-- Seamlessly convert between JSON (pretty/compact), XML, YAML, and TOON.
-- Enable low-friction, offline experimentation without requiring APIs or installations beyond pip dependencies.  
-- Keep the implementation modular, testable, and self-contained.
+## 3. Browser experience
 
----
+The browser UI must:
 
-## 3. Supported Formats
+- remain a single static `web/index.html` with no application backend;
+- provide one editable panel per format and a calculate action for each;
+- validate the selected structured input before conversion;
+- populate every structured panel from a valid source object;
+- show inline errors and clear stale counts/comparison results after a failed
+  calculation;
+- show token counts, their source (`API` or `Local`), the smallest and largest
+  renderings, and percentage differences from the smallest;
+- support system, light, and dark themes and persist only the theme choice;
+- treat raw text as a count-only operation.
 
-| Type | Input Source | Conversion | Token Counting |
-|------|---------------|-------------|----------------|
-| Raw Text | Manual entry only | No | Yes |
-| JSON Pretty | Yes | To all others | Yes |
-| JSON Compact | Yes | To all others | Yes |
-| XML | Yes | To all others | Yes |
-| YAML | Yes | To all others | Yes |
-| TOON | Yes | To all others | Yes |
+The page may load parsing libraries and fonts from public CDNs. Consequently,
+the current product requires network access for a first uncached load of all
+features.
 
----
+### Token-count contract
 
-## 4. Functional Requirements
+The default count is `ceil(text.length / 4)`. It is explicitly an estimate, not
+GPT-5 tokenization or a billing measurement.
 
-### 4.1 Web Interface
+When a user explicitly exposes an API key as `window.OPENAI_API_KEY`, the page
+may attempt the legacy Completions request implemented in `web/index.html`.
+Failure must fall back to the local estimate without preventing conversion.
 
-**Structure**
-- Single HTML file (inline JS and CSS preferred).
-- Six stacked text boxes (one per format).
-- “Calculate” button under each box.
-- Token count displayed under each box.
-- Comparison table listing format name, token count, and percentage difference from smallest count.
+### Browser conversion boundaries
 
-**Behavior**
-- When *Calculate* is clicked:
-  1. Validate the input.
-  2. If valid:
-     - Convert to all other supported formats.
-     - Calculate and display token counts.
-     - Update comparison table.
-  3. If invalid:
-     - Show an inline error below the offending box.
-     - Clear all token counts.
-- When entering raw text, all other boxes are cleared and disabled.
-- Boxes are editable, but counts update only on *Calculate*.
+- JSON is the common in-memory representation.
+- Generated XML uses a synthetic `root` element. XML attributes and exact XML
+  scalar typing are outside the lossless-conversion contract.
+- Browser TOON support is a small, local syntax adapter and is not required to
+  match every construct accepted by the Python `toon-format` package.
+- TOML conversion must reject a value tree containing `null`.
 
-**Tokenization**
-- Uses **OpenAI GPT-5 tokenizer**.
-- Attempt API call first; fall back to local `tiktoken` if unavailable.
-- Each token count shows an indicator:  
-  - ✅ “API” — official OpenAI tokenizer used  
-  - ⚙️ “Local” — fallback mode  
+## 4. CLI experience
 
-**Error Handling**
-- Inline errors directly beneath inputs.
-- Clears all previous counts and results when any error is detected.
+The CLI is invoked as:
 
----
-
-### 4.2 CLI Utility
-
-**Command Name:** `data_convert`
-
-**Syntax**
-```
-data_convert --input <file> --to <target_format> [--output <file>]
+```text
+python src/data_convert.py --input FILE --to FORMAT [--output FILE]
 ```
 
-**Behavior**
-- Validates input format and structure.  
-- Converts to specified target format.  
-- Outputs to:
-  - `<input_basename>.<target_format>` by default, or  
-  - User-defined filename via `--output`.  
-- Supports: JSON (pretty/compact), XML, YAML, TOON.
-- Does **not** calculate token counts.  
+It must:
 
-**Dependencies**
-- `xmltodict`
-- `tiktoken`
-- `requests`
-- `pyyaml`
-- `toon-format` (from GitHub)
+- infer JSON, XML, TOON, YAML, or TOML from the input extension, defaulting
+  unknown extensions to JSON;
+- accept `json`, `jsonc`, `xml`, `toon`, `yaml`, and `toml` as targets;
+- write to the explicit output path or to a derived filename in the current
+  directory;
+- emit pretty sorted JSON for `json` and compact sorted JSON for `jsonc`;
+- add an XML root wrapper when the common object does not already have exactly
+  one top-level key;
+- reject TOML output when any nested value is `None`;
+- return nonzero exit codes and a one-line JSON error on standard error for
+  runtime failures;
+- never perform token counting or make an OpenAI request.
 
----
+## 5. Quality requirements
 
-## 5. Technical Architecture
+- Python parsing and serialization behavior must be covered by pytest.
+- CLI tests must cover success, malformed input, absent input, default output
+  naming, TOML null rejection, and meaningful cross-format round trips.
+- Tests and examples must use conspicuously synthetic data.
+- The README must distinguish the browser's heuristic/API behavior from the
+  CLI and document lossy format boundaries.
 
-### 5.1 Web Tool
-- **Language:** HTML5 + Vanilla JS (optional inline CSS).  
-- **Tokenization:**  
-  - JS fetch to OpenAI API (`/v1/tokenize`) when available.  
-  - Fallback to embedded `tiktoken`-based estimator when offline.  
-- **No backend, uploads, or persistent storage.**
+The browser implementation currently has no automated tests; this is a known
+coverage boundary, not a claim that the Python suite validates browser behavior.
 
-### 5.2 CLI Tool
-- **Language:** Python 3.10+  
-- **Structure:**
-  ```
-  src/
-    data_convert.py
-    converters/
-      json_conv.py
-      xml_conv.py
-      toon_conv.py
-      yaml_conv.py
-    tests/
-      test_json_conv.py
-      test_xml_conv.py
-      test_toon_conv.py
-      test_yaml_conv.py
-  requirements.txt
-  ```
+## 6. Privacy and operational constraints
 
-- **Libraries:**  
-  - `tiktoken` (token counting, fallback)  
-  - `xmltodict` (XML handling)  
-  - `requests` (API calls)  
-  - `pyyaml` (YAML handling)
-  - `toon-format` (TOON handling, installed from GitHub)
+- Structured values stay in the browser unless the optional API path is used.
+- No API key is stored by the application.
+- Users must be warned that setting a key in browser JavaScript exposes it to
+  that browser context.
+- The project must not include real keys, private data, or realistic personal
+  fixtures.
 
-- **Environment:** isolated `venv` install via `requirements.txt`.
+## 7. Deliverables
 
----
-
-## 6. Unit Testing (pytest)
-
-### Scope
-
-| Component | Positive Tests | Negative Tests |
-|------------|----------------|----------------|
-| JSON converter | Valid round-trip (pretty↔compact) | Invalid JSON syntax |
-| XML converter | Proper nested conversion | Malformed tags |
-| YAML converter | Proper nested conversion | Malformed YAML |
-| TOON converter | Valid TOON→JSON | Unsupported features |
-| Fallback logic | Uses local tokenizer if API down | N/A |
-| Parity | JSON→XML→JSON matches original | N/A |
-
-### Exclusions
-- No UI tests for HTML/JS.  
-- No tests requiring OpenAI API keys.
-
----
-
-## 7. Non-Functional Requirements
-
-- Must run offline (excluding optional API call).  
-- Setup entirely via `requirements.txt`.  
-- CLI operations complete within 3 seconds for ≤1 MB input.  
-- Static HTML page, no CDN or server dependency.
-
----
-
-## 8. Deliverables
-
-- `web/index.html` — static front-end.  
-- `src/data_convert.py` — CLI utility.  
-- `requirements.txt` — dependencies.  
-- `tests/` — pytest suite.  
-- `README.md` — setup and usage instructions.  
-
----
-
-## 9. Risks & Notes
-
-- **OpenAI API:** fallback ensures continuity if API changes or requires key.  
-- **Future Expansion:** add Anthropic/Gemini tokenizers when official SDKs exist.
-
----
-
-## 10. Sample Execution Plan
-
-### Phase 1 — Core Conversion (CLI)
-- Implement converters for JSON, XML, YAML, TOON.
-- Build CLI wrapper and argument parser.  
-- Validate and test round-trip conversions.  
-
-### Phase 2 — Tokenization Logic
-- Integrate GPT-5 API calls with fallback to `tiktoken`.  
-- Create token count and comparison logic.  
-- Unit-test fallback and count accuracy.  
-
-### Phase 3 — Web UI
-- Build static HTML/JS interface.  
-- Implement conversion and tokenization flows.  
-- Add inline error handling and comparison table.  
-
-### Phase 4 — Finalization & QA
-- Add README, requirements, and usage docs.  
-- Run pytest suite.  
-- Package for venv deployment.  
-
----
-
-**End of Document**
+- `web/index.html`
+- `src/data_convert.py`
+- `src/converters/`
+- `requirements.txt`
+- `tests/`
+- `README.md`
+- this product requirements document and the current technical specification

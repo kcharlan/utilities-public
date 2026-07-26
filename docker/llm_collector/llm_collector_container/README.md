@@ -13,8 +13,12 @@ Python dependencies are installed at image build time from `collector/requiremen
 Before running the container, initialize the external configuration; normal setup does not require editing `docker-compose.yml`:
 
 1.  Run `../setup.sh` first. It writes `~/.config/llm_collector/secret.env` and generates `extension/config.local.js`.
-2.  The project directory is still bind-mounted into the container for code.
-3.  Runtime data is bind-mounted from the external `LLM_COLLECTOR_DATA_DIR` defined in `~/.config/llm_collector/secret.env`.
+2. The project directory is bind-mounted read-write at
+   `/workspace/llm_collector` so the container runs the host copy of the
+   collector code.
+3. Runtime data is separately bind-mounted from the external
+   `LLM_COLLECTOR_DATA_DIR` defined in
+   `~/.config/llm_collector/secret.env`.
 
 ## Installation and Operation
 
@@ -22,8 +26,13 @@ Helper scripts are provided for convenience:
 
 -   **`./up.sh`**: Loads the external config, then builds and starts the container in detached mode.
 -   **`./down.sh`**: Stops and removes the container.
+- **`./update.sh`**: Performs a no-cache rebuild, recreates the container, waits
+  for health, and verifies the public health and authenticated counters
+  endpoints.
 
-Or use Docker Compose directly:
+The scripts source the external environment before invoking Compose. If you use
+Docker Compose directly, first export the values from
+`~/.config/llm_collector/secret.env`.
 
 1. **Build and start the container:**
 
@@ -49,5 +58,6 @@ Once the container is running, state, logs, and snapshots are stored under the h
 
 You can also access the collector's API endpoints directly:
 
-*   **Counters:** `http://127.0.0.1:9000/counters` (requires `X-API-KEY` header)
-*   **Reset:** `http://127.0.0.1:9000/reset` (requires `X-API-KEY` header)
+- **Health:** `GET http://127.0.0.1:9000/health`
+- **Counters:** `GET http://127.0.0.1:9000/counters` (requires `X-API-KEY`)
+- **Reset:** `POST http://127.0.0.1:9000/reset` (requires `X-API-KEY`)

@@ -1,6 +1,11 @@
 # LLM Proxy
 
-A modular, stateless proxy server that exposes non-standard LLM provider APIs as OpenAI-compatible endpoints. Runs as a single Docker container with path-based routing for multiple providers. Designed to integrate with [OpenCode](https://github.com/opencode-ai/opencode) as a custom `openai-compatible` provider.
+A modular, credential-stateless proxy server that exposes non-standard LLM
+provider APIs as OpenAI-compatible endpoints. It runs as a single Docker
+container with path-based routing for the T3 Chat and ChatJimmy adapters and is
+designed to integrate with
+[OpenCode](https://github.com/opencode-ai/opencode) as a custom
+`openai-compatible` provider.
 
 ## Motivation
 
@@ -32,7 +37,9 @@ OpenCode provider configs:
 - **Stateless**: No auth is stored in the proxy. Adapters that require credentials receive them per request via the `Authorization` header; currently T3 uses base64-encoded JSON, while ChatJimmy requires no credentials.
 - **Modular**: Each backend provider is a self-contained adapter module. Adding a new provider means adding one Python file and rebuilding the container.
 - **Single container, path-based routing**: All adapters run in one container. OpenCode selects the provider via `baseURL` path prefix.
-- **OpenAI-compatible**: Speaks the `/v1/chat/completions` protocol, works with OpenCode, Continue, Cursor, or any OpenAI-compatible client.
+- **OpenAI-compatible**: Implements provider-scoped `/v1/models` and
+  `/v1/chat/completions` endpoints. Compatibility outside the tested OpenCode
+  workflow depends on which optional OpenAI fields a client requires.
 - **Streaming-first**: Translates provider-specific SSE formats into OpenAI-compatible SSE in real time.
 - **Dynamic model discovery**: The T3 and ChatJimmy adapters discover available models at startup and each has a hardcoded fallback list.
 - **Docker-only**: `docker compose up` is the primary interface. No bare-metal run.
@@ -104,8 +111,11 @@ Some models on T3.chat require a user-provided API key (BYOK) at higher reasonin
 
 ## Reasoning Content
 
-For models that support extended thinking (e.g. Gemini thinking, GPT reasoning), the proxy streams `reasoning_content` deltas alongside regular `content` deltas, matching the OpenAI `reasoning_content` convention so compatible clients can display the model's chain-of-thought.
+For T3 models that support extended thinking, the adapter streams
+`reasoning_content` deltas alongside regular `content` deltas, matching the
+OpenAI `reasoning_content` convention used by compatible clients.
 
-## Status
+## Design Reference
 
-Under development. See `docs/` for the design document.
+See [`docs/design_document.md`](docs/design_document.md) for the implemented
+architecture, invariants, and provider-extension guidance.

@@ -45,8 +45,13 @@ In `docker-compose.yml`:
         docker compose up -d --build app_py
         ```
 
-3.  **Rebuild and Restart:**
-    After making changes to `main.py` or `requirements.txt`, rebuild and restart the `app_py` service:
+3. **Restart or Rebuild:**
+    Compose bind-mounts `app_py/` read-only over `/app`, so a `main.py` change
+    needs a container restart (Uvicorn is not running with reload enabled):
+    ```bash
+    docker compose restart app_py
+    ```
+    Rebuild when `requirements.txt` or the Dockerfile changes:
     ```bash
     docker compose up -d --build app_py
     ```

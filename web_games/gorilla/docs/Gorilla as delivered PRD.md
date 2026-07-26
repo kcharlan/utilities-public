@@ -1,4 +1,6 @@
-# Gorilla.BAS Reimagined - As Delivered PRD
+# Gorilla.BAS Reimagined — Delivered Product Reference
+
+This document records the product behavior and design boundaries represented by the current single-file implementation. It is a reference, not an implementation plan or backlog.
 
 ## 1. Product Summary
 **Project Name:** Gorilla.BAS Web (Reimagined)
@@ -16,14 +18,14 @@ A modern, feature-rich artillery game inspired by QBasic Gorilla.BAS but signifi
   - **Classic:** Sequential turns (Player 1 -> Player 2).
   - **Counterfire:** Simultaneous turn planning. Both players lock in their angle/velocity, and shots are launched together in a volley.
 - **Collision:**
-  - **Buildings:** Projectiles explode on impact, destroying the banana (terrain deformation is not currently implemented).
-  - **Gorillas:** Direct hits or splash damage (if implemented, though currently hitboxes are binary) result in a "kill," ending the round.
+  - **Buildings:** Projectiles explode on impact and are removed. Terrain is not deformed.
+  - **Gorillas:** A banana overlapping a gorilla's rectangular hitbox records a kill and ends the round after the volley resolves. There is no splash-damage mechanic.
 - **Scoring:** Points are awarded for kills. "Aces" are tracked (first-shot hits).
 
 ### 2.2 Game Modes
 1.  **Classic Mode:** Standard 1v1 (AI or Human). Infinite rounds.
 2.  **Arcade Mode:** Survival challenge. Player 1 starts with 5 lives. Goal is to survive as many rounds as possible against the AI. Difficulty setting is locked in at the first firing.
-3.  **Demo Mode:** AI vs AI auto-play. Useful for screensavers or testing. Players can interrupt to take control.
+3.  **Demo Mode:** AI vs AI auto-play. Pressing `Escape` returns to the last manually selected mode.
 
 ### 2.3 AI
 - **Behavior:** The AI calculates trajectories based on the target's position, wind, and gravity.
@@ -31,7 +33,7 @@ A modern, feature-rich artillery game inspired by QBasic Gorilla.BAS but signifi
   - **Easy:** High variance/error in aiming.
   - **Medium:** Moderate precision.
   - **Hard:** High precision, often "locking in" after 1-2 ranging shots.
-- **Implementation:** The AI simulates potential shots to find valid solutions, then applies a randomized offset based on difficulty level.
+- **Implementation:** The AI simulates possible angle/velocity pairs to find a solution, then schedules a difficulty-dependent number of deliberately offset ranging shots before using the calculated shot.
 
 ## 3. UI & UX
 ### 3.1 Heads-Up Display (HUD)
@@ -66,7 +68,7 @@ A collapsible sidebar allows configuration of:
   - Particle effects for explosions.
   - Procedurally drawn gorillas and bananas (no external images).
 - **Audio:** Synthesized sound effects (Web Audio API) for throws, explosions, and impacts.
-- **Stats:** detailed session stats (kills, aces, shot distribution) viewable via modal.
+- **Stats:** Session-only kills, aces, and kills-by-shot-count are viewable in a modal. They are not persisted across page reloads.
 
 ## 4. Technical Architecture
 ### 4.1 Single-File Constraint
@@ -76,15 +78,15 @@ A collapsible sidebar allows configuration of:
 
 ### 4.2 State Management
 - **Global State:** Centralized `state` object tracking scores, round status, buildings, and projectiles.
-- **Settings:** Separate `settings` object for persistent preferences.
+- **Settings:** A separate in-memory `settings` object tracks the current options. Preferences are not persisted.
 - **Game Loop:** `requestAnimationFrame` driving a fixed time-step physics simulation for stability.
 
 ### 4.3 Physics Engine
 - **Integration:** Euler integration for projectile motion.
 - **Collision Detection:** AABB (Axis-Aligned Bounding Box) for buildings and gorillas.
-- **Simulation:** Projectiles are simulated in a logical world space that extends beyond the canvas boundaries.
+- **Simulation:** Projectiles are simulated in logical world space and may travel beyond the visible canvas until they hit a termination bound or the flight timeout.
 
-## 5. Future Considerations (For Re-implementation)
-- **Terrain Destruction:** Adding "holes" to buildings upon impact.
-- **Mobile Optimization:** Further improvements to touch controls and layout on very small screens.
-- **Network Multiplayer:** Replacing the local/AI model with WebSockets for remote play.
+## 5. Delivered Scope Boundaries
+- Building impacts do not deform terrain.
+- Multiplayer is local only; there is no network protocol or server component.
+- The responsive layout supports smaller viewports, but there are no dedicated touch gestures.

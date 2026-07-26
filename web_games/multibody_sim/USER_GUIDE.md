@@ -15,7 +15,7 @@ In the app:
 
 1. Pick a mode (`Screensaver` or `User setup`).
 2. Use `Start/Pause` to run or stop simulation time.
-3. Use `Reset` to regenerate (screensaver) or restore your saved setup (user mode).
+3. Use `Reset` to regenerate (screensaver) or restore the in-memory baseline captured by `Start` or `Load` (user mode).
 4. Tune `Time speed` and `Time multiplier` for simulation rate.
 5. Use `Trails` and `Leads` for visual history/forecast.
 
@@ -30,13 +30,13 @@ Quick first run:
 
 ## Quick Reference
 
-## Main Controls
+### Main Controls
 
 | Control | Available In | What It Does |
 |---|---|---|
 | `Start/Pause` | Both | Starts or pauses simulation time |
 | `Reset` | Both | Screensaver: new random system. User setup: restore baseline setup |
-| `Save` | Both | Screensaver: save current cycle starting state to JSON. User setup: save setup to JSON |
+| `Save` | Both | Screensaver: save the current cycle's starting state. User setup: save the current paused scene, or the most recent start/load baseline while running |
 | `Time speed` | Both | Multiplies simulation time rate (slider) |
 | `Time multiplier` | Both | Additional simulation time multiplier (number input) |
 | `Gravity (G)` | Both | Strength of attraction |
@@ -57,12 +57,12 @@ Quick first run:
 | `Singularity` (selected body) | User setup (paused) | Toggles selected body between regular and singularity behavior |
 | `Load` | User setup | Load setup from JSON file |
 
-## Stats Overlay
+### Stats and Camera Overlays
 
 The floating bottom-left readout is always visible and separate from controls:
 
 - Row 1: `FPS`, active `Bodies`, `Sim Time`.
-- Row 2: screensaver exit gates (`Quiet`, `Zoom gate`, `Near-pair lock`).
+- Row 2: screensaver exit gates (`Quiet`, `Zoom gate`, `Near-pair lock`). These values remain visible in User setup mode but only control screensaver restarts.
 
 The floating bottom-right `Camera Subject` panel controls camera targeting:
 
@@ -93,8 +93,8 @@ These actions work only in `User setup` while paused unless noted.
 Notes:
 
 - Velocity arrows start at the body edge (not center).
-- Body ids are rendered directly on each object for faster camera/object selection.
-- In user setup, newly created body numbers track current canvas count (`count + 1`); deleting all bodies resets the next created body to `1`.
+- Body ids are rendered directly on each object by default for faster camera/object selection; `Show object numbers` can hide them.
+- In user setup, a new body prefers `current body count + 1`; if that id is already in use, the app chooses the next unused id. Deleting all bodies resets numbering to `1`.
 - If your cursor is inside the body while setting velocity, velocity can resolve to zero.
 - Delete key does not remove a body while your cursor focus is inside a text/number input.
 
@@ -108,7 +108,7 @@ What to expect:
 
 - Bodies spawn with random mass/position/color.
 - Velocities are auto-generated (with special low-body logic for 3-4 body cases to improve interaction likelihood).
-- Camera auto-tracks bodies.
+- Camera uses its selected subject mode; `Auto` tracks the system and is the default.
 - Simulation restarts automatically at cycle end.
 
 End/restart behavior:
@@ -138,17 +138,17 @@ Saving interesting screensaver scenarios:
 
 `User setup` is for manual scene creation, editing, and repeatable experiments.
 
-## Typical Workflow
+### Typical Workflow
 
 1. Switch mode to `User setup`.
 2. (Optional) Press `Load` and choose `multibody-test-1.json`, `multibody-test-2.json`, or `multibody-test-3.json` to start from an included sample setup.
 3. Place bodies by left-clicking canvas (or edit bodies from the loaded sample).
 4. Set mass and velocity per selected body.
 5. Press `Start` to run.
-6. Press `Reset` to return to your saved baseline.
+6. Press `Reset` to return to the baseline captured when you pressed `Start` (or loaded the file).
 7. Use `Save` to export scene to JSON; `Load` to import.
 
-## Building and Editing Bodies
+### Building and Editing Bodies
 
 Create/select/move:
 
@@ -181,7 +181,7 @@ Delete controls:
 - `Delete selected` button in panel.
 - `Delete`/`Backspace` keyboard shortcut.
 
-## Run, Reset, and Clear (Important Differences)
+### Run, Reset, and Clear (Important Differences)
 
 - `Start`: begins simulation.
 - `Reset`: restores your baseline setup snapshot (positions, velocities, bodies, colors, etc.).
@@ -192,7 +192,7 @@ When baseline is captured:
 - Baseline is captured on `Start`.
 - Baseline is also restored/created during `Load`.
 
-## Auto Velocity Features (User mode)
+### Auto Velocity Features (User mode)
 
 - `Auto-assign velocities on Start`:
   - If enabled, pressing `Start` computes velocities before run.
@@ -201,14 +201,14 @@ When baseline is captured:
 - `Auto velocities` button:
   - Applies velocity assignment immediately to current bodies.
 
-## Camera Behavior in User Mode
+### Camera Behavior in User Mode
 
 - While running, camera auto-follows bodies.
 - In paused user mode, `Auto camera while paused` controls whether camera reframes while you edit.
 - `Reset` also snaps camera to include bodies and velocity arrows with padding.
 - `Camera subject` overrides this when set to `Full` or `Follow`; those modes stay active in both running and paused states.
 
-## Save and Load (JSON)
+### Save and Load (JSON)
 
 `Save` writes a JSON file containing:
 
@@ -218,6 +218,12 @@ When baseline is captured:
 - sidebar settings (time controls, physics settings, trails/leads settings, user mode toggles, camera subject settings).
 
 `Load` restores that JSON into user mode and updates camera/UI accordingly.
+
+User-mode save source depends on simulation state:
+
+- While paused, `Save` exports the bodies currently on screen. This lets you pause after a run and save that state as a new setup.
+- While running, `Save` exports the baseline captured at the most recent `Start` or `Load`, not transient in-run positions or merges.
+- `Load` treats the saved baseline as the editable scene and leaves the simulation paused.
 
 Included sample files for testing and learning:
 
@@ -257,6 +263,6 @@ Quick try flow with included samples:
 - "Delete key does nothing":
   - click on canvas/body first; ensure focus is not inside an input field.
 - "Velocity drag seems weak or weird":
-  - start drag outside the body edge; use panel velocity fields for precise edits.
-- "Reset says no saved setup yet":
-  - press `Start` once (captures baseline), or load a saved JSON.
+  - start the middle-button drag on the body, then drag beyond its edge; use the panel velocity fields for precise edits.
+- "`Reset` is disabled in User setup":
+  - create at least two bodies and press `Start` once to capture a baseline, or load a saved JSON.
