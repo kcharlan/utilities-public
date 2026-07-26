@@ -264,7 +264,11 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 os.environ[provider.credential_env_var],
                 profile,
             )
-            normalized_models = normalize_models(provider, raw_models)
+            normalized_models = normalize_models(
+                provider,
+                raw_models,
+                profile,
+            )
             current_map = {model.provider_model_id: model for model in normalized_models}
             if baseline:
                 baseline_models = store.load_saved_models(baseline.scrape_id)

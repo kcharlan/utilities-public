@@ -1,5 +1,6 @@
 from model_sentinel.config import ProviderConfig
 from model_sentinel.normalize import normalize_models
+from model_sentinel.provider_profiles import GENERIC_PROFILE, resolve_profile
 
 
 def test_openrouter_pricing_fields_normalize_into_input_output_prices() -> None:
@@ -28,6 +29,11 @@ def test_openrouter_pricing_fields_normalize_into_input_output_prices() -> None:
                 },
             }
         ],
+        resolve_profile(
+            provider.kind,
+            price_multiplier=provider.price_multiplier,
+            price_divisor=provider.price_divisor,
+        ),
     )
     model = models[0]
     assert model.input_price == 2
@@ -58,7 +64,40 @@ def test_abacus_token_rate_fields_normalize_into_input_output_prices() -> None:
                 "output_token_rate": 0.18,
             }
         ],
+        resolve_profile(
+            provider.kind,
+            price_multiplier=provider.price_multiplier,
+            price_divisor=provider.price_divisor,
+        ),
     )
     model = models[0]
     assert model.input_price == 0.09
     assert model.output_price == 0.18
+
+
+def test_profile_candidates_preserve_truthy_or_chain_semantics() -> None:
+    provider = ProviderConfig(
+        provider_id="synthetic",
+        label="Synthetic Provider",
+        kind="synthetic",
+        base_url="https://synthetic.invalid/v1",
+        models_path="/models",
+        credential_env_var="SYNTHETIC_API_KEY",
+        price_multiplier=1,
+        price_divisor=1,
+        enabled=True,
+    )
+
+    model = normalize_models(
+        provider,
+        [
+            {
+                "id": "synthetic/model-a",
+                "context_length": 0,
+                "context_window": 128,
+            }
+        ],
+        GENERIC_PROFILE,
+    )[0]
+
+    assert model.context_window == 128

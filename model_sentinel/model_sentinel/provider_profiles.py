@@ -209,12 +209,54 @@ _OPENROUTER_DEFAULT_SQUELCH_FIELDS = (
     "benchmarks.*",
 )
 
+_DEFAULT_NORMALIZED_FIELDS: Mapping[str, PathCandidates] = {
+    "provider_model_id": (("id",), ("model",), ("name",)),
+    "display_name": (("name",), ("display_name",)),
+    "description": (("description",), ("short_description",)),
+    "model_family": (("family",), ("developer",)),
+    "created_at_provider": (("created",), ("created_at",)),
+    "context_window": (
+        ("context_length",),
+        ("limit", "context"),
+        ("context_window",),
+    ),
+    "max_output_tokens": (
+        ("top_provider", "max_completion_tokens"),
+        ("limit", "output"),
+        ("max_output_tokens",),
+    ),
+    "input_price": (
+        ("pricing", "input"),
+        ("pricing", "prompt"),
+        ("cost", "input"),
+        ("input_token_rate",),
+    ),
+    "output_price": (
+        ("pricing", "output"),
+        ("pricing", "completion"),
+        ("cost", "output"),
+        ("output_token_rate",),
+    ),
+    "cache_read_price": (
+        ("pricing", "input_cache_read"),
+        ("pricing", "cache_read"),
+    ),
+    "cache_write_price": (
+        ("pricing", "input_cache_write"),
+        ("pricing", "cache_write"),
+    ),
+}
 
-GENERIC_PROFILE = ProviderProfile(kind="generic")
+
+GENERIC_PROFILE = ProviderProfile(
+    kind="generic",
+    normalized_fields=_DEFAULT_NORMALIZED_FIELDS,
+)
 
 OPENROUTER_PROFILE = ProviderProfile(
     kind="openrouter",
     envelope_keys=("data",),
+    normalized_fields=_DEFAULT_NORMALIZED_FIELDS,
     field_path_labels=_OPENROUTER_FIELD_PATH_LABELS,
     field_leaf_labels=_OPENROUTER_FIELD_LEAF_LABELS,
     known_boolean_fields=_OPENROUTER_KNOWN_BOOLEAN_FIELDS,
