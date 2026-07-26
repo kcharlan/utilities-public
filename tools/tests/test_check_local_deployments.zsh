@@ -32,8 +32,11 @@ assert_contains() {
   local file="$1"
   local expected="$2"
   local label="${3:-$expected}"
-  grep -Fq -- "$expected" "$file" ||
+  if ! grep -Fq -- "$expected" "$file"; then
+    print -u2 -- "--- $file ---"
+    sed -n '1,200p' "$file" >&2
     fail "$label: expected text not found: $expected"
+  fi
 }
 
 assert_not_contains() {
@@ -372,13 +375,318 @@ test_project_byte_drift() {
   snapshot_fixture "$after"
 
   assert_status 1 "$AUDIT_STATUS" "project byte drift"
-  assert_contains "$AUDIT_STDERR" "FAIL: tax2 has 1 missing or differing tracked files"
+  assert_contains "$AUDIT_STDERR" "FAIL: tax2 deployment drift"
+  assert_contains "$AUDIT_STDERR" "missing files: 0"
+  assert_contains "$AUDIT_STDERR" "byte differences: 1"
+  assert_contains "$AUDIT_STDERR" "mode differences: 0"
   assert_not_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
   assert_fixture_unchanged "$before" "$after"
+}
+
+test_direct_mode_drift() {
+  new_fixture
+  chmod 744 "$FIXTURE_SCRIPTS/de-abacus.py"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "direct mode drift"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: de-abacus.py mode differs: source 0755, deployed 0744"
+  assert_not_contains "$AUDIT_STDOUT" "OK: de-abacus.py"
+}
+
+test_direct_special_mode_drift() {
+  local source_mode deployed_mode
+  for source_mode deployed_mode in 4755 0755 2600 0600 1700 0700; do
+    new_fixture
+    chmod "$source_mode" "$FIXTURE_REPO/abacus usage/de-abacus.py"
+    chmod "$deployed_mode" "$FIXTURE_SCRIPTS/de-abacus.py"
+    run_audit
+
+    assert_status 1 "$AUDIT_STATUS" "direct special-bit mode drift"
+    assert_contains \
+      "$AUDIT_STDERR" \
+      "FAIL: de-abacus.py mode differs: source $source_mode, deployed $deployed_mode"
+    assert_not_contains "$AUDIT_STDOUT" "OK: de-abacus.py"
+  done
+}
+
+test_project_mode_drift() {
+  new_fixture
+  chmod 755 "$FIXTURE_REPO/tax2/synthetic-placeholder.txt"
+  chmod 744 "$FIXTURE_LOCAL/tax2/synthetic-placeholder.txt"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "project mode drift"
+  assert_contains "$AUDIT_STDERR" "tax2 deployment drift"
+  assert_contains "$AUDIT_STDERR" "missing files: 0"
+  assert_contains "$AUDIT_STDERR" "byte differences: 0"
+  assert_contains "$AUDIT_STDERR" "mode differences: 1"
+  assert_not_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
+}
+
+test_project_byte_and_mode_dimensions() {
+  new_fixture
+  print -r -- "synthetic byte and mode drift" \
+    > "$FIXTURE_LOCAL/tax2/synthetic-placeholder.txt"
+  chmod 744 "$FIXTURE_LOCAL/tax2/synthetic-placeholder.txt"
+  chmod 755 "$FIXTURE_REPO/tax2/synthetic-placeholder.txt"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "project byte and mode drift"
+  assert_contains "$AUDIT_STDERR" "tax2 deployment drift"
+  assert_contains "$AUDIT_STDERR" "missing files: 0"
+  assert_contains "$AUDIT_STDERR" "byte differences: 1"
+  assert_contains "$AUDIT_STDERR" "mode differences: 1"
+}
+
+test_direct_symlink_rejected() {
+  new_fixture
+  rm -- "$FIXTURE_SCRIPTS/de-abacus.py"
+  ln -s "$FIXTURE_REPO/abacus usage/de-abacus.py" \
+    "$FIXTURE_SCRIPTS/de-abacus.py"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "direct deployment symlink"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: de-abacus.py has unsupported deployment type"
+  assert_not_contains "$AUDIT_STDOUT" "OK: de-abacus.py"
+}
+
+test_direct_nonregular_types_rejected() {
+  local object_kind
+  for object_kind in directory dangling-symlink fifo; do
+    new_fixture
+    rm -- "$FIXTURE_SCRIPTS/de-abacus.py"
+    case "$object_kind" in
+      directory)
+        mkdir "$FIXTURE_SCRIPTS/de-abacus.py"
+        ;;
+      dangling-symlink)
+        ln -s "$FIXTURE_ROOT/does-not-exist" "$FIXTURE_SCRIPTS/de-abacus.py"
+        ;;
+      fifo)
+        mkfifo "$FIXTURE_SCRIPTS/de-abacus.py"
+        ;;
+    esac
+    run_audit
+
+    assert_status 1 "$AUDIT_STATUS" "direct deployment $object_kind"
+    assert_contains \
+      "$AUDIT_STDERR" \
+      "FAIL: de-abacus.py has unsupported deployment type"
+    assert_not_contains "$AUDIT_STDOUT" "OK: de-abacus.py"
+  done
+}
+
+test_model_owner_execute_required() {
+  new_fixture
+  chmod 0011 "$FIXTURE_SCRIPTS/model-sentinel"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "model sentinel owner execute"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: model-sentinel zipapp owner execute bit is not set (mode 0011)"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_owner_executable_modes() {
+  local executable_mode
+  for executable_mode in 0100 0111; do
+    new_fixture
+    chmod "$executable_mode" "$FIXTURE_SCRIPTS/model-sentinel"
+    run_audit
+
+    assert_status 1 "$AUDIT_STATUS" "unreadable model sentinel mode $executable_mode"
+    assert_contains \
+      "$AUDIT_STDERR" \
+      "FAIL: model-sentinel zipapp is not readable by the audit process"
+    assert_not_contains \
+      "$AUDIT_STDERR" \
+      "model-sentinel zipapp owner execute bit is not set"
+    assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+  done
+
+  for executable_mode in 0700 0755; do
+    new_fixture
+    chmod "$executable_mode" "$FIXTURE_SCRIPTS/model-sentinel"
+    run_audit
+
+    assert_status 0 "$AUDIT_STATUS" "model sentinel mode $executable_mode"
+    assert_occurrences "$AUDIT_STDOUT" 1 "OK: model-sentinel zipapp"
+  done
+}
+
+test_compare_operational_error() {
+  new_fixture
+  local shim_dir="$FIXTURE_ROOT/shims"
+  mkdir -p -- "$shim_dir"
+  {
+    print '#!/bin/zsh'
+    print 'if [[ "$*" == *de-abacus.py* ]]; then'
+    print '  exit 2'
+    print 'fi'
+    print 'exec /usr/bin/cmp "$@"'
+  } > "$shim_dir/cmp"
+  chmod 755 "$shim_dir/cmp"
+  run_audit "$shim_dir"
+
+  assert_status 1 "$AUDIT_STATUS" "comparison operational error"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: de-abacus.py byte comparison failed"
+  assert_not_contains "$AUDIT_STDOUT" "OK: de-abacus.py"
+  assert_contains "$AUDIT_STDOUT" "OK: div_conv"
+  assert_contains "$AUDIT_STDERR" "Local deployment audit failed:"
+}
+
+test_stat_operational_error() {
+  new_fixture
+  local shim_dir="$FIXTURE_ROOT/shims"
+  mkdir -p -- "$shim_dir"
+  {
+    print '#!/bin/zsh'
+    print 'if [[ "$*" == *de-abacus.py* ]]; then'
+    print '  exit 2'
+    print 'fi'
+    print 'exec /usr/bin/stat "$@"'
+  } > "$shim_dir/stat"
+  chmod 755 "$shim_dir/stat"
+  run_audit "$shim_dir"
+
+  assert_status 1 "$AUDIT_STATUS" "stat operational error"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: de-abacus.py source mode inspection failed"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: de-abacus.py deployed mode inspection failed"
+  assert_not_contains "$AUDIT_STDOUT" "OK: de-abacus.py"
+  assert_contains "$AUDIT_STDOUT" "OK: div_conv"
+  assert_contains "$AUDIT_STDERR" "Local deployment audit failed:"
+}
+
+test_protected_modes_and_types() {
+  new_fixture
+  chmod 2600 "$FIXTURE_LOCAL/docker/webserver/.env"
+  chmod 1700 "$FIXTURE_HOME/.local/state/n8n-poc"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" "protected special modes"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "private config is not mode 0600: docker/webserver/.env (mode 2600)"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "n8n state directory is missing or not mode 0700 (mode 1700)"
+
+  new_fixture
+  local private_target="$FIXTURE_ROOT/private-target"
+  write_synthetic_file "$private_target" "synthetic private target"
+  chmod 600 "$private_target"
+  rm "$FIXTURE_LOCAL/docker/webserver/.env"
+  ln -s "$private_target" "$FIXTURE_LOCAL/docker/webserver/.env"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" "protected config symlink"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "required private config has unsupported type: docker/webserver/.env"
+
+  new_fixture
+  local state_target="$FIXTURE_ROOT/state-target"
+  mkdir "$state_target"
+  chmod 700 "$state_target"
+  rmdir "$FIXTURE_HOME/.local/state/n8n-poc"
+  ln -s "$state_target" "$FIXTURE_HOME/.local/state/n8n-poc"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" "protected state symlink"
+  assert_contains "$AUDIT_STDERR" "n8n state path has unsupported type"
+}
+
+test_hostile_mktemp_targets_rejected() {
+  local target_kind fixed_target
+  for target_kind in root repository deployment existing symlink; do
+    new_fixture
+    case "$target_kind" in
+      root)
+        fixed_target=/
+        ;;
+      repository)
+        fixed_target="$FIXTURE_REPO"
+        ;;
+      deployment)
+        fixed_target="$FIXTURE_HOME"
+        ;;
+      existing)
+        fixed_target="$FIXTURE_ROOT/unrelated"
+        mkdir "$fixed_target"
+        ;;
+      symlink)
+        mkdir "$FIXTURE_ROOT/unrelated"
+        fixed_target="$FIXTURE_ROOT/temp-symlink"
+        ln -s "$FIXTURE_ROOT/unrelated" "$fixed_target"
+        ;;
+    esac
+    local marker="$FIXTURE_ROOT/unrelated-marker"
+    print -r -- "must remain" > "$marker"
+    local shim_dir="$FIXTURE_ROOT/shims"
+    mkdir -p "$shim_dir"
+    {
+      print '#!/bin/zsh'
+      printf "print -r -- %q\n" "$fixed_target"
+    } > "$shim_dir/mktemp"
+    chmod 755 "$shim_dir/mktemp"
+
+    run_audit "$shim_dir"
+    assert_status 1 "$AUDIT_STATUS" "hostile mktemp target $target_kind"
+    assert_contains \
+      "$AUDIT_STDERR" \
+      "FAIL: could not initialize private audit temporary directory"
+    assert_contains "$marker" "must remain"
+    [[ -e "$fixed_target" || -L "$fixed_target" ]] ||
+      fail "hostile mktemp target was removed: $target_kind"
+  done
+}
+
+test_tmp_cleanup_after_chmod_failure() {
+  new_fixture
+  local shim_dir="$FIXTURE_ROOT/shims"
+  mkdir -p "$shim_dir"
+  {
+    print '#!/bin/zsh'
+    print 'if [[ "$*" == *utilities-deployment-audit.* ]]; then'
+    print '  exit 2'
+    print 'fi'
+    print 'exec /bin/chmod "$@"'
+  } > "$shim_dir/chmod"
+  chmod 755 "$shim_dir/chmod"
+  run_audit "$shim_dir"
+
+  assert_status 1 "$AUDIT_STATUS" "audit temporary chmod failure"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: could not initialize private audit temporary directory"
+  if find "$FIXTURE_TMP" -mindepth 1 -print -quit | grep -q .; then
+    fail "audit temporary directory remained after chmod failure"
+  fi
 }
 
 test_passing_baseline
 test_missing_direct_copy
 test_project_byte_drift
+test_direct_mode_drift
+test_direct_special_mode_drift
+test_project_mode_drift
+test_project_byte_and_mode_dimensions
+test_direct_symlink_rejected
+test_direct_nonregular_types_rejected
+test_model_owner_execute_required
+test_model_owner_executable_modes
+test_compare_operational_error
+test_stat_operational_error
+test_protected_modes_and_types
+test_hostile_mktemp_targets_rejected
+test_tmp_cleanup_after_chmod_failure
 
 print -- "check_local_deployments tests: PASS"
