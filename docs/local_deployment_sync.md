@@ -17,7 +17,50 @@ Run the read-only audit from the repository root:
 zsh tools/check_local_deployments.zsh
 ```
 
-It compares hashes and modes but never prints configuration contents.
+The audit is read-only with respect to the repository, Git index, deployments,
+configuration, and runtime state. It creates and removes one validated private
+temporary directory for status-checked command output and bounded Model
+Sentinel entry streams. It never prints protected configuration contents.
+
+The audit contract is:
+
+- One validated stage-0 Git-index snapshot defines current source for direct
+  mappings, maintained top-level projects, Model Sentinel, and tracked
+  repository `.gitignore` files. Staged additions are included; untracked files
+  are excluded.
+- Current direct and maintained-project files are compared byte-for-byte.
+  Their complete numeric permission modes must also match, including setuid,
+  setgid, and sticky bits as well as ordinary read/write/execute bits.
+- An indexed source missing from the working tree, a staged deletion, an
+  unmerged entry, a sparse-directory entry, a symlink, a submodule, or another
+  unsupported indexed type fails as incomplete source state instead of being
+  silently skipped.
+- Model Sentinel must be a regular non-symlink file with its owner-execute bit
+  set and must be executable by the audit process. The audit checks the exact
+  executable preamble, bidirectional archive inventory, entry types,
+  encryption state, advertised sizes, bounded streamed sizes, and contents.
+  It lists before reading contents and never bulk-extracts the archive.
+- Protected local configuration files must be regular non-symlink files at
+  exactly `0600`. The n8n state check covers the top-level
+  `~/.local/state/n8n-poc` directory at exactly `0700`; it does not recursively
+  verify every descendant directory and file mode.
+
+For maintained top-level projects, stale candidates come from pathname
+deletions in the current `HEAD` first-parent history. Rename detection is
+disabled deliberately, so the old pathname from a rename is treated as
+deleted. Only current index membership suppresses a deleted pathname as a
+re-add. A non-ignored untracked source object at the same pathname does not.
+
+Repository ignore rules can classify a historical pathname as intentional
+local-only state only when the winning positive rule comes from a tracked
+stage-0 `.gitignore` inside this worktree. Untracked ignore files, global
+excludes, `.git/info/exclude`, and winning `!` re-inclusion rules are not
+authoritative. Shallow Git history fails stale-file coverage rather than
+silently passing. History cannot detect source files deleted before the
+retained public repository history began.
+
+Stale detection reports aggregate counts and never deletes deployment files.
+Removal remains a separately authorized operation performed with backups.
 
 ## `~/Library/Scripts`
 
@@ -42,7 +85,12 @@ These files are direct copies of tracked source and should remain byte-for-byte 
 - `usage-monthly-csv` <- `usage-monthly-csv/usage-monthly-csv`
 - `worktree` <- `worktree-helper/worktree`
 
-`model-sentinel` is intentionally different: it is a generated zipapp. Rebuild it with `model_sentinel/install_standalone.sh`, then compare the archive's `__main__.py` and `model_sentinel/*.py` entries with repository source. Run the installer with a venv-provided `python3` on Homebrew-managed macOS.
+`model-sentinel` is intentionally different: it is a generated zipapp. Rebuild
+it with `model_sentinel/install_standalone.sh`. The audit derives its exact
+expected `__main__.py` and `model_sentinel/*.py` inventory from the same
+validated Git-index snapshot used for other deployments, then validates and
+streams only those entries. Run the installer with a venv-provided `python3`
+on Homebrew-managed macOS.
 
 `fid_div_conv` and `van_div_conv` are retained local legacy launchers. They were intentionally excluded from the public repository because `div_conv` supersedes them and the old source historically mixed operational mappings with code. Do not copy them back into public source. Remove them only after deciding the legacy rollback path is no longer needed.
 
