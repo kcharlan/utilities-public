@@ -728,37 +728,98 @@ def test_price_movement_verdict_counts_models_not_fields() -> None:
     assert '<span class="price-tally-chip price-mixed">↕ 3 both</span>' in movement
 
 
-def test_price_movement_verdict_names_a_strictly_largest_model_bucket() -> None:
-    """One bucket strictly largest in each direction, and its counts appended."""
-    higher_led = tuple(
-        [_price_model(f"up-{index}", higher=1) for index in range(3)]
-        + [_price_model("down-0", lower=1)]
-    )
+def _verdict(changed: tuple[ModelDelta, ...]) -> str:
+    """The card's verdict span, rendered from `changed`.
+
+    Extracted so the verdict tests below state a shape and its verdict and
+    nothing else; every one of them renders a whole report through the public
+    entry point, exactly as the tests that predate this helper did.
+    """
     report = render_scan_report(
         generated_at="2026-07-25T09:00:00+00:00",
         command="scan",
         format_name="html",
-        provider_results=[_scan_result(higher_led)],
+        provider_results=[_scan_result(changed)],
+    )
+    movement = _price_movement_card(report)
+    match = re.search(r'<span class="outcome [^"]*">[^<]*</span>', movement)
+    assert match is not None, "no verdict span in the price movement card"
+    return match.group(0)
+
+
+def test_price_movement_verdict_names_a_strictly_largest_model_bucket() -> None:
+    """One bucket strictly largest in each direction, and its counts appended.
+
+    Both fixtures are MIXED populations -- the losing bucket is non-empty --
+    which is what earns the `mostly` hedge. The unanimous shapes, where it is
+    dropped, are the test below.
+    """
+    higher_led = tuple(
+        [_price_model(f"up-{index}", higher=1) for index in range(3)]
+        + [_price_model("down-0", lower=1)]
     )
     assert (
-        '<span class="outcome price-higher">mostly higher — 3 up, 1 down</span>'
-        in _price_movement_card(report)
+        _verdict(higher_led)
+        == '<span class="outcome price-higher">mostly higher — 3 up, 1 down</span>'
     )
 
     lower_led = tuple(
         [_price_model(f"down-{index}", lower=1) for index in range(3)]
         + [_price_model("up-0", higher=1)]
     )
-    report = render_scan_report(
-        generated_at="2026-07-25T09:00:00+00:00",
-        command="scan",
-        format_name="html",
-        provider_results=[_scan_result(lower_led)],
+    assert (
+        _verdict(lower_led)
+        == '<span class="outcome price-lower">mostly lower — 1 up, 3 down</span>'
+    )
+
+    # The runner-up need not be the opposite direction: one `both` model is
+    # still a model this scan did not move in one direction, so the hedge
+    # stands. This is the boundary of the rule below -- exactly one non-leading
+    # model, in the bucket that is neither `up` nor `down`.
+    with_one_both = tuple(
+        [_price_model(f"up-{index}", higher=1) for index in range(3)]
+        + [_price_model("both-0", higher=1, lower=1)]
     )
     assert (
-        '<span class="outcome price-lower">mostly lower — 1 up, 3 down</span>'
-        in _price_movement_card(report)
+        _verdict(with_one_both)
+        == '<span class="outcome price-higher">mostly higher — 3 up, 1 both</span>'
     )
+
+
+def test_price_movement_verdict_drops_the_qualifier_when_unanimous() -> None:
+    """A unanimous population is `higher` / `lower`, never `mostly` either.
+
+    "mostly" claims that some models went the other way. When the two
+    non-leading buckets are empty, none did, and the hedge understates what
+    the card is showing -- `mostly higher — 5 up` over a list in which nothing
+    fell. Size is irrelevant: one model alone is as unanimous as five, and the
+    single-model form is what the concise-HTML characterization golden holds.
+
+    This is an amendment to the approved design, which specified only "one
+    bucket strictly largest -> mostly higher / mostly lower" and did not
+    consider a population with nothing to be "mostly" of. Restore the
+    unconditional `mostly ` and every assertion here fails.
+    """
+    for size in (1, 2, 5):
+        rising = tuple(_price_model(f"up-{index}", higher=1) for index in range(size))
+        assert (
+            _verdict(rising)
+            == f'<span class="outcome price-higher">higher — {size} up</span>'
+        )
+
+        falling = tuple(_price_model(f"down-{index}", lower=1) for index in range(size))
+        assert (
+            _verdict(falling)
+            == f'<span class="outcome price-lower">lower — {size} down</span>'
+        )
+
+    # A unanimous `both` bucket keeps `mixed`: every model here moved in two
+    # directions at once, so the verdict naming that is already exact and has
+    # no qualifier to drop.
+    both_only = tuple(
+        _price_model(f"both-{index}", higher=1, lower=1) for index in range(3)
+    )
+    assert _verdict(both_only) == '<span class="outcome price-mixed">mixed — 3 both</span>'
 
 
 def test_price_movement_verdict_is_mixed_when_both_directions_leads() -> None:
@@ -782,6 +843,90 @@ def test_price_movement_verdict_is_mixed_when_both_directions_leads() -> None:
         '<span class="outcome price-mixed">mixed — 1 up, 1 down, 3 both</span>'
         in _price_movement_card(report)
     )
+
+
+def test_price_movement_kind_and_classify_change_agree_on_direction() -> None:
+    """The card's two authorities must not disagree about which way a price went.
+
+    `_price_movement_kind` gates the counts (and so the buckets, and so the
+    verdict); `classify_change` supplies the headline panel's magnitude and
+    direction. They are separate functions with different branch orders --
+    `classify_change` tries noop, list and boolean before price -- so nothing
+    but this assertion stops a future edit to either one from producing a card
+    whose verdict says one thing and whose headline says the other.
+
+    Today they agree on every input below, and the disagreement is not
+    reachable: `_collect_price_movement_summary` calls `classify_change` only
+    for changes this gate has already admitted, and every one-sided form the
+    gate admits carries no `delta_abs` and so can never headline. That makes
+    the invariant latent, not absent -- it is load-bearing for the card's
+    internal consistency, and it was unasserted.
+
+    The mapping is checked in one direction only. The converse is false by
+    design and deliberately so: a boolean-coded price field classifies `up`
+    while the gate returns `None`, and the collector never reaches
+    `classify_change` for it.
+    """
+    expected_direction = {
+        "higher": "up",
+        "lower": "down",
+        "added": "added",
+        "removed": "removed",
+    }
+    cases = [
+        # two-sided, both directions, across string / float / int spellings
+        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+        FieldChange("pricing.prompt", "0.000002", "0.000001"),
+        FieldChange("pricing.completion", 1e-6, 3e-6),
+        FieldChange("pricing.completion", 3, 1),
+        FieldChange("pricing.request", "1e-6", "2e-6"),
+        FieldChange("pricing.request", "2e-6", "1e-6"),
+        # a zero on one side: still two-sided, and the percent basis is 0
+        FieldChange("pricing.image", 0, "0.000001"),
+        FieldChange("pricing.image", "0.000001", 0),
+        # one-sided: counted, but never a headline mover
+        FieldChange("pricing.input_cache_read", None, "0.000001"),
+        FieldChange("pricing.input_cache_write", "0.000001", None),
+        # a conditional tier, whose path carries a bracketed qualifier
+        FieldChange("pricing.overrides[0].prompt", "0.000001", "0.000002"),
+        # not admitted by the gate at all; asserted below to stay that way
+        FieldChange("pricing.prompt", "0.1", "0.10"),
+        FieldChange("pricing.prompt", "free", "0.000001"),
+        FieldChange("pricing.prompt", False, True),
+    ]
+    # Every provider normalization the collector can be handed, including the
+    # identity: normalization scales magnitudes, and a scale that could invert
+    # a comparison would desync the buckets from the headline.
+    normalizations = ((1_000_000, 1), (1, 1), (1, 1000), (1000, 1000))
+
+    observed = set()
+    for field_change in cases:
+        kind = reporting._price_movement_kind(field_change)
+        observed.add(kind)
+        for multiplier, divisor in normalizations:
+            rendered = classify_change(
+                field_change,
+                price_multiplier=multiplier,
+                price_divisor=divisor,
+            )
+            if kind is None:
+                # Not counted, so whatever it classifies as, it is not part of
+                # any bucket -- but it must also not be able to headline, which
+                # is what `delta_abs` decides.
+                continue
+            assert rendered.direction == expected_direction[kind], (
+                f"{field_change.field_name} {field_change.old_value!r} -> "
+                f"{field_change.new_value!r} at x{multiplier}/{divisor}: "
+                f"counted {kind!r} but classified {rendered.direction!r}"
+            )
+            # The headline slot lookup, restated: only the two-sided
+            # directions have a slot, so `added`/`removed` cannot headline.
+            assert (rendered.direction in reporting._PRICE_MOVEMENT_SLOTS) == (
+                kind in ("higher", "lower")
+            )
+
+    # The fixture must exercise every kind, or the loop above passes vacuously.
+    assert observed == {"higher", "lower", "added", "removed", None}
 
 
 # ---------------------------------------------------------------------------

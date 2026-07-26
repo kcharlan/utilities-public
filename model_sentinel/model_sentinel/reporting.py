@@ -3193,6 +3193,16 @@ def _price_movement_outcome(summary: _PriceMovementSummary) -> tuple[str, str]:
 
     Coverage-only reports keep their own verdict: with no directional model at
     all, "mixed" would be a claim about a direction that nothing here has.
+
+    "mostly" is dropped when the population is UNANIMOUS -- every directional
+    model in the leading bucket, the other two empty. The design's rule ("one
+    bucket strictly largest -> mostly higher / mostly lower") was written with
+    a genuine mixture in mind and says nothing about the unanimous case, where
+    it hedges against evidence that does not exist: one model up and nothing
+    down is not "mostly higher — 1 up", it is `higher — 1 up`, and
+    five models up with nothing falling is no less unanimous for being larger.
+    The qualifier returns the moment any other bucket holds a model. This is a
+    deliberate amendment to the approved design; see the task report.
     """
     buckets = [
         ("up", len(summary.models_in("higher")), "price-higher"),
@@ -3206,10 +3216,16 @@ def _price_movement_outcome(summary: _PriceMovementSummary) -> tuple[str, str]:
     ranked = sorted(buckets, key=lambda bucket: -bucket[1])
     leader_name, leader_count, leader_class = ranked[0]
     strictly_largest = leader_count > ranked[1][1]
+    # Every model outside the leading bucket, summed: zero means unanimous.
+    # Summed rather than testing `ranked[1]` alone so the check does not lean
+    # on the sort order to imply that the third bucket is empty too, and drop
+    # the qualifier for the wrong population if that sort is ever changed.
+    # Unanimity implies `strictly_largest`: a non-empty leader beats a zero.
+    qualifier = "" if sum(count for _, count, _ in ranked[1:]) == 0 else "mostly "
     if strictly_largest and leader_name == "up":
-        return f"mostly higher \u2014 {counts}", leader_class
+        return f"{qualifier}higher \u2014 {counts}", leader_class
     if strictly_largest and leader_name == "down":
-        return f"mostly lower \u2014 {counts}", leader_class
+        return f"{qualifier}lower \u2014 {counts}", leader_class
     return f"mixed \u2014 {counts}", "price-mixed"
 
 
@@ -3290,8 +3306,7 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
     populated_buckets = [
         (group_label, chip_label, css_class, models)
         for bucket, group_label, chip_label, css_class in _PRICE_MOVEMENT_BUCKETS
-        for models in (summary.models_in(bucket),)
-        if models
+        if (models := summary.models_in(bucket))
     ]
     model_chip_parts = []
     group_parts = []
@@ -3319,8 +3334,7 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
     field_chip_parts = [
         f'<span class="price-tally-chip {css_class}">{h(chip_label.format(count=count))}</span>'
         for attribute, chip_label, css_class in _PRICE_MOVEMENT_FIELD_CHIPS
-        for count in (getattr(summary, attribute),)
-        if count
+        if (count := getattr(summary, attribute))
     ]
 
     model_suffix = "" if len(summary.models) == 1 else "s"
