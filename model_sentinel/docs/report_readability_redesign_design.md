@@ -1,6 +1,8 @@
 # Report Readability Redesign — Design
 
-Status: approved design, not yet implemented.
+Status: **implemented** on branch `report-readability-redesign`, across an eleven-task plan.
+
+This document has been corrected in place where implementation diverged from the approved design. Nine such divergences are marked inline and recorded under [Amendments during implementation](#amendments-during-implementation). Where the design and the shipped code disagree, **the code is authoritative** — read the amendments before trusting an unmarked passage.
 
 Supersedes the presentation decisions in [`report_detail_policy_plan.md`](./report_detail_policy_plan.md) where they conflict. Detail-policy semantics (squelch patterns, `--detail` modes) are unchanged.
 
@@ -18,7 +20,7 @@ Three problems drive this work:
 
 - Changing what is collected, stored, or squelched.
 - Changing JSON output shape (full fidelity, unchanged).
-- Changing `_full.html` layout. It keeps today's rendering.
+- ~~Changing `_full.html` layout. It keeps today's rendering.~~ **Corrected — see Amendment 1.** `_full.html` is not a separate renderer: [cli.py:363–372](../model_sentinel/cli.py) generates it by calling the same `render_scan_report` with `make_report_detail_policy(mode="all")`. It therefore receives every layout change automatically, and holding its layout back would require building a second renderer that does not exist and was never budgeted.
 - Adding runtime dependencies. Reports stay self-contained, single-file, and (except where noted in N3, which is deferred) JavaScript-free.
 
 ---
@@ -69,7 +71,7 @@ Owns classification, labeling, and value formatting. Format-agnostic — it retu
 - `qualifier` — optional condition text extracted from a bracketed dynamic path, e.g. the condition in `pricing.overrides[min_prompt_tokens=200000].completion`; `None` for ordinary fields.
 - `old_display` / `new_display` — the formatted human values (`"$2.00"`, `"262,144"`, `"off"`, `"—"`).
 - `old_raw` / `new_raw` — original provider values as strings, for tooltips and the raw-value toggle.
-- `unit` — `"/1M"`, `"tok"`, `"items"`, or `None`.
+- `unit` — `"/1M"`, `"tok"`, or `None`. ~~`"items"`~~ **dropped — see Amendment 8:** a list change has no operand row for a unit to sit beside.
 - `delta_display` — formatted absolute delta (`"+$1.50"`, `"+250,144"`), or `None`.
 - `delta_abs` — the numeric absolute delta as a float, or `None`. Used by the F2 sort; not for display.
 - `pct_display` — `"↑ 63.6%"` / `"↓ 20.5%"`, or `None`.
@@ -87,7 +89,7 @@ Owns classification, labeling, and value formatting. Format-agnostic — it retu
 | `_render_html_table_row` | Reduced to a thin HTML formatter over `RenderedChange` |
 | `_build_summary_entries_from_fc` | Consumes `RenderedChange`; stops re-deriving classification |
 | `_render_list_diff_text` / `_render_html_list_diff` | Consume `list_added` / `list_removed` |
-| `_render_bulk_list_diff_text` / `_render_html_bulk_list_diff` | Same |
+| `_render_bulk_list_diff_text` / `_render_html_bulk_list_diff` | Same. **Deferred out of step 2, then completed — see Amendment 4.** |
 | `_pct_change`, `_fmt_price_per_m`, `_fmt_int`, `_normalize_price`, `_both_numeric`, `_numeric_value`, `_is_price_amount_field`, `_is_count_field`, `_classify_field` | Move into `change_render.py`. They are the shared primitives; reporting.py imports them |
 
 The percent-when-old-is-zero behavior at [reporting.py:1213](../model_sentinel/reporting.py) — returning `""` — is the root cause of the blank Change cell on `0 → 1` booleans. It is fixed by the boolean branch never reaching percent logic (E2), not by changing `_pct_change` itself.
@@ -141,6 +143,19 @@ Normalized to per-1M using the existing `canonical_price = raw * PRICE_MULTIPLIE
 - A change in the fourth decimal shows four: `$0.1500 → $0.1425`, delta `−$0.0075`.
 - A sub-cent move is visually obvious as a sub-cent move rather than being rounded into invisibility.
 
+**Sentinel rule (amended — see Amendment 2).** The cap at 4 is real, but "render at 4 and rely on the tooltip for exactness" is not, because rounding a non-zero value to 4 places can produce `$0.0000` and `0.0%` — figures that assert *no change* where a change was measured. A column that would round to a degenerate value therefore prints a **bounded sentinel** instead:
+
+| Column | Sentinel |
+|---|---|
+| Price | `<$0.0001`, `-<$0.0001` |
+| Price delta | `+<$0.0001`, `-<$0.0001` |
+| Count / numeric | `<0.01`, `-<0.01` |
+| Percent | `↑ <0.1%`, `↓ <0.1%` |
+
+The bound is the column's own printable width, so a reader can verify it from what is on screen. Sign is carried outside the bound (`-<$0.0001`, never `$-0.0001`), and the rule lives in one place rather than at each call site.
+
+**Accepted residual: displayed arithmetic need not close under rounding.** A row may read `$2.00 → $2.00` with delta `+<$0.0001`, which does not visibly add up. This is accepted deliberately. Each cell states a true proposition — both prices really do round to `$2.00` at the row's precision, and the movement really is non-zero and smaller than `$0.0001` — even though the row as a whole cannot be checked by eye at that width. The rejected alternative, printing `+$0.0000`, makes the row close by stating something false.
+
 `_fmt_price_per_m`'s current magnitude-based precision selection is replaced by this operand-based rule. `0` still renders as `free`.
 
 ### Alignment
@@ -175,21 +190,31 @@ Color is driven by `semantic`, never by `direction` alone.
 
 The practical effect: green and red appear **only** on money. A `↑ 227.7%` context increase and a `↑ 63.6%` price increase are never the same color again.
 
+**List membership takes `capability`'s pair (amended — see Amendment 8).** The table above says nothing about the `+ member` / `− member` glyphs of a list change, which are not a delta cell and have no `direction`. They are colored blue for an arrival and dim for a departure, matching `capability` up/down, by **one global CSS rule with no per-card override** — a list gaining `logit_bias` is a capability change, and the `+`/`−` glyphs already carry the add-vs-remove distinction that green/red would otherwise duplicate on the one axis B1 reserves.
+
 ---
 
 ## Raw values (R1 + R2 + R3)
 
 All three, together.
 
-**Tooltip** (native `title`, on both the old and new price cells) contains, in order: scientific notation for the raw value, and the conversion math.
+**Tooltip** (native `title`, on both the old and new price cells) contains, in order: the literal raw value, its magnitude in scientific notation as a **parenthetical aside**, and the conversion math.
 
-> `2.0e-6 · 0.000002 × 1,000,000 = $2.00`
+> `0.000002 (2.0e-6) × 1,000,000 = $2.00`
+>
+> `2.5 (2.5e0) = $2.50` — a provider needing no conversion (`multiplier == divisor == 1`) gets no factor clause rather than a `× 1` that would read as a conversion.
 
 Scientific notation removes zero-counting; the explicit multiplication answers "is this really $2.00 and not $0.20" without arithmetic. The literal raw value is present so the tooltip remains an audit surface.
 
+**Amended — see Amendment 5.** The design originally specified `2.0e-6 · 0.000002 × 1,000,000 = $2.00`, joining the two with a middle dot. That is unusable: a `·` immediately after a scientific mantissa reads as multiplication, so the stated expression evaluates to 4e-6 rather than $2.00, and with no conversion factor it degrades to `2.5e0 · 2.5 = $2.50` — a bare `A · B = C` in which C is neither operand nor their product. The tooltip exists so a reader can verify a price *without* doing arithmetic; a separator that can be mistaken for an operator defeats the whole feature. Parenthesising the magnitude makes it an aside, leaving exactly one operator chain between the leading operand and the `=`.
+
+The scientific notation is built with `Decimal` on the provider's own string with no format spec, so it is exact rather than rounded, and is `None` on a non-finite value (the tooltip then carries the raw value alone). Where the cell's display is a sentinel, the tooltip's right-hand side is that same bound: `1e-06 (1.0e-6) = <$0.0001` reads "equals less than $0.0001", which is what the bound asserts.
+
 **Field labels** also carry a `title` with the full dotted path.
 
-**Raw-value toggle** — a single checkbox in the report header labeled "Show raw values". When checked, a dim, selectable sub-line appears beneath each price row showing `0.000002 → 0.0000035`. Implemented in CSS only, via a checkbox whose checked state is used by a sibling/`:has()` selector. Unchecked by default. This exists because `title` text cannot be selected or copied; the toggle produces text that can be pasted into a spreadsheet.
+**Raw-value toggle** — a single checkbox in the report header labeled "Show raw values". When checked, a dim, selectable sub-line appears beneath each price row showing `0.000002 → 0.0000035`. Implemented in CSS only, via a checkbox whose checked state is used by a sibling/`:has()` selector. This exists because `title` text cannot be selected or copied; the toggle produces text that can be pasted into a spreadsheet.
+
+**Default state (amended — see Amendment 1):** unchecked in the concise report, **checked when the detail mode is `"all"`**. That is what lets `_full.html` adopt the concise layout without ceasing to be an audit view — the raw numbers it exists for are inline from the moment it opens.
 
 No JavaScript.
 
@@ -208,8 +233,11 @@ Order of elements:
 
 Derived from **model** buckets, matching the tally directly beneath it:
 
-- One bucket strictly largest → "mostly higher" / "mostly lower".
+- One bucket strictly largest → "higher" / "lower", qualified by "mostly" **only when some model falls outside the leading bucket** (amended — see Amendment 3).
 - Otherwise → "mixed".
+- **Fourth outcome (amended — see Amendment 7):** when no model moved in either direction and every price change is a field appearing or disappearing, the verdict is `price fields added/removed`, not "mixed".
+
+The qualifier is dropped on a unanimous population: five models up and none down reads `higher — 5 up`, not `mostly higher — 5 up`. As originally written the rule hedged a result that had nothing to hedge — "mostly" invites the reader to look for the exception, and there is none. Unanimity is tested by summing every non-leading bucket rather than by checking the runner-up alone, so the check does not lean on the sort order to imply the third bucket is empty too.
 
 The verdict string appends the bucket counts: `mixed — 4 up, 4 down, 3 both`. This is a behavior change: the current implementation derives the verdict from *field* counts while displaying *model* counts, so 2026-07-25 currently reads "mostly lower" despite models being tied 4/4/3. It will now read "mixed". Historical reports are not regenerated.
 
@@ -223,14 +251,14 @@ Selected by largest absolute per-1M delta across all price fields of all affecte
 
 Two labeled chip groups, both stated in explicit units so they cannot be confused:
 
-- `N MODELS` — `↑ n higher`, `↓ n lower`, `↕ n both`
+- `N MODELS` — `↑ n higher`, `↓ n lower`, `↕ n both`, and `± n added/removed only` (amended — see Amendment 7)
 - `N PRICE FIELDS` — `↓ n`, `↑ n`, `+n added`, `−n removed`
 
 Bucket labels are short. The current sentence-form labels ("4 with increases and no decreases") are replaced. Zero-count buckets stay omitted.
 
 ### Affected-model list
 
-Three columns: `↑ Higher only`, `↓ Lower only`, `↕ Both directions`. Model IDs only. Per E5, the provider label is omitted when exactly one provider has price changes; when more than one does, it is retained.
+~~Three columns~~ **Four (amended — see Amendment 7):** `↑ Higher only`, `↓ Lower only`, `↕ Both directions`, `± Added/removed only`. Model IDs only. Per E5, the provider label is omitted when exactly one provider has price changes; when more than one does, it is retained.
 
 Each entry links to its card (see N1).
 
@@ -240,9 +268,9 @@ Each entry links to its card (see N1).
 
 ### Header
 
-`<model id>` · display name · flex spacer · impact badge · `+N hidden` · back-link.
+~~`<model id>` · display name · flex spacer · impact badge · `+N hidden` · back-link.~~ **Corrected — see Amendment 6.** The impact badge was dropped; the header is `<model id>` · display name · flex spacer · `+N hidden` · back-link.
 
-- **Impact badge** — `↑ costs more` / `↓ costs less` / `↕ both directions`, colored per B1. Only on cards with price changes.
+- ~~**Impact badge** — `↑ costs more` / `↓ costs less` / `↕ both directions`, colored per B1. Only on cards with price changes.~~ **Dropped — see Amendment 6.**
 - **`+N hidden`** (E3) — dim text, replaces today's full `SQUELCHED` section with its own uppercase header. Aggregate count across all categories on that card.
 - **Back-link** (N1) — a small dim `↑` anchored to the Price Movement card.
 
@@ -318,15 +346,17 @@ Which changes apply where. This is the answer to "fix it everywhere, not just fo
 | E2 boolean rendering | yes | yes | yes | yes | **no** | yes |
 | Field labels | yes | yes | yes | yes | **no** | yes |
 | Delta precision rule | yes | yes | yes | yes | **no** | yes |
-| A1 price layout | yes | no | n/a | n/a | no | yes |
-| B1 color semantics | yes | no | n/a | n/a | no | yes |
-| C1 single table | yes | no | n/a | n/a | no | no |
-| D1/D3 price movement | yes | no | n/a | n/a | no | n/a |
-| E3–E6, F1, F2, N1, R1–R3 | yes | no | no | no | no | no |
+| A1 price layout | yes | **yes** | n/a | n/a | no | yes |
+| B1 color semantics | yes | **yes** | n/a | n/a | no | yes |
+| C1 single table | yes | **yes** | n/a | n/a | no | no |
+| D1/D3 price movement | yes | **yes** | n/a | n/a | no | n/a |
+| E3–E6, F1, F2, N1, R1–R3 | yes | **yes** | no | no | no | no |
 
 JSON is full-fidelity and unchanged in every row, including `noop` entries — audit output must not silently drop records.
 
-`_full.html` inherits the semantic fixes (E1, E2, labels, precision) because they are correctness issues, but keeps its current layout because it is the audit view.
+**The `_full.html` column reads "yes" throughout, and the original "no"s were wrong.** `_full.html` has no renderer of its own — [cli.py:363–372](../model_sentinel/cli.py) builds it from the same `render_scan_report` with `make_report_detail_policy(mode="all")` — so it inherits A1/B1/C1 and the rest whether or not the design asked it to. The only real question was whether the audit view loses anything by adopting the concise layout, and the answer was raw values: A1 moves the provider's literal number out of the cell and into a tooltip and a hidden sub-line, which is exactly the thing an audit reader came for.
+
+**Resolution implemented:** the R3 "Show raw values" checkbox defaults to **checked** when the detail mode is `"all"`. The audit view therefore renders the new layout with every raw value inline and selectable, and no second renderer is needed. See Amendment 1.
 
 ---
 
@@ -399,6 +429,100 @@ Baseline at design time: 56 passed. By format, existing tests exercise text 15×
 Flagged for review; each was a judgment call, not an instruction.
 
 1. **Cents is the right rounding granularity** for the F2 primary sort key. Coarser loses distinctions between real moves; finer makes the percent tiebreaker dead code.
-2. **Precision is capped at 4 decimal places.** Values needing more render at 4 and rely on the tooltip for exactness.
+2. ~~**Precision is capped at 4 decimal places.** Values needing more render at 4 and rely on the tooltip for exactness.~~ **No longer holds — see Amendment 2.** Rounding to 4 places turns a measured change into `$0.0000` / `0.0%`, which denies the change rather than approximating it. Values that would round to a degenerate figure now print a bounded sentinel (`<$0.0001`, `+<$0.0001`, `↑ <0.1%`); see the sentinel rule under "Price display (A1)".
 3. **`context_length` is labeled "Context length (model)"** to distinguish it from `top_provider.context_length`. Both occur in the data; the disambiguating wording is a guess at intent.
 4. **Change Summary rows for tier-2 models render as plain text** rather than links, to avoid fragment navigation into a closed `<details>`.
+
+---
+
+## Amendments during implementation
+
+Nine places where the shipped behavior differs from the design above. Each is marked inline at the point it applies; this section records what changed and why.
+
+### 1. `_full.html` is not a separate renderer, and adopts the new layout
+
+**Design said:** `_full.html` keeps today's layout and inherits only the semantic fixes (E1, E2, labels, precision).
+
+**Reality:** there is no second renderer to hold back. [cli.py:363–372](../model_sentinel/cli.py) produces `_full.html` from the same `render_scan_report` call with `make_report_detail_policy(mode="all")`, so A1, B1, C1 and everything after them apply to it automatically. Withholding them would have meant *writing* a second renderer — new scope, and a permanent second layout to maintain.
+
+**Resolution:** let it inherit, and close the one real gap. A1 moves the provider's literal value out of the cell, which is precisely what an audit reader opens `_full.html` for; so the R3 "Show raw values" checkbox **defaults to checked when the detail mode is `"all"`**. The audit view gets the readable layout with every raw value inline and selectable. The cross-renderer matrix's `_full.html` column was corrected from "no" to "yes" throughout.
+
+### 2. The 4-decimal cap was replaced by bounded sentinels
+
+**Design said (Open Assumption #2):** values needing more than 4 decimals render at 4 and rely on the tooltip for exactness.
+
+**Reality:** rounding a measured non-zero movement to 4 places produces `$0.0000` and `0.0%` — figures that assert *no change*. A report whose job is to say what moved cannot print a value that denies the movement it just detected.
+
+**Why the reversal, and not more tuning:** three successive precision "escape hatches" were attempted and all three failed the same way — each fixed the column it was aimed at and pushed the contradiction into another (fix the delta, the percent lies; fix the percent, the operands do). Three corrective rules that still produced inconsistent results was taken as evidence the approach was wrong rather than under-tuned, and all three were removed in favour of one rule applied uniformly: **a column that would round to a degenerate value prints a bounded sentinel** — `<$0.0001`, `+<$0.0001`, `↑ <0.1%` — rather than a false zero. The bound is the column's own printable width, so the reader can verify it from what is on screen.
+
+**Accepted residual:** displayed arithmetic no longer closes under rounding. A row can read `$2.00 → $2.00` with delta `+<$0.0001` and not visibly add up. This is accepted: every cell states a true proposition, and only the row-level sum is illegible at that width. The rejected alternative made the row close by printing something false, which is strictly worse — a reader who checks the arithmetic and finds it consistent has been *misled*, where a reader who finds it incomplete has merely been told the column is too narrow.
+
+### 3. The verdict drops "mostly" on a unanimous population
+
+**Design said (D3):** one bucket strictly largest → "mostly higher" / "mostly lower".
+
+**Reality:** five models up and none down produced `mostly higher — 5 up`. "Mostly" invites the reader to hunt for the exception, and there is none — the hedge is not merely redundant, it misdescribes the data.
+
+**Resolution:** drop the qualifier when **both** non-leading buckets are empty (`higher — 5 up`); keep it otherwise (`mostly higher — 4 up, 1 down`). Unanimity is tested by summing every non-leading bucket rather than inspecting the runner-up alone, so the check does not silently depend on the sort order to imply the third bucket is empty too.
+
+### 4. Task 3's step-4 exemption, and its later resolution
+
+**Design said (step 2 / the retirement table):** all six render functions move onto `RenderedChange` in one step, with no behavior change.
+
+**Reality:** two of them could not. `_render_bulk_list_diff_text` and `_render_html_bulk_list_diff` shared their member stringification with `_list_change_signature`, the bulk grouping key, and the two conventions disagreed on structured members — the signature path JSON-encoded them (`{"a": 1}`) while the per-model renderers used Python `repr` (`{'a': 1}`). Moving the bulk renderers while that disagreement stood would have changed bulk-group output as a side effect of a step declared behavior-neutral, and the goldens of the day did not cover bulk grouping, so the change would have landed unobserved. Both functions were left calling the old helper, with the reason recorded at each site.
+
+**Resolution:** the two conventions were later unified on **JSON** (user decision), both renderers were moved onto `RenderedChange`, and the shared `_list_item_text` now lives in `change_render.py` with `_list_change_signature` routed through it. The exemption is closed and the retirement table's row is accurate again.
+
+### 5. The raw-value tooltip's notation
+
+**Design said:** `2.0e-6 · 0.000002 × 1,000,000 = $2.00`.
+
+**Reality:** a middle dot immediately after a scientific-notation mantissa reads as multiplication. The stated expression evaluates to 4e-6, not $2.00, so the tooltip appears to contradict the cell it is explaining — and with no conversion factor it degrades further, to `2.5e0 · 2.5 = $2.50`, a bare `A · B = C` whose C is neither operand nor their product. The tooltip's entire purpose is letting a reader verify a price *without* doing arithmetic; a separator that can be read as an operator defeats it.
+
+**Resolution:** parenthesise the magnitude so it is an aside rather than an operand — `0.000002 (2.0e-6) × 1,000,000 = $2.00`, and `2.5 (2.5e0) = $2.50` where no conversion applies. Everything else is unchanged: `Decimal` on the provider string with no format spec, `None` on a non-finite value, and a bounded right-hand side where the cell itself is a sentinel.
+
+### 6. The card's impact badge was dropped, not built
+
+**Design said (C1, Header):** each card with price changes carries an impact badge in its header — `↑ costs more` / `↓ costs less` / `↕ both directions`, colored per B1.
+
+**Reality:** no such string and no such CSS class was ever written. This is recorded as a deliberate drop rather than an outstanding gap, because building it now would add a third statement of something the page already states twice:
+
+* **the card itself already says it, per row and more precisely.** C1 gives every row a delta and a percent column colored by B1, so a card whose prices moved up is a card with red in its delta column. A header badge reading `↑ costs more` summarises the rows immediately beneath it, at the cost of being the only element on the card that can disagree with them;
+* **the Price Movement card already says it, by name.** D1/D3's affected-model list groups every affected model into `↑ Higher only`, `↓ Lower only`, `↕ Both directions` and `± Added/removed only`, and each entry links to its card. A reader who wants "which models cost more" has that list, complete and sorted, before reaching any card.
+
+The badge would also have been the fourth place the higher/lower/both trichotomy is spelled (buckets, tallies, verdict, badge), and the one furthest from the data it describes.
+
+**Resolution:** the header is `<model id>` · display name · flex spacer · `+N hidden` · back-link. The C1 Header section is struck through in place.
+
+### 7. A fourth price-movement bucket, and a fourth verdict outcome
+
+**Design said (D3, Tallies, Affected-model list):** three model buckets — `↑ Higher only`, `↓ Lower only`, `↕ Both directions` — and three verdict outcomes — "higher", "lower", "mixed".
+
+**Reality:** a model whose only price change is a price field *appearing* or *disappearing* belongs to none of the three. It has no direction: B1 already rules that painting an added price red would claim a rise that was never measured, and the same reasoning denies it a directional bucket.
+
+Left in the three-bucket shape, such a model was still counted in the `N MODELS` tally and still had a card, but appeared in no column of the affected-model list directly beneath that tally — so the total did not match the rows under it, which is exactly the class of internal disagreement D3 exists to remove. And a report in which *every* price change is a coverage change produced the verdict "mixed", asserting a mixture of directions where not one direction had been observed.
+
+**Resolution:** a fourth bucket `± Added/removed only` (`coverage`), carried in the same `_PRICE_MOVEMENT_BUCKETS` table as the other three so the column label, the chip label and the colour stay one decision; and a fourth verdict string `price fields added/removed`, returned when no directional bucket holds a model. The `± ` glyph and the `price-coverage` blue are deliberately not any of the three directional pairs.
+
+### 8. B1 and A1 reach the `changes` table and the Change Summary; text and markdown do not move
+
+**Design said:** the cross-renderer matrix already scopes "B1 color semantics" and "A1 price layout" to `changes` HTML with a **yes**, and marks Text/Markdown `n/a`.
+
+**Reality:** two HTML surfaces were left behind, and both were caught by a whole-branch review rather than by a test.
+
+* **The `changes` table colored by `direction`.** `_render_html_table_row` never consulted the semantic table, choosing instead from a private `delta-increase` / `delta-decrease` / `delta-neutral` / `delta-price-*` vocabulary keyed on direction. In the shipped document a context window doubling read **green**, a max output halving read **red**, an added coverage field read **green**, and an informational scalar read **amber** — the precise confusion B1 exists to remove, in the one document with a table of its own. The six direction-named CSS rules are deleted, not merely bypassed, so there is no working second vocabulary left to reach for.
+* **List membership was colored per card type.** Blue/dim inside `.card-table` and green/red everywhere else, so one document showed the same membership change blue in a model card and green in a bulk-change card — the same green the Price Movement card uses for a price cut — and green/red again in the `changes` report's standalone list-diff block. Fixed with **one global rule** rather than a per-card-type override, per the note added to the B1 section: no card type and no document wants green here, and a second override would have been a second place for the decision to drift.
+
+**A1 in the Change Summary.** The summary's `Change` cell was built by rendering the *text* report's line and splitting it on `": "`, which imported text's raw-value-first convention into HTML wholesale: the card read `$2.00 → $3.00  /1M  +$1.00  ↑ 50.0%` while the summary index a few inches below read `2e-06 → 3e-06 ($2.00 → $3.00 / 1M, ↑ 50.0%)`. The concise report was hiding raw values in the card and printing them, unconditionally and outside the "Show raw values" toggle, in the index. The cell is now composed from `RenderedChange` in the card's own column order — `old → new unit (delta, pct)` — which also removes the fragile split (a dynamic path such as `pricing.overrides[min_prompt_tokens=200000].completion` puts provider payload text on the left of a `": "`) and makes an absent side unspellable as `null` rather than respelled after the fact.
+
+**`unit` is `None` for a list change**, where the dataclass spec said `"items"`. Every renderer that prints `unit` prints it beside a pair of operands — the card's unit column, the price headline, and now the summary's `old → new unit` — and a list change has no operand row: its counts live inside the `(1 → 2)` parenthesis beside the member names. `"items"` was set at construction, read by nothing, and would have rendered `+logit_bias (1 → 2) items` the moment anything read it.
+
+**Text and markdown are deliberately unchanged** by all of the above. `null` is what `change_render` produces for an absent side and what the text renderer prints; `_SummaryEntry` feeds the HTML summary table and nothing else. The text, markdown and JSON goldens are the audit trail for this branch, and they did not move.
+
+### 9. Duplicate provider labels are a healthcheck warning, not a `ConfigError`
+
+**Design said:** nothing — this rule was added during implementation, as a hard `ConfigError` raised from `load_config`.
+
+**Reality:** by the time it shipped it was redundant *and* the harshest possible response to a working config. This branch already made label collisions harmless: reports group on `provider_id` and disambiguate display as `Label (provider_id)`, which also covers historical rows recorded under a label the current `providers.env` no longer contains — rows a config-time check cannot see at all. So the complete mechanism was the display one, and the incomplete one was the mechanism that halted `scan`, `changes`, `history` and `providers` alike. A scheduled overnight scan would stop on a config that worked yesterday, and the report the user would have received does not exist; that is strictly worse than a report whose two providers share display text and whose rows say which is which.
+
+**Resolution:** `config.describe_duplicate_labels(providers, path)` returns the advisory string or `None`, and `healthcheck` surfaces it as a `provider_labels` check with status `warn` — which does **not** move the exit code. The message still names every offender and the key to edit, and still compares labels exactly. `healthcheck` is the command whose job is to tell the user what to fix; refusing to run every other command was never that job.

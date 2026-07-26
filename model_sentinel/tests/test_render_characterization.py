@@ -1,0 +1,2617 @@
+"""Golden-output characterization tests for the scan report renderers.
+
+These tests lock in the exact current output of render_scan_report() across all
+four output formats (text, markdown, html, json) and both the default and `all`
+detail policies. They exist to protect a later readability redesign of the HTML/
+text renderers: if a refactor changes rendered output, one of these tests will
+fail and show the reviewer a full diff of old vs. new output.
+
+Do NOT update the golden constants to make a refactor's tests pass silently.
+A failing test here means the renderer output changed; the reviewer must look at
+the diff and decide whether the new output is intentional before updating the
+constant.
+
+DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
+
+* Task 3c unified list-member stringification on JSON, changing how `dict`
+  members inside a list field are spelled.
+* Task 4 landed E1 and E2, the first intentional readability changes. E1
+  removed every `null -> null` row -- and, where that was a model's only
+  change, the whole card and its summary row -- from the text, markdown and
+  HTML goldens while leaving the JSON goldens untouched. E2 moved boolean
+  fields off the numeric path: `off -> on` / `on -> off` with an
+  `enabled`/`disabled` pill instead of `0 -> 1 (+1)` and `↓ 100.0%`, and a
+  one-sided boolean now reads `— -> on` with an `added` pill.
+* Task 4 fix pass 1 completed E1's accounting. Dropping a card left the
+  provider's `changed: 7` / `### Changed (7)` counters standing over six, with
+  nothing to say where the seventh went -- and, when EVERY model under a
+  heading was no-op-only, the heading was emitted over nothing at all. The
+  counters stay record counts; a provider-level `no-op: N field changes across
+  M models` rollup now follows the pre-existing `squelched` rollup in the text,
+  markdown and HTML goldens and names the models whose rows were dropped. That
+  rollup line is the ONLY diff in this pass; the JSON goldens are untouched.
+* Task 5 introduced the field-label registry, replacing raw dotted paths with
+  human labels throughout the text, markdown and HTML goldens.
+* Task 5 fix pass 1 made the renderers print the registry's `qualifier`
+  alongside its label. The registry alone had collapsed
+  `pricing.overrides[min_prompt_tokens=200000].completion` and a plain
+  `pricing.completion` to the same bare `Output`, so `synth/model-core` showed
+  two rows that read identically. Two diffs in this module, both consequences
+  of that one change:
+    1. the tiered row now reads `Output (min_prompt_tokens=200000)` in the
+       text, markdown, HTML change-table and HTML Change Summary goldens;
+    2. that row MOVED within the Change Summary. `_summary_entry_sort_key`
+       orders on the displayed field text, and `"output"` sorts before
+       `"output (min_prompt_tokens=200000)"`, so the tiered row now follows
+       the base `Output` row. The section is the same 15 rows either way --
+       `test_qualifier_change_summary_is_a_pure_permutation` below asserts
+       that as a multiset rather than leaving it to the eye.
+  The JSON goldens are untouched, as always.
+
+* Task 6 replaced the magnitude-based price precision with the operand-based
+  rule and changed NOT ONE golden in this module -- stated because a silent
+  no-diff on a deliberate output change is exactly what should be checked
+  rather than assumed. Every price in `characterization_scan_result()`
+  resolves at two decimal places (`$2.00`, `$3.50`, `$0.05`, `$0.09`, `$4.00`,
+  `$5.00`), which both the old rule and the new one spell identically. The
+  consequence is that this fixture cannot demonstrate the new rule at all, so
+  `test_sub_cent_precision_reaches_every_human_format` and its JSON
+  counterpart carry their own single-model fixture below.
+
+* Task 6 fix pass 1 gave the four-place cap an escape hatch (a row whose two
+  operands are numerically different but render as ONE string extends past the
+  cap until they differ) and, again, changed NOT ONE golden in this module --
+  for the same reason: the shared fixture's prices all resolve at two places,
+  which is below the cap, so neither the cap nor its hatch is reachable from
+  them. `test_a_price_below_the_columns_resolution_bounds_itself_in_every_
+  format` (renamed in Task 6c) carries its own fixture below. The same pass
+  also disclosed a SECOND
+  behaviour-change class from Task 6 that had gone unrecorded: prices >= $1
+  with three or four significant decimals now render those decimals
+  (`$12.345`, not the old rule's `$12.35`). That class is likewise invisible
+  here -- `$2.00`, `$4.00` and `$5.00` have no decimals to keep -- and is
+  pinned in `test_change_render.py`.
+
+* Task 6 fix pass 2 widened that hatch's trigger (a row also extends when its
+  DELTA would print as zero while being numerically non-zero) and, for the
+  third time, changed NOT ONE golden in this module -- same reason again: the
+  shared fixture's prices resolve at two places, where every delta it produces
+  prints plainly. `test_vanishing_delta_row_bounds_its_delta_in_every_human_format_but_not_
+  json` (renamed in Task 6c) carries its own fixture below.
+
+* Task 6b gave the PERCENT column the same escape hatch (a percentage that
+  would print `0.0%` over a real movement extends until it prints) and, for the
+  fourth time, changed NOT ONE golden in this module. The reason is different
+  from the previous three and worth stating, because this hatch fires at
+  ORDINARY magnitudes rather than sub-cent ones: every movement in the shared
+  fixture is large (`$2.00 → $3.50` is 75%, `131,072 → 262,144` is 100%), and
+  the smallest is `$0.05 → $0.09` at 80%. Nothing here moves by less than
+  0.05%, which is the only range the hatch touches.
+  `test_vanishing_percent_row_bounds_its_percent_in_every_format_but_not_json`
+  (renamed in Task 6c) carries its own fixture below.
+
+* Task 6c REMOVED all three of those escape hatches and replaced them with one
+  rule: a column that would round to a degenerate value prints a bounded
+  sentinel (`<$0.0001`, `+<$0.0001`, `↑ <0.1%`) instead of a false zero. Each
+  hatch had fixed one column by extending the row's precision, and each moved
+  the inconsistency into a column it did not cover; a bound is true at the
+  precision the column already has, so nothing is extended and the price cap is
+  a cap again. For the FIFTH time this changed NOT ONE golden in this module,
+  and for the union of the reasons above: every price in the shared fixture
+  resolves at two places (so nothing rounds to zero) and every movement in it
+  is large (so no percentage vanishes). The three fixtures below that DO reach
+  the rule changed their expectations, and only their expectations -- their
+  fixture values are unchanged, so the before/after is a rendering diff and not
+  a different input.
+
+* Task 7 rebuilt the concise HTML model card: one `<table>` per card with a
+  fixed eight-column `<colgroup>` (category, field, old, arrow, new, unit,
+  delta, percent) in place of one four-column table per category, colour driven
+  by `RenderedChange.semantic` instead of `direction`, and Pricing rows sorted
+  by descending absolute delta. ONLY the two HTML goldens in this module moved;
+  the text, markdown and JSON goldens are byte-identical, which is the evidence
+  that the layout work stayed inside the HTML card renderer. Four classes of
+  diff, all deliberate:
+    1. structure -- `<div class="change-category">` + per-category
+       `<table class="change-table">` becomes one `<table class="card-table">`
+       inside `<div class="card-table-wrap">`, with the category name as a
+       `cat-chip` cell on the first row of each group only;
+    2. price presentation -- the cell that read `2e-06 ($2.00 / 1M)` now reads
+       `$2.00` with `title="2e-06"`, the unit moves to its own column, and the
+       ABSOLUTE delta (`+$1.50`) appears for the first time in any format;
+    3. colour -- `delta-increase`/`delta-decrease`/`delta-price-*` give way to
+       `sem-cost-up`/`sem-cost-down`/`sem-capacity`/`sem-capability`/
+       `sem-capability-off`/`sem-coverage`/`sem-neutral`, so a context-length
+       increase is no longer the same green as a price DECREASE;
+    4. absent sides -- a one-sided price, count or scalar renders `—` in the
+       card where it rendered `null`, matching what one-sided booleans have
+       always done. Text and markdown still say `null`; that split is recorded
+       in the Task 7 report and is not closed here.
+  The Pricing group of `synth/model-core` also reorders (Output, Output
+  (min_prompt_tokens=200000), Cache read, Cache write) -- descending absolute
+  delta, not the arrival order.
+
+* Task 7 fix pass 1 corrected that card after RENDERING it, which Task 7 never
+  did. Again only HTML goldens moved. Four classes of diff:
+    1. list rows -- a membership change was one `colspan="6"` cell holding an
+       inline count and a BLOCK-level member `<div>`, so it always occupied two
+       lines and began mid-table, left-aligned under the right-aligned numeric
+       columns of its neighbours. The label row now stays in the grid with the
+       member count in the DELTA column, and the members follow as
+       `<tr class="list-members">` -- one empty chip cell plus a `colspan="7"`
+       band starting at the field-label column. Still one table, one colgroup;
+    2. `num` on the value cells of `price`, `count` and `numeric` rows only.
+       `white-space: nowrap` used to apply to EVERY value cell, and a `col`
+       width is a hint rather than a maximum, so a long one-sided
+       `supported_parameters` scalar widened the column until the card
+       overflowed sideways. Right-alignment still applies to every value cell
+       -- that shared right edge IS the alignment;
+    3. `list-added`/`list-removed` are re-coloured (blue and dim, matching
+       `capability` up/down) so that red and green mean money and nothing else.
+       ~~INSIDE the card only; the global rules are untouched, so the `changes`
+       report and the bulk cards keep their green/red membership glyphs~~ --
+       that scoping was itself the defect, and fix pass 3 replaced the override
+       with one global rule. See the fix-pass-3 entry at the end of this list;
+    4. the Change Summary now spells an absent side `—`, matching the card
+       three inches above it in the same document. `_SummaryEntry` feeds the
+       HTML summary table and nothing else, so text, markdown and JSON still
+       print `null` and did not move. This closes the split the Task 7 entry
+       above recorded as open.
+
+* Task 9 restructured the PAGE. Only the two HTML goldens moved; text,
+  markdown and JSON are byte-identical, which is the evidence that F1's split
+  is a layout change and not a change to what the report says. Five classes of
+  diff, and nothing else:
+    1. F1 -- one `<details class="secondary-changes">` now holds every model
+       card with no price change, the provider-level rollups, and the Change
+       Summary. `synth/model-core` is the only card left above it, because it
+       is the only model whose price moved. Card order INSIDE the disclosure is
+       alphabetical, which is why `synth/model-moderation-added` moved ahead of
+       `-off` and `-temp-toggle`;
+    2. F2 -- tier-1 cards sort by impact. This fixture has one, so the golden
+       shows the tiering but not the ordering; `test_reporting.py` carries the
+       four-level sort tests;
+    3. E3 -- the card's `SQUELCHED` section is replaced by a
+       `<span class="hidden-count">+1 hidden</span>` in its header, with the
+       per-reason breakdown moved to that span's `title`;
+    4. E4 -- the header counts MODELS and names both units:
+       `7 of 7 models changed · 1 field change squelched`, where it read
+       `7 changes` over a figure that counted fields;
+    5. E5/E6 -- the Change Summary is a collapsed `<details>`; its Category
+       column became a group heading row per category, and its Provider column
+       is gone because this fixture has exactly one provider.
+  The CSS block moved with them: `.secondary-changes`, `.summary-group`, the
+  `.hidden-count` chip, and a flex `.model-card-header` to right-align it. No
+  new colour values -- every rule reuses an existing `--accent-*`/`--text-*`.
+
+* Task 10 added navigation and raw-value inspection (N1, R1-R3). Only the two
+  HTML goldens in this module moved; text, markdown and JSON are byte-identical,
+  and so are every golden in `test_render_changes_characterization.py` -- the
+  `changes` report has no model cards to address and no header to put a toggle
+  in. Five classes of diff:
+    1. N1 ids -- every model card carries `id="m-<slugified model id>"`
+       (lowercase, non-alphanumeric runs to `-`, `m-` prefix). A repeat gets
+       `-2`, `-3`, ... in DOCUMENT order, which is how the `~vendor/model` and
+       `vendor/model` alias pair providers ship is separated;
+    2. N1 links -- the Price Movement card takes `id="price-movement"`, its
+       headline panel and affected-model entries link into their cards, and so
+       do the Change Summary rows of TIER-1 models. Tier-2 rows stay plain
+       `<code>`, which is why `synth/model-core` is the only linked model in
+       this fixture: it is the only one whose price moved. Each card header
+       gains a dim `↑` back-link to `#price-movement`;
+    3. R1 -- a price cell's `title` grew from the bare raw value to the whole
+       derivation, `2e-06 (2.0e-6) × 1,000,000 = $2.00`. The scientific
+       notation is built from `Decimal` on the provider's own string, so it is
+       exact rather than rounded, and it is PARENTHESISED rather than joined to
+       the raw value by a middle dot -- `2.0e-6 · 2e-06 × ...` read as a
+       product of the mantissa and the raw value, an expression whose stated
+       left side does not equal its right;
+    4. R3 -- each price row gains a `<tr class="raw-line">` sub-line holding
+       `old_raw → new_raw`, hidden by CSS until the header's new
+       `Show raw values` checkbox is ticked. The checkbox is CHECKED by default
+       in the `all`-detail golden and unchecked in the concise one: `cli.py`
+       builds `_full.html` through this same renderer with `mode="all"`, and
+       that document's whole purpose is the raw numbers;
+    5. CSS -- `.model-card:target` and its `@keyframes`, `.raw-toggle`,
+       `.raw-line`, `.card-back` and `a.model-link`. No JavaScript and no new
+       colour values: every rule reuses an existing `--accent-*`/`--text-*`.
+
+* Fix pass 3 closed the last two places B1 and A1 had not reached. Again only
+  the two HTML goldens in this module moved; text, markdown and JSON are
+  byte-identical, and so is every golden in
+  `test_render_bulk_characterization.py`. Three classes of diff, and the CARD
+  rows are not among them -- they already carried `sem-*`:
+    1. CSS -- the six direction-keyed `delta-increase` / `delta-decrease` /
+       `delta-neutral` / `delta-price-*` rules are DELETED. They coloured the
+       `changes` report's four-column table, which is why that document painted
+       a doubling context window green; it now takes the same `sem-*` classes
+       the card does. Deleting rather than orphaning them is deliberate: an
+       unused rule that still works is a working way to reintroduce the defect;
+    2. CSS -- `.card-table .list-added` / `.list-removed` are gone and the
+       GLOBAL `.list-added` / `.list-removed` carry blue and dim instead of
+       green and red. The override meant a membership change read blue in a
+       model card and green in a bulk-change card of the SAME document. Item 3
+       of the Task 7 entry above is struck through accordingly;
+    3. every Change Summary `Change` cell. The cells were built by splitting
+       the text renderer's line, so a price row led with the raw provider value
+       (`2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`) while the card three
+       inches above led with `$2.00` -- A1 demoted in the card and undone in
+       the index, outside the "Show raw values" toggle that governs every other
+       raw value here. Composed from `RenderedChange` in the card's own column
+       order they read `$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)`, which also brings
+       in the unit, the absolute delta, and the `added`/`removed`/`enabled`/
+       `disabled` pill. List and plain-scalar rows are unchanged.
+
+The JSON goldens have never changed and must not: JSON is the audit path.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import time
+
+from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
+from model_sentinel.reporting import (
+    DEFAULT_REPORT_SHOW_FIELDS,
+    ReportDetailPolicy,
+    render_scan_report,
+)
+
+# Pin the process timezone to UTC before any golden constant below is defined.
+# render_scan_report() formats timestamps through to_local_human()/to_local_iso()
+# (model_sentinel/time_utils.py), both of which convert via datetime.astimezone()
+# to whatever the OS considers "local". Without this pin, the golden constants
+# would have to be computed through those same helper functions to stay portable
+# across machines/CI runners in different timezones -- which would make the goldens
+# self-fulfilling and unable to catch a future regression in those helpers'
+# formatting. Pinning TZ here means "local" resolves to UTC for the whole test
+# run (this also overrides any ambient `TZ=...` set by whoever invokes pytest),
+# so the golden constants below can be hardcoded literal strings instead.
+os.environ["TZ"] = "UTC"
+time.tzset()
+
+# Fixed instant used for every golden render in this module.
+GENERATED_AT = "2026-07-25T09:00:00+00:00"
+COMMAND = "scan"
+
+# Literal expected renderings of GENERATED_AT, valid because TZ is pinned to UTC
+# above. Do NOT replace these with calls to to_local_human()/to_local_iso() --
+# that would make the timestamp assertions below tautological.
+_GENERATED_AT_HUMAN = "2026-07-25 09:00:00"
+_GENERATED_AT_ISO = "2026-07-25T09:00:00+00:00"
+HUMAN_TOKEN = "@@GENERATED_AT_HUMAN@@"
+ISO_TOKEN = "@@GENERATED_AT_ISO@@"
+
+# Placeholder substituted with _EXPECTED_HTML_STYLE_BLOCK (defined further down,
+# next to the HTML templates) so the identical <style> block isn't pasted twice
+# across _EXPECTED_HTML_TEMPLATE and _EXPECTED_HTML_DETAIL_ALL_TEMPLATE.
+STYLE_TOKEN = "@@STYLE_BLOCK@@"
+
+ALL_DETAIL_POLICY = ReportDetailPolicy(
+    mode="all",
+    show_fields=DEFAULT_REPORT_SHOW_FIELDS,
+    squelch_fields=("benchmarks", "benchmarks.*"),
+    unclassified_limit=20,
+)
+
+
+def characterization_scan_result() -> list[ProviderScanResult]:
+    """Fixture builder covering every field-classification branch in reporting.py.
+
+    One provider, seven models. Model ``synth/model-core`` carries the bulk of
+    the cases (cases 1-4, 7, 9, 11-14 from the task-1 brief); cases 5, 6, 8, 9b,
+    10, and 15 each get their own model because they reuse a field name already
+    used by another case and a real diff would never emit the same field twice
+    for one model.
+
+    Seven models are ALWAYS reported in the provider counters (`changed: 7`),
+    which count `ModelDelta`s, not visible rows. Since E1 only six of them
+    reach the human-readable goldens: `synth/model-temp-null`'s single change
+    is a no-op, so the model contributes no card and no summary row there
+    while staying fully present in the JSON golden. That asymmetry between
+    the counters, the human formats, and JSON is deliberate and is what these
+    goldens pin.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-core",
+            "Synth Model Core",
+            (
+                # Case 1: price change, both sides numeric.
+                FieldChange("pricing.completion", 0.000002, 0.0000035),
+                # Case 2: price addition.
+                FieldChange("pricing.input_cache_read", None, 0.00000005),
+                # Case 3: price removal.
+                FieldChange("pricing.input_cache_write", 0.00000009, None),
+                # Case 4: count field, both sides numeric.
+                FieldChange("top_provider.context_length", 131072, 262144),
+                # Case 7: boolean false -> true.
+                FieldChange("top_provider.is_moderated", False, True),
+                # Case 9: integer-encoded boolean.
+                FieldChange("reasoning.default_enabled", 0, 1),
+                # Case 11: list diff.
+                FieldChange("supported_parameters", ["tools"], ["tools", "logit_bias"]),
+                # Case 12: dynamic pricing-override path (real list-of-dicts shape,
+                # keyed by min_prompt_tokens, so _expand_pricing_override_changes engages).
+                FieldChange(
+                    "pricing.overrides",
+                    [{"min_prompt_tokens": 200000, "completion": "0.000004"}],
+                    [{"min_prompt_tokens": 200000, "completion": "0.000005"}],
+                ),
+                # Case 13: scalar fallback.
+                FieldChange("expiration_date", None, "2030-12-31"),
+                # Case 14: squelched field (benchmarks.*).
+                FieldChange("benchmarks.example_suite", [{"score": 1}], [{"score": 2}]),
+            ),
+        ),
+        ModelDelta(
+            "changed",
+            "synth/model-limit-add",
+            "Synth Model Limit Add",
+            # Case 5: count field, one-sided add.
+            (FieldChange("top_provider.max_completion_tokens", None, 16384),),
+        ),
+        ModelDelta(
+            "changed",
+            "synth/model-limit-remove",
+            "Synth Model Limit Remove",
+            # Case 6: count field, one-sided remove (separate model from case 5 --
+            # same field name).
+            (FieldChange("top_provider.max_completion_tokens", 8192, None),),
+        ),
+        ModelDelta(
+            "changed",
+            "synth/model-moderation-off",
+            "Synth Model Moderation Off",
+            # Case 8: boolean true -> false (separate model from case 7 -- same field name).
+            (FieldChange("top_provider.is_moderated", True, False),),
+        ),
+        ModelDelta(
+            "changed",
+            "synth/model-temp-toggle",
+            "Synth Model Temp Toggle",
+            # Case 9b: numeric field holding 0/1 that must NOT classify as
+            # boolean. E2 put the boolean branch ahead of the numeric family,
+            # so this is the direct counter-example proving KNOWN_BOOLEAN_FIELDS
+            # is applied as a restriction: a temperature of 1 is a magnitude
+            # and must keep rendering `0 -> 1 (+1)`, not `off -> on`.
+            # (Separate model from cases 9/10 -- same field name as case 10.)
+            (FieldChange("default_parameters.temperature", 0, 1),),
+        ),
+        ModelDelta(
+            "changed",
+            "synth/model-temp-null",
+            "Synth Model Temp Null",
+            # Case 10: null -> null. E1's case. Deliberately the ONLY change
+            # on its own model, so suppression shows up in the goldens as an
+            # entire card and summary row disappearing rather than one row
+            # among several -- and so a renderer that suppressed the row but
+            # still emitted an empty card would fail here.
+            (FieldChange("default_parameters.temperature", None, None),),
+        ),
+        ModelDelta(
+            "changed",
+            "synth/model-moderation-added",
+            "Synth Model Moderation Added",
+            # Case 15: bool paired with None (one-sided), added from
+            # None -> True. Through Task 3 this fell through to the generic
+            # scalar fallback and leaked a raw Python repr into the report
+            # (`null -> True`). Task 4 settled the open question: a one-sided
+            # boolean is a `coverage` change presented like every other
+            # one-sided change -- em dash on the absent side, `added` pill in
+            # the delta column -- so the golden now reads `— -> on`. Separate
+            # model from cases 7/8 (same field name).
+            (FieldChange("top_provider.is_moderated", None, True),),
+        ),
+    )
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=7,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=changed,
+            error_message=None,
+            price_multiplier=1000000,
+            price_divisor=1,
+        )
+    ]
+
+
+_EXPECTED_TEXT_TEMPLATE = """Model Sentinel report
+Generated at: @@GENERATED_AT_HUMAN@@
+Command: scan
+
+Synth Provider (synthprov)
+  status: success
+  current_count: 7
+  added: 0
+  removed: 0
+  changed: 7
+    * synth/model-core (Synth Model Core)
+      [Pricing]
+        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
+        Cache read: null → 5e-08 ($0.05 / 1M)
+        Cache write: 9e-08 ($0.09 / 1M) → null
+        Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
+      [Context & Limits]
+        Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
+      [Parameters]
+        Supported parameters: +logit_bias (1 → 2)
+      [Capabilities]
+        Reasoning default: off → on
+      [Other]
+        Moderated: off → on
+        Expiration date: null → 2030-12-31
+      [Squelched]
+        1 field change hidden by report detail policy
+    * synth/model-limit-add (Synth Model Limit Add)
+      Max output: null → 16,384
+    * synth/model-limit-remove (Synth Model Limit Remove)
+      Max output: 8,192 → null
+    * synth/model-moderation-off (Synth Model Moderation Off)
+      Moderated: on → off
+    * synth/model-temp-toggle (Synth Model Temp Toggle)
+      Temperature: 0 → 1 (+1)
+    * synth/model-moderation-added (Synth Model Moderation Added)
+      Moderated: — → on
+  squelched: 1 field change across 1 model
+    patterns: benchmarks, benchmarks.*
+    models: synth/model-core
+  no-op: 1 field change across 1 model
+    models: synth/model-temp-null
+
+Summary
+------------------------------------------------------------
+  Synth Provider: 7 changed"""
+
+EXPECTED_TEXT = _EXPECTED_TEXT_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
+
+
+_EXPECTED_TEXT_DETAIL_ALL_TEMPLATE = """Model Sentinel report
+Generated at: @@GENERATED_AT_HUMAN@@
+Command: scan
+
+Synth Provider (synthprov)
+  status: success
+  current_count: 7
+  added: 0
+  removed: 0
+  changed: 7
+    * synth/model-core (Synth Model Core)
+      [Pricing]
+        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
+        Cache read: null → 5e-08 ($0.05 / 1M)
+        Cache write: 9e-08 ($0.09 / 1M) → null
+        Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
+      [Context & Limits]
+        Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
+      [Parameters]
+        Supported parameters: +logit_bias (1 → 2)
+      [Capabilities]
+        Reasoning default: off → on
+      [Benchmarks]
+        Example suite: +{"score": 2}; -{"score": 1} (1 → 1)
+      [Other]
+        Moderated: off → on
+        Expiration date: null → 2030-12-31
+    * synth/model-limit-add (Synth Model Limit Add)
+      Max output: null → 16,384
+    * synth/model-limit-remove (Synth Model Limit Remove)
+      Max output: 8,192 → null
+    * synth/model-moderation-off (Synth Model Moderation Off)
+      Moderated: on → off
+    * synth/model-temp-toggle (Synth Model Temp Toggle)
+      Temperature: 0 → 1 (+1)
+    * synth/model-moderation-added (Synth Model Moderation Added)
+      Moderated: — → on
+  no-op: 1 field change across 1 model
+    models: synth/model-temp-null
+
+Summary
+------------------------------------------------------------
+  Synth Provider: 7 changed"""
+
+EXPECTED_TEXT_DETAIL_ALL = _EXPECTED_TEXT_DETAIL_ALL_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
+
+
+_EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
+
+- Generated at: @@GENERATED_AT_HUMAN@@
+- Command: scan
+
+## Synth Provider (`synthprov`)
+
+- Status: `success`
+- Current models: `7`
+
+### Added (0)
+
+- None
+
+### Removed (0)
+
+- None
+
+### Changed (7)
+
+- `synth/model-core` - Synth Model Core
+  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
+  - `Cache read: null → 5e-08 ($0.05 / 1M)`
+  - `Cache write: 9e-08 ($0.09 / 1M) → null`
+  - `Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
+  - `Moderated: off → on`
+  - `Reasoning default: off → on`
+  - `Supported parameters: +logit_bias (1 → 2)`
+  - `Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
+  - `Expiration date: null → 2030-12-31`
+  - Squelched: `1` field change(s) hidden by report detail policy
+- `synth/model-limit-add` - Synth Model Limit Add
+  - `Max output: null → 16,384`
+- `synth/model-limit-remove` - Synth Model Limit Remove
+  - `Max output: 8,192 → null`
+- `synth/model-moderation-off` - Synth Model Moderation Off
+  - `Moderated: on → off`
+- `synth/model-temp-toggle` - Synth Model Temp Toggle
+  - `Temperature: 0 → 1 (+1)`
+- `synth/model-moderation-added` - Synth Model Moderation Added
+  - `Moderated: — → on`
+- squelched: `1` field change across `1` model
+- Squelch patterns: `benchmarks, benchmarks.*`
+- Squelched models: `synth/model-core`
+- no-op: `1` field change across `1` model
+- No-op models: `synth/model-temp-null`"""
+
+EXPECTED_MARKDOWN = _EXPECTED_MARKDOWN_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
+
+
+_EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
+
+- Generated at: @@GENERATED_AT_HUMAN@@
+- Command: scan
+
+## Synth Provider (`synthprov`)
+
+- Status: `success`
+- Current models: `7`
+
+### Added (0)
+
+- None
+
+### Removed (0)
+
+- None
+
+### Changed (7)
+
+- `synth/model-core` - Synth Model Core
+  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
+  - `Cache read: null → 5e-08 ($0.05 / 1M)`
+  - `Cache write: 9e-08 ($0.09 / 1M) → null`
+  - `Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
+  - `Moderated: off → on`
+  - `Reasoning default: off → on`
+  - `Supported parameters: +logit_bias (1 → 2)`
+  - `Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
+  - `Expiration date: null → 2030-12-31`
+  - `Example suite: +{"score": 2}; -{"score": 1} (1 → 1)`
+- `synth/model-limit-add` - Synth Model Limit Add
+  - `Max output: null → 16,384`
+- `synth/model-limit-remove` - Synth Model Limit Remove
+  - `Max output: 8,192 → null`
+- `synth/model-moderation-off` - Synth Model Moderation Off
+  - `Moderated: on → off`
+- `synth/model-temp-toggle` - Synth Model Temp Toggle
+  - `Temperature: 0 → 1 (+1)`
+- `synth/model-moderation-added` - Synth Model Moderation Added
+  - `Moderated: — → on`
+- no-op: `1` field change across `1` model
+- No-op models: `synth/model-temp-null`"""
+
+EXPECTED_MARKDOWN_DETAIL_ALL = _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN)
+
+
+# The <style> block is byte-identical between _EXPECTED_HTML_TEMPLATE and
+# _EXPECTED_HTML_DETAIL_ALL_TEMPLATE below (the detail policy only affects which
+# rows/categories are rendered in <body>, not the stylesheet). It is kept here as
+# one literal golden string and spliced into both templates via STYLE_TOKEN,
+# rather than pasted twice, so a future CSS change only needs to be reviewed once.
+# This is NOT imported from model_sentinel.reporting -- it is an independent golden
+# copy, so it still catches an unintended CSS regression in the renderer.
+_EXPECTED_HTML_STYLE_BLOCK = """:root {
+  --bg: #0f1419;
+  --bg-card: #1a1f2e;
+  --bg-card-hover: #1e2536;
+  --bg-table-row: #151a24;
+  --bg-table-alt: #1a2030;
+  --border: #2a3040;
+  --border-accent: #3a4050;
+  --text: #c5cdd8;
+  --text-dim: #6b7a8d;
+  --text-bright: #e8edf4;
+  --accent-green: #34d399;
+  --accent-green-dim: rgba(52, 211, 153, 0.12);
+  --accent-red: #f87171;
+  --accent-red-dim: rgba(248, 113, 113, 0.12);
+  --accent-amber: #fbbf24;
+  --accent-amber-dim: rgba(251, 191, 36, 0.12);
+  --accent-blue: #60a5fa;
+  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+  --font-body: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 2rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1.5rem;
+  margin-bottom: 2rem;
+}
+header h1 {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  letter-spacing: -0.02em;
+}
+header h1 .count {
+  color: var(--accent-amber);
+  font-weight: 400;
+}
+.meta {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin-top: 0.4rem;
+  font-family: var(--font-mono);
+}
+.raw-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.raw-toggle input { cursor: pointer; }
+.provider-cards {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+.provider-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  min-width: 200px;
+  flex: 1;
+  border-left: 3px solid var(--border);
+}
+.provider-card.status-clean { border-left-color: var(--accent-green); }
+.provider-card.status-changed { border-left-color: var(--accent-amber); }
+.provider-card.status-error { border-left-color: var(--accent-red); }
+.provider-name {
+  font-weight: 600;
+  color: var(--text-bright);
+  font-size: 1rem;
+}
+.provider-stats {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  margin-top: 0.2rem;
+}
+.provider-badge {
+  margin-top: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.status-clean .provider-badge { color: var(--accent-green); }
+.status-changed .provider-badge { color: var(--accent-amber); }
+.status-error .provider-badge { color: var(--accent-red); }
+.price-movement-summary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 2rem;
+}
+.price-movement-title {
+  font-family: var(--font-mono);
+  color: var(--text-bright);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.65rem;
+}
+.price-movement-title .outcome {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.price-movement-title .outcome::before {
+  content: "· ";
+  color: var(--text-dim);
+}
+.price-higher { color: var(--accent-red); }
+.price-lower { color: var(--accent-green); }
+.price-mixed { color: var(--accent-amber); }
+.price-coverage { color: var(--accent-blue); }
+.price-movement-headlines {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+.price-headline {
+  background: var(--bg-table-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font-family: var(--font-mono);
+  min-width: 0;
+}
+.price-headline-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.price-headline-model {
+  display: block;
+  color: var(--text-bright);
+  font-size: 0.85rem;
+  margin-top: 0.15rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-field {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-values {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.3rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-unit {
+  color: var(--text-dim);
+  margin-left: 0.3rem;
+}
+.price-headline-figures {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.1rem;
+}
+.price-headline-delta {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.price-headline-pct {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.price-movement-tallies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 2rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.price-tally-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.price-tally-label {
+  color: var(--text-bright);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-right: 0.1rem;
+}
+.price-tally-chip {
+  background: var(--bg-table-alt);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
+}
+.price-movement-models {
+  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+  padding-top: 0.55rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.price-movement-models summary {
+  cursor: pointer;
+  color: var(--text);
+}
+.price-movement-model-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem 1.5rem;
+  margin-top: 0.75rem;
+}
+.price-movement-group-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 0.3rem;
+}
+.price-movement-model {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+.price-movement-model .price-movement-provider {
+  flex: 0 0 auto;
+  min-width: 90px;
+}
+.price-movement-provider { color: var(--text-dim); }
+.price-movement-model code {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.date-heading {
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  color: var(--text-bright);
+  margin: 1.5rem 0 0.75rem 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.provider-section {
+  margin-bottom: 2.5rem;
+}
+.provider-section h2 {
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  color: var(--text-bright);
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+}
+.provider-id {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 0.9rem;
+}
+.baseline-info {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  margin-bottom: 1rem;
+}
+.error-msg {
+  background: var(--accent-red-dim);
+  color: var(--accent-red);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+h3 {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 1.25rem 0 0.5rem 0;
+  font-weight: 600;
+}
+.model-list {
+  list-style: none;
+  padding-left: 0;
+}
+.model-list li {
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  margin-bottom: 0.2rem;
+}
+.added-list li {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+}
+.removed-list li {
+  background: var(--accent-red-dim);
+  color: var(--accent-red);
+}
+.model-list .display-name {
+  color: var(--text-dim);
+  font-family: var(--font-body);
+}
+.model-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+.model-card:target {
+  border-color: var(--accent-amber);
+  animation: card-landing 1.8s ease-out 1;
+}
+@keyframes card-landing {
+  from { background: var(--accent-amber-dim); }
+  to { background: var(--bg-card); }
+}
+/* The landing flash is a nicety; the amber border already says "you are here".
+   A reader who has asked the OS to reduce motion keeps the border and loses
+   the 1.8s fade. */
+@media (prefers-reduced-motion: reduce) {
+  .model-card:target { animation: none; }
+}
+.model-card-header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card-hover);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.model-card-header .hidden-count,
+.model-card-header .card-back {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.model-card-header .card-back { text-decoration: none; }
+.model-card-header .card-back:hover { color: var(--text-bright); }
+.model-card-header .hidden-count + .card-back { margin-left: 0; }
+a.model-link { color: inherit; text-decoration: none; }
+a.model-link code {
+  text-decoration: underline dotted var(--border-accent);
+  text-underline-offset: 0.18em;
+}
+a.model-link:hover code {
+  color: var(--text-bright);
+  text-decoration-color: var(--text-bright);
+}
+.price-headline a.model-link { display: block; }
+.model-card-header code {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--accent-amber);
+  font-weight: 600;
+}
+.model-card-header .display-name {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.bulk-change-card {
+  border-left: 3px solid var(--accent-amber);
+}
+.bulk-models, .summary-models {
+  padding: 0.55rem 1rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.bulk-models summary, .summary-models summary {
+  cursor: pointer;
+  color: var(--text);
+}
+.bulk-model-list, .summary-model-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.25rem 1rem;
+  margin-top: 0.6rem;
+}
+.bulk-model-list code, .summary-model-list code {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.change-category,
+.card-table-wrap {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.card-table-wrap {
+  overflow-x: auto;
+}
+.change-category:last-child,
+.card-table-wrap:last-child {
+  border-bottom: none;
+}
+.category-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+}
+.change-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.change-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.change-table td {
+  padding: 0.4rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  vertical-align: top;
+}
+.change-table tr:nth-child(even) td {
+  background: var(--bg-table-alt);
+}
+.field-name { color: var(--text); }
+td.old-val { color: var(--text-dim); }
+td.new-val { color: var(--text-bright); }
+td.change-delta { font-weight: 600; }
+/* The `changes` table's Change cell takes its colour from the `sem-*` rules
+   below, the same ones the scan card's delta and percent cells take theirs
+   from. The six `delta-increase`/`delta-decrease`/`delta-neutral`/
+   `delta-price-*` rules that used to sit here are deleted, not merely unused:
+   they were a second colour vocabulary keyed on DIRECTION, and leaving them in
+   the stylesheet would leave the next renderer a working way to paint a bigger
+   context window green. */
+.card-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.card-table col.col-category { width: 7.5rem; }
+.card-table col.col-arrow { width: 1.25rem; }
+.card-table col.col-old,
+.card-table col.col-new { width: 7rem; }
+.card-table col.col-unit { width: 2.75rem; }
+.card-table col.col-delta { width: 7rem; }
+.card-table col.col-pct { width: 5.5rem; }
+.card-table td {
+  padding: 0.35rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  vertical-align: top;
+  border-top: 1px solid transparent;
+}
+.card-table tr.row-alt td {
+  background: var(--bg-table-alt);
+}
+.card-table tr.group-start td {
+  border-top: 1px solid var(--border-accent);
+}
+.card-table tr:first-child td {
+  border-top: 1px solid transparent;
+}
+.card-table td.old-val,
+.card-table td.new-val,
+.card-table td.delta,
+.card-table td.pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.card-table td.num,
+.card-table td.delta,
+.card-table td.pct {
+  white-space: nowrap;
+}
+.card-table td.old-val,
+.card-table td.new-val {
+  overflow-wrap: break-word;
+}
+.card-table td.arrow,
+.card-table td.unit {
+  color: var(--text-dim);
+}
+.card-table td.delta,
+.card-table td.pct {
+  font-weight: 600;
+}
+.card-table td.cat-chip {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+.card-table tr.list-members td {
+  border-top: 1px solid transparent;
+  padding-top: 0;
+}
+.card-table tr.raw-line { display: none; }
+body:has(#show-raw:checked) .card-table tr.raw-line { display: table-row; }
+/* Structural, so it covers the leading spacer cell too: without `padding-top`
+   on BOTH cells the empty first column would set a taller row than the values
+   it sits beside. */
+.card-table tr.raw-line td {
+  border-top: 1px solid transparent;
+  padding-top: 0;
+}
+/* Presentational, and scoped to the cell that actually holds the text. The
+   point of R3 is a value you can drag-select and paste, so the class naming
+   that cell is the class carrying its rule rather than a bare test hook. */
+.card-table tr.raw-line td.raw-values {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  user-select: text;
+}
+td.sem-cost-up { color: var(--accent-red); }
+td.sem-cost-down { color: var(--accent-green); }
+td.sem-capacity { color: var(--accent-amber); }
+td.sem-capability { color: var(--accent-blue); }
+td.sem-capability-off { color: var(--text-dim); }
+td.sem-coverage { color: var(--accent-blue); }
+td.sem-neutral { color: var(--text-dim); }
+.list-diff {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  padding: 0.35rem 0;
+}
+/* Membership takes `capability`'s pair -- blue for a member arriving, dim for
+   one leaving -- matching the `sem-capability` / `sem-capability-off` cells
+   beside it, because a list gaining `logit_bias` IS a capability change. The
+   `+` and `−` glyphs already carry the add-vs-remove distinction, so losing the
+   green/red contrast costs nothing.
+
+   ONE rule, global. Fix pass 3, blocker 1(b): the blue/dim pair used to be a
+   `.card-table` override sitting above a green/red global, so the same
+   membership change read blue inside a model card and GREEN inside a
+   bulk-change card in the same document -- the same green the Price Movement
+   card two screens up uses for a price cut -- and green/red again in the
+   `changes` report's standalone list-diff block. Scoping the fix per card type
+   would have meant a third copy of one decision and would still have left the
+   `changes` report out; there is no card type or document for which green here
+   is correct, so the global rule carries the colour and no override exists to
+   drift from it. */
+.list-added { color: var(--accent-blue); }
+.list-removed { color: var(--text-dim); }
+.list-count { color: var(--text-dim); font-size: 0.8rem; }
+.secondary-changes {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+}
+.secondary-changes > summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.secondary-changes > summary:hover {
+  color: var(--text-bright);
+}
+.secondary-changes .provider-section {
+  margin-top: 1rem;
+}
+.summary-section {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+}
+.secondary-changes .summary-section {
+  margin-top: 1.5rem;
+}
+.summary-section h2,
+.summary-section > summary {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  color: var(--text-bright);
+  margin-bottom: 1rem;
+}
+.summary-section > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.summary-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 2px solid var(--border-accent);
+  background: var(--bg-card);
+}
+.summary-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+.summary-table:not(.grouped) tr:nth-child(even) td {
+  background: var(--bg-table-alt);
+}
+.summary-table.grouped tr.row-alt td {
+  background: var(--bg-table-alt);
+}
+.summary-table tr.summary-group td {
+  background: var(--bg-card);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding-top: 0.7rem;
+}
+.summary-table .summary-models {
+  padding: 0;
+}
+footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}"""
+
+_EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Sentinel — @@GENERATED_AT_HUMAN@@</title>
+<style>
+@@STYLE_BLOCK@@
+</style>
+</head>
+<body>
+<header>
+  <h1>Model Sentinel <span class="count">— 7 of 7 models changed · 1 field change squelched</span></h1>
+  <div class="meta">@@GENERATED_AT_HUMAN@@ &middot; scan</div>
+  <label class="raw-toggle"><input type="checkbox" id="show-raw"> Show raw values</label>
+</header>
+<div class="provider-cards">
+  <div class="provider-card status-changed"><div class="provider-name">Synth Provider</div><div class="provider-stats">7 models</div><div class="provider-badge">7 changes</div></div>
+</div>
+
+<section class="price-movement-summary" id="price-movement"><div class="price-movement-title">PRICE MOVEMENT <span class="outcome price-higher">higher — 1 up</span></div><div class="price-movement-headlines"><div class="price-headline"><div class="price-headline-label price-higher">Biggest increase</div><a class="model-link" href="#m-synth-model-core"><code class="price-headline-model">synth/model-core</code></a><div class="price-headline-field" title="pricing.completion">Output</div><div class="price-headline-values">$2.00 → $3.50<span class="price-headline-unit">/1M</span></div><div class="price-headline-figures"><span class="price-headline-delta price-higher">+$1.50</span><span class="price-headline-pct price-higher">↑ 75.0%</span></div></div></div><div class="price-movement-tallies"><div class="price-tally-group"><span class="price-tally-label">1 model</span><span class="price-tally-chip price-higher">↑ 1 higher</span></div><div class="price-tally-group"><span class="price-tally-label">4 price fields</span><span class="price-tally-chip price-higher">↑ 2</span><span class="price-tally-chip price-coverage">+1 added</span><span class="price-tally-chip price-coverage">−1 removed</span></div></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher only — 1</div><div class="price-movement-model"><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></div></div></div></details></section>
+
+<section class="provider-section"><h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>
+<h3>Changed</h3>
+<div class="model-card" id="m-synth-model-core">
+<div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><span class="hidden-count" title="1 squelched">+1 hidden</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
+<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr class="raw-line"><td></td><td class="raw-values" colspan="7">— → 5e-08</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+<tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">9e-08 → —</td></tr>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val num">131,072</td><td class="arrow">→</td><td class="new-val num">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
+<tr class="group-start row-alt"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
+<tr class="list-members row-alt"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ logit_bias</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Capabilities</td><td class="field-name" title="reasoning.default_enabled">Reasoning default</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
+<tr class="group-start row-alt"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
+<tr><td></td><td class="field-name" title="expiration_date">Expiration date</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">2030-12-31</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
+</tbody></table></div>
+</div></section>
+<details class="secondary-changes"><summary>Other changes — 5 models with no price change · 2 report-detail rollups · the Change Summary</summary><section class="provider-section"><div class="model-card" id="m-synth-model-limit-add">
+<div class="model-card-header"><code>synth/model-limit-add</code><span class="display-name">Synth Model Limit Add</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num">16,384</td><td class="unit">tok</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card" id="m-synth-model-limit-remove">
+<div class="model-card-header"><code>synth/model-limit-remove</code><span class="display-name">Synth Model Limit Remove</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val num">8,192</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">tok</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card" id="m-synth-model-moderation-added">
+<div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card" id="m-synth-model-moderation-off">
+<div class="model-card-header"><code>synth/model-moderation-off</code><span class="display-name">Synth Model Moderation Off</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">on</td><td class="arrow">→</td><td class="new-val">off</td><td class="unit"></td><td class="delta sem-capability-off">disabled</td><td class="pct sem-capability-off"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card" id="m-synth-model-temp-toggle">
+<div class="model-card-header"><code>synth/model-temp-toggle</code><span class="display-name">Synth Model Temp Toggle</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="default_parameters.temperature">Temperature</td><td class="old-val num">0</td><td class="arrow">→</td><td class="new-val num">1</td><td class="unit"></td><td class="delta sem-neutral">+1</td><td class="pct sem-neutral"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card">
+<div class="model-card-header"><code>squelched</code><span class="display-name">report detail summary</span></div>
+<div class="change-category"><div class="category-label">squelched</div>
+<div class="list-diff">1 field change across 1 model</div>
+<div class="list-count">patterns: benchmarks, benchmarks.*</div>
+<div class="list-count">models: synth/model-core</div>
+</div></div>
+<div class="model-card">
+<div class="model-card-header"><code>no-op</code><span class="display-name">report detail summary</span></div>
+<div class="change-category"><div class="category-label">no-op</div>
+<div class="list-diff">1 field change across 1 model</div>
+<div class="list-count">models: synth/model-temp-null</div>
+</div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>$0.09 → — /1M (removed)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td></tr>
+<tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
+<tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384 tok (added)</td></tr>
+<tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → — tok (removed)</td></tr>
+<tr class="summary-group"><td colspan="3">Parameters</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
+<tr class="summary-group"><td colspan="3">Capabilities</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Reasoning default</td><td>off → on (enabled)</td></tr>
+<tr class="summary-group"><td colspan="3">Other</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on (enabled)</td></tr>
+<tr class="row-alt"><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on (added)</td></tr>
+<tr><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off (disabled)</td></tr>
+<tr class="row-alt"><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr>
+<tr class="summary-group"><td colspan="3">Squelched</td></tr>
+<tr><td><details class="summary-models"><summary>1 models</summary><div class="summary-model-list"><code>synth/model-core</code></div></details></td><td>benchmarks, benchmarks.*</td><td>1 field change hidden by report detail policy</td></tr></tbody></table></details></details>
+<footer>Generated by Model Sentinel</footer>
+</body>
+</html>"""
+
+EXPECTED_HTML = _EXPECTED_HTML_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN).replace(
+    STYLE_TOKEN, _EXPECTED_HTML_STYLE_BLOCK
+)
+
+
+_EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Sentinel — @@GENERATED_AT_HUMAN@@</title>
+<style>
+@@STYLE_BLOCK@@
+</style>
+</head>
+<body>
+<header>
+  <h1>Model Sentinel <span class="count">— 7 of 7 models changed</span></h1>
+  <div class="meta">@@GENERATED_AT_HUMAN@@ &middot; scan</div>
+  <label class="raw-toggle"><input type="checkbox" id="show-raw" checked> Show raw values</label>
+</header>
+<div class="provider-cards">
+  <div class="provider-card status-changed"><div class="provider-name">Synth Provider</div><div class="provider-stats">7 models</div><div class="provider-badge">7 changes</div></div>
+</div>
+
+<section class="price-movement-summary" id="price-movement"><div class="price-movement-title">PRICE MOVEMENT <span class="outcome price-higher">higher — 1 up</span></div><div class="price-movement-headlines"><div class="price-headline"><div class="price-headline-label price-higher">Biggest increase</div><a class="model-link" href="#m-synth-model-core"><code class="price-headline-model">synth/model-core</code></a><div class="price-headline-field" title="pricing.completion">Output</div><div class="price-headline-values">$2.00 → $3.50<span class="price-headline-unit">/1M</span></div><div class="price-headline-figures"><span class="price-headline-delta price-higher">+$1.50</span><span class="price-headline-pct price-higher">↑ 75.0%</span></div></div></div><div class="price-movement-tallies"><div class="price-tally-group"><span class="price-tally-label">1 model</span><span class="price-tally-chip price-higher">↑ 1 higher</span></div><div class="price-tally-group"><span class="price-tally-label">4 price fields</span><span class="price-tally-chip price-higher">↑ 2</span><span class="price-tally-chip price-coverage">+1 added</span><span class="price-tally-chip price-coverage">−1 removed</span></div></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher only — 1</div><div class="price-movement-model"><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></div></div></div></details></section>
+
+<section class="provider-section"><h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>
+<h3>Changed</h3>
+<div class="model-card" id="m-synth-model-core">
+<div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
+<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr class="raw-line"><td></td><td class="raw-values" colspan="7">— → 5e-08</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+<tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">9e-08 → —</td></tr>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val num">131,072</td><td class="arrow">→</td><td class="new-val num">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
+<tr class="group-start row-alt"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
+<tr class="list-members row-alt"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ logit_bias</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Capabilities</td><td class="field-name" title="reasoning.default_enabled">Reasoning default</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
+<tr class="group-start row-alt"><td class="cat-chip">Benchmarks</td><td class="field-name" title="benchmarks.example_suite">Example suite</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 1)</td><td class="pct"></td></tr>
+<tr class="list-members row-alt"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ {&quot;score&quot;: 2}</div><div class="list-removed">&nbsp;&nbsp;− {&quot;score&quot;: 1}</div></td></tr>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="expiration_date">Expiration date</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">2030-12-31</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
+</tbody></table></div>
+</div></section>
+<details class="secondary-changes"><summary>Other changes — 5 models with no price change · 1 report-detail rollup · the Change Summary</summary><section class="provider-section"><div class="model-card" id="m-synth-model-limit-add">
+<div class="model-card-header"><code>synth/model-limit-add</code><span class="display-name">Synth Model Limit Add</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num">16,384</td><td class="unit">tok</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card" id="m-synth-model-limit-remove">
+<div class="model-card-header"><code>synth/model-limit-remove</code><span class="display-name">Synth Model Limit Remove</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val num">8,192</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">tok</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card" id="m-synth-model-moderation-added">
+<div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card" id="m-synth-model-moderation-off">
+<div class="model-card-header"><code>synth/model-moderation-off</code><span class="display-name">Synth Model Moderation Off</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">on</td><td class="arrow">→</td><td class="new-val">off</td><td class="unit"></td><td class="delta sem-capability-off">disabled</td><td class="pct sem-capability-off"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card" id="m-synth-model-temp-toggle">
+<div class="model-card-header"><code>synth/model-temp-toggle</code><span class="display-name">Synth Model Temp Toggle</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="default_parameters.temperature">Temperature</td><td class="old-val num">0</td><td class="arrow">→</td><td class="new-val num">1</td><td class="unit"></td><td class="delta sem-neutral">+1</td><td class="pct sem-neutral"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card">
+<div class="model-card-header"><code>no-op</code><span class="display-name">report detail summary</span></div>
+<div class="change-category"><div class="category-label">no-op</div>
+<div class="list-diff">1 field change across 1 model</div>
+<div class="list-count">models: synth/model-temp-null</div>
+</div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>$0.09 → — /1M (removed)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td></tr>
+<tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
+<tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384 tok (added)</td></tr>
+<tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → — tok (removed)</td></tr>
+<tr class="summary-group"><td colspan="3">Parameters</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
+<tr class="summary-group"><td colspan="3">Capabilities</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Reasoning default</td><td>off → on (enabled)</td></tr>
+<tr class="summary-group"><td colspan="3">Benchmarks</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Example suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
+<tr class="summary-group"><td colspan="3">Other</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on (enabled)</td></tr>
+<tr><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on (added)</td></tr>
+<tr class="row-alt"><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off (disabled)</td></tr>
+<tr><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr></tbody></table></details></details>
+<footer>Generated by Model Sentinel</footer>
+</body>
+</html>"""
+
+EXPECTED_HTML_DETAIL_ALL = _EXPECTED_HTML_DETAIL_ALL_TEMPLATE.replace(HUMAN_TOKEN, _GENERATED_AT_HUMAN).replace(
+    STYLE_TOKEN, _EXPECTED_HTML_STYLE_BLOCK
+)
+
+
+_EXPECTED_JSON_TEMPLATE = """{
+  "command": "scan",
+  "generated_at": "@@GENERATED_AT_ISO@@",
+  "providers": [
+    {
+      "added": [],
+      "baseline": null,
+      "baseline_message": null,
+      "changed": [
+        {
+          "display_name": "Synth Model Core",
+          "field_changes": [
+            {
+              "field_name": "pricing.completion",
+              "new_value": 3.5e-06,
+              "old_value": 2e-06
+            },
+            {
+              "field_name": "pricing.input_cache_read",
+              "new_value": 5e-08,
+              "old_value": null
+            },
+            {
+              "field_name": "pricing.input_cache_write",
+              "new_value": null,
+              "old_value": 9e-08
+            },
+            {
+              "field_name": "top_provider.context_length",
+              "new_value": 262144,
+              "old_value": 131072
+            },
+            {
+              "field_name": "top_provider.is_moderated",
+              "new_value": true,
+              "old_value": false
+            },
+            {
+              "field_name": "reasoning.default_enabled",
+              "new_value": 1,
+              "old_value": 0
+            },
+            {
+              "field_name": "supported_parameters",
+              "new_value": [
+                "tools",
+                "logit_bias"
+              ],
+              "old_value": [
+                "tools"
+              ]
+            },
+            {
+              "field_name": "pricing.overrides",
+              "new_value": [
+                {
+                  "completion": "0.000005",
+                  "min_prompt_tokens": 200000
+                }
+              ],
+              "old_value": [
+                {
+                  "completion": "0.000004",
+                  "min_prompt_tokens": 200000
+                }
+              ]
+            },
+            {
+              "field_name": "expiration_date",
+              "new_value": "2030-12-31",
+              "old_value": null
+            },
+            {
+              "field_name": "benchmarks.example_suite",
+              "new_value": [
+                {
+                  "score": 2
+                }
+              ],
+              "old_value": [
+                {
+                  "score": 1
+                }
+              ]
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-core"
+        },
+        {
+          "display_name": "Synth Model Limit Add",
+          "field_changes": [
+            {
+              "field_name": "top_provider.max_completion_tokens",
+              "new_value": 16384,
+              "old_value": null
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-limit-add"
+        },
+        {
+          "display_name": "Synth Model Limit Remove",
+          "field_changes": [
+            {
+              "field_name": "top_provider.max_completion_tokens",
+              "new_value": null,
+              "old_value": 8192
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-limit-remove"
+        },
+        {
+          "display_name": "Synth Model Moderation Off",
+          "field_changes": [
+            {
+              "field_name": "top_provider.is_moderated",
+              "new_value": false,
+              "old_value": true
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-moderation-off"
+        },
+        {
+          "display_name": "Synth Model Temp Toggle",
+          "field_changes": [
+            {
+              "field_name": "default_parameters.temperature",
+              "new_value": 1,
+              "old_value": 0
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-temp-toggle"
+        },
+        {
+          "display_name": "Synth Model Temp Null",
+          "field_changes": [
+            {
+              "field_name": "default_parameters.temperature",
+              "new_value": null,
+              "old_value": null
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-temp-null"
+        },
+        {
+          "display_name": "Synth Model Moderation Added",
+          "field_changes": [
+            {
+              "field_name": "top_provider.is_moderated",
+              "new_value": true,
+              "old_value": null
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-moderation-added"
+        }
+      ],
+      "current_count": 7,
+      "error_message": null,
+      "provider_id": "synthprov",
+      "provider_label": "Synth Provider",
+      "removed": [],
+      "saved": false,
+      "scrape_id": null,
+      "status": "success"
+    }
+  ]
+}"""
+
+EXPECTED_JSON = _EXPECTED_JSON_TEMPLATE.replace(ISO_TOKEN, _GENERATED_AT_ISO)
+
+
+_EXPECTED_JSON_DETAIL_ALL_TEMPLATE = """{
+  "command": "scan",
+  "generated_at": "@@GENERATED_AT_ISO@@",
+  "providers": [
+    {
+      "added": [],
+      "baseline": null,
+      "baseline_message": null,
+      "changed": [
+        {
+          "display_name": "Synth Model Core",
+          "field_changes": [
+            {
+              "field_name": "pricing.completion",
+              "new_value": 3.5e-06,
+              "old_value": 2e-06
+            },
+            {
+              "field_name": "pricing.input_cache_read",
+              "new_value": 5e-08,
+              "old_value": null
+            },
+            {
+              "field_name": "pricing.input_cache_write",
+              "new_value": null,
+              "old_value": 9e-08
+            },
+            {
+              "field_name": "top_provider.context_length",
+              "new_value": 262144,
+              "old_value": 131072
+            },
+            {
+              "field_name": "top_provider.is_moderated",
+              "new_value": true,
+              "old_value": false
+            },
+            {
+              "field_name": "reasoning.default_enabled",
+              "new_value": 1,
+              "old_value": 0
+            },
+            {
+              "field_name": "supported_parameters",
+              "new_value": [
+                "tools",
+                "logit_bias"
+              ],
+              "old_value": [
+                "tools"
+              ]
+            },
+            {
+              "field_name": "pricing.overrides",
+              "new_value": [
+                {
+                  "completion": "0.000005",
+                  "min_prompt_tokens": 200000
+                }
+              ],
+              "old_value": [
+                {
+                  "completion": "0.000004",
+                  "min_prompt_tokens": 200000
+                }
+              ]
+            },
+            {
+              "field_name": "expiration_date",
+              "new_value": "2030-12-31",
+              "old_value": null
+            },
+            {
+              "field_name": "benchmarks.example_suite",
+              "new_value": [
+                {
+                  "score": 2
+                }
+              ],
+              "old_value": [
+                {
+                  "score": 1
+                }
+              ]
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-core"
+        },
+        {
+          "display_name": "Synth Model Limit Add",
+          "field_changes": [
+            {
+              "field_name": "top_provider.max_completion_tokens",
+              "new_value": 16384,
+              "old_value": null
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-limit-add"
+        },
+        {
+          "display_name": "Synth Model Limit Remove",
+          "field_changes": [
+            {
+              "field_name": "top_provider.max_completion_tokens",
+              "new_value": null,
+              "old_value": 8192
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-limit-remove"
+        },
+        {
+          "display_name": "Synth Model Moderation Off",
+          "field_changes": [
+            {
+              "field_name": "top_provider.is_moderated",
+              "new_value": false,
+              "old_value": true
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-moderation-off"
+        },
+        {
+          "display_name": "Synth Model Temp Toggle",
+          "field_changes": [
+            {
+              "field_name": "default_parameters.temperature",
+              "new_value": 1,
+              "old_value": 0
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-temp-toggle"
+        },
+        {
+          "display_name": "Synth Model Temp Null",
+          "field_changes": [
+            {
+              "field_name": "default_parameters.temperature",
+              "new_value": null,
+              "old_value": null
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-temp-null"
+        },
+        {
+          "display_name": "Synth Model Moderation Added",
+          "field_changes": [
+            {
+              "field_name": "top_provider.is_moderated",
+              "new_value": true,
+              "old_value": null
+            }
+          ],
+          "kind": "changed",
+          "provider_model_id": "synth/model-moderation-added"
+        }
+      ],
+      "current_count": 7,
+      "error_message": null,
+      "provider_id": "synthprov",
+      "provider_label": "Synth Provider",
+      "removed": [],
+      "saved": false,
+      "scrape_id": null,
+      "status": "success"
+    }
+  ]
+}"""
+
+EXPECTED_JSON_DETAIL_ALL = _EXPECTED_JSON_DETAIL_ALL_TEMPLATE.replace(ISO_TOKEN, _GENERATED_AT_ISO)
+
+
+# ---------------------------------------------------------------------------
+# Change Summary: what the qualifier did, and did not, do to the section.
+#
+# `_summary_entry_sort_key` sorts on the DISPLAYED field text, so any change to
+# how a field is spelled reorders this section. Task 5 moved it once (raw paths
+# -> registry labels) and this pass moves it again (labels -> labels with
+# qualifiers). Reordering is acceptable; gaining, losing or duplicating a row
+# is not, and an ordered golden alone cannot tell those apart at a glance.
+#
+# The two constants below split each row at the only cell a qualifier can
+# touch. `_SUMMARY_ROW_SHAPES` is the row multiset with the Field cell removed;
+# `_SUMMARY_FIELD_CELLS` is the Field cells alone, of which exactly one entry
+# differs from b94a9d3 -- the whole intent of the qualifier pass.
+#
+# Task 7 fix pass 1 moved `_SUMMARY_ROW_SHAPES` for the first time since
+# b94a9d3, and deliberately: five Change cells spelled an absent side `null`
+# while the model card a few inches above spelled the SAME absence `—`. The
+# HTML document now says `—` in both places. Text, markdown and JSON still
+# print `null` and their goldens did not move -- `_SummaryEntry` feeds
+# `_build_html_summary_table` and nothing else.
+# ---------------------------------------------------------------------------
+
+# Task 9 moved `_SUMMARY_ROW_SHAPES` a second time, and only by REMOVING two
+# cells from every entry: E6 lifted the Category out of each row into a group
+# heading over its rows, and E5 dropped the Provider column because this
+# fixture has exactly one provider and a column repeating one label says
+# nothing. No Change cell moved -- the last `<td>` of every shape below is
+# character-for-character what it was -- which is the evidence that the tiering
+# pass did not disturb what the summary SAYS, only how often it repeats itself.
+#
+# Task 10 (N1) moved it a THIRD time, and only in the Model cell: a row whose
+# model card is in TIER 1 now links to it. `synth/model-core` is the fixture's
+# only tier-1 card -- it is the only model whose price moved -- so it is the
+# only shape below that gained a link. The five tier-2 models keep a plain
+# `<code>`, which is N1's hard constraint stated in this module's own data: a
+# fragment pointing inside a closed `<details>` is not reliably navigable, so
+# the Change Summary must not emit one. The Change cells are again
+# character-for-character unchanged.
+_SUMMARY_CORE = (
+    '<td><a class="model-link" href="#m-synth-model-core">'
+    "<code>synth/model-core</code></a></td>"
+)
+
+# Fix pass 3 (blocker 2) rewrote every Change cell below. They were built by
+# splitting the TEXT renderer's line, so a price row led with the provider's
+# raw per-token value -- the exact presentation A1 exists to demote, printed
+# unconditionally in the concise report's index while the card three inches
+# above showed `$2.00`. They are now composed from `RenderedChange` in the
+# card's own column order, `old → new unit (delta, pct)`, which also brings in
+# the unit (`/1M`, `tok`), the absolute delta on a price row, and the
+# `added`/`removed`/`enabled`/`disabled` pill the card's delta column carries.
+# The list and the plain-scalar rows are unchanged.
+_SUMMARY_ROW_SHAPES = (
+    f"{_SUMMARY_CORE}<td>— → $0.05 /1M (added)</td>",
+    f"{_SUMMARY_CORE}<td>$0.09 → — /1M (removed)</td>",
+    f"{_SUMMARY_CORE}<td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td>",
+    f"{_SUMMARY_CORE}<td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td>",
+    f"{_SUMMARY_CORE}<td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td>",
+    "<td><code>synth/model-limit-add</code></td><td>— → 16,384 tok (added)</td>",
+    "<td><code>synth/model-limit-remove</code></td><td>8,192 → — tok (removed)</td>",
+    f"{_SUMMARY_CORE}<td>+logit_bias (1 → 2)</td>",
+    f"{_SUMMARY_CORE}<td>off → on (enabled)</td>",
+    f"{_SUMMARY_CORE}<td>— → 2030-12-31</td>",
+    f"{_SUMMARY_CORE}<td>off → on (enabled)</td>",
+    "<td><code>synth/model-moderation-added</code></td><td>— → on (added)</td>",
+    "<td><code>synth/model-moderation-off</code></td><td>on → off (disabled)</td>",
+    "<td><code>synth/model-temp-toggle</code></td><td>0 → 1 (+1)</td>",
+    '<td><details class="summary-models">'
+    '<summary>1 models</summary><div class="summary-model-list">'
+    "<code>synth/model-core</code></div></details></td>"
+    "<td>1 field change hidden by report detail policy</td>",
+)
+
+_SUMMARY_FIELD_CELLS = (
+    "Cache read",
+    "Cache write",
+    "Output",
+    # The ONLY cell this pass changed. Under b94a9d3 this read "Output" -- two
+    # rows for one model, both spelled "Output", one the base rate and one the
+    # 200K-token tier, with nothing in the report to say which was which.
+    "Output (min_prompt_tokens=200000)",
+    "Context length",
+    "Max output",
+    "Max output",
+    "Supported parameters",
+    "Reasoning default",
+    "Expiration date",
+    "Moderated",
+    "Moderated",
+    "Moderated",
+    "Temperature",
+    "benchmarks, benchmarks.*",
+)
+
+
+_SUMMARY_DATA_ROW_RE = re.compile(r"<tr([^>]*)>(.*?)</tr>", re.S)
+
+
+def _summary_rows(html: str) -> list[str]:
+    """The DATA `<tr>` bodies of the Change Summary, in document order.
+
+    E6 turned the section into a collapsed `<details>` and gave each category a
+    group heading row, and the zebra-stripe fix gave every other DATA row a
+    `row-alt` class. Both mean a row's opening tag is no longer reliably the
+    exact string `"<tr>"`, so this used to be `body.split("<tr>")` and silently
+    dropped every striped row -- half the table -- while the caller still read
+    as though it had them all. Matched as a tag with any attributes instead,
+    with heading rows discarded BY NAME rather than by relying on their markup
+    being unsplittable. The caller's count assertion keeps that honest.
+    """
+    start = html.index('<details class="summary-section">')
+    section = html[start : html.index("</details>", html.index("</tbody>", start))]
+    body = section[section.index("<tbody>") : section.index("</tbody>")]
+    return [
+        match.group(2)
+        for match in _SUMMARY_DATA_ROW_RE.finditer(body)
+        if "summary-group" not in match.group(1)
+    ]
+
+
+def _split_summary_row(row: str) -> tuple[str, str]:
+    """Return `(row_without_field_cell, field_cell)` for one summary row.
+
+    Three `<td>`s since E5/E6 dropped the Category and Provider columns from
+    this single-provider report (they were two, then three, before). The Field
+    cell is the second and is the only one a qualifier can reach.
+    """
+    cells = ["<td>" + cell for cell in row.split("<td>")[1:]]
+    assert len(cells) == 3, row
+    field_cell = cells[1]
+    assert field_cell.startswith("<td>") and field_cell.endswith("</td>"), field_cell
+    return "".join(cells[:1] + cells[2:]), field_cell[len("<td>") : -len("</td>")]
+
+
+def test_qualifier_change_summary_is_a_pure_permutation() -> None:
+    """The section still holds the same 15 rows; only order and one cell moved.
+
+    Checked as a MULTISET, not by reading the ordered golden: `sorted()` on
+    both sides, so a row that was silently duplicated or dropped by the re-sort
+    fails here even though the ordered golden was updated wholesale.
+
+    `_SUMMARY_ROW_SHAPES` deliberately excludes the Field cell, which makes it
+    invariant across this pass -- if anything OTHER than the field label
+    changed, this assertion is what catches it.
+    """
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="html",
+        provider_results=characterization_scan_result(),
+    )
+    rows = _summary_rows(report)
+    assert len(rows) == 15
+    assert len(_SUMMARY_ROW_SHAPES) == 15
+    assert len(_SUMMARY_FIELD_CELLS) == 15
+
+    shapes, field_cells = zip(*(_split_summary_row(row) for row in rows))
+    assert sorted(shapes) == sorted(_SUMMARY_ROW_SHAPES)
+    assert sorted(field_cells) == sorted(_SUMMARY_FIELD_CELLS)
+
+
+def test_qualifier_is_what_reordered_the_change_summary() -> None:
+    """Names the cause of the reorder, so a future reorder is not mistaken for it.
+
+    The tiered row sorts after the base row for exactly one reason: the sort
+    key is the displayed field text and `"output"` is a prefix of
+    `"output (min_prompt_tokens=200000)"`. Both rows belong to the same model
+    and the same category, so nothing else in the key can separate them.
+    """
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="html",
+        provider_results=characterization_scan_result(),
+    )
+    field_cells = [_split_summary_row(row)[1] for row in _summary_rows(report)]
+    assert field_cells.index("Output") < field_cells.index("Output (min_prompt_tokens=200000)")
+    assert "Output".casefold() < "Output (min_prompt_tokens=200000)".casefold()
+
+
+def _sub_cent_price_scan_result() -> list[ProviderScanResult]:
+    """One model, one price change, deliberately below cent resolution.
+
+    Separate from `characterization_scan_result()` ON PURPOSE. Every price in
+    that fixture resolves at two decimal places, so the Task 6 precision rule
+    left all eight of its goldens byte-identical -- which is worth having, but
+    means the shared fixture cannot demonstrate the new rule at all. Adding a
+    sub-cent field to it would also have moved the JSON goldens (a new field
+    change is a new JSON entry), destroying the evidence that JSON is untouched.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-subcent",
+                    "Synth Model Subcent",
+                    (FieldChange("pricing.prompt", 0.00000015, 0.0000001425),),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1000000,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_sub_cent_precision_reaches_every_human_format() -> None:
+    """The shared precision is a property of `RenderedChange`, so it should
+    reach text, markdown and HTML without any per-renderer change. Verified,
+    not assumed.
+
+    `0.15` needs two decimal places on its own and renders at four because the
+    other operand needs four. Every human format must show BOTH operands at
+    four: a format that formatted one of them independently would print
+    `$0.15` here and pass every other test in this module.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_sub_cent_price_scan_result(),
+        )
+        assert "$0.1500" in report, format_name
+        assert "$0.1425" in report, format_name
+        # The replaced rule's spelling of the same pair: two places against
+        # four. Absent from every format, or the row is still magnitude-priced.
+        assert "$0.15 " not in report, format_name
+        # ...and absent in EVERY delimiter, not just the space-delimited one.
+        # `$0.1500` contains `$0.15`, so equal counts means every occurrence of
+        # `$0.15` is the head of a `$0.1500` and none is a bare two-place
+        # price. (The previous line's `"$0.196" not in report` was vacuous:
+        # this fixture's operands are 0.15 and 0.1425, so no implementation
+        # could ever emit 0.196.)
+        assert report.count("$0.15") == report.count("$0.1500"), format_name
+
+
+def test_sub_cent_precision_does_not_reach_json() -> None:
+    """JSON is the audit path: raw values, no formatted prices, ever.
+
+    The precision rule lives entirely in `RenderedChange`, and `_delta_to_json`
+    serialises `FieldChange` directly -- so no rounding can reach the machine-
+    readable output. Asserted on the absence of a dollar sign rather than on a
+    golden string, so any future formatted price leaking into JSON fails here.
+    """
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_sub_cent_price_scan_result(),
+    )
+    assert "$" not in report
+    assert "1.5e-07" in report
+    assert "1.425e-07" in report
+
+
+def _below_resolution_price_scan_result() -> list[ProviderScanResult]:
+    """A provider configured as if its raw prices were already per-1M.
+
+    `price_multiplier=1` is the misconfiguration this row exists for: per-TOKEN
+    values land unscaled in a per-1M column, where the four-place cap would
+    render both sides of a doubling as `$0.0000` -- twice telling the reader
+    the price is nothing. Separate fixture for the same reason as
+    `_sub_cent_price_scan_result` -- adding a field to the shared fixture would
+    move the JSON goldens.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-unscaled",
+                    "Synth Model Unscaled",
+                    (FieldChange("pricing.prompt", 0.000001, 0.000002),),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1,
+            price_divisor=1,
+        )
+    ]
+
+
+def _sentinel(format_name: str, text: str) -> str:
+    """A sentinel as the given format spells it.
+
+    HTML escapes the `<`, so a test that asserted the bare form would pass on
+    text and markdown and silently miss the HTML cell -- or, worse, be "fixed"
+    by emitting an unescaped `<` into a document, which is a rendering bug and
+    an injection hazard at once. Asserting the ESCAPED form in HTML is what
+    pins that the sentinel goes through `html.escape` like every other cell.
+    """
+    return text.replace("<", "&lt;") if format_name == "html" else text
+
+
+def test_a_price_below_the_columns_resolution_bounds_itself_in_every_format() -> None:
+    """The sentinel is a property of `RenderedChange`, so every renderer gets it.
+
+    Text and markdown are why this matters: the design note that "the tooltip
+    will carry exactness" is an HTML-only mitigation, unavailable in the two
+    formats a scheduled run actually mails out. All three human formats must
+    show a bound rather than the capped `$0.0000`, which claimed the price was
+    nothing -- and the raw per-token values stay beside it in every format, so
+    the misconfiguration tell survives in full.
+
+    JSON is asserted unchanged in the same test rather than a separate one, so
+    the human-format expectation and the audit-path expectation cannot drift.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_below_resolution_price_scan_result(),
+        )
+        # Pinned EXACTLY, per format. This assertion was `>= 2` until Task 7
+        # fix pass 1 (finding 5), which measured it: HTML carried FIVE and the
+        # `>=` had been absorbing the difference silently for the whole of
+        # Task 7. A bound that cannot fail is not a bound.
+        #
+        # text/markdown = 2: one line, `raw → raw ($old → $new / 1M, pct)`,
+        #   both price operands bounded and no delta term at all.
+        # html = 11: the card's `old-val`, `new-val` and `delta` cells (the
+        #   delta column is Task 7's, and it bounds too), plus the Change
+        #   Summary's row, plus Task 8's Price Movement headline panel, which
+        #   is a FOURTH home for this row -- it prints the same three bounded
+        #   figures (both operands and the delta) because this fixture's only
+        #   price move is also its biggest. One panel, not two: nothing here
+        #   got cheaper, so the decrease panel is omitted rather than rendered
+        #   empty. Task 10 (R1) added two more: each price cell's `title` now
+        #   ends `= <the cell's own display>`, so a bounded cell has a bounded
+        #   right-hand side (`1e-06 (1.0e-6) = <$0.0001`, which is the bound
+        #   restated, not a second claim). Fix pass 3 (blocker 2) added the
+        #   eleventh: the summary row used to be the text line's copy, with two
+        #   bounded operands and NO delta term; composed from `RenderedChange`
+        #   it now carries the delta column too, so it bounds three figures like
+        #   the card it indexes.
+        expected_sentinels = 11 if format_name == "html" else 2
+        assert report.count(_sentinel(format_name, "<$0.0001")) == expected_sentinels, format_name
+        # The false spelling, in every delimiter. `$0.0000` cannot appear at
+        # all here: no cell in this row is allowed to print a zero price.
+        assert "$0.0000" not in report, format_name
+        # The movement itself is still reported, and the raw per-token values
+        # survive in every format -- so the misconfiguration tell the hatch was
+        # built to preserve is preserved without it. NOTE the HTML card carries
+        # the raw in the price cell's `title` rather than in the cell text
+        # since Task 7 (A1); it is visible on hover, not at a glance, until R3's
+        # raw-value toggle lands.
+        assert "↑ 100.0%" in report, format_name
+        assert "1e-06" in report, format_name
+        assert "2e-06" in report, format_name
+
+    payload = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_below_resolution_price_scan_result(),
+    )
+    assert "$" not in payload
+    assert "<" not in payload
+    assert "1e-06" in payload
+    assert "2e-06" in payload
+
+
+def _vanishing_delta_price_scan_result() -> list[ProviderScanResult]:
+    """A row whose operands print at the cap but whose delta cannot.
+
+    `0.000124999 -> 0.000125001` both round to `$0.0001`, which is true of
+    each; the `2e-09` between them is what a four-place column cannot show, and
+    it used to print `+$0.00000` -- a delta asserting the difference between
+    the two prices is zero. Separate fixture for the same reason as the two
+    above -- adding a field to the shared fixture would move the JSON goldens
+    and destroy the evidence that JSON is untouched.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-vanishing",
+                    "Synth Model Vanishing",
+                    (FieldChange("pricing.prompt", 0.000124999, 0.000125001),),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_vanishing_delta_row_bounds_its_delta_in_every_human_format_but_not_json() -> None:
+    """The row whose operands print but whose movement cannot, through every renderer.
+
+    The hatch answered this row by dragging it out to nine places
+    (`$0.000124999 → $0.000125001`) so the delta could be spelled in full. It
+    now prints at the cap: `$0.0001` is a true rounding of both operands, and
+    the movement -- too small for the column in either the delta or the percent
+    reading of it -- is bounded rather than denied. `↑ 0.0%` must appear in no
+    format.
+
+    JSON is asserted unchanged in the same test rather than a separate one, so
+    the human-format expectation and the audit-path expectation cannot drift.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_vanishing_delta_price_scan_result(),
+        )
+        assert _sentinel(format_name, "↑ <0.1%") in report, format_name
+        # No cell may print a zero price or a zero percentage here.
+        assert "$0.0000" not in report, format_name
+        assert "0.0%" not in report, format_name
+        # The operands print at the cap, and the raw values sit beside them.
+        assert report.count("$0.0001") >= 2, format_name
+        assert "0.000124999" in report, format_name
+        assert "0.000125001" in report, format_name
+        # The row is NOT widened to prise the operands apart -- that was the
+        # hatch, and its nine-place spelling must not survive it.
+        assert "$0.000124999" not in report, format_name
+        assert "$0.000125001" not in report, format_name
+
+    payload = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_vanishing_delta_price_scan_result(),
+    )
+    assert "$" not in payload
+    assert "<" not in payload
+    assert "0.000124999" in payload
+    assert "0.000125001" in payload
+
+
+def _fractional_numeric_scan_result() -> list[ProviderScanResult]:
+    """A fractional numeric field whose operands and delta all round to zero.
+
+    `default_parameters.temperature` is the realistic fractional field on the
+    numeric path -- `_fmt_int` renders whole numbers exactly, so `0.001 ->
+    0.002` is the shape that reaches its two-place fallback, where it printed
+    `0.00 -> 0.00 (+0.00, ↑ 100.0%)`: three cells asserting nothing beside a
+    percentage asserting a doubling.
+
+    This fixture exists because the numeric path was, when it was written, the
+    ONLY one whose DELTA a renderer printed: a price row's delta was computed
+    and carried on `RenderedChange` but rendered nowhere, so without this
+    fixture no end-to-end test could see a bounded delta at all. Task 7 gave
+    the HTML card a price delta column and that is no longer the case in HTML
+    -- text and markdown still print no price delta, which is why this fixture
+    stays. Its own claim is unchanged: a fractional numeric delta bounds itself
+    in all three human formats.
+
+    Separate fixture for the same reason as the others -- adding a field to the
+    shared fixture would move the JSON goldens.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-fractional",
+                    "Synth Model Fractional",
+                    (FieldChange("default_parameters.temperature", 0.001, 0.002),),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_a_fractional_delta_below_resolution_bounds_itself_in_every_format() -> None:
+    """The count/numeric column takes the same rule, in the same three formats.
+
+    All three cells bound: `<0.01 → <0.01 (+<0.01, ...)`. `0.00` may not appear
+    anywhere in the row -- as an operand it says the value is nothing, as a
+    delta it says nothing moved, and both are false here.
+
+    JSON is asserted unchanged in the same test rather than a separate one, so
+    the human-format expectation and the audit-path expectation cannot drift.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_fractional_numeric_scan_result(),
+            detail_policy=ALL_DETAIL_POLICY,
+        )
+        # Exact, per format -- see finding 5 in the price test above.
+        # text/markdown = 3: `<0.01 → <0.01 (+<0.01, ↑ 100.0%)` -- a numeric
+        #   row prints its delta inline, so both operands AND the delta bound.
+        # html = 6: the same three as the card's `old-val`, `new-val` and
+        #   `delta` cells, plus the Change Summary's copy of that line.
+        assert report.count(_sentinel(format_name, "<0.01")) == (6 if format_name == "html" else 3), format_name
+        assert "0.00" not in report, format_name
+        assert "↑ 100.0%" in report, format_name
+
+    payload = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_fractional_numeric_scan_result(),
+        detail_policy=ALL_DETAIL_POLICY,
+    )
+    assert "<" not in payload
+    assert "0.001" in payload
+    assert "0.002" in payload
+
+
+def _vanishing_percent_scan_result() -> list[ProviderScanResult]:
+    """Two ordinary rows whose percentage, at one place, denied their movement.
+
+    Nothing exotic is needed for this one, which is the point: `3.000 -> 3.001`
+    is a tenth-of-a-cent price move and `262144 -> 262150` a six-token context
+    bump, both in the ranges the product meets constantly, and both printed
+    `↑ 0.0%` beside operands that showed the change plainly. Both kinds are in
+    ONE fixture because the rule lives in `_pct_change`, which every numeric
+    kind shares -- a price-only fixture could not have caught a price-only fix.
+
+    Separate fixture for the same reason as the three above: adding a field to
+    the shared fixture would move the JSON goldens and destroy the evidence
+    that JSON is untouched.
+    """
+    return [
+        ProviderScanResult(
+            provider_id="synthprov",
+            provider_label="Synth Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=None,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-ordinary",
+                    "Synth Model Ordinary",
+                    (
+                        FieldChange("pricing.prompt", 3.000, 3.001),
+                        FieldChange("context_length", 262144, 262150),
+                    ),
+                ),
+            ),
+            error_message=None,
+            price_multiplier=1,
+            price_divisor=1,
+        )
+    ]
+
+
+def test_vanishing_percent_row_bounds_its_percent_in_every_format_but_not_json() -> None:
+    """The percent sentinel is a property of `RenderedChange`, so every renderer gets it.
+
+    `↑ 0.0%` must appear in NO human format: beside `$3.000 → $3.001` and
+    `262,144 → 262,150` it is a percentage asserting that nothing changed next
+    to two numbers that show it did. All three formats must print the bound
+    instead -- and the price row and the count row are checked in the same
+    pass, because a fix applied only to the price path would leave the context
+    row still printing `0.0%` here.
+
+    Both rows print the SAME bound (`↑ <0.1%`) where the hatch printed two
+    different extended percentages (`↑ 0.03%`, `↑ 0.002%`). That is the
+    deliberate trade: the column keeps its one place, and the exact magnitudes
+    remain in the operands beside it and in the JSON audit path.
+
+    JSON is asserted unchanged in the same test rather than a separate one, so
+    the human-format expectation and the audit-path expectation cannot drift.
+    """
+    for format_name in ("text", "markdown", "html"):
+        report = render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name=format_name,
+            provider_results=_vanishing_percent_scan_result(),
+        )
+        # Two rows, two bounds: the price row and the count row alike --
+        # pinned exactly per format, see finding 5 in the price test above.
+        # text/markdown = 2: one bounded percentage per row.
+        # html = 5: each row's `pct` cell in the card, plus each row's line in
+        #   the Change Summary, plus ONE more for Task 8's Price Movement
+        #   headline panel. One, not two: that card is about prices, so the
+        #   count row has no headline and only the price row's bound repeats
+        #   there.
+        assert report.count(_sentinel(format_name, "↑ <0.1%")) == (5 if format_name == "html" else 2), format_name
+        # The spelling the sentinel replaces, in either direction, ruled out
+        # outright: no row in this fixture may print a zero percentage.
+        assert "0.0%" not in report, format_name
+        # The operands the percentage has to agree with are still there, and
+        # they still print in full -- a bounded percentage does not coarsen
+        # the columns it sits beside.
+        assert "$3.000" in report, format_name
+        assert "$3.001" in report, format_name
+        assert "262,150" in report, format_name
+
+    payload = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=_vanishing_percent_scan_result(),
+    )
+    assert "%" not in payload
+    assert "$" not in payload
+    assert "<" not in payload
+    assert '"old_value": 3.0' in payload
+    assert '"new_value": 3.001' in payload
+    assert '"old_value": 262144' in payload
+    assert '"new_value": 262150' in payload
+
+
+def test_characterization_text() -> None:
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="text",
+        provider_results=characterization_scan_result(),
+    )
+    assert report == EXPECTED_TEXT
+
+
+def test_characterization_markdown() -> None:
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="markdown",
+        provider_results=characterization_scan_result(),
+    )
+    assert report == EXPECTED_MARKDOWN
+
+
+def test_characterization_html() -> None:
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="html",
+        provider_results=characterization_scan_result(),
+    )
+    assert report == EXPECTED_HTML
+
+
+def test_characterization_json() -> None:
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=characterization_scan_result(),
+    )
+    assert report == EXPECTED_JSON
+
+
+def test_characterization_text_detail_all() -> None:
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="text",
+        provider_results=characterization_scan_result(),
+        detail_policy=ALL_DETAIL_POLICY,
+    )
+    assert report == EXPECTED_TEXT_DETAIL_ALL
+
+
+def test_characterization_markdown_detail_all() -> None:
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="markdown",
+        provider_results=characterization_scan_result(),
+        detail_policy=ALL_DETAIL_POLICY,
+    )
+    assert report == EXPECTED_MARKDOWN_DETAIL_ALL
+
+
+def test_characterization_html_detail_all() -> None:
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="html",
+        provider_results=characterization_scan_result(),
+        detail_policy=ALL_DETAIL_POLICY,
+    )
+    assert report == EXPECTED_HTML_DETAIL_ALL
+
+
+def test_characterization_json_detail_all() -> None:
+    # The JSON renderer ignores detail_policy entirely and always emits full
+    # fidelity, so this is expected to be byte-identical to EXPECTED_JSON above --
+    # that identity is itself part of what this test protects.
+    report = render_scan_report(
+        generated_at=GENERATED_AT,
+        command=COMMAND,
+        format_name="json",
+        provider_results=characterization_scan_result(),
+        detail_policy=ALL_DETAIL_POLICY,
+    )
+    assert report == EXPECTED_JSON_DETAIL_ALL
+    assert EXPECTED_JSON_DETAIL_ALL == EXPECTED_JSON

@@ -166,7 +166,55 @@ def test_scan_writes_full_html_companion_report(tmp_path: Path, monkeypatch, cap
     assert concise_reports
     assert full_reports
     assert any("1 field change across 1 model" in path.read_text(encoding="utf-8") for path in concise_reports)
-    assert any("benchmarks.design_arena" in path.read_text(encoding="utf-8") for path in full_reports)
+    assert any("Design arena" in path.read_text(encoding="utf-8") for path in full_reports)
+
+
+def test_changes_writes_its_html_companion_when_a_model_was_added(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """`changes` always renders HTML alongside its text report, so the summary
+    table crashed the whole command for any added model, removed model or
+    squelched change -- after the text report had already been written."""
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    # One scan that produces all three previously-fatal record kinds at once,
+    # on three distinct models: `changes` groups rows by date/provider/model.
+    payloads = iter(
+        [
+            [
+                {"id": "alpha", "name": "Alpha", "benchmarks": {"design_arena": [{"elo": 1}]}},
+                {"id": "gamma", "name": "Gamma"},
+            ],
+            [
+                {"id": "alpha", "name": "Alpha", "benchmarks": {"design_arena": [{"elo": 2}]}},
+                {"id": "beta", "name": "Beta"},
+            ],
+        ]
+    )
+    monkeypatch.setattr(cli, "fetch_raw_models", lambda provider, api_key: next(payloads))
+
+    assert cli.main(["scan", "--save"]) == 0
+    # beta added, gamma removed, alpha's benchmarks change squelched
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["changes"]) == 0
+    capsys.readouterr()
+
+    html_reports = sorted((runtime_home / "reports").glob("changes_*.html"))
+    assert html_reports, "changes wrote no HTML companion report"
+    html = html_reports[-1].read_text(encoding="utf-8")
+    summary = html.split('<section class="summary-section">', 1)
+    assert len(summary) == 2, "changes HTML rendered without a Change Summary"
+    assert "<td>Added</td>" in summary[1]
+    assert "<td>Removed</td>" in summary[1]
+    assert "<td>Squelched</td>" in summary[1]
+    assert "<code>beta</code>" in summary[1]
+    assert "<code>gamma</code>" in summary[1]
+    # Squelched rows account for the hidden change instead of printing it.
+    assert "Design arena" not in summary[1]
 
 
 def test_history_model_list_lists_known_models(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -544,3 +592,68 @@ def test_history_with_unknown_provider_exits_cleanly(tmp_path: Path, monkeypatch
         assert exc.code == 2
     captured = capsys.readouterr()
     assert "Unknown provider 'abacusai'" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# A colliding provider label has to be visible where the user goes looking for
+# config problems -- and NOWHERE ELSE. It used to be a `ConfigError` raised
+# from `load_config`, which made it visible everywhere by halting every
+# command; design Amendment 9 downgraded it to a `provider_labels` check with
+# status `warn` in `healthcheck` alone. Both halves are pinned below: the
+# warning is emitted and named, and it does not move the exit code.
+# ---------------------------------------------------------------------------
+
+
+def test_healthcheck_warns_about_a_duplicate_provider_label(tmp_path: Path, monkeypatch, capsys) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    providers_path = runtime_home / "providers.env"
+    providers_path.write_text(
+        providers_path.read_text(encoding="utf-8")
+        + "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_ENABLED=1\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_LABEL=OpenRouter\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_KIND=openrouter\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_BASE_URL=https://synth.invalid/api/v1\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_MODELS_PATH=/models\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_API_KEY_ENV=SYNTHTWIN_CREDS\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_PRICE_MULTIPLIER=1\n"
+        "MODEL_SENTINEL_PROVIDER_SYNTHTWIN_PRICE_DIVISOR=1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
+    monkeypatch.setenv("SYNTHTWIN_CREDS", "token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    exit_code = cli.main(["healthcheck"])
+    captured = capsys.readouterr()
+
+    # DELIBERATELY INVERTED: this asserted `exit_code == 1` and a failed
+    # `config_load` check. A duplicate label no longer fails anything -- the
+    # config loads, every command runs, and the exit code stays 0. An exit code
+    # of 1 here would mean a scheduled `healthcheck` had started paging someone
+    # about a cosmetic problem.
+    assert exit_code == 0
+    assert "config_load" not in captured.out
+    assert "WARN    provider_labels" in captured.out
+    # The message the user acts on, not just a generic warning.
+    assert "Duplicate provider label" in captured.out
+    assert "'OpenRouter'" in captured.out
+    assert "openrouter, synthtwin" in captured.out
+    # And it says the reports are still correct, so the user can schedule the
+    # edit rather than treat it as an outage.
+    assert "Label (provider_id)" in captured.out
+
+
+def test_healthcheck_reports_distinct_provider_labels_as_ok(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Control: the check passes, visibly, on the shipped single-provider fixture."""
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    exit_code = cli.main(["healthcheck"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "OK      provider_labels" in captured.out
+    assert "WARN" not in captured.out
+    assert "Duplicate provider label" not in captured.out
+    assert "config_load" not in captured.out

@@ -8,7 +8,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Sequence
 
-from .config import ConfigError, default_runtime_home, load_config, missing_credentials, validate_selected_providers
+from .config import (
+    ConfigError,
+    default_runtime_home,
+    describe_duplicate_labels,
+    load_config,
+    missing_credentials,
+    validate_selected_providers,
+)
 from .diffing import compare_models
 from .models import BaselineInfo, ModelDelta, ProviderScanResult
 from .normalize import normalize_models
@@ -520,6 +527,19 @@ def run_healthcheck(*, args: argparse.Namespace, project_root: Path) -> int:
         report = render_healthcheck_report(format_name=args.format, checks=checks)
         _emit_output(report, output_path=None)
         return 1
+
+    # Advisory, and deliberately over EVERY provider rather than the enabled
+    # ones: a disabled provider still appears in `providers` listings and still
+    # owns recorded history that `changes` renders under its label, so its
+    # label is just as readable-or-not. `warn` leaves `status_code` alone --
+    # this is a legibility note about a config that works, not a failure.
+    duplicate_labels = describe_duplicate_labels(loaded.providers, providers_path)
+    if duplicate_labels:
+        checks.append({"check": "provider_labels", "status": "warn", "detail": duplicate_labels})
+    else:
+        checks.append(
+            {"check": "provider_labels", "status": "ok", "detail": "Every provider label is distinct"}
+        )
 
     selected = tuple(provider for provider in loaded.providers if provider.enabled)
     missing = missing_credentials(selected, os.environ)

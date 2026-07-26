@@ -135,6 +135,12 @@ After running setup:
 4. run `./model-sentinel healthcheck`
 5. create the first baseline with `./model-sentinel scan --save`
 
+`MODEL_SENTINEL_PROVIDER_<ID>_LABEL` is display text only; `<ID>` is the
+provider's identity and is what reports group by. Labels must be unique across
+all providers, enabled or not. A duplicate label is rejected when the config
+loads, and `healthcheck` reports it as a failed `config_load` check naming both
+providers.
+
 Each provider entry in `providers.env` must now include:
 
 - `MODEL_SENTINEL_PROVIDER_<ID>_PRICE_MULTIPLIER`
@@ -260,15 +266,25 @@ Built-in help is intended to be complete:
 
 Scan reports use smart, field-type-aware formatting:
 
-- **Pricing fields** show normalized `$X.XX / 1M` alongside raw values, including newly added or removed prices
+- **Pricing fields** are normalized to a `$X.XX` per-1M figure alongside the provider's raw value. Newly added and removed prices are included.
+  - **In HTML only,** the normalized figure *leads*: it is the value in the cell, the unit moves to its own column, and the raw provider value is available on demand — in the cell's tooltip, and inline via the page's "Show raw values" toggle (see below), which is on by default in the full-detail companion. The HTML Change Summary follows the same order.
+  - **Text and markdown still lead with the raw value**, in the form `2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`, and have no toggle. They are the audit formats; the literal value a provider published is what they exist to record.
 - **New structured fields** expand nested objects and object lists into readable leaf-level changes in human reports
 - **List fields** (e.g., supported parameters) show added/removed items instead of dumping full arrays
 - **Context and limit fields** use human-readable number formatting
 - **All field changes** are grouped by category: Pricing, Context & Limits, Parameters, Capabilities, Other
+- **A column too narrow for a real value prints a bounded sentinel, never a false zero.** A movement smaller than the price column can show reads `<$0.0001` or `+<$0.0001`, and a percentage below the row's precision reads `↑ <0.1%`. The consequence is deliberate: a displayed row need not visibly add up (`$2.00 → $2.00 +<$0.0001`), because each cell states something true even where the arithmetic is not legible at the printed width. The alternative — rounding to `$0.0000` and `0.0%` — states something false.
 - **Repetitive list changes** affecting at least three models are consolidated into one bulk-change entry in default reports. List-size differences are ignored when the actual additions/removals match.
 - **Scalar and mixed changes remain model-specific**, so pricing, limits, cutoffs, and models with any additional visible change retain individual entries.
-- **HTML scan reports include a compact Price Movement summary** that leads with the dominant direction, classifies each affected provider/model identity exactly once as higher-only, lower-only, mixed-direction, or price-fields-added/removed-only, and clearly separates affected-model counts from changed-price-field counts. Zero-count categories are omitted so only observed movements compete for attention.
 - Bulk entries aggregate their squelched changes and expose expandable model lists in HTML. The HTML Change Summary uses the same bulk entries plus one provider-level squelched rollup.
+
+### Color Semantics
+
+**Wherever an HTML report states a field change, color carries one meaning and only one: cost.** Red/salmon marks a price going up, green a price going down. Nothing that reports a change is allowed to borrow those two colors, so a red change cell always means "this got more expensive" and a green one always means "this got cheaper" — a reader never has to check which axis a color is on. This holds in all three HTML documents: the scan report's model cards, its automatically generated `_full.html` companion, and the standalone `changes` report's change table — plus the Price Movement card and the Change Summary in each.
+
+Everything else takes a non-cost color: capacity changes (context windows, output limits) are amber, capability changes are blue, a disabled capability and purely informational changes are dim, list membership is blue for a member arriving and dim for one leaving (in every card type and in the `changes` report alike), and a price field appearing or disappearing is the neutral coverage blue — coverage is not a direction, and painting an added price red would claim a price rise that was never measured.
+
+Two things outside that vocabulary still use red and green, and neither reports a field change: **run status** — a provider card and its badge are green when clean and red when the fetch failed, and an error message is red — and the **added/removed model lists**, where a whole model arriving is green and one departing is red. Both are presence-or-health signals about the scan itself rather than statements about a value moving, and neither appears in a change table, a model card row, or the Change Summary.
 
 Bulk consolidation applies only to the default human-readable report. `--detail all`, the automatically generated full-detail HTML companion, and JSON output remain ungrouped and full fidelity.
 
@@ -276,7 +292,19 @@ Bulk consolidation applies only to the default human-readable report. `--detail 
 
 When a scan detects changes and is writing a report to the configured report directory (notification flow), Model Sentinel automatically generates a self-contained HTML companion report alongside the text file.
 
-The HTML report uses a dark industrial theme with color-coded change badges, model cards, expandable bulk model lists, a collapsed Price Movement model list, and a selectively consolidated summary table. Price increases use higher-cost red/salmon semantics, price decreases use lower-cost green semantics, and price fields appearing or disappearing use a neutral coverage color. It has no external dependencies — everything is inlined CSS.
+The HTML report uses a dark industrial theme and has no external dependencies and no JavaScript — all CSS is inlined, and every interactive affordance is built from native `<details>`, `:target` and `:has()`.
+
+**The Price Movement card comes first and is denominated in dollars.** It opens with a verdict over the affected *models* — `higher — 5 up` when every model that moved moved up, `mostly higher — 4 up, 1 down` when the population is merely lopsided, and `mixed` when no direction leads. The qualifier is dropped on a unanimous result rather than hedging it. Beneath the verdict sit the biggest increase and the biggest decrease, each naming its model, field, old and new price, dollar delta and percentage; then two tallies that keep affected-model counts and changed-price-field counts visibly separate; then a collapsed list of every affected model, grouped by direction. Zero-count categories are omitted so only observed movements compete for attention.
+
+**Each model card is a single aligned table.** One row per field, with fixed columns for category, field name, old value, new value, unit, delta and percentage, so values line up down the card and can be compared by eye instead of read as prose. The category name appears as a dim chip on the first row of each group.
+
+**Ordering is by impact, not by name.** Within a card, pricing rows are sorted by the size of the movement. Across the page, models are ranked by their price impact.
+
+**The page has two tiers.** Models whose prices moved are presented directly. Everything else — models with no price change, bulk-change groups, and the report-detail rollups — is folded into one collapsed `Other changes` disclosure, which states in its summary exactly what it contains. A card that is hiding squelched fields carries a `+N hidden` chip in its header, with a breakdown in the chip's tooltip, so suppression is always visible even when the detail is not.
+
+**Navigation is by anchor.** Every model card has a stable id; the Price Movement panel and the tier-1 Change Summary rows link into them, and each card header carries a dim `↑` back-link to the Price Movement card. The landed-on card is highlighted, with the highlight animation suppressed under `prefers-reduced-motion`.
+
+**Raw values are available without leaving the page.** Hovering a price cell shows the full derivation — the provider's literal value, its magnitude in scientific notation as a parenthetical, the conversion factor and the resulting figure, e.g. `0.000002 (2.0e-6) × 1,000,000 = $2.00`. Because a tooltip cannot be selected or copied, a `Show raw values` checkbox in the header also reveals a selectable `old → new` sub-line under every price row. That checkbox is **ticked by default in the full-detail companion report**, whose whole purpose is the raw numbers, and unticked in the concise one.
 
 When no changes are detected, only the text report is generated. This gives a quick visual cue in the reports folder: if an `.html` file exists for a run, something changed.
 
