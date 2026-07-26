@@ -16,7 +16,9 @@ report_failure() {
 
 initialize_audit_tmp() {
   local raw_parent="${TMPDIR:-/tmp}"
-  local resolved_parent candidate resolved_candidate owner
+  local resolved_parent candidate resolved_candidate owner existing_candidate
+  local protected_dir resolved_protected_dir
+  local -A preexisting_candidates
 
   if [[ "$raw_parent" != "/" ]]; then
     raw_parent="${raw_parent%/}"
@@ -30,7 +32,21 @@ initialize_audit_tmp() {
       return 1
       ;;
   esac
+  for protected_dir in "$HOME" "$REPO_ROOT" "$SCRIPTS_DIR" "$LOCAL_ROOT"; do
+    if [[ -d "$protected_dir" ]] &&
+        resolved_protected_dir="$(
+          cd -P -- "$protected_dir" 2>/dev/null && pwd -P
+        )" &&
+        [[ "$resolved_parent" == "$resolved_protected_dir" ]]; then
+      return 1
+    fi
+  done
 
+  preexisting_candidates=()
+  for existing_candidate in \
+      "$resolved_parent"/utilities-deployment-audit.*(N); do
+    preexisting_candidates[$existing_candidate]=1
+  done
   if ! candidate="$(mktemp -d \
     "$resolved_parent/utilities-deployment-audit.XXXXXX" 2>/dev/null)"; then
     return 1
@@ -43,6 +59,7 @@ initialize_audit_tmp() {
   [[ "$resolved_candidate" == "$resolved_parent"/utilities-deployment-audit.* ]] ||
     return 1
   [[ "${resolved_candidate:h}" == "$resolved_parent" ]] || return 1
+  [[ -z "${preexisting_candidates[$resolved_candidate]-}" ]] || return 1
   [[ -d "$resolved_candidate" && ! -L "$resolved_candidate" ]] || return 1
   if ! owner="$(stat -f '%u' "$resolved_candidate" 2>/dev/null)"; then
     return 1
@@ -330,7 +347,22 @@ if [[ "$git_snapshot_ok" == true && "$git_head_ok" == true ]]; then
   fi
 fi
 
-stale_history_available=true
+gitignore_source_state_ok=true
+for ignore_state_path in \
+    "${invalid_index_paths[@]}" \
+    "${(k)source_state_invalid[@]}" \
+    "${pending_deletion_paths[@]}"; do
+  if [[ "$ignore_state_path" == .gitignore ||
+        "$ignore_state_path" == */.gitignore ]]; then
+    gitignore_source_state_ok=false
+    break
+  fi
+done
+if [[ "$gitignore_source_state_ok" != true ]]; then
+  report_failure "tracked repository .gitignore source state is incomplete"
+fi
+
+stale_history_available="$gitignore_source_state_ok"
 shallow_file="$AUDIT_TMP/git-shallow"
 if [[ "$git_snapshot_ok" == true && "$git_head_ok" == true ]]; then
   if run_git_capture \
@@ -703,8 +735,7 @@ if [[ "$model_can_inspect" == true ]]; then
         inventory_unexpected=true
         continue
       fi
-      archive_inventory_counts[$inventory_entry]=$((\
-        ${archive_inventory_counts[$inventory_entry]:-0} + 1))
+      archive_inventory_counts[$inventory_entry]=$(( ${archive_inventory_counts[$inventory_entry]:-0} + 1 ))
     done < "$inventory_list"
 
     if [[ "$inventory_unexpected" == true ]]; then

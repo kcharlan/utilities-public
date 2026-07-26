@@ -628,8 +628,10 @@ test_hostile_mktemp_targets_rejected() {
         fixed_target="$FIXTURE_HOME"
         ;;
       existing)
-        fixed_target="$FIXTURE_ROOT/unrelated"
+        fixed_target="$FIXTURE_TMP/utilities-deployment-audit.PREEXISTING"
         mkdir "$fixed_target"
+        print -r -- "pre-existing content must remain" \
+          > "$fixed_target/pre-existing-marker"
         ;;
       symlink)
         mkdir "$FIXTURE_ROOT/unrelated"
@@ -781,6 +783,21 @@ test_staged_project_deletion_fails_source_state() {
   assert_contains "$AUDIT_STDERR" "source-state failures: 1"
   assert_contains "$AUDIT_STDERR" "stale formerly tracked files: 0"
   assert_not_contains "$AUDIT_STDOUT" "OK: ~/tax2 tracked files"
+}
+
+test_staged_root_gitignore_deletion_fails_history_coverage() {
+  new_fixture
+  print -r -- "*.synthetic-local" > "$FIXTURE_REPO/.gitignore"
+  git -C "$FIXTURE_REPO" add .gitignore
+  git -C "$FIXTURE_REPO" commit -qm "add synthetic root ignore"
+  git -C "$FIXTURE_REPO" rm -q .gitignore
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "staged root gitignore deletion"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "tracked repository .gitignore source state is incomplete"
+  assert_not_contains "$AUDIT_STDOUT" "OK: ~/docker tracked files"
 }
 
 test_tracked_source_symlink_rejected() {
@@ -1264,6 +1281,7 @@ test_untracked_model_module_excluded
 test_staged_model_module_audited
 test_missing_tracked_sources_fail
 test_staged_project_deletion_fails_source_state
+test_staged_root_gitignore_deletion_fails_history_coverage
 test_tracked_source_symlink_rejected
 test_git_index_collection_failure_suppresses_dependent_ok
 test_genuine_stale_project_file
