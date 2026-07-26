@@ -69,14 +69,14 @@ Prerequisites every later task's tests rely on: a feature branch, synthetic job 
   3. `com.example.synthetic-failed` — `domain: "user-agent"`, `is_apple: false`, loaded, enabled, `pid: null`, `last_exit: 78` (drives the failed-jobs panel deterministically).
 - `restore_settings` (function-scoped fixture): GETs `/api/settings` before the test, PUTs the snapshot back after, regardless of outcome. Every settings-mutating test takes it.
 
-- [ ] **Step 1: Create the branch.** `git checkout -b codex/job-actions-ui` (from up-to-date `main`).
-- [ ] **Step 2: Commit the plan alone — required first commit.** `git add docs/job_actions_ui_implementation_plan.md && git commit -m "docs: job actions UI implementation plan"`. Nothing else may be in this commit; the harness work comes after (repo convention: plan committed first, as on prior `codex/...` branches).
-- [ ] **Step 3: Baseline.** Run the full suite: `.venv/bin/python -m pytest -q` → record the pass count.
-- [ ] **Step 4: Write failing E2E test** (`TestSyntheticHarness`): with the harness active, the job table (Apple toggle on, search for `synthetic`) shows all three labels above; the failed panel shows `com.example.synthetic-failed`; searching `com.apple.example-synthetic` with the Apple toggle ON shows the orphan. Also assert the synthetic jobs are still present after a WS poll cycle (`page.wait_for_timeout` past the poll interval, rows still there — catches injection at the wrong layer).
-- [ ] **Step 5: Run** `-k TestSyntheticHarness` → FAIL (no injection exists).
-- [ ] **Step 6: Implement** the `build_job_list` injection + conftest wiring + `restore_settings`.
-- [ ] **Step 7: Run** the class, then the **full suite** — API-suite tests that compare against real `launchctl` output must be unaffected (they use the separate session-scoped server without the env var).
-- [ ] **Step 8: Commit.** `git add launchmaster tests && git commit -m "test: deterministic synthetic-jobs harness and settings-restore fixture"`
+- [x] **Step 1: Create the branch.** `git checkout -b codex/job-actions-ui` (from up-to-date `main`).
+- [x] **Step 2: Commit the plan alone — required first commit.** `git add docs/job_actions_ui_implementation_plan.md && git commit -m "docs: job actions UI implementation plan"`. Nothing else may be in this commit; the harness work comes after (repo convention: plan committed first, as on prior `codex/...` branches).
+- [x] **Step 3: Baseline.** Run the full suite: `.venv/bin/python -m pytest -q` → record the pass count.
+- [x] **Step 4: Write failing E2E test** (`TestSyntheticHarness`): with the harness active, the job table (Apple toggle on, search for `synthetic`) shows all three labels above; the failed panel shows `com.example.synthetic-failed`; searching `com.apple.example-synthetic` with the Apple toggle ON shows the orphan. Also assert the synthetic jobs are still present after a WS poll cycle (`page.wait_for_timeout` past the poll interval, rows still there — catches injection at the wrong layer).
+- [x] **Step 5: Run** `-k TestSyntheticHarness` → FAIL (no injection exists).
+- [x] **Step 6: Implement** the `build_job_list` injection + conftest wiring + `restore_settings`.
+- [x] **Step 7: Run** the class, then the **full suite** — API-suite tests that compare against real `launchctl` output must be unaffected (they use the separate session-scoped server without the env var).
+- [x] **Step 8: Commit.** `git add launchmaster tests && git commit -m "test: deterministic synthetic-jobs harness and settings-restore fixture"`
 
 ### Task 1: Shared job-action layer (`JOB_ACTIONS` + `useJobActions`)
 
@@ -129,7 +129,7 @@ function useJobActions({ addToast, setShowConfirm, settings, openDetail }) {
 
 Success/error toast texts must match today's strings (e.g. `'Stopped ' + job.label`, `'Running ' + job.label + ' (one-shot)...'`, `'Deleted ' + job.label`, `'Failed to delete: ' + err.message`) so existing user expectations and any string-matching tests keep working. In this task, delete keeps its current unconditional confirm (Task 2 makes it policy-driven).
 
-- [ ] **Step 1: Write failing E2E test.** Add `TestSharedActions` to `tests/test_e2e.py`. Use Playwright route interception so no real job is mutated — this is the load-bearing pattern for all action tests in this plan:
+- [x] **Step 1: Write failing E2E test.** Add `TestSharedActions` to `tests/test_e2e.py`. Use Playwright route interception so no real job is mutated — this is the load-bearing pattern for all action tests in this plan:
 
 ```python
 class TestSharedActions:
@@ -169,10 +169,10 @@ Additional failing tests in this class (use synthetic jobs from Task 0 — searc
   - **Export works:** open `com.example.synthetic-idle`'s **detail panel** and click its Export Plist button (this control survives Task 3's row-layout replacement; the synthetic job's real plist file in `LAUNCHMASTER_HOME` makes the response deterministic); assert the resulting request to `/api/jobs/.../export` returns status 200 with a `Content-Disposition` attachment header (use `page.expect_download()` or capture via `page.on("response")`). (Fails today: 405.) Also add an API-level test in `tests/test_api.py`: GET export for a nonexistent label returns 404 (no real-job export there — the API server has no synthetics and host jobs are not guaranteed exportable).
   - **Detail panel closes after successful delete:** open `com.example.synthetic-idle`'s detail panel, intercept DELETE to fulfill success, click Delete Job → Confirm → panel closes (`.detail-panel.open` count 0). Safe: the route never reaches the backend.
 
-- [ ] **Step 2: Run the new tests.** `.venv/bin/python -m pytest tests/test_e2e.py -k TestSharedActions -v`. Expected: the first interception test PASSES; duplication, failure-toast, export, and close-after-delete tests FAIL.
-- [ ] **Step 3: Implement** `isAppleJob`, the `api()` `success: false` rejection, the export route POST→GET, and `JOB_ACTIONS` + `useJobActions` with the completion contract; refactor `JobTable` (drop its `handleRowAction`, receive `runAction` prop), `DetailPanel` (its `handleAction`/`handleDelete` become `runAction` calls; close-after-delete via the `{ok}` result; keep its extra buttons Enable/Disable/Load/Unload/Export wired through the hook), and `App`'s `FailedPanel onReload` (becomes `(j) => runAction(j, 'reload')`). `App` instantiates the hook once. Keep `BulkBar` untouched for now.
-- [ ] **Step 4: Run** `.venv/bin/python -m pytest tests/test_e2e.py -k TestSharedActions -v` → all PASS, then the full E2E file `.venv/bin/python -m pytest tests/test_e2e.py -q` → no regressions (all pre-existing tests pass).
-- [ ] **Step 5: Commit.** `git add launchmaster tests && git commit -m "refactor: centralize job actions; fix success:false toasts and export method"`
+- [x] **Step 2: Run the new tests.** `.venv/bin/python -m pytest tests/test_e2e.py -k TestSharedActions -v`. Expected: the first interception test PASSES; duplication, failure-toast, export, and close-after-delete tests FAIL.
+- [x] **Step 3: Implement** `isAppleJob`, the `api()` `success: false` rejection, the export route POST→GET, and `JOB_ACTIONS` + `useJobActions` with the completion contract; refactor `JobTable` (drop its `handleRowAction`, receive `runAction` prop), `DetailPanel` (its `handleAction`/`handleDelete` become `runAction` calls; close-after-delete via the `{ok}` result; keep its extra buttons Enable/Disable/Load/Unload/Export wired through the hook), and `App`'s `FailedPanel onReload` (becomes `(j) => runAction(j, 'reload')`). `App` instantiates the hook once. Keep `BulkBar` untouched for now.
+- [x] **Step 4: Run** `.venv/bin/python -m pytest tests/test_e2e.py -k TestSharedActions -v` → all PASS, then the full E2E file `.venv/bin/python -m pytest tests/test_e2e.py -q` → no regressions (all pre-existing tests pass).
+- [x] **Step 5: Commit.** `git add launchmaster tests && git commit -m "refactor: centralize job actions; fix success:false toasts and export method"`
 
 ### Task 2: Settings-aware confirmation policy
 
@@ -206,16 +206,16 @@ Also in this task (dialog ergonomics, small and colocated):
 - Global Esc priority in `App`'s keydown handler: `showConfirm` → close it and return; else close detail/create/settings panels; else clear checkbox selection (`setSelected([])`). This makes the advertised "Esc … deselect" true.
 - `BulkBar` refactor: replace its inline fetch loop's confirm logic with `bulkConfirmationFor`; the per-job fetch loop itself may stay in `BulkBar` (it is batch orchestration, not per-job dispatch — but route both through one small shared `apiJobAction(label, actionId)` helper the hook also uses, so endpoint construction exists once).
 
-- [ ] **Step 1: Write failing E2E tests** (`TestConfirmationPolicy`). All destructive flows intercepted or cancelled. **Order-independence rules:** every scenario drives actions through the **detail panel's** buttons (open via row click on a synthetic job) — the detail panel's Stop/Delete buttons exist unchanged through every task of this plan, whereas Task 3 replaces the row-button layout and would invalidate row-button-based tests. Settings-mutating scenarios take the `restore_settings` fixture (Task 0) and use snake_case keys. Scenarios (each its own test method):
+- [x] **Step 1: Write failing E2E tests** (`TestConfirmationPolicy`). All destructive flows intercepted or cancelled. **Order-independence rules:** every scenario drives actions through the **detail panel's** buttons (open via row click on a synthetic job) — the detail panel's Stop/Delete buttons exist unchanged through every task of this plan, whereas Task 3 replaces the row-button layout and would invalidate row-button-based tests. Settings-mutating scenarios take the `restore_settings` fixture (Task 0) and use snake_case keys. Scenarios (each its own test method):
   1. Delete via detail panel on `com.example.synthetic-idle`: confirm dialog appears; press `Escape`; dialog closes; no DELETE request was made (assert via `page.route` interception recording zero calls).
   2. Confirm dialog Cancel button has focus on open (`page.evaluate("document.activeElement.textContent")` → `"Cancel"`).
   3. (`restore_settings`) With `confirm_destructive` set false via API then page reload: detail-panel Delete issues DELETE immediately (intercepted) with **no** dialog.
   4. Apple guard on the orphan shape the domain check misses: enable the Apple Jobs toggle, open `com.apple.example-synthetic` (synthetic, `domain: "unknown"`, `is_apple: true`), click its Stop; expect a confirm dialog mentioning "Apple"; Cancel; zero intercepted calls. Deterministic — no skip.
   5. Esc with rows selected (no dialog/panels open) clears the selection (bulk bar disappears).
-- [ ] **Step 2: Run them** — expect FAIL (no policy, Esc doesn't clear dialog/selection, dialog not focused). `.venv/bin/python -m pytest tests/test_e2e.py -k TestConfirmationPolicy -v`
-- [ ] **Step 3: Implement** the settings key normalization + `_load_config` migration, then `confirmationFor` / `bulkConfirmationFor` (using `isAppleJob`), wire into `useJobActions` and `BulkBar`, add dialog keyboard/focus behavior and the Esc priority chain.
-- [ ] **Step 4: Run** the class, then full E2E file. All PASS; pre-existing `test_detail_panel_escape_closes` must still pass (priority chain must not break it).
-- [ ] **Step 5: Commit.** `git commit -m "feat: settings-aware confirmation policy with Apple-job guard"`
+- [x] **Step 2: Run them** — expect FAIL (no policy, Esc doesn't clear dialog/selection, dialog not focused). `.venv/bin/python -m pytest tests/test_e2e.py -k TestConfirmationPolicy -v`
+- [x] **Step 3: Implement** the settings key normalization + `_load_config` migration, then `confirmationFor` / `bulkConfirmationFor` (using `isAppleJob`), wire into `useJobActions` and `BulkBar`, add dialog keyboard/focus behavior and the Esc priority chain.
+- [x] **Step 4: Run** the class, then full E2E file. All PASS; pre-existing `test_detail_panel_escape_closes` must still pass (priority chain must not break it).
+- [x] **Step 5: Commit.** `git commit -m "feat: settings-aware confirmation policy with Apple-job guard"`
 
 ### Task 3: Always-visible row actions, kebab menu, sticky Actions column
 
@@ -266,17 +266,17 @@ Executor: read the existing `tr:hover` / `tr.selected` / `.apple-row` / `.status
 - Kebab click: `e.stopPropagation()` (don't open the detail panel), open at the button's rect (`rect.left, rect.bottom + 4`).
 - The global Esc priority chain (binding, final order): **confirm dialog → action menu → detail/create/settings panels → clear selection.** The dialog outranks the menu: a menu item click closes the menu before its confirmation appears, but if both are ever visible, Esc must dismiss the dialog (resolving its promise as cancelled via `onCancel`) and leave everything beneath it untouched.
 
-- [ ] **Step 1: Write failing E2E tests** (`TestRowActionsAndKebab`). Deterministic target: search for `com.example.synthetic-idle` first so assertions bind to a known row.
+- [x] **Step 1: Write failing E2E tests** (`TestRowActionsAndKebab`). Deterministic target: search for `com.example.synthetic-idle` first so assertions bind to a known row.
   1. Kebab is visible **without hover**: `expect(row's button[title='More actions']).to_be_visible()` immediately after load.
   2. Actions column on-screen: at default viewport, the kebab's `bounding_box()` fits within `page.viewport_size["width"]` **without any horizontal scrolling** (do not scroll before asserting).
   3. Kebab opens menu containing exactly the grouped items incl. a red Delete; click elsewhere closes it.
   4. Menu Delete → confirm dialog (Task 2 wording) → Cancel.
   5. Menu Run Now issues intercepted POST `/run-now` and closes the menu.
   6. Exactly 3 buttons per row (`.row-actions button` count == 3 within the target row).
-- [ ] **Step 2: Run** `-k TestRowActionsAndKebab` → FAIL (8 hover-hidden buttons, no kebab).
-- [ ] **Step 3: Implement** CSS, row markup, `JobActionMenu`, `App` menu state.
-- [ ] **Step 4: Run** class + full E2E file → PASS. Manually smoke-check in a sandboxed run (`LAUNCHMASTER_HOME=$(mktemp -d) ./launchmaster --no-browser`) at a narrow (~1100px) window: sticky column visible, no tearing, menu flips near the bottom row.
-- [ ] **Step 5: Commit.** `git commit -m "feat: always-visible row actions with kebab menu and sticky column"`
+- [x] **Step 2: Run** `-k TestRowActionsAndKebab` → FAIL (8 hover-hidden buttons, no kebab).
+- [x] **Step 3: Implement** CSS, row markup, `JobActionMenu`, `App` menu state.
+- [x] **Step 4: Run** class + full E2E file → PASS. Manually smoke-check in a sandboxed run (`LAUNCHMASTER_HOME=$(mktemp -d) ./launchmaster --no-browser`) at a narrow (~1100px) window: sticky column visible, no tearing, menu flips near the bottom row.
+- [x] **Step 5: Commit.** `git commit -m "feat: always-visible row actions with kebab menu and sticky column"`
 
 ### Task 4: Right-click context menu (Option C)
 
@@ -286,11 +286,11 @@ Executor: read the existing `tr:hover` / `tr.selected` / `.apple-row` / `.status
 
 **Interfaces:** Consumes `openActionMenu(job, x, y)` from Task 3 — the context menu IS `JobActionMenu`, opened at the cursor. No new component.
 
-- [ ] **Step 1: Write failing E2E tests:** right-click a row (`row.click(button="right")`) → menu appears at/near the pointer with the same items; browser-native menu suppressed (assert our `.job-action-menu` is visible); `Escape` closes it; right-clicking a second row moves the menu to that row's job (menu shows only once — `count() == 1`).
-- [ ] **Step 2: Run** `-k TestContextMenu` → FAIL.
-- [ ] **Step 3: Implement:** on `<tr>` add `onContextMenu={e => { e.preventDefault(); openActionMenu(job, e.clientX, e.clientY); }}`. Do not alter checkbox selection on right-click.
-- [ ] **Step 4: Run** class + full E2E → PASS.
-- [ ] **Step 5: Commit.** `git commit -m "feat: right-click context menu on job rows"`
+- [x] **Step 1: Write failing E2E tests:** right-click a row (`row.click(button="right")`) → menu appears at/near the pointer with the same items; browser-native menu suppressed (assert our `.job-action-menu` is visible); `Escape` closes it; right-clicking a second row moves the menu to that row's job (menu shows only once — `count() == 1`).
+- [x] **Step 2: Run** `-k TestContextMenu` → FAIL.
+- [x] **Step 3: Implement:** on `<tr>` add `onContextMenu={e => { e.preventDefault(); openActionMenu(job, e.clientX, e.clientY); }}`. Do not alter checkbox selection on right-click.
+- [x] **Step 4: Run** class + full E2E → PASS.
+- [x] **Step 5: Commit.** `git commit -m "feat: right-click context menu on job rows"`
 
 ### Task 5: Failed panel gets full actions
 
@@ -300,11 +300,11 @@ Executor: read the existing `tr:hover` / `tr.selected` / `.apple-row` / `.status
 
 **Interfaces:** Consumes `openActionMenu`. `FailedPanel` gains props `openActionMenu` and (already from Task 1) routes Reload through `runAction`.
 
-- [ ] **Step 1: Write failing E2E test:** the failed panel deterministically contains `com.example.synthetic-failed` (Task 0 harness — no skip); its `.failed-job-row` contains a kebab button that opens the shared menu with Stop and a red Delete. Keep the existing Logs/Edit/Reload text buttons — this is an addition, not a swap.
-- [ ] **Step 2: Run** → FAIL (kebab does not exist yet; the row itself must already be visible or Task 0 has regressed).
-- [ ] **Step 3: Implement:** append a kebab button (same 26px style, always visible) to `.failed-job-actions`, `e.stopPropagation()`, open at button rect.
-- [ ] **Step 4: Run** class + full E2E → PASS.
-- [ ] **Step 5: Commit.** `git commit -m "feat: full action menu from failed-jobs panel"`
+- [x] **Step 1: Write failing E2E test:** the failed panel deterministically contains `com.example.synthetic-failed` (Task 0 harness — no skip); its `.failed-job-row` contains a kebab button that opens the shared menu with Stop and a red Delete. Keep the existing Logs/Edit/Reload text buttons — this is an addition, not a swap.
+- [x] **Step 2: Run** → FAIL (kebab does not exist yet; the row itself must already be visible or Task 0 has regressed).
+- [x] **Step 3: Implement:** append a kebab button (same 26px style, always visible) to `.failed-job-actions`, `e.stopPropagation()`, open at button rect.
+- [x] **Step 4: Run** class + full E2E → PASS.
+- [x] **Step 5: Commit.** `git commit -m "feat: full action menu from failed-jobs panel"`
 
 ### Task 6: Real keyboard shortcuts
 
@@ -324,11 +324,11 @@ Make the advertised shortcuts true, and update the help text where behavior diff
 - Guards: ignore when `e.metaKey || e.ctrlKey || e.altKey`, and keep the existing INPUT/TEXTAREA/SELECT early-return.
 - Update the help grid: `Esc` line becomes "Close menu/dialog/panel, then deselect" (matching the Task 2/3 priority chain).
 
-- [ ] **Step 1: Write failing E2E tests** (added to the existing `TestKeyboardShortcuts` class): all selection-based scenarios target `com.example.synthetic-idle` (search for it, check its checkbox — non-Apple, so no Apple-guard dialog interferes): (a) with exactly that row checked, press `l` → detail panel opens on Logs tab; (b) with nothing selected, press `x` → warning toast, no dialog, no intercepted call; (c) with that row checked, press `x` with the stop route intercepted → intercepted call happens; (d) press `?` → settings modal visible; (e) modal guard: open the synthetic job's delete confirm (via detail panel), press `x` → no new dialog, no intercepted stop call, original dialog still visible; Cancel it.
-- [ ] **Step 2: Run** `-k TestKeyboardShortcuts` → FAIL.
-- [ ] **Step 3: Implement** handler + help text.
-- [ ] **Step 4: Run** class + full E2E → PASS (existing `test_n_opens_create_modal`, `test_slash_focuses_search` must still pass).
-- [ ] **Step 5: Commit.** `git commit -m "feat: implement advertised keyboard shortcuts"`
+- [x] **Step 1: Write failing E2E tests** (added to the existing `TestKeyboardShortcuts` class): all selection-based scenarios target `com.example.synthetic-idle` (search for it, check its checkbox — non-Apple, so no Apple-guard dialog interferes): (a) with exactly that row checked, press `l` → detail panel opens on Logs tab; (b) with nothing selected, press `x` → warning toast, no dialog, no intercepted call; (c) with that row checked, press `x` with the stop route intercepted → intercepted call happens; (d) press `?` → settings modal visible; (e) modal guard: open the synthetic job's delete confirm (via detail panel), press `x` → no new dialog, no intercepted stop call, original dialog still visible; Cancel it.
+- [x] **Step 2: Run** `-k TestKeyboardShortcuts` → FAIL.
+- [x] **Step 3: Implement** handler + help text.
+- [x] **Step 4: Run** class + full E2E → PASS (existing `test_n_opens_create_modal`, `test_slash_focuses_search` must still pass).
+- [x] **Step 5: Commit.** `git commit -m "feat: implement advertised keyboard shortcuts"`
 
 ### Task 7: Backend — deleting a defunct job succeeds
 
@@ -374,23 +374,23 @@ Executor: before relying on this, read the launcher's module-level code and conf
 4. Permission denied on remove (make the plist's parent dir read-only via `chmod 0o500`, restore in `finally`) → success False, "Permission denied" in message.
 5. **Endpoint level — proves the `api_delete_job` early return is gone** (calling `delete_job` directly cannot): monkeypatch `mod._find_job` to return `{"label": "com.example.fake-job", "plist_path": None, "domain": "unknown"}`, monkeypatch `mod.delete_job` with an async stub recording its arguments and returning `{"success": True, "message": "ok"}`, monkeypatch `mod._refresh_jobs` with an async no-op; `asyncio.run(mod.api_delete_job("com.example.fake-job"))` → assert `delete_job` was called once **with `plist_path=None`** and the result propagated. Against current code this test fails because the early return means `delete_job` is never called. (No `TestClient`/httpx — direct coroutine call keeps dev deps unchanged.)
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_delete_job.py`, cases above).
-- [ ] **Step 2: Run** `.venv/bin/python -m pytest tests/test_delete_job.py -v` → cases 2, 3, and 5 FAIL against current code (cases 1 and 4 pass).
-- [ ] **Step 3: Implement** the `delete_job` / `api_delete_job` changes.
-- [ ] **Step 4: Run** the file → all PASS. Also confirm the frontend delete confirm message still reads correctly for this case (generic "unload and remove the plist file" wording is acceptable; no UI change required).
-- [ ] **Step 5: Commit.** `git commit -m "fix: allow deleting defunct jobs whose plist is already gone"`
+- [x] **Step 1: Write the failing tests** (`tests/test_delete_job.py`, cases above).
+- [x] **Step 2: Run** `.venv/bin/python -m pytest tests/test_delete_job.py -v` → cases 2, 3, and 5 FAIL against current code (cases 1 and 4 pass).
+- [x] **Step 3: Implement** the `delete_job` / `api_delete_job` changes.
+- [x] **Step 4: Run** the file → all PASS. Also confirm the frontend delete confirm message still reads correctly for this case (generic "unload and remove the plist file" wording is acceptable; no UI change required).
+- [x] **Step 5: Commit.** `git commit -m "fix: allow deleting defunct jobs whose plist is already gone"`
 
 ### Task 8: Exit verification and documentation
 
 **Files:**
 - Modify: `README.md` (only if run/test commands changed — they should not have), `docs/job_actions_ui_implementation_plan.md` (check off tasks)
 
-- [ ] **Step 1: Full suite** from `launchmaster/`: `.venv/bin/python -m pytest -q`. Every test passes — report any failure verbatim and fix before proceeding; no category skipped (E2E included).
-- [ ] **Step 2: Fleet drift guard** from the monorepo root: `uv run --script tools/check_uv_headers.py` → clean.
-- [ ] **Step 3: Duplicate-logic exit check:** `rg -n "'/jobs/' \+" launchmaster` (and equivalent template-literal forms) — per-job endpoint construction must appear only inside the shared helper from Tasks 1–2. If a stray copy exists, refactor before declaring done.
-- [ ] **Step 4: Manual smoke** in a sandboxed instance (`LAUNCHMASTER_HOME=$(mktemp -d) ./launchmaster --no-browser`): kebab + context menu + delete-cancel on a real (Apple-filtered-out) row at 1100px and 1600px widths; verify sticky column (including the header corner when scrolled both axes) and menu flip.
-- [ ] **Step 5: Tracking check** (on `codex/job-actions-ui`): `git ls-files launchmaster tests docs | sort` — confirm `tests/test_delete_job.py` and this plan are tracked; `git diff --stat main...HEAD` matches the files this plan names (three-dot diff against the merge base — valid because all work is on the feature branch, never on `main`).
-- [ ] **Step 6: Commit** any doc updates. `git commit -m "docs: check off job actions UI plan"`
+- [x] **Step 1: Full suite** from `launchmaster/`: `.venv/bin/python -m pytest -q`. Every test passes — report any failure verbatim and fix before proceeding; no category skipped (E2E included).
+- [x] **Step 2: Fleet drift guard** from the monorepo root: `uv run --script tools/check_uv_headers.py` → clean.
+- [x] **Step 3: Duplicate-logic exit check:** `rg -n "'/jobs/' \+" launchmaster` (and equivalent template-literal forms) — per-job endpoint construction must appear only inside the shared helper from Tasks 1–2. If a stray copy exists, refactor before declaring done.
+- [x] **Step 4: Manual smoke** in a sandboxed instance (`LAUNCHMASTER_HOME=$(mktemp -d) ./launchmaster --no-browser`): kebab + context menu + delete-cancel on a real (Apple-filtered-out) row at 1100px and 1600px widths; verify sticky column (including the header corner when scrolled both axes) and menu flip.
+- [x] **Step 5: Tracking check** (on `codex/job-actions-ui`): `git ls-files launchmaster tests docs | sort` — confirm `tests/test_delete_job.py` and this plan are tracked; `git diff --stat main...HEAD` matches the files this plan names (three-dot diff against the merge base — valid because all work is on the feature branch, never on `main`).
+- [x] **Step 6: Commit** any doc updates. `git commit -m "docs: check off job actions UI plan"`
 - [ ] **Step 7: Hand off for merge.** Push the branch and open a PR to `main` (repo convention: squash-merge after review, as with prior `codex/...` branches). Do not merge without Kevin's review.
 
 ---
