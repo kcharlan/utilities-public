@@ -150,6 +150,49 @@ def _scan_html_provider_sections(html: str) -> list[str]:
     ]
 
 
+# F1 split the concise scan report into two tiers. Both landmarks are spelled
+# once here because a dozen tests below split the document on them.
+_SECONDARY_OPEN = '<details class="secondary-changes">'
+_SCAN_SUMMARY_OPEN = '<details class="summary-section">'
+
+
+def _scan_detail_and_summary(html: str) -> tuple[str, str]:
+    """A scan report split into "everything above the Change Summary" and it.
+
+    The split used to be `html.split("<h2>Change Summary</h2>")`, spelled at
+    each call site. E6 turned that heading into a `<summary>` inside a closed
+    `<details>`, so the landmark moved; naming it here means the next move is
+    one edit rather than a dozen, and the assertion below makes a document that
+    has no Change Summary at all fail by name instead of by `IndexError`.
+    """
+    occurrences = html.count(_SCAN_SUMMARY_OPEN)
+    assert occurrences == 1, f"expected exactly one Change Summary, got {occurrences}"
+    detail, summary = html.split(_SCAN_SUMMARY_OPEN, 1)
+    return detail, summary
+
+
+def _scan_tiers(html: str) -> tuple[str, str]:
+    """A scan report split at F1's disclosure: (tier 1, tier 2).
+
+    Tier 2 includes the Change Summary, which lives inside the same
+    `<details>`. Returns an empty tier 2 when the report has no disclosure.
+    """
+    if _SECONDARY_OPEN not in html:
+        return html, ""
+    primary, secondary = html.split(_SECONDARY_OPEN, 1)
+    return primary, secondary
+
+
+def _model_card_order(html: str) -> list[str]:
+    """Every model-card headline id in document order.
+
+    Reads the `<code>` that opens a card header, so it picks up the
+    provider-level rollup pseudo-cards (`squelched`, `no-op`) too -- callers
+    that care about real models scope the html they pass in.
+    """
+    return re.findall(r'<div class="model-card-header"><code>([^<]*)</code>', html)
+
+
 def _bulk_parameter_changes() -> tuple[ModelDelta, ...]:
     return (
         ModelDelta(
@@ -380,12 +423,19 @@ def test_html_change_summary_sorts_rows_by_change_type() -> None:
         ),
     )
 
-    summary = report.split("<h2>Change Summary</h2>", 1)[1]
-    pricing_index = summary.index("<td>Pricing</td>")
-    benchmarks_index = summary.index("<td>Benchmarks</td>")
-    other_index = summary.index("<td>Other</td>")
+    _, summary = _scan_detail_and_summary(report)
+    # E6: the category is a group heading spanning the row, named once, rather
+    # than a cell repeated on every row beneath it. The ORDER under test is
+    # unchanged -- `_summary_entry_sort_key` still ranks the categories -- so
+    # the assertion follows the headings instead of the per-row cells.
+    pricing_index = summary.index('<td colspan="3">Pricing</td>')
+    benchmarks_index = summary.index('<td colspan="3">Benchmarks</td>')
+    other_index = summary.index('<td colspan="3">Other</td>')
 
     assert pricing_index < benchmarks_index < other_index
+    # Named once each, which is what E6 bought.
+    for category in ("Pricing", "Benchmarks", "Other"):
+        assert summary.count(f'<td colspan="3">{category}</td>') == 1, category
 
 
 def test_html_price_movement_summary_uses_exclusive_model_buckets() -> None:
@@ -460,11 +510,18 @@ def test_html_price_movement_summary_uses_exclusive_model_buckets() -> None:
 
     assert report.index('<div class="provider-cards">') < report.index('<section class="price-movement-summary">')
     assert report.index('<section class="price-movement-summary">') < report.index('<section class="provider-section">')
-    card_positions = [
-        report.index(f'<div class="model-card-header"><code>{model_id}</code>')
-        for model_id in ("higher-model", "lower-model", "mixed-model", "coverage-model")
+    # F2, not fixture order. All four models moved by the same $100,000/1M, so
+    # the primary key ties at cents and the percent tiebreaker decides:
+    # higher-model and mixed-model both peak at 100%, and higher-model's added
+    # cache-read field wins the coverage tiebreaker; lower-model peaks at 50%;
+    # coverage-model has no two-sided move at all and sorts at $0.00.
+    primary, _ = _scan_tiers(report)
+    assert _model_card_order(primary) == [
+        "higher-model",
+        "mixed-model",
+        "lower-model",
+        "coverage-model",
     ]
-    assert card_positions == sorted(card_positions)
 
 
 def test_html_price_movement_summary_preserves_provider_identity() -> None:
@@ -1298,15 +1355,22 @@ def test_default_scan_reports_group_repetitive_list_changes_but_keep_scalar_chan
     assert "`Supported parameters: +reasoning_effort`" in markdown_report
     assert "`priced-model` - Priced Model" in markdown_report
 
-    detail_html, summary_html = html_report.split("<h2>Change Summary</h2>", 1)
+    detail_html, summary_html = _scan_detail_and_summary(html_report)
     assert '<div class="model-card-header"><code>Bulk change \u2014 3 models</code>' in detail_html
     assert '<div class="model-card-header"><code>alpha</code>' not in detail_html
     assert '<div class="model-card-header"><code>priced-model</code>' in detail_html
     assert '<summary>Models: alpha, beta, gamma</summary>' in detail_html
     assert '<summary>3 models</summary>' in summary_html
-    assert summary_html.count("<td>Parameters</td>") == 2
-    assert summary_html.count("<td>Squelched</td>") == 1
+    # E6: two Parameters rows still, but the category names itself once, in a
+    # group heading over them, instead of once per row.
+    assert summary_html.count('<td colspan="3">Parameters</td>') == 1
+    assert summary_html.count('<td colspan="3">Squelched</td>') == 1
     assert "priced-model" in summary_html
+    # F1/F2: the bulk group holds only list changes, so it can never carry a
+    # price move and is always secondary; the priced model leads tier 1.
+    primary, secondary = _scan_tiers(html_report)
+    assert _model_card_order(primary) == ["priced-model"]
+    assert "Bulk change \u2014 3 models" in _model_card_order(secondary)
 
 
 def test_all_detail_scan_report_does_not_bulk_group_models() -> None:
@@ -1323,7 +1387,7 @@ def test_all_detail_scan_report_does_not_bulk_group_models() -> None:
         ),
     )
 
-    detail_html, _ = report.split("<h2>Change Summary</h2>", 1)
+    detail_html, _ = _scan_detail_and_summary(report)
     assert "Bulk change" not in detail_html
     assert '<div class="model-card-header"><code>alpha</code>' in detail_html
     assert '<div class="model-card-header"><code>beta</code>' in detail_html
@@ -1365,11 +1429,11 @@ def test_default_scan_report_omits_squelched_only_models_from_details_and_summar
     assert "* visible-and-squelched (Visible and Squelched)" in text_report
     assert "squelched: 2 field changes across 2 models" in text_report
 
-    detail_html, summary_html = html_report.split("<h2>Change Summary</h2>", 1)
+    detail_html, summary_html = _scan_detail_and_summary(html_report)
     assert '<div class="model-card-header"><code>squelched-only</code>' not in detail_html
     assert '<div class="model-card-header"><code>visible-and-squelched</code>' in detail_html
-    assert '<td>Squelched</td><td>OpenRouter</td><td><code>squelched-only</code>' not in summary_html
-    assert summary_html.count("<td>Squelched</td>") == 1
+    assert '<td><code>squelched-only</code>' not in summary_html
+    assert summary_html.count('<td colspan="3">Squelched</td>') == 1
     assert '<summary>2 models</summary>' in summary_html
     assert "visible-and-squelched" in summary_html
     assert "2 field changes across 2 models" in detail_html
@@ -1584,7 +1648,7 @@ def test_html_card_emits_exactly_one_table_for_a_multi_category_model() -> None:
     the card, one `<colgroup>`, and the category names become row-group chips.
     """
     report = _mixed_direction_card_html()
-    card = report[report.index('<div class="model-card">') : report.index('<section class="summary-section">')]
+    card = report[report.index('<div class="model-card">') : report.index(_SCAN_SUMMARY_OPEN)]
 
     assert card.count("<table") == 1
     assert card.count("<colgroup>") == 1
@@ -2366,8 +2430,7 @@ def test_base_price_and_conditional_tier_render_distinguishably_in_html() -> Non
 
     # Change Summary (the other HTML path). Same requirement, separate renderer
     # input: the summary splits the already-formatted text line.
-    start = report.index('<section class="summary-section">')
-    summary = report[start : report.index("</section>", start)]
+    _, summary = _scan_detail_and_summary(report)
     assert "<td>Input</td>" in summary
     assert "<td>Input (min_prompt_tokens=200000)</td>" in summary
 
@@ -2876,13 +2939,21 @@ def test_scan_markdown_falls_back_to_none_when_a_section_has_no_body() -> None:
 
 
 def test_scan_html_omits_the_changed_heading_when_no_card_survives() -> None:
-    """`<h3>Changed</h3>` with no cards after it was the HTML symptom."""
+    """`<h3>Changed</h3>` with no cards after it was the HTML symptom.
+
+    F1 moved the rollup card that used to justify this heading into tier 2 --
+    a provider-level rollup is not a change, so it never earns a place above
+    the disclosure -- and no model card survives here. So the heading must now
+    be absent ENTIRELY rather than present over a rollup, and the rollup must
+    be findable inside the disclosure. Both halves are asserted: dropping the
+    second would let a report that rendered no rollup at all pass.
+    """
     html = _render_all_human_formats((_NOOP_MODEL,))["html"]
-    body = _html_section_body(html, "<h3>Changed</h3>")
-    assert body, "<h3>Changed</h3> rendered with nothing beneath it"
-    # The rollup card is what justifies the heading, and it is what follows it.
-    assert '<div class="category-label">no-op</div>' in body
-    assert "1 field change across 1 model" in body
+    primary, secondary = _scan_tiers(html)
+    assert "<h3>Changed</h3>" not in html
+    assert '<div class="category-label">no-op</div>' not in primary
+    assert '<div class="category-label">no-op</div>' in secondary
+    assert "1 field change across 1 model" in secondary
 
 
 def test_scan_html_provider_section_is_never_a_bare_heading() -> None:
@@ -3883,3 +3954,319 @@ def test_changes_json_is_unchanged_by_provider_identity_grouping() -> None:
         "changes": list(_shared_label_rows()),
     }
     assert "(synthprov-a)" not in json.dumps(payload)
+
+
+# ---------------------------------------------------------------------------
+# Task 9: page structure and impact sorting (E3-E6, F1, F2)
+#
+# The sort tests below are built so that each level of the key is the ONLY
+# thing that can produce the asserted order. Where a weaker implementation
+# would agree by accident -- alphabetical order matching coverage order, raw
+# float order matching cents-rounded order -- the fixture is arranged so the
+# two disagree, and the assertion follows the design.
+# ---------------------------------------------------------------------------
+
+
+def _priced(model_id: str, *changes: FieldChange) -> ModelDelta:
+    return ModelDelta("changed", model_id, model_id.upper(), changes)
+
+
+def _impact_order(changed: tuple[ModelDelta, ...]) -> list[str]:
+    """Tier-1 card ids of a one-provider scan report, in document order."""
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    primary, _ = _scan_tiers(html)
+    return _model_card_order(primary)
+
+
+def test_impact_sort_leads_with_the_largest_absolute_dollar_move() -> None:
+    """F2 level 1. Alphabetical order is the reverse, so it cannot pass by luck."""
+    changed = (
+        _priced("synth/model-alpha", FieldChange("pricing.prompt", "0.000001", "0.0000015")),
+        _priced("synth/model-bravo", FieldChange("pricing.prompt", "0.000001", "0.000004")),
+        _priced("synth/model-charlie", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+    )
+    # $0.50, $3.00 and $1.00 per 1M respectively.
+    assert _impact_order(changed) == [
+        "synth/model-bravo",
+        "synth/model-charlie",
+        "synth/model-alpha",
+    ]
+
+
+def test_impact_sort_breaks_a_cents_rounded_tie_with_percent() -> None:
+    """F2 level 2, and the evidence that level 1's rounding is load-bearing.
+
+    Both models move ~$1.40 per 1M, but not by the same amount to the last
+    binary place: `alpha` moves $1.4012 and `zulu` $1.4004. The expected order
+    is `zulu` first, and each of the two things that could produce it is ruled
+    out by the fixture:
+
+    * compared RAW, `alpha` is the larger move and would lead, so the
+      `round(..., 2)` on the primary key is what creates the tie at all. Drop
+      it and this ordering inverts -- which is the only way to demonstrate that
+      the percent tiebreaker is reachable rather than dead code;
+    * `zulu` sorts AFTER `alpha` alphabetically, and both carry zero coverage,
+      so neither of the remaining two levels can produce this order either.
+      Only the percent can: `zulu` moved 140% off a $1.00 base while `alpha`
+      moved 14% off a $10.00 base.
+    """
+    changed = (
+        _priced("synth/model-alpha", FieldChange("pricing.prompt", "0.00001", "0.0000114012")),
+        _priced("synth/model-zulu", FieldChange("pricing.prompt", "0.000001", "0.0000024004")),
+    )
+    assert _impact_order(changed) == ["synth/model-zulu", "synth/model-alpha"]
+
+
+def test_impact_sort_breaks_a_percent_tie_with_coverage_count() -> None:
+    """F2 level 3, isolated: the two models agree on levels 1 AND 2.
+
+    Both move $1.00 per 1M off the same $1.00 base, so the dollar key and the
+    percent key are identical and only the count of price fields added or
+    removed separates them. `zulu` carries two such fields and `echo` none, so
+    coverage must put `zulu` FIRST -- against the alphabetical order that the
+    fourth level would otherwise impose.
+    """
+    changed = (
+        _priced("synth/model-echo", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+        _priced(
+            "synth/model-zulu",
+            FieldChange("pricing.prompt", "0.000001", "0.000002"),
+            FieldChange("pricing.input_cache_read", None, "0.0000001"),
+            FieldChange("pricing.input_cache_write", "0.0000002", None),
+        ),
+    )
+    assert _impact_order(changed) == ["synth/model-zulu", "synth/model-echo"]
+
+
+def test_impact_sort_falls_back_to_the_model_id() -> None:
+    """F2 level 4. Identical on all three impact levels, so only the id is left."""
+    changed = (
+        _priced("synth/model-golf", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+        _priced("synth/model-foxtrot", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+    )
+    assert _impact_order(changed) == ["synth/model-foxtrot", "synth/model-golf"]
+
+
+def test_a_one_sided_price_change_sorts_at_zero_dollars() -> None:
+    """A model whose only price change is an addition or a removal.
+
+    There is no second operand, so there is no delta and no percent: the design
+    ranks it at $0.00 on the primary key, below every real move, and separates
+    it from other $0.00 models by coverage. `juliet` moves four TENTHS of a
+    cent, which also rounds to $0.00 -- the design's stated accepted
+    consequence -- and its 0.4% beats the one-sided models' absent percent.
+    """
+    changed = (
+        _priced("synth/model-hotel", FieldChange("pricing.prompt", None, "0.000003")),
+        _priced(
+            "synth/model-india",
+            FieldChange("pricing.prompt", "0.000001", None),
+            FieldChange("pricing.completion", "0.000002", None),
+        ),
+        _priced("synth/model-juliet", FieldChange("pricing.prompt", "0.000001", "0.000001004")),
+        _priced("synth/model-kilo", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+    )
+    assert _impact_order(changed) == [
+        # A real $1.00 move outranks every $0.00 one.
+        "synth/model-kilo",
+        # $0.00 by rounding, but it has a percent.
+        "synth/model-juliet",
+        # $0.00 with no percent; two removals outrank one addition on coverage.
+        "synth/model-india",
+        "synth/model-hotel",
+    ]
+
+
+def test_the_header_counts_models_and_names_both_units() -> None:
+    """E4. `change_count` is a MODEL count; the squelched figure counts FIELDS.
+
+    The header used to print `7 changes · 3 squelched` -- two units, one
+    sentence, and nothing on the line saying so.
+    """
+    changed = (
+        _priced("synth/model-priced", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+        ModelDelta(
+            "changed",
+            "synth/model-benched",
+            "Benched",
+            (FieldChange("benchmarks.design_arena", [{"elo": 1}], [{"elo": 2}]),),
+        ),
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    assert (
+        '<h1>Model Sentinel <span class="count">'
+        "— 2 of 2 models changed · 1 field change squelched</span></h1>"
+    ) in html
+    # The defect, spelled out: the old header would have said `2 changes`.
+    assert ">— 2 changes<" not in html
+
+
+def test_the_header_omits_the_squelched_clause_when_nothing_was_squelched() -> None:
+    changed = (_priced("synth/model-priced", FieldChange("pricing.prompt", "0.000001", "0.000002")),)
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    assert '<span class="count">— 1 of 2 models changed</span>' in html
+    assert "squelched" not in html.split("</header>", 1)[0]
+
+
+def test_a_squelched_card_gets_a_hidden_chip_and_no_squelch_section() -> None:
+    """E3. The section this replaces was taller than the change it was hiding."""
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-core",
+            "Core",
+            (
+                FieldChange("pricing.prompt", "0.000001", "0.000002"),
+                FieldChange("benchmarks.design_arena", [{"elo": 1}], [{"elo": 2}]),
+                FieldChange("benchmarks.other_arena", [{"elo": 1}], [{"elo": 3}]),
+            ),
+        ),
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    primary, _ = _scan_tiers(html)
+    assert (
+        '<div class="model-card-header"><code>synth/model-core</code>'
+        '<span class="display-name">Core</span>'
+        '<span class="hidden-count" title="2 squelched">+2 hidden</span></div>'
+    ) in primary
+    # The per-card section is gone from the CARD. The provider-level rollup
+    # still exists and still says `Squelched`, so the assertion is scoped to
+    # tier 1 rather than to the whole document.
+    assert '<div class="category-label">Squelched</div>' not in primary
+
+
+def test_a_card_with_nothing_hidden_carries_no_chip() -> None:
+    """`+0 hidden` on every card would be the clutter E3 is removing."""
+    changed = (_priced("synth/model-core", FieldChange("pricing.prompt", "0.000001", "0.000002")),)
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    # Scoped past the `<style>` block, which necessarily names the class.
+    assert "hidden-count" not in html.split("</head>", 1)[1]
+
+
+def _tiering_report() -> str:
+    changed = (
+        _priced("synth/model-priced", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+        ModelDelta(
+            "changed",
+            "synth/model-quiet",
+            "Quiet",
+            (FieldChange("top_provider.context_length", 1000, 2000),),
+        ),
+        ModelDelta(
+            "changed",
+            "synth/model-benched",
+            "Benched",
+            (FieldChange("benchmarks.design_arena", [{"elo": 1}], [{"elo": 2}]),),
+        ),
+    )
+    return render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+
+
+def test_only_price_changed_cards_sit_above_the_disclosure() -> None:
+    """F1. A context-length change is real but is not a price move."""
+    primary, secondary = _scan_tiers(_tiering_report())
+    assert _model_card_order(primary) == ["synth/model-priced"]
+    assert _model_card_order(secondary) == ["synth/model-quiet", "squelched"]
+
+
+def test_the_change_summary_is_collapsed_and_inside_the_disclosure() -> None:
+    """E6 plus F1: one disclosure, and the summary is closed within it."""
+    html = _tiering_report()
+    primary, secondary = _scan_tiers(html)
+    assert html.count(_SECONDARY_OPEN) == 1
+    assert _SCAN_SUMMARY_OPEN in secondary
+    assert _SCAN_SUMMARY_OPEN not in primary
+    # Closed by default: neither disclosure carries an `open` attribute.
+    assert "<details class=\"secondary-changes\" open" not in html
+    assert "<details class=\"summary-section\" open" not in html
+    assert "<h2>Change Summary</h2>" not in html
+
+
+def test_the_disclosure_summary_states_its_contents_with_counts() -> None:
+    html = _tiering_report()
+    assert (
+        "<summary>Other changes — 1 model with no price change · "
+        "1 report-detail rollup · the Change Summary</summary>"
+    ) in html
+
+
+def test_the_change_summary_drops_the_provider_column_for_one_provider() -> None:
+    """E5, applied outside the movement list."""
+    _, summary = _scan_detail_and_summary(_tiering_report())
+    assert "<thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead>" in summary
+    assert "<th>Provider</th>" not in summary
+    assert "<th>Category</th>" not in summary
+    assert "OpenRouter" not in summary
+
+
+def test_the_change_summary_keeps_the_provider_column_for_two_providers() -> None:
+    """E5's other half: with two providers the label is load-bearing."""
+    first = _scan_result(
+        (_priced("shared/model", FieldChange("pricing.prompt", "0.000001", "0.000002")),),
+        provider_id="pa",
+        provider_label="Provider A",
+    )
+    second = _scan_result(
+        (_priced("shared/model", FieldChange("pricing.prompt", "0.000002", "0.000001")),),
+        provider_id="pb",
+        provider_label="Provider B",
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[first, second],
+    )
+    _, summary = _scan_detail_and_summary(html)
+    assert (
+        "<thead><tr><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead>"
+    ) in summary
+    assert "<td>Provider A</td>" in summary
+    assert "<td>Provider B</td>" in summary
+
+
+def test_the_changes_report_keeps_its_own_summary_table() -> None:
+    """The cross-renderer matrix scopes E3-E6 to the concise HTML report.
+
+    Asserted from the `changes` report's output rather than trusted to the
+    default argument, so a later caller that starts passing `concise=True`
+    from `_render_changes_html` fails here.
+    """
+    html = _mixed_changes_report("html")
+    assert '<section class="summary-section"><h2>Change Summary</h2>' in html
+    assert (
+        "<thead><tr><th>Category</th><th>Provider</th><th>Model</th>"
+        "<th>Field</th><th>Change</th></tr></thead>"
+    ) in html
+    assert _SECONDARY_OPEN not in html
+    assert _SCAN_SUMMARY_OPEN not in html

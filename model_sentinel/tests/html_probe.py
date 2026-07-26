@@ -26,7 +26,13 @@ import re
 # attributes are both matched loosely so a later cell class cannot silently
 # drop a cell out of the probe.
 _VALUE_CELL_RE = re.compile(r'<td class="(?:old|new)-val\b[^"]*"[^>]*>(.*?)</td>')
-_SUMMARY_SECTION_RE = re.compile(r'<section class="summary-section">(.*?)</section>', re.S)
+# The Change Summary is a `<section>` in the `changes` report and a collapsed
+# `<details>` in the scan report (E6). Both tags are matched, and the closing
+# tag is tied to whichever opened, so a probe pointed at the scan report cannot
+# silently return an empty list and let the loop over it pass vacuously.
+_SUMMARY_SECTION_RE = re.compile(
+    r'<(section|details) class="summary-section">(.*?)</\1>', re.S
+)
 _SUMMARY_ROW_RE = re.compile(r"<tr>(.*?)</tr>", re.S)
 _SUMMARY_CELL_RE = re.compile(r"<td([^>]*)>(.*?)</td>", re.S)
 
@@ -59,7 +65,7 @@ def absent_side_cells(html: str) -> list[str]:
     """
     cells = [match.group(1) for match in _VALUE_CELL_RE.finditer(html)]
     for section in _SUMMARY_SECTION_RE.finditer(html):
-        for row in _SUMMARY_ROW_RE.finditer(section.group(1)):
+        for row in _SUMMARY_ROW_RE.finditer(section.group(2)):
             row_cells = _SUMMARY_CELL_RE.findall(row.group(1))
             if row_cells and "colspan" not in row_cells[-1][0]:
                 cells.append(row_cells[-1][1])

@@ -646,6 +646,28 @@ def _fmt_int(value: float) -> str:
 PCT_PRECISION = 1
 
 
+def pct_change_magnitude(old: float, new: float) -> float | None:
+    """The row's relative movement as a NUMBER, or `None` for a zero basis.
+
+    The arithmetic behind `_pct_change`'s string, extracted so that the one
+    other consumer of a percentage -- `reporting._model_price_impact`, which
+    orders model cards by impact (design F2, tiebreaker 2) -- ranks by the
+    percentage the row actually prints instead of re-deriving it beside this
+    one. A second copy of `(new - old) / abs(old)` would be a second place for
+    the zero-basis case and the sign convention to drift.
+
+    Signed, and NOT rounded to `PCT_PRECISION`: the sort wants the true
+    ordering, and rounding here would manufacture ties that the display's one
+    decimal place merely hides. Callers that want a magnitude take `abs()`.
+
+    `None`, not `0.0`, when `old == 0`: `(new - 0) / 0` has no relative reading
+    at all, and a zero would sort such a row as if it had not moved.
+    """
+    if old == 0:
+        return None
+    return ((new - old) / abs(old)) * 100
+
+
 def _pct_change(old: float, new: float) -> str:
     """The row's relative movement: one place, bounded rather than denied.
 
@@ -668,9 +690,9 @@ def _pct_change(old: float, new: float) -> str:
     remaining false claim: one column reporting a decrease beside three
     reporting no change.
     """
-    if old == 0:
+    pct = pct_change_magnitude(old, new)
+    if pct is None:
         return ""
-    pct = ((new - old) / abs(old)) * 100
     arrow = "↑ " if pct > 0 else ("↓ " if pct < 0 else "")
     if _prints_as_zero(pct, PCT_PRECISION):
         return _sentinel(pct, PCT_PRECISION, suffix="%", lead=arrow)

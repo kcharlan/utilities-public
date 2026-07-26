@@ -156,6 +156,32 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
        print `null` and did not move. This closes the split the Task 7 entry
        above recorded as open.
 
+* Task 9 restructured the PAGE. Only the two HTML goldens moved; text,
+  markdown and JSON are byte-identical, which is the evidence that F1's split
+  is a layout change and not a change to what the report says. Five classes of
+  diff, and nothing else:
+    1. F1 -- one `<details class="secondary-changes">` now holds every model
+       card with no price change, the provider-level rollups, and the Change
+       Summary. `synth/model-core` is the only card left above it, because it
+       is the only model whose price moved. Card order INSIDE the disclosure is
+       alphabetical, which is why `synth/model-moderation-added` moved ahead of
+       `-off` and `-temp-toggle`;
+    2. F2 -- tier-1 cards sort by impact. This fixture has one, so the golden
+       shows the tiering but not the ordering; `test_reporting.py` carries the
+       four-level sort tests;
+    3. E3 -- the card's `SQUELCHED` section is replaced by a
+       `<span class="hidden-count">+1 hidden</span>` in its header, with the
+       per-reason breakdown moved to that span's `title`;
+    4. E4 -- the header counts MODELS and names both units:
+       `7 of 7 models changed · 1 field change squelched`, where it read
+       `7 changes` over a figure that counted fields;
+    5. E5/E6 -- the Change Summary is a collapsed `<details>`; its Category
+       column became a group heading row per category, and its Provider column
+       is gone because this fixture has exactly one provider.
+  The CSS block moved with them: `.secondary-changes`, `.summary-group`, the
+  `.hidden-count` chip, and a flex `.model-card-header` to right-align it. No
+  new colour values -- every rule reuses an existing `--accent-*`/`--text-*`.
+
 The JSON goldens have never changed and must not: JSON is the audit path.
 """
 
@@ -868,6 +894,17 @@ h3 {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-card-hover);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.model-card-header .hidden-count {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 .model-card-header code {
   font-family: var(--font-mono);
@@ -878,7 +915,6 @@ h3 {
 .model-card-header .display-name {
   color: var(--text-dim);
   font-size: 0.85rem;
-  margin-left: 0.5rem;
 }
 .bulk-change-card {
   border-left: 3px solid var(--accent-amber);
@@ -1039,16 +1075,42 @@ td.sem-neutral { color: var(--text-dim); }
 .list-added { color: var(--accent-green); }
 .list-removed { color: var(--accent-red); }
 .list-count { color: var(--text-dim); font-size: 0.8rem; }
+.secondary-changes {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+}
+.secondary-changes > summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.secondary-changes > summary:hover {
+  color: var(--text-bright);
+}
+.secondary-changes .provider-section {
+  margin-top: 1rem;
+}
 .summary-section {
   margin-top: 2.5rem;
   border-top: 1px solid var(--border);
   padding-top: 1.5rem;
 }
-.summary-section h2 {
+.secondary-changes .summary-section {
+  margin-top: 1.5rem;
+}
+.summary-section h2,
+.summary-section > summary {
   font-family: var(--font-mono);
   font-size: 1.1rem;
   color: var(--text-bright);
   margin-bottom: 1rem;
+}
+.summary-section > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
 }
 .summary-table {
   width: 100%;
@@ -1075,6 +1137,15 @@ td.sem-neutral { color: var(--text-dim); }
 .summary-table tr:nth-child(even) td {
   background: var(--bg-table-alt);
 }
+.summary-table tr.summary-group td {
+  background: var(--bg-card);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding-top: 0.7rem;
+}
 .summary-table .summary-models {
   padding: 0;
 }
@@ -1099,7 +1170,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>Model Sentinel <span class="count">— 7 changes</span></h1>
+  <h1>Model Sentinel <span class="count">— 7 of 7 models changed · 1 field change squelched</span></h1>
   <div class="meta">@@GENERATED_AT_HUMAN@@ &middot; scan</div>
 </header>
 <div class="provider-cards">
@@ -1111,7 +1182,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <section class="provider-section"><h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>
 <h3>Changed</h3>
 <div class="model-card">
-<div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span></div>
+<div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><span class="hidden-count" title="1 squelched">+1 hidden</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
 <tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
@@ -1124,11 +1195,8 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <tr class="group-start row-alt"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
 <tr><td></td><td class="field-name" title="expiration_date">Expiration date</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">2030-12-31</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
 </tbody></table></div>
-<div class="change-category"><div class="category-label">Squelched</div>
-<div class="list-diff">1 field change hidden by report detail policy</div>
-</div>
-</div>
-<div class="model-card">
+</div></section>
+<details class="secondary-changes"><summary>Other changes — 5 models with no price change · 2 report-detail rollups · the Change Summary</summary><section class="provider-section"><div class="model-card">
 <div class="model-card-header"><code>synth/model-limit-add</code><span class="display-name">Synth Model Limit Add</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num">16,384</td><td class="unit">tok</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
@@ -1138,6 +1206,12 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-limit-remove</code><span class="display-name">Synth Model Limit Remove</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val num">8,192</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">tok</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card">
+<div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
 </tbody></table></div>
 </div>
 <div class="model-card">
@@ -1153,12 +1227,6 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 </tbody></table></div>
 </div>
 <div class="model-card">
-<div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
-<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
-</tbody></table></div>
-</div>
-<div class="model-card">
 <div class="model-card-header"><code>squelched</code><span class="display-name">report detail summary</span></div>
 <div class="change-category"><div class="category-label">squelched</div>
 <div class="list-diff">1 field change across 1 model</div>
@@ -1170,22 +1238,27 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="change-category"><div class="category-label">no-op</div>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
-</div></div></section>
-<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache read</td><td>— → 5e-08 ($0.05 / 1M)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → —</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
-<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Reasoning default</td><td>off → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Moderated</td><td>off → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr>
-<tr><td>Squelched</td><td>Synth Provider</td><td><details class="summary-models"><summary>1 models</summary><div class="summary-model-list"><code>synth/model-core</code></div></details></td><td>benchmarks, benchmarks.*</td><td>1 field change hidden by report detail policy</td></tr></tbody></table></section>
+</div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Cache read</td><td>— → 5e-08 ($0.05 / 1M)</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
+<tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
+<tr><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
+<tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → —</td></tr>
+<tr class="summary-group"><td colspan="3">Parameters</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
+<tr class="summary-group"><td colspan="3">Capabilities</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Reasoning default</td><td>off → on</td></tr>
+<tr class="summary-group"><td colspan="3">Other</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Moderated</td><td>off → on</td></tr>
+<tr><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
+<tr><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
+<tr><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr>
+<tr class="summary-group"><td colspan="3">Squelched</td></tr>
+<tr><td><details class="summary-models"><summary>1 models</summary><div class="summary-model-list"><code>synth/model-core</code></div></details></td><td>benchmarks, benchmarks.*</td><td>1 field change hidden by report detail policy</td></tr></tbody></table></details></details>
 <footer>Generated by Model Sentinel</footer>
 </body>
 </html>"""
@@ -1207,7 +1280,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>Model Sentinel <span class="count">— 7 changes</span></h1>
+  <h1>Model Sentinel <span class="count">— 7 of 7 models changed</span></h1>
   <div class="meta">@@GENERATED_AT_HUMAN@@ &middot; scan</div>
 </header>
 <div class="provider-cards">
@@ -1234,8 +1307,8 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">off</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-capability">enabled</td><td class="pct sem-capability"></td></tr>
 <tr class="row-alt"><td></td><td class="field-name" title="expiration_date">Expiration date</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">2030-12-31</td><td class="unit"></td><td class="delta sem-neutral">—</td><td class="pct sem-neutral"></td></tr>
 </tbody></table></div>
-</div>
-<div class="model-card">
+</div></section>
+<details class="secondary-changes"><summary>Other changes — 5 models with no price change · 1 report-detail rollup · the Change Summary</summary><section class="provider-section"><div class="model-card">
 <div class="model-card-header"><code>synth/model-limit-add</code><span class="display-name">Synth Model Limit Add</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num">16,384</td><td class="unit">tok</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
@@ -1245,6 +1318,12 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card-header"><code>synth/model-limit-remove</code><span class="display-name">Synth Model Limit Remove</span></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.max_completion_tokens">Max output</td><td class="old-val num">8,192</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">tok</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+</tbody></table></div>
+</div>
+<div class="model-card">
+<div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
+<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
+<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
 </tbody></table></div>
 </div>
 <div class="model-card">
@@ -1260,32 +1339,31 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 </tbody></table></div>
 </div>
 <div class="model-card">
-<div class="model-card-header"><code>synth/model-moderation-added</code><span class="display-name">Synth Model Moderation Added</span></div>
-<div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Other</td><td class="field-name" title="top_provider.is_moderated">Moderated</td><td class="old-val">—</td><td class="arrow">→</td><td class="new-val">on</td><td class="unit"></td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
-</tbody></table></div>
-</div>
-<div class="model-card">
 <div class="model-card-header"><code>no-op</code><span class="display-name">report detail summary</span></div>
 <div class="change-category"><div class="category-label">no-op</div>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
-</div></div></section>
-<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache read</td><td>— → 5e-08 ($0.05 / 1M)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
-<tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → —</td></tr>
-<tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
-<tr><td>Capabilities</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Reasoning default</td><td>off → on</td></tr>
-<tr><td>Benchmarks</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Example suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-core</code></td><td>Moderated</td><td>off → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
-<tr><td>Other</td><td>Synth Provider</td><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr></tbody></table></section>
+</div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Cache read</td><td>— → 5e-08 ($0.05 / 1M)</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
+<tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
+<tr><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
+<tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → —</td></tr>
+<tr class="summary-group"><td colspan="3">Parameters</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
+<tr class="summary-group"><td colspan="3">Capabilities</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Reasoning default</td><td>off → on</td></tr>
+<tr class="summary-group"><td colspan="3">Benchmarks</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Example suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
+<tr class="summary-group"><td colspan="3">Other</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
+<tr><td><code>synth/model-core</code></td><td>Moderated</td><td>off → on</td></tr>
+<tr><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
+<tr><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
+<tr><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr></tbody></table></details></details>
 <footer>Generated by Model Sentinel</footer>
 </body>
 </html>"""
@@ -1671,29 +1749,31 @@ EXPECTED_JSON_DETAIL_ALL = _EXPECTED_JSON_DETAIL_ALL_TEMPLATE.replace(ISO_TOKEN,
 # `_build_html_summary_table` and nothing else.
 # ---------------------------------------------------------------------------
 
-_SUMMARY_CORE = "<td>Synth Provider</td><td><code>synth/model-core</code></td>"
+# Task 9 moved `_SUMMARY_ROW_SHAPES` a second time, and only by REMOVING two
+# cells from every entry: E6 lifted the Category out of each row into a group
+# heading over its rows, and E5 dropped the Provider column because this
+# fixture has exactly one provider and a column repeating one label says
+# nothing. No Change cell moved -- the last `<td>` of every shape below is
+# character-for-character what it was -- which is the evidence that the tiering
+# pass did not disturb what the summary SAYS, only how often it repeats itself.
+_SUMMARY_CORE = "<td><code>synth/model-core</code></td>"
 
 _SUMMARY_ROW_SHAPES = (
-    f"<td>Pricing</td>{_SUMMARY_CORE}<td>— → 5e-08 ($0.05 / 1M)</td>",
-    f"<td>Pricing</td>{_SUMMARY_CORE}<td>9e-08 ($0.09 / 1M) → —</td>",
-    f"<td>Pricing</td>{_SUMMARY_CORE}<td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td>",
-    f"<td>Pricing</td>{_SUMMARY_CORE}<td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td>",
-    f"<td>Context &amp; Limits</td>{_SUMMARY_CORE}<td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td>",
-    "<td>Context &amp; Limits</td><td>Synth Provider</td>"
+    f"{_SUMMARY_CORE}<td>— → 5e-08 ($0.05 / 1M)</td>",
+    f"{_SUMMARY_CORE}<td>9e-08 ($0.09 / 1M) → —</td>",
+    f"{_SUMMARY_CORE}<td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td>",
+    f"{_SUMMARY_CORE}<td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td>",
+    f"{_SUMMARY_CORE}<td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td>",
     "<td><code>synth/model-limit-add</code></td><td>— → 16,384</td>",
-    "<td>Context &amp; Limits</td><td>Synth Provider</td>"
     "<td><code>synth/model-limit-remove</code></td><td>8,192 → —</td>",
-    f"<td>Parameters</td>{_SUMMARY_CORE}<td>+logit_bias (1 → 2)</td>",
-    f"<td>Capabilities</td>{_SUMMARY_CORE}<td>off → on</td>",
-    f"<td>Other</td>{_SUMMARY_CORE}<td>— → 2030-12-31</td>",
-    f"<td>Other</td>{_SUMMARY_CORE}<td>off → on</td>",
-    "<td>Other</td><td>Synth Provider</td>"
+    f"{_SUMMARY_CORE}<td>+logit_bias (1 → 2)</td>",
+    f"{_SUMMARY_CORE}<td>off → on</td>",
+    f"{_SUMMARY_CORE}<td>— → 2030-12-31</td>",
+    f"{_SUMMARY_CORE}<td>off → on</td>",
     "<td><code>synth/model-moderation-added</code></td><td>— → on</td>",
-    "<td>Other</td><td>Synth Provider</td>"
     "<td><code>synth/model-moderation-off</code></td><td>on → off</td>",
-    "<td>Other</td><td>Synth Provider</td>"
     "<td><code>synth/model-temp-toggle</code></td><td>0 → 1 (+1)</td>",
-    '<td>Squelched</td><td>Synth Provider</td><td><details class="summary-models">'
+    '<td><details class="summary-models">'
     '<summary>1 models</summary><div class="summary-model-list">'
     "<code>synth/model-core</code></div></details></td>"
     "<td>1 field change hidden by report detail policy</td>",
@@ -1722,9 +1802,17 @@ _SUMMARY_FIELD_CELLS = (
 
 
 def _summary_rows(html: str) -> list[str]:
-    """The `<tr>` bodies of the Change Summary section, in document order."""
-    start = html.index('<section class="summary-section">')
-    section = html[start : html.index("</section>", start)]
+    """The DATA `<tr>` bodies of the Change Summary, in document order.
+
+    E6 turned the section into a collapsed `<details>` and gave each category a
+    group heading row. That heading row opens `<tr class="summary-group">`, so
+    splitting on the exact string `"<tr>"` never starts a chunk at one, and
+    `_split_summary_row` truncates at the first `</tr>` -- a heading trailing a
+    data row is discarded rather than counted. The count assertion in the
+    caller is what keeps that reasoning honest.
+    """
+    start = html.index('<details class="summary-section">')
+    section = html[start : html.index("</details>", html.index("</tbody>", start))]
     body = section[section.index("<tbody>") : section.index("</tbody>")]
     return [row for row in body.split("<tr>")[1:]]
 
@@ -1732,16 +1820,16 @@ def _summary_rows(html: str) -> list[str]:
 def _split_summary_row(row: str) -> tuple[str, str]:
     """Return `(row_without_field_cell, field_cell)` for one summary row.
 
-    Every summary row is five `<td>`s (or three, for the colspan-2 presence
-    rows, which this fixture does not produce). The Field cell is the fourth
-    and is the only one a qualifier can reach.
+    Three `<td>`s since E5/E6 dropped the Category and Provider columns from
+    this single-provider report (they were two, then three, before). The Field
+    cell is the second and is the only one a qualifier can reach.
     """
     body = row[: row.index("</tr>")]
     cells = ["<td>" + cell for cell in body.split("<td>")[1:]]
-    assert len(cells) == 5, row
-    field_cell = cells[3]
+    assert len(cells) == 3, row
+    field_cell = cells[1]
     assert field_cell.startswith("<td>") and field_cell.endswith("</td>"), field_cell
-    return "".join(cells[:3] + cells[4:]), field_cell[len("<td>") : -len("</td>")]
+    return "".join(cells[:1] + cells[2:]), field_cell[len("<td>") : -len("</td>")]
 
 
 def test_qualifier_change_summary_is_a_pure_permutation() -> None:

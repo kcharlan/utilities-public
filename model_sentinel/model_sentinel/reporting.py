@@ -53,6 +53,7 @@ from .change_render import (
     _numeric_value,
     _scalar_display,
     classify_change,
+    pct_change_magnitude,
 )
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
 from .time_utils import to_local_human, to_local_iso
@@ -863,13 +864,36 @@ def _hidden_rollup_markdown(rollups: _HiddenRollups, policy: ReportDetailPolicy)
     return lines
 
 
+def _hidden_rollup_cards(
+    rollups: _HiddenRollups,
+    policy: ReportDetailPolicy,
+) -> list[str]:
+    """One HTML string per provider-level rollup that has anything to report.
+
+    ONE element per card, not one per markup fragment. F1's disclosure states
+    how many rollups it is hiding, and the previous shape -- a flat list of
+    six or seven `<div>`s per card, appended in place -- made `len(parts)`
+    read as a count of rollups when it was a count of lines. The first draft
+    of that summary line announced "13 report-detail rollups" over two.
+
+    Both HTML renderers join their parts with a newline, so a card assembled
+    here and joined there is byte-identical to the fragments this replaced.
+    """
+    cards = []
+    for label, entries in _ordered_rollups(rollups):
+        parts: list[str] = []
+        _append_html_provider_summary(parts, label, entries, policy)
+        if parts:
+            cards.append("\n".join(parts))
+    return cards
+
+
 def _append_hidden_rollup_html(
     parts: list[str],
     rollups: _HiddenRollups,
     policy: ReportDetailPolicy,
 ) -> None:
-    for label, entries in _ordered_rollups(rollups):
-        _append_html_provider_summary(parts, label, entries, policy)
+    parts.extend(_hidden_rollup_cards(rollups, policy))
 
 
 def _field_changes_from_change_rows(model_changes: list[dict[str, Any]]) -> tuple[FieldChange, ...]:
@@ -1608,6 +1632,110 @@ def _collect_price_movement_summary(
     return _PriceMovementSummary(tuple(models))
 
 
+# F2's primary key is rounded to CENTS before comparison, and that rounding is
+# load-bearing rather than cosmetic. Compared raw, two per-1M deltas are equal
+# only by float coincidence, so tiebreaker 2 (percent) would never run and would
+# sit in this module as dead code that no test could reach. At cents, two models
+# that both moved ~$1.40 genuinely tie on "how many dollars" and are then ranked
+# by relative impact, which is the ordering the design asked for.
+#
+# Accepted consequence, stated in the design: every sub-cent move rounds to
+# $0.00 and ties, so those models are ordered by percent, then coverage, then
+# alphabetically. Their mutual order carries no meaning, and neither does the
+# size of the move that produced it.
+_IMPACT_DELTA_PLACES = 2
+
+
+@dataclass(frozen=True)
+class _ModelImpact:
+    """Where one model card sits in F2's impact order.
+
+    Built only by `_model_price_impact`, which returns `None` for a model with
+    no price movement at all -- that `None` is also F1's tier test, so the
+    "which tier" and "how far up the tier" questions cannot answer from two
+    different notions of "has a price change".
+    """
+
+    delta: float
+    """Largest absolute per-1M movement on this model, ROUNDED TO CENTS."""
+
+    pct: float
+    """Absolute percent of the field that produced `delta`; 0.0 when none did."""
+
+    coverage: int
+    """Price fields added or removed -- movements with no delta to rank."""
+
+    model_id: str
+
+    @property
+    def sort_key(self) -> tuple[float, float, int, str]:
+        """Descending on impact, ascending on model id, as one sortable tuple.
+
+        Negation rather than `reverse=True` because the four levels do not all
+        run the same way: `reverse=True` would also reverse the model id and
+        order two equally-unimportant models Z before A.
+        """
+        return (-self.delta, -self.pct, -self.coverage, self.model_id.casefold())
+
+
+def _model_price_impact(
+    item: _PlannedModelChange,
+    *,
+    price_multiplier: int,
+    price_divisor: int,
+) -> _ModelImpact | None:
+    """F2's sort key for one planned model, or `None` if it has no price move.
+
+    The gate is `_price_movement_kind`, the SAME predicate the Price Movement
+    card counts with, so the set of cards promoted to tier 1 is exactly the set
+    of models that card names. Deciding it here on `_is_price_amount_field`
+    alone would promote a model whose price field was rewritten without moving.
+
+    A one-sided addition or removal carries no `delta_abs` (there is no second
+    operand to subtract), so it contributes to `coverage` and leaves the
+    primary key at 0.00 -- the design's stated behavior for a model whose only
+    price change is a field appearing or disappearing.
+
+    The percent is the percent of the field that produced the primary key, so
+    the two are chosen TOGETHER as one maximum over `(delta, pct)` rather than
+    independently: taking the largest delta and then the largest percent from
+    anywhere on the card would report a percentage that belongs to a different
+    field than the dollar figure ranked above it.
+    """
+    best = (0.0, 0.0)
+    coverage = 0
+    moved = False
+    for field_change in item.display.visible:
+        movement = _price_movement_kind(field_change)
+        if movement is None:
+            continue
+        moved = True
+        if movement in ("added", "removed"):
+            coverage += 1
+            continue
+        rendered = classify_change(
+            field_change,
+            price_multiplier=price_multiplier,
+            price_divisor=price_divisor,
+        )
+        # `_price_movement_kind` returned a two-sided direction, so both
+        # operands are numeric and `pct_change_magnitude` can only be `None`
+        # for a zero basis -- which is a real "no relative reading", ranked as
+        # 0.0 rather than allowed to crash the sort.
+        percent = pct_change_magnitude(
+            _numeric_value(field_change.old_value),
+            _numeric_value(field_change.new_value),
+        )
+        candidate = (
+            round(abs(rendered.delta_abs or 0.0), _IMPACT_DELTA_PLACES),
+            abs(percent or 0.0),
+        )
+        best = max(best, candidate)
+    if not moved:
+        return None
+    return _ModelImpact(best[0], best[1], coverage, item.delta.provider_model_id)
+
+
 def _is_one_sided(rendered: RenderedChange) -> bool:
     """Whether only one side of a price/count change carries a value.
 
@@ -2297,6 +2425,17 @@ h3 {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-card-hover);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.model-card-header .hidden-count {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 .model-card-header code {
   font-family: var(--font-mono);
@@ -2307,7 +2446,6 @@ h3 {
 .model-card-header .display-name {
   color: var(--text-dim);
   font-size: 0.85rem;
-  margin-left: 0.5rem;
 }
 .bulk-change-card {
   border-left: 3px solid var(--accent-amber);
@@ -2468,16 +2606,42 @@ td.sem-neutral { color: var(--text-dim); }
 .list-added { color: var(--accent-green); }
 .list-removed { color: var(--accent-red); }
 .list-count { color: var(--text-dim); font-size: 0.8rem; }
+.secondary-changes {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+}
+.secondary-changes > summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.secondary-changes > summary:hover {
+  color: var(--text-bright);
+}
+.secondary-changes .provider-section {
+  margin-top: 1rem;
+}
 .summary-section {
   margin-top: 2.5rem;
   border-top: 1px solid var(--border);
   padding-top: 1.5rem;
 }
-.summary-section h2 {
+.secondary-changes .summary-section {
+  margin-top: 1.5rem;
+}
+.summary-section h2,
+.summary-section > summary {
   font-family: var(--font-mono);
   font-size: 1.1rem;
   color: var(--text-bright);
   margin-bottom: 1rem;
+}
+.summary-section > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
 }
 .summary-table {
   width: 100%;
@@ -2504,6 +2668,15 @@ td.sem-neutral { color: var(--text-dim); }
 .summary-table tr:nth-child(even) td {
   background: var(--bg-table-alt);
 }
+.summary-table tr.summary-group td {
+  background: var(--bg-card);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding-top: 0.7rem;
+}
 .summary-table .summary-models {
   padding: 0;
 }
@@ -2517,7 +2690,15 @@ footer {
 }"""
 
 
-def _render_html_page(*, title: str, header_html: str, body_html: str, summary_html: str) -> str:
+def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html: str) -> str:
+    """The page shell. `tail_html` is whatever sits between the body and the footer.
+
+    Named for its POSITION rather than its contents since F1: the `changes`
+    report still passes its Change Summary table here, but the scan report now
+    passes the whole tier-2 disclosure, which CONTAINS that table. A parameter
+    called `summary_html` holding a disclosure holding a summary would have
+    read as a bug at both call sites.
+    """
     h = html_module.escape
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2532,7 +2713,7 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, summary_h
 <body>
 {header_html}
 {body_html}
-{summary_html}
+{tail_html}
 <footer>Generated by Model Sentinel</footer>
 </body>
 </html>"""
@@ -2540,13 +2721,47 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, summary_h
 
 def _build_html_summary_table(
     entries: list[_SummaryEntry],
+    *,
+    concise: bool = False,
 ) -> str:
-    """Build the concise, selectively consolidated Change Summary."""
+    """Build the concise, selectively consolidated Change Summary.
+
+    `concise` selects the scan report's E5/E6 presentation and defaults to off,
+    so the `changes` report -- which the design's cross-renderer matrix scopes
+    E3-E6 away from -- keeps the table it has, byte for byte. The row bodies are
+    shared either way; only which cells a row carries and what wraps the table
+    differ, which is why this is a flag rather than a second builder.
+
+    Under `concise`:
+
+    * E6 -- the table is closed by default and the Category column becomes a
+      group heading row, so a category is named once instead of once per row.
+    * E5 -- the Provider column is dropped when every row names the same
+      provider. Repeating one provider label down a whole column says nothing;
+      the moment two providers appear it is load-bearing and comes back.
+    """
     if not entries:
         return ""
     h = html_module.escape
+    ordered = sorted(entries, key=_summary_entry_sort_key)
+    show_provider = not concise or len({entry.provider for entry in ordered}) > 1
+    headings = (
+        ([] if concise else ["Category"])
+        + (["Provider"] if show_provider else [])
+        + ["Model", "Field", "Change"]
+    )
+    # The Field and Change columns merge on a presence row, so the widest a row
+    # can be is one cell short of the heading count.
+    group_span = len(headings)
+
     rows = []
-    for entry in sorted(entries, key=_summary_entry_sort_key):
+    open_category: str | None = None
+    for entry in ordered:
+        if concise and entry.category != open_category:
+            open_category = entry.category
+            rows.append(
+                f'<tr class="summary-group"><td colspan="{group_span}">{h(entry.category)}</td></tr>'
+            )
         if entry.grouped_model_ids:
             model_list = "".join(f'<code>{h(model_id)}</code>' for model_id in entry.grouped_model_ids)
             model_cell = (
@@ -2555,29 +2770,31 @@ def _build_html_summary_table(
             )
         else:
             model_cell = f'<code>{h(entry.model_id)}</code>'
+        cells = [] if concise else [f'<td>{h(entry.category)}</td>']
+        if show_provider:
+            cells.append(f'<td>{h(entry.provider)}</td>')
+        cells.append(f'<td>{model_cell}</td>')
         if entry.field:
-            rows.append(
-                f'<tr>'
-                f'<td>{h(entry.category)}</td>'
-                f'<td>{h(entry.provider)}</td>'
-                f'<td>{model_cell}</td>'
-                f'<td>{h(entry.field)}</td>'
-                f'<td>{h(entry.detail)}</td>'
-                f'</tr>'
-            )
+            cells.append(f'<td>{h(entry.field)}</td><td>{h(entry.detail)}</td>')
         else:
-            rows.append(
-                f'<tr><td>{h(entry.category)}</td><td>{h(entry.provider)}</td>'
-                f'<td>{model_cell}</td>'
-                f'<td colspan="2">{h(entry.detail)}</td></tr>'
-            )
-    return (
-        '<section class="summary-section">'
-        '<h2>Change Summary</h2>'
+            cells.append(f'<td colspan="2">{h(entry.detail)}</td>')
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    head = "".join(f'<th>{heading}</th>' for heading in headings)
+    table = (
         '<table class="summary-table">'
-        '<thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead>'
+        f'<thead><tr>{head}</tr></thead>'
         '<tbody>' + "\n".join(rows) + '</tbody>'
-        '</table></section>'
+        '</table>'
+    )
+    if not concise:
+        return '<section class="summary-section"><h2>Change Summary</h2>' + table + '</section>'
+    row_suffix = "" if len(ordered) == 1 else "s"
+    return (
+        '<details class="summary-section">'
+        f'<summary>Change Summary — {len(ordered)} row{row_suffix}</summary>'
+        + table
+        + '</details>'
     )
 
 
@@ -2732,7 +2949,8 @@ def _render_html_model_changes(
     parts = [
         '<div class="model-card">',
         f'<div class="model-card-header"><code>{h(delta.provider_model_id)}</code>'
-        f'<span class="display-name">{h(delta.display_name)}</span></div>',
+        f'<span class="display-name">{h(delta.display_name)}</span>'
+        f'{_html_hidden_chip(plan)}</div>',
     ]
 
     # C1: ONE table for the whole card, not one per category. Per-category
@@ -2745,10 +2963,52 @@ def _render_html_model_changes(
     )
     if table_html:
         parts.append(f'<div class="card-table-wrap">{table_html}</div>')
-    _append_html_hidden_summary(parts, plan, model_ids=(delta.provider_model_id,))
 
     parts.append('</div>')
     return "\n".join(parts), plan
+
+
+# The three reasons a card can be hiding a field, paired with the word the chip
+# uses for each. Ordered as `_append_html_hidden_summary` emitted its sections,
+# so the tooltip reads the way the sections it replaces read.
+_HIDDEN_CHIP_REASONS = (
+    ("squelched", "squelched"),
+    ("hidden_unclassified", "unclassified"),
+    ("hidden_non_squelched", "filtered"),
+)
+
+
+def _html_hidden_chip(plan: _FieldDisplayPlan) -> str:
+    """E3: one dim `+N hidden` chip in the card header, or nothing.
+
+    Replaces the three stacked `<div class="change-category">` blocks that
+    `_append_html_hidden_summary` still emits for the `changes` report. On a
+    scan card those blocks were routinely taller than the change they were
+    hiding: an uppercase SQUELCHED heading plus a full sentence, to report that
+    one benchmark row was not shown.
+
+    The count is AGGREGATED across all three reasons, because the reader's
+    question is "is this card showing me everything?" and not "under which of
+    three policy clauses was each field withheld". The breakdown is not
+    discarded -- it moves into the `title`, so nothing the removed sections
+    said is now unavailable, it is one hover away.
+
+    Empty string, not an empty chip, when nothing is hidden: `+0 hidden` on
+    every card is exactly the clutter this is removing.
+    """
+    counted = [
+        (len(getattr(plan, attribute)), word)
+        for attribute, word in _HIDDEN_CHIP_REASONS
+        if getattr(plan, attribute)
+    ]
+    total = sum(count for count, _ in counted)
+    if not total:
+        return ""
+    breakdown = ", ".join(f"{count} {word}" for count, word in counted)
+    return (
+        f'<span class="hidden-count" title="{html_module.escape(breakdown)}">'
+        f'+{total} hidden</span>'
+    )
 
 
 def _html_model_details(label: str, model_ids: tuple[str, ...], *, preview_limit: int = 8) -> str:
@@ -2793,6 +3053,14 @@ def _render_html_bulk_changes(group: _BulkChangeGroup, policy: ReportDetailPolic
 
 
 def _append_html_hidden_summary(parts: list[str], plan: _FieldDisplayPlan, *, model_ids: tuple[str, ...]) -> None:
+    """The `changes` report's per-model hidden-detail sections.
+
+    The scan report's cards used to share this and now carry `_html_hidden_chip`
+    instead (E3). The split is deliberate and matches the design's cross-renderer
+    matrix, which scopes E3 to the concise HTML report only: the `changes` report
+    lists a model as a heading with loose blocks beneath it, not as a card with a
+    header row, so it has nowhere to put a chip.
+    """
     if plan.squelched:
         parts.append('<div class="change-category"><div class="category-label">Squelched</div>')
         parts.append(
@@ -3367,6 +3635,239 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
 
 
 # ---------------------------------------------------------------------------
+# F1: the concise scan report's two tiers
+#
+# Everything between here and `_render_scan_html` exists so that function does
+# not grow. The design's own risk note says the tiering "belongs in a separate
+# builder function rather than inline" the moment the renderer gets longer, and
+# it would have: F1 turns one loop over providers into two interleaved passes
+# with a sort, a partition and a disclosure between them.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ScanChangeTiers:
+    """The rendered halves of F1's split, plus what the disclosure must say.
+
+    `primary` is everything above the fold: per-provider headings, baselines,
+    errors, added and removed models, and the model cards that carry a price
+    change, in F2's impact order.
+
+    `secondary` is everything the reader asked for only if they ask: model
+    cards with no price change (alphabetical), bulk-change cards, and the
+    provider-level hidden-detail rollups.
+    """
+
+    primary: str
+    secondary: str
+    secondary_cards: int
+    secondary_rollups: int
+
+
+def _provider_lead_html(result: ProviderScanResult) -> list[str]:
+    """A provider's identification block: heading, baseline, error.
+
+    Stays in tier 1 even for a provider whose every card went to tier 2. The
+    heading is what carries the provider id and the baseline scrape the whole
+    section is diffed against, and burying that behind a disclosure would leave
+    a report whose provenance is only visible after a click.
+    """
+    h = html_module.escape
+    parts = [
+        f'<h2>{h(result.provider_label)} '
+        f'<span class="provider-id">({h(result.provider_id)})</span></h2>'
+    ]
+    if result.baseline:
+        parts.append(
+            f'<div class="baseline-info">Baseline: scrape {result.baseline.scrape_id} '
+            f'at {h(to_local_human(result.baseline.completed_at))}</div>'
+        )
+    if result.error_message:
+        parts.append(f'<div class="error-msg">{h(result.error_message)}</div>')
+    return parts
+
+
+def _presence_list_html(heading: str, css_class: str, deltas: tuple[ModelDelta, ...]) -> list[str]:
+    h = html_module.escape
+    if not deltas:
+        return []
+    parts = [f'<h3>{heading}</h3><ul class="model-list {css_class}">']
+    parts.extend(
+        f'<li><code>{h(delta.provider_model_id)}</code> '
+        f'<span class="display-name">{h(delta.display_name)}</span></li>'
+        for delta in deltas
+    )
+    parts.append('</ul>')
+    return parts
+
+
+def _build_scan_change_tiers(
+    planned_results: list[tuple[ProviderScanResult, _ProviderChangePlan]],
+    policy: ReportDetailPolicy,
+    *,
+    show_provider: bool,
+) -> _ScanChangeTiers:
+    """Render every provider's changes, split into F1's two tiers.
+
+    `show_provider` is E5 applied outside the movement list: in a report where
+    exactly one provider has anything to say, repeating its label at the head of
+    the tier-2 block says nothing the tier-1 heading has not already said. With
+    two or more providers it comes back, because a bare list of model ids from
+    two providers is ambiguous.
+
+    A bulk-change group is always secondary. Groups are formed only from models
+    whose every visible change is a list diff (`_bulk_change_signature`), so a
+    group can never hold a price change and can never earn tier 1.
+    """
+    primary_sections: list[str] = []
+    secondary_sections: list[str] = []
+    secondary_cards = 0
+    secondary_rollups = 0
+
+    for result, provider_plan in planned_results:
+        if result.change_count == 0 and result.status != "error":
+            continue
+
+        ranked: list[tuple[tuple[float, float, int, str], str]] = []
+        deferred: list[tuple[str, str]] = []
+        for item in provider_plan.items:
+            if isinstance(item, _BulkChangeGroup):
+                deferred.append((item.label.casefold(), _render_html_bulk_changes(item, policy)))
+                continue
+            card, _ = _render_html_model_changes(
+                item.delta,
+                result.price_multiplier,
+                result.price_divisor,
+                policy,
+                display_plan=item.display,
+            )
+            impact = _model_price_impact(
+                item,
+                price_multiplier=result.price_multiplier,
+                price_divisor=result.price_divisor,
+            )
+            if impact is None:
+                deferred.append((item.delta.provider_model_id.casefold(), card))
+            else:
+                ranked.append((impact.sort_key, card))
+        ranked.sort(key=lambda entry: entry[0])
+        deferred.sort(key=lambda entry: entry[0])
+
+        rollup_cards = _hidden_rollup_cards(provider_plan.rollups, policy)
+
+        lead = _provider_lead_html(result)
+        primary_parts = [
+            *lead,
+            *_presence_list_html("Added", "added-list", result.added),
+            *_presence_list_html("Removed", "removed-list", result.removed),
+        ]
+        # `<h3>Changed</h3>` is emitted only when a card survives beneath it,
+        # the rule this renderer has always had -- now applied per tier, so
+        # neither tier can end up with a heading over nothing.
+        if ranked:
+            primary_parts.append('<h3>Changed</h3>')
+            primary_parts.extend(card for _, card in ranked)
+        # A provider heading with nothing beneath it is not a section. Error
+        # providers are the exception: the provider card above says ERROR and
+        # this section is where a reader looks for the message.
+        has_primary = len(primary_parts) > 1 or result.status == "error"
+
+        secondary_parts: list[str] = []
+        if deferred or rollup_cards:
+            if not has_primary:
+                # Every one of this provider's cards is secondary, so its
+                # identification travels with them rather than being left
+                # behind as a bare `<h2>` over nothing.
+                secondary_parts.extend(lead)
+            elif show_provider:
+                secondary_parts.append(
+                    f'<h3>{html_module.escape(result.provider_label)}</h3>'
+                )
+            secondary_parts.extend(card for _, card in deferred)
+            secondary_parts.extend(rollup_cards)
+            secondary_cards += len(deferred)
+            secondary_rollups += len(rollup_cards)
+
+        if has_primary:
+            primary_sections.append(
+                '<section class="provider-section">' + "\n".join(primary_parts) + '</section>'
+            )
+        if secondary_parts:
+            secondary_sections.append(
+                '<section class="provider-section">' + "\n".join(secondary_parts) + '</section>'
+            )
+
+    return _ScanChangeTiers(
+        primary="".join(primary_sections),
+        secondary="".join(secondary_sections),
+        secondary_cards=secondary_cards,
+        secondary_rollups=secondary_rollups,
+    )
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _render_scan_disclosure(tiers: _ScanChangeTiers, summary_html: str) -> str:
+    """F1's one disclosure, wrapping tier 2 and the Change Summary.
+
+    The summary line states its contents WITH COUNTS. A `<details>` labelled
+    only "Other changes" asks the reader to open it to find out whether it was
+    worth opening, which is the same cost the sections it replaced imposed by
+    being open.
+
+    Zero-count clauses are dropped rather than printed as `0 models`: the point
+    of the line is what is actually in there.
+    """
+    if not (tiers.secondary or summary_html):
+        return ""
+    clauses = []
+    if tiers.secondary_cards:
+        clauses.append(f"{_plural(tiers.secondary_cards, 'model')} with no price change")
+    if tiers.secondary_rollups:
+        clauses.append(_plural(tiers.secondary_rollups, "report-detail rollup"))
+    if summary_html:
+        clauses.append("the Change Summary")
+    return (
+        '<details class="secondary-changes">'
+        f'<summary>Other changes — {" · ".join(clauses)}</summary>'
+        + tiers.secondary
+        + summary_html
+        + '</details>'
+    )
+
+
+def _scan_header_counts(
+    planned_results: list[tuple[ProviderScanResult, _ProviderChangePlan]],
+) -> tuple[int, int, int]:
+    """E4: (models changed, models scanned, field changes squelched).
+
+    Three numbers in TWO units, which is the whole defect this fixes. The
+    header used to read `7 changes · 3 squelched`, where `7` was
+    `ProviderScanResult.change_count` -- added plus removed plus changed
+    MODELS -- and `3` was a count of FIELDS. Both are returned here so the one
+    caller labels each with its own unit rather than letting the reader assume
+    they share one.
+
+    The scanned population is the current model count plus the models that
+    disappeared, since a removed model was scanned and is no longer current.
+    The floor against `change_count` is not a fudge: it keeps a provider that
+    reported an inconsistent `current_count` from printing an impossible
+    fraction such as `3 of 2 models changed`.
+    """
+    changed = 0
+    scanned = 0
+    squelched = 0
+    for result, provider_plan in planned_results:
+        changed += result.change_count
+        scanned += max(result.current_count + len(result.removed), result.change_count)
+        count, _ = _summarize_field_changes(provider_plan.rollups.squelched)
+        squelched += count
+    return changed, scanned, squelched
+
+
+# ---------------------------------------------------------------------------
 # HTML scan report
 # ---------------------------------------------------------------------------
 
@@ -3380,7 +3881,6 @@ def _render_scan_html(
 ) -> str:
     h = html_module.escape
     timestamp = h(to_local_human(generated_at))
-    total_changes = sum(r.change_count for r in provider_results)
     planned_results = [
         (result, _plan_provider_changes(result.changed, detail_policy))
         for result in provider_results
@@ -3406,56 +3906,16 @@ def _render_scan_html(
             f'</div>'
         )
 
-    # Change detail sections
-    change_sections = []
-    for result, provider_plan in planned_results:
-        if result.change_count == 0 and result.status != "error":
-            continue
-        section_parts = [f'<h2>{h(result.provider_label)} <span class="provider-id">({h(result.provider_id)})</span></h2>']
-        if result.baseline:
-            section_parts.append(
-                f'<div class="baseline-info">Baseline: scrape {result.baseline.scrape_id} '
-                f'at {h(to_local_human(result.baseline.completed_at))}</div>'
-            )
-        if result.error_message:
-            section_parts.append(f'<div class="error-msg">{h(result.error_message)}</div>')
-        if result.added:
-            section_parts.append('<h3>Added</h3><ul class="model-list added-list">')
-            for delta in result.added:
-                section_parts.append(f'<li><code>{h(delta.provider_model_id)}</code> <span class="display-name">{h(delta.display_name)}</span></li>')
-            section_parts.append('</ul>')
-        if result.removed:
-            section_parts.append('<h3>Removed</h3><ul class="model-list removed-list">')
-            for delta in result.removed:
-                section_parts.append(f'<li><code>{h(delta.provider_model_id)}</code> <span class="display-name">{h(delta.display_name)}</span></li>')
-            section_parts.append('</ul>')
-        if result.changed:
-            # Build the cards first: `<h3>Changed</h3>` is emitted only when
-            # something survives beneath it.
-            changed_parts: list[str] = []
-            for item in provider_plan.items:
-                if isinstance(item, _BulkChangeGroup):
-                    changed_parts.append(_render_html_bulk_changes(item, detail_policy))
-                    continue
-                html, _ = _render_html_model_changes(
-                    item.delta,
-                    result.price_multiplier,
-                    result.price_divisor,
-                    detail_policy,
-                    display_plan=item.display,
-                )
-                changed_parts.append(html)
-            _append_hidden_rollup_html(changed_parts, provider_plan.rollups, detail_policy)
-            if changed_parts:
-                section_parts.append('<h3>Changed</h3>')
-                section_parts.extend(changed_parts)
-        if len(section_parts) == 1 and result.status != "error":
-            # Provider heading with no baseline and no surviving change beneath
-            # it -- emit nothing rather than a bare `<h2>`. Error providers keep
-            # their heading: the provider card above says ERROR and the section
-            # is where a reader looks for it.
-            continue
-        change_sections.append('<section class="provider-section">' + "\n".join(section_parts) + '</section>')
+    # F1's two tiers. E5's condition -- more than one provider actually saying
+    # something -- is decided once, here, and governs both the tier-2 headings
+    # and the Change Summary's Provider column.
+    contributing = sum(
+        1 for result in provider_results
+        if result.change_count or result.status == "error"
+    )
+    tiers = _build_scan_change_tiers(
+        planned_results, detail_policy, show_provider=contributing > 1
+    )
 
     # Summary entries
     summary_entries: list[_SummaryEntry] = []
@@ -3490,8 +3950,14 @@ def _render_scan_html(
                 model_id=delta.provider_model_id, display_name=delta.display_name,
             ))
 
-    suffix = "s" if total_changes != 1 else ""
-    count_span = f'<span class="count">\u2014 {total_changes} change{suffix}</span>' if total_changes else ""
+    # E4: two units, each named. `changed` counts MODELS, `squelched` counts
+    # FIELD CHANGES; the header this replaces printed them side by side as
+    # though they were the same thing.
+    changed, scanned, squelched = _scan_header_counts(planned_results)
+    counts = f"{changed} of {_plural(scanned, 'model')} changed" if changed else ""
+    if counts and squelched:
+        counts += f" \u00b7 {_plural(squelched, 'field change')} squelched"
+    count_span = f'<span class="count">\u2014 {counts}</span>' if counts else ""
     header_html = (
         f'<header>\n'
         f'  <h1>Model Sentinel {count_span}</h1>\n'
@@ -3504,14 +3970,16 @@ def _render_scan_html(
     body_html = (
         f'<div class="provider-cards">\n  {"".join(provider_cards)}\n</div>\n\n'
         + (f'{price_movement_html}\n\n' if price_movement_html else "")
-        + "".join(change_sections)
+        + tiers.primary
     )
 
     return _render_html_page(
         title=f"Model Sentinel \u2014 {to_local_human(generated_at)}",
         header_html=header_html,
         body_html=body_html,
-        summary_html=_build_html_summary_table(summary_entries),
+        tail_html=_render_scan_disclosure(
+            tiers, _build_html_summary_table(summary_entries, concise=True)
+        ),
     )
 
 
@@ -3644,7 +4112,7 @@ def _render_changes_html(
         title="Model Sentinel \u2014 Change Log",
         header_html=header_html,
         body_html="".join(date_sections),
-        summary_html=_build_html_summary_table(summary_entries),
+        tail_html=_build_html_summary_table(summary_entries),
     )
 
 
