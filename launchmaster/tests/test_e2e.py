@@ -440,6 +440,103 @@ class TestRowActionsAndKebab:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Right-click context menu and failed-panel actions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestContextMenu:
+    def test_right_click_opens_shared_menu_without_changing_selection(
+        self, server, page
+    ):
+        page.goto(server, wait_until="networkidle")
+        row = _job_row(page, "com.example.synthetic-idle")
+        row_box = row.bounding_box()
+        assert row_box is not None
+
+        row.click(button="right", position={"x": 80, "y": 12})
+
+        menu = page.locator(".job-action-menu")
+        expect(menu).to_be_visible()
+        expect(menu).to_have_attribute(
+            "aria-label", "Actions for com.example.synthetic-idle"
+        )
+        assert menu.locator(".job-action-menu-item").all_text_contents() == [
+            "Start",
+            "Stop",
+            "Run Now",
+            "Reload",
+            "Disable",
+            "Unload",
+            "Edit",
+            "Logs",
+            "Details",
+            "Export",
+            "Delete",
+        ]
+        menu_box = menu.bounding_box()
+        assert menu_box is not None
+        assert abs(menu_box["x"] - (row_box["x"] + 80)) <= 2
+        expect(row.locator(".checkbox")).not_to_have_class(
+            re.compile(r"\bchecked\b")
+        )
+        expect(page.locator(".bulk-bar")).to_have_count(0)
+
+        page.keyboard.press("Escape")
+        expect(menu).to_have_count(0)
+
+    def test_right_clicking_second_row_retargets_single_menu(
+        self, server, page
+    ):
+        page.goto(server, wait_until="networkidle")
+        page.locator(".filter-search").fill("com.example.synthetic-")
+        idle_row = page.locator(".job-table tbody tr").filter(
+            has_text="com.example.synthetic-idle"
+        )
+        failed_row = page.locator(".job-table tbody tr").filter(
+            has_text="com.example.synthetic-failed"
+        )
+        expect(idle_row).to_be_visible()
+        expect(failed_row).to_be_visible()
+
+        idle_row.click(button="right", position={"x": 20, "y": 12})
+        menu = page.locator(".job-action-menu")
+        expect(menu).to_have_attribute(
+            "aria-label", "Actions for com.example.synthetic-idle"
+        )
+
+        failed_row.click(button="right", position={"x": 300, "y": 12})
+        expect(menu).to_have_count(1)
+        expect(menu).to_have_attribute(
+            "aria-label", "Actions for com.example.synthetic-failed"
+        )
+
+
+class TestFailedPanelActions:
+    def test_failed_job_keeps_primary_actions_and_opens_shared_menu(
+        self, server, page
+    ):
+        page.goto(server, wait_until="networkidle")
+        row = page.locator(".failed-job-row").filter(
+            has_text="com.example.synthetic-failed"
+        )
+        expect(row).to_be_visible()
+
+        actions = row.locator(".failed-job-actions")
+        for label in ("Logs", "Edit", "Reload"):
+            expect(actions.get_by_role("button", name=label)).to_be_visible()
+
+        actions.get_by_role("button", name="More actions").click()
+        menu = page.locator(".job-action-menu")
+        expect(menu).to_be_visible()
+        expect(menu).to_have_attribute(
+            "aria-label", "Actions for com.example.synthetic-failed"
+        )
+        expect(menu.get_by_role("menuitem", name="Stop")).to_be_visible()
+        delete_item = menu.get_by_role("menuitem", name="Delete")
+        expect(delete_item).to_be_visible()
+        expect(delete_item).to_have_class(re.compile(r"\bdanger\b"))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 1. Page Load & CDN Dependencies
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -772,6 +869,15 @@ class TestSettingsModal:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestKeyboardShortcuts:
+    @staticmethod
+    def _select_synthetic_job(page):
+        row = _job_row(page, "com.example.synthetic-idle")
+        row.locator(".checkbox").click()
+        # The checkbox is a non-focusable div; explicitly move focus away from
+        # the search input so the global shortcut handler receives the key.
+        page.locator(".topbar-brand").click()
+        expect(page.locator(".bulk-bar")).to_be_visible()
+
     def test_n_opens_create_modal(self, server, page):
         page.goto(server, wait_until="networkidle")
         page.keyboard.press("n")
@@ -783,6 +889,248 @@ class TestKeyboardShortcuts:
         page.keyboard.press("/")
         search = page.locator(".filter-search")
         expect(search).to_be_focused()
+
+    def test_selected_job_navigation_shortcuts_open_logs_and_edit(
+        self, server, page
+    ):
+        page.goto(server, wait_until="networkidle")
+        self._select_synthetic_job(page)
+
+        page.keyboard.press("l")
+        panel = page.locator(".detail-panel.open")
+        expect(panel).to_be_visible()
+        expect(panel.locator(".panel-tab.active")).to_have_text("Logs")
+
+        # Esc closes the panel before it clears the underlying selection.
+        page.keyboard.press("Escape")
+        expect(panel).to_have_count(0)
+        expect(page.locator(".bulk-bar")).to_be_visible()
+
+        page.keyboard.press("e")
+        panel = page.locator(".detail-panel.open")
+        expect(panel).to_be_visible()
+        expect(panel.locator(".panel-tab.active")).to_have_text("Edit Plist")
+
+    def test_detail_panel_job_takes_shortcut_target_priority(
+        self, server, page
+    ):
+        calls = []
+
+        def intercept(route):
+            calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(re.compile(r".*/api/jobs/.*/stop$"), intercept)
+        page.goto(server, wait_until="networkidle")
+        self._select_synthetic_job(page)
+        _open_job_detail(page, "com.example.synthetic-failed")
+        page.locator(".panel-header-title").click()
+
+        page.keyboard.press("x")
+
+        expect(page.locator(".toast.success")).to_contain_text(
+            "Stopped com.example.synthetic-failed"
+        )
+        assert len(calls) == 1
+        assert calls[0].endswith(
+            "/api/jobs/com.example.synthetic-failed/stop"
+        )
+
+    def test_mutating_shortcuts_use_intercepted_action_routes(
+        self, server, page
+    ):
+        calls = []
+
+        def intercept(route):
+            calls.append((route.request.method, route.request.url))
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(
+            re.compile(
+                r".*/api/jobs/com\.example\.synthetic-idle/"
+                r"(start|stop|reload)$"
+            ),
+            intercept,
+        )
+        page.goto(server, wait_until="networkidle")
+        self._select_synthetic_job(page)
+
+        for key in ("s", "x", "r"):
+            page.keyboard.press(key)
+
+        expect(page.locator(".toast.success")).to_have_count(3)
+        assert [method for method, _ in calls] == ["POST", "POST", "POST"]
+        assert [url.rsplit("/", 1)[-1] for _, url in calls] == [
+            "start",
+            "stop",
+            "reload",
+        ]
+
+    def test_action_shortcut_without_one_target_warns_without_request(
+        self, server, page
+    ):
+        calls = []
+
+        def intercept(route):
+            calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(re.compile(r".*/api/jobs/.*/stop$"), intercept)
+        page.goto(server, wait_until="networkidle")
+        page.locator(".topbar-brand").click()
+
+        page.keyboard.press("x")
+
+        expect(page.locator(".toast.warning")).to_contain_text(
+            "Select one job or open its details first"
+        )
+        expect(page.locator(".confirm-dialog")).to_have_count(0)
+        assert calls == []
+
+    def test_question_opens_settings_and_updated_shortcut_help(
+        self, server, page
+    ):
+        page.goto(server, wait_until="networkidle")
+
+        page.keyboard.press("?")
+
+        modal = page.locator(".modal")
+        expect(modal).to_be_visible()
+        expect(modal.locator(".modal-title")).to_contain_text("Settings")
+        expect(modal).to_contain_text("Open settings & shortcuts")
+        expect(modal).to_contain_text(
+            "Close menu/dialog/panel, then deselect"
+        )
+
+    def test_confirm_dialog_guards_action_shortcuts(self, server, page):
+        stop_calls = []
+
+        def intercept_stop(route):
+            stop_calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(re.compile(r".*/api/jobs/.*/stop$"), intercept_stop)
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+        panel.get_by_role("button", name="Delete Job").click()
+        dialog = page.locator(".confirm-dialog")
+        expect(dialog).to_be_visible()
+        expect(dialog.locator(".confirm-title")).to_have_text("Delete Job")
+
+        page.keyboard.press("x")
+
+        expect(dialog).to_be_visible()
+        expect(dialog.locator(".confirm-title")).to_have_text("Delete Job")
+        expect(page.locator(".confirm-dialog")).to_have_count(1)
+        assert stop_calls == []
+        dialog.get_by_role("button", name="Cancel").click()
+
+    def test_create_and_settings_modals_guard_all_shortcuts(
+        self, server, page
+    ):
+        calls = []
+
+        def intercept(route):
+            calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(
+            re.compile(r".*/api/jobs/.*/(start|stop|reload)$"),
+            intercept,
+        )
+        page.goto(server, wait_until="networkidle")
+
+        page.keyboard.press("n")
+        create_modal = page.locator(".modal")
+        expect(create_modal).to_be_visible()
+        for key in ("s", "x", "r", "e", "l", "n", "?", "/"):
+            page.keyboard.press(key)
+        expect(page.locator(".modal")).to_have_count(1)
+        expect(create_modal.locator(".modal-title")).to_contain_text(
+            "Create New Job"
+        )
+        expect(page.locator(".toast.warning")).to_have_count(0)
+        assert calls == []
+        create_modal.get_by_role("button", name="Cancel").click()
+
+        page.keyboard.press("?")
+        settings_modal = page.locator(".modal")
+        expect(settings_modal.locator(".modal-title")).to_contain_text(
+            "Settings"
+        )
+        for key in ("s", "x", "r", "e", "l", "n", "?", "/"):
+            page.keyboard.press(key)
+        expect(page.locator(".modal")).to_have_count(1)
+        expect(settings_modal.locator(".modal-title")).to_contain_text(
+            "Settings"
+        )
+        expect(page.locator(".toast.warning")).to_have_count(0)
+        assert calls == []
+
+    def test_input_and_modifier_guards_block_action_shortcuts(
+        self, server, page
+    ):
+        calls = []
+
+        def intercept(route):
+            calls.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"success": True, "message": "ok"}),
+            )
+
+        page.route(
+            re.compile(r".*/api/jobs/.*/(start|stop|reload)$"),
+            intercept,
+        )
+        page.goto(server, wait_until="networkidle")
+        self._select_synthetic_job(page)
+
+        search = page.locator(".filter-search")
+        search.focus()
+        page.keyboard.press("x")
+        expect(search).to_have_value("com.example.synthetic-idlex")
+
+        domain_select = page.locator(".filter-select")
+        domain_select.focus()
+        page.keyboard.press("r")
+
+        page.evaluate(
+            """() => {
+              window.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 's', metaKey: true, bubbles: true,
+              }));
+              window.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'x', ctrlKey: true, bubbles: true,
+              }));
+              window.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'r', altKey: true, bubbles: true,
+              }));
+            }"""
+        )
+
+        assert calls == []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

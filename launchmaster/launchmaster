@@ -1645,7 +1645,7 @@ function StatusCards({ jobs, activeFilter, setActiveFilter }) {
 }
 
 // ---- Failed Jobs Panel ----
-function FailedPanel({ jobs, onOpenDetail, onOpenLogs, onOpenEdit, onReload }) {
+function FailedPanel({ jobs, onOpenDetail, onOpenLogs, onOpenEdit, onReload, openActionMenu }) {
   const [collapsed, setCollapsed] = useState(false);
   const failedJobs = jobs.filter(j => getJobStatus(j) === 'failed');
 
@@ -1678,6 +1678,18 @@ function FailedPanel({ jobs, onOpenDetail, onOpenLogs, onOpenEdit, onReload }) {
                 </button>
                 <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); onReload(j); }}>
                   <Icon name="refresh-cw" size={12} /> Reload
+                </button>
+                <button
+                  className="row-action-btn"
+                  title="More actions"
+                  aria-label="More actions"
+                  onClick={e => {
+                    e.stopPropagation();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    openActionMenu(j, rect.left, rect.bottom + 4);
+                  }}
+                >
+                  <Icon name="more-vertical" size={13} />
                 </button>
               </div>
             </div>
@@ -1945,6 +1957,10 @@ function JobTable({ jobs, selected, setSelected, onRowClick, showApple, runActio
                 key={job.label}
                 className={(selected.includes(job.label) ? 'selected ' : '') + 'status-' + status + (apple ? ' apple-row' : '')}
                 onClick={() => onRowClick(job)}
+                onContextMenu={e => {
+                  e.preventDefault();
+                  openActionMenu(job, e.clientX, e.clientY);
+                }}
                 style={{ animationDelay: (i * 20) + 'ms' }}
               >
                 <td>
@@ -2882,9 +2898,9 @@ function SettingsModal({ onClose, settings, setSettings, addToast }) {
               <kbd className="kbd">e</kbd> <span>Edit selected job</span>
               <kbd className="kbd">l</kbd> <span>View logs</span>
               <kbd className="kbd">n</kbd> <span>Create new job</span>
-              <kbd className="kbd">Esc</kbd> <span>Close panel / deselect</span>
+              <kbd className="kbd">Esc</kbd> <span>Close menu/dialog/panel, then deselect</span>
               <kbd className="kbd">/</kbd> <span>Focus search</span>
-              <kbd className="kbd">?</kbd> <span>Toggle shortcuts help</span>
+              <kbd className="kbd">?</kbd> <span>Open settings & shortcuts</span>
             </div>
           </div>
         </div>
@@ -3078,13 +3094,50 @@ function App() {
         if (selected.length > 0) setSelected([]);
         return;
       }
+
+      // Do not let global shortcuts stack or replace modal interactions.
+      if (showConfirmRef.current || showCreate || showSettings) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
       if (e.key === 'n') { e.preventDefault(); setShowCreate(true); }
       if (e.key === '/') { e.preventDefault(); document.querySelector('.filter-search') && document.querySelector('.filter-search').focus(); }
+      if (e.key === '?') { e.preventDefault(); setShowSettings(true); return; }
+
+      const actionId = {
+        s: 'start',
+        x: 'stop',
+        r: 'reload',
+        e: 'edit',
+        l: 'logs',
+      }[e.key];
+      if (!actionId) return;
+
+      e.preventDefault();
+      const target = detailJob || (
+        selected.length === 1
+          ? jobs.find(job => job.label === selected[0])
+          : null
+      );
+      if (!target) {
+        addToast('warning', 'Select one job or open its details first');
+        return;
+      }
+      runAction(target, actionId);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [actionMenu, cancelConfirm, detailJob, selected, showCreate, showSettings]);
+  }, [
+    actionMenu,
+    addToast,
+    cancelConfirm,
+    detailJob,
+    jobs,
+    runAction,
+    selected,
+    showCreate,
+    showSettings,
+  ]);
 
   return (
     <div className="app-shell">
@@ -3133,6 +3186,7 @@ function App() {
           onOpenLogs={(j) => { setDetailInitialTab('logs'); setDetailJob(j); }}
           onOpenEdit={(j) => { setDetailInitialTab('edit'); setDetailJob(j); }}
           onReload={(j) => runAction(j, 'reload')}
+          openActionMenu={openActionMenu}
         />
 
         <FilterBar
