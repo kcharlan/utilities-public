@@ -51,6 +51,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .models import FieldChange
+from .provider_profiles import (
+    OPENROUTER_PROFILE,
+    default_categorize,
+    default_is_count_field,
+    default_is_price_amount_field,
+)
 
 # Fields whose recorded values are 0/1 (not real Python bool) but are
 # semantically flags, not magnitudes. Seeded from the boolean-valued fields
@@ -470,6 +476,16 @@ def _is_count_field(field_name: str) -> bool:
     lower = field_name.lower()
     leaf = lower.rsplit(".", 1)[-1].split("[", 1)[0]
     return "token" in leaf or _classify_field(field_name) == "Context & Limits"
+
+
+# Transitional compatibility aliases. Profile-aware call sites replace these
+# in the next refactor step.
+FIELD_PATH_LABELS = OPENROUTER_PROFILE.field_path_labels
+FIELD_LEAF_LABELS = OPENROUTER_PROFILE.field_leaf_labels
+KNOWN_BOOLEAN_FIELDS = OPENROUTER_PROFILE.known_boolean_fields
+_classify_field = default_categorize
+_is_price_amount_field = default_is_price_amount_field
+_is_count_field = default_is_count_field
 
 
 # ---------------------------------------------------------------------------
