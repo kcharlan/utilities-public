@@ -33,7 +33,14 @@ _VALUE_CELL_RE = re.compile(r'<td class="(?:old|new)-val\b[^"]*"[^>]*>(.*?)</td>
 _SUMMARY_SECTION_RE = re.compile(
     r'<(section|details) class="summary-section">(.*?)</\1>', re.S
 )
-_SUMMARY_ROW_RE = re.compile(r"<tr>(.*?)</tr>", re.S)
+# `<tr[^>]*>`, not `<tr>`, for the same reason the value-cell pattern above
+# matches its class list loosely: a row that gains an attribute must not fall
+# silently out of the probe. The scan report's summary rows now carry a
+# `row-alt` zebra class on every other DATA row, and the tight pattern dropped
+# exactly those -- halving what this function returned while every caller still
+# read as though it covered the table. Group heading rows now match too, and
+# are discarded by the `colspan` guard below, which is what that guard is for.
+_SUMMARY_ROW_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
 _SUMMARY_CELL_RE = re.compile(r"<td([^>]*)>(.*?)</td>", re.S)
 
 

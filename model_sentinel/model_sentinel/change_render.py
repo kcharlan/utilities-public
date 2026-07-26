@@ -646,8 +646,8 @@ def _fmt_int(value: float) -> str:
 PCT_PRECISION = 1
 
 
-def pct_change_magnitude(old: float, new: float) -> float | None:
-    """The row's relative movement as a NUMBER, or `None` for a zero basis.
+def signed_pct_change(old: float, new: float) -> float | None:
+    """The row's relative movement as a SIGNED NUMBER, or `None` for a zero basis.
 
     The arithmetic behind `_pct_change`'s string, extracted so that the one
     other consumer of a percentage -- `reporting._model_price_impact`, which
@@ -656,7 +656,10 @@ def pct_change_magnitude(old: float, new: float) -> float | None:
     one. A second copy of `(new - old) / abs(old)` would be a second place for
     the zero-basis case and the sign convention to drift.
 
-    Signed, and NOT rounded to `PCT_PRECISION`: the sort wants the true
+    Signed -- as the name now says. It was called `pct_change_magnitude` while
+    returning a signed value, so the docstring had to spend a sentence
+    disclaiming the name, and both callers take `abs()` or strip the sign
+    themselves. NOT rounded to `PCT_PRECISION` either: the sort wants the true
     ordering, and rounding here would manufacture ties that the display's one
     decimal place merely hides. Callers that want a magnitude take `abs()`.
 
@@ -690,7 +693,7 @@ def _pct_change(old: float, new: float) -> str:
     remaining false claim: one column reporting a decrease beside three
     reporting no change.
     """
-    pct = pct_change_magnitude(old, new)
+    pct = signed_pct_change(old, new)
     if pct is None:
         return ""
     arrow = "↑ " if pct > 0 else ("↓ " if pct < 0 else "")

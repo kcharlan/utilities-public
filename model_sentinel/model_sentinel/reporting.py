@@ -55,7 +55,7 @@ from .change_render import (
     _numeric_value,
     _scalar_display,
     classify_change,
-    pct_change_magnitude,
+    signed_pct_change,
 )
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
 from .time_utils import to_local_human, to_local_iso
@@ -1729,10 +1729,10 @@ def _model_price_impact(
             price_divisor=price_divisor,
         )
         # `_price_movement_kind` returned a two-sided direction, so both
-        # operands are numeric and `pct_change_magnitude` can only be `None`
+        # operands are numeric and `signed_pct_change` can only be `None`
         # for a zero basis -- which is a real "no relative reading", ranked as
         # 0.0 rather than allowed to crash the sort.
-        percent = pct_change_magnitude(
+        percent = signed_pct_change(
             _numeric_value(field_change.old_value),
             _numeric_value(field_change.new_value),
         )
@@ -2717,7 +2717,10 @@ td.sem-neutral { color: var(--text-dim); }
   font-family: var(--font-mono);
   font-size: 0.82rem;
 }
-.summary-table tr:nth-child(even) td {
+.summary-table:not(.grouped) tr:nth-child(even) td {
+  background: var(--bg-table-alt);
+}
+.summary-table.grouped tr.row-alt td {
   background: var(--bg-table-alt);
 }
 .summary-table tr.summary-group td {
@@ -2886,6 +2889,7 @@ def _build_html_summary_table(
     entries: list[_SummaryEntry],
     *,
     concise: bool = False,
+    show_provider: bool = True,
 ) -> str:
     """Build the concise, selectively consolidated Change Summary.
 
@@ -2902,23 +2906,46 @@ def _build_html_summary_table(
     * E5 -- the Provider column is dropped when every row names the same
       provider. Repeating one provider label down a whole column says nothing;
       the moment two providers appear it is load-bearing and comes back.
+
+    `show_provider` is E5's decision, and it is made by the CALLER so that the
+    document makes it exactly once. This function used to re-derive it as
+    `len({entry.provider for entry in ordered}) > 1`, which is a different
+    question from the one `_render_scan_html` asks of the same document: a
+    provider whose every change is a no-op contributes a tier-2 rollup -- and
+    therefore an `<h3>` naming it -- while producing no summary ROW at all. The
+    two answers then disagreed, and the disclosure showed an `<h3>Provider B</h3>`
+    inside a summary that had just dropped its Provider column on the grounds
+    that only one provider was present. The `changes` report keeps the column
+    unconditionally, which is the default.
     """
     if not entries:
         return ""
     h = html_module.escape
     ordered = sorted(entries, key=_summary_entry_sort_key)
-    show_provider = not concise or len({entry.provider for entry in ordered}) > 1
+    # E5 is scoped to the concise presentation; the `changes` report's table is
+    # out of E3-E6's scope and keeps every column it has.
+    show_provider = show_provider or not concise
     headings = (
         ([] if concise else ["Category"])
         + (["Provider"] if show_provider else [])
         + ["Model", "Field", "Change"]
     )
-    # The Field and Change columns merge on a presence row, so the widest a row
-    # can be is one cell short of the heading count.
+    # A group heading names the category for every row beneath it, so it spans
+    # the whole table -- however many columns E5 left standing. (The earlier
+    # comment here reasoned about presence rows merging the Field and Change
+    # columns, which is true of DATA rows and has nothing to do with this line.)
     group_span = len(headings)
 
     rows = []
     open_category: str | None = None
+    # Zebra striping for the GROUPED table is counted here, over data rows only,
+    # for the same reason `_render_html_card_table` counts its own: an
+    # interleaved non-data row shifts CSS `:nth-child` parity for everything
+    # after it. E6's group headings did exactly that, so the alternation
+    # restarted at each category and stopped meaning anything. The ungrouped
+    # (`changes`) table has no such rows and keeps the plain `:nth-child(even)`
+    # rule, which is still correct there and leaves that report untouched.
+    data_row_index = 0
     for entry in ordered:
         if concise and entry.category != open_category:
             open_category = entry.category
@@ -2941,11 +2968,14 @@ def _build_html_summary_table(
             cells.append(f'<td>{h(entry.field)}</td><td>{h(entry.detail)}</td>')
         else:
             cells.append(f'<td colspan="2">{h(entry.detail)}</td>')
-        rows.append("<tr>" + "".join(cells) + "</tr>")
+        row_class = ' class="row-alt"' if concise and data_row_index % 2 else ""
+        data_row_index += 1
+        rows.append(f"<tr{row_class}>" + "".join(cells) + "</tr>")
 
     head = "".join(f'<th>{heading}</th>' for heading in headings)
+    table_class = "summary-table grouped" if concise else "summary-table"
     table = (
-        '<table class="summary-table">'
+        f'<table class="{table_class}">'
         f'<thead><tr>{head}</tr></thead>'
         '<tbody>' + "\n".join(rows) + '</tbody>'
         '</table>'
@@ -3991,7 +4021,15 @@ class _ScanChangeTiers:
 
     primary: str
     secondary: str
-    secondary_cards: int
+    secondary_models: int
+    """How many MODELS are behind the disclosure, not how many cards.
+
+    Named for the unit deliberately. A bulk-change card is one card standing
+    for three or more models, so the two counts differ whenever a group is
+    present, and the disclosure line quotes this one because "should I open
+    this?" is a question about models. Counting cards and printing `model` was
+    the defect this name exists to prevent recurring.
+    """
     secondary_rollups: int
 
 
@@ -4146,7 +4184,7 @@ def _build_scan_change_tiers(
 
     primary_sections: list[str] = []
     secondary_sections: list[str] = []
-    secondary_cards = 0
+    secondary_models = 0
     secondary_rollups = 0
 
     for split, primary_ids, secondary_ids in zip(splits, primary_anchors, secondary_anchors):
@@ -4175,8 +4213,14 @@ def _build_scan_change_tiers(
         rollup_cards = _hidden_rollup_cards(provider_plan.rollups, policy)
 
         lead = _provider_lead_html(result)
-        primary_parts = [
-            *lead,
+        # The lead is held OUT of this list, and `has_primary` asks whether the
+        # list is empty. Measuring `len(lead + body) > 1` instead made the test
+        # depend on how many elements the lead happened to have -- one without a
+        # baseline, two with -- so the "lead travels into tier 2" rule fired
+        # only for baseline-less results, and every real scan (storage.py always
+        # builds a `BaselineInfo`) left an `<h2>` and a baseline line presiding
+        # over nothing whenever the provider's cards were all secondary.
+        primary_body = [
             *_presence_list_html("Added", "added-list", result.added),
             *_presence_list_html("Removed", "removed-list", result.removed),
         ]
@@ -4184,12 +4228,13 @@ def _build_scan_change_tiers(
         # the rule this renderer has always had -- now applied per tier, so
         # neither tier can end up with a heading over nothing.
         if ranked:
-            primary_parts.append('<h3>Changed</h3>')
-            primary_parts.extend(ranked)
+            primary_body.append('<h3>Changed</h3>')
+            primary_body.extend(ranked)
         # A provider heading with nothing beneath it is not a section. Error
         # providers are the exception: the provider card above says ERROR and
         # this section is where a reader looks for the message.
-        has_primary = len(primary_parts) > 1 or result.status == "error"
+        has_primary = bool(primary_body) or result.status == "error"
+        primary_parts = [*lead, *primary_body]
 
         secondary_parts: list[str] = []
         if deferred or rollup_cards:
@@ -4204,7 +4249,14 @@ def _build_scan_change_tiers(
                 )
             secondary_parts.extend(deferred)
             secondary_parts.extend(rollup_cards)
-            secondary_cards += len(deferred)
+            # Counted over the ITEMS, not over `deferred`'s rendered cards: a
+            # `_BulkChangeGroup` is one card standing for `BULK_CHANGE_MIN_MODELS`
+            # or more models, so `len(deferred)` understates the disclosure's
+            # contents by the size of every group it holds.
+            secondary_models += sum(
+                len(item.model_ids) if isinstance(item, _BulkChangeGroup) else 1
+                for item in split.secondary
+            )
             secondary_rollups += len(rollup_cards)
 
         if has_primary:
@@ -4219,7 +4271,7 @@ def _build_scan_change_tiers(
     return _ScanChangeTiers(
         primary="".join(primary_sections),
         secondary="".join(secondary_sections),
-        secondary_cards=secondary_cards,
+        secondary_models=secondary_models,
         secondary_rollups=secondary_rollups,
     )
 
@@ -4242,8 +4294,8 @@ def _render_scan_disclosure(tiers: _ScanChangeTiers, summary_html: str) -> str:
     if not (tiers.secondary or summary_html):
         return ""
     clauses = []
-    if tiers.secondary_cards:
-        clauses.append(f"{_plural(tiers.secondary_cards, 'model')} with no price change")
+    if tiers.secondary_models:
+        clauses.append(f"{_plural(tiers.secondary_models, 'model')} with no price change")
     if tiers.secondary_rollups:
         clauses.append(_plural(tiers.secondary_rollups, "report-detail rollup"))
     if summary_html:
@@ -4326,8 +4378,13 @@ def _render_scan_html(
         )
 
     # F1's two tiers. E5's condition -- more than one provider actually saying
-    # something -- is decided once, here, and governs both the tier-2 headings
-    # and the Change Summary's Provider column.
+    # something -- is decided ONCE, here, and passed to both consumers: the
+    # tier-2 provider headings and the Change Summary's Provider column. The
+    # summary table used to answer it a second time from its own rows, which is
+    # a narrower population (a provider can contribute a rollup and no row), so
+    # one disclosure could carry a Provider heading and a provider-less table.
+    # "Which providers said anything" is the reader's question in both places,
+    # so it gets one answer.
     contributing = sum(
         1 for result in provider_results
         if result.change_count or result.status == "error"
@@ -4418,7 +4475,10 @@ def _render_scan_html(
         header_html=header_html,
         body_html=body_html,
         tail_html=_render_scan_disclosure(
-            tiers, _build_html_summary_table(summary_entries, concise=True)
+            tiers,
+            _build_html_summary_table(
+                summary_entries, concise=True, show_provider=contributing > 1
+            ),
         ),
     )
 

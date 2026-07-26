@@ -217,6 +217,7 @@ The JSON goldens have never changed and must not: JSON is the audit path.
 from __future__ import annotations
 
 import os
+import re
 import time
 
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
@@ -1205,7 +1206,10 @@ td.sem-neutral { color: var(--text-dim); }
   font-family: var(--font-mono);
   font-size: 0.82rem;
 }
-.summary-table tr:nth-child(even) td {
+.summary-table:not(.grouped) tr:nth-child(even) td {
+  background: var(--bg-table-alt);
+}
+.summary-table.grouped tr.row-alt td {
   background: var(--bg-table-alt);
 }
 .summary-table tr.summary-group td {
@@ -1314,25 +1318,25 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="change-category"><div class="category-label">no-op</div>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
-</div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
+</div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → 5e-08 ($0.05 / 1M)</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
 <tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
+<tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
 <tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → —</td></tr>
 <tr class="summary-group"><td colspan="3">Parameters</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
 <tr class="summary-group"><td colspan="3">Capabilities</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Reasoning default</td><td>off → on</td></tr>
 <tr class="summary-group"><td colspan="3">Other</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on</td></tr>
-<tr><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
+<tr class="row-alt"><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
 <tr><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
-<tr><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr>
+<tr class="row-alt"><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr>
 <tr class="summary-group"><td colspan="3">Squelched</td></tr>
 <tr><td><details class="summary-models"><summary>1 models</summary><div class="summary-model-list"><code>synth/model-core</code></div></details></td><td>benchmarks, benchmarks.*</td><td>1 field change hidden by report detail policy</td></tr></tbody></table></details></details>
 <footer>Generated by Model Sentinel</footer>
@@ -1424,26 +1428,26 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="change-category"><div class="category-label">no-op</div>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
-</div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
+</div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → 5e-08 ($0.05 / 1M)</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>9e-08 ($0.09 / 1M) → —</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)</td></tr>
 <tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 (+131,072, ↑ 100.0%)</td></tr>
-<tr><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
+<tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384</td></tr>
 <tr><td><code>synth/model-limit-remove</code></td><td>Max output</td><td>8,192 → —</td></tr>
 <tr class="summary-group"><td colspan="3">Parameters</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Supported parameters</td><td>+logit_bias (1 → 2)</td></tr>
 <tr class="summary-group"><td colspan="3">Capabilities</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Reasoning default</td><td>off → on</td></tr>
 <tr class="summary-group"><td colspan="3">Benchmarks</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Example suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Example suite</td><td>+{&quot;score&quot;: 2}; -{&quot;score&quot;: 1} (1 → 1)</td></tr>
 <tr class="summary-group"><td colspan="3">Other</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Expiration date</td><td>— → 2030-12-31</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Moderated</td><td>off → on</td></tr>
 <tr><td><code>synth/model-moderation-added</code></td><td>Moderated</td><td>— → on</td></tr>
-<tr><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
+<tr class="row-alt"><td><code>synth/model-moderation-off</code></td><td>Moderated</td><td>on → off</td></tr>
 <tr><td><code>synth/model-temp-toggle</code></td><td>Temperature</td><td>0 → 1 (+1)</td></tr></tbody></table></details></details>
 <footer>Generated by Model Sentinel</footer>
 </body>
@@ -1894,20 +1898,29 @@ _SUMMARY_FIELD_CELLS = (
 )
 
 
+_SUMMARY_DATA_ROW_RE = re.compile(r"<tr([^>]*)>(.*?)</tr>", re.S)
+
+
 def _summary_rows(html: str) -> list[str]:
     """The DATA `<tr>` bodies of the Change Summary, in document order.
 
     E6 turned the section into a collapsed `<details>` and gave each category a
-    group heading row. That heading row opens `<tr class="summary-group">`, so
-    splitting on the exact string `"<tr>"` never starts a chunk at one, and
-    `_split_summary_row` truncates at the first `</tr>` -- a heading trailing a
-    data row is discarded rather than counted. The count assertion in the
-    caller is what keeps that reasoning honest.
+    group heading row, and the zebra-stripe fix gave every other DATA row a
+    `row-alt` class. Both mean a row's opening tag is no longer reliably the
+    exact string `"<tr>"`, so this used to be `body.split("<tr>")` and silently
+    dropped every striped row -- half the table -- while the caller still read
+    as though it had them all. Matched as a tag with any attributes instead,
+    with heading rows discarded BY NAME rather than by relying on their markup
+    being unsplittable. The caller's count assertion keeps that honest.
     """
     start = html.index('<details class="summary-section">')
     section = html[start : html.index("</details>", html.index("</tbody>", start))]
     body = section[section.index("<tbody>") : section.index("</tbody>")]
-    return [row for row in body.split("<tr>")[1:]]
+    return [
+        match.group(2)
+        for match in _SUMMARY_DATA_ROW_RE.finditer(body)
+        if "summary-group" not in match.group(1)
+    ]
 
 
 def _split_summary_row(row: str) -> tuple[str, str]:
@@ -1917,8 +1930,7 @@ def _split_summary_row(row: str) -> tuple[str, str]:
     this single-provider report (they were two, then three, before). The Field
     cell is the second and is the only one a qualifier can reach.
     """
-    body = row[: row.index("</tr>")]
-    cells = ["<td>" + cell for cell in body.split("<td>")[1:]]
+    cells = ["<td>" + cell for cell in row.split("<td>")[1:]]
     assert len(cells) == 3, row
     field_cell = cells[1]
     assert field_cell.startswith("<td>") and field_cell.endswith("</td>"), field_cell

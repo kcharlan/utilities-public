@@ -63,15 +63,38 @@ this module -- bulk group included -- inside the tier-2 disclosure, and the
 provider `<h2>` travels with them rather than being left above as a bare
 heading. `EXPECTED_HTML_CHANGE_BODY` is unchanged except that the cards are
 now in ALPHABETICAL order, which moved `synth/model-list-added` and
-`-list-removed` ahead of `synth/model-pair-x`. A bulk group is formed only from
-models whose every visible change is a list diff, so it can never carry a price
-move and is always secondary; `test_reporting.py` pins that as an invariant.
+`-list-removed` ahead of `synth/model-pair-x`, AND that it lost its trailing
+newline -- the constant used to end `</section>\n`, and now ends `</section>`,
+because the sibling that followed it in the document changed. That is a real
+byte the containment assertion would not have caught on its own, so it is
+recorded here rather than left to be rediscovered as a mystery in the next
+diff. A bulk group is formed only from models whose every visible change is a
+list diff, so it can never carry a price move and is always secondary;
+`test_reporting.py` pins that as an invariant.
+
+A CAVEAT ON "the provider `<h2>` travels with them" (fix pass 1): that was true
+of THIS fixture for the wrong reason. The tier test was `len(primary_parts) > 1`
+over a list whose first element is the provider lead, and the lead is one
+element without a baseline and two with. This fixture sets `baseline=None`
+(see `bulk_characterization_scan_result`), so it took the branch that works;
+a provider carrying a `BaselineInfo` -- which every real scan does -- was left
+with an `<h2>` and a baseline line over nothing. `_build_scan_change_tiers` now
+tests the tier-1 BODY rather than the body plus the lead, and
+`test_reporting.py::test_scan_html_provider_section_is_never_a_bare_heading`
+covers both baseline states.
 
 `EXPECTED_HTML_SUMMARY` moved for E5 and E6 only: the section became a
 collapsed `<details>` with a row count, the Category column became one group
 heading row per category, and the Provider column is gone because this fixture
 has exactly one provider. Every Model, Field and Change cell is character-for-
 character what it was.
+
+DELIBERATE UPDATE (fix pass 1): `EXPECTED_HTML_SUMMARY` moved once more, and
+only in row markup -- `<table class="summary-table grouped">` and a `row-alt`
+class on every other DATA row. E6's group heading rows had been consuming CSS
+`:nth-child` parity slots, so the zebra alternation restarted at each category
+and meant nothing; it is now counted in Python over data rows, the way
+`_render_html_card_table` already counted its own. No cell content moved.
 
 DELIBERATELY NOT COVERED HERE: the full HTML document envelope (`<!DOCTYPE>`,
 the `<style>` block, provider headers) is already pinned byte-for-byte by
@@ -442,16 +465,16 @@ EXPECTED_HTML_CHANGE_BODY = """<div class="model-card bulk-change-card">
 
 # Exact summary table. Bulk entries collapse the model column into a
 # <details> disclosure listing the grouped model ids.
-EXPECTED_HTML_SUMMARY = """<details class="summary-section"><summary>Change Summary — 9 rows</summary><table class="summary-table"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Parameters</td></tr>
+EXPECTED_HTML_SUMMARY = """<details class="summary-section"><summary>Change Summary — 9 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Parameters</td></tr>
 <tr><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>Supported parameters</td><td>+logit_bias</td></tr>
-<tr><td><code>synth/model-list-added</code></td><td>Supported parameters</td><td>— → [&quot;tools&quot;, &quot;logit_bias&quot;]</td></tr>
+<tr class="row-alt"><td><code>synth/model-list-added</code></td><td>Supported parameters</td><td>— → [&quot;tools&quot;, &quot;logit_bias&quot;]</td></tr>
 <tr><td><code>synth/model-list-removed</code></td><td>Supported parameters</td><td>[&quot;tools&quot;, &quot;logit_bias&quot;] → —</td></tr>
-<tr><td><code>synth/model-pair-x</code></td><td>Supported parameters</td><td>+seed (1 → 2)</td></tr>
+<tr class="row-alt"><td><code>synth/model-pair-x</code></td><td>Supported parameters</td><td>+seed (1 → 2)</td></tr>
 <tr><td><code>synth/model-pair-y</code></td><td>Supported parameters</td><td>+seed (1 → 2)</td></tr>
 <tr class="summary-group"><td colspan="3">Other</td></tr>
-<tr><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 2}; -{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 1}</td></tr>
+<tr class="row-alt"><td><details class="summary-models"><summary>3 models</summary><div class="summary-model-list"><code>synth/model-bulk-a</code><code>synth/model-bulk-b</code><code>synth/model-bulk-c</code></div></details></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 2}; -{&quot;name&quot;: &quot;alpha&quot;, &quot;weight&quot;: 1}</td></tr>
 <tr><td><code>synth/model-solo-struct</code></td><td>Tier profiles</td><td>+{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 4}; -{&quot;name&quot;: &quot;beta&quot;, &quot;weight&quot;: 3} (1 → 1)</td></tr>
-<tr><td><code>synth/model-struct-added</code></td><td>Name (#0)</td><td>— → gamma</td></tr>
+<tr class="row-alt"><td><code>synth/model-struct-added</code></td><td>Name (#0)</td><td>— → gamma</td></tr>
 <tr><td><code>synth/model-struct-added</code></td><td>Weight (#0)</td><td>— → 5</td></tr></tbody></table></details>"""
 
 

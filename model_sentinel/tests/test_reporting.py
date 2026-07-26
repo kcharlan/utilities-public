@@ -1,6 +1,8 @@
 import json
 import re
 
+import pytest
+
 from tests.html_probe import absent_side_cells
 
 from model_sentinel import reporting
@@ -9,7 +11,13 @@ from model_sentinel.change_render import (
     format_qualified_label,
     resolve_field_label,
 )
-from model_sentinel.models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
+from model_sentinel.models import (
+    BaselineInfo,
+    FieldChange,
+    HistoryEvent,
+    ModelDelta,
+    ProviderScanResult,
+)
 from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     ReportDetailPolicy,
@@ -21,6 +29,15 @@ from model_sentinel.reporting import (
 )
 
 
+# The baseline every real scan carries. `storage.py` builds a `BaselineInfo`
+# from the scrape table on every compare, so `baseline=None` -- this module's
+# historical default and the shape most fixtures here use -- is the SHAPE THAT
+# DOES NOT SHIP. Fix pass 1: a tiering bug that only reproduced with a baseline
+# present survived precisely because no fixture had one. Spelled once, and
+# passed explicitly by the tests that need production's shape.
+_BASELINE = BaselineInfo(scrape_id=7, completed_at="2026-07-24T05:00:00+00:00")
+
+
 def _scan_result(
     changed: tuple[ModelDelta, ...],
     *,
@@ -28,6 +45,7 @@ def _scan_result(
     provider_label: str = "OpenRouter",
     status: str = "success",
     error_message: str | None = None,
+    baseline: BaselineInfo | None = None,
 ) -> ProviderScanResult:
     return ProviderScanResult(
         provider_id=provider_id,
@@ -35,7 +53,7 @@ def _scan_result(
         status=status,
         current_count=2,
         saved=False,
-        baseline=None,
+        baseline=baseline,
         baseline_message=None,
         scrape_id=None,
         added=(),
@@ -3005,12 +3023,30 @@ def test_scan_html_omits_the_changed_heading_when_no_card_survives() -> None:
     assert "1 field change across 1 model" in secondary
 
 
-def test_scan_html_provider_section_is_never_a_bare_heading() -> None:
-    """A provider `<h2>` always presides over something."""
+@pytest.mark.parametrize("baseline", [None, _BASELINE], ids=["no-baseline", "with-baseline"])
+def test_scan_html_provider_section_is_never_a_bare_heading(
+    baseline: BaselineInfo | None,
+) -> None:
+    """A provider `<h2>` always presides over something.
+
+    PARAMETRIZED OVER THE BASELINE (fix pass 1), because this invariant held
+    only for the case that does not ship. The tier test was
+    `len(primary_parts) > 1` over a list whose first element is the provider
+    lead -- and the lead is ONE element with no baseline and TWO with one. So
+    "the lead travels into tier 2 when nothing else is up there" fired only for
+    baseline-less results, and this test's fixture was baseline-less. With a
+    `BaselineInfo` -- what `storage.py` builds on every real compare -- the
+    same fixture rendered tier 1 as an `<h2>` and a `<div class="baseline-info">`
+    presiding over nothing at all, with the rollup card behind the disclosure.
+
+    Both parameters assert the same thing: whatever section carries this
+    provider's heading also carries its content.
+    """
     result = _scan_result(
         (_NOOP_MODEL,),
         provider_id="synthprov",
         provider_label="Synth Provider",
+        baseline=baseline,
     )
     html = render_scan_report(
         generated_at="2026-07-25T09:00:00+00:00",
@@ -3022,7 +3058,15 @@ def test_scan_html_provider_section_is_never_a_bare_heading() -> None:
     assert '<section class="provider-section">' in html
     body = _html_section_body(html, "</h2>")
     assert body, "provider section rendered as a bare <h2>"
+    # Scoped past the baseline line, which is part of the lead and therefore
+    # travels WITH the heading -- it is not content the heading presides over.
+    # Without this, the `with-baseline` case would pass on the baseline `<div>`
+    # alone, which is exactly the defect.
     assert '<div class="category-label">no-op</div>' in body
+    if baseline is not None:
+        assert "baseline-info" in body
+        after_baseline = body.split("</div>", 1)[1].strip()
+        assert after_baseline, "the heading and baseline line preside over nothing"
 
 
 def test_scan_html_emits_no_provider_section_when_the_body_would_be_empty() -> None:
@@ -4208,6 +4252,69 @@ def test_a_squelched_card_gets_a_hidden_chip_and_no_squelch_section() -> None:
     assert '<div class="category-label">Squelched</div>' not in primary
 
 
+def test_the_hidden_chip_title_joins_every_reason_in_one_order() -> None:
+    """E3's `title` with MORE THAN ONE reason -- the format nothing else pins.
+
+    Every other assertion and both HTML goldens carry a squelched-only card, so
+    the chip's title has only ever been exercised as a single `"N squelched"`
+    clause. That leaves two things unpinned: the `", "` join between clauses,
+    and `_HIDDEN_CHIP_REASONS`' order, which exists so the tooltip reads the
+    way the three stacked sections it replaced read (squelched, then
+    unclassified, then filtered). Either could be reordered or respelled today
+    without a single test noticing.
+
+    `unclassified_limit=0` is what forces the second clause: an unclassified
+    field is otherwise shown, up to a budget of twenty per provider.
+
+    The two clauses asserted here are the only pair REACHABLE. `squelched` and
+    `hidden_unclassified` are populated by the default mode, while
+    `hidden_non_squelched` is populated only by `mode="squelched"`, which
+    empties the other two -- so the third word is asserted alone below.
+    """
+    changed = (
+        _priced(
+            "synth/model-core",
+            FieldChange("pricing.prompt", "0.000001", "0.000002"),
+            FieldChange("benchmarks.design_arena", [{"elo": 1}], [{"elo": 2}]),
+            FieldChange("synthetic_unknown_field", "before", "after"),
+        ),
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed, baseline=_BASELINE)],
+        detail_policy=make_report_detail_policy(unclassified_limit=0),
+    )
+    assert (
+        '<span class="hidden-count" title="1 squelched, 1 unclassified">+2 hidden</span>'
+    ) in html
+
+
+def test_the_hidden_chip_spells_the_third_reason_filtered() -> None:
+    """`mode="squelched"` is the only mode that reaches `hidden_non_squelched`.
+
+    Pins the third word of `_HIDDEN_CHIP_REASONS`, which the pair above cannot
+    reach. The count is the two non-squelched fields the mode withheld.
+    """
+    changed = (
+        _priced(
+            "synth/model-core",
+            FieldChange("pricing.prompt", "0.000001", "0.000002"),
+            FieldChange("benchmarks.design_arena", [{"elo": 1}], [{"elo": 2}]),
+            FieldChange("synthetic_unknown_field", "before", "after"),
+        ),
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed, baseline=_BASELINE)],
+        detail_policy=make_report_detail_policy(mode="squelched"),
+    )
+    assert '<span class="hidden-count" title="2 filtered">+2 hidden</span>' in html
+
+
 def test_a_card_with_nothing_hidden_carries_no_chip() -> None:
     """`+0 hidden` on every card would be the clutter E3 is removing."""
     changed = (_priced("synth/model-core", FieldChange("pricing.prompt", "0.000001", "0.000002")),)
@@ -4271,6 +4378,120 @@ def test_the_disclosure_summary_states_its_contents_with_counts() -> None:
         "<summary>Other changes — 1 model with no price change · "
         "1 report-detail rollup · the Change Summary</summary>"
     ) in html
+
+
+def _bulk_trio(*model_ids: str) -> tuple[ModelDelta, ...]:
+    """Models sharing ONE byte-identical list-change signature, so they group.
+
+    `_plan_provider_changes` consolidates on the value of
+    `_bulk_change_signature`, so identical `FieldChange` values across distinct
+    models are what forms the group -- see the bulk characterization module.
+    """
+    change = FieldChange("supported_parameters", ["tools"], ["logit_bias", "tools"])
+    return tuple(
+        ModelDelta("changed", model_id, model_id.upper(), (change,))
+        for model_id in model_ids
+    )
+
+
+def test_the_disclosure_counts_models_not_cards_when_a_bulk_group_is_present() -> None:
+    """The disclosure line's unit is MODELS, and a bulk card is not one model.
+
+    A `_BulkChangeGroup` renders as ONE card standing for three or more models.
+    The count behind this line was `len(deferred)` -- a count of rendered CARDS
+    -- printed with the noun `model`, so this exact fixture said `1 model with
+    no price change` over three hidden models: a 3x understatement of the one
+    number a reader uses to decide whether opening the disclosure is worth it.
+
+    The bulk group is the ONLY thing in tier 2 here, so the count cannot be
+    right by accident: 1 is what counting cards gives, 3 is what counting
+    models gives, and nothing else contributes.
+    """
+    changed = _bulk_trio("synth/model-bulk-a", "synth/model-bulk-b", "synth/model-bulk-c") + (
+        _priced("synth/model-priced", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed, baseline=_BASELINE)],
+    )
+    primary, secondary = _scan_tiers(html)
+    # Preconditions, so the count below cannot pass over a page of a different
+    # shape than the one this test describes.
+    assert _model_card_order(primary) == ["synth/model-priced"]
+    assert _model_card_order(secondary) == ["Bulk change — 3 models"]
+    assert (
+        "<summary>Other changes — 3 models with no price change · "
+        "the Change Summary</summary>"
+    ) in html
+
+
+def test_the_disclosure_count_adds_bulk_members_to_solo_cards() -> None:
+    """Mixed tier 2: the count is the SUM, not the card count and not the group.
+
+    Guards the arithmetic rather than one branch of it. Three grouped models
+    plus two ungrouped ones is five; counting cards gives three, and counting
+    only the group gives three as well -- so a fixture with three grouped
+    models and one solo card could not tell those two wrong answers apart.
+    """
+    changed = _bulk_trio("synth/model-bulk-a", "synth/model-bulk-b", "synth/model-bulk-c") + (
+        ModelDelta("changed", "synth/model-quiet", "Quiet",
+                   (FieldChange("top_provider.context_length", 1000, 2000),)),
+        ModelDelta("changed", "synth/model-hush", "Hush",
+                   (FieldChange("top_provider.context_length", 2000, 4000),)),
+        _priced("synth/model-priced", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed, baseline=_BASELINE)],
+    )
+    _, secondary = _scan_tiers(html)
+    assert _model_card_order(secondary) == [
+        "Bulk change — 3 models", "synth/model-hush", "synth/model-quiet",
+    ]
+    assert "Other changes — 5 models with no price change" in html
+
+
+def test_the_tier_headings_and_the_summary_column_answer_to_one_decision() -> None:
+    """E5 is decided once, so the disclosure cannot contradict itself.
+
+    Provider B's every change is a no-op: it counts toward "providers that
+    said something" (its `change_count` is 1, and it renders a report-detail
+    rollup that must be attributed to it) but produces NO Change Summary row.
+    The summary table used to re-derive E5 from its own rows and conclude that
+    only one provider was present, so a disclosure could carry a heading naming
+    Provider B above a table that had dropped its Provider column on the
+    grounds that Provider B did not exist. One decision, so the document cannot
+    name a provider in one half and deny it in the other.
+    """
+    first = _scan_result(
+        (_priced("synth/model-priced", FieldChange("pricing.prompt", "0.000001", "0.000002")),),
+        provider_id="pa", provider_label="Provider A", baseline=_BASELINE,
+    )
+    second = _scan_result(
+        (ModelDelta("changed", "synth/model-noop", "No Op",
+                    (FieldChange("description", "same", "same"),)),),
+        provider_id="pb", provider_label="Provider B", baseline=_BASELINE,
+    )
+    html = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[first, second],
+    )
+    _, secondary = _scan_tiers(html)
+    _, summary = _scan_detail_and_summary(html)
+    # Provider B is named in tier 2 -- by its full lead, since it has no tier-1
+    # content of its own -- and its rollup is what the heading presides over.
+    assert "Provider B" in secondary
+    assert '<div class="category-label">no-op</div>' in secondary
+    # ...so the table it sits beside must still carry the column that says
+    # which provider a row belongs to, even though every row is Provider A's.
+    assert "<th>Provider</th>" in summary
+    assert "<td>Provider A</td>" in summary
 
 
 def test_the_change_summary_drops_the_provider_column_for_one_provider() -> None:
