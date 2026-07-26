@@ -193,6 +193,19 @@ class _PriceMovementModel:
     lower: int
     added: int
     removed: int
+    # D1: the price field that moved this model FURTHEST in each direction, as
+    # the classified change itself rather than a magnitude beside it. The
+    # magnitude is `delta_abs` on that change, so it is read back through
+    # `top_delta` and never stored twice -- a second copy is a second thing to
+    # keep in step, and the card prints the change's OWN `delta_display`,
+    # `pct_display` and operands, so a stored number that disagreed with them
+    # would be invisible until it was wrong on screen.
+    #
+    # `None` on either side means this model has no two-sided move in that
+    # direction: a one-sided add/remove carries no `delta_abs` (nothing to
+    # subtract from) and so can never be a headline mover.
+    top_increase: RenderedChange | None = None
+    top_decrease: RenderedChange | None = None
 
     @property
     def bucket(self) -> Literal["higher", "lower", "mixed", "coverage"]:
@@ -204,6 +217,15 @@ class _PriceMovementModel:
             return "lower"
         return "coverage"
 
+    @staticmethod
+    def top_delta(rendered: RenderedChange | None) -> float:
+        """The absolute per-1M magnitude of a headline candidate, 0.0 for none.
+
+        Sorting only, exactly as `RenderedChange.delta_abs` requires: the card
+        displays `delta_display`, never this.
+        """
+        return abs(rendered.delta_abs or 0.0) if rendered is not None else 0.0
+
 
 @dataclass(frozen=True)
 class _PriceMovementSummary:
@@ -211,6 +233,41 @@ class _PriceMovementSummary:
 
     def models_in(self, bucket: Literal["higher", "lower", "mixed", "coverage"]) -> tuple[_PriceMovementModel, ...]:
         return tuple(model for model in self.models if model.bucket == bucket)
+
+    def _headline(
+        self, attribute: Literal["top_increase", "top_decrease"]
+    ) -> tuple[_PriceMovementModel, RenderedChange] | None:
+        """The model whose single largest move in that direction is the report's.
+
+        Selected across every price field of every affected model, by absolute
+        per-1M delta. `models` is already sorted, and `max` returns the FIRST
+        maximal element, so two models that moved by the same amount resolve to
+        the same one on every run.
+
+        `None` when nothing moved that way -- the caller omits the panel rather
+        than rendering an empty one.
+        """
+        candidates = [
+            (model, getattr(model, attribute))
+            for model in self.models
+            if getattr(model, attribute) is not None
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda pair: _PriceMovementModel.top_delta(pair[1]))
+
+    @property
+    def headline_increase(self) -> tuple[_PriceMovementModel, RenderedChange] | None:
+        return self._headline("top_increase")
+
+    @property
+    def headline_decrease(self) -> tuple[_PriceMovementModel, RenderedChange] | None:
+        return self._headline("top_decrease")
+
+    @property
+    def provider_count(self) -> int:
+        """Distinct providers with a price change (E5's condition)."""
+        return len({model.provider_id for model in self.models})
 
     @property
     def higher_fields(self) -> int:
@@ -227,6 +284,10 @@ class _PriceMovementSummary:
     @property
     def removed_fields(self) -> int:
         return sum(model.removed for model in self.models)
+
+    @property
+    def field_total(self) -> int:
+        return self.higher_fields + self.lower_fields + self.added_fields + self.removed_fields
 
 
 def make_report_detail_policy(
@@ -1470,11 +1531,18 @@ def _price_movement_kind(
     return None
 
 
+# Which `_PriceMovementModel` slot a classified change competes for. Only the
+# two-sided directions appear: `added`/`removed`/`none` carry no `delta_abs` and
+# so can never be a headline mover.
+_PRICE_MOVEMENT_SLOTS = {"up": "top_increase", "down": "top_decrease"}
+
+
 def _collect_price_movement_summary(
     planned_results: list[tuple[ProviderScanResult, _ProviderChangePlan]],
 ) -> _PriceMovementSummary:
     counts: dict[tuple[str, str], dict[str, int]] = {}
     identities: dict[tuple[str, str], tuple[str, str, str]] = {}
+    movers: dict[tuple[str, str], dict[str, RenderedChange]] = {}
 
     for result, provider_plan in planned_results:
         for item in provider_plan.planned:
@@ -1493,10 +1561,30 @@ def _collect_price_movement_summary(
                     {"higher": 0, "lower": 0, "added": 0, "removed": 0},
                 )
                 model_counts[movement] += 1
+                # D1's magnitudes, tracked in the pass that was already here.
+                # `_price_movement_kind` stays THE gate for the counts above --
+                # it is what `test_change_render.py` pins and what decides which
+                # fields this card is about -- and `classify_change` supplies
+                # what that gate has no opinion on: how far the price moved and
+                # how the row is spelled. A one-sided add/remove has no
+                # `delta_abs`, so it is counted and then skipped here.
+                rendered = classify_change(
+                    field_change,
+                    price_multiplier=result.price_multiplier,
+                    price_divisor=result.price_divisor,
+                )
+                slot = _PRICE_MOVEMENT_SLOTS.get(rendered.direction)
+                if slot is None or rendered.delta_abs is None:
+                    continue
+                model_movers = movers.setdefault(key, {})
+                incumbent = model_movers.get(slot)
+                if _PriceMovementModel.top_delta(rendered) > _PriceMovementModel.top_delta(incumbent):
+                    model_movers[slot] = rendered
 
     models = []
     for key, model_counts in counts.items():
         provider_id, provider_label, provider_model_id = identities[key]
+        model_movers = movers.get(key, {})
         models.append(
             _PriceMovementModel(
                 provider_id=provider_id,
@@ -1506,6 +1594,8 @@ def _collect_price_movement_summary(
                 lower=model_counts["lower"],
                 added=model_counts["added"],
                 removed=model_counts["removed"],
+                top_increase=model_movers.get("top_increase"),
+                top_decrease=model_movers.get("top_decrease"),
             )
         )
     models.sort(
@@ -1985,38 +2075,107 @@ header h1 .count {
   color: var(--text-bright);
   font-size: 1.05rem;
   font-weight: 600;
+  letter-spacing: 0.04em;
   margin-bottom: 0.65rem;
 }
 .price-movement-title .outcome {
   font-weight: 400;
+  letter-spacing: 0;
 }
-.price-movement-model-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-}
-.price-movement-model-summary > strong,
-.price-movement-fields > strong {
-  color: var(--text-bright);
-  font-weight: 600;
-  margin-right: 0.45rem;
+.price-movement-title .outcome::before {
+  content: "· ";
+  color: var(--text-dim);
 }
 .price-higher { color: var(--accent-red); }
 .price-lower { color: var(--accent-green); }
 .price-mixed { color: var(--accent-amber); }
 .price-coverage { color: var(--accent-blue); }
-.price-movement-fields {
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  margin-top: 0.45rem;
+.price-movement-headlines {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
 }
-.price-movement-model-summary span + span::before,
-.price-movement-fields span + span::before {
-  content: " · ";
+.price-headline {
+  background: var(--bg-table-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font-family: var(--font-mono);
+  min-width: 0;
+}
+.price-headline-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.price-headline-model {
+  display: block;
+  color: var(--text-bright);
+  font-size: 0.85rem;
+  margin-top: 0.15rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-field {
   color: var(--text-dim);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-values {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.3rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-unit {
+  color: var(--text-dim);
+  margin-left: 0.3rem;
+}
+.price-headline-figures {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.1rem;
+}
+.price-headline-delta {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.price-headline-pct {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.price-movement-tallies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 2rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.price-tally-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.price-tally-label {
+  color: var(--text-bright);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-right: 0.1rem;
+}
+.price-tally-chip {
+  background: var(--bg-table-alt);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
 }
 .price-movement-models {
   border-top: 1px solid var(--border);
@@ -2044,10 +2203,14 @@ header h1 .count {
   margin-bottom: 0.3rem;
 }
 .price-movement-model {
-  display: grid;
-  grid-template-columns: minmax(90px, auto) 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.15rem 0;
+}
+.price-movement-model .price-movement-provider {
+  flex: 0 0 auto;
+  min-width: 90px;
 }
 .price-movement-provider { color: var(--text-dim); }
 .price-movement-model code {
@@ -2809,6 +2972,24 @@ def _html_side_display(display: str, raw: str | None) -> str:
     return ABSENT_DISPLAY if raw is None else display
 
 
+def _html_raw_and_normalized(raw: str | None, display: str) -> str:
+    """`<raw> (<normalized> / 1M)` for a present price side, the absent token else.
+
+    Takes the OPERANDS, not the composed string. The `changes` table used to
+    build `f"{raw} ({display} / 1M)"` unconditionally and hand it to
+    `_html_side_display`, which threw it away whenever `raw` was `None` -- so
+    the literal text `None (null / 1M)` existed in the source, was constructed
+    on every one-sided price row, and was one refactor of that helper away from
+    reaching a cell. Composing after the absence check makes the string
+    unconstructible instead of merely unused.
+
+    The `raw is None` rule itself is still `_html_side_display`'s and is not
+    restated here, so both spellings of an absent side keep coming from one
+    place.
+    """
+    return _html_side_display(f"{raw} ({display} / 1M)" if raw is not None else "", raw)
+
+
 def _card_delta_cell(rendered: RenderedChange) -> str:
     """The delta column's text: an absolute movement, a pill, or an em dash.
 
@@ -2967,49 +3148,166 @@ def _render_html_card_row(
     )
 
 
+# The four model buckets, each with the label its column in the affected-model
+# list carries, the label its tally chip carries, and its colour class. One
+# table rather than three parallel ones: bucket order, wording and colour are
+# the same decision in all three places, and a list that disagreed with the
+# chip beside it is precisely the class of defect D3 exists to remove.
+#
+# `coverage` is deliberately kept alongside the design's three directional
+# buckets. A model whose only price change is a field appearing or disappearing
+# has no direction, and dropping its bucket would drop the model from the list
+# while still counting it in "N MODELS" -- a total that does not match the rows
+# beneath it. See the task report's Deviations.
 _PRICE_MOVEMENT_BUCKETS = (
-    ("higher", "\u2191 Higher, no decreases", "with increases and no decreases", "price-higher"),
-    ("lower", "\u2193 Lower, no increases", "with decreases and no increases", "price-lower"),
-    ("mixed", "\u2195 Mixed directions", "mixed", "price-mixed"),
-    ("coverage", "Fields added/removed only", "with fields added/removed only", "price-coverage"),
+    ("higher", "\u2191 Higher only", "\u2191 {count} higher", "price-higher"),
+    ("lower", "\u2193 Lower only", "\u2193 {count} lower", "price-lower"),
+    ("mixed", "\u2195 Both directions", "\u2195 {count} both", "price-mixed"),
+    ("coverage", "\u00b1 Added/removed only", "\u00b1 {count} added/removed only", "price-coverage"),
+)
+
+# The price-FIELD tally, in the design's fixed order. Fixed, not sorted by
+# magnitude as it used to be: the chips sit under a "N PRICE FIELDS" label that
+# names their unit, so their order no longer has to carry the verdict, and a
+# stable order is one less thing for a reader comparing two reports to decode.
+_PRICE_MOVEMENT_FIELD_CHIPS = (
+    ("lower_fields", "\u2193 {count}", "price-lower"),
+    ("higher_fields", "\u2191 {count}", "price-higher"),
+    ("added_fields", "+{count} added", "price-coverage"),
+    ("removed_fields", "\u2212{count} removed", "price-coverage"),
 )
 
 
 def _price_movement_outcome(summary: _PriceMovementSummary) -> tuple[str, str]:
-    if summary.higher_fields and summary.lower_fields:
-        if summary.higher_fields > summary.lower_fields:
-            return "mostly higher", "price-higher"
-        if summary.lower_fields > summary.higher_fields:
-            return "mostly lower", "price-lower"
-        return "mixed", "price-mixed"
-    if summary.higher_fields:
-        return "higher", "price-higher"
-    if summary.lower_fields:
-        return "lower", "price-lower"
-    return "price fields added/removed", "price-coverage"
+    """D3: the verdict, derived from MODEL buckets and carrying their counts.
+
+    The counts are appended because the verdict is a summary of them and the
+    reader should not have to take it on faith -- `mixed \u2014 4 up, 4 down, 3
+    both` states its own evidence.
+
+    Derived from models, not fields, which is the fix. The previous
+    implementation compared `higher_fields` against `lower_fields` and printed
+    the MODEL tally directly beneath, so a report whose models were tied 4/4/3
+    announced "mostly lower" over a body that showed no such thing. Units now
+    match on both lines.
+
+    Coverage-only reports keep their own verdict: with no directional model at
+    all, "mixed" would be a claim about a direction that nothing here has.
+    """
+    buckets = [
+        ("up", len(summary.models_in("higher")), "price-higher"),
+        ("down", len(summary.models_in("lower")), "price-lower"),
+        ("both", len(summary.models_in("mixed")), "price-mixed"),
+    ]
+    counts = ", ".join(f"{count} {name}" for name, count, _ in buckets if count)
+    if not counts:
+        return "price fields added/removed", "price-coverage"
+
+    ranked = sorted(buckets, key=lambda bucket: -bucket[1])
+    leader_name, leader_count, leader_class = ranked[0]
+    strictly_largest = leader_count > ranked[1][1]
+    if strictly_largest and leader_name == "up":
+        return f"mostly higher \u2014 {counts}", leader_class
+    if strictly_largest and leader_name == "down":
+        return f"mostly lower \u2014 {counts}", leader_class
+    return f"mixed \u2014 {counts}", "price-mixed"
+
+
+def _render_price_movement_headline(
+    model: _PriceMovementModel,
+    rendered: RenderedChange,
+    *,
+    label: str,
+    css_class: str,
+) -> str:
+    """One headline mover panel: who moved, on what field, and by how much.
+
+    D1's whole point is the last of those. The card used to say which models
+    moved and how many fields moved without ever naming a dollar figure, so the
+    biggest move in a scan could only be found by opening every card.
+
+    Values, unit, delta and percent all come off the `RenderedChange`, so this
+    panel and the model card's Pricing row are formatting the same numbers from
+    the same source and cannot disagree.
+    """
+    h = html_module.escape
+    return (
+        f'<div class="price-headline">'
+        f'<div class="price-headline-label {css_class}">{h(label)}</div>'
+        f'<code class="price-headline-model">{h(model.provider_model_id)}</code>'
+        f'<div class="price-headline-field" title="{h(rendered.field_path)}">'
+        f'{h(rendered.display_label)}</div>'
+        f'<div class="price-headline-values">'
+        f'{h(_html_side_display(rendered.old_display, rendered.old_raw))} \u2192 '
+        f'{h(_html_side_display(rendered.new_display, rendered.new_raw))}'
+        f'<span class="price-headline-unit">{h(rendered.unit or "")}</span></div>'
+        f'<div class="price-headline-figures">'
+        f'<span class="price-headline-delta {css_class}">{h(_card_delta_cell(rendered))}</span>'
+        f'<span class="price-headline-pct {css_class}">{h(rendered.pct_display or "")}</span>'
+        f'</div></div>'
+    )
 
 
 def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
+    """D1 + D3: the report's price triage card.
+
+    Order: verdict, the two headline movers, the two tallies, then the
+    affected-model list. Dollars first, counts second, names last -- the
+    reverse of what this card used to lead with.
+    """
     if not summary.models:
         return ""
 
     h = html_module.escape
-    model_summary_parts = []
-    group_parts = []
+
+    headline_parts = []
+    for headline, label, css_class in (
+        (summary.headline_increase, "Biggest increase", "price-higher"),
+        (summary.headline_decrease, "Biggest decrease", "price-lower"),
+    ):
+        # Omitted, not emptied: a "Biggest decrease" panel over a blank space
+        # reads as a rendering failure, and a scan where nothing got cheaper
+        # has nothing to put there.
+        if headline is None:
+            continue
+        model, rendered = headline
+        headline_parts.append(
+            _render_price_movement_headline(model, rendered, label=label, css_class=css_class)
+        )
+
+    # E5: the provider label is noise when every affected model came from the
+    # same provider, and load-bearing the moment two providers ship a model ID
+    # that looks alike.
+    show_provider = summary.provider_count > 1
+
+    # Fixed bucket order, in both the chips and the list beneath them, exactly
+    # as the field chips are fixed and for the same reason. This used to sort
+    # by count descending so the biggest bucket led -- a way of making the
+    # order carry the verdict. D3 gives that job to the verdict string itself,
+    # which now names the leading bucket AND prints every bucket's count, so
+    # the sort is redundant; and a report whose columns move around between
+    # runs is a report the reader has to re-parse each time.
     populated_buckets = [
-        (bucket, group_label, summary_label, css_class, summary.models_in(bucket))
-        for bucket, group_label, summary_label, css_class in _PRICE_MOVEMENT_BUCKETS
-        if summary.models_in(bucket)
+        (group_label, chip_label, css_class, models)
+        for bucket, group_label, chip_label, css_class in _PRICE_MOVEMENT_BUCKETS
+        for models in (summary.models_in(bucket),)
+        if models
     ]
-    populated_buckets.sort(key=lambda item: -len(item[4]))
-    for _, group_label, summary_label, css_class, models in populated_buckets:
-        model_summary_parts.append(
-            f'<span class="{css_class}">{len(models)} {h(summary_label)}</span>'
+    model_chip_parts = []
+    group_parts = []
+    for group_label, chip_label, css_class, models in populated_buckets:
+        model_chip_parts.append(
+            f'<span class="price-tally-chip {css_class}">'
+            f'{h(chip_label.format(count=len(models)))}</span>'
         )
         model_rows = "".join(
             f'<div class="price-movement-model">'
-            f'<span class="price-movement-provider">{h(model.provider_label)}</span>'
-            f'<code>{h(model.provider_model_id)}</code></div>'
+            + (
+                f'<span class="price-movement-provider">{h(model.provider_label)}</span>'
+                if show_provider
+                else ""
+            )
+            + f'<code>{h(model.provider_model_id)}</code></div>'
             for model in models
         )
         group_parts.append(
@@ -3018,38 +3316,36 @@ def _render_html_price_movement_summary(summary: _PriceMovementSummary) -> str:
             f'{model_rows}</div>'
         )
 
-    model_suffix = "" if len(summary.models) == 1 else "s"
-    field_counts = (
-        ("higher", summary.higher_fields, "price-higher"),
-        ("lower", summary.lower_fields, "price-lower"),
-    )
-    if summary.lower_fields > summary.higher_fields:
-        field_counts = tuple(reversed(field_counts))
-    field_counts += (
-        ("added", summary.added_fields, "price-coverage"),
-        ("removed", summary.removed_fields, "price-coverage"),
-    )
-    field_parts = [
-        f'<span class="{css_class}">{count} {label}</span>'
-        for label, count, css_class in field_counts
+    field_chip_parts = [
+        f'<span class="price-tally-chip {css_class}">{h(chip_label.format(count=count))}</span>'
+        for attribute, chip_label, css_class in _PRICE_MOVEMENT_FIELD_CHIPS
+        for count in (getattr(summary, attribute),)
         if count
     ]
-    field_total = (
-        summary.higher_fields
-        + summary.lower_fields
-        + summary.added_fields
-        + summary.removed_fields
-    )
-    field_suffix = "" if field_total == 1 else "s"
+
+    model_suffix = "" if len(summary.models) == 1 else "s"
+    field_suffix = "" if summary.field_total == 1 else "s"
     outcome, outcome_class = _price_movement_outcome(summary)
     return (
         '<section class="price-movement-summary">'
-        f'<div class="price-movement-title">Price Movement '
-        f'<span class="outcome {outcome_class}">\u2014 {h(outcome)}</span></div>'
-        f'<div class="price-movement-model-summary"><strong>{len(summary.models)} affected model{model_suffix}:</strong>'
-        f'{"".join(model_summary_parts)}</div>'
-        f'<div class="price-movement-fields"><strong>{field_total} changed price field{field_suffix}:</strong>'
-        f'{"".join(field_parts)}</div>'
+        f'<div class="price-movement-title">PRICE MOVEMENT '
+        f'<span class="outcome {outcome_class}">{h(outcome)}</span></div>'
+        + (
+            f'<div class="price-movement-headlines">{"".join(headline_parts)}</div>'
+            if headline_parts
+            else ""
+        )
+        # Both tallies name their own unit. They used to read `4 affected
+        # models: ...` and `8 changed price fields: ...` in different type
+        # sizes, which put two counts of two different things beside each
+        # other and left the reader to work out which was which.
+        + f'<div class="price-movement-tallies">'
+        f'<div class="price-tally-group">'
+        f'<span class="price-tally-label">{len(summary.models)} model{model_suffix}</span>'
+        f'{"".join(model_chip_parts)}</div>'
+        f'<div class="price-tally-group">'
+        f'<span class="price-tally-label">{summary.field_total} price field{field_suffix}</span>'
+        f'{"".join(field_chip_parts)}</div></div>'
         f'<details class="price-movement-models"><summary>View {len(summary.models)} affected model{model_suffix}</summary>'
         f'<div class="price-movement-model-groups">{"".join(group_parts)}</div>'
         '</details></section>'
@@ -3371,8 +3667,8 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
     h = html_module.escape
 
     if rendered.kind == "price":
-        old_str = h(_html_side_display(f"{rendered.old_raw} ({rendered.old_display} / 1M)", rendered.old_raw))
-        new_str = h(_html_side_display(f"{rendered.new_raw} ({rendered.new_display} / 1M)", rendered.new_raw))
+        old_str = h(_html_raw_and_normalized(rendered.old_raw, rendered.old_display))
+        new_str = h(_html_raw_and_normalized(rendered.new_raw, rendered.new_display))
         if rendered.direction == "added":
             delta_cls, delta_text = "delta-price-coverage", "added"
         elif rendered.direction == "removed":

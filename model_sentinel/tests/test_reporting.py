@@ -73,6 +73,34 @@ def _card_row(html: str, label: str) -> str:
     return matches[0]
 
 
+_PRICE_MOVEMENT_OPEN = '<section class="price-movement-summary">'
+
+
+def _price_movement_card(html: str) -> str:
+    """THE Price Movement card's inner HTML.
+
+    One spelling of the split, because five tests were each carrying their own
+    copy of it. Fails loudly when the card is absent or duplicated rather than
+    raising `IndexError` from inside a test that reads as though it had a card.
+    """
+    occurrences = html.count(_PRICE_MOVEMENT_OPEN)
+    assert occurrences == 1, f"expected exactly one Price Movement card, got {occurrences}"
+    return html.split(_PRICE_MOVEMENT_OPEN, 1)[1].split("</section>", 1)[0]
+
+
+def _without_price_movement_card(html: str) -> str:
+    """`html` with the Price Movement card excised, for document-wide counts.
+
+    The card is a SUMMARY: it repeats figures and labels that also appear on
+    the model cards below it, so a count taken over the whole document counts
+    some rows twice. Returns `html` unchanged when there is no card.
+    """
+    if _PRICE_MOVEMENT_OPEN not in html:
+        return html
+    before, rest = html.split(_PRICE_MOVEMENT_OPEN, 1)
+    return before + rest.split("</section>", 1)[1]
+
+
 def _html_section_body(html: str, heading: str) -> str:
     """Return what `heading` actually presides over, up to its `</section>`.
 
@@ -407,18 +435,25 @@ def test_html_price_movement_summary_uses_exclusive_model_buckets() -> None:
         provider_results=[_scan_result(changed)],
     )
 
-    movement = report.split('<section class="price-movement-summary">', 1)[1].split("</section>", 1)[0]
-    assert 'Price Movement <span class="outcome price-mixed">\u2014 mixed</span>' in movement
-    assert '<strong>4 affected models:</strong>' in movement
-    assert '<span class="price-higher">1 with increases and no decreases</span>' in movement
-    assert '<span class="price-lower">1 with decreases and no increases</span>' in movement
-    assert '<span class="price-mixed">1 mixed</span>' in movement
-    assert '<span class="price-coverage">1 with fields added/removed only</span>' in movement
-    assert '<strong>8 changed price fields:</strong>' in movement
-    assert '<span class="price-higher">2 higher</span>' in movement
-    assert '<span class="price-lower">2 lower</span>' in movement
-    assert '<span class="price-coverage">2 added</span>' in movement
-    assert '<span class="price-coverage">2 removed</span>' in movement
+    movement = _price_movement_card(report)
+    # One model up, one down, one both: no bucket is strictly largest, so the
+    # verdict is `mixed` and carries the counts it was derived from.
+    assert (
+        '<span class="outcome price-mixed">mixed \u2014 1 up, 1 down, 1 both</span>' in movement
+    )
+    assert '<span class="price-tally-label">4 models</span>' in movement
+    assert '<span class="price-tally-chip price-higher">\u2191 1 higher</span>' in movement
+    assert '<span class="price-tally-chip price-lower">\u2193 1 lower</span>' in movement
+    assert '<span class="price-tally-chip price-mixed">\u2195 1 both</span>' in movement
+    assert (
+        '<span class="price-tally-chip price-coverage">\u00b1 1 added/removed only</span>'
+        in movement
+    )
+    assert '<span class="price-tally-label">8 price fields</span>' in movement
+    assert '<span class="price-tally-chip price-higher">\u2191 2</span>' in movement
+    assert '<span class="price-tally-chip price-lower">\u2193 2</span>' in movement
+    assert '<span class="price-tally-chip price-coverage">+2 added</span>' in movement
+    assert '<span class="price-tally-chip price-coverage">\u22122 removed</span>' in movement
     assert '<summary>View 4 affected models</summary>' in movement
     for model_id in ("higher-model", "lower-model", "mixed-model", "coverage-model"):
         assert movement.count(f"<code>{model_id}</code>") == 1
@@ -451,14 +486,54 @@ def test_html_price_movement_summary_preserves_provider_identity() -> None:
         ],
     )
 
-    movement = report.split('<section class="price-movement-summary">', 1)[1].split("</section>", 1)[0]
-    assert '<strong>2 affected models:</strong>' in movement
+    movement = _price_movement_card(report)
+    assert '<span class="price-tally-label">2 models</span>' in movement
     assert movement.count("<code>shared-model</code>") == 2
     assert '<span class="price-movement-provider">Abacus.AI</span>' in movement
     assert '<span class="price-movement-provider">OpenRouter</span>' in movement
 
 
-def test_html_price_movement_summary_omits_zero_categories_and_leads_with_direction() -> None:
+def test_html_price_movement_list_omits_the_provider_when_only_one_has_price_changes() -> None:
+    """E5: two providers in the report, one of them with the price changes.
+
+    The provider label earns its column only when the list mixes providers.
+    The second provider here is present, changed, and has NO price change, so
+    a renderer keying the label off "how many providers are in this report"
+    rather than "how many are in this card" still prints it and fails.
+    """
+    priced = (
+        ModelDelta(
+            "changed",
+            "priced-model",
+            "Priced Model",
+            (FieldChange("pricing.prompt", "0.1", "0.2"),),
+        ),
+    )
+    unpriced = (
+        ModelDelta(
+            "changed",
+            "limits-model",
+            "Limits Model",
+            (FieldChange("context_length", 1000, 2000),),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-15T13:05:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[
+            _scan_result(priced, provider_id="openrouter", provider_label="OpenRouter"),
+            _scan_result(unpriced, provider_id="abacus", provider_label="Abacus.AI"),
+        ],
+    )
+
+    movement = _price_movement_card(report)
+    assert "price-movement-provider" not in movement
+    assert "OpenRouter" not in movement
+    assert '<div class="price-movement-model"><code>priced-model</code></div>' in movement
+
+
+def test_html_price_movement_summary_omits_zero_categories() -> None:
     changed = (
         ModelDelta(
             "changed",
@@ -486,18 +561,24 @@ def test_html_price_movement_summary_omits_zero_categories_and_leads_with_direct
         provider_results=[_scan_result(changed)],
     )
 
-    movement = report.split('<section class="price-movement-summary">', 1)[1].split("</section>", 1)[0]
-    assert 'Price Movement <span class="outcome price-lower">\u2014 mostly lower</span>' in movement
-    assert '<strong>2 affected models:</strong>' in movement
-    assert '<span class="price-lower">1 with decreases and no increases</span>' in movement
-    assert '<span class="price-mixed">1 mixed</span>' in movement
-    assert "with increases and no decreases" not in movement
-    assert "with fields added/removed only" not in movement
-    assert '<strong>4 changed price fields:</strong>' in movement
-    assert '<span class="price-lower">2 lower</span>' in movement
-    assert '<span class="price-higher">1 higher</span>' in movement
-    assert '<span class="price-coverage">1 removed</span>' in movement
-    assert ">0 added</span>" not in movement
+    movement = _price_movement_card(report)
+    # One `lower` model and one `mixed` model, so no bucket is strictly
+    # largest and the verdict is `mixed`. It used to read `mostly lower` on
+    # this same fixture -- 2 falling fields against 1 rising one -- which is
+    # D3's defect in miniature: the tally below has never shown a majority
+    # here, because at the level of models there is not one.
+    assert '<span class="outcome price-mixed">mixed \u2014 1 down, 1 both</span>' in movement
+    assert "mostly" not in movement
+    assert '<span class="price-tally-label">2 models</span>' in movement
+    assert '<span class="price-tally-chip price-lower">\u2193 1 lower</span>' in movement
+    assert '<span class="price-tally-chip price-mixed">\u2195 1 both</span>' in movement
+    assert "higher</span>" not in movement
+    assert "added/removed only" not in movement
+    assert '<span class="price-tally-label">4 price fields</span>' in movement
+    assert '<span class="price-tally-chip price-lower">\u2193 2</span>' in movement
+    assert '<span class="price-tally-chip price-higher">\u2191 1</span>' in movement
+    assert '<span class="price-tally-chip price-coverage">\u22121 removed</span>' in movement
+    assert "+0 added" not in movement
 
 
 def test_html_price_movement_summary_uses_visible_monetary_leaves_only() -> None:
@@ -529,10 +610,16 @@ def test_html_price_movement_summary_uses_visible_monetary_leaves_only() -> None
         detail_policy=all_policy,
     )
 
-    movement = report.split('<section class="price-movement-summary">', 1)[1].split("</section>", 1)[0]
-    assert 'Price Movement <span class="outcome price-coverage">\u2014 price fields added/removed</span>' in movement
-    assert '<span class="price-coverage">1 added</span>' in movement
-    assert '>0 removed</span>' not in movement
+    movement = _price_movement_card(report)
+    # No directional model at all, so there is no bucket to be "mostly" of and
+    # `mixed` would assert a direction this report does not have.
+    assert (
+        '<span class="outcome price-coverage">price fields added/removed</span>' in movement
+    )
+    assert '<span class="price-tally-chip price-coverage">+1 added</span>' in movement
+    assert "\u22120 removed" not in movement
+    # Nothing moved, so there is no dollar figure to headline and no panel.
+    assert "price-headline" not in movement
     assert movement.count("<code>structured-model</code>") == 1
 
     squelched_policy = ReportDetailPolicy(
@@ -548,7 +635,11 @@ def test_html_price_movement_summary_uses_visible_monetary_leaves_only() -> None
         provider_results=[_scan_result(changed)],
         detail_policy=squelched_policy,
     )
-    assert "Price Movement" not in hidden_report
+    # Keyed off the section element, not the words in its header: the header
+    # was re-worded in Task 8 (`Price Movement` -> `PRICE MOVEMENT`), and an
+    # assertion phrased against the old wording would have gone on passing
+    # while the card it was meant to exclude rendered in full.
+    assert _PRICE_MOVEMENT_OPEN not in hidden_report
 
 
 def test_html_price_movement_summary_is_omitted_without_price_amount_changes() -> None:
@@ -570,7 +661,440 @@ def test_html_price_movement_summary_is_omitted_without_price_amount_changes() -
         ],
     )
 
-    assert "Price Movement" not in report
+    # See the note on the assertion above: the element, not the header text.
+    assert _PRICE_MOVEMENT_OPEN not in report
+
+
+# ---------------------------------------------------------------------------
+# D3: the verdict and the tally beneath it must be counting the same things.
+# ---------------------------------------------------------------------------
+
+
+def _price_model(model_id: str, *, higher: int = 0, lower: int = 0) -> ModelDelta:
+    """A model with `higher` price fields going up and `lower` going down.
+
+    Distinct leaves per field so no two changes collapse, and distinct values
+    so nothing classifies as a no-op. The magnitudes are irrelevant to the
+    verdict -- that is the point of the fixture below.
+    """
+    fields = [
+        FieldChange(leaf, "0.1", "0.2")
+        for leaf in ("pricing.prompt", "pricing.completion", "pricing.request")[:higher]
+    ] + [
+        FieldChange(leaf, "0.2", "0.1")
+        for leaf in ("pricing.input_cache_read", "pricing.input_cache_write", "pricing.image")[:lower]
+    ]
+    assert len(fields) == higher + lower, "fixture asked for more price leaves than it has"
+    return ModelDelta("changed", model_id, model_id.title(), tuple(fields))
+
+
+def test_price_movement_verdict_counts_models_not_fields() -> None:
+    """THE D3 regression: a tied MODEL split must not read `mostly lower`.
+
+    Four models up, four down, three in both directions -- no bucket is
+    strictly largest, so the verdict is `mixed`. The field counts deliberately
+    disagree with the model counts: the down models carry two decreases each,
+    so there are 7 rising fields against 11 falling ones. The previous
+    implementation compared exactly those two numbers and announced `mostly
+    lower` directly above a tally showing 4 and 4, which is the defect. Restore
+    the field-count comparison and this test fails on the verdict string.
+    """
+    changed = tuple(
+        [_price_model(f"up-{index}", higher=1) for index in range(4)]
+        + [_price_model(f"down-{index}", lower=2) for index in range(4)]
+        + [_price_model(f"both-{index}", higher=1, lower=1) for index in range(3)]
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    movement = _price_movement_card(report)
+
+    # The premise: fields are NOT tied, and lower leads. Asserted here so the
+    # test cannot quietly stop exercising the defect if the fixture is edited.
+    assert '<span class="price-tally-chip price-lower">↓ 11</span>' in movement
+    assert '<span class="price-tally-chip price-higher">↑ 7</span>' in movement
+
+    assert (
+        '<span class="outcome price-mixed">mixed — 4 up, 4 down, 3 both</span>' in movement
+    )
+    assert "mostly lower" not in movement
+    # The line the verdict now agrees with.
+    assert '<span class="price-tally-label">11 models</span>' in movement
+    assert '<span class="price-tally-chip price-higher">↑ 4 higher</span>' in movement
+    assert '<span class="price-tally-chip price-lower">↓ 4 lower</span>' in movement
+    assert '<span class="price-tally-chip price-mixed">↕ 3 both</span>' in movement
+
+
+def test_price_movement_verdict_names_a_strictly_largest_model_bucket() -> None:
+    """One bucket strictly largest in each direction, and its counts appended."""
+    higher_led = tuple(
+        [_price_model(f"up-{index}", higher=1) for index in range(3)]
+        + [_price_model("down-0", lower=1)]
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(higher_led)],
+    )
+    assert (
+        '<span class="outcome price-higher">mostly higher — 3 up, 1 down</span>'
+        in _price_movement_card(report)
+    )
+
+    lower_led = tuple(
+        [_price_model(f"down-{index}", lower=1) for index in range(3)]
+        + [_price_model("up-0", higher=1)]
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(lower_led)],
+    )
+    assert (
+        '<span class="outcome price-lower">mostly lower — 1 up, 3 down</span>'
+        in _price_movement_card(report)
+    )
+
+
+def test_price_movement_verdict_is_mixed_when_both_directions_leads() -> None:
+    """A strictly largest `both` bucket is still `mixed`, not a direction.
+
+    `both` is the largest bucket here, and it is the one bucket whose name is
+    not a direction -- a "strictly largest bucket wins" rule that forgot to
+    check WHICH bucket won would have to invent a verdict for it.
+    """
+    changed = tuple(
+        [_price_model(f"both-{index}", higher=1, lower=1) for index in range(3)]
+        + [_price_model("up-0", higher=1), _price_model("down-0", lower=1)]
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    assert (
+        '<span class="outcome price-mixed">mixed — 1 up, 1 down, 3 both</span>'
+        in _price_movement_card(report)
+    )
+
+
+# ---------------------------------------------------------------------------
+# D1: the card leads with the two biggest dollar movers, by name and amount.
+# ---------------------------------------------------------------------------
+
+
+def _headline_panel(movement: str, label: str) -> str:
+    """The `price-headline` panel whose label is `label`.
+
+    Bounded by the headlines CONTAINER before splitting on the panels, so the
+    last panel's text stops where the container does. Splitting the whole card
+    on the panel opening tag instead would hand back everything from the final
+    panel to the end of the card -- tallies and affected-model list included --
+    and an assertion that some other model is absent "from the panel" would be
+    reading the model list.
+    """
+    assert '<div class="price-movement-headlines">' in movement, "no headline movers rendered"
+    container = movement.split('<div class="price-movement-headlines">', 1)[1]
+    container = container.split('<div class="price-movement-tallies">', 1)[0]
+    panels = [
+        panel
+        for panel in container.split('<div class="price-headline">')[1:]
+        if f">{label}</div>" in panel
+    ]
+    assert len(panels) == 1, f"expected exactly one {label!r} panel, got {len(panels)}"
+    return panels[0]
+
+
+def test_price_movement_headline_names_the_biggest_dollar_mover() -> None:
+    """The increase panel is chosen by DOLLARS, not by percent and not by count.
+
+    `small-pct-big-dollars` moves $1.00 -> $3.00 (+$2.00, +200%);
+    `big-pct-small-dollars` moves $0.01 -> $0.05 (+$0.04, +400%) and carries
+    THREE rising fields to the other model's one. A selector keyed on percent
+    or on how many fields moved picks the wrong model, and the panel names it.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "small-pct-big-dollars",
+            "Small Pct Big Dollars",
+            (FieldChange("pricing.prompt", "0.000001", "0.000003"),),
+        ),
+        ModelDelta(
+            "changed",
+            "big-pct-small-dollars",
+            "Big Pct Small Dollars",
+            (
+                FieldChange("pricing.prompt", "0.00000001", "0.00000005"),
+                FieldChange("pricing.completion", "0.00000001", "0.00000005"),
+                FieldChange("pricing.request", "0.00000001", "0.00000005"),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    panel = _headline_panel(_price_movement_card(report), "Biggest increase")
+
+    assert '<code class="price-headline-model">small-pct-big-dollars</code>' in panel
+    assert '<div class="price-headline-field" title="pricing.prompt">Input</div>' in panel
+    assert "$1.00 → $3.00" in panel
+    assert '<span class="price-headline-delta price-higher">+$2.00</span>' in panel
+    assert '<span class="price-headline-pct price-higher">↑ 200.0%</span>' in panel
+    assert "big-pct-small-dollars" not in panel
+
+
+def test_price_movement_headline_panels_cover_both_directions() -> None:
+    """Two panels when the scan moved both ways, each naming its own extreme."""
+    changed = (
+        ModelDelta(
+            "changed",
+            "riser",
+            "Riser",
+            (FieldChange("pricing.prompt", "0.000001", "0.000004"),),
+        ),
+        ModelDelta(
+            "changed",
+            "faller",
+            "Faller",
+            (FieldChange("pricing.completion", "0.000009", "0.000002"),),
+        ),
+        ModelDelta(
+            "changed",
+            "small-mover",
+            "Small Mover",
+            (
+                FieldChange("pricing.prompt", "0.000001", "0.0000011"),
+                FieldChange("pricing.completion", "0.000002", "0.0000019"),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    movement = _price_movement_card(report)
+    assert movement.count('<div class="price-headline">') == 2
+
+    increase = _headline_panel(movement, "Biggest increase")
+    assert '<code class="price-headline-model">riser</code>' in increase
+    assert '<span class="price-headline-delta price-higher">+$3.00</span>' in increase
+
+    decrease = _headline_panel(movement, "Biggest decrease")
+    assert '<code class="price-headline-model">faller</code>' in decrease
+    assert '<span class="price-headline-delta price-lower">-$7.00</span>' in decrease
+
+    # The increase panel comes first, so the two panels are in a fixed order
+    # rather than whichever direction happened to be discovered first.
+    assert movement.index("Biggest increase") < movement.index("Biggest decrease")
+
+
+def test_price_movement_omits_the_decrease_panel_when_nothing_got_cheaper() -> None:
+    """No decreases -> the panel is ABSENT, not an empty box.
+
+    A panel headed `Biggest decrease` over blank space reads as a rendering
+    failure, and there is nothing truthful to put in it.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "riser",
+            "Riser",
+            (
+                FieldChange("pricing.prompt", "0.000001", "0.000004"),
+                # A removal, which is a price CHANGE with no direction and no
+                # delta -- it must not be pressed into service as a decrease.
+                FieldChange("pricing.input_cache_read", "0.000009", None),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    movement = _price_movement_card(report)
+
+    assert movement.count('<div class="price-headline">') == 1
+    assert "Biggest increase" in movement
+    assert "Biggest decrease" not in movement
+
+
+def test_price_movement_headline_prints_the_qualified_label() -> None:
+    """The headline names the tier that moved, not the collapsed leaf label.
+
+    The conditional tier moves $4.00 -> $9.00 and the base rate $1.00 ->
+    $2.00, so the tier is the biggest mover and the panel must spell it
+    `Input (min_prompt_tokens=200000)`. A renderer reading `label` instead of
+    `display_label` prints a bare `Input` here, indistinguishable from the
+    base-rate row on the card below.
+
+    This is the guard `test_every_field_change_entry_point_surfaces_the_qualifier`
+    cannot carry: its bare/qualified parity identity holds only for render
+    sites that emit BOTH rows, and a headline emits one by construction.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-tiered",
+            "Synth Tiered",
+            (
+                FieldChange("pricing.prompt", "0.000001", "0.000002"),
+                FieldChange(
+                    "pricing.overrides",
+                    [{"min_prompt_tokens": 200000, "prompt": "0.000004"}],
+                    [{"min_prompt_tokens": 200000, "prompt": "0.000009"}],
+                ),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    panel = _headline_panel(_price_movement_card(report), "Biggest increase")
+
+    assert (
+        '<div class="price-headline-field" '
+        'title="pricing.overrides[min_prompt_tokens=200000].prompt">'
+        "Input (min_prompt_tokens=200000)</div>" in panel
+    )
+    assert '<span class="price-headline-delta price-higher">+$5.00</span>' in panel
+
+
+def test_price_movement_tallies_state_their_units_independently() -> None:
+    """Models and price fields are counted separately and each says which it is.
+
+    The two counts differ here (2 models, 5 price fields) precisely so that a
+    tally which printed one unit's number under the other's label is visible.
+    """
+    changed = (
+        ModelDelta(
+            "changed",
+            "mover-a",
+            "Mover A",
+            (
+                FieldChange("pricing.prompt", "0.1", "0.2"),
+                FieldChange("pricing.completion", "0.4", "0.3"),
+                FieldChange("pricing.input_cache_read", None, "0.01"),
+            ),
+        ),
+        ModelDelta(
+            "changed",
+            "mover-b",
+            "Mover B",
+            (
+                FieldChange("pricing.prompt", "0.2", "0.1"),
+                FieldChange("pricing.input_cache_write", "0.02", None),
+            ),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    movement = _price_movement_card(report)
+
+    models_group, fields_group = movement.split('<div class="price-tally-group">')[1:3]
+    assert '<span class="price-tally-label">2 models</span>' in models_group
+    assert '<span class="price-tally-chip price-mixed">↕ 1 both</span>' in models_group
+    assert '<span class="price-tally-chip price-lower">↓ 1 lower</span>' in models_group
+    assert "↑" not in models_group  # no model rose without also falling
+
+    assert '<span class="price-tally-label">5 price fields</span>' in fields_group
+    assert '<span class="price-tally-chip price-lower">↓ 2</span>' in fields_group
+    assert '<span class="price-tally-chip price-higher">↑ 1</span>' in fields_group
+    assert '<span class="price-tally-chip price-coverage">+1 added</span>' in fields_group
+    assert '<span class="price-tally-chip price-coverage">−1 removed</span>' in fields_group
+
+
+def test_price_movement_buckets_hold_one_fixed_order_everywhere() -> None:
+    """Chips and columns are ordered by the design's bucket list, not by count.
+
+    Both tallies used to be ordered by magnitude -- the field chips put the
+    leading direction first, the model chips and the affected-model columns
+    sorted by bucket size -- so that the order itself carried the verdict.
+    D3 gives that job to the verdict string, which now names the leading
+    bucket and prints every bucket's count, and an order that still shifts
+    with the data is a layout the reader has to re-parse on every report.
+
+    The fixture is deliberately anti-sorted: the SMALLEST model bucket
+    (`higher`, 1) is the one that must come first, and the field tally has
+    more decreases than increases while `↑` must still precede `↓`. Any
+    surviving count-sort therefore reverses something here.
+    """
+    changed = tuple(
+        [_price_model("up-0", higher=1)]
+        + [_price_model(f"down-{index}", lower=2) for index in range(2)]
+        + [_price_model(f"both-{index}", higher=1, lower=1) for index in range(3)]
+        + [
+            ModelDelta(
+                "changed",
+                "coverage-0",
+                "Coverage 0",
+                (
+                    FieldChange("pricing.input_cache_read", None, "0.01"),
+                    FieldChange("pricing.input_cache_write", "0.02", None),
+                ),
+            )
+        ]
+    )
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    movement = _price_movement_card(report)
+    models_group, fields_group = movement.split('<div class="price-tally-group">')[1:3]
+
+    def _order(haystack: str, needles: tuple[str, ...]) -> list[int]:
+        positions = []
+        for needle in needles:
+            assert needle in haystack, needle
+            positions.append(haystack.index(needle))
+        return positions
+
+    # Models: ↑ higher, ↓ lower, ↕ both, ± added/removed only -- despite the
+    # counts running 1, 2, 3, 1.
+    model_chips = _order(
+        models_group, ("↑ 1 higher", "↓ 2 lower", "↕ 3 both", "± 1 added/removed only")
+    )
+    assert model_chips == sorted(model_chips), models_group
+
+    # Price fields: ↓, ↑, +added, −removed -- the design's order, which puts
+    # decreases first regardless of which direction leads.
+    field_chips = _order(fields_group, ("↓ 7", "↑ 4", "+1 added", "−1 removed"))
+    assert field_chips == sorted(field_chips), fields_group
+
+    # The affected-model columns repeat the same order, so a chip and the
+    # column it summarises are never read in different sequences.
+    columns = _order(
+        movement,
+        (
+            "↑ Higher only — 1",
+            "↓ Lower only — 2",
+            "↕ Both directions — 3",
+            "± Added/removed only — 1",
+        ),
+    )
+    assert columns == sorted(columns), movement
 
 
 def test_default_html_summary_aggregates_squelched_benchmark_rows() -> None:
@@ -1231,6 +1755,36 @@ def test_one_html_document_spells_an_absent_side_one_way() -> None:
         assert "8,192 → null" in other, format_name
 
 
+def test_an_absent_price_side_is_never_composed_with_its_operands() -> None:
+    """The `changes` table must not BUILD the text it is about to throw away.
+
+    `_render_html_table_row` used to write `f"{raw} ({display} / 1M)"`
+    unconditionally and hand the result to `_html_side_display`, which
+    discards it when `raw is None`. The literal string `None (null / 1M)` was
+    therefore constructed on every one-sided price row in the `changes`
+    report -- invisible, correct by accident, and one refactor of that helper
+    away from reaching a cell.
+
+    A count of the output cannot catch that: the old code and the new code
+    render identically. What distinguishes them is whether the operands are
+    TOUCHED on the absent path, so this asserts exactly that, with a display
+    operand that refuses to be formatted. Restore the eager f-string and this
+    raises `AssertionError` from inside the formatter.
+    """
+
+    class _RefusesToBeFormatted:
+        def __str__(self) -> str:  # pragma: no cover - the raise is the point
+            raise AssertionError("the absent side must not format its operands")
+
+    assert (
+        reporting._html_raw_and_normalized(None, _RefusesToBeFormatted())  # type: ignore[arg-type]
+        == "—"
+    )
+    # The present path still composes both operands, so the guard above cannot
+    # be satisfied by a helper that formats nothing at all.
+    assert reporting._html_raw_and_normalized("2e-06", "$2.00") == "2e-06 ($2.00 / 1M)"
+
+
 # `num` is not optional in this pattern. A price is a number, so its cell must
 # carry the class that earns tabular figures and `nowrap`; a price cell that
 # lost it would silently start wrapping mid-figure and this regex would stop
@@ -1822,7 +2376,8 @@ def test_every_field_change_entry_point_surfaces_the_qualifier() -> None:
     changes_reports = _render_changes_human_formats(_tiered_pricing_changes_rows())
 
     rendered = {
-        f"render_scan_report/{name}": report for name, report in scan_reports.items()
+        f"render_scan_report/{name}": _without_price_movement_card(report)
+        for name, report in scan_reports.items()
     } | {
         f"render_changes_report/{name}": report for name, report in changes_reports.items()
     }
@@ -1843,6 +2398,16 @@ def test_every_field_change_entry_point_surfaces_the_qualifier() -> None:
         # collapsed site contributes two bare `Input`s and no qualified one,
         # and the equality breaks. A fixed count would have had to be spelled
         # per format, and would then pass for a format nobody updated.
+        #
+        # The pairing is why the scan HTML is counted with its Price Movement
+        # card removed. Task 8's headline mover is the first render site that
+        # emits ONE of the two rows by construction -- the biggest mover, not
+        # both -- so it breaks the parity identity in whichever direction it
+        # picks, and no arithmetic here can hold for a site that is not a pair.
+        # Its qualifier behaviour is not thereby unguarded: it has its own
+        # test, `test_price_movement_headline_prints_the_qualified_label`,
+        # whose fixture makes the CONDITIONAL tier the biggest mover so that a
+        # bare-`label` renderer is what fails it.
         assert report.count(qualified) >= 1, key
         assert report.count("Input") == 2 * report.count(qualified), key
 

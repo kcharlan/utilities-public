@@ -646,38 +646,107 @@ header h1 .count {
   color: var(--text-bright);
   font-size: 1.05rem;
   font-weight: 600;
+  letter-spacing: 0.04em;
   margin-bottom: 0.65rem;
 }
 .price-movement-title .outcome {
   font-weight: 400;
+  letter-spacing: 0;
 }
-.price-movement-model-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-}
-.price-movement-model-summary > strong,
-.price-movement-fields > strong {
-  color: var(--text-bright);
-  font-weight: 600;
-  margin-right: 0.45rem;
+.price-movement-title .outcome::before {
+  content: "· ";
+  color: var(--text-dim);
 }
 .price-higher { color: var(--accent-red); }
 .price-lower { color: var(--accent-green); }
 .price-mixed { color: var(--accent-amber); }
 .price-coverage { color: var(--accent-blue); }
-.price-movement-fields {
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  margin-top: 0.45rem;
+.price-movement-headlines {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
 }
-.price-movement-model-summary span + span::before,
-.price-movement-fields span + span::before {
-  content: " · ";
+.price-headline {
+  background: var(--bg-table-row);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font-family: var(--font-mono);
+  min-width: 0;
+}
+.price-headline-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.price-headline-model {
+  display: block;
+  color: var(--text-bright);
+  font-size: 0.85rem;
+  margin-top: 0.15rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-field {
   color: var(--text-dim);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-values {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.3rem;
+  overflow-wrap: anywhere;
+}
+.price-headline-unit {
+  color: var(--text-dim);
+  margin-left: 0.3rem;
+}
+.price-headline-figures {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.1rem;
+}
+.price-headline-delta {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.price-headline-pct {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.price-movement-tallies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 2rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.price-tally-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.price-tally-label {
+  color: var(--text-bright);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-right: 0.1rem;
+}
+.price-tally-chip {
+  background: var(--bg-table-alt);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
 }
 .price-movement-models {
   border-top: 1px solid var(--border);
@@ -705,10 +774,14 @@ header h1 .count {
   margin-bottom: 0.3rem;
 }
 .price-movement-model {
-  display: grid;
-  grid-template-columns: minmax(90px, auto) 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.15rem 0;
+}
+.price-movement-model .price-movement-provider {
+  flex: 0 0 auto;
+  min-width: 90px;
 }
 .price-movement-provider { color: var(--text-dim); }
 .price-movement-model code {
@@ -1033,7 +1106,7 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="provider-card status-changed"><div class="provider-name">Synth Provider</div><div class="provider-stats">7 models</div><div class="provider-badge">7 changes</div></div>
 </div>
 
-<section class="price-movement-summary"><div class="price-movement-title">Price Movement <span class="outcome price-higher">— higher</span></div><div class="price-movement-model-summary"><strong>1 affected model:</strong><span class="price-higher">1 with increases and no decreases</span></div><div class="price-movement-fields"><strong>4 changed price fields:</strong><span class="price-higher">2 higher</span><span class="price-coverage">1 added</span><span class="price-coverage">1 removed</span></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher, no decreases — 1</div><div class="price-movement-model"><span class="price-movement-provider">Synth Provider</span><code>synth/model-core</code></div></div></div></details></section>
+<section class="price-movement-summary"><div class="price-movement-title">PRICE MOVEMENT <span class="outcome price-higher">mostly higher — 1 up</span></div><div class="price-movement-headlines"><div class="price-headline"><div class="price-headline-label price-higher">Biggest increase</div><code class="price-headline-model">synth/model-core</code><div class="price-headline-field" title="pricing.completion">Output</div><div class="price-headline-values">$2.00 → $3.50<span class="price-headline-unit">/1M</span></div><div class="price-headline-figures"><span class="price-headline-delta price-higher">+$1.50</span><span class="price-headline-pct price-higher">↑ 75.0%</span></div></div></div><div class="price-movement-tallies"><div class="price-tally-group"><span class="price-tally-label">1 model</span><span class="price-tally-chip price-higher">↑ 1 higher</span></div><div class="price-tally-group"><span class="price-tally-label">4 price fields</span><span class="price-tally-chip price-higher">↑ 2</span><span class="price-tally-chip price-coverage">+1 added</span><span class="price-tally-chip price-coverage">−1 removed</span></div></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher only — 1</div><div class="price-movement-model"><code>synth/model-core</code></div></div></div></details></section>
 
 <section class="provider-section"><h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>
 <h3>Changed</h3>
@@ -1141,7 +1214,7 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
   <div class="provider-card status-changed"><div class="provider-name">Synth Provider</div><div class="provider-stats">7 models</div><div class="provider-badge">7 changes</div></div>
 </div>
 
-<section class="price-movement-summary"><div class="price-movement-title">Price Movement <span class="outcome price-higher">— higher</span></div><div class="price-movement-model-summary"><strong>1 affected model:</strong><span class="price-higher">1 with increases and no decreases</span></div><div class="price-movement-fields"><strong>4 changed price fields:</strong><span class="price-higher">2 higher</span><span class="price-coverage">1 added</span><span class="price-coverage">1 removed</span></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher, no decreases — 1</div><div class="price-movement-model"><span class="price-movement-provider">Synth Provider</span><code>synth/model-core</code></div></div></div></details></section>
+<section class="price-movement-summary"><div class="price-movement-title">PRICE MOVEMENT <span class="outcome price-higher">mostly higher — 1 up</span></div><div class="price-movement-headlines"><div class="price-headline"><div class="price-headline-label price-higher">Biggest increase</div><code class="price-headline-model">synth/model-core</code><div class="price-headline-field" title="pricing.completion">Output</div><div class="price-headline-values">$2.00 → $3.50<span class="price-headline-unit">/1M</span></div><div class="price-headline-figures"><span class="price-headline-delta price-higher">+$1.50</span><span class="price-headline-pct price-higher">↑ 75.0%</span></div></div></div><div class="price-movement-tallies"><div class="price-tally-group"><span class="price-tally-label">1 model</span><span class="price-tally-chip price-higher">↑ 1 higher</span></div><div class="price-tally-group"><span class="price-tally-label">4 price fields</span><span class="price-tally-chip price-higher">↑ 2</span><span class="price-tally-chip price-coverage">+1 added</span><span class="price-tally-chip price-coverage">−1 removed</span></div></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher only — 1</div><div class="price-movement-model"><code>synth/model-core</code></div></div></div></details></section>
 
 <section class="provider-section"><h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>
 <h3>Changed</h3>
@@ -1880,10 +1953,15 @@ def test_a_price_below_the_columns_resolution_bounds_itself_in_every_format() ->
         #
         # text/markdown = 2: one line, `raw → raw ($old → $new / 1M, pct)`,
         #   both price operands bounded and no delta term at all.
-        # html = 5: the card's `old-val`, `new-val` and `delta` cells (the
+        # html = 8: the card's `old-val`, `new-val` and `delta` cells (the
         #   delta column is Task 7's, and it bounds too), plus the Change
-        #   Summary's copy of the text line, which carries both operands.
-        expected_sentinels = 5 if format_name == "html" else 2
+        #   Summary's copy of the text line, which carries both operands, plus
+        #   Task 8's Price Movement headline panel, which is a FOURTH home for
+        #   this row -- it prints the same three bounded figures (both operands
+        #   and the delta) because this fixture's only price move is also its
+        #   biggest. One panel, not two: nothing here got cheaper, so the
+        #   decrease panel is omitted rather than rendered empty.
+        expected_sentinels = 8 if format_name == "html" else 2
         assert report.count(_sentinel(format_name, "<$0.0001")) == expected_sentinels, format_name
         # The false spelling, in every delimiter. `$0.0000` cannot appear at
         # all here: no cell in this row is allowed to print a zero price.
@@ -2151,9 +2229,12 @@ def test_vanishing_percent_row_bounds_its_percent_in_every_format_but_not_json()
         # Two rows, two bounds: the price row and the count row alike --
         # pinned exactly per format, see finding 5 in the price test above.
         # text/markdown = 2: one bounded percentage per row.
-        # html = 4: each row's `pct` cell in the card, plus each row's line in
-        #   the Change Summary. There is no third home for a percentage.
-        assert report.count(_sentinel(format_name, "↑ <0.1%")) == (4 if format_name == "html" else 2), format_name
+        # html = 5: each row's `pct` cell in the card, plus each row's line in
+        #   the Change Summary, plus ONE more for Task 8's Price Movement
+        #   headline panel. One, not two: that card is about prices, so the
+        #   count row has no headline and only the price row's bound repeats
+        #   there.
+        assert report.count(_sentinel(format_name, "↑ <0.1%")) == (5 if format_name == "html" else 2), format_name
         # The spelling the sentinel replaces, in either direction, ruled out
         # outright: no row in this fixture may print a zero percentage.
         assert "0.0%" not in report, format_name
