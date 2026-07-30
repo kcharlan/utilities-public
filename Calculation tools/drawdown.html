@@ -1029,7 +1029,7 @@
       <div class="eyebrow">A study in patience &amp; principal</div>
       <h2>Investment <em>Drawdown</em></h2>
       <p class="subtitle">A month-by-month projection of buffer, principal, and income, traced until the wells run dry — or until you adjust the headwaters.</p>
-      <div class="today-stamp">From <strong id="today-stamp">May 2026</strong></div>
+      <div class="today-stamp">From <strong id="today-stamp"></strong></div>
     </header>
 
     <div class="stats" id="stats"></div>
@@ -1105,7 +1105,8 @@
 /* ============================================================
    STATE
    ============================================================ */
-const TODAY = new Date(2026, 4, 14); // May 14, 2026
+const currentDate = new Date();
+const TODAY = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
 
 const PARAM_DEFS = [
   // [key, type, label, isAbsoluteState?]
@@ -1330,9 +1331,7 @@ function snapshotEffectiveState(sim, expense, income) {
    ============================================================ */
 
 function dateForMonth(m) {
-  const d = new Date(TODAY);
-  d.setMonth(d.getMonth() + m);
-  return d;
+  return new Date(TODAY.getFullYear(), TODAY.getMonth() + m, 1);
 }
 
 function fmtMoney(v, withSign = false) {

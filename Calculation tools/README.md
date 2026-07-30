@@ -18,7 +18,7 @@ Projects how long a cash buffer and investment principal remain solvent under mo
 - Shows summary statistics, a trajectory chart, a detailed table, and CSV export.
 - Treats a period count of `0` as "run to depletion," subject to a 1,200-month (100-year) safety cap.
 
-Projection dates are anchored to the hard-coded model date of May 14, 2026, not the browser's current date. Overrides exist only in page memory and disappear on reload. Google Fonts are loaded from the network when available; the calculator otherwise uses local fallback fonts.
+Projection dates are anchored to the browser's current local month when the page loads. Month 1 is the following calendar month. Overrides exist only in page memory and disappear on reload. Google Fonts are loaded from the network when available; the calculator otherwise uses local fallback fonts.
 
 ### `early_loan_termination_calculator.html`
 
@@ -70,6 +70,6 @@ Both calculators use `APR / 12` monthly compounding and round monthly amounts to
 3. Click **Calculate** where provided. `drawdown.html` also recalculates shortly after an input changes.
 4. Use the page's export controls if you need CSV data or, for the early-loan calculator, a PNG chart.
 
-No automated test suite or package installation is provided for this directory. When modifying a calculator, verify its default scenario, representative edge cases such as zero interest, and its download controls in a browser.
+Run the dependency-free date regression test with `node --test tests/*.test.js`. No package installation is required. When modifying a calculator, also verify its default scenario, representative edge cases such as zero interest, and its download controls in a browser.
 
 These tools provide planning estimates, not financial, tax, or investment advice.
