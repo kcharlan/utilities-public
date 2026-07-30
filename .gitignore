@@ -21,6 +21,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!time_machine_snapshot_monitor/lib/
+!time_machine_snapshot_monitor/lib/tm_snapshot_monitor.sh
 lib64/
 parts/
 sdist/

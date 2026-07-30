@@ -25,9 +25,9 @@ Sentinel entry streams. It never prints protected configuration contents.
 The audit contract is:
 
 - One validated stage-0 Git-index snapshot defines current source for direct
-  mappings, maintained top-level projects, Model Sentinel, and tracked
-  repository `.gitignore` files. Staged additions are included; untracked files
-  are excluded.
+  mappings, maintained top-level projects, the Time Machine Snapshot Monitor
+  tree, Model Sentinel, and tracked repository `.gitignore` files. Staged
+  additions are included; untracked files are excluded.
 - Current direct and maintained-project files are compared byte-for-byte.
   Their complete numeric permission modes must also match, including setuid,
   setgid, and sticky bits as well as ordinary read/write/execute bits.
@@ -91,6 +91,24 @@ expected `__main__.py` and `model_sentinel/*.py` inventory from the same
 validated Git-index snapshot used for other deployments, then validates and
 streams only those entries. Run the installer with a venv-provided `python3`
 on Homebrew-managed macOS.
+
+`time_machine_snapshot_monitor` is a maintained multi-file copy under
+`~/Library/Scripts/time_machine_snapshot_monitor`. Deploy or update it from the
+repository with:
+
+```bash
+./time_machine_snapshot_monitor/install.sh
+```
+
+The installer copies only the six documented project files, verifies staged
+bytes before activation, backs up a changed prior source tree under
+`~/.utilities-deploy-backups/`, refreshes the
+`~/Library/Scripts/tm-snapshot-monitor` command symlink, and installs the
+hourly user LaunchAgent. Mutable counters and bounded logs remain under
+`~/Library/Application Support/TimeMachineSnapshotMonitor`, outside both source
+trees. The read-only deployment audit compares the installed project tree
+byte-for-byte and mode-for-mode and verifies the stable command link target.
+Use the project README for setup, repair, and removal behavior.
 
 `fid_div_conv` and `van_div_conv` are retained local legacy launchers. They were intentionally excluded from the public repository because `div_conv` supersedes them and the old source historically mixed operational mappings with code. Do not copy them back into public source. Remove them only after deciding the legacy rollback path is no longer needed.
 

@@ -157,6 +157,39 @@ home_projects=(
   video-scenes
 )
 
+scripts_projects=(
+  time_machine_snapshot_monitor
+)
+
+all_projects=(
+  "${home_projects[@]}"
+  "${scripts_projects[@]}"
+)
+
+project_deployment_root() {
+  local project="$1"
+  case "$project" in
+    time_machine_snapshot_monitor)
+      print -r -- "$SCRIPTS_DIR"
+      ;;
+    *)
+      print -r -- "$LOCAL_ROOT"
+      ;;
+  esac
+}
+
+project_deployment_label() {
+  local project="$1"
+  case "$project" in
+    time_machine_snapshot_monitor)
+      print -r -- "~/Library/Scripts/$project"
+      ;;
+    *)
+      print -r -- "~/$project"
+      ;;
+  esac
+}
+
 run_git_capture() {
   local label="$1"
   local output_file="$2"
@@ -236,7 +269,7 @@ audited_scopes=(
   model_sentinel/__main__.py
   model_sentinel/model_sentinel
   ':(glob)**/.gitignore'
-  "${home_projects[@]}"
+  "${all_projects[@]}"
 )
 
 git_snapshot_ok=true
@@ -418,9 +451,10 @@ check_repository_ignore() {
 
 if [[ "$stale_history_available" == true ]]; then
   history_number=0
-  for project in "${home_projects[@]}"; do
+  for project in "${all_projects[@]}"; do
     stale_counts[$project]=0
     stale_history_operational_errors[$project]=0
+    project_root="$(project_deployment_root "$project")"
     history_number=$((history_number + 1))
     history_file="$AUDIT_TMP/history-$history_number"
     if ! run_git_capture \
@@ -446,7 +480,7 @@ if [[ "$stale_history_available" == true ]]; then
         continue
       fi
 
-      deployed_candidate="$LOCAL_ROOT/$deleted_path"
+      deployed_candidate="$project_root/$deleted_path"
       ignore_candidate="$deleted_path"
       if [[ ! -L "$deployed_candidate" && -d "$deployed_candidate" ]]; then
         ignore_candidate="$deleted_path/"
@@ -504,7 +538,7 @@ if [[ "$stale_history_available" == true ]]; then
     done
   done
 else
-  for project in "${home_projects[@]}"; do
+  for project in "${all_projects[@]}"; do
     stale_counts[$project]=0
     stale_history_operational_errors[$project]=1
   done
@@ -880,7 +914,9 @@ if [[ "$model_zipapp_ok" == true ]]; then
   print -- "OK: model-sentinel zipapp"
 fi
 
-for project in "${home_projects[@]}"; do
+for project in "${all_projects[@]}"; do
+  project_root="$(project_deployment_root "$project")"
+  project_label="$(project_deployment_label "$project")"
   project_missing=0
   project_type_failures=0
   project_byte_differences=0
@@ -903,7 +939,7 @@ for project in "${home_projects[@]}"; do
         project_source_state_failures=$((project_source_state_failures + 1))
         continue
       fi
-      deployed_file="$LOCAL_ROOT/$tracked_file"
+      deployed_file="$project_root/$tracked_file"
       if [[ ! -e "$deployed_file" && ! -L "$deployed_file" ]]; then
         project_missing=$((project_missing + 1))
         continue
@@ -961,9 +997,34 @@ for project in "${home_projects[@]}"; do
     report_failure \
       "$project deployment drift (missing files: $project_missing, deployment-type failures: $project_type_failures, byte differences: $project_byte_differences, mode differences: $project_mode_differences, stale formerly tracked files: $project_stale, source-state failures: $project_source_state_failures, operational errors: $project_operational_errors)"
   else
-    print -- "OK: ~/$project tracked files"
+    print -- "OK: $project_label tracked files"
   fi
 done
+
+monitor_command_link="$SCRIPTS_DIR/tm-snapshot-monitor"
+monitor_command_target="$SCRIPTS_DIR/time_machine_snapshot_monitor/bin/tm-snapshot-monitor"
+monitor_link_ok=true
+if [[ "$git_snapshot_ok" != true ]]; then
+  monitor_link_ok=false
+elif [[ ! -e "$monitor_command_link" && ! -L "$monitor_command_link" ]]; then
+  report_failure "tm-snapshot-monitor command link is missing"
+  monitor_link_ok=false
+elif [[ ! -L "$monitor_command_link" ]]; then
+  report_failure "tm-snapshot-monitor command link is not a symlink"
+  monitor_link_ok=false
+else
+  monitor_actual_target=
+  if ! monitor_actual_target="$(readlink "$monitor_command_link" 2>/dev/null)"; then
+    report_failure "tm-snapshot-monitor command link could not be read"
+    monitor_link_ok=false
+  elif [[ "$monitor_actual_target" != "$monitor_command_target" ]]; then
+    report_failure "tm-snapshot-monitor command link target differs"
+    monitor_link_ok=false
+  fi
+fi
+if [[ "$monitor_link_ok" == true ]]; then
+  print -- "OK: tm-snapshot-monitor command link"
+fi
 
 private_files=(
   "$LOCAL_ROOT/docker/webserver/.env"

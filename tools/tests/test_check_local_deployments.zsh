@@ -129,6 +129,10 @@ typeset -a HOME_PROJECTS=(
   video-scenes
 )
 
+typeset -a SCRIPTS_PROJECTS=(
+  time_machine_snapshot_monitor
+)
+
 write_synthetic_file() {
   local file_path="$1"
   local label="$2"
@@ -216,6 +220,17 @@ new_fixture() {
     mkdir -p -- "$FIXTURE_LOCAL/$project"
     cp -p -- "$placeholder" "$FIXTURE_LOCAL/$project/synthetic-placeholder.txt"
   done
+
+  for project in "${SCRIPTS_PROJECTS[@]}"; do
+    placeholder="$FIXTURE_REPO/$project/bin/tm-snapshot-monitor"
+    write_synthetic_file "$placeholder" "$project launcher"
+    chmod 755 "$placeholder"
+    mkdir -p -- "$FIXTURE_SCRIPTS/$project/bin"
+    cp -p -- "$placeholder" "$FIXTURE_SCRIPTS/$project/bin/tm-snapshot-monitor"
+  done
+  ln -s \
+    "$FIXTURE_SCRIPTS/time_machine_snapshot_monitor/bin/tm-snapshot-monitor" \
+    "$FIXTURE_SCRIPTS/tm-snapshot-monitor"
 
   write_synthetic_file \
     "$FIXTURE_LOCAL/docker/webserver/.env" \
@@ -352,10 +367,39 @@ test_passing_baseline() {
   for project in "${HOME_PROJECTS[@]}"; do
     assert_contains "$AUDIT_STDOUT" "OK: ~/$project tracked files"
   done
+  for project in "${SCRIPTS_PROJECTS[@]}"; do
+    assert_contains \
+      "$AUDIT_STDOUT" \
+      "OK: ~/Library/Scripts/$project tracked files"
+  done
+  assert_contains "$AUDIT_STDOUT" "OK: tm-snapshot-monitor command link"
   assert_contains "$AUDIT_STDOUT" "Local deployment audit: PASS"
   assert_not_contains "$AUDIT_STDOUT" "SYNTHETIC_WEB_SECRET"
   assert_not_contains "$AUDIT_STDERR" "SYNTHETIC_WEB_SECRET"
   assert_fixture_unchanged "$before" "$after"
+}
+
+test_scripts_project_and_command_link_drift() {
+  new_fixture
+  print -r -- "synthetic deployment drift" \
+    > "$FIXTURE_SCRIPTS/time_machine_snapshot_monitor/bin/tm-snapshot-monitor"
+  rm -- "$FIXTURE_SCRIPTS/tm-snapshot-monitor"
+  ln -s "$FIXTURE_ROOT/unrelated-command" \
+    "$FIXTURE_SCRIPTS/tm-snapshot-monitor"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "scripts project and command link drift"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: time_machine_snapshot_monitor deployment drift"
+  assert_contains "$AUDIT_STDERR" "byte differences: 1"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "FAIL: tm-snapshot-monitor command link target differs"
+  assert_not_contains \
+    "$AUDIT_STDOUT" \
+    "OK: ~/Library/Scripts/time_machine_snapshot_monitor tracked files"
+  assert_not_contains "$AUDIT_STDOUT" "OK: tm-snapshot-monitor command link"
 }
 
 test_missing_direct_copy() {
@@ -1259,6 +1303,7 @@ test_model_archive_bounds_streamed_output() {
 }
 
 test_passing_baseline
+test_scripts_project_and_command_link_drift
 test_missing_direct_copy
 test_project_byte_drift
 test_direct_mode_drift

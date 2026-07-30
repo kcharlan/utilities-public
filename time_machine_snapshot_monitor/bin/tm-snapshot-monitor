@@ -1,0 +1,70 @@
+#!/bin/sh
+
+set -u
+
+resolve_source_path() {
+    source_path=$1
+    while [ -L "$source_path" ]; do
+        source_dir=$(CDPATH= cd -- "$(dirname -- "$source_path")" && /bin/pwd -P) || exit 6
+        link_target=$(/usr/bin/readlink "$source_path") || exit 6
+        case "$link_target" in
+            /*) source_path=$link_target ;;
+            *) source_path=$source_dir/$link_target ;;
+        esac
+    done
+    /bin/echo "$source_path"
+}
+
+SOURCE_PATH=$(resolve_source_path "$0") || exit 6
+SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE_PATH")" && /bin/pwd -P) || exit 6
+LIBRARY_PATH=$SOURCE_DIR/../lib/tm_snapshot_monitor.sh
+
+if [ ! -r "$LIBRARY_PATH" ]; then
+    /bin/echo "tm-snapshot-monitor: cannot read library: $LIBRARY_PATH" >&2
+    exit 6
+fi
+
+# shellcheck source=../lib/tm_snapshot_monitor.sh
+. "$LIBRARY_PATH"
+
+case "${1:---check}" in
+    --check)
+        [ "$#" -le 1 ] || {
+            print_usage >&2
+            exit 2
+        }
+        run_check
+        ;;
+    --status)
+        [ "$#" -eq 1 ] || {
+            print_usage >&2
+            exit 2
+        }
+        run_status
+        ;;
+    --repair)
+        [ "$#" -eq 1 ] || {
+            print_usage >&2
+            exit 2
+        }
+        run_repair
+        ;;
+    --test-notification)
+        [ "$#" -eq 1 ] || {
+            print_usage >&2
+            exit 2
+        }
+        run_test_notification
+        ;;
+    --help|-h)
+        [ "$#" -eq 1 ] || {
+            print_usage >&2
+            exit 2
+        }
+        print_help
+        ;;
+    *)
+        print_usage >&2
+        exit 2
+        ;;
+esac
