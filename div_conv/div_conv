@@ -76,6 +76,25 @@ VANGUARD_HEADERS = [
     "Commissions and Fees",
     "Net Amount",
 ]
+VANGUARD_HOLDINGS_HEADERS = [
+    "Account Number",
+    "Investment Name",
+    "Symbol",
+    "Shares",
+    "Share Price",
+    "Total Value",
+]
+VANGUARD_ACCOUNT_ACTIVITY_HEADERS = [
+    "Account Number",
+    "Trade Date",
+    "Run Date",
+    "Transaction Activity",
+    "Transaction Description",
+    "Investment Name",
+    "Share Price",
+    "Transaction Shares",
+    "Dollar Amount",
+]
 SOURCE_NUMERIC_HEADERS = {
     "Quantity",
     "Price ($)",
@@ -123,6 +142,7 @@ class BrokerageAdapter:
     transfer_actions: tuple[str, ...]
     required_security_keys: tuple[str, ...]
     extractor: Callable[[dict[str, str]], ExtractedRow]
+    surrounding_section_headers: tuple[tuple[str, ...], ...] = ()
     allows_trailing_notices: bool = False
 
 
@@ -180,6 +200,10 @@ ADAPTERS = {
         transfer_actions=("withdrawal",),
         required_security_keys=(WITHDRAWAL_SECURITY_KEY,),
         extractor=extract_vanguard_row,
+        surrounding_section_headers=(
+            tuple(VANGUARD_HOLDINGS_HEADERS),
+            tuple(VANGUARD_ACCOUNT_ACTIVITY_HEADERS),
+        ),
     ),
 }
 REGISTERED_BROKERAGES = tuple(ADAPTERS)
@@ -748,16 +772,75 @@ def adapter_header_matches(actual: Sequence[str], adapter: BrokerageAdapter) -> 
     return any(header_matches(actual, required) for required in contracts)
 
 
-def detect_brokerage(path: Path) -> str:
-    headers = normalized_headers(path)
+def discover_contract_headers(
+    path: Path,
+) -> list[tuple[str, int, list[str]]]:
+    """Return every registered transaction header and its physical line number."""
+    matches: list[tuple[str, int, list[str]]] = []
+    saw_declared_record = False
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(handle)
+            for row in reader:
+                headers = [cell.strip() for cell in row]
+                if not any(headers):
+                    continue
+                saw_declared_record = True
+                for name, adapter in ADAPTERS.items():
+                    if adapter_header_matches(headers, adapter):
+                        matches.append((name, reader.line_num, headers))
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise UserError(f"Could not read CSV headers from {path}: {exc}") from exc
+    if not saw_declared_record:
+        raise UserError(f"CSV is empty: {path}")
+    return matches
+
+
+def selected_contract_header_from(
+    path: Path,
+    brokerage: str,
+    discovered: Sequence[tuple[str, int, list[str]]],
+) -> tuple[int, list[str]]:
+    """Return the selected adapter's sole transaction header from discovery."""
     matches = [
-        name
-        for name, adapter in ADAPTERS.items()
-        if adapter_header_matches(headers, adapter)
+        (line_number, headers)
+        for name, line_number, headers in discovered
+        if name == brokerage
     ]
-    if len(matches) == 1:
-        return matches[0]
+    if not matches:
+        raise UserError(f"{path} does not match the {brokerage} CSV contract.")
     if len(matches) > 1:
+        raise UserError(
+            f"MULTIPLE CSV CONTRACT SECTIONS: {path} contains more than one "
+            f"{brokerage} transaction table. Split the export and retry."
+        )
+    return matches[0]
+
+
+def selected_contract_header(path: Path, brokerage: str) -> tuple[int, list[str]]:
+    """Return the selected adapter's sole transaction header."""
+    return selected_contract_header_from(
+        path, brokerage, discover_contract_headers(path)
+    )
+
+
+def surrounding_section_header_matches(
+    actual: Sequence[str], adapter: BrokerageAdapter
+) -> bool:
+    return any(
+        header_matches(actual, required)
+        for required in adapter.surrounding_section_headers
+    )
+
+
+def detect_brokerage(path: Path) -> str:
+    matches = discover_contract_headers(path)
+    brokerages = {name for name, _line_number, _headers in matches}
+    if len(brokerages) == 1:
+        brokerage = brokerages.pop()
+        selected_contract_header_from(path, brokerage, matches)
+        return brokerage
+    if len(brokerages) > 1:
         raise UserError(
             f"AMBIGUOUS CSV CONTRACT: {path} matches multiple brokerage contracts."
         )
@@ -769,16 +852,17 @@ def detect_brokerage(path: Path) -> str:
 
 def validate_brokerage_contract(path: Path, brokerage: str) -> None:
     """Validate only an explicitly selected adapter, resolving union headers."""
-    headers = normalized_headers(path)
-    if not adapter_header_matches(headers, ADAPTERS[brokerage]):
-        raise UserError(f"{path} does not match the {brokerage} CSV contract.")
+    selected_contract_header(path, brokerage)
 
 
 def source_account_for(
     path: Path, brokerage: str, section: dict, config: Path
 ) -> str | None:
     """Resolve account-less Fidelity exports without guessing among mappings."""
-    if brokerage != "fidelity" or "Account" in normalized_headers(path):
+    if brokerage != "fidelity":
+        return None
+    _header_line, headers = selected_contract_header(path, brokerage)
+    if "Account" in headers:
         return None
     accounts = section["accounts"]
     if len(accounts) != 1:
@@ -937,6 +1021,7 @@ def read_source(
     path: Path, brokerage: str, *, source_account: str | None = None
 ) -> ParsedSource:
     adapter = ADAPTERS[brokerage]
+    header_line, headers = selected_contract_header(path, brokerage)
     try:
         handle = path.open("r", encoding="utf-8-sig", newline="")
     except (OSError, UnicodeError) as exc:
@@ -946,7 +1031,13 @@ def read_source(
     try:
         with handle:
             reader = csv.reader(handle)
-            _header_line, headers = next_declared_header(reader, path)
+            for source_row in reader:
+                if reader.line_num == header_line:
+                    break
+            else:
+                raise UserError(
+                    f"Could not locate the selected {brokerage} transaction table in {path}."
+                )
             blank_before_row = False
             in_trailer = False
             for source_row in reader:
@@ -960,8 +1051,12 @@ def read_source(
                         raise UserError(
                             f"{path}: row {row_number} contains tabular data after "
                             "the Fidelity trailing notices began."
-                        )
+                    )
                     continue
+                if blank_before_row and surrounding_section_header_matches(
+                    cells, adapter
+                ):
+                    break
                 if (
                     adapter.allows_trailing_notices
                     and blank_before_row
