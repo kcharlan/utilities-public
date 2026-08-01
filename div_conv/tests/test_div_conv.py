@@ -18,6 +18,34 @@ PROJECT = Path(__file__).resolve().parents[1]
 LAUNCHER = PROJECT / "div_conv"
 APP = runpy.run_path(str(LAUNCHER))
 
+VANGUARD_HOLDINGS_HEADERS = [
+    "Account Number",
+    "Investment Name",
+    "Symbol",
+    "Shares",
+    "Share Price",
+    "Total Value",
+    "",
+]
+VANGUARD_ACCOUNT_ACTIVITY_HEADERS = [
+    "Account Number",
+    "Trade Date",
+    "Run Date",
+    "Transaction Activity",
+    "Transaction Description",
+    "Investment Name",
+    "Share Price",
+    "Transaction Shares",
+    "Dollar Amount",
+    "",
+]
+VANGUARD_COMPOSITE_TRANSACTION_HEADERS = [
+    *APP["VANGUARD_HEADERS"],
+    "Accrued Interest",
+    "Account Type",
+    "",
+]
+
 
 def run_cli(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
@@ -52,6 +80,45 @@ def write_fidelity_history_csv(
             writer.writerow([])
             writer.writerow(["SYNTHETIC FIDELITY EXPORT NOTICE"])
             writer.writerow(["SYNTHETIC FIDELITY LEGAL NOTICE"])
+
+
+def write_vanguard_composite_csv(
+    path: Path, transaction_rows: list[list[str]]
+) -> None:
+    """Write Vanguard's public multi-table export shape using fake data."""
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(VANGUARD_HOLDINGS_HEADERS)
+        writer.writerow(
+            [
+                "SYNTHETIC VANGUARD ACCOUNT",
+                "SYNTHETIC HOLDING ONLY",
+                "SYNTH0",
+                "1",
+                "1.00",
+                "1.00",
+                "",
+            ]
+        )
+        writer.writerows([[], [], []])
+        writer.writerow(VANGUARD_COMPOSITE_TRANSACTION_HEADERS)
+        writer.writerows(transaction_rows)
+        writer.writerows([[], []])
+        writer.writerow(VANGUARD_ACCOUNT_ACTIVITY_HEADERS)
+        writer.writerow(
+            [
+                "SYNTHETIC VANGUARD ACCOUNT",
+                "2030-01-04",
+                "2030-01-05",
+                "SYNTHETIC ACCOUNT ACTIVITY",
+                "SYNTHETIC ACTIVITY ONLY",
+                "SYNTHETIC SETTLEMENT FUND",
+                "",
+                "",
+                "1.00",
+                "",
+            ]
+        )
 
 
 def configured_section(account: str, security: str, *, brokerage: str = "fidelity") -> dict:
@@ -869,6 +936,140 @@ def test_extra_undeclared_csv_row_cells_are_rejected(tmp_path: Path) -> None:
     assert not (tmp_path / "synthetic.qif").exists()
 
 
+def test_vanguard_composite_export_selects_embedded_transaction_table(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "runtime"
+    write_config(
+        home,
+        {
+            "vanguard": configured_section(
+                "SYNTHETIC VANGUARD ACCOUNT", "SYNTH2", brokerage="vanguard"
+            )
+        },
+    )
+    source = tmp_path / "synthetic-vanguard-composite.csv"
+    write_vanguard_composite_csv(
+        source,
+        [[
+            "SYNTHETIC VANGUARD ACCOUNT",
+            "2030-01-03",
+            "2030-01-05",
+            "Dividend",
+            "SYNTHETIC DIVIDEND DESCRIPTION",
+            "SYNTHETIC SETTLEMENT FUND",
+            "SYNTH2",
+            "",
+            "",
+            "",
+            "",
+            "40.00",
+            "",
+            "SYNTHETIC BROKERAGE",
+            "",
+        ]],
+    )
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 0, result.stderr
+    cooked_path = tmp_path / "synthetic-vanguard-composite.cooked.csv"
+    cooked_text = cooked_path.read_text(encoding="utf-8")
+    cooked = list(csv.DictReader(cooked_text.splitlines()))
+    assert len(cooked) == 1
+    assert list(cooked[0]) == VANGUARD_COMPOSITE_TRANSACTION_HEADERS
+    assert cooked[0]["Transaction Type"] == "Dividend"
+    assert cooked[0]["Account Type"] == "SYNTHETIC BROKERAGE"
+    assert "SYNTHETIC HOLDING ONLY" not in cooked_text
+    assert "SYNTHETIC ACTIVITY ONLY" not in cooked_text
+
+    qif = (tmp_path / "synthetic-vanguard-composite.qif").read_text(
+        encoding="utf-8"
+    )
+    assert qif.count("NMiscInc\n") == 1
+    assert "SYNTHETIC HOLDING ONLY" not in qif
+    assert "SYNTHETIC ACTIVITY ONLY" not in qif
+    assert (
+        "synthetic-vanguard-composite.csv: row 7 | 2030-01-03 | dividend | "
+        "SYNTHETIC INCOME FUND | 40.00"
+    ) in result.stdout
+
+
+def test_vanguard_composite_export_rejects_multiple_transaction_tables(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "runtime"
+    write_config(
+        home,
+        {
+            "vanguard": configured_section(
+                "SYNTHETIC VANGUARD ACCOUNT", "SYNTH2", brokerage="vanguard"
+            )
+        },
+    )
+    source = tmp_path / "synthetic-duplicate-vanguard-tables.csv"
+    with source.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(VANGUARD_COMPOSITE_TRANSACTION_HEADERS)
+        writer.writerows([[], []])
+        writer.writerow(VANGUARD_COMPOSITE_TRANSACTION_HEADERS)
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 2
+    assert "MULTIPLE CSV CONTRACT SECTIONS" in result.stderr
+    assert "more than one vanguard transaction table" in result.stderr
+    assert not (tmp_path / "synthetic-duplicate-vanguard-tables.cooked.csv").exists()
+    assert not (tmp_path / "synthetic-duplicate-vanguard-tables.qif").exists()
+
+
+def test_vanguard_composite_export_does_not_hide_malformed_row_after_blank(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "runtime"
+    write_config(
+        home,
+        {
+            "vanguard": configured_section(
+                "SYNTHETIC VANGUARD ACCOUNT", "SYNTH2", brokerage="vanguard"
+            )
+        },
+    )
+    source = tmp_path / "synthetic-malformed-vanguard-composite.csv"
+    write_vanguard_composite_csv(
+        source,
+        [
+            [
+                "SYNTHETIC VANGUARD ACCOUNT",
+                "2030-01-03",
+                "2030-01-05",
+                "Dividend",
+                "SYNTHETIC DIVIDEND DESCRIPTION",
+                "SYNTHETIC SETTLEMENT FUND",
+                "SYNTH2",
+                "",
+                "",
+                "",
+                "",
+                "40.00",
+                "",
+                "SYNTHETIC BROKERAGE",
+                "",
+            ],
+            [],
+            ["SYNTHETIC VANGUARD ACCOUNT"],
+        ],
+    )
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 2
+    assert "row 9" in result.stderr
+    assert "missing" in result.stderr
+    assert not (tmp_path / "synthetic-malformed-vanguard-composite.cooked.csv").exists()
+    assert not (tmp_path / "synthetic-malformed-vanguard-composite.qif").exists()
+
+
 def test_vanguard_processes_dividend_and_withdrawal_and_visibly_skips_legacy_rows(
     tmp_path: Path,
 ) -> None:
@@ -1053,6 +1254,11 @@ def test_adapter_registry_owns_contracts_and_keeps_extractors_separate() -> None
     assert adapters["vanguard"].skipped_actions == ("Reinvestment", "Sweep out")
     assert adapters["fidelity"].required_security_keys == ()
     assert adapters["vanguard"].required_security_keys == ("@withdrawal",)
+    assert adapters["fidelity"].surrounding_section_headers == ()
+    assert adapters["vanguard"].surrounding_section_headers == (
+        tuple(APP["VANGUARD_HOLDINGS_HEADERS"]),
+        tuple(APP["VANGUARD_ACCOUNT_ACTIVITY_HEADERS"]),
+    )
     assert adapters["fidelity"].allows_trailing_notices is True
     assert adapters["vanguard"].allows_trailing_notices is False
     assert adapters["fidelity"].extractor is not adapters["vanguard"].extractor

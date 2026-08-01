@@ -38,7 +38,7 @@ All output paths are planned invocation-wide before staging. An output may never
 
 ## Exact public CSV contracts
 
-Leading blank CSV records are ignored before contract detection. Headers are compared after trimming surrounding whitespace, but otherwise must match exactly. Extra declared columns are permitted; every listed required column for one variant must be present. A data row with more or fewer cells than its declared header is rejected.
+Contract detection searches nonblank CSV records for a registered transaction-table header. Headers are compared after trimming surrounding whitespace, but otherwise must match exactly. Extra declared columns are permitted; every listed required column for one variant must be present. A file containing more than one matching transaction table is rejected rather than partially converted. A data row with more or fewer cells than its selected declared header is rejected.
 
 Fidelity supports both the account-column variant:
 
@@ -66,6 +66,8 @@ Vanguard required headers, in the usual export order:
 Account Number,Trade Date,Settlement Date,Transaction Type,Transaction Description,Investment Name,Symbol,Shares,Share Price,Principal Amount,Commissions and Fees,Net Amount
 ```
 
+A Vanguard download may contain blank-record-separated holdings, investment-transaction, and account-activity tables in one CSV. The converter locates the one unique investment-transaction table shown above, ignores the surrounding Vanguard tables, and uses only the selected table for cooked CSV and QIF output. Extra columns declared by that transaction table are preserved. Unexpected rows within the selected table still receive the normal width, action, date, amount, and output-safety validation; only a recognized Vanguard surrounding-section header after a blank separator ends transaction parsing.
+
 Supported Vanguard actions:
 
 - `Dividend` → normalized `dividend`, rendered as QIF `MiscInc` with memo `Dividend <source symbol/security>`
@@ -77,7 +79,7 @@ The Vanguard cooked CSV preserves the Vanguard header and every recognized sourc
 
 The two contracts are registered as separate adapters. Each adapter owns its required headers, allowed source actions, and raw-row extraction. Shared code owns configuration validation, batch cooking, rendering, and the all-artifact output transaction.
 
-Blank rows are ignored. Dates may use ISO `YYYY-MM-DD` or Fidelity's `MM/DD/YYYY`; both are normalized before rendering in Moneydance form `M/D'YY`. Amounts use strict financial-number syntax: optional leading sign and dollar sign, correctly grouped thousands commas, decimal fraction, or surrounding parentheses for a negative amount. Forms such as `-$1,234.56`, `$-1,234.56`, and `($1,234.56)` are accepted; misplaced currency signs or malformed comma grouping are rejected instead of being stripped. Amounts must be finite and are bounded to 100 significant digits and 100 integer digits so formatting cannot allocate unbounded output or fail during rendering. Every processed source account and dividend security must have an exact local mapping. Unsupported actions and unmapped values stop the whole batch before outputs are written.
+Blank rows within the selected transaction table are ignored, except that a blank followed by a recognized Vanguard surrounding-section header marks the end of an embedded transaction table. Dates may use ISO `YYYY-MM-DD` or Fidelity's `MM/DD/YYYY`; both are normalized before rendering in Moneydance form `M/D'YY`. Amounts use strict financial-number syntax: optional leading sign and dollar sign, correctly grouped thousands commas, decimal fraction, or surrounding parentheses for a negative amount. Forms such as `-$1,234.56`, `$-1,234.56`, and `($1,234.56)` are accepted; misplaced currency signs or malformed comma grouping are rejected instead of being stripped. Amounts must be finite and are bounded to 100 significant digits and 100 integer digits so formatting cannot allocate unbounded output or fail during rendering. Every processed source account and dividend security must have an exact local mapping. Unsupported actions and unmapped values stop the whole batch before outputs are written.
 
 Generated QIF fields reject CR, LF, and other control characters instead of allowing record injection. Non-numeric, non-date fields written to cooked CSV also reject values whose first non-space character is `=`, `+`, `-`, or `@`, because spreadsheet applications may interpret those values as formulas. Numeric and date columns are exempt so legitimate signed values and dates remain valid; the transaction date and amount are parsed strictly, while other numeric/date source columns pass through unchanged (apart from Fidelity's date and integral-quantity normalization described above). Rename an unsafe source filename, correct an unsafe source value, or change the named local mapping and retry; the launcher does not silently rewrite identifiers.
 
