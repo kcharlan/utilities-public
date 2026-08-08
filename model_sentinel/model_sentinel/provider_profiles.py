@@ -81,6 +81,7 @@ class ProviderProfile:
     normalized_fields: Mapping[str, PathCandidates] = field(default_factory=dict)
     field_path_labels: Mapping[str, str] = field(default_factory=dict)
     field_leaf_labels: Mapping[str, str] = field(default_factory=dict)
+    pricing_field_order: tuple[str, ...] = ()
     known_boolean_fields: frozenset[str] = frozenset()
     categorize: Callable[[str], str] = default_categorize
     is_price_amount_field: Callable[[str], bool] = default_is_price_amount_field
@@ -143,6 +144,15 @@ class ProviderProfile:
 # Seeded from every distinct non-benchmark field path observed in the history
 # database. `test_registry_covers_every_seeded_field_name` pins the complete
 # key/label set.
+_OPENROUTER_PRICING_FIELD_ORDER = (
+    "prompt",
+    "input_cache_read",
+    "input_cache_write",
+    "input_cache_write_1h",
+    "input_audio_cache",
+    "completion",
+)
+
 _OPENROUTER_FIELD_PATH_LABELS: dict[str, str] = {
     # Pricing. Only the money leaves conditional pricing has been OBSERVED to
     # relocate are leaf-keyed (see below); these four are spelled in full.
@@ -332,6 +342,7 @@ OPENROUTER_PROFILE = ProviderProfile(
     normalized_fields=_DEFAULT_NORMALIZED_FIELDS,
     field_path_labels=_OPENROUTER_FIELD_PATH_LABELS,
     field_leaf_labels=_OPENROUTER_FIELD_LEAF_LABELS,
+    pricing_field_order=_OPENROUTER_PRICING_FIELD_ORDER,
     known_boolean_fields=_OPENROUTER_KNOWN_BOOLEAN_FIELDS,
     default_show_fields=_OPENROUTER_DEFAULT_SHOW_FIELDS,
     default_squelch_fields=_OPENROUTER_DEFAULT_SQUELCH_FIELDS,

@@ -54,6 +54,9 @@ from .models import FieldChange
 from .provider_profiles import ProviderProfile
 
 
+PricingFieldSortKey = tuple[int, int, str, str]
+
+
 def _split_field_path(field_path: str) -> tuple[str, str | None]:
     """Split a path into its bare dotted form and any bracketed condition(s).
 
@@ -190,6 +193,29 @@ def format_qualified_label(label: str, qualifier: str | None) -> str:
         _format_qualifier_part(part) for part in qualifier.split(QUALIFIER_SEPARATOR)
     )
     return f"{label} ({parts})"
+
+
+def pricing_field_sort_key(
+    field_path: str,
+    profile: ProviderProfile,
+) -> PricingFieldSortKey:
+    """Return the provider-defined presentation order for one Pricing field."""
+    bare_path, _ = _split_field_path(field_path)
+    leaf = bare_path.rsplit(".", 1)[-1]
+    try:
+        rank = profile.pricing_field_order.index(bare_path)
+    except ValueError:
+        try:
+            rank = profile.pricing_field_order.index(leaf)
+        except ValueError:
+            rank = None
+
+    label, qualifier = resolve_field_label(field_path, profile)
+    display_label = format_qualified_label(label, qualifier).casefold()
+    raw_path = field_path.casefold()
+    if rank is None:
+        return (1, 0, display_label, raw_path)
+    return (0, rank, display_label, raw_path)
 
 
 @dataclass(frozen=True)
