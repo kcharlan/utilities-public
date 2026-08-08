@@ -295,12 +295,13 @@ EXPECTED_HTML_BODY = """<section class="provider-section"><h2 class="date-headin
 </div></div></section>"""
 
 
-# The exact summary table. Rows are ordered by category, then by field label
-# within a category, with the presence rows and the provider-level squelched
-# rollup last. The three `—` sides here are the ones the body above must agree
-# with.
-EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Input</td><td>$1.00 → $2.00 /1M (+$1.00, ↑ 100.0%)</td></tr>
+# The exact summary table. Rows are ordered by category; Pricing follows the
+# active provider profile (Input, cache variants, Output), while other
+# categories retain their field-label fallback. Presence rows and the
+# provider-level squelched rollup remain last. The three `—` sides here are the
+# ones the body above must agree with.
+EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Input</td><td>$1.00 → $2.00 /1M (+$1.00, ↑ 100.0%)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
 <tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → — /1M (removed)</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Max output</td><td>8,192 → — tok (removed)</td></tr>

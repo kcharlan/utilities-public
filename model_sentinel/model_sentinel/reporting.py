@@ -46,11 +46,13 @@ from typing import Any, Literal
 from .change_render import (
     ABSENT_DISPLAY,
     ABSENT_TEXT_DISPLAY,
+    PricingFieldSortKey,
     RenderedChange,
     _list_diff_members,
     _numeric_value,
     _scalar_display,
     classify_change,
+    pricing_field_sort_key,
     signed_pct_change,
 )
 from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
@@ -159,6 +161,9 @@ class _SummaryEntry:
     model_id: str
     field: str
     detail: str
+    # Provider-resolved presentation metadata for the HTML summary only. It is
+    # never part of report JSON, history records, or stored change data.
+    pricing_sort_key: PricingFieldSortKey | None = None
     grouped_model_ids: tuple[str, ...] = ()
     # N1: the card id this row's Model cell links to, or `""` for none. Empty
     # for every row of the `changes` report (which has no model cards at all),
@@ -1070,6 +1075,51 @@ def _history_summary_markdown(events: tuple[HistoryEvent, ...], policy: ReportDe
     return lines
 
 
+def _field_category_for_detail(
+    field_change: FieldChange,
+    policy: ReportDetailPolicy,
+    profile: ProviderProfile,
+) -> str:
+    category = profile.categorize(field_change.field_name)
+    if (
+        policy.mode == "default"
+        and classify_detail_visibility(field_change.field_name, policy) == "unclassified"
+    ):
+        return "Unclassified"
+    return category
+
+
+def _field_changes_with_pricing_order(
+    field_changes: tuple[FieldChange, ...],
+    policy: ReportDetailPolicy,
+    profile: ProviderProfile,
+) -> tuple[FieldChange, ...]:
+    """Reorder final-Pricing slots while preserving every other field's slot.
+
+    Slot selection and the sorted iterator share the same final-category
+    tuple, so their Pricing cardinalities are equal and ``next`` cannot exhaust.
+    Non-Pricing fields, including final-Unclassified pricing paths, stay put.
+    """
+    categories = tuple(
+        _field_category_for_detail(field_change, policy, profile)
+        for field_change in field_changes
+    )
+    ordered_pricing = iter(
+        sorted(
+            (
+                field_change
+                for field_change, category in zip(field_changes, categories)
+                if category == "Pricing"
+            ),
+            key=lambda fc: pricing_field_sort_key(fc.field_name, profile),
+        )
+    )
+    return tuple(
+        next(ordered_pricing) if category == "Pricing" else field_change
+        for field_change, category in zip(field_changes, categories)
+    )
+
+
 def _group_field_changes_for_detail(
     field_changes: tuple[FieldChange, ...],
     policy: ReportDetailPolicy,
@@ -1079,12 +1129,14 @@ def _group_field_changes_for_detail(
     category_order = [*_CATEGORY_ORDER]
     if "Unclassified" not in category_order:
         category_order.append("Unclassified")
-    for fc in field_changes:
-        category = profile.categorize(fc.field_name)
-        if policy.mode == "default" and classify_detail_visibility(fc.field_name, policy) == "unclassified":
-            category = "Unclassified"
-        grouped[category].append(fc)
-    return [(cat, grouped[cat]) for cat in category_order if cat in grouped]
+    for field_change in _field_changes_with_pricing_order(
+        field_changes,
+        policy,
+        profile,
+    ):
+        category = _field_category_for_detail(field_change, policy, profile)
+        grouped[category].append(field_change)
+    return [(category, grouped[category]) for category in category_order if category in grouped]
 
 
 def render_scan_report(
@@ -2150,7 +2202,11 @@ def _render_scan_markdown(
                     continue
                 delta, plan = item.delta, item.display
                 changed_lines.append(f"- `{delta.provider_model_id}` - {delta.display_name}")
-                for field_change in plan.visible:
+                for field_change in _field_changes_with_pricing_order(
+                    plan.visible,
+                    detail_policy,
+                    result.profile,
+                ):
                     changed_lines.append(
                         f"  - `{_render_smart_change_text(field_change, result.profile)}`"
                     )
@@ -3087,13 +3143,23 @@ def _build_html_summary_table(
     )
 
 
-def _summary_entry_sort_key(entry: _SummaryEntry) -> tuple[int, str, str, str, str]:
+def _summary_entry_sort_key(
+    entry: _SummaryEntry,
+) -> tuple[int, str, str, PricingFieldSortKey, str, str]:
+    field = entry.field.casefold()
+    detail = entry.detail.casefold()
+    presentation_key = (
+        entry.pricing_sort_key
+        if entry.category == "Pricing" and entry.pricing_sort_key is not None
+        else (2, 0, field, detail)
+    )
     return (
         _SUMMARY_CATEGORY_RANK.get(entry.category, len(_SUMMARY_CATEGORY_RANK)),
         entry.provider.casefold(),
         entry.model_id.casefold(),
-        entry.field.casefold(),
-        entry.detail.casefold(),
+        presentation_key,
+        field,
+        detail,
     )
 
 
@@ -3118,7 +3184,13 @@ def _presence_summary_entry(
     display_name: str,
 ) -> _SummaryEntry:
     """One row for a model that appeared in, or disappeared from, a provider."""
-    return _SummaryEntry(category, provider_label, model_id, "", display_name)
+    return _SummaryEntry(
+        category=category,
+        provider=provider_label,
+        model_id=model_id,
+        field="",
+        detail=display_name,
+    )
 
 
 def _squelched_summary_entry(
@@ -3137,12 +3209,12 @@ def _squelched_summary_entry(
     if not count:
         return None
     return _SummaryEntry(
-        "Squelched",
-        provider_label,
-        f"{len(model_ids)} models",
-        ", ".join(policy.squelch_fields) or "no patterns",
-        f"{count} field change{'s' if count != 1 else ''} hidden by report detail policy",
-        model_ids,
+        category="Squelched",
+        provider=provider_label,
+        model_id=f"{len(model_ids)} models",
+        field=", ".join(policy.squelch_fields) or "no patterns",
+        detail=f"{count} field change{'s' if count != 1 else ''} hidden by report detail policy",
+        grouped_model_ids=model_ids,
     )
 
 
@@ -3156,14 +3228,22 @@ def _build_summary_entries_from_bulk(
     entries = []
     for field_change in group.visible:
         rendered = classify_change(field_change, profile=profile)
-        entries.append(_SummaryEntry(
-            profile.categorize(field_change.field_name),
-            provider_label,
-            group.label,
-            rendered.display_label,
-            _bulk_list_diff_body(rendered),
-            tuple(sorted(group.model_ids)),
-        ))
+        category = profile.categorize(field_change.field_name)
+        entries.append(
+            _SummaryEntry(
+                category=category,
+                provider=provider_label,
+                model_id=group.label,
+                field=rendered.display_label,
+                detail=_bulk_list_diff_body(rendered),
+                pricing_sort_key=(
+                    pricing_field_sort_key(field_change.field_name, profile)
+                    if category == "Pricing"
+                    else None
+                ),
+                grouped_model_ids=tuple(sorted(group.model_ids)),
+            )
+        )
     return entries
 
 
@@ -3248,11 +3328,16 @@ def _build_summary_entries_from_fc(
         # comes from a provider payload.
         entries.append(
             _SummaryEntry(
-                category,
-                provider_label,
-                model_id,
-                rendered.display_label,
-                _summary_change_detail(rendered),
+                category=category,
+                provider=provider_label,
+                model_id=model_id,
+                field=rendered.display_label,
+                detail=_summary_change_detail(rendered),
+                pricing_sort_key=(
+                    pricing_field_sort_key(rendered.field_path, profile)
+                    if category == "Pricing"
+                    else None
+                ),
                 anchor=anchor,
             )
         )
@@ -3721,16 +3806,6 @@ def _card_raw_title(
     return f' title="{html_module.escape(derivation)}"'
 
 
-def _pricing_rows_by_impact(rendered_changes: list[RenderedChange]) -> list[RenderedChange]:
-    """Pricing rows, largest absolute movement first.
-
-    `delta_abs` is `None` on a one-sided change (nothing to subtract from), which
-    sorts as 0 -- the same treatment the design gives such models in the F2 card
-    sort. Python's sort is stable, so equal-impact rows keep their arrival order.
-    """
-    return sorted(rendered_changes, key=lambda rendered: -abs(rendered.delta_abs or 0.0))
-
-
 def _render_html_card_table(
     grouped: list[tuple[str, list[FieldChange]]],
     profile: ProviderProfile,
@@ -3757,8 +3832,6 @@ def _render_html_card_table(
             classify_change(fc, profile=profile)
             for fc in field_changes
         ]
-        if category == "Pricing":
-            rendered_changes = _pricing_rows_by_impact(rendered_changes)
         for index, rendered in enumerate(rendered_changes):
             rows.append(
                 _render_html_card_row(

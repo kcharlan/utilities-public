@@ -234,6 +234,43 @@ def _scan_detail_and_summary(html: str) -> tuple[str, str]:
     return detail, summary
 
 
+def _change_summary_rows(html: str) -> list[tuple[str, ...]]:
+    """Plain-text cells from only the Change Summary's data rows."""
+    if _SCAN_SUMMARY_OPEN in html:
+        summary = html.split(_SCAN_SUMMARY_OPEN, 1)[1]
+    else:
+        marker = '<section class="summary-section"><h2>Change Summary</h2>'
+        occurrences = html.count(marker)
+        assert occurrences == 1, f"expected exactly one Change Summary, got {occurrences}"
+        summary = html.split(marker, 1)[1]
+
+    table_matches = re.findall(
+        r'<table class="summary-table(?: grouped)?">.*?</table>',
+        summary,
+        re.S,
+    )
+    assert len(table_matches) == 1, (
+        f"expected exactly one Change Summary table, got {len(table_matches)}"
+    )
+    tbody = re.search(r"<tbody>(.*?)</tbody>", table_matches[0], re.S)
+    assert tbody is not None, "Change Summary table has no tbody"
+
+    rows = []
+    for row in re.findall(r"<tr[^>]*>.*?</tr>", tbody.group(1), re.S):
+        if '<tr class="summary-group">' in row:
+            continue
+        cells = tuple(
+            re.sub(
+                r"<[^>]+>",
+                "",
+                re.sub(r'<div class="summary-model-list">.*?</div>', "", cell, flags=re.S),
+            ).strip()
+            for cell in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)
+        )
+        rows.append(cells)
+    return rows
+
+
 def _scan_tiers(html: str) -> tuple[str, str]:
     """A scan report split at F1's disclosure: (tier 1, tier 2).
 
@@ -254,6 +291,58 @@ def _model_card_order(html: str) -> list[str]:
     that care about real models scope the html they pass in.
     """
     return re.findall(r'<div class="model-card-header"><code>([^<]*)</code>', html)
+
+
+def _model_card_fragment(html: str, model_id: str) -> str:
+    """One model card, bounded before the next card in the document.
+
+    The scan and changes HTML renderers use the same nested card markup, so a
+    split on the first ``</div>`` would stop at the header rather than at the
+    card boundary. Card openings are the stable boundary shared by both.
+    """
+    matches = list(
+        re.finditer(
+            r'<div class="model-card"[^>]*>\s*'
+            r'<div class="model-card-header"><code>([^<]+)</code>',
+            html,
+        )
+    )
+    targets = [index for index, match in enumerate(matches) if match.group(1) == model_id]
+    assert len(targets) == 1, f"expected exactly one {model_id!r} model card, got {len(targets)}"
+    index = targets[0]
+    start = matches[index].start()
+    end = matches[index + 1].start() if index + 1 < len(matches) else len(html)
+    return html[start:end]
+
+
+def _pricing_labels_from_text_block(block: str) -> list[str]:
+    return re.findall(r"^\s+(Input|Cache read|Output):", block, re.M)
+
+
+def _pricing_labels_from_markdown_block(block: str) -> list[str]:
+    return re.findall(r"^\s+- `(Input|Cache read|Output):", block, re.M)
+
+
+def _pricing_labels_from_html_card(card: str) -> list[str]:
+    return re.findall(
+        r'<td class="field-name"[^>]*>(Input|Cache read|Output)</td>',
+        card,
+    )
+
+
+def _scan_model_block(report: str, model_id: str, *, markdown: bool) -> str:
+    pattern = (
+        re.compile(r"^- `([^`]+)` -", re.M)
+        if markdown
+        else re.compile(r"^\s+\* ([^ ]+) \(", re.M)
+    )
+    matches = list(pattern.finditer(report))
+    targets = [index for index, match in enumerate(matches) if match.group(1) == model_id]
+    assert len(targets) == 1, f"expected exactly one {model_id!r} model block, got {len(targets)}"
+    index = targets[0]
+    start = matches[index].start()
+    end = matches[index + 1].start() if index + 1 < len(matches) else len(report)
+    return report[start:end]
 
 
 def _bulk_parameter_changes() -> tuple[ModelDelta, ...]:
@@ -499,6 +588,271 @@ def test_html_change_summary_sorts_rows_by_change_type() -> None:
     # Named once each, which is what E6 bought.
     for category in ("Pricing", "Benchmarks", "Other"):
         assert summary.count(f'<td colspan="3">{category}</td>') == 1, category
+
+
+def test_scan_change_summary_uses_profile_pricing_field_order() -> None:
+    """Summary order is category, provider, model, then provider-owned Pricing order."""
+    pricing_and_context = (
+        FieldChange(
+            "pricing.overrides[min_prompt_tokens=200000].completion",
+            "0.000008",
+            "0.000009",
+        ),
+        FieldChange("top_provider.max_completion_tokens", 4_000, 8_000),
+        FieldChange("pricing.completion", "0.000006", "0.000007"),
+        FieldChange(
+            "pricing.overrides[min_prompt_tokens=200000].prompt",
+            "0.000004",
+            "0.000005",
+        ),
+        FieldChange(
+            "pricing.overrides[min_prompt_tokens=200000].input_cache_read",
+            "0.000002",
+            "0.000003",
+        ),
+        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+        FieldChange("top_provider.context_length", 16_000, 32_000),
+        FieldChange("pricing.input_cache_read", "0.000001", "0.000002"),
+        FieldChange("benchmarks.design_arena", 1, 2),
+    )
+    profile = OPENROUTER_PROFILE.with_pricing(1_000_000, 1)
+    results = [
+        ProviderScanResult(
+            provider_id="synthprov-z",
+            provider_label="Zulu Provider",
+            status="success",
+            current_count=1,
+            saved=False,
+            baseline=_BASELINE,
+            baseline_message=None,
+            scrape_id=None,
+            added=(),
+            removed=(),
+            changed=(
+                ModelDelta(
+                    "changed",
+                    "synth/model-b",
+                    "Synth Model B",
+                    (
+                        FieldChange("pricing.completion", "0.000003", "0.000004"),
+                        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+                        FieldChange(
+                            "pricing.input_cache_read", "0.000001", "0.000002"
+                        ),
+                    ),
+                ),
+            ),
+            profile=profile,
+        ),
+        ProviderScanResult(
+            provider_id="synthprov-a",
+            provider_label="Alpha Provider",
+            status="success",
+            current_count=3,
+            saved=False,
+            baseline=_BASELINE,
+            baseline_message=None,
+            scrape_id=None,
+            added=(ModelDelta("added", "synth/model-new", "Synth New", ()),),
+            removed=(ModelDelta("removed", "synth/model-gone", "Synth Gone", ()),),
+            changed=(
+                ModelDelta("changed", "synth/model-z", "Synth Model Z", pricing_and_context),
+                ModelDelta(
+                    "changed",
+                    "synth/model-a",
+                    "Synth Model A",
+                    (
+                        FieldChange("pricing.completion", "0.000003", "0.000004"),
+                        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+                    ),
+                ),
+            ),
+            profile=profile,
+        ),
+    ]
+    report = render_scan_report(
+        generated_at="2026-07-25T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=results,
+        detail_policy=ReportDetailPolicy(
+            mode="default",
+            show_fields=("pricing.*", "top_provider.*"),
+            squelch_fields=("benchmarks", "benchmarks.*"),
+            unclassified_limit=0,
+        ),
+    )
+
+    rows = _change_summary_rows(report)
+    pricing_rows = [row[:3] for row in rows if len(row) == 4 and row[2].startswith(("Input", "Cache", "Output"))]
+    assert pricing_rows == [
+        ("Alpha Provider", "synth/model-a", "Input"),
+        ("Alpha Provider", "synth/model-a", "Output"),
+        ("Alpha Provider", "synth/model-z", "Input"),
+        (
+            "Alpha Provider",
+            "synth/model-z",
+            "Input (min_prompt_tokens=200000)",
+        ),
+        ("Alpha Provider", "synth/model-z", "Cache read"),
+        (
+            "Alpha Provider",
+            "synth/model-z",
+            "Cache read (min_prompt_tokens=200000)",
+        ),
+        ("Alpha Provider", "synth/model-z", "Output"),
+        (
+            "Alpha Provider",
+            "synth/model-z",
+            "Output (min_prompt_tokens=200000)",
+        ),
+        ("Zulu Provider", "synth/model-b", "Input"),
+        ("Zulu Provider", "synth/model-b", "Cache read"),
+        ("Zulu Provider", "synth/model-b", "Output"),
+    ]
+
+    # The existing fallback still alphabetizes non-Pricing fields, even though
+    # the fixture presents Max output before Context length.
+    assert [row[:3] for row in rows if len(row) == 4 and row[2] in {"Context length", "Max output"}] == [
+        ("Alpha Provider", "synth/model-z", "Context length"),
+        ("Alpha Provider", "synth/model-z", "Max output"),
+    ]
+
+    _, summary = _scan_detail_and_summary(report)
+    assert re.findall(r'<tr class="summary-group"><td[^>]*>(.*?)</td></tr>', summary) == [
+        "Pricing",
+        "Context &amp; Limits",
+        "Added",
+        "Removed",
+        "Squelched",
+    ]
+    assert ("Alpha Provider", "synth/model-new", "Synth New") in rows
+    assert ("Alpha Provider", "synth/model-gone", "Synth Gone") in rows
+    assert (
+        "Alpha Provider",
+        "1 models",
+        "benchmarks, benchmarks.*",
+        "1 field change hidden by report detail policy",
+    ) in rows
+
+
+def test_changes_change_summary_uses_profile_pricing_field_order() -> None:
+    def row(
+        provider_id: str,
+        model_id: str,
+        field_name: str | None,
+        *,
+        change_kind: str = "changed",
+        old_value=1,
+        new_value=2,
+    ) -> dict:
+        return {
+            "detected_at": "2026-07-25T09:00:00+00:00",
+            "provider_id": provider_id,
+            "provider_label": "Shared Provider",
+            "provider_model_id": model_id,
+            "display_name": model_id.title(),
+            "change_kind": change_kind,
+            "field_name": field_name,
+            "old_value": old_value,
+            "new_value": new_value,
+        }
+
+    changes = (
+        row("synthprov-z", "synth/model-b", "pricing.completion", old_value="0.3", new_value="0.4"),
+        row("synthprov-z", "synth/model-b", "pricing.prompt", old_value="0.1", new_value="0.2"),
+        row("synthprov-z", "synth/model-b", "pricing.input_cache_read", old_value="0.1", new_value="0.2"),
+        row("synthprov-a", "synth/model-z", "pricing.overrides[min_prompt_tokens=200000].completion", old_value="0.8", new_value="0.9"),
+        row("synthprov-a", "synth/model-z", "top_provider.max_completion_tokens", old_value=4_000, new_value=8_000),
+        row("synthprov-a", "synth/model-z", "pricing.completion", old_value="0.6", new_value="0.7"),
+        row("synthprov-a", "synth/model-z", "pricing.overrides[min_prompt_tokens=200000].prompt", old_value="0.4", new_value="0.5"),
+        row("synthprov-a", "synth/model-z", "pricing.overrides[min_prompt_tokens=200000].input_cache_read", old_value="0.2", new_value="0.3"),
+        row("synthprov-a", "synth/model-z", "pricing.prompt", old_value="0.1", new_value="0.2"),
+        row("synthprov-a", "synth/model-z", "top_provider.context_length", old_value=16_000, new_value=32_000),
+        row("synthprov-a", "synth/model-z", "pricing.input_cache_read", old_value="0.1", new_value="0.2"),
+        row("synthprov-a", "synth/model-z", "benchmarks.design_arena"),
+        row("synthprov-a", "synth/model-new", None, change_kind="added", old_value=None, new_value=None),
+        row("synthprov-a", "synth/model-gone", None, change_kind="removed", old_value=None, new_value=None),
+        row("synthprov-a", "synth/model-a", "pricing.completion", old_value="0.3", new_value="0.4"),
+        row("synthprov-a", "synth/model-a", "pricing.prompt", old_value="0.1", new_value="0.2"),
+    )
+    profile = OPENROUTER_PROFILE.with_pricing(1, 1)
+    report = render_changes_report(
+        format_name="html",
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=changes,
+        provider_profiles={"synthprov-a": profile, "synthprov-z": profile},
+        detail_policy=ReportDetailPolicy(
+            mode="default",
+            show_fields=("pricing.*", "top_provider.*"),
+            squelch_fields=("benchmarks", "benchmarks.*"),
+            unclassified_limit=0,
+        ),
+    )
+
+    rows = _change_summary_rows(report)
+    pricing_rows = [
+        row[1:4]
+        for row in rows
+        if len(row) == 5 and row[0] == "Pricing"
+    ]
+    assert pricing_rows == [
+        ("Shared Provider (synthprov-a)", "synth/model-a", "Input"),
+        ("Shared Provider (synthprov-a)", "synth/model-a", "Output"),
+        ("Shared Provider (synthprov-a)", "synth/model-z", "Input"),
+        (
+            "Shared Provider (synthprov-a)",
+            "synth/model-z",
+            "Input (min_prompt_tokens=200000)",
+        ),
+        ("Shared Provider (synthprov-a)", "synth/model-z", "Cache read"),
+        (
+            "Shared Provider (synthprov-a)",
+            "synth/model-z",
+            "Cache read (min_prompt_tokens=200000)",
+        ),
+        ("Shared Provider (synthprov-a)", "synth/model-z", "Output"),
+        (
+            "Shared Provider (synthprov-a)",
+            "synth/model-z",
+            "Output (min_prompt_tokens=200000)",
+        ),
+        ("Shared Provider (synthprov-z)", "synth/model-b", "Input"),
+        ("Shared Provider (synthprov-z)", "synth/model-b", "Cache read"),
+        ("Shared Provider (synthprov-z)", "synth/model-b", "Output"),
+    ]
+    assert [
+        row[1:4]
+        for row in rows
+        if len(row) == 5 and row[0] == "Context &amp; Limits"
+    ] == [
+        ("Shared Provider (synthprov-a)", "synth/model-z", "Context length"),
+        ("Shared Provider (synthprov-a)", "synth/model-z", "Max output"),
+    ]
+
+    categories = [row[0] for row in rows]
+    assert categories.index("Added") < categories.index("Removed") < categories.index("Squelched")
+    assert (
+        "Added",
+        "Shared Provider (synthprov-a)",
+        "synth/model-new",
+        "Synth/Model-New",
+    ) in rows
+    assert (
+        "Removed",
+        "Shared Provider (synthprov-a)",
+        "synth/model-gone",
+        "Synth/Model-Gone",
+    ) in rows
+    assert (
+        "Squelched",
+        "Shared Provider (synthprov-a)",
+        "1 models",
+        "benchmarks, benchmarks.*",
+        "1 field change hidden by report detail policy",
+    ) in rows
 
 
 def test_html_price_movement_summary_uses_exclusive_model_buckets() -> None:
@@ -1760,35 +2114,177 @@ def test_html_card_emits_exactly_one_table_for_a_multi_category_model() -> None:
         assert row.count("<td") == 8, row
 
 
-def test_html_card_sorts_pricing_rows_by_absolute_impact() -> None:
-    """C1's ordering rule: within Pricing, the largest mover leads.
-
-    Alphabetical order would put `Cache read` first and the two $100k movements
-    below it; the fixture's field order would put `Input` before `Output`. The
-    expected order matches neither, so this cannot pass by accident.
-    """
-    changed = (
+def _opposite_impact_pricing_models() -> tuple[ModelDelta, ...]:
+    """Two shuffled models whose old impact sort demands opposite row orders."""
+    return (
         ModelDelta(
             "changed",
-            "sorted-model",
-            "Sorted Model",
+            "synth/model-output-heavy",
+            "Synth Output Heavy",
             (
+                FieldChange("pricing.completion", "0.000001", "0.000009"),
                 FieldChange("pricing.input_cache_read", "0.000001", "0.000002"),
                 FieldChange("pricing.prompt", "0.000004", "0.000005"),
-                FieldChange("pricing.completion", "0.000001", "0.000009"),
+            ),
+        ),
+        ModelDelta(
+            "changed",
+            "synth/model-input-heavy",
+            "Synth Input Heavy",
+            (
+                FieldChange("pricing.input_cache_read", "0.000001", "0.000003"),
+                FieldChange("pricing.completion", "0.000001", "0.000002"),
+                FieldChange("pricing.prompt", "0.000001", "0.000010"),
             ),
         ),
     )
+
+
+def test_html_cards_use_profile_pricing_field_order_across_opposite_impacts() -> None:
+    changed = _opposite_impact_pricing_models()
     report = render_scan_report(
         generated_at="2026-07-15T13:05:00+00:00",
         command="scan",
         format_name="html",
         provider_results=[_scan_result(changed)],
     )
-    labels = re.findall(r'<td class="field-name"[^>]*>(.*?)</td>', report)
-    # +$8.00, then +$1.00, then +$1.00 -- the last two tie on impact and keep
-    # their arrival order (`Cache read` was first in the fixture).
-    assert labels == ["Output", "Cache read", "Input"]
+
+    for model in changed:
+        card = _model_card_fragment(report, model.provider_model_id)
+        assert _pricing_labels_from_html_card(card) == ["Input", "Cache read", "Output"]
+
+
+def test_human_scan_reports_use_profile_pricing_field_order() -> None:
+    changed = _opposite_impact_pricing_models()
+    reports = {
+        format_name: render_scan_report(
+            generated_at="2026-07-15T13:05:00+00:00",
+            command="scan",
+            format_name=format_name,
+            provider_results=[_scan_result(changed)],
+        )
+        for format_name in ("text", "markdown", "html", "json")
+    }
+
+    for model in changed:
+        text_block = _scan_model_block(reports["text"], model.provider_model_id, markdown=False)
+        markdown_block = _scan_model_block(
+            reports["markdown"], model.provider_model_id, markdown=True
+        )
+        html_card = _model_card_fragment(reports["html"], model.provider_model_id)
+        assert _pricing_labels_from_text_block(text_block) == ["Input", "Cache read", "Output"]
+        assert _pricing_labels_from_markdown_block(markdown_block) == [
+            "Input",
+            "Cache read",
+            "Output",
+        ]
+        assert _pricing_labels_from_html_card(html_card) == ["Input", "Cache read", "Output"]
+
+    payload = json.loads(reports["json"])
+    json_changes = {
+        model["provider_model_id"]: [
+            field_change["field_name"] for field_change in model["field_changes"]
+        ]
+        for model in payload["providers"][0]["changed"]
+    }
+    assert json_changes == {
+        model.provider_model_id: [
+            field_change.field_name for field_change in model.field_changes
+        ]
+        for model in changed
+    }
+
+
+def test_scan_markdown_reorders_only_fields_in_the_final_pricing_category() -> None:
+    changed = (
+        ModelDelta(
+            "changed",
+            "synth/model-final-category",
+            "Synthetic Final Category Model",
+            (
+                FieldChange("pricing.completion", "0.000001", "0.000009"),
+                FieldChange("top_provider.context_length", 16_000, 32_000),
+                FieldChange("pricing.prompt", "0.000001", "0.000002"),
+                FieldChange("pricing.input_cache_read", "0.000001", "0.000003"),
+                FieldChange("reasoning.default_enabled", False, True),
+            ),
+        ),
+    )
+    policy = ReportDetailPolicy(
+        mode="default",
+        show_fields=(
+            "pricing.completion",
+            "pricing.input_cache_read",
+            "top_provider.context_length",
+            "reasoning.default_enabled",
+        ),
+        squelch_fields=(),
+        unclassified_limit=1,
+    )
+
+    report = render_scan_report(
+        generated_at="2026-07-15T13:05:00+00:00",
+        command="scan",
+        format_name="markdown",
+        provider_results=[_scan_result(changed)],
+        detail_policy=policy,
+    )
+    block = _scan_model_block(
+        report,
+        "synth/model-final-category",
+        markdown=True,
+    )
+
+    labels = re.findall(r"^\s+- `([^:]+):", block, re.M)
+    assert labels == [
+        "Cache read",
+        "Context length",
+        "Input",
+        "Output",
+        "Reasoning default",
+    ]
+
+
+def test_changes_report_uses_profile_pricing_field_order() -> None:
+    rows = tuple(
+        {
+            "detected_at": "2026-07-15T13:05:00+00:00",
+            "provider_id": "synthprov",
+            "provider_label": "Synthetic Provider",
+            "provider_model_id": "synth/model-shuffled",
+            "display_name": "Synthetic Shuffled Model",
+            "change_kind": "changed",
+            "field_name": field_name,
+            "old_value": old_value,
+            "new_value": new_value,
+        }
+        for field_name, old_value, new_value in (
+            ("pricing.completion", "0.000001", "0.000009"),
+            ("pricing.prompt", "0.000001", "0.000002"),
+            ("pricing.input_cache_read", "0.000001", "0.000003"),
+        )
+    )
+    reports = {
+        format_name: render_changes_report(
+            format_name=format_name,
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=rows,
+            provider_profiles={
+                "synthprov": OPENROUTER_PROFILE.with_pricing(1_000_000, 1)
+            },
+        )
+        for format_name in ("text", "html")
+    }
+
+    assert _pricing_labels_from_text_block(reports["text"]) == [
+        "Input",
+        "Cache read",
+        "Output",
+    ]
+    card = _model_card_fragment(reports["html"], "synth/model-shuffled")
+    assert _pricing_labels_from_html_card(card) == ["Input", "Cache read", "Output"]
 
 
 _LONG_PARAMETER_LIST = (
