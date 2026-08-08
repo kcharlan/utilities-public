@@ -37,6 +37,7 @@ def test_resolve_openrouter_profile_with_bound_pricing() -> None:
 
     assert profile.kind == OPENROUTER_PROFILE.kind
     assert profile.field_path_labels is OPENROUTER_PROFILE.field_path_labels
+    assert profile.pricing_field_order == OPENROUTER_PROFILE.pricing_field_order
     assert profile.price_multiplier == 1_000_000
     assert profile.price_divisor == 2
 
@@ -64,6 +65,26 @@ def test_openrouter_profile_contains_provider_vocabulary() -> None:
     assert "top_provider.is_moderated" in OPENROUTER_PROFILE.known_boolean_fields
     assert OPENROUTER_PROFILE.field_leaf_labels["prompt"] == "Input"
     assert OPENROUTER_PROFILE.envelope_keys == ("data",)
+
+
+def test_profiles_define_provider_owned_pricing_field_order() -> None:
+    assert GENERIC_PROFILE.pricing_field_order == ()
+    assert OPENROUTER_PROFILE.pricing_field_order == (
+        "prompt",
+        "input_cache_read",
+        "input_cache_write",
+        "input_cache_write_1h",
+        "input_audio_cache",
+        "completion",
+    )
+
+
+def test_openrouter_pricing_order_uses_exact_raw_field_identities() -> None:
+    order = OPENROUTER_PROFILE.pricing_field_order
+
+    assert "Input" not in order
+    assert "Output" not in order
+    assert "cache" not in order
 
 
 def test_default_heuristics_preserve_existing_behavior() -> None:

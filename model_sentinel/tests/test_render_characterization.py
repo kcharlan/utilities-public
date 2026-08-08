@@ -40,10 +40,13 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   of that one change:
     1. the tiered row now reads `Output (min_prompt_tokens=200000)` in the
        text, markdown, HTML change-table and HTML Change Summary goldens;
-    2. that row MOVED within the Change Summary. `_summary_entry_sort_key`
-       orders on the displayed field text, and `"output"` sorts before
-       `"output (min_prompt_tokens=200000)"`, so the tiered row now follows
-       the base `Output` row. The section is the same 15 rows either way --
+    2. that row MOVED within the Change Summary. At that time,
+       `_summary_entry_sort_key` ordered Pricing rows on displayed field text,
+       and `"output"` sorted before `"output (min_prompt_tokens=200000)"`.
+       Provider-defined Pricing order now supersedes that category-wide
+       alphabetical policy, while display text still deterministically orders
+       base and qualified variants that share one configured field rank. The
+       section is the same 15 rows either way --
        `test_qualifier_change_summary_is_a_pure_permutation` below asserts
        that as a multiset rather than leaving it to the eye.
   The JSON goldens are untouched, as always.
@@ -130,6 +133,15 @@ DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
   The Pricing group of `synth/model-core` also reorders (Output, Output
   (min_prompt_tokens=200000), Cache read, Cache write) -- descending absolute
   delta, not the arrival order.
+
+* The 2026-08-08 provider-order pass superseded Task 7's row-level impact sort
+  across every human report. Pricing now follows the active profile's semantic
+  sequence; this fixture has no Input row, so its order is Cache read, Cache
+  write, Output, then qualified Output. The two Output rows share one configured
+  rank, with the base label ahead of its qualified variant. Text, Markdown and
+  both scan HTML goldens move only those rows (plus the HTML category-chip and
+  zebra classes that belong to their new positions). JSON remains byte-identical,
+  and Task 9's page-level model-card impact ranking remains in force.
 
 * Task 7 fix pass 1 corrected that card after RENDERING it, which Task 7 never
   did. Again only HTML goldens moved. Four classes of diff:
@@ -438,9 +450,9 @@ Synth Provider (synthprov)
   changed: 7
     * synth/model-core (Synth Model Core)
       [Pricing]
-        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
         Cache read: null → 5e-08 ($0.05 / 1M)
         Cache write: 9e-08 ($0.09 / 1M) → null
+        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
         Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
       [Context & Limits]
         Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
@@ -488,9 +500,9 @@ Synth Provider (synthprov)
   changed: 7
     * synth/model-core (Synth Model Core)
       [Pricing]
-        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
         Cache read: null → 5e-08 ($0.05 / 1M)
         Cache write: 9e-08 ($0.09 / 1M) → null
+        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
         Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
       [Context & Limits]
         Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
@@ -544,9 +556,9 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
 ### Changed (7)
 
 - `synth/model-core` - Synth Model Core
-  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
   - `Cache read: null → 5e-08 ($0.05 / 1M)`
   - `Cache write: 9e-08 ($0.09 / 1M) → null`
+  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
   - `Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
   - `Moderated: off → on`
   - `Reasoning default: off → on`
@@ -594,9 +606,9 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
 ### Changed (7)
 
 - `synth/model-core` - Synth Model Core
-  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
   - `Cache read: null → 5e-08 ($0.05 / 1M)`
   - `Cache write: 9e-08 ($0.09 / 1M) → null`
+  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
   - `Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
   - `Moderated: off → on`
   - `Reasoning default: off → on`
@@ -1320,14 +1332,14 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card" id="m-synth-model-core">
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><span class="hidden-count" title="1 squelched">+1 hidden</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
-<tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
-<tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
-<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">— → 5e-08</td></tr>
 <tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">9e-08 → —</td></tr>
+<tr><td></td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val num">131,072</td><td class="arrow">→</td><td class="new-val num">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
 <tr class="group-start row-alt"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
 <tr class="list-members row-alt"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ logit_bias</div></td></tr>
@@ -1435,14 +1447,14 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="model-card" id="m-synth-model-core">
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
-<tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
-<tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
-<tr><td></td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">— → 5e-08</td></tr>
 <tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">9e-08 → —</td></tr>
+<tr><td></td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val num">131,072</td><td class="arrow">→</td><td class="new-val num">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
 <tr class="group-start row-alt"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
 <tr class="list-members row-alt"><td></td><td colspan="7"><div class="list-added">&nbsp;&nbsp;+ logit_bias</div></td></tr>
@@ -1875,11 +1887,13 @@ EXPECTED_JSON_DETAIL_ALL = _EXPECTED_JSON_DETAIL_ALL_TEMPLATE.replace(ISO_TOKEN,
 # ---------------------------------------------------------------------------
 # Change Summary: what the qualifier did, and did not, do to the section.
 #
-# `_summary_entry_sort_key` sorts on the DISPLAYED field text, so any change to
-# how a field is spelled reorders this section. Task 5 moved it once (raw paths
-# -> registry labels) and this pass moves it again (labels -> labels with
-# qualifiers). Reordering is acceptable; gaining, losing or duplicating a row
-# is not, and an ordered golden alone cannot tell those apart at a glance.
+# Task 5 originally made `_summary_entry_sort_key` sort on displayed field text,
+# so spelling changes could reorder this section. Provider-defined Pricing order
+# now takes precedence across configured field identities. Display text remains
+# the deterministic tie-breaker for base and qualified variants that share one
+# configured rank, preserving the Task 5 qualifier behavior pinned here.
+# Reordering is acceptable; gaining, losing or duplicating a row is not, and an
+# ordered golden alone cannot tell those apart at a glance.
 #
 # The two constants below split each row at the only cell a qualifier can
 # touch. `_SUMMARY_ROW_SHAPES` is the row multiset with the Field cell removed;
@@ -2033,13 +2047,12 @@ def test_qualifier_change_summary_is_a_pure_permutation() -> None:
     assert sorted(field_cells) == sorted(_SUMMARY_FIELD_CELLS)
 
 
-def test_qualifier_is_what_reordered_the_change_summary() -> None:
-    """Names the cause of the reorder, so a future reorder is not mistaken for it.
+def test_qualifier_orders_base_before_variant_within_shared_provider_rank() -> None:
+    """The display-label tie-breaker keeps a base field before its variant.
 
-    The tiered row sorts after the base row for exactly one reason: the sort
-    key is the displayed field text and `"output"` is a prefix of
-    `"output (min_prompt_tokens=200000)"`. Both rows belong to the same model
-    and the same category, so nothing else in the key can separate them.
+    Both Output paths inherit the same configured leaf rank. Their qualified
+    display labels, rather than category-wide alphabetical ordering, separate
+    them deterministically within that shared provider rank.
     """
     report = render_scan_report(
         generated_at=GENERATED_AT,

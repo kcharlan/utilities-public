@@ -47,12 +47,14 @@ from model_sentinel.change_render import (
     _split_field_path,
     classify_change as classify_change_with_profile,
     format_qualified_label,
+    pricing_field_sort_key,
     resolve_field_label as resolve_field_label_with_profile,
 )
 from model_sentinel.models import FieldChange
 from model_sentinel.provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
+    ProviderProfile,
     default_categorize as _classify_field,
     default_is_price_amount_field as _is_price_amount_field,
 )
@@ -87,6 +89,106 @@ def classify_change(
 
 def resolve_field_label(field_path: str) -> tuple[str, str | None]:
     return resolve_field_label_with_profile(field_path, OPENROUTER_PROFILE)
+
+
+def test_pricing_field_sort_key_uses_profile_order() -> None:
+    shuffled = (
+        "pricing.completion",
+        "pricing.input_cache_write_1h",
+        "pricing.prompt",
+        "pricing.input_audio_cache",
+        "pricing.input_cache_write",
+        "pricing.input_cache_read",
+    )
+
+    assert sorted(
+        shuffled,
+        key=lambda path: pricing_field_sort_key(path, OPENROUTER_PROFILE),
+    ) == [
+        "pricing.prompt",
+        "pricing.input_cache_read",
+        "pricing.input_cache_write",
+        "pricing.input_cache_write_1h",
+        "pricing.input_audio_cache",
+        "pricing.completion",
+    ]
+
+
+def test_pricing_field_sort_key_resolves_conditional_leaf() -> None:
+    base_prompt = "pricing.prompt"
+    tier_prompt = "pricing.overrides[min_prompt_tokens=200000].prompt"
+    tier_completion = "pricing.overrides[min_prompt_tokens=200000].completion"
+
+    assert sorted(
+        (
+            tier_completion,
+            "pricing.input_cache_read",
+            tier_prompt,
+            base_prompt,
+        ),
+        key=lambda path: pricing_field_sort_key(path, OPENROUTER_PROFILE),
+    ) == [
+        base_prompt,
+        tier_prompt,
+        "pricing.input_cache_read",
+        tier_completion,
+    ]
+    assert pricing_field_sort_key(tier_completion, OPENROUTER_PROFILE)[:2] == (0, 5)
+
+    synthetic_profile = ProviderProfile(
+        kind="synthetic",
+        pricing_field_order=("leaf_name", "pricing.exact.leaf_name"),
+    )
+    assert pricing_field_sort_key(
+        "pricing.exact.leaf_name",
+        synthetic_profile,
+    )[:2] == (0, 1)
+
+
+def test_pricing_field_sort_key_keeps_unranked_fields_deterministic() -> None:
+    synthetic_profile = ProviderProfile(
+        kind="synthetic",
+        pricing_field_order=("prompt",),
+        field_path_labels={
+            "pricing.zed": "First label",
+            "pricing.beta": "Same label",
+            "pricing.alpha": "Same label",
+        },
+    )
+    shuffled = (
+        "pricing.beta",
+        "pricing.prompt",
+        "pricing.alpha",
+        "pricing.zed",
+    )
+
+    assert sorted(
+        shuffled,
+        key=lambda path: pricing_field_sort_key(path, synthetic_profile),
+    ) == [
+        "pricing.prompt",
+        "pricing.zed",
+        "pricing.alpha",
+        "pricing.beta",
+    ]
+    assert pricing_field_sort_key("pricing.audio", OPENROUTER_PROFILE)[0] == 1
+
+    generic_fields = ("pricing.prompt", "pricing.completion")
+    assert sorted(
+        generic_fields,
+        key=lambda path: pricing_field_sort_key(path, GENERIC_PROFILE),
+    ) == ["pricing.completion", "pricing.prompt"]
+
+
+def test_pricing_field_sort_key_does_not_infer_similar_names() -> None:
+    prompt_key = pricing_field_sort_key("pricing.prompt", OPENROUTER_PROFILE)
+    surcharge_key = pricing_field_sort_key(
+        "pricing.prompt_surcharge",
+        OPENROUTER_PROFILE,
+    )
+
+    assert prompt_key[:2] == (0, 0)
+    assert surcharge_key[:2] == (1, 0)
 
 
 def _is_boolean_change(field_change: FieldChange) -> bool:
