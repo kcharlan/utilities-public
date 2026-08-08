@@ -107,6 +107,7 @@ provider-specific interpretation:
 - field labels and known boolean paths
 - price/count classification predicates
 - conditional-pricing identity fields
+- preferred presentation order for Pricing field paths
 - default report show/squelch patterns
 
 Fetch, normalization, change classification, and human reporting all receive
@@ -279,6 +280,16 @@ The shared change-classification and value-formatting layer lives in
 `change_render.py`; report assembly lives in `reporting.py`. This separation
 keeps type semantics, labels, price precision, and no-op handling consistent
 across text, Markdown, scan HTML, changes HTML, and summary surfaces.
+
+Within every human-readable Pricing group, report assembly applies the stable
+semantic order owned by the active provider profile. OpenRouter orders Input,
+cache variants, and Output first, then places unranked Pricing fields
+alphabetically. The same order is used by scan text, Markdown, concise and
+full-detail HTML, `changes` text and HTML, and the HTML Change Summary. This
+ordering is presentation-only: JSON output, chronological history, stored raw
+field paths, and source storage order are unchanged. It also does not replace
+the HTML page-level impact ranking: model cards with price changes and the
+Price Movement headline continue to prioritize the largest dollar movements.
 
 The HTML triage layout, cost-only color vocabulary, price-movement model,
 sorting, navigation, raw-value behavior, and implementation amendments are

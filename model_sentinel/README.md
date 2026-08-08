@@ -355,7 +355,15 @@ The HTML report uses a dark industrial theme and has no external dependencies an
 
 **Each model card is a single aligned table.** One row per field, with fixed columns for category, field name, old value, new value, unit, delta and percentage, so values line up down the card and can be compared by eye instead of read as prose. The category name appears as a dim chip on the first row of each group.
 
-**Ordering is by impact, not by name.** Within a card, pricing rows are sorted by the size of the movement. Across the page, models are ranked by their price impact.
+**Pricing fields use one stable semantic order.** The active provider profile
+defines the preferred sequence within each human-readable Pricing group.
+OpenRouter presents Input first, then cache variants, then Output; any other
+Pricing fields follow alphabetically. Scan text, Markdown, concise and
+full-detail HTML, `changes` text and HTML, and the HTML Change Summary all use
+that same sequence. This is presentation-only: JSON output, chronological
+history, and stored source field order are unchanged. Across the HTML page,
+price-changed model cards are still ranked by impact, and the Price Movement
+headline still elevates the largest dollar movements.
 
 **The page has two tiers.** Models whose prices moved are presented directly. Everything else — models with no price change, bulk-change groups, and the report-detail rollups — is folded into one collapsed `Other changes` disclosure, which states in its summary exactly what it contains. A card that is hiding squelched fields carries a `+N hidden` chip in its header, with a breakdown in the chip's tooltip, so suppression is always visible even when the detail is not.
 

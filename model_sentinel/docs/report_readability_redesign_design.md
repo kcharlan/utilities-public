@@ -2,7 +2,7 @@
 
 Status: **implemented** in the current code.
 
-This document has been corrected in place where implementation diverged from the approved design. Nine such divergences are marked inline and recorded under [Amendments during implementation](#amendments-during-implementation). Where the design and the shipped code disagree, **the code is authoritative** — read the amendments before trusting an unmarked passage.
+This document has been corrected in place where implementation diverged from the approved design. Ten such divergences are marked inline and recorded under [Amendments during implementation](#amendments-during-implementation). Where the design and the shipped code disagree, **the code is authoritative** — read the amendments before trusting an unmarked passage.
 
 This design extends the report-detail policy described in
 [`DESIGN.md`](./DESIGN.md). Detail-policy semantics (squelch patterns and
@@ -304,7 +304,11 @@ Each entry links to its card (see N1).
 
 Rows are grouped by category in the existing order (Pricing, Context & Limits, Parameters, Capabilities, Other). The category name renders as a dim chip in column 1 on the **first row of each group only**; subsequent rows leave it blank. A slightly stronger top border marks each group boundary.
 
-Within Pricing, rows sort by descending absolute delta so the largest move is first.
+~~Within Pricing, rows sort by descending absolute delta so the largest move
+is first.~~ **Superseded on 2026-08-08 — see Amendment 10.** Pricing rows now
+use the active provider profile's stable semantic order: OpenRouter presents
+Input, cache variants, and Output first, followed by unranked Pricing fields
+alphabetically.
 
 ---
 
@@ -403,7 +407,7 @@ Flagged for review; each was a judgment call, not an instruction.
 
 ## Amendments during implementation
 
-Nine places where the shipped behavior differs from the design above. Each is marked inline at the point it applies; this section records what changed and why.
+Ten places where the shipped behavior differs from the design above. Each is marked inline at the point it applies; this section records what changed and why.
 
 ### 1. `_full.html` is not a separate renderer, and adopts the new layout
 
@@ -496,3 +500,28 @@ Left in the three-bucket shape, such a model was still counted in the `N MODELS`
 **Reality:** by the time it shipped it was redundant *and* the harshest possible response to a working config. This branch already made label collisions harmless: reports group on `provider_id` and disambiguate display as `Label (provider_id)`, which also covers historical rows recorded under a label the current `providers.env` no longer contains — rows a config-time check cannot see at all. So the complete mechanism was the display one, and the incomplete one was the mechanism that halted `scan`, `changes`, `history` and `providers` alike. A scheduled overnight scan would stop on a config that worked yesterday, and the report the user would have received does not exist; that is strictly worse than a report whose two providers share display text and whose rows say which is which.
 
 **Resolution:** `config.describe_duplicate_labels(providers, path)` returns the advisory string or `None`, and `healthcheck` surfaces it as a `provider_labels` check with status `warn` — which does **not** move the exit code. The message still names every offender and the key to edit, and still compares labels exactly. `healthcheck` is the command whose job is to tell the user what to fix; refusing to run every other command was never that job.
+
+### 10. Pricing rows use provider-defined semantic order
+
+**Amended 2026-08-08.**
+
+**Design said (C1):** within a model card, Pricing rows sort by descending
+absolute delta so the largest movement appears first.
+
+**Reality:** actual reports exposed cross-model schema drift. Because Input,
+Cache, and Output often moved by different amounts, their positions changed
+from one model card to the next. The impact sort elevated movement but made
+otherwise identical Pricing groups harder to scan and compare.
+
+**Resolution:** stable semantic order wins within every human-readable Pricing
+group. The active provider profile owns the preferred field sequence;
+OpenRouter presents Input, cache variants, and Output first, followed by
+unranked Pricing fields alphabetically. Scan text, Markdown, concise and
+full-detail HTML, `changes` text and HTML, and the HTML Change Summary share
+that order. This is presentation-only: JSON, chronological history, and stored
+source field order do not change.
+
+D1 and F2 remain intact. The Price Movement headline still selects the largest
+dollar movers, and price-changed model cards are still ranked by impact across
+the page. The amendment removes row-level permutation without weakening the
+report's page-level triage priorities.
