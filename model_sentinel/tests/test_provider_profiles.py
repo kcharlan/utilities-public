@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from types import MappingProxyType
 
 import pytest
 
@@ -9,6 +10,7 @@ from model_sentinel.provider_profiles import (
     PER_MILLION_TOKENS_TARGET,
     USD_PER_MILLION_TOKENS_GROUP,
     PriceDisplayRule,
+    ProviderProfile,
     default_categorize,
     default_is_price_amount_field,
     resolve_profile,
@@ -254,6 +256,21 @@ def test_price_rule_registries_are_immutable() -> None:
         OPENROUTER_PROFILE.price_path_rules["pricing.synthetic"] = PriceDisplayRule(  # type: ignore[index]
             unit_label="/synthetic operation"
         )
+
+
+def test_price_rule_registries_do_not_alias_proxy_backing_mappings() -> None:
+    backing = {"prompt": PriceDisplayRule(unit_label="/synthetic original")}
+    profile = ProviderProfile(
+        kind="synthetic",
+        price_leaf_rules=MappingProxyType(backing),
+    )
+
+    backing["prompt"] = PriceDisplayRule(unit_label="/synthetic mutated")
+    backing["completion"] = PriceDisplayRule(unit_label="/synthetic added")
+
+    assert profile.price_leaf_rules == {
+        "prompt": PriceDisplayRule(unit_label="/synthetic original")
+    }
 
 
 def test_with_pricing_preserves_price_rule_contract() -> None:

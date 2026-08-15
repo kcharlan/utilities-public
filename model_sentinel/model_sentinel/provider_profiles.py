@@ -161,15 +161,20 @@ class ProviderProfile:
     def __post_init__(self) -> None:
         for name in ("price_path_rules", "price_leaf_rules"):
             registry = getattr(self, name)
-            if not isinstance(registry, MappingProxyType):
-                object.__setattr__(self, name, MappingProxyType(dict(registry)))
+            object.__setattr__(self, name, MappingProxyType(dict(registry)))
 
     def with_pricing(self, multiplier: int, divisor: int) -> ProviderProfile:
-        return replace(
+        bound = replace(
             self,
             price_multiplier=multiplier,
             price_divisor=divisor,
         )
+        # `self` already owns defensive copies. Restore those trusted proxies
+        # after `replace()` runs validation so rebinding factors preserves the
+        # immutable registry objects without retaining caller-owned mappings.
+        object.__setattr__(bound, "price_path_rules", self.price_path_rules)
+        object.__setattr__(bound, "price_leaf_rules", self.price_leaf_rules)
+        return bound
 
 
 # ---------------------------------------------------------------------------
