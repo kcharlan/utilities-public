@@ -208,9 +208,9 @@ Since: 2026-07-01
     Synth Provider
       * synth/model-changes (Synth Changes)
           [Pricing]
-            Input: 0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)
-            Cache read: null → 0.00000005 ($0.05 / 1M)
-            Output (min_prompt_tokens=200000): 0.000004 ($4.00 / 1M) → null
+            Input: 0.000001 → 0.000002 ($1.00 → $2.00 /1M tokens, ↑ 100.0%)
+            Cache read: null → 0.00000005 ($0.05 /1M tokens)
+            Output (min_prompt_tokens=200000): 0.000004 ($4.00 /1M tokens) → null
           [Context & Limits]
             Max output: 8,192 → null
             Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
@@ -256,9 +256,9 @@ EXPECTED_HTML_BODY = """<section class="provider-section"><h2 class="date-headin
 <div class="model-card-header"><code>synth/model-changes</code><span class="display-name">Synth Changes</span></div>
 <div class="change-category"><div class="category-label">Pricing</div>
 <table class="change-table"><thead><tr><th>Field</th><th>Old</th><th>New</th><th>Change</th></tr></thead><tbody>
-<tr><td class="field-name">Input</td><td class="old-val">0.000001 ($1.00 / 1M)</td><td class="new-val">0.000002 ($2.00 / 1M)</td><td class="change-delta sem-cost-up">↑ 100.0%</td></tr>
-<tr><td class="field-name">Cache read</td><td class="old-val">—</td><td class="new-val">0.00000005 ($0.05 / 1M)</td><td class="change-delta sem-coverage">added</td></tr>
-<tr><td class="field-name">Output (min_prompt_tokens=200000)</td><td class="old-val">0.000004 ($4.00 / 1M)</td><td class="new-val">—</td><td class="change-delta sem-coverage">removed</td></tr>
+<tr><td class="field-name">Input</td><td class="old-val">0.000001 ($1.00 /1M tokens)</td><td class="new-val">0.000002 ($2.00 /1M tokens)</td><td class="change-delta sem-cost-up">↑ 100.0%</td></tr>
+<tr><td class="field-name">Cache read</td><td class="old-val">—</td><td class="new-val">0.00000005 ($0.05 /1M tokens)</td><td class="change-delta sem-coverage">added</td></tr>
+<tr><td class="field-name">Output (min_prompt_tokens=200000)</td><td class="old-val">0.000004 ($4.00 /1M tokens)</td><td class="new-val">—</td><td class="change-delta sem-coverage">removed</td></tr>
 </tbody></table>
 </div>
 <div class="change-category"><div class="category-label">Context &amp; Limits</div>
@@ -300,9 +300,9 @@ EXPECTED_HTML_BODY = """<section class="provider-section"><h2 class="date-headin
 # categories retain their field-label fallback. Presence rows and the
 # provider-level squelched rollup remain last. The three `—` sides here are the
 # ones the body above must agree with.
-EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Input</td><td>$1.00 → $2.00 /1M (+$1.00, ↑ 100.0%)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
-<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → — /1M (removed)</td></tr>
+EXPECTED_HTML_SUMMARY = """<section class="summary-section"><h2>Change Summary</h2><table class="summary-table"><thead><tr><th>Category</th><th>Provider</th><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Input</td><td>$1.00 → $2.00 /1M tokens (+$1.00, ↑ 100.0%)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Cache read</td><td>— → $0.05 /1M tokens (added)</td></tr>
+<tr><td>Pricing</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → — /1M tokens (removed)</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
 <tr><td>Context &amp; Limits</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Max output</td><td>8,192 → — tok (removed)</td></tr>
 <tr><td>Parameters</td><td>Synth Provider</td><td><code>synth/model-changes</code></td><td>Supported parameters</td><td>+seed (2 → 3)</td></tr>
@@ -377,10 +377,10 @@ def test_the_changes_card_and_its_summary_agree_on_an_absent_side() -> None:
     # card and in the summary of the same document. The two cells no longer
     # spell the VALUE identically -- the summary leads with the normalized
     # figure per fix pass 3's blocker 2, while this document's four-column
-    # table keeps its `raw (normalized / 1M)` cell -- but the ABSENT side,
+    # table keeps its `raw (normalized /1M tokens)` cell -- but the ABSENT side,
     # which is what this test is about, is `—` in both.
-    assert '<td class="old-val">—</td><td class="new-val">0.00000005 ($0.05 / 1M)</td>' in html
-    assert "<td>— → $0.05 /1M (added)</td>" in html
+    assert '<td class="old-val">—</td><td class="new-val">0.00000005 ($0.05 /1M tokens)</td>' in html
+    assert "<td>— → $0.05 /1M tokens (added)</td>" in html
 
     # Exactly four cells are NOTHING BUT an em dash: the card's four absent
     # sides, produced by three different branches of `_render_html_table_row`
@@ -400,8 +400,8 @@ def test_the_shared_text_line_still_spells_an_absent_side_null() -> None:
     """
     text = render("text")
     for absent in (
-        "Cache read: null → 0.00000005 ($0.05 / 1M)",
-        "Output (min_prompt_tokens=200000): 0.000004 ($4.00 / 1M) → null",
+        "Cache read: null → 0.00000005 ($0.05 /1M tokens)",
+        "Output (min_prompt_tokens=200000): 0.000004 ($4.00 /1M tokens) → null",
         "Max output: 8,192 → null",
         "Expiration date: null → 2030-12-31",
     ):

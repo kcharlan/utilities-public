@@ -33,7 +33,7 @@ from model_sentinel.change_render import (
     _both_numeric,
     _classify_boolean as _classify_boolean_with_profile,
     _fmt_int,
-    _fmt_price_per_m,
+    _fmt_money,
     _is_boolean_change as _is_boolean_change_with_profile,
     _list_diff_members,
     _list_item_text,
@@ -49,11 +49,15 @@ from model_sentinel.change_render import (
     format_qualified_label,
     pricing_field_sort_key,
     resolve_field_label as resolve_field_label_with_profile,
+    resolve_price_rule,
 )
 from model_sentinel.models import FieldChange
 from model_sentinel.provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
+    PER_MILLION_TOKENS_TARGET,
+    USD_PER_MILLION_TOKENS_GROUP,
+    PriceDisplayRule,
     ProviderProfile,
     default_categorize as _classify_field,
     default_is_price_amount_field as _is_price_amount_field,
@@ -71,6 +75,17 @@ FIELD_LEAF_LABELS = OPENROUTER_PROFILE.field_leaf_labels
 KNOWN_BOOLEAN_FIELDS = OPENROUTER_PROFILE.known_boolean_fields
 _is_count_field = OPENROUTER_PROFILE.is_count_field
 
+_INHERITED_PRICE_PROFILE = dataclasses.replace(
+    OPENROUTER_PROFILE,
+    price_path_rules={},
+    price_leaf_rules={},
+    unmatched_price_rule=PriceDisplayRule(
+        unit_label="/1M",
+        normalized_target=PER_MILLION_TOKENS_TARGET,
+    ),
+    primary_price_comparison_group=None,
+)
+
 
 def classify_change(
     field_change: FieldChange,
@@ -80,7 +95,7 @@ def classify_change(
 ) -> RenderedChange:
     return classify_change_with_profile(
         field_change,
-        profile=OPENROUTER_PROFILE.with_pricing(
+        profile=_INHERITED_PRICE_PROFILE.with_pricing(
             price_multiplier,
             price_divisor,
         ),
@@ -191,6 +206,94 @@ def test_pricing_field_sort_key_does_not_infer_similar_names() -> None:
     assert surcharge_key[:2] == (1, 0)
 
 
+def test_price_rule_exact_path_wins_over_leaf() -> None:
+    profile = ProviderProfile(
+        kind="synthetic",
+        price_path_rules={
+            "pricing.special.prompt": PriceDisplayRule(
+                unit_label="/exact operation",
+                multiplier=9,
+                divisor=2,
+                comparison_group="usd_per_exact_operation",
+            )
+        },
+        price_leaf_rules={
+            "prompt": PriceDisplayRule(
+                unit_label="/leaf operation",
+                multiplier=4,
+                divisor=1,
+            )
+        },
+    )
+
+    exact = resolve_price_rule("pricing.special.prompt", profile)
+    leaf = resolve_price_rule("pricing.other.prompt", profile)
+
+    assert exact.unit_label == "/exact operation"
+    assert (exact.multiplier, exact.divisor) == (9, 2)
+    assert exact.comparison_group == "usd_per_exact_operation"
+    assert exact.match_source == "path"
+    assert leaf.unit_label == "/leaf operation"
+    assert leaf.match_source == "leaf"
+
+
+def test_price_rule_resolves_conditional_leaf() -> None:
+    rule = resolve_price_rule(
+        "pricing.overrides[min_prompt_tokens=200000].prompt",
+        OPENROUTER_PROFILE,
+    )
+
+    assert rule.unit_label == "/1M tokens"
+    assert (rule.multiplier, rule.divisor) == (1_000_000, 1)
+    assert rule.normalized_target == PER_MILLION_TOKENS_TARGET
+    assert rule.match_source == "leaf"
+
+
+def test_openrouter_unknown_price_rule_is_conservative() -> None:
+    rule = resolve_price_rule("pricing.input_cache_write_1h", OPENROUTER_PROFILE)
+
+    assert rule.unit_label == "/unit unknown"
+    assert (rule.multiplier, rule.divisor) == (1, 1)
+    assert rule.comparison_group is None
+    assert rule.normalized_target is None
+    assert rule.match_source == "unmatched"
+
+
+def test_generic_price_rule_binds_active_profile_factors() -> None:
+    rule = resolve_price_rule(
+        "pricing.synthetic_amount",
+        GENERIC_PROFILE.with_pricing(7, 3),
+    )
+
+    assert rule.unit_label == "/1M"
+    assert (rule.multiplier, rule.divisor) == (7, 3)
+    assert rule.normalized_target == PER_MILLION_TOKENS_TARGET
+    assert rule.comparison_group is None
+    assert rule.match_source == "unmatched"
+
+
+@pytest.mark.parametrize(
+    "field_path",
+    ("pricing.prompt_surcharge", "pricing.web_search_preview"),
+)
+def test_price_rule_resolution_does_not_infer_similar_names(field_path: str) -> None:
+    rule = resolve_price_rule(field_path, OPENROUTER_PROFILE)
+
+    assert rule.unit_label == "/unit unknown"
+    assert rule.match_source == "unmatched"
+
+
+@pytest.mark.parametrize("multiplier, divisor", ((0, 1), (1, 0), (-1, 1), (1, -1)))
+def test_price_rule_rejects_non_positive_inherited_factors(
+    multiplier: int,
+    divisor: int,
+) -> None:
+    profile = GENERIC_PROFILE.with_pricing(multiplier, divisor)
+
+    with pytest.raises(ValueError, match="positive"):
+        resolve_price_rule("pricing.synthetic_amount", profile)
+
+
 def _is_boolean_change(field_change: FieldChange) -> bool:
     return _is_boolean_change_with_profile(field_change, OPENROUTER_PROFILE)
 
@@ -216,6 +319,7 @@ def test_rendered_change_is_frozen_with_expected_fields():
         "old_raw",
         "new_raw",
         "unit",
+        "price_rule",
         "delta_display",
         "delta_abs",
         "pct_display",
@@ -303,6 +407,125 @@ def test_price_both_numeric_increase():
     assert result.old_display == "$1.00"
     assert result.new_display == "$2.00"
     assert result.delta_abs == 1.0
+
+
+def test_openrouter_token_price_uses_explicit_rule_metadata() -> None:
+    result = classify_change_with_profile(
+        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+        profile=OPENROUTER_PROFILE.with_pricing(7, 3),
+    )
+
+    assert result.kind == "price"
+    assert (result.old_display, result.new_display, result.delta_display) == (
+        "$1.00",
+        "$2.00",
+        "+$1.00",
+    )
+    assert result.unit == "/1M tokens"
+    assert result.price_rule is not None
+    assert (result.price_rule.multiplier, result.price_rule.divisor) == (1_000_000, 1)
+    assert result.price_rule.comparison_group == USD_PER_MILLION_TOKENS_GROUP
+    assert result.price_rule.normalized_target == PER_MILLION_TOKENS_TARGET
+    assert result.price_rule.match_source == "leaf"
+
+
+@pytest.mark.parametrize(
+    "field_path, old, new, expected_old, expected_new, unit, group",
+    (
+        (
+            "pricing.web_search",
+            "0.010",
+            "0.014",
+            "$10.00",
+            "$14.00",
+            "/1K searches",
+            "usd_per_thousand_searches",
+        ),
+        (
+            "pricing.request",
+            "0.01",
+            "0.02",
+            "$0.01",
+            "$0.02",
+            "/request",
+            "usd_per_request",
+        ),
+        (
+            "pricing.image",
+            "0.25",
+            "0.5",
+            "$0.25",
+            "$0.50",
+            "/image",
+            "usd_per_image",
+        ),
+    ),
+)
+def test_openrouter_operation_prices_use_their_declared_rules(
+    field_path: str,
+    old: str,
+    new: str,
+    expected_old: str,
+    expected_new: str,
+    unit: str,
+    group: str,
+) -> None:
+    result = classify_change_with_profile(
+        FieldChange(field_path, old, new),
+        profile=OPENROUTER_PROFILE,
+    )
+
+    assert (result.old_display, result.new_display) == (expected_old, expected_new)
+    assert result.unit == unit
+    assert result.price_rule is not None
+    assert result.price_rule.comparison_group == group
+    assert result.price_rule.normalized_target is None
+
+
+def test_openrouter_unknown_price_preserves_raw_magnitude_without_unit_claim() -> None:
+    result = classify_change_with_profile(
+        FieldChange("pricing.input_cache_write_1h", "0.25", "0.5"),
+        profile=OPENROUTER_PROFILE,
+    )
+
+    assert (result.old_display, result.new_display) == ("$0.25", "$0.50")
+    assert result.unit == "/unit unknown"
+    assert result.direction == "up"
+    assert result.semantic == "cost"
+    assert result.price_rule is not None
+    assert result.price_rule.comparison_group is None
+    assert result.price_rule.normalized_target is None
+    assert result.price_rule.match_source == "unmatched"
+
+
+def test_conditional_openrouter_token_price_uses_the_leaf_rule() -> None:
+    result = classify_change_with_profile(
+        FieldChange(
+            "pricing.overrides[min_prompt_tokens=200000].completion",
+            "0.000004",
+            "0.000005",
+        ),
+        profile=OPENROUTER_PROFILE,
+    )
+
+    assert (result.old_display, result.new_display) == ("$4.00", "$5.00")
+    assert result.unit == "/1M tokens"
+    assert result.price_rule is not None
+    assert result.price_rule.match_source == "leaf"
+
+
+def test_one_sided_openrouter_price_carries_the_same_resolved_rule() -> None:
+    result = classify_change_with_profile(
+        FieldChange("pricing.web_search", None, "0.014"),
+        profile=OPENROUTER_PROFILE,
+    )
+
+    assert (result.old_display, result.new_display) == ("null", "$14.00")
+    assert result.unit == "/1K searches"
+    assert result.price_rule is not None
+    assert (result.price_rule.multiplier, result.price_rule.divisor) == (1_000, 1)
+    assert result.delta_abs is None
+    assert result.pct_display is None
 
 
 def test_price_both_numeric_decrease():
@@ -568,12 +791,12 @@ def test_free_and_the_sentinel_are_distinguishable_claims():
     look like the first.
 
     `free` is decided BEFORE the sentinel (zero short-circuits in
-    `_fmt_price_per_m`), so it survives at any precision and never takes a
+    `_fmt_money`), so it survives at any precision and never takes a
     bound of its own.
     """
-    assert _fmt_price_per_m(0.0, PRICE_MAX_PRECISION) == "free"
-    assert _fmt_price_per_m(1e-09, PRICE_MAX_PRECISION) == "<$0.0001"
-    assert _fmt_price_per_m(0.0, PRICE_MAX_PRECISION) != _fmt_price_per_m(1e-09, PRICE_MAX_PRECISION)
+    assert _fmt_money(0.0, PRICE_MAX_PRECISION) == "free"
+    assert _fmt_money(1e-09, PRICE_MAX_PRECISION) == "<$0.0001"
+    assert _fmt_money(0.0, PRICE_MAX_PRECISION) != _fmt_money(1e-09, PRICE_MAX_PRECISION)
 
     # The full row: a price appearing out of `free` and moving by `1e-09`.
     result = _price_change("0", "0.000000001")
@@ -729,12 +952,12 @@ def test_price_precision_ignores_normalization_float_noise():
 
 def test_zero_price_still_renders_free_at_any_precision():
     """`free` survives the new rule, on both sides and however precise the row."""
-    assert _fmt_price_per_m(0, 2) == "free"
-    assert _fmt_price_per_m(0.0, 4) == "free"
+    assert _fmt_money(0, 2) == "free"
+    assert _fmt_money(0.0, 4) == "free"
     # Zero is decided BEFORE the sentinel, so it never takes a bound of its
     # own: `free` and `<$0.0001` stay two different claims at every precision.
-    assert _fmt_price_per_m(0.0, PRICE_MIN_PRECISION) == "free"
-    assert _fmt_price_per_m(0.0, PRICE_MAX_PRECISION) == "free"
+    assert _fmt_money(0.0, PRICE_MIN_PRECISION) == "free"
+    assert _fmt_money(0.0, PRICE_MAX_PRECISION) == "free"
     assert _price_change("0", "0.1425").old_display == "free"
     assert _price_change("0.1425", "0").new_display == "free"
 
@@ -779,7 +1002,7 @@ def test_operands_inside_the_precision_tolerance_state_only_true_things():
 # ---------------------------------------------------------------------------
 # 3b. Structural guarantees
 #
-# `_fmt_price_per_m`'s `precision` carries a defect-prevention argument: it
+# `_fmt_money`'s `precision` carries a defect-prevention argument: it
 # exists so that a caller CANNOT silently reinstate a fixed defect by omitting
 # it. The argument is behaviourally unfalsifiable -- no in-tree caller omits
 # it, so no rendered output changes if a default were added back -- which is
@@ -795,7 +1018,7 @@ def test_operands_inside_the_precision_tolerance_state_only_true_things():
 # ---------------------------------------------------------------------------
 
 
-def test_fmt_price_per_m_requires_its_precision_at_the_signature():
+def test_fmt_money_requires_its_precision_at_the_signature():
     """`precision` must stay required, so no caller can inherit a default.
 
     It used to default to a value derived from the single operand, which is
@@ -804,9 +1027,9 @@ def test_fmt_price_per_m_requires_its_precision_at_the_signature():
     desynchronised-precision defect the shared precision replaced.
     """
     with pytest.raises(TypeError):
-        _fmt_price_per_m(2.0)  # type: ignore[call-arg]
+        _fmt_money(2.0)  # type: ignore[call-arg]
 
-    precision = inspect.signature(_fmt_price_per_m).parameters["precision"]
+    precision = inspect.signature(_fmt_money).parameters["precision"]
     assert precision.default is inspect.Parameter.empty
     assert precision.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
 
@@ -941,8 +1164,8 @@ def test_one_predicate_triggers_every_sentinel():
 
     # The same predicate, seen through each of the four columns it governs.
     assert _pct_change(1000.0, 1000.0003) == "↑ <0.1%"  # percent, 1 place
-    assert _fmt_price_per_m(3e-05, PRICE_MAX_PRECISION) == "<$0.0001"  # price, 4
-    assert _fmt_price_per_m(3e-05, PRICE_MIN_PRECISION) == "<$0.01"  # price, 2
+    assert _fmt_money(3e-05, PRICE_MAX_PRECISION) == "<$0.0001"  # price, 4
+    assert _fmt_money(3e-05, PRICE_MIN_PRECISION) == "<$0.01"  # price, 2
     assert _fmt_int(0.003) == "<0.01"  # count/numeric, 2
 
     # Non-finite magnitudes format to letters, never to zeroes, so they are
@@ -991,9 +1214,9 @@ def test_the_sentinel_keeps_the_sign_of_a_negative_magnitude():
     """
     assert _fmt_int(-0.001) == "-<0.01"
     assert _fmt_int(0.001) == "<0.01"
-    assert _fmt_price_per_m(-1e-09, PRICE_MAX_PRECISION) == "-<$0.0001"
-    assert _fmt_price_per_m(-3.0, PRICE_MIN_PRECISION) == "-$3.00"
-    assert _fmt_price_per_m(3.0, PRICE_MIN_PRECISION) == "$3.00"
+    assert _fmt_money(-1e-09, PRICE_MAX_PRECISION) == "-<$0.0001"
+    assert _fmt_money(-3.0, PRICE_MIN_PRECISION) == "-$3.00"
+    assert _fmt_money(3.0, PRICE_MIN_PRECISION) == "$3.00"
 
     result = classify_change(FieldChange("some.arbitrary.metric", -0.001, 0.002))
     assert (result.old_display, result.new_display) == ("-<0.01", "<0.01")
@@ -1502,6 +1725,7 @@ def _rendered_change_kwargs(**overrides):
         old_raw="0",
         new_raw="20",
         unit=None,
+        price_rule=None,
         delta_display="+20",
         delta_abs=20.0,
         pct_display=None,
@@ -1522,6 +1746,27 @@ def test_rendered_change_rejects_zero_basis_with_a_percentage():
     `__post_init__` must refuse to construct it."""
     with pytest.raises(ValueError, match="pct_basis_zero=True requires pct_display=None"):
         RenderedChange(**_rendered_change_kwargs(pct_basis_zero=True, pct_display="↑ 5.0%"))
+
+
+def test_rendered_change_requires_price_rule_only_for_price_kind() -> None:
+    rule = resolve_price_rule("pricing.prompt", OPENROUTER_PROFILE)
+    price_kwargs = _rendered_change_kwargs(
+        kind="price",
+        field_path="pricing.prompt",
+        label="Input",
+        unit=rule.unit_label,
+        price_rule=rule,
+        semantic="cost",
+        pct_basis_zero=False,
+    )
+
+    assert RenderedChange(**price_kwargs).price_rule is rule
+    with pytest.raises(ValueError, match="price_rule"):
+        RenderedChange(**{**price_kwargs, "price_rule": None})
+    with pytest.raises(ValueError, match="unit"):
+        RenderedChange(**{**price_kwargs, "unit": "/wrong"})
+    with pytest.raises(ValueError, match="price_rule"):
+        RenderedChange(**_rendered_change_kwargs(price_rule=rule))
 
 
 def test_rendered_change_allows_absent_percentage_without_a_zero_basis():
@@ -2476,5 +2721,5 @@ def test_shared_primitives_behave_the_same_in_change_render():
     assert _is_count_field("context_length") is True
     assert _fmt_int(1024.0) == "1,024"
     assert _pct_change(10, 20) == "↑ 100.0%"
-    assert _fmt_price_per_m(2.0, 2) == "$2.00"
+    assert _fmt_money(2.0, 2) == "$2.00"
     assert _normalize_price(0.000002, 1_000_000, 1) == 2.0

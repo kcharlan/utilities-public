@@ -34,8 +34,12 @@ Observed top-level model fields included:
 - optional `benchmarks` and `reasoning`
 
 Nested pricing values were string-encoded per-token amounts for the common
-token-price leaves. The existing OpenRouter multiplier of `1_000_000` therefore
-preserves Model Sentinel's established per-million-token presentation.
+token-price leaves. The registered OpenRouter rules explicitly display
+`prompt`, `completion`, `internal_reasoning`, `input_cache_read`, and
+`input_cache_write` per million tokens. They also declare `web_search` per
+1,000 searches, `request` per request, and `image` per image. Unknown monetary
+leaves display with `/unit unknown` and are excluded from token snapshot
+columns and absolute token-rate comparisons.
 
 ## Abacus.AI
 
@@ -92,9 +96,10 @@ multiplier/divisor can normalize the full Abacus schema correctly.
 
 The current `MULTIPLIER=1` template value is retained to avoid silently
 changing seeded behavior, but it is known to be wrong for Abacus token rates.
-A correct Abacus profile needs per-field pricing rules and units. Until the
-authenticated response is validated and that mechanism exists, Abacus uses the
-generic profile and healthcheck reports the fallback.
+A correct Abacus profile needs a validated mapping from its authenticated
+fields to the existing per-field pricing-rule mechanism. Until that response
+is validated and a dedicated profile is registered, Abacus uses the generic
+profile and healthcheck reports the fallback.
 
 ## OpenCode Zen
 
@@ -108,10 +113,8 @@ behavior. Confirm the authenticated schema before registering the kind.
 
 ## Deferred Profile Work
 
-- Add per-field pricing rules and unit labels before registering an Abacus
-  profile.
+- Register Abacus per-field pricing rules and unit labels after validating its
+  authenticated response.
 - Validate authenticated Abacus and OpenCode Zen payloads against these public
   observations.
 - Confirm whether OpenCode ever exposes pricing or richer capability metadata.
-- Address OpenRouter's existing `pricing.request` per-request unit through the
-  same per-field price-rule mechanism rather than adding another special case.

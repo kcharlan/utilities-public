@@ -525,3 +525,24 @@ D1 and F2 remain intact. The Price Movement headline still selects the largest
 dollar movers, and price-changed model cards are still ranked by impact across
 the page. The amendment removes row-level permutation without weakening the
 report's page-level triage priorities.
+
+### 11. Price display and absolute impact use provider-owned field units
+
+**Amended 2026-08-15.**
+
+The fixed `/1M` assumption in A1, D1, R1, summary details, and the unit column
+is superseded. Every monetary change resolves one immutable provider-owned
+rule, and every human surface consumes that rule's effective conversion and
+unit. OpenRouter token rates display `/1M tokens`; search, request, and image
+rates retain their own denominators, while an unregistered monetary leaf is
+shown conservatively as `/unit unknown`. Raw provider literals remain visible
+in the existing audit surfaces, and JSON/history storage is unchanged.
+
+Direction, percentages, Price Movement tallies and model buckets, Change
+Summary membership, and tier-one inclusion still cover all monetary fields.
+Absolute values from unlike denominators are never compared. D1's global
+panels are now labeled “Biggest token-rate increase/decrease” and consider
+only OpenRouter's declared primary token comparison group. F2 scores that same
+primary group; non-primary-only and coverage-only monetary models remain tier
+one, follow scored token movers, and sort by model ID. The wider unit column
+wraps long unit labels at narrow widths.

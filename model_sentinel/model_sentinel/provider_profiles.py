@@ -11,9 +11,65 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
+from typing import Literal
 
 
 PathCandidates = tuple[tuple[str, ...], ...]
+PriceNormalizedTarget = Literal["per_million_tokens"]
+PriceRuleMatchSource = Literal["path", "leaf", "unmatched"]
+
+PER_MILLION_TOKENS_TARGET: PriceNormalizedTarget = "per_million_tokens"
+USD_PER_MILLION_TOKENS_GROUP = "usd_per_million_tokens"
+
+
+@dataclass(frozen=True)
+class PriceDisplayRule:
+    """Provider-declared conversion and display semantics for one price field."""
+
+    unit_label: str
+    multiplier: int | None = None
+    divisor: int | None = None
+    comparison_group: str | None = None
+    normalized_target: PriceNormalizedTarget | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.unit_label, str) or not self.unit_label.strip():
+            raise ValueError("price rule unit_label must be a non-empty string")
+        if (self.multiplier is None) != (self.divisor is None):
+            raise ValueError("price rule multiplier and divisor must both be explicit or inherited")
+        for name, value in (("multiplier", self.multiplier), ("divisor", self.divisor)):
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 1
+            ):
+                raise ValueError(f"price rule {name} must be a positive integer")
+        if self.comparison_group is not None and (
+            not isinstance(self.comparison_group, str) or not self.comparison_group.strip()
+        ):
+            raise ValueError("price rule comparison_group must be a non-empty string or None")
+        if self.normalized_target not in (None, PER_MILLION_TOKENS_TARGET):
+            raise ValueError(
+                f"unsupported price rule normalized_target: {self.normalized_target!r}"
+            )
+
+
+@dataclass(frozen=True)
+class ResolvedPriceRule:
+    """A price display rule with provider-bound effective factors."""
+
+    unit_label: str
+    multiplier: int
+    divisor: int
+    comparison_group: str | None
+    normalized_target: PriceNormalizedTarget | None
+    match_source: PriceRuleMatchSource
+
+
+_EMPTY_PRICE_RULES: Mapping[str, PriceDisplayRule] = MappingProxyType({})
+_GENERIC_UNMATCHED_PRICE_RULE = PriceDisplayRule(
+    unit_label="/1M",
+    normalized_target=PER_MILLION_TOKENS_TARGET,
+)
 
 
 def default_categorize(field_name: str) -> str:
@@ -77,6 +133,14 @@ class ProviderProfile:
     kind: str
     price_multiplier: int = 1
     price_divisor: int = 1
+    price_path_rules: Mapping[str, PriceDisplayRule] = field(
+        default_factory=lambda: _EMPTY_PRICE_RULES
+    )
+    price_leaf_rules: Mapping[str, PriceDisplayRule] = field(
+        default_factory=lambda: _EMPTY_PRICE_RULES
+    )
+    unmatched_price_rule: PriceDisplayRule = _GENERIC_UNMATCHED_PRICE_RULE
+    primary_price_comparison_group: str | None = None
     envelope_keys: tuple[str, ...] = ("data", "models", "result", "results")
     normalized_fields: Mapping[str, PathCandidates] = field(default_factory=dict)
     field_path_labels: Mapping[str, str] = field(default_factory=dict)
@@ -94,12 +158,23 @@ class ProviderProfile:
     default_show_fields: tuple[str, ...] = ()
     default_squelch_fields: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        for name in ("price_path_rules", "price_leaf_rules"):
+            registry = getattr(self, name)
+            object.__setattr__(self, name, MappingProxyType(dict(registry)))
+
     def with_pricing(self, multiplier: int, divisor: int) -> ProviderProfile:
-        return replace(
+        bound = replace(
             self,
             price_multiplier=multiplier,
             price_divisor=divisor,
         )
+        # `self` already owns defensive copies. Restore those trusted proxies
+        # after `replace()` runs validation so rebinding factors preserves the
+        # immutable registry objects without retaining caller-owned mappings.
+        object.__setattr__(bound, "price_path_rules", self.price_path_rules)
+        object.__setattr__(bound, "price_leaf_rules", self.price_leaf_rules)
+        return bound
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +367,48 @@ _OPENROUTER_DEFAULT_SQUELCH_FIELDS = (
     "benchmarks.*",
 )
 
+_OPENROUTER_TOKEN_PRICE_RULE = PriceDisplayRule(
+    unit_label="/1M tokens",
+    multiplier=1_000_000,
+    divisor=1,
+    comparison_group=USD_PER_MILLION_TOKENS_GROUP,
+    normalized_target=PER_MILLION_TOKENS_TARGET,
+)
+
+_OPENROUTER_PRICE_LEAF_RULES: Mapping[str, PriceDisplayRule] = MappingProxyType(
+    {
+        "prompt": _OPENROUTER_TOKEN_PRICE_RULE,
+        "completion": _OPENROUTER_TOKEN_PRICE_RULE,
+        "internal_reasoning": _OPENROUTER_TOKEN_PRICE_RULE,
+        "input_cache_read": _OPENROUTER_TOKEN_PRICE_RULE,
+        "input_cache_write": _OPENROUTER_TOKEN_PRICE_RULE,
+        "web_search": PriceDisplayRule(
+            unit_label="/1K searches",
+            multiplier=1_000,
+            divisor=1,
+            comparison_group="usd_per_thousand_searches",
+        ),
+        "request": PriceDisplayRule(
+            unit_label="/request",
+            multiplier=1,
+            divisor=1,
+            comparison_group="usd_per_request",
+        ),
+        "image": PriceDisplayRule(
+            unit_label="/image",
+            multiplier=1,
+            divisor=1,
+            comparison_group="usd_per_image",
+        ),
+    }
+)
+
+_OPENROUTER_UNMATCHED_PRICE_RULE = PriceDisplayRule(
+    unit_label="/unit unknown",
+    multiplier=1,
+    divisor=1,
+)
+
 _DEFAULT_NORMALIZED_FIELDS: Mapping[str, PathCandidates] = {
     "provider_model_id": (("id",), ("model",), ("name",)),
     "display_name": (("name",), ("display_name",)),
@@ -338,6 +455,9 @@ GENERIC_PROFILE = ProviderProfile(
 
 OPENROUTER_PROFILE = ProviderProfile(
     kind="openrouter",
+    price_leaf_rules=_OPENROUTER_PRICE_LEAF_RULES,
+    unmatched_price_rule=_OPENROUTER_UNMATCHED_PRICE_RULE,
+    primary_price_comparison_group=USD_PER_MILLION_TOKENS_GROUP,
     envelope_keys=("data",),
     normalized_fields=_DEFAULT_NORMALIZED_FIELDS,
     field_path_labels=_OPENROUTER_FIELD_PATH_LABELS,
