@@ -61,9 +61,10 @@ Two alternatives were rejected:
 
 Add a small `model_sentinel/build_info.py` module containing source-checkout
 defaults. Runtime helpers in that module expose a stable display string and
-the current entrypoint path. The standalone installer replaces only the
-staged copy of the metadata constants before creating the zipapp; it never
-modifies the checkout.
+the current entrypoint path. The standalone installer adds a generated,
+constants-only `model_sentinel/_packaged_build.py` to the staging tree before
+creating the zipapp; `build_info.py` imports those constants when present.
+The installer never writes generated metadata into the checkout.
 
 Packaged metadata:
 
@@ -72,9 +73,9 @@ Packaged metadata:
   with a visible modified marker when tracked or untracked files under this
   project differ from that revision; otherwise `unknown`.
 - `BUILD_SOURCE_HASH`: a SHA-256 digest over the staged Python files that will
-  enter the artifact, excluding generated `build_info.py` to avoid a recursive
-  hash. Paths are relative and sorted, making repeated builds of identical
-  source produce the same content identity.
+  enter the artifact, excluding generated `_packaged_build.py` to avoid a
+  recursive hash. Paths are relative and sorted, making repeated builds of
+  identical source produce the same content identity.
 - `BUILD_TIME_UTC`: the UTC packaging timestamp. It is diagnostic metadata,
   not part of freshness equality.
 

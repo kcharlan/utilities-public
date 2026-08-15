@@ -80,13 +80,29 @@ and seeds the runtime-home config files if they do not already exist:
 After installation you can run:
 
 ```bash
+~/Library/Scripts/model-sentinel --version
 ~/Library/Scripts/model-sentinel --help
 ~/Library/Scripts/model-sentinel healthcheck
 ```
 
-This removes the repo dependency for normal execution. The repo-provided
-`launchd` installer is separate and embeds the checkout path when it is seeded;
-see [`docs/LAUNCHD.md`](./docs/LAUNCHD.md).
+The zipapp is a point-in-time copy: pulling or editing the repository does not
+update it. After repository updates, rebuild the standalone or run the
+read-only freshness check from the checkout:
+
+```bash
+./install_standalone.sh
+./install_standalone.sh --check
+```
+
+`--check` compares the exact Python contents that would be packaged with the
+source hash embedded in the installed target. It does not replace the target,
+seed runtime files, load provider configuration, or contact a provider.
+`--version` is also configuration-free and reports the product version,
+artifact kind, Git revision context, packaged source hash, and UTC build time.
+
+The standalone removes the repo dependency for normal execution. The
+repo-provided `launchd` installer is separate and embeds the checkout path when
+it is seeded; see [`docs/LAUNCHD.md`](./docs/LAUNCHD.md).
 
 The standalone install does not remove the requirement that provider
 credentials exist in the process environment. If your credentials come from a
@@ -289,6 +305,7 @@ This lists configured providers and useful status fields, including whether each
 
 This validates:
 
+- the running build identity and resolved command entrypoint
 - `~/.model_sentinel/providers.env`
 - `~/.model_sentinel/settings.env`
 - all provider definitions
@@ -304,6 +321,7 @@ kinds that are using the generic fallback profile.
 Built-in help is intended to be complete:
 
 ```bash
+./model-sentinel --version
 ./model-sentinel --help
 ./model-sentinel scan --help
 ./model-sentinel history --help

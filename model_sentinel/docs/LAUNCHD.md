@@ -47,7 +47,11 @@ runtime installer or remove the seeded installer and rerun
 
 The standalone zipapp installer does not change this LaunchAgent target or
 seed `install_launchd.sh`; using the standalone executable for scheduled runs
-requires setting `PROJECT_DIR`/the runner command accordingly.
+requires setting `PROJECT_DIR`/the runner command accordingly. A standalone
+target is a point-in-time copy and must be rebuilt after repository updates.
+Replacing the same target path with `install_standalone.sh` is atomic and does
+not require reloading launchd; the generated runner resolves the path on every
+invocation.
 
 ## 2. Edit `launchd.env`
 
@@ -145,6 +149,18 @@ Useful files:
 - `~/.model_sentinel/logs/launchd.stderr.log`
 - `~/.model_sentinel/reports/`
 
+For a job customized to run the standalone target, diagnose deployment
+freshness from the checkout before inspecting the logs:
+
+```bash
+./install_standalone.sh --check
+~/Library/Scripts/model-sentinel --version
+~/Library/Scripts/model-sentinel healthcheck
+```
+
+The freshness check is read-only. A `stale` result means the standalone must
+be rebuilt; it does not imply that launchd itself needs to be reloaded.
+
 Observed behavior:
 
 - the human-readable Model Sentinel report goes to `launchd.stdout.log`
@@ -162,7 +178,11 @@ That removes the LaunchAgent from `~/Library/LaunchAgents/` but keeps the runtim
 
 - The scheduled job uses `MODEL_SENTINEL_HOME` pointing at `~/.model_sentinel/`.
 - The generated runner depends on the repository path captured when
-  `setup_launchd.sh` seeded the runtime installer.
+  `setup_launchd.sh` seeded the runtime installer, unless the runtime installer
+  was explicitly customized to target a standalone directory.
+- A customized standalone target remains independent of the checkout at run
+  time, but repository updates do not update that target. Rebuild it with
+  `install_standalone.sh` and verify it with `install_standalone.sh --check`.
 - If credentials are missing in `launchd.env`, the run will fail just like a manual invocation.
 - Notifications behave the same as manual runs.
 - Click-to-open notifications require `terminal-notifier`.
