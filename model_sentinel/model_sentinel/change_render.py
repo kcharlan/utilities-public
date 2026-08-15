@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .models import FieldChange
-from .provider_profiles import ProviderProfile
+from .provider_profiles import ProviderProfile, ResolvedPriceRule
 
 
 PricingFieldSortKey = tuple[int, int, str, str]
@@ -137,6 +137,48 @@ def resolve_field_label(
         leaf = bare_path.rsplit(".", 1)[-1]
         label = profile.field_leaf_labels.get(leaf, _prettify_leaf(leaf))
     return label, qualifier
+
+
+def resolve_price_rule(
+    field_path: str,
+    profile: ProviderProfile,
+) -> ResolvedPriceRule:
+    """Resolve one price field by exact bare path, leaf, then profile fallback."""
+    bare_path, _ = _split_field_path(field_path)
+    leaf = bare_path.rsplit(".", 1)[-1]
+    if bare_path in profile.price_path_rules:
+        declaration = profile.price_path_rules[bare_path]
+        source = "path"
+    elif leaf in profile.price_leaf_rules:
+        declaration = profile.price_leaf_rules[leaf]
+        source = "leaf"
+    else:
+        declaration = profile.unmatched_price_rule
+        source = "unmatched"
+
+    multiplier = (
+        profile.price_multiplier
+        if declaration.multiplier is None
+        else declaration.multiplier
+    )
+    divisor = (
+        profile.price_divisor
+        if declaration.divisor is None
+        else declaration.divisor
+    )
+    if multiplier < 1 or divisor < 1:
+        raise ValueError(
+            f"effective price factors must be positive for field {field_path!r}: "
+            f"multiplier={multiplier}, divisor={divisor}"
+        )
+    return ResolvedPriceRule(
+        unit_label=declaration.unit_label,
+        multiplier=multiplier,
+        divisor=divisor,
+        comparison_group=declaration.comparison_group,
+        normalized_target=declaration.normalized_target,
+        match_source=source,
+    )
 
 
 # `_split_field_path` joins multiple bracket groups with this exact separator,

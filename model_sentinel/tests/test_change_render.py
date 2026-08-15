@@ -49,11 +49,14 @@ from model_sentinel.change_render import (
     format_qualified_label,
     pricing_field_sort_key,
     resolve_field_label as resolve_field_label_with_profile,
+    resolve_price_rule,
 )
 from model_sentinel.models import FieldChange
 from model_sentinel.provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
+    PER_MILLION_TOKENS_TARGET,
+    PriceDisplayRule,
     ProviderProfile,
     default_categorize as _classify_field,
     default_is_price_amount_field as _is_price_amount_field,
@@ -189,6 +192,94 @@ def test_pricing_field_sort_key_does_not_infer_similar_names() -> None:
 
     assert prompt_key[:2] == (0, 0)
     assert surcharge_key[:2] == (1, 0)
+
+
+def test_price_rule_exact_path_wins_over_leaf() -> None:
+    profile = ProviderProfile(
+        kind="synthetic",
+        price_path_rules={
+            "pricing.special.prompt": PriceDisplayRule(
+                unit_label="/exact operation",
+                multiplier=9,
+                divisor=2,
+                comparison_group="usd_per_exact_operation",
+            )
+        },
+        price_leaf_rules={
+            "prompt": PriceDisplayRule(
+                unit_label="/leaf operation",
+                multiplier=4,
+                divisor=1,
+            )
+        },
+    )
+
+    exact = resolve_price_rule("pricing.special.prompt", profile)
+    leaf = resolve_price_rule("pricing.other.prompt", profile)
+
+    assert exact.unit_label == "/exact operation"
+    assert (exact.multiplier, exact.divisor) == (9, 2)
+    assert exact.comparison_group == "usd_per_exact_operation"
+    assert exact.match_source == "path"
+    assert leaf.unit_label == "/leaf operation"
+    assert leaf.match_source == "leaf"
+
+
+def test_price_rule_resolves_conditional_leaf() -> None:
+    rule = resolve_price_rule(
+        "pricing.overrides[min_prompt_tokens=200000].prompt",
+        OPENROUTER_PROFILE,
+    )
+
+    assert rule.unit_label == "/1M tokens"
+    assert (rule.multiplier, rule.divisor) == (1_000_000, 1)
+    assert rule.normalized_target == PER_MILLION_TOKENS_TARGET
+    assert rule.match_source == "leaf"
+
+
+def test_openrouter_unknown_price_rule_is_conservative() -> None:
+    rule = resolve_price_rule("pricing.input_cache_write_1h", OPENROUTER_PROFILE)
+
+    assert rule.unit_label == "/unit unknown"
+    assert (rule.multiplier, rule.divisor) == (1, 1)
+    assert rule.comparison_group is None
+    assert rule.normalized_target is None
+    assert rule.match_source == "unmatched"
+
+
+def test_generic_price_rule_binds_active_profile_factors() -> None:
+    rule = resolve_price_rule(
+        "pricing.synthetic_amount",
+        GENERIC_PROFILE.with_pricing(7, 3),
+    )
+
+    assert rule.unit_label == "/1M"
+    assert (rule.multiplier, rule.divisor) == (7, 3)
+    assert rule.normalized_target == PER_MILLION_TOKENS_TARGET
+    assert rule.comparison_group is None
+    assert rule.match_source == "unmatched"
+
+
+@pytest.mark.parametrize(
+    "field_path",
+    ("pricing.prompt_surcharge", "pricing.web_search_preview"),
+)
+def test_price_rule_resolution_does_not_infer_similar_names(field_path: str) -> None:
+    rule = resolve_price_rule(field_path, OPENROUTER_PROFILE)
+
+    assert rule.unit_label == "/unit unknown"
+    assert rule.match_source == "unmatched"
+
+
+@pytest.mark.parametrize("multiplier, divisor", ((0, 1), (1, 0), (-1, 1), (1, -1)))
+def test_price_rule_rejects_non_positive_inherited_factors(
+    multiplier: int,
+    divisor: int,
+) -> None:
+    profile = GENERIC_PROFILE.with_pricing(multiplier, divisor)
+
+    with pytest.raises(ValueError, match="positive"):
+        resolve_price_rule("pricing.synthetic_amount", profile)
 
 
 def _is_boolean_change(field_change: FieldChange) -> bool:

@@ -6,6 +6,9 @@ from model_sentinel.config import ProviderConfig
 from model_sentinel.provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
+    PER_MILLION_TOKENS_TARGET,
+    USD_PER_MILLION_TOKENS_GROUP,
+    PriceDisplayRule,
     default_categorize,
     default_is_price_amount_field,
     resolve_profile,
@@ -130,3 +133,134 @@ def test_top_level_model_list_bypasses_envelope_search(
     models = [{"id": "synthetic/model-a"}]
 
     assert extract_model_list(synthetic_provider, models, profile) == models
+
+
+def test_price_display_rule_accepts_explicit_and_inherited_factors() -> None:
+    explicit = PriceDisplayRule(
+        unit_label="/synthetic operation",
+        multiplier=7,
+        divisor=3,
+        comparison_group="usd_per_synthetic_operation",
+    )
+    inherited = PriceDisplayRule(
+        unit_label="/1M",
+        normalized_target=PER_MILLION_TOKENS_TARGET,
+    )
+
+    assert (explicit.multiplier, explicit.divisor) == (7, 3)
+    assert (inherited.multiplier, inherited.divisor) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {"unit_label": ""},
+        {"unit_label": "   "},
+        {"unit_label": "/unit", "multiplier": 1},
+        {"unit_label": "/unit", "divisor": 1},
+        {"unit_label": "/unit", "multiplier": 0, "divisor": 1},
+        {"unit_label": "/unit", "multiplier": 1, "divisor": -1},
+        {"unit_label": "/unit", "comparison_group": "  "},
+        {"unit_label": "/unit", "normalized_target": "per_guess"},
+    ),
+)
+def test_price_display_rule_rejects_invalid_declarations(kwargs: dict) -> None:
+    with pytest.raises(ValueError):
+        PriceDisplayRule(**kwargs)  # type: ignore[arg-type]
+
+
+def test_price_display_rule_is_frozen() -> None:
+    rule = PriceDisplayRule(unit_label="/synthetic operation")
+
+    with pytest.raises(FrozenInstanceError):
+        rule.unit_label = "/changed"  # type: ignore[misc]
+
+
+def test_generic_profile_declares_inherited_token_fallback_without_comparison() -> None:
+    rule = GENERIC_PROFILE.unmatched_price_rule
+
+    assert GENERIC_PROFILE.price_path_rules == {}
+    assert GENERIC_PROFILE.price_leaf_rules == {}
+    assert (rule.multiplier, rule.divisor) == (None, None)
+    assert rule.unit_label == "/1M"
+    assert rule.normalized_target == PER_MILLION_TOKENS_TARGET
+    assert rule.comparison_group is None
+    assert GENERIC_PROFILE.primary_price_comparison_group is None
+
+
+def test_openrouter_profile_declares_exact_price_rule_registry() -> None:
+    rules = OPENROUTER_PROFILE.price_leaf_rules
+
+    assert set(rules) == {
+        "prompt",
+        "completion",
+        "internal_reasoning",
+        "input_cache_read",
+        "input_cache_write",
+        "web_search",
+        "request",
+        "image",
+    }
+    for leaf in (
+        "prompt",
+        "completion",
+        "internal_reasoning",
+        "input_cache_read",
+        "input_cache_write",
+    ):
+        rule = rules[leaf]
+        assert (rule.multiplier, rule.divisor) == (1_000_000, 1)
+        assert rule.unit_label == "/1M tokens"
+        assert rule.comparison_group == USD_PER_MILLION_TOKENS_GROUP
+        assert rule.normalized_target == PER_MILLION_TOKENS_TARGET
+
+    assert rules["web_search"] == PriceDisplayRule(
+        unit_label="/1K searches",
+        multiplier=1_000,
+        divisor=1,
+        comparison_group="usd_per_thousand_searches",
+    )
+    assert rules["request"] == PriceDisplayRule(
+        unit_label="/request",
+        multiplier=1,
+        divisor=1,
+        comparison_group="usd_per_request",
+    )
+    assert rules["image"] == PriceDisplayRule(
+        unit_label="/image",
+        multiplier=1,
+        divisor=1,
+        comparison_group="usd_per_image",
+    )
+    assert OPENROUTER_PROFILE.price_path_rules == {}
+    assert OPENROUTER_PROFILE.primary_price_comparison_group == USD_PER_MILLION_TOKENS_GROUP
+
+
+def test_openrouter_profile_unknown_price_rule_is_conservative() -> None:
+    rule = OPENROUTER_PROFILE.unmatched_price_rule
+
+    assert (rule.multiplier, rule.divisor) == (1, 1)
+    assert rule.unit_label == "/unit unknown"
+    assert rule.comparison_group is None
+    assert rule.normalized_target is None
+
+
+def test_price_rule_registries_are_immutable() -> None:
+    with pytest.raises(TypeError):
+        OPENROUTER_PROFILE.price_leaf_rules["synthetic"] = PriceDisplayRule(  # type: ignore[index]
+            unit_label="/synthetic operation"
+        )
+    with pytest.raises(TypeError):
+        OPENROUTER_PROFILE.price_path_rules["pricing.synthetic"] = PriceDisplayRule(  # type: ignore[index]
+            unit_label="/synthetic operation"
+        )
+
+
+def test_with_pricing_preserves_price_rule_contract() -> None:
+    bound = OPENROUTER_PROFILE.with_pricing(7, 3)
+
+    assert bound.price_path_rules is OPENROUTER_PROFILE.price_path_rules
+    assert bound.price_leaf_rules is OPENROUTER_PROFILE.price_leaf_rules
+    assert bound.unmatched_price_rule is OPENROUTER_PROFILE.unmatched_price_rule
+    assert bound.primary_price_comparison_group == OPENROUTER_PROFILE.primary_price_comparison_group
+    assert (bound.price_multiplier, bound.price_divisor) == (7, 3)
