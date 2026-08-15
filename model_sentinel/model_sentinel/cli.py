@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Sequence
 
+from .__init__ import __version__
+from .build_info import format_build_info, runtime_entrypoint
 from .config import (
     ConfigError,
     default_runtime_home,
@@ -106,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
             "  If no baseline exists yet, run:\n"
             "      model_sentinel scan --save\n"
         ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"model_sentinel {__version__} {format_build_info(full_hash=True)}",
     )
     subparsers = parser.add_subparsers(dest="command", required=False)
 
@@ -207,6 +214,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.Logger) -> int:
+    logger.info(
+        "Runtime build: %s executable=%s",
+        format_build_info(full_hash=False),
+        runtime_entrypoint(),
+    )
     selected = validate_selected_providers(loaded.providers, provider_id=args.provider)
     missing = missing_credentials(selected, os.environ)
     if missing:
@@ -539,7 +551,16 @@ def run_changes(*, args: argparse.Namespace, loaded, store: Store) -> int:
 
 
 def run_healthcheck(*, args: argparse.Namespace, project_root: Path) -> int:
-    checks: list[dict[str, str]] = []
+    checks: list[dict[str, str]] = [
+        {
+            "check": "runtime_build",
+            "status": "ok",
+            "detail": (
+                f"{format_build_info(full_hash=False)} "
+                f"executable={runtime_entrypoint()}"
+            ),
+        }
+    ]
     runtime_home = default_runtime_home()
     providers_path = runtime_home / "providers.env"
     settings_path = runtime_home / "settings.env"
@@ -775,7 +796,7 @@ def _normalize_argv_for_default_scan(argv: list[str]) -> list[str]:
     if not argv:
         return ["scan"]
     first = argv[0]
-    if first in {"-h", "--help"}:
+    if first in {"-h", "--help", "--version"}:
         return argv
     if first in COMMANDS:
         return argv

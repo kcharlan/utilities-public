@@ -1,9 +1,14 @@
 from pathlib import Path
 
 from argparse import Namespace
+import json
 import os
 
+import pytest
+
 import model_sentinel.cli as cli
+from model_sentinel.__init__ import __version__
+from model_sentinel.build_info import format_build_info
 from model_sentinel.config import ProviderConfig
 from model_sentinel.models import BaselineInfo
 from model_sentinel.storage import Store
@@ -36,6 +41,30 @@ def _write_config_files(root: Path) -> Path:
     return runtime_home
 
 
+def test_version_is_configuration_free(tmp_path: Path, monkeypatch, capsys) -> None:
+    runtime_home = tmp_path / "missing-runtime-home"
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--version"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert captured.out.strip() == (
+        f"model_sentinel {__version__} {format_build_info(full_hash=True)}"
+    )
+    assert captured.err == ""
+    assert not runtime_home.exists()
+
+
+def test_default_scan_normalization_preserves_the_top_level_version_flag() -> None:
+    assert cli._normalize_argv_for_default_scan(["--version"]) == ["--version"]
+    assert cli._normalize_argv_for_default_scan(["--no-notify"]) == [
+        "scan",
+        "--no-notify",
+    ]
+
+
 def test_default_scan_without_baseline_explains_next_step(tmp_path: Path, monkeypatch, capsys) -> None:
     runtime_home = _write_config_files(tmp_path)
     monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
@@ -44,8 +73,33 @@ def test_default_scan_without_baseline_explains_next_step(tmp_path: Path, monkey
     exit_code = cli.main([])
     captured = capsys.readouterr()
     assert exit_code == 0
+    assert captured.err.count("Runtime build:") == 1
+    assert "build=source" in captured.err
+    assert "source_sha256=unpackaged" in captured.err
+    assert "executable=" in captured.err
+    assert captured.err.index("Runtime build:") < captured.err.index("Scanning providers:")
     assert "No saved baseline exists for provider 'openrouter'" in captured.out
     assert "model_sentinel scan --save" in captured.out
+
+
+def test_scan_logs_runtime_identity_before_a_credential_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.delenv("OPENROUTER_AI_CREDS", raising=False)
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    exit_code = cli.main(["scan"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.err.count("Runtime build:") == 1
+    assert "executable=" in captured.err
+    assert captured.err.index("Runtime build:") < captured.err.index(
+        "Missing required credential environment variables:"
+    )
 
 
 def test_save_mode_allows_initial_baseline_without_prior_snapshot(tmp_path: Path) -> None:
@@ -664,10 +718,37 @@ def test_healthcheck_reports_distinct_provider_labels_as_ok(tmp_path: Path, monk
     captured = capsys.readouterr()
 
     assert exit_code == 0
+    assert "OK      runtime_build:" in captured.out
+    assert "build=source" in captured.out
+    assert "source_sha256=unpackaged" in captured.out
+    assert "executable=" in captured.out
     assert "OK      provider_labels" in captured.out
     assert "WARN" not in captured.out
     assert "Duplicate provider label" not in captured.out
     assert "config_load" not in captured.out
+
+
+def test_healthcheck_json_reports_runtime_build_without_changing_status(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    exit_code = cli.main(["healthcheck", "--format", "json"])
+    captured = capsys.readouterr()
+    checks = json.loads(captured.out)
+    runtime_checks = [check for check in checks if check["check"] == "runtime_build"]
+
+    assert exit_code == 0
+    assert captured.err == ""
+    assert len(runtime_checks) == 1
+    assert runtime_checks[0]["status"] == "ok"
+    assert "build=source" in runtime_checks[0]["detail"]
+    assert "source_sha256=unpackaged" in runtime_checks[0]["detail"]
+    assert "executable=" in runtime_checks[0]["detail"]
 
 
 def test_healthcheck_warns_when_provider_kind_has_no_registered_profile(
