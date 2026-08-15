@@ -13,6 +13,12 @@ constant.
 
 DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
 
+* 2026-08-15: provider-owned price rules changed contracted OpenRouter token
+  labels from `/1M` (including the old spaced spelling) to `/1M tokens`, made
+  the global mover label explicitly token-rate-only, and widened/wrapped the
+  HTML unit column. JSON remained byte-for-byte unchanged. Precision-specific
+  formatter probes use a synthetic inherited rule so they continue testing
+  small-value bounds rather than stale OpenRouter-wide factors.
 * Task 3c unified list-member stringification on JSON, changing how `dict`
   members inside a list field are spelled.
 * Task 4 landed E1 and E2, the first intentional readability changes. E1
@@ -262,9 +268,15 @@ from __future__ import annotations
 import os
 import re
 import time
+from dataclasses import replace
 
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
-from model_sentinel.provider_profiles import OPENROUTER_PROFILE
+from model_sentinel.provider_profiles import (
+    OPENROUTER_PROFILE,
+    PER_MILLION_TOKENS_TARGET,
+    USD_PER_MILLION_TOKENS_GROUP,
+    PriceDisplayRule,
+)
 from model_sentinel.reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     ReportDetailPolicy,
@@ -287,6 +299,23 @@ time.tzset()
 # Fixed instant used for every golden render in this module.
 GENERATED_AT = "2026-07-25T09:00:00+00:00"
 COMMAND = "scan"
+
+
+def _legacy_inherited_price_profile(multiplier: int):
+    """Keep formatter edge probes independent of OpenRouter's contracted scale."""
+    return replace(
+        OPENROUTER_PROFILE,
+        price_multiplier=multiplier,
+        price_divisor=1,
+        price_path_rules={},
+        price_leaf_rules={},
+        unmatched_price_rule=PriceDisplayRule(
+            unit_label="/1M",
+            comparison_group=USD_PER_MILLION_TOKENS_GROUP,
+            normalized_target=PER_MILLION_TOKENS_TARGET,
+        ),
+        primary_price_comparison_group=USD_PER_MILLION_TOKENS_GROUP,
+    )
 
 # Literal expected renderings of GENERATED_AT, valid because TZ is pinned to UTC
 # above. Do NOT replace these with calls to to_local_human()/to_local_iso() --
@@ -450,10 +479,10 @@ Synth Provider (synthprov)
   changed: 7
     * synth/model-core (Synth Model Core)
       [Pricing]
-        Cache read: null → 5e-08 ($0.05 / 1M)
-        Cache write: 9e-08 ($0.09 / 1M) → null
-        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
-        Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
+        Cache read: null → 5e-08 ($0.05 /1M tokens)
+        Cache write: 9e-08 ($0.09 /1M tokens) → null
+        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 /1M tokens, ↑ 75.0%)
+        Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 /1M tokens, ↑ 25.0%)
       [Context & Limits]
         Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
       [Parameters]
@@ -500,10 +529,10 @@ Synth Provider (synthprov)
   changed: 7
     * synth/model-core (Synth Model Core)
       [Pricing]
-        Cache read: null → 5e-08 ($0.05 / 1M)
-        Cache write: 9e-08 ($0.09 / 1M) → null
-        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)
-        Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)
+        Cache read: null → 5e-08 ($0.05 /1M tokens)
+        Cache write: 9e-08 ($0.09 /1M tokens) → null
+        Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 /1M tokens, ↑ 75.0%)
+        Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 /1M tokens, ↑ 25.0%)
       [Context & Limits]
         Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)
       [Parameters]
@@ -556,14 +585,14 @@ _EXPECTED_MARKDOWN_TEMPLATE = """# Model Sentinel Report
 ### Changed (7)
 
 - `synth/model-core` - Synth Model Core
-  - `Cache read: null → 5e-08 ($0.05 / 1M)`
-  - `Cache write: 9e-08 ($0.09 / 1M) → null`
-  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
+  - `Cache read: null → 5e-08 ($0.05 /1M tokens)`
+  - `Cache write: 9e-08 ($0.09 /1M tokens) → null`
+  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 /1M tokens, ↑ 75.0%)`
   - `Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
   - `Moderated: off → on`
   - `Reasoning default: off → on`
   - `Supported parameters: +logit_bias (1 → 2)`
-  - `Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
+  - `Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 /1M tokens, ↑ 25.0%)`
   - `Expiration date: null → 2030-12-31`
   - Squelched: `1` field change(s) hidden by report detail policy
 - `synth/model-limit-add` - Synth Model Limit Add
@@ -606,14 +635,14 @@ _EXPECTED_MARKDOWN_DETAIL_ALL_TEMPLATE = """# Model Sentinel Report
 ### Changed (7)
 
 - `synth/model-core` - Synth Model Core
-  - `Cache read: null → 5e-08 ($0.05 / 1M)`
-  - `Cache write: 9e-08 ($0.09 / 1M) → null`
-  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`
+  - `Cache read: null → 5e-08 ($0.05 /1M tokens)`
+  - `Cache write: 9e-08 ($0.09 /1M tokens) → null`
+  - `Output: 2e-06 → 3.5e-06 ($2.00 → $3.50 /1M tokens, ↑ 75.0%)`
   - `Context length: 131,072 → 262,144 (+131,072, ↑ 100.0%)`
   - `Moderated: off → on`
   - `Reasoning default: off → on`
   - `Supported parameters: +logit_bias (1 → 2)`
-  - `Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`
+  - `Output (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 /1M tokens, ↑ 25.0%)`
   - `Expiration date: null → 2030-12-31`
   - `Example suite: +{"score": 2}; -{"score": 1} (1 → 1)`
 - `synth/model-limit-add` - Synth Model Limit Add
@@ -1116,7 +1145,7 @@ td.change-delta { font-weight: 600; }
 .card-table col.col-arrow { width: 1.25rem; }
 .card-table col.col-old,
 .card-table col.col-new { width: 7rem; }
-.card-table col.col-unit { width: 2.75rem; }
+.card-table col.col-unit { width: 6.5rem; }
 .card-table col.col-delta { width: 7rem; }
 .card-table col.col-pct { width: 5.5rem; }
 .card-table td {
@@ -1154,6 +1183,10 @@ td.change-delta { font-weight: 600; }
 .card-table td.arrow,
 .card-table td.unit {
   color: var(--text-dim);
+}
+.card-table td.unit {
+  min-width: 6.5rem;
+  overflow-wrap: anywhere;
 }
 .card-table td.delta,
 .card-table td.pct {
@@ -1325,20 +1358,20 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="provider-card status-changed"><div class="provider-name">Synth Provider</div><div class="provider-stats">7 models</div><div class="provider-badge">7 changes</div></div>
 </div>
 
-<section class="price-movement-summary" id="price-movement"><div class="price-movement-title">PRICE MOVEMENT <span class="outcome price-higher">higher — 1 up</span></div><div class="price-movement-headlines"><div class="price-headline"><div class="price-headline-label price-higher">Biggest increase</div><a class="model-link" href="#m-synth-model-core"><code class="price-headline-model">synth/model-core</code></a><div class="price-headline-field" title="pricing.completion">Output</div><div class="price-headline-values">$2.00 → $3.50<span class="price-headline-unit">/1M</span></div><div class="price-headline-figures"><span class="price-headline-delta price-higher">+$1.50</span><span class="price-headline-pct price-higher">↑ 75.0%</span></div></div></div><div class="price-movement-tallies"><div class="price-tally-group"><span class="price-tally-label">1 model</span><span class="price-tally-chip price-higher">↑ 1 higher</span></div><div class="price-tally-group"><span class="price-tally-label">4 price fields</span><span class="price-tally-chip price-higher">↑ 2</span><span class="price-tally-chip price-coverage">+1 added</span><span class="price-tally-chip price-coverage">−1 removed</span></div></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher only — 1</div><div class="price-movement-model"><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></div></div></div></details></section>
+<section class="price-movement-summary" id="price-movement"><div class="price-movement-title">PRICE MOVEMENT <span class="outcome price-higher">higher — 1 up</span></div><div class="price-movement-headlines"><div class="price-headline"><div class="price-headline-label price-higher">Biggest token-rate increase</div><a class="model-link" href="#m-synth-model-core"><code class="price-headline-model">synth/model-core</code></a><div class="price-headline-field" title="pricing.completion">Output</div><div class="price-headline-values">$2.00 → $3.50<span class="price-headline-unit">/1M tokens</span></div><div class="price-headline-figures"><span class="price-headline-delta price-higher">+$1.50</span><span class="price-headline-pct price-higher">↑ 75.0%</span></div></div></div><div class="price-movement-tallies"><div class="price-tally-group"><span class="price-tally-label">1 model</span><span class="price-tally-chip price-higher">↑ 1 higher</span></div><div class="price-tally-group"><span class="price-tally-label">4 price fields</span><span class="price-tally-chip price-higher">↑ 2</span><span class="price-tally-chip price-coverage">+1 added</span><span class="price-tally-chip price-coverage">−1 removed</span></div></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher only — 1</div><div class="price-movement-model"><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></div></div></div></details></section>
 
 <section class="provider-section"><h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>
 <h3>Changed</h3>
 <div class="model-card" id="m-synth-model-core">
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><span class="hidden-count" title="1 squelched">+1 hidden</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M tokens</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">— → 5e-08</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M tokens</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">9e-08 → —</td></tr>
-<tr><td></td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr><td></td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M tokens</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M tokens</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val num">131,072</td><td class="arrow">→</td><td class="new-val num">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
 <tr class="group-start row-alt"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
@@ -1391,10 +1424,10 @@ _EXPECTED_HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
 </div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>$0.09 → — /1M (removed)</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → $0.05 /1M tokens (added)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>$0.09 → — /1M tokens (removed)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>$2.00 → $3.50 /1M tokens (+$1.50, ↑ 75.0%)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → $5.00 /1M tokens (+$1.00, ↑ 25.0%)</td></tr>
 <tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
 <tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384 tok (added)</td></tr>
@@ -1440,20 +1473,20 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
   <div class="provider-card status-changed"><div class="provider-name">Synth Provider</div><div class="provider-stats">7 models</div><div class="provider-badge">7 changes</div></div>
 </div>
 
-<section class="price-movement-summary" id="price-movement"><div class="price-movement-title">PRICE MOVEMENT <span class="outcome price-higher">higher — 1 up</span></div><div class="price-movement-headlines"><div class="price-headline"><div class="price-headline-label price-higher">Biggest increase</div><a class="model-link" href="#m-synth-model-core"><code class="price-headline-model">synth/model-core</code></a><div class="price-headline-field" title="pricing.completion">Output</div><div class="price-headline-values">$2.00 → $3.50<span class="price-headline-unit">/1M</span></div><div class="price-headline-figures"><span class="price-headline-delta price-higher">+$1.50</span><span class="price-headline-pct price-higher">↑ 75.0%</span></div></div></div><div class="price-movement-tallies"><div class="price-tally-group"><span class="price-tally-label">1 model</span><span class="price-tally-chip price-higher">↑ 1 higher</span></div><div class="price-tally-group"><span class="price-tally-label">4 price fields</span><span class="price-tally-chip price-higher">↑ 2</span><span class="price-tally-chip price-coverage">+1 added</span><span class="price-tally-chip price-coverage">−1 removed</span></div></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher only — 1</div><div class="price-movement-model"><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></div></div></div></details></section>
+<section class="price-movement-summary" id="price-movement"><div class="price-movement-title">PRICE MOVEMENT <span class="outcome price-higher">higher — 1 up</span></div><div class="price-movement-headlines"><div class="price-headline"><div class="price-headline-label price-higher">Biggest token-rate increase</div><a class="model-link" href="#m-synth-model-core"><code class="price-headline-model">synth/model-core</code></a><div class="price-headline-field" title="pricing.completion">Output</div><div class="price-headline-values">$2.00 → $3.50<span class="price-headline-unit">/1M tokens</span></div><div class="price-headline-figures"><span class="price-headline-delta price-higher">+$1.50</span><span class="price-headline-pct price-higher">↑ 75.0%</span></div></div></div><div class="price-movement-tallies"><div class="price-tally-group"><span class="price-tally-label">1 model</span><span class="price-tally-chip price-higher">↑ 1 higher</span></div><div class="price-tally-group"><span class="price-tally-label">4 price fields</span><span class="price-tally-chip price-higher">↑ 2</span><span class="price-tally-chip price-coverage">+1 added</span><span class="price-tally-chip price-coverage">−1 removed</span></div></div><details class="price-movement-models"><summary>View 1 affected model</summary><div class="price-movement-model-groups"><div class="price-movement-group"><div class="price-movement-group-label price-higher">↑ Higher only — 1</div><div class="price-movement-model"><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></div></div></div></details></section>
 
 <section class="provider-section"><h2>Synth Provider <span class="provider-id">(synthprov)</span></h2>
 <h3>Changed</h3>
 <div class="model-card" id="m-synth-model-core">
 <div class="model-card-header"><code>synth/model-core</code><span class="display-name">Synth Model Core</span><a class="card-back" href="#price-movement" title="Back to price movement">↑</a></div>
 <div class="card-table-wrap"><table class="card-table"><colgroup><col class="col-category"><col class="col-field"><col class="col-old"><col class="col-arrow"><col class="col-new"><col class="col-unit"><col class="col-delta"><col class="col-pct"></colgroup><tbody>
-<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
+<tr class="group-start"><td class="cat-chip">Pricing</td><td class="field-name" title="pricing.input_cache_read">Cache read</td><td class="old-val num">—</td><td class="arrow">→</td><td class="new-val num" title="5e-08 (5.0e-8) × 1,000,000 = $0.05">$0.05</td><td class="unit">/1M tokens</td><td class="delta sem-coverage">added</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">— → 5e-08</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.input_cache_write">Cache write</td><td class="old-val num" title="9e-08 (9.0e-8) × 1,000,000 = $0.09">$0.09</td><td class="arrow">→</td><td class="new-val num">—</td><td class="unit">/1M tokens</td><td class="delta sem-coverage">removed</td><td class="pct sem-coverage"></td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">9e-08 → —</td></tr>
-<tr><td></td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
+<tr><td></td><td class="field-name" title="pricing.completion">Output</td><td class="old-val num" title="2e-06 (2.0e-6) × 1,000,000 = $2.00">$2.00</td><td class="arrow">→</td><td class="new-val num" title="3.5e-06 (3.5e-6) × 1,000,000 = $3.50">$3.50</td><td class="unit">/1M tokens</td><td class="delta sem-cost-up">+$1.50</td><td class="pct sem-cost-up">↑ 75.0%</td></tr>
 <tr class="raw-line"><td></td><td class="raw-values" colspan="7">2e-06 → 3.5e-06</td></tr>
-<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
+<tr class="row-alt"><td></td><td class="field-name" title="pricing.overrides[min_prompt_tokens=200000].completion">Output (min_prompt_tokens=200000)</td><td class="old-val num" title="0.000004 (4.0e-6) × 1,000,000 = $4.00">$4.00</td><td class="arrow">→</td><td class="new-val num" title="0.000005 (5.0e-6) × 1,000,000 = $5.00">$5.00</td><td class="unit">/1M tokens</td><td class="delta sem-cost-up">+$1.00</td><td class="pct sem-cost-up">↑ 25.0%</td></tr>
 <tr class="raw-line row-alt"><td></td><td class="raw-values" colspan="7">0.000004 → 0.000005</td></tr>
 <tr class="group-start"><td class="cat-chip">Context &amp; Limits</td><td class="field-name" title="top_provider.context_length">Context length</td><td class="old-val num">131,072</td><td class="arrow">→</td><td class="new-val num">262,144</td><td class="unit">tok</td><td class="delta sem-capacity">+131,072</td><td class="pct sem-capacity">↑ 100.0%</td></tr>
 <tr class="group-start row-alt"><td class="cat-chip">Parameters</td><td class="field-name" title="supported_parameters">Supported parameters</td><td></td><td></td><td></td><td></td><td class="delta list-count">(1 → 2)</td><td class="pct"></td></tr>
@@ -1501,10 +1534,10 @@ _EXPECTED_HTML_DETAIL_ALL_TEMPLATE = """<!DOCTYPE html>
 <div class="list-diff">1 field change across 1 model</div>
 <div class="list-count">models: synth/model-temp-null</div>
 </div></div></section><details class="summary-section"><summary>Change Summary — 15 rows</summary><table class="summary-table grouped"><thead><tr><th>Model</th><th>Field</th><th>Change</th></tr></thead><tbody><tr class="summary-group"><td colspan="3">Pricing</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → $0.05 /1M (added)</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>$0.09 → — /1M (removed)</td></tr>
-<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td></tr>
-<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache read</td><td>— → $0.05 /1M tokens (added)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Cache write</td><td>$0.09 → — /1M tokens (removed)</td></tr>
+<tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output</td><td>$2.00 → $3.50 /1M tokens (+$1.50, ↑ 75.0%)</td></tr>
+<tr class="row-alt"><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Output (min_prompt_tokens=200000)</td><td>$4.00 → $5.00 /1M tokens (+$1.00, ↑ 25.0%)</td></tr>
 <tr class="summary-group"><td colspan="3">Context &amp; Limits</td></tr>
 <tr><td><a class="model-link" href="#m-synth-model-core"><code>synth/model-core</code></a></td><td>Context length</td><td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td></tr>
 <tr class="row-alt"><td><code>synth/model-limit-add</code></td><td>Max output</td><td>— → 16,384 tok (added)</td></tr>
@@ -1935,14 +1968,14 @@ _SUMMARY_CORE = (
 # unconditionally in the concise report's index while the card three inches
 # above showed `$2.00`. They are now composed from `RenderedChange` in the
 # card's own column order, `old → new unit (delta, pct)`, which also brings in
-# the unit (`/1M`, `tok`), the absolute delta on a price row, and the
+# the unit (`/1M tokens`, `tok`), the absolute delta on a price row, and the
 # `added`/`removed`/`enabled`/`disabled` pill the card's delta column carries.
 # The list and the plain-scalar rows are unchanged.
 _SUMMARY_ROW_SHAPES = (
-    f"{_SUMMARY_CORE}<td>— → $0.05 /1M (added)</td>",
-    f"{_SUMMARY_CORE}<td>$0.09 → — /1M (removed)</td>",
-    f"{_SUMMARY_CORE}<td>$2.00 → $3.50 /1M (+$1.50, ↑ 75.0%)</td>",
-    f"{_SUMMARY_CORE}<td>$4.00 → $5.00 /1M (+$1.00, ↑ 25.0%)</td>",
+    f"{_SUMMARY_CORE}<td>— → $0.05 /1M tokens (added)</td>",
+    f"{_SUMMARY_CORE}<td>$0.09 → — /1M tokens (removed)</td>",
+    f"{_SUMMARY_CORE}<td>$2.00 → $3.50 /1M tokens (+$1.50, ↑ 75.0%)</td>",
+    f"{_SUMMARY_CORE}<td>$4.00 → $5.00 /1M tokens (+$1.00, ↑ 25.0%)</td>",
     f"{_SUMMARY_CORE}<td>131,072 → 262,144 tok (+131,072, ↑ 100.0%)</td>",
     "<td><code>synth/model-limit-add</code></td><td>— → 16,384 tok (added)</td>",
     "<td><code>synth/model-limit-remove</code></td><td>8,192 → — tok (removed)</td>",
@@ -2182,7 +2215,7 @@ def _below_resolution_price_scan_result() -> list[ProviderScanResult]:
                 ),
             ),
             error_message=None,
-            profile=OPENROUTER_PROFILE.with_pricing(1, 1),
+            profile=_legacy_inherited_price_profile(1),
         )
     ]
 
@@ -2299,7 +2332,7 @@ def _vanishing_delta_price_scan_result() -> list[ProviderScanResult]:
                 ),
             ),
             error_message=None,
-            profile=OPENROUTER_PROFILE.with_pricing(1, 1),
+            profile=_legacy_inherited_price_profile(1),
         )
     ]
 
@@ -2473,7 +2506,7 @@ def _vanishing_percent_scan_result() -> list[ProviderScanResult]:
                 ),
             ),
             error_message=None,
-            profile=OPENROUTER_PROFILE.with_pricing(1, 1),
+            profile=_legacy_inherited_price_profile(1),
         )
     ]
 

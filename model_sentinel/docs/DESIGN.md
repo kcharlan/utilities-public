@@ -106,6 +106,9 @@ provider-specific interpretation:
 - normalized-field candidate paths
 - field labels and known boolean paths
 - price/count classification predicates
+- immutable exact-path and leaf-keyed price display rules, with an unmatched
+  fallback and exact-path-before-leaf resolution
+- a primary price comparison group for unit-safe absolute-impact ranking
 - conditional-pricing identity fields
 - preferred presentation order for Pricing field paths
 - default report show/squelch patterns
@@ -143,16 +146,19 @@ columns are:
 - reasoning, tool, modality, structured-output, deprecation, and status flags
 - canonical provider metadata JSON
 
-Common normalized price columns use:
+Common normalized price columns remain per-million-token values. A candidate
+may populate one only when its resolved provider rule explicitly targets
+`per_million_tokens`; operation, image, and unknown-unit prices are excluded.
+Inherited rules use:
 
 ```text
 normalized_price = raw_price * price_multiplier / price_divisor
 ```
 
 Human metadata-diff reports classify and present raw provider metadata using
-the same profile conversion factors. This rule is valid only where the
-configured factors represent the field's real unit; the current Abacus
-limitation is why that provider is not registered.
+the same resolved rule. `RenderedChange.price_rule` carries the effective
+factors, unit, comparison group, normalized target, and match source for
+presentation only; it is not serialized or persisted.
 
 ## Snapshots and Baselines
 
@@ -288,8 +294,10 @@ alphabetically. The same order is used by scan text, Markdown, concise and
 full-detail HTML, `changes` text and HTML, and the HTML Change Summary. This
 ordering is presentation-only: JSON output, chronological history, stored raw
 field paths, and source storage order are unchanged. It also does not replace
-the HTML page-level impact ranking: model cards with price changes and the
-Price Movement headline continue to prioritize the largest dollar movements.
+the HTML page-level impact ranking: direction, counts, and tier-one inclusion
+cover every monetary unit, while absolute headlines and impact scores compare
+only the active profile's declared primary group. OpenRouter's global panels
+are explicitly token-rate-only.
 
 The HTML triage layout, cost-only color vocabulary, price-movement model,
 sorting, navigation, raw-value behavior, and implementation amendments are
@@ -348,8 +356,9 @@ path. Operational commands and customization points are documented in
 The following are deliberate future extensions rather than current behavior:
 
 - authenticated schema validation for Abacus.AI and OpenCode Zen
-- per-field pricing rules and unit labels for mixed-unit providers
-- a registered Abacus provider profile after those rules exist
-- explicit handling for per-request OpenRouter prices
+- a registered Abacus provider profile after its authenticated mixed-unit
+  schema is validated and mapped to provider-owned field rules
+- an optional runtime override layer for provider-owned field rules, if a
+  demonstrated operational need justifies its validation and precedence rules
 - provider-specific auth schemes, headers, query parameters, and timeouts
 - raw-response debug capture behind an explicit opt-in

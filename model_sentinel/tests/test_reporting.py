@@ -1,5 +1,6 @@
 import json
 import re
+from dataclasses import replace
 
 import pytest
 
@@ -27,7 +28,23 @@ from model_sentinel.reporting import (
     render_history_report as render_history_report_with_profile,
     render_scan_report,
 )
-from model_sentinel.provider_profiles import OPENROUTER_PROFILE
+from model_sentinel.provider_profiles import (
+    OPENROUTER_PROFILE,
+    PER_MILLION_TOKENS_TARGET,
+    PriceDisplayRule,
+)
+
+
+_INHERITED_PRICE_PROFILE = replace(
+    OPENROUTER_PROFILE,
+    price_path_rules={},
+    price_leaf_rules={},
+    unmatched_price_rule=PriceDisplayRule(
+        unit_label="/1M",
+        normalized_target=PER_MILLION_TOKENS_TARGET,
+    ),
+    primary_price_comparison_group=None,
+)
 
 
 def classify_change(
@@ -38,7 +55,7 @@ def classify_change(
 ):
     return classify_change_with_profile(
         field_change,
-        profile=OPENROUTER_PROFILE.with_pricing(
+        profile=_INHERITED_PRICE_PROFILE.with_pricing(
             price_multiplier,
             price_divisor,
         ),
@@ -62,7 +79,7 @@ def render_changes_report(
 ):
     if provider_profiles is None and provider_pricing is not None:
         provider_profiles = {
-            provider_id: OPENROUTER_PROFILE.with_pricing(multiplier, divisor)
+            provider_id: _INHERITED_PRICE_PROFILE.with_pricing(multiplier, divisor)
             for provider_id, (multiplier, divisor) in provider_pricing.items()
         }
     return render_changes_report_with_profiles(
@@ -1470,7 +1487,7 @@ def test_price_movement_headline_names_the_biggest_dollar_mover() -> None:
         format_name="html",
         provider_results=[_scan_result(changed)],
     )
-    panel = _headline_panel(_price_movement_card(report), "Biggest increase")
+    panel = _headline_panel(_price_movement_card(report), "Biggest token-rate increase")
 
     assert '<code class="price-headline-model">small-pct-big-dollars</code>' in panel
     assert '<div class="price-headline-field" title="pricing.prompt">Input</div>' in panel
@@ -1478,6 +1495,64 @@ def test_price_movement_headline_names_the_biggest_dollar_mover() -> None:
     assert '<span class="price-headline-delta price-higher">+$2.00</span>' in panel
     assert '<span class="price-headline-pct price-higher">↑ 200.0%</span>' in panel
     assert "big-pct-small-dollars" not in panel
+
+
+def test_price_movement_headline_ignores_larger_non_token_rate_moves() -> None:
+    """Only the primary token-rate group may compete for global headlines."""
+    changed = (
+        ModelDelta(
+            "changed",
+            "token-mover",
+            "Token Mover",
+            (FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+        ),
+        ModelDelta(
+            "changed",
+            "search-mover",
+            "Search Mover",
+            (FieldChange("pricing.web_search", "0.01", "999.0"),),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-08-15T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    movement = _price_movement_card(report)
+    panel = _headline_panel(movement, "Biggest token-rate increase")
+
+    assert '<code class="price-headline-model">token-mover</code>' in panel
+    assert "search-mover" not in panel
+    assert "Biggest increase" not in movement
+
+
+def test_non_token_only_price_report_keeps_triage_without_headlines() -> None:
+    """Non-primary prices still count, render, summarize, and earn tier one."""
+    changed = (
+        ModelDelta(
+            "changed",
+            "search-only",
+            "Search Only",
+            (FieldChange("pricing.web_search", "0.01", "0.02"),),
+        ),
+    )
+    report = render_scan_report(
+        generated_at="2026-08-15T09:00:00+00:00",
+        command="scan",
+        format_name="html",
+        provider_results=[_scan_result(changed)],
+    )
+    movement = _price_movement_card(report)
+    primary, _ = _scan_tiers(report)
+
+    assert "higher — 1 up" in movement
+    assert '<span class="price-tally-chip price-higher">↑ 1</span>' in movement
+    assert "search-only" in movement
+    assert '<div class="price-movement-headlines">' not in movement
+    assert 'id="m-search-only"' in primary
+    assert "Change Summary" in report
+    assert "$10.00 → $20.00 /1K searches" in report
 
 
 def test_price_movement_headline_panels_cover_both_directions() -> None:
@@ -1514,17 +1589,19 @@ def test_price_movement_headline_panels_cover_both_directions() -> None:
     movement = _price_movement_card(report)
     assert movement.count('<div class="price-headline">') == 2
 
-    increase = _headline_panel(movement, "Biggest increase")
+    increase = _headline_panel(movement, "Biggest token-rate increase")
     assert '<code class="price-headline-model">riser</code>' in increase
     assert '<span class="price-headline-delta price-higher">+$3.00</span>' in increase
 
-    decrease = _headline_panel(movement, "Biggest decrease")
+    decrease = _headline_panel(movement, "Biggest token-rate decrease")
     assert '<code class="price-headline-model">faller</code>' in decrease
     assert '<span class="price-headline-delta price-lower">-$7.00</span>' in decrease
 
     # The increase panel comes first, so the two panels are in a fixed order
     # rather than whichever direction happened to be discovered first.
-    assert movement.index("Biggest increase") < movement.index("Biggest decrease")
+    assert movement.index("Biggest token-rate increase") < movement.index(
+        "Biggest token-rate decrease"
+    )
 
 
 def test_price_movement_omits_the_decrease_panel_when_nothing_got_cheaper() -> None:
@@ -1555,8 +1632,8 @@ def test_price_movement_omits_the_decrease_panel_when_nothing_got_cheaper() -> N
     movement = _price_movement_card(report)
 
     assert movement.count('<div class="price-headline">') == 1
-    assert "Biggest increase" in movement
-    assert "Biggest decrease" not in movement
+    assert "Biggest token-rate increase" in movement
+    assert "Biggest token-rate decrease" not in movement
 
 
 def test_price_movement_headline_prints_the_qualified_label() -> None:
@@ -1593,7 +1670,7 @@ def test_price_movement_headline_prints_the_qualified_label() -> None:
         format_name="html",
         provider_results=[_scan_result(changed)],
     )
-    panel = _headline_panel(_price_movement_card(report), "Biggest increase")
+    panel = _headline_panel(_price_movement_card(report), "Biggest token-rate increase")
 
     assert (
         '<div class="price-headline-field" '
@@ -1981,7 +2058,7 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
         provider_results=[_scan_result(changed)],
     )
 
-    expected = "Audio cache: null \u2192 0.0000003 ($0.30 / 1M)"
+    expected = "Audio cache: null \u2192 0.0000003 (<$0.0001 /unit unknown)"
     assert expected in text_report
     assert expected in markdown_report
     # A1: the card leads with the normalized figure and keeps the provider's
@@ -1992,10 +2069,10 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
     # magnitude, the literal provider value, and the arithmetic behind the
     # figure in the cell.
     assert (
-        '<td class="new-val num" title="0.0000003 (3.0e-7) × 1,000,000 = $0.30">$0.30</td>'
+        '<td class="new-val num" title="0.0000003 (3.0e-7) = &lt;$0.0001">&lt;$0.0001</td>'
     ) in row
     assert '<td class="old-val num">\u2014</td>' in row
-    assert '<td class="unit">/1M</td>' in row
+    assert '<td class="unit">/unit unknown</td>' in row
     assert '<td class="delta sem-coverage">added</td>' in row
 
     # Fix pass 1, finding 3: the Change Summary is in the SAME document, and it
@@ -2006,7 +2083,7 @@ def test_new_pricing_values_are_normalized_when_the_old_value_is_missing() -> No
     # `0.0000003` regardless of the "Show raw values" toggle, which is the
     # original complaint A1 exists to answer, surviving in the index. The cell
     # is now composed in the card's own column order.
-    assert "<td>\u2014 \u2192 $0.30 /1M (added)</td>" in html_report
+    assert "<td>\u2014 \u2192 &lt;$0.0001 /unit unknown (added)</td>" in html_report
     assert "<td>null \u2192" not in html_report
     # The raw value is reachable from the card (tooltip and raw-value row) and
     # from the audit formats above; it must not LEAD the summary row.
@@ -2061,7 +2138,7 @@ def test_html_card_colors_are_driven_by_semantic_not_direction() -> None:
     price_gone = _card_row(report, "Cache read")
     capacity_up = _card_row(report, "Context length (model)")
 
-    # No thousands separator: `_fmt_price_per_m` has never grouped digits, and
+    # No thousands separator: `_fmt_money` has never grouped digits, and
     # it is shared with text and markdown, so this task does not change it.
     assert '<td class="delta sem-cost-up">+$100000.00</td>' in price_up
     assert '<td class="pct sem-cost-up">\u2191 100.0%</td>' in price_up
@@ -2460,6 +2537,15 @@ def test_a_long_scalar_value_is_not_promised_nowrap_by_the_card() -> None:
     assert "overflow-x: auto;" in css
 
 
+def test_unit_column_keeps_a_readable_minimum_before_wrapping() -> None:
+    """A narrow table must scroll instead of stacking units character by character."""
+    css = _list_and_scalar_card_html().split("<style>", 1)[1].split("</style>", 1)[0]
+    unit_rule = css.rsplit(".card-table td.unit {", 1)[1].split("}", 1)[0]
+
+    assert "min-width: 6.5rem;" in unit_rule
+    assert "overflow-wrap: anywhere;" in unit_rule
+
+
 def test_list_members_keep_red_and_green_for_money_in_every_card_type() -> None:
     """Fix pass 1, finding 4, then fix pass 3, blocker 1(b).
 
@@ -2550,7 +2636,7 @@ def test_one_html_document_spells_an_absent_side_one_way() -> None:
     # text renderer's line, so the price cell leads with `$0.05` and carries
     # its unit and its coverage pill, and the count cell carries its `tok`.
     # The scalar is unchanged -- it has no unit, no delta and no percent.
-    for cell in ("<td>— → $0.05 /1M (added)</td>", "<td>8,192 → — tok (removed)</td>", "<td>— → 2030-12-31</td>"):
+    for cell in ("<td>— → $0.05 /1M tokens (added)</td>", "<td>8,192 → — tok (removed)</td>", "<td>— → 2030-12-31</td>"):
         assert cell in html_report, cell
     for row_label in ("Cache read", "Max output", "Expiration date"):
         assert "—" in _card_row(html_report, row_label), row_label
@@ -2560,7 +2646,7 @@ def test_one_html_document_spells_an_absent_side_one_way() -> None:
     # move the text and markdown characterization goldens.
     for format_name in ("text", "markdown"):
         other = render_scan_report(format_name=format_name, **kwargs)
-        assert "null → 0.00000005 ($0.05 / 1M)" in other, format_name
+        assert "null → 0.00000005 ($0.05 /1M tokens)" in other, format_name
         assert "8,192 → null" in other, format_name
 
 
@@ -2586,12 +2672,12 @@ def test_an_absent_price_side_is_never_composed_with_its_operands() -> None:
             raise AssertionError("the absent side must not format its operands")
 
     assert (
-        reporting._html_raw_and_normalized(None, _RefusesToBeFormatted())  # type: ignore[arg-type]
+        reporting._html_raw_and_normalized(None, _RefusesToBeFormatted(), "/synthetic")  # type: ignore[arg-type]
         == "—"
     )
     # The present path still composes both operands, so the guard above cannot
     # be satisfied by a helper that formats nothing at all.
-    assert reporting._html_raw_and_normalized("2e-06", "$2.00") == "2e-06 ($2.00 / 1M)"
+    assert reporting._html_raw_and_normalized("2e-06", "$2.00", "/1M tokens") == "2e-06 ($2.00 /1M tokens)"
 
 
 # `num` is not optional in this pattern. A price is a number, so its cell must
@@ -2640,7 +2726,7 @@ def test_every_price_cell_pairs_a_normalized_value_with_its_raw_value() -> None:
         provider_results=[_scan_result(changed)],
     )
 
-    price_rows = [row for row in _card_rows(report) if '<td class="unit">/1M</td>' in row]
+    price_rows = [row for row in _card_rows(report) if '<td class="unit">/1M tokens</td>' in row]
     assert len(price_rows) == 3
     cells = [match for row in price_rows for match in _PRICE_VALUE_CELL.findall(row)]
     assert len(cells) == 6, cells
@@ -2711,7 +2797,7 @@ def _unscaled_price_report(old_value: str, new_value: str) -> str:
                         (FieldChange("pricing.prompt", old_value, new_value),),
                     ),
                 ),
-                profile=OPENROUTER_PROFILE,
+                profile=_INHERITED_PRICE_PROFILE,
                 error_message=None,
             )
         ],
@@ -2758,7 +2844,7 @@ def test_price_delta_column_renders_a_bounded_sentinel_rather_than_a_false_zero(
     """The degenerate delta, end to end, for the first time.
 
     The sentinel rule bounds a movement too small for the column
-    (`+<$0.0001`), and `_fmt_price_per_m` has produced that string for the
+    (`+<$0.0001`), and `_fmt_money` has produced that string for the
     price delta since it landed -- but with no renderer reading a price
     `delta_display`, the price-delta sentinel had never reached a document.
     This is the test that exercises it.
@@ -2835,8 +2921,8 @@ def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() ->
     # (not `_pricing_override_path`) supplies the bracketed segment and the
     # qualifier is a LIST INDEX. It renders "#0" so the parenthetical reads as
     # an ordinal rather than as a stray value in a row full of values.
-    assert "Output (#0): null \u2192 0.0000225 ($22.50 / 1M)" in text_report
-    assert "Cache read (#0): null \u2192 0.0000006 ($0.60 / 1M)" in text_report
+    assert "Output (#0): null \u2192 0.0000225 ($22.50 /1M tokens)" in text_report
+    assert "Cache read (#0): null \u2192 0.0000006 ($0.60 /1M tokens)" in text_report
     assert "Min prompt tokens (#0): null \u2192 200,000" in text_report
     assert "$200" not in text_report
     # The qualifier is required here too. A bare `assert "Input" in html_report`
@@ -2849,7 +2935,7 @@ def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() ->
     # text and markdown reports -- so asserting it of the HTML document had
     # stopped testing the HTML renderer and started testing the text one.
     assert '<td class="new-val num" title="0.000006 (6.0e-6) × 1,000,000 = $6.00">$6.00</td>' in html_report
-    assert "<td>— → $6.00 /1M (added)</td>" in html_report
+    assert "<td>— → $6.00 /1M tokens (added)</td>" in html_report
     assert '"field_name": "pricing.overrides"' in json_report
     assert '"field_name": "pricing.overrides[0].prompt"' not in json_report
 
@@ -2919,7 +3005,7 @@ def test_existing_pricing_override_tiers_render_only_changed_leaves() -> None:
     # `_pricing_override_path` condition renders LITERALLY, per the design.
     display_label = format_qualified_label(label, qualifier)
     assert display_label == "Cache read (min_prompt_tokens=200000)"
-    expected = f"{display_label}: 0.000001 \u2192 0.0000006 ($1.00 \u2192 $0.60 / 1M, \u2193 40.0%)"
+    expected = f"{display_label}: 0.000001 \u2192 0.0000006 ($1.00 \u2192 $0.60 /1M tokens, \u2193 40.0%)"
     assert expected in text_report
     assert display_label in html_report
     # Same substitution as the sibling test above: `$1.00 \u2192 $0.60 / 1M` is the
@@ -2927,7 +3013,7 @@ def test_existing_pricing_override_tiers_render_only_changed_leaves() -> None:
     # with the unit in a third, and spells the summary row in that same order.
     assert '<td class="old-val num" title="0.000001 (1.0e-6) \u00d7 1,000,000 = $1.00">$1.00</td>' in html_report
     assert '<td class="new-val num" title="0.0000006 (6.0e-7) \u00d7 1,000,000 = $0.60">$0.60</td>' in html_report
-    assert "<td>$1.00 \u2192 $0.60 /1M (-$0.40, \u2193 40.0%)</td>" in html_report
+    assert "<td>$1.00 \u2192 $0.60 /1M tokens (-$0.40, \u2193 40.0%)</td>" in html_report
     assert "Conditional pricing (2 \u2192 2)" not in text_report
     assert "utc_start=30" not in text_report
     assert '"field_name": "pricing.overrides"' in json_report
@@ -2959,8 +3045,8 @@ def test_pricing_override_tier_addition_and_removal_render_as_semantic_tiers() -
 
     # Both tiers carry the same two leaves, so the tier condition is the ONLY
     # thing separating the removed tier's rows from the added tier's.
-    assert "Input (min_prompt_tokens=200000): 0.000004 ($4.00 / 1M) \u2192 null" in report
-    assert "Input (min_prompt_tokens=300000): null \u2192 0.000005 ($5.00 / 1M)" in report
+    assert "Input (min_prompt_tokens=200000): 0.000004 ($4.00 /1M tokens) \u2192 null" in report
+    assert "Input (min_prompt_tokens=300000): null \u2192 0.000005 ($5.00 /1M tokens)" in report
     assert "Min prompt tokens (min_prompt_tokens=200000): 200,000 \u2192 null" in report
     assert "Min prompt tokens (min_prompt_tokens=300000): null \u2192 300,000" in report
 
@@ -3031,8 +3117,8 @@ def _tiered_pricing_changes_rows() -> tuple[dict, ...]:
 def test_base_price_and_conditional_tier_render_distinguishably_in_text() -> None:
     report = _tiered_pricing_report("text")
 
-    base = "Input: 0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)"
-    tier = "Input (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)"
+    base = "Input: 0.000001 → 0.000002 ($1.00 → $2.00 /1M tokens, ↑ 100.0%)"
+    tier = "Input (min_prompt_tokens=200000): 0.000004 → 0.000005 ($4.00 → $5.00 /1M tokens, ↑ 25.0%)"
     assert base in report
     assert tier in report
 
@@ -3047,10 +3133,10 @@ def test_base_price_and_conditional_tier_render_distinguishably_in_text() -> Non
 def test_base_price_and_conditional_tier_render_distinguishably_in_markdown() -> None:
     report = _tiered_pricing_report("markdown")
 
-    assert "  - `Input: 0.000001 → 0.000002 ($1.00 → $2.00 / 1M, ↑ 100.0%)`" in report
+    assert "  - `Input: 0.000001 → 0.000002 ($1.00 → $2.00 /1M tokens, ↑ 100.0%)`" in report
     assert (
         "  - `Input (min_prompt_tokens=200000): "
-        "0.000004 → 0.000005 ($4.00 → $5.00 / 1M, ↑ 25.0%)`"
+        "0.000004 → 0.000005 ($4.00 → $5.00 /1M tokens, ↑ 25.0%)`"
     ) in report
 
     labels = [
@@ -3166,11 +3252,11 @@ def test_changes_report_carries_the_shared_price_precision() -> None:
     the normalized figure per blocker 2, and both must still carry FOUR places.
     """
     text = _sub_cent_changes_report("text")
-    assert "($0.1500 → $0.1425 / 1M" in text
+    assert "($0.1500 → $0.1425 /1M" in text
 
     html = _sub_cent_changes_report("html")
-    assert '<td class="old-val">0.00000015 ($0.1500 / 1M)</td>' in html
-    assert '<td class="new-val">0.0000001425 ($0.1425 / 1M)</td>' in html
+    assert '<td class="old-val">0.00000015 ($0.1500 /1M)</td>' in html
+    assert '<td class="new-val">0.0000001425 ($0.1425 /1M)</td>' in html
     summary = html[html.index('<section class="summary-section">') :]
     assert "<td>$0.1500 → $0.1425 /1M (-$0.0075, ↓ 5.0%)</td>" in summary
 
@@ -4516,22 +4602,22 @@ def test_changes_report_prices_each_shared_label_provider_with_its_own_factors()
     # Assert the VALUES before assigning them to sections, so the wrong number
     # is what fails rather than a section split that never found its heading.
     # Under the defect these read 2 and 0: A's conversion applied to both rows.
-    assert text.count("$100.00 → $200.00 / 1M") == 1
-    assert text.count("$0.0001 → $0.0002 / 1M") == 1
+    assert text.count("$100.00 → $200.00 /1M") == 1
+    assert text.count("$0.0001 → $0.0002 /1M") == 1
 
     a_section, b_section = (
         text.split(f"{_SHARED_LABEL} (synthprov-a)", 1)[1].split(f"{_SHARED_LABEL} (synthprov-b)", 1)[0],
         text.split(f"{_SHARED_LABEL} (synthprov-b)", 1)[1],
     )
     # ...and each lands under the provider it belongs to.
-    assert "Input: 0.0001 \u2192 0.0002 ($100.00 \u2192 $200.00 / 1M, \u2191 100.0%)" in a_section
-    assert "Input: 0.0001 \u2192 0.0002 ($0.0001 \u2192 $0.0002 / 1M, \u2191 100.0%)" in b_section
+    assert "Input: 0.0001 \u2192 0.0002 ($100.00 \u2192 $200.00 /1M, \u2191 100.0%)" in a_section
+    assert "Input: 0.0001 \u2192 0.0002 ($0.0001 \u2192 $0.0002 /1M, \u2191 100.0%)" in b_section
 
     html = _shared_label_report("html")
-    assert '<td class="old-val">0.0001 ($100.00 / 1M)</td>' in html
-    assert '<td class="new-val">0.0002 ($200.00 / 1M)</td>' in html
-    assert '<td class="old-val">0.0001 ($0.0001 / 1M)</td>' in html
-    assert '<td class="new-val">0.0002 ($0.0002 / 1M)</td>' in html
+    assert '<td class="old-val">0.0001 ($100.00 /1M)</td>' in html
+    assert '<td class="new-val">0.0002 ($200.00 /1M)</td>' in html
+    assert '<td class="old-val">0.0001 ($0.0001 /1M)</td>' in html
+    assert '<td class="new-val">0.0002 ($0.0002 /1M)</td>' in html
 
     # The Change Summary is built from the same per-provider factors, and keeps
     # the two providers apart by the disambiguated label.
@@ -4750,12 +4836,12 @@ def test_impact_sort_falls_back_to_the_model_id() -> None:
     assert _impact_order(changed) == ["synth/model-foxtrot", "synth/model-golf"]
 
 
-def test_a_one_sided_price_change_sorts_at_zero_dollars() -> None:
+def test_a_one_sided_price_change_has_no_primary_impact_score() -> None:
     """A model whose only price change is an addition or a removal.
 
     There is no second operand, so there is no delta and no percent: the design
-    ranks it at $0.00 on the primary key, below every real move, and separates
-    it from other $0.00 models by coverage. `juliet` moves four TENTHS of a
+    leaves it unscored, below every real move, and sorts it alphabetically
+    beside other unscored models. `juliet` moves four TENTHS of a
     cent, which also rounds to $0.00 -- the design's stated accepted
     consequence -- and its 0.4% beats the one-sided models' absent percent.
     """
@@ -4774,9 +4860,29 @@ def test_a_one_sided_price_change_sorts_at_zero_dollars() -> None:
         "synth/model-kilo",
         # $0.00 by rounding, but it has a percent.
         "synth/model-juliet",
-        # $0.00 with no percent; two removals outrank one addition on coverage.
-        "synth/model-india",
         "synth/model-hotel",
+        "synth/model-india",
+    ]
+
+
+def test_impact_sort_scores_only_primary_token_rates() -> None:
+    """Unscored monetary models follow token movers alphabetically."""
+    changed = (
+        _priced("synth/model-zulu-token", FieldChange("pricing.prompt", "0.000001", "0.000002")),
+        _priced("synth/model-alpha-search", FieldChange("pricing.web_search", "0.01", "999")),
+        _priced("synth/model-bravo-request", FieldChange("pricing.request", "0.01", "50")),
+        _priced("synth/model-charlie-image", FieldChange("pricing.image", "0.01", "75")),
+        _priced("synth/model-delta-unknown", FieldChange("pricing.future_unit", "0.01", "100")),
+        _priced("synth/model-echo-one-sided", FieldChange("pricing.completion", None, "0.000004")),
+    )
+
+    assert _impact_order(changed) == [
+        "synth/model-zulu-token",
+        "synth/model-alpha-search",
+        "synth/model-bravo-request",
+        "synth/model-charlie-image",
+        "synth/model-delta-unknown",
+        "synth/model-echo-one-sided",
     ]
 
 
@@ -5619,7 +5725,6 @@ def test_both_html_change_renderers_give_a_change_the_same_colour() -> None:
         card = reporting._render_html_card_row(
             rendered,
             category="Pricing",
-            profile=OPENROUTER_PROFILE.with_pricing(1_000_000, 1),
         )
         table = reporting._render_html_table_row(rendered)
 
@@ -5820,8 +5925,8 @@ def test_no_summary_row_leads_with_a_raw_provider_value() -> None:
     # And the normalized figure IS there -- otherwise "no raw value" could be
     # satisfied by a summary that had stopped saying anything.
     scan = _all_html_documents()["scan"]
-    assert "<td>$1.00 → $2.00 /1M (+$1.00, ↑ 100.0%)</td>" in scan
-    assert "<td>— → $0.05 /1M (added)</td>" in scan
+    assert "<td>$1.00 → $2.00 /1M tokens (+$1.00, ↑ 100.0%)</td>" in scan
+    assert "<td>— → $0.05 /1M tokens (added)</td>" in scan
 
 
 def test_the_summary_cell_and_the_card_row_state_the_same_operands() -> None:
@@ -5842,7 +5947,6 @@ def test_the_summary_cell_and_the_card_row_state_the_same_operands() -> None:
     card = reporting._render_html_card_row(
         rendered,
         category="Pricing",
-        profile=OPENROUTER_PROFILE.with_pricing(1_000_000, 1),
     )
     # Every operand in the summary cell appears in the card's own cells.
     for operand in ("$1.00", "$2.00", "/1M", "+$1.00", "↑ 100.0%"):
@@ -5898,7 +6002,96 @@ def test_the_summary_cell_survives_a_label_containing_the_old_split_token() -> N
     # The whole label in the Field cell, the whole change in the Change cell --
     # neither truncated at the token inside the qualifier.
     assert entries[0].field == rendered.display_label
-    assert entries[0].detail == "$2.00 → $3.00 /1M (+$1.00, ↑ 50.0%)"
+    assert entries[0].detail == "$2.00 → $3.00 /1M tokens (+$1.00, ↑ 50.0%)"
+
+
+def _mixed_unit_delta() -> ModelDelta:
+    return ModelDelta(
+        "changed",
+        "synthetic/model-mixed-units",
+        "Synthetic Mixed Units",
+        (
+            FieldChange("pricing.prompt", "0.000001", "0.000002"),
+            FieldChange("pricing.web_search", "0.010", "0.014"),
+            FieldChange("pricing.request", "0.01", "0.02"),
+            FieldChange("pricing.image", "0.25", "0.5"),
+            FieldChange("pricing.input_cache_write_1h", "0.3", "0.4"),
+        ),
+    )
+
+
+def test_mixed_price_units_reach_every_scan_report_surface() -> None:
+    kwargs = {
+        "generated_at": "2026-08-15T13:05:00+00:00",
+        "command": "scan",
+        "provider_results": [_scan_result((_mixed_unit_delta(),))],
+    }
+
+    text = render_scan_report(format_name="text", **kwargs)
+    markdown = render_scan_report(format_name="markdown", **kwargs)
+    html = render_scan_report(format_name="html", **kwargs)
+    json_payload = json.loads(render_scan_report(format_name="json", **kwargs))
+
+    expected_lines = (
+        "Input: 0.000001 → 0.000002 ($1.00 → $2.00 /1M tokens, ↑ 100.0%)",
+        "Web search: 0.010 → 0.014 ($10.00 → $14.00 /1K searches, ↑ 40.0%)",
+        "Per request: 0.01 → 0.02 ($0.01 → $0.02 /request, ↑ 100.0%)",
+        "Image: 0.25 → 0.5 ($0.25 → $0.50 /image, ↑ 100.0%)",
+        "Cache write (1h): 0.3 → 0.4 ($0.30 → $0.40 /unit unknown, ↑ 33.3%)",
+    )
+    for expected in expected_lines:
+        assert expected in text
+        assert expected in markdown
+
+    for unit in ("/1M tokens", "/1K searches", "/request", "/image", "/unit unknown"):
+        assert f'<td class="unit">{unit}</td>' in html
+        assert any(unit in cell for cell in summary_change_cells(html))
+
+    assert 'title="0.014 (1.4e-2) × 1,000 = $14.00"' in html
+    assert 'title="0.02 (2.0e-2) = $0.02"' in html
+    field_changes = json_payload["providers"][0]["changed"][0]["field_changes"]
+    assert [change["field_name"] for change in field_changes] == [
+        change.field_name for change in _mixed_unit_delta().field_changes
+    ]
+    assert field_changes[1]["old_value"] == "0.010"
+    assert "price_rule" not in json.dumps(json_payload)
+
+
+def test_mixed_price_units_reach_changes_text_html_and_json() -> None:
+    rows = tuple(
+        {
+            "detected_at": "2026-08-15T13:05:00+00:00",
+            "provider_id": "openrouter",
+            "provider_label": "OpenRouter",
+            "provider_model_id": "synthetic/model-mixed-units",
+            "display_name": "Synthetic Mixed Units",
+            "change_kind": "changed",
+            "field_name": change.field_name,
+            "old_value": change.old_value,
+            "new_value": change.new_value,
+        }
+        for change in _mixed_unit_delta().field_changes
+    )
+    kwargs = {
+        "provider_id": "openrouter",
+        "since": None,
+        "until": None,
+        "changes": rows,
+        "provider_profiles": {"openrouter": OPENROUTER_PROFILE},
+    }
+
+    text = render_changes_report(format_name="text", **kwargs)
+    html = render_changes_report(format_name="html", **kwargs)
+    json_payload = json.loads(render_changes_report(format_name="json", **kwargs))
+
+    assert "Web search: 0.010 → 0.014 ($10.00 → $14.00 /1K searches, ↑ 40.0%)" in text
+    assert "Per request: 0.01 → 0.02 ($0.01 → $0.02 /request, ↑ 100.0%)" in text
+    assert '<td class="old-val">0.010 ($10.00 /1K searches)</td>' in html
+    assert '<td class="new-val">0.02 ($0.02 /request)</td>' in html
+    assert "<td>$10.00 → $14.00 /1K searches (+$4.00, ↑ 40.0%)</td>" in html
+    assert "<td>$0.01 → $0.02 /request (+$0.01, ↑ 100.0%)</td>" in html
+    assert json_payload["changes"][1]["old_value"] == "0.010"
+    assert "price_rule" not in json.dumps(json_payload)
 
 
 def test_a_bulk_summary_row_survives_a_label_containing_the_old_split_token() -> None:

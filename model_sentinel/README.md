@@ -135,7 +135,8 @@ The live config files are stored in the runtime home:
 
 `providers.env` defines which providers exist, whether they are enabled, which
 environment variable each provider uses for credentials, and the default
-multiplier/divisor used to present provider-returned monetary price fields.
+multiplier/divisor used as fallback conversion factors for provider-returned
+monetary price fields.
 
 Each provider's `KIND` selects a provider profile for its payload envelope,
 field mapping, labels, classification rules, and report behavior. Unregistered
@@ -178,18 +179,27 @@ Each provider entry in `providers.env` must include:
 - `MODEL_SENTINEL_PROVIDER_<ID>_PRICE_MULTIPLIER`
 - `MODEL_SENTINEL_PROVIDER_<ID>_PRICE_DIVISOR`
 
-The conversion rule is:
+For generic providers and registered rules that inherit the configured
+factors, the conversion rule is:
 
 ```text
 canonical_price = raw_provider_price * PRICE_MULTIPLIER / PRICE_DIVISOR
 ```
 
-OpenRouter's registered profile uses `1000000 / 1` because its common token
-prices are returned per token. The Abacus template intentionally retains
-`1 / 1`, but that is not a complete normalization rule: its public schema
-mixes per-token token rates with media prices in other units. Abacus therefore
-uses the generic fallback profile until per-field price rules and the
-authenticated payload are validated. See
+Registered provider profiles may instead declare an explicit scale, display
+unit, comparison group, and canonical-storage target for each field. The
+OpenRouter profile displays token fields as `/1M tokens`, `web_search` as
+`/1K searches`, `request` as `/request`, and `image` as `/image`. An unknown
+OpenRouter monetary leaf remains visible as `/unit unknown`; it does not enter
+the token-price snapshot columns or absolute token-rate headlines.
+
+OpenRouter's configured `1000000 / 1` factors remain required and provide the
+inherited fallback contract, but its registered field rules cannot be changed
+accidentally by stale provider-wide factors. The Abacus template intentionally
+retains `1 / 1`, but that is not a complete normalization rule: its public
+schema mixes per-token token rates with media prices in other units. Abacus
+therefore uses the generic fallback profile until its authenticated payload is
+validated and a dedicated field-rule registry is added. See
 [`docs/provider_schema_notes.md`](./docs/provider_schema_notes.md).
 
 ## Required Credential Environment Variables

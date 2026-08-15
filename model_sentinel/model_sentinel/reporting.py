@@ -39,7 +39,7 @@ from typing import Any, Literal
 # difference with `classify_change`'s list branch without inheriting the
 # cascade's noop-before-list ordering -- see both docstrings. The
 # six other primitives that moved (`_both_numeric`, `_fmt_int`,
-# `_fmt_price_per_m`, `_is_count_field`, `_normalize_price`, `_pct_change`)
+# `_fmt_money`, `_is_count_field`, `_normalize_price`, `_pct_change`)
 # had no remaining call site here once the renderers were rewired, so their
 # transitional re-export shims were dropped; import those from
 # `model_sentinel.change_render` directly.
@@ -60,6 +60,7 @@ from .provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
     ProviderProfile,
+    USD_PER_MILLION_TOKENS_GROUP,
 )
 from .time_utils import to_local_human, to_local_iso
 
@@ -210,7 +211,7 @@ class _PriceMovementModel:
 
     @staticmethod
     def top_delta(rendered: RenderedChange | None) -> float:
-        """The absolute per-1M magnitude of a headline candidate, 0.0 for none.
+        """The absolute primary token-rate magnitude, or 0.0 for no candidate.
 
         Sorting only, exactly as `RenderedChange.delta_abs` requires: the card
         displays `delta_display`, never this.
@@ -230,8 +231,8 @@ class _PriceMovementSummary:
     ) -> tuple[_PriceMovementModel, RenderedChange] | None:
         """The model whose single largest move in that direction is the report's.
 
-        Selected across every price field of every affected model, by absolute
-        per-1M delta. `models` is already sorted, and `max` returns the FIRST
+        Selected across eligible token-rate fields, by absolute display-rate
+        delta. `models` is already sorted, and `max` returns the FIRST
         maximal element, so two models that moved by the same amount resolve to
         the same one on every run.
 
@@ -1663,6 +1664,15 @@ def _collect_price_movement_summary(
                 slot = _PRICE_MOVEMENT_SLOTS.get(rendered.direction)
                 if slot is None or rendered.delta_abs is None:
                     continue
+                rule = rendered.price_rule
+                primary_group = result.profile.primary_price_comparison_group
+                if (
+                    rule is None
+                    or primary_group is None
+                    or rule.comparison_group != primary_group
+                    or rule.comparison_group != USD_PER_MILLION_TOKENS_GROUP
+                ):
+                    continue
                 model_movers = movers.setdefault(key, {})
                 incumbent = model_movers.get(slot)
                 if _PriceMovementModel.top_delta(rendered) > _PriceMovementModel.top_delta(incumbent):
@@ -1719,11 +1729,11 @@ class _ModelImpact:
     different notions of "has a price change".
     """
 
-    delta: float
-    """Largest absolute per-1M movement on this model, ROUNDED TO CENTS."""
+    primary_delta: float | None
+    """Largest primary-group movement, rounded to cents; None if unscored."""
 
     pct: float
-    """Absolute percent of the field that produced `delta`; 0.0 when none did."""
+    """Percent paired with `primary_delta`; 0.0 when no primary score exists."""
 
     coverage: int
     """Price fields added or removed -- movements with no delta to rank."""
@@ -1731,14 +1741,22 @@ class _ModelImpact:
     model_id: str
 
     @property
-    def sort_key(self) -> tuple[float, float, int, str]:
+    def sort_key(self) -> tuple[int, float, float, int, str]:
         """Descending on impact, ascending on model id, as one sortable tuple.
 
         Negation rather than `reverse=True` because the four levels do not all
         run the same way: `reverse=True` would also reverse the model id and
         order two equally-unimportant models Z before A.
         """
-        return (-self.delta, -self.pct, -self.coverage, self.model_id.casefold())
+        if self.primary_delta is None:
+            return (1, 0.0, 0.0, 0, self.model_id.casefold())
+        return (
+            0,
+            -self.primary_delta,
+            -self.pct,
+            -self.coverage,
+            self.model_id.casefold(),
+        )
 
 
 def _model_price_impact(
@@ -1755,9 +1773,9 @@ def _model_price_impact(
     field was rewritten without moving.
 
     A one-sided addition or removal carries no `delta_abs` (there is no second
-    operand to subtract), so it contributes to `coverage` and leaves the
-    primary key at 0.00 -- the design's stated behavior for a model whose only
-    price change is a field appearing or disappearing.
+    operand to subtract), so it contributes to `coverage` but never creates a
+    primary score. Models with only coverage or non-primary-unit movement sort
+    alphabetically after scored models.
 
     The percent is the percent of the field that produced the primary key, so
     the two are chosen TOGETHER as one maximum over `(delta, pct)` rather than
@@ -1765,7 +1783,7 @@ def _model_price_impact(
     anywhere on the card would report a percentage that belongs to a different
     field than the dollar figure ranked above it.
     """
-    best = (0.0, 0.0)
+    best: tuple[float, float] | None = None
     coverage = 0
     moved = False
     for field_change in item.display.visible:
@@ -1780,6 +1798,14 @@ def _model_price_impact(
             field_change,
             profile=profile,
         )
+        rule = rendered.price_rule
+        primary_group = profile.primary_price_comparison_group
+        if (
+            rule is None
+            or primary_group is None
+            or rule.comparison_group != primary_group
+        ):
+            continue
         # `_price_movement_kind` returned a two-sided direction, so both
         # operands are numeric and `signed_pct_change` can only be `None`
         # for a zero basis -- which is a real "no relative reading", ranked as
@@ -1792,10 +1818,15 @@ def _model_price_impact(
             round(abs(rendered.delta_abs or 0.0), _IMPACT_DELTA_PLACES),
             abs(percent or 0.0),
         )
-        best = max(best, candidate)
+        best = candidate if best is None else max(best, candidate)
     if not moved:
         return None
-    return _ModelImpact(best[0], best[1], coverage, item.delta.provider_model_id)
+    return _ModelImpact(
+        None if best is None else best[0],
+        0.0 if best is None else best[1],
+        coverage,
+        item.delta.provider_model_id,
+    )
 
 
 def _is_one_sided(rendered: RenderedChange) -> bool:
@@ -1832,14 +1863,14 @@ def _render_change_text(rendered: RenderedChange) -> str:
             # two conditions cannot come apart here.
             old_hint = (
                 ABSENT_TEXT_DISPLAY if rendered.old_raw is None
-                else f"{rendered.old_raw} ({rendered.old_display} / 1M)"
+                else f"{rendered.old_raw} ({rendered.old_display} {rendered.unit})"
             )
             new_hint = (
                 ABSENT_TEXT_DISPLAY if rendered.new_raw is None
-                else f"{rendered.new_raw} ({rendered.new_display} / 1M)"
+                else f"{rendered.new_raw} ({rendered.new_display} {rendered.unit})"
             )
             return f"{rendered.display_label}: {old_hint} \u2192 {new_hint}"
-        price_hint = f"{rendered.old_display} \u2192 {rendered.new_display} / 1M"
+        price_hint = f"{rendered.old_display} \u2192 {rendered.new_display} {rendered.unit}"
         suffix = f", {rendered.pct_display}" if rendered.pct_display else ""
         return f"{rendered.display_label}: {rendered.old_raw} \u2192 {rendered.new_raw} ({price_hint}{suffix})"
 
@@ -2707,7 +2738,7 @@ td.change-delta { font-weight: 600; }
 .card-table col.col-arrow { width: 1.25rem; }
 .card-table col.col-old,
 .card-table col.col-new { width: 7rem; }
-.card-table col.col-unit { width: 2.75rem; }
+.card-table col.col-unit { width: 6.5rem; }
 .card-table col.col-delta { width: 7rem; }
 .card-table col.col-pct { width: 5.5rem; }
 .card-table td {
@@ -2745,6 +2776,10 @@ td.change-delta { font-weight: 600; }
 .card-table td.arrow,
 .card-table td.unit {
   color: var(--text-dim);
+}
+.card-table td.unit {
+  min-width: 6.5rem;
+  overflow-wrap: anywhere;
 }
 .card-table td.delta,
 .card-table td.pct {
@@ -3691,8 +3726,8 @@ def _html_side_display(display: str, raw: str | None) -> str:
     return ABSENT_DISPLAY if raw is None else display
 
 
-def _html_raw_and_normalized(raw: str | None, display: str) -> str:
-    """`<raw> (<normalized> / 1M)` for a present price side, the absent token else.
+def _html_raw_and_normalized(raw: str | None, display: str, unit: str) -> str:
+    """`<raw> (<normalized> <unit>)` for a present price side, absent token else.
 
     Takes the OPERANDS, not the composed string. The `changes` table used to
     build `f"{raw} ({display} / 1M)"` unconditionally and hand it to
@@ -3706,7 +3741,7 @@ def _html_raw_and_normalized(raw: str | None, display: str) -> str:
     restated here, so both spellings of an absent side keep coming from one
     place.
     """
-    return _html_side_display(f"{raw} ({display} / 1M)" if raw is not None else "", raw)
+    return _html_side_display(f"{raw} ({display} {unit})" if raw is not None else "", raw)
 
 
 def _card_delta_cell(rendered: RenderedChange) -> str:
@@ -3755,17 +3790,19 @@ def _scientific_notation(raw: str) -> str | None:
     return f"{'-' if sign else ''}{mantissa}e{adjusted}"
 
 
-def _price_conversion_factor(profile: ProviderProfile) -> str:
-    """`× 1,000,000`, `÷ 1,000`, both, or `""` when the provider needs neither.
+def _price_conversion_factor(rendered: RenderedChange) -> str:
+    """The resolved price rule's factor clause, or `""` for identity scale.
 
     Thousands-separated because the whole point of R1 is that the reader should
     not have to count zeros -- including the zeros in the factor.
     """
+    if rendered.price_rule is None:
+        return ""
     parts = []
-    if profile.price_multiplier != 1:
-        parts.append(f"× {profile.price_multiplier:,}")
-    if profile.price_divisor != 1:
-        parts.append(f"÷ {profile.price_divisor:,}")
+    if rendered.price_rule.multiplier != 1:
+        parts.append(f"× {rendered.price_rule.multiplier:,}")
+    if rendered.price_rule.divisor != 1:
+        parts.append(f"÷ {rendered.price_rule.divisor:,}")
     return " ".join(parts)
 
 
@@ -3773,8 +3810,6 @@ def _card_raw_title(
     rendered: RenderedChange,
     raw: str | None,
     display: str,
-    *,
-    profile: ProviderProfile,
 ) -> str:
     """R1: a price cell's `title`, showing the whole derivation, else `""`.
 
@@ -3801,7 +3836,7 @@ def _card_raw_title(
         return ""
     scientific = _scientific_notation(raw)
     lead = f"{raw} ({scientific})" if scientific is not None else raw
-    factor = _price_conversion_factor(profile)
+    factor = _price_conversion_factor(rendered)
     derivation = f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
     return f' title="{html_module.escape(derivation)}"'
 
@@ -3838,7 +3873,6 @@ def _render_html_card_table(
                     rendered,
                     category=category if index == 0 else None,
                     alternate=field_row_index % 2 == 1,
-                    profile=profile,
                 )
             )
             field_row_index += 1
@@ -3887,7 +3921,6 @@ def _render_html_card_row(
     *,
     category: str | None,
     alternate: bool = False,
-    profile: ProviderProfile,
 ) -> str:
     """One field's `<tr>` -- plus a members `<tr>` for a list change.
 
@@ -3947,13 +3980,11 @@ def _render_html_card_row(
         rendered,
         rendered.old_raw,
         rendered.old_display,
-        profile=profile,
     )
     new_title = _card_raw_title(
         rendered,
         rendered.new_raw,
         rendered.new_display,
-        profile=profile,
     )
     field_row = (
         f'<tr{row_class}>{chip}{label}'
@@ -4119,10 +4150,10 @@ def _render_html_price_movement_summary(
 
     headline_parts = []
     for headline, label, css_class in (
-        (summary.headline_increase, "Biggest increase", "price-higher"),
-        (summary.headline_decrease, "Biggest decrease", "price-lower"),
+        (summary.headline_increase, "Biggest token-rate increase", "price-higher"),
+        (summary.headline_decrease, "Biggest token-rate decrease", "price-lower"),
     ):
-        # Omitted, not emptied: a "Biggest decrease" panel over a blank space
+        # Omitted, not emptied: a "Biggest token-rate decrease" panel over a blank space
         # reads as a rendering failure, and a scan where nothing got cheaper
         # has nothing to put there.
         if headline is None:
@@ -4326,7 +4357,7 @@ def _split_provider_tiers(
     whose every visible change is a list diff (`_bulk_change_signature`), so a
     group can never hold a price change and can never earn tier 1.
     """
-    ranked: list[tuple[tuple[float, float, int, str], _PlannedModelChange]] = []
+    ranked: list[tuple[tuple[int, float, float, int, str], _PlannedModelChange]] = []
     deferred: list[tuple[str, _PlannedModelChange | _BulkChangeGroup]] = []
     for item in provider_plan.items:
         if isinstance(item, _BulkChangeGroup):
@@ -4920,8 +4951,20 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
     delta_cls = _card_semantic_class(rendered)
 
     if rendered.kind == "price":
-        old_str = h(_html_raw_and_normalized(rendered.old_raw, rendered.old_display))
-        new_str = h(_html_raw_and_normalized(rendered.new_raw, rendered.new_display))
+        old_str = h(
+            _html_raw_and_normalized(
+                rendered.old_raw,
+                rendered.old_display,
+                rendered.unit or "",
+            )
+        )
+        new_str = h(
+            _html_raw_and_normalized(
+                rendered.new_raw,
+                rendered.new_display,
+                rendered.unit or "",
+            )
+        )
         if rendered.direction in ("added", "removed"):
             delta_text = rendered.direction
         elif rendered.direction in ("up", "down"):

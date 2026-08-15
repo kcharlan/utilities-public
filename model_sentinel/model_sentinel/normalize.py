@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .change_render import resolve_price_rule
 from .config import ProviderConfig
 from .models import NormalizedModel, canonical_json
-from .provider_profiles import ProviderProfile
+from .provider_profiles import PER_MILLION_TOKENS_TARGET, ProviderProfile
 
 
 def normalize_models(
@@ -24,30 +25,10 @@ def normalize_models(
             _profile_field(raw_model, profile, "display_name")
             or provider_model_id
         )
-        input_price = _normalize_price(
-            profile,
-            _coerce_float(
-                _profile_field(raw_model, profile, "input_price")
-            ),
-        )
-        output_price = _normalize_price(
-            profile,
-            _coerce_float(
-                _profile_field(raw_model, profile, "output_price")
-            ),
-        )
-        cache_read_price = _normalize_price(
-            profile,
-            _coerce_float(
-                _profile_field(raw_model, profile, "cache_read_price")
-            ),
-        )
-        cache_write_price = _normalize_price(
-            profile,
-            _coerce_float(
-                _profile_field(raw_model, profile, "cache_write_price")
-            ),
-        )
+        input_price = _profile_price(raw_model, profile, "input_price")
+        output_price = _profile_price(raw_model, profile, "output_price")
+        cache_read_price = _profile_price(raw_model, profile, "cache_read_price")
+        cache_write_price = _profile_price(raw_model, profile, "cache_write_price")
         normalized.append(
             NormalizedModel(
                 provider_id=provider.provider_id,
@@ -123,11 +104,33 @@ def _profile_field(
     skipped exactly as they were before profiles moved the candidate paths out
     of this module.
     """
+    value, _ = _profile_field_candidate(raw_model, profile, field_name)
+    return value
+
+
+def _profile_field_candidate(
+    raw_model: dict[str, Any],
+    profile: ProviderProfile,
+    field_name: str,
+) -> tuple[Any, str | None]:
+    """Return the first truthy candidate together with its raw dotted path."""
     for path in profile.normalized_fields.get(field_name, ()):
         value = _nested_get(raw_model, *path)
         if value:
-            return value
-    return None
+            return value, ".".join(path)
+    return None, None
+
+
+def _profile_price(
+    raw_model: dict[str, Any],
+    profile: ProviderProfile,
+    field_name: str,
+) -> float | None:
+    value, field_path = _profile_field_candidate(raw_model, profile, field_name)
+    coerced = _coerce_float(value)
+    if coerced is None or field_path is None:
+        return None
+    return _normalize_price(profile, field_path, coerced)
 
 
 def _supports_parameter(raw_model: dict[str, Any], token: str) -> bool | None:
@@ -189,11 +192,15 @@ def _coerce_float(value: Any) -> float | None:
 
 def _normalize_price(
     profile: ProviderProfile,
+    field_path: str,
     value: float | None,
 ) -> float | None:
     if value is None:
         return None
-    return (value * profile.price_multiplier) / profile.price_divisor
+    rule = resolve_price_rule(field_path, profile)
+    if rule.normalized_target != PER_MILLION_TOKENS_TARGET:
+        return None
+    return (value * rule.multiplier) / rule.divisor
 
 
 def _coerce_bool(value: Any) -> bool | None:

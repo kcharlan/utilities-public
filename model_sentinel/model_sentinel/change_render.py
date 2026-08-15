@@ -271,6 +271,7 @@ class RenderedChange:
     old_raw: str | None
     new_raw: str | None
     unit: str | None
+    price_rule: ResolvedPriceRule | None
     delta_display: str | None
     # Sorting only -- never format this for display.
     delta_abs: float | None
@@ -306,6 +307,21 @@ class RenderedChange:
             raise ValueError(
                 f"pct_basis_zero=True requires pct_display=None for field "
                 f"{self.field_path!r}, got pct_display={self.pct_display!r}"
+            )
+        if self.kind == "price":
+            if self.price_rule is None:
+                raise ValueError(
+                    f"price change requires price_rule for field {self.field_path!r}"
+                )
+            if self.unit != self.price_rule.unit_label:
+                raise ValueError(
+                    f"price change unit must match price_rule for field "
+                    f"{self.field_path!r}: unit={self.unit!r}, "
+                    f"rule={self.price_rule.unit_label!r}"
+                )
+        elif self.price_rule is not None:
+            raise ValueError(
+                f"non-price change requires price_rule=None for field {self.field_path!r}"
             )
 
     @property
@@ -613,7 +629,7 @@ def _significant_decimals(value: float) -> int:
     than "renders at whatever is left after rounding".
 
     A value of 0.000001 needs six places. At four it is NOT rounded away into
-    `$0.0000`: `_fmt_price_per_m` bounds it into `<$0.0001`, which is the
+    `$0.0000`: `_fmt_money` bounds it into `<$0.0001`, which is the
     statement the cap was always trying to make ("too small for this column")
     without the false one it used to make instead ("nothing").
 
@@ -630,7 +646,7 @@ def _significant_decimals(value: float) -> int:
 def _price_precision(*values: float) -> int:
     """THE shared precision for one price row: its operands', capped at four.
 
-    Called ONCE per row and passed to every `_fmt_price_per_m` call for that
+    Called ONCE per row and passed to every `_fmt_money` call for that
     row. The point of the function is that old, new and delta cannot disagree:
     formatting them from three independent magnitude-based decisions is exactly
     the defect this replaces, where `$0.196`, `$0.1876` and `$0.0196` could
@@ -649,8 +665,8 @@ def _price_precision(*values: float) -> int:
     return max((_significant_decimals(value) for value in values), default=PRICE_MIN_PRECISION)
 
 
-def _fmt_price_per_m(value: float, precision: int) -> str:
-    """Format one normalized per-1M price at the row's shared precision.
+def _fmt_money(value: float, precision: int) -> str:
+    """Format one display-denominated price at the row's shared precision.
 
     Three outcomes, and only one of them is a rendering of the number:
 
@@ -920,6 +936,7 @@ def _classify_boolean(
             old_raw=_raw_value(old_value),
             new_raw=_raw_value(new_value),
             unit=None,
+            price_rule=None,
             delta_display=one_sided_direction,
             delta_abs=None,
             pct_display=None,
@@ -952,6 +969,7 @@ def _classify_boolean(
         old_raw=_raw_value(old_value),
         new_raw=_raw_value(new_value),
         unit=None,
+        price_rule=None,
         delta_display=delta_display,
         delta_abs=None,
         pct_display=None,
@@ -972,17 +990,18 @@ def _classify_price(
     field_path = field_change.field_name
     label, qualifier = resolve_field_label(field_path, profile)
     old_value, new_value = field_change.old_value, field_change.new_value
+    price_rule = resolve_price_rule(field_path, profile)
 
     if old_numeric is not None and new_numeric is not None:
         norm_old = _normalize_price(
             old_numeric,
-            profile.price_multiplier,
-            profile.price_divisor,
+            price_rule.multiplier,
+            price_rule.divisor,
         )
         norm_new = _normalize_price(
             new_numeric,
-            profile.price_multiplier,
-            profile.price_divisor,
+            price_rule.multiplier,
+            price_rule.divisor,
         )
         delta_norm = norm_new - norm_old
         direction: Literal["up", "down", "none"]
@@ -1001,18 +1020,19 @@ def _classify_price(
         # computed from. A delta too small to print here bounds itself
         # (`+<$0.0001`) rather than widening the row.
         precision = _price_precision(norm_old, norm_new)
-        delta_display = f"{sign}{_fmt_price_per_m(abs(delta_norm), precision)}"
+        delta_display = f"{sign}{_fmt_money(abs(delta_norm), precision)}"
         pct_display = _pct_change(old_numeric, new_numeric) or None
         return RenderedChange(
             kind="price",
             field_path=field_path,
             label=label,
             qualifier=qualifier,
-            old_display=_fmt_price_per_m(norm_old, precision),
-            new_display=_fmt_price_per_m(norm_new, precision),
+            old_display=_fmt_money(norm_old, precision),
+            new_display=_fmt_money(norm_new, precision),
             old_raw=_raw_value(old_value),
             new_raw=_raw_value(new_value),
-            unit="/1M",
+            unit=price_rule.unit_label,
+            price_rule=price_rule,
             delta_display=delta_display,
             delta_abs=delta_norm,
             pct_display=pct_display,
@@ -1032,18 +1052,18 @@ def _classify_price(
         old_display = ABSENT_TEXT_DISPLAY
         norm_only = _normalize_price(
             new_numeric,
-            profile.price_multiplier,
-            profile.price_divisor,
+            price_rule.multiplier,
+            price_rule.divisor,
         )
-        new_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
+        new_display = _fmt_money(norm_only, _price_precision(norm_only))
     else:
         one_sided_direction = "removed"
         norm_only = _normalize_price(
             old_numeric,
-            profile.price_multiplier,
-            profile.price_divisor,
+            price_rule.multiplier,
+            price_rule.divisor,
         )
-        old_display = _fmt_price_per_m(norm_only, _price_precision(norm_only))
+        old_display = _fmt_money(norm_only, _price_precision(norm_only))
         new_display = ABSENT_TEXT_DISPLAY
 
     return RenderedChange(
@@ -1055,7 +1075,8 @@ def _classify_price(
         new_display=new_display,
         old_raw=_raw_value(old_value),
         new_raw=_raw_value(new_value),
-        unit="/1M",
+        unit=price_rule.unit_label,
+        price_rule=price_rule,
         delta_display=None,
         delta_abs=None,
         pct_display=None,
@@ -1099,6 +1120,7 @@ def _classify_count(
             old_raw=_raw_value(old_value),
             new_raw=_raw_value(new_value),
             unit="tok",
+            price_rule=None,
             delta_display=delta_display,
             delta_abs=delta,
             pct_display=pct_display,
@@ -1128,6 +1150,7 @@ def _classify_count(
         old_raw=_raw_value(old_value),
         new_raw=_raw_value(new_value),
         unit="tok",
+        price_rule=None,
         delta_display=None,
         delta_abs=None,
         pct_display=None,
@@ -1169,6 +1192,7 @@ def _classify_numeric(
         old_raw=_raw_value(old_value),
         new_raw=_raw_value(new_value),
         unit=None,
+        price_rule=None,
         delta_display=delta_display,
         delta_abs=delta,
         pct_display=pct_display,
@@ -1207,6 +1231,7 @@ def classify_change(
             old_raw=_raw_value(old_value),
             new_raw=_raw_value(new_value),
             unit=None,
+            price_rule=None,
             delta_display=None,
             delta_abs=None,
             pct_display=None,
@@ -1244,6 +1269,7 @@ def classify_change(
             # construction, read by nothing, and would have read as
             # `+logit_bias (1 → 2) items` the moment anything did read it.
             unit=None,
+            price_rule=None,
             delta_display=None,
             delta_abs=None,
             pct_display=None,
@@ -1324,6 +1350,7 @@ def classify_change(
         old_raw=_raw_value(old_value),
         new_raw=_raw_value(new_value),
         unit=None,
+        price_rule=None,
         delta_display=None,
         delta_abs=None,
         pct_display=None,
