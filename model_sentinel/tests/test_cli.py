@@ -3,7 +3,11 @@ from pathlib import Path
 from argparse import Namespace
 import os
 
+import pytest
+
 import model_sentinel.cli as cli
+from model_sentinel.__init__ import __version__
+from model_sentinel.build_info import format_build_info
 from model_sentinel.config import ProviderConfig
 from model_sentinel.models import BaselineInfo
 from model_sentinel.storage import Store
@@ -34,6 +38,30 @@ def _write_config_files(root: Path) -> Path:
         encoding="utf-8",
     )
     return runtime_home
+
+
+def test_version_is_configuration_free(tmp_path: Path, monkeypatch, capsys) -> None:
+    runtime_home = tmp_path / "missing-runtime-home"
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--version"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert captured.out.strip() == (
+        f"model_sentinel {__version__} {format_build_info(full_hash=True)}"
+    )
+    assert captured.err == ""
+    assert not runtime_home.exists()
+
+
+def test_default_scan_normalization_preserves_the_top_level_version_flag() -> None:
+    assert cli._normalize_argv_for_default_scan(["--version"]) == ["--version"]
+    assert cli._normalize_argv_for_default_scan(["--no-notify"]) == [
+        "scan",
+        "--no-notify",
+    ]
 
 
 def test_default_scan_without_baseline_explains_next_step(tmp_path: Path, monkeypatch, capsys) -> None:

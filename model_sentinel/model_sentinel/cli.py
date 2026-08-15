@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Sequence
 
+from .__init__ import __version__
+from .build_info import format_build_info
 from .config import (
     ConfigError,
     default_runtime_home,
@@ -106,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
             "  If no baseline exists yet, run:\n"
             "      model_sentinel scan --save\n"
         ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"model_sentinel {__version__} {format_build_info(full_hash=True)}",
     )
     subparsers = parser.add_subparsers(dest="command", required=False)
 
@@ -775,7 +782,7 @@ def _normalize_argv_for_default_scan(argv: list[str]) -> list[str]:
     if not argv:
         return ["scan"]
     first = argv[0]
-    if first in {"-h", "--help"}:
+    if first in {"-h", "--help", "--version"}:
         return argv
     if first in COMMANDS:
         return argv
