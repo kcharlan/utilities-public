@@ -13,6 +13,7 @@ from model_sentinel.browse import api
 from model_sentinel.browse import queries
 from model_sentinel.browse.aspects import Aspect, build_aspect_catalog
 from model_sentinel.browse.readonly import open_readonly
+from model_sentinel.models import FieldChange, ModelDelta
 from model_sentinel.provider_profiles import profiles_for, resolve_profile
 from model_sentinel.reporting import DEFAULT_REPORT_SHOW_FIELDS, DEFAULT_REPORT_SQUELCH_FIELDS
 from model_sentinel.storage import Store, recent_change_rows
@@ -122,12 +123,22 @@ def test_api_context_uses_explicit_prebuilt_dependencies(browse_context) -> None
 def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
     context, facts = browse_context
     result = api.activity(context, {"providers": EXAMPLE_PROVIDER.provider_id})
-    assert set(result) == {"total", "page", "page_size", "entries", "rollups"}
+    assert set(result) == {
+        "total", "page", "page_size", "entries", "rollups", "rollups_by_date",
+    }
     assert set(result["rollups"]) == {"squelched", "non_squelched", "noop"}
     assert result["rollups"] == {
         "squelched": [["benchmarks.design_arena.score", 5]],
         "non_squelched": [],
         "noop": [],
+    }
+    assert result["rollups_by_date"] == {
+        day.isoformat(): {
+            "squelched": [["benchmarks.design_arena.score", 1]],
+            "non_squelched": [],
+            "noop": [],
+        }
+        for day in facts.scrape_dates[1:]
     }
     bulk = next(entry for entry in result["entries"] if entry["kind"] == "bulk")
     assert result["total"] == 9
@@ -147,9 +158,15 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
     assert [detail["field"] for detail in bulk_details].count("supported_parameters") == 3
     assert [detail["field"] for detail in bulk_details].count("benchmarks.design_arena.score") == 1
     assert {detail["model_id"] for detail in bulk_details} == set(facts.bulk_list_models)
+    assert len(bulk["change_ids_by_change"]) == 1
+    assert len(bulk["change_ids_by_change"][0]) == len(facts.bulk_list_models)
+    assert {
+        api.change(context, {"change_id": str(change_id)})["field"]
+        for change_id in bulk["change_ids_by_change"][0]
+    } == {"supported_parameters"}
     assert set(bulk) == {
         "date", "provider_id", "model_id", "display_name", "kind", "changes",
-        "hidden", "change_ids", "bulk_models",
+        "hidden", "change_ids", "change_ids_by_change", "bulk_models",
     }
     assert set(bulk["hidden"]) == {"squelched", "unclassified", "noop"}
     assert any(entry["model_id"] == facts.price_step[0] for entry in result["entries"])
@@ -166,6 +183,17 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
     response_ids = [change_id for entry in result["entries"] for change_id in entry["change_ids"]]
     assert set(response_ids) == source_ids
     assert len(response_ids) == len(source_ids)
+    for entry in result["entries"]:
+        if entry["kind"] not in {"changed", "bulk"}:
+            assert entry["change_ids_by_change"] == []
+            continue
+        for index, change in enumerate(entry["changes"]):
+            assert entry["change_ids_by_change"][index]
+            detail = api.change(
+                context,
+                {"change_id": str(entry["change_ids_by_change"][index][0])},
+            )
+            assert detail["field"] == change["field_path"]
     squelched_only = next(
         entry for entry in result["entries"]
         if entry["kind"] == "changed" and entry["hidden"]["squelched"] and not entry["changes"]
@@ -181,6 +209,216 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
         {"date": "2026-08-15", "changed": 3, "added": 0, "removed": 0, "squelched": 1},
     ]
     assert all(set(day) == {"date", "changed", "added", "removed", "squelched"} for day in heatmap)
+
+
+def test_activity_associates_expanded_children_with_raw_origin_ids(tmp_path) -> None:
+    path = tmp_path / "fixture.db"
+    facts = build_fixture_db(path)
+    model_id = facts.benchmark_churn_model
+    store = Store(path)
+    store.record_field_changes(
+        provider_id=EXAMPLE_PROVIDER.provider_id,
+        from_scrape_id=facts.scrape_ids[-2],
+        to_scrape_id=facts.scrape_ids[-1],
+        deltas=(
+            ModelDelta(
+                "changed",
+                model_id,
+                "Synthetic Test Model A",
+                (
+                    FieldChange("context_length", 128_000, 256_000),
+                    FieldChange(
+                        "default_parameters",
+                        None,
+                        {"alpha": {"leaf": 1}, "beta": 2, "gamma": 3},
+                    ),
+                    FieldChange(
+                        "default_parameters.alpha", None, {"leaf": 4},
+                    ),
+                    FieldChange(
+                        "default_parameters.alpha", None, {"leaf": 5},
+                    ),
+                    FieldChange("status", "active", "paused"),
+                ),
+            ),
+        ),
+        detected_at="2026-08-15T12:30:00+00:00",
+    )
+    db = open_readonly(path)
+    try:
+        context = _context(db)
+        result = api.activity(
+            context,
+            {
+                "providers": EXAMPLE_PROVIDER.provider_id,
+                "from": "2026-08-15",
+                "to": "2026-08-15",
+                "models": model_id,
+                "detail": "all",
+            },
+        )
+        entry = next(
+            item
+            for item in result["entries"]
+            if any(
+                change["field_path"] == "default_parameters.beta"
+                for change in item["changes"]
+            )
+        )
+        raw_details = {
+            change_id: api.change(context, {"change_id": str(change_id)})
+            for change_id in entry["change_ids"]
+        }
+        source_ids = {
+            row["change_id"]
+            for row in recent_change_rows(
+                context.db.connection(),
+                provider_id=EXAMPLE_PROVIDER.provider_id,
+                since=date(2026, 8, 15),
+                until=date(2026, 8, 15),
+            )
+            if row["provider_model_id"] == model_id
+        }
+    finally:
+        db.close_all()
+
+    assert len(entry["change_ids_by_change"]) == len(entry["changes"])
+    by_path = {}
+    for change, associated in zip(
+        entry["changes"], entry["change_ids_by_change"], strict=True
+    ):
+        by_path.setdefault(change["field_path"], []).append(associated)
+
+    alpha_rows = [
+        (change, associated)
+        for change, associated in zip(
+            entry["changes"], entry["change_ids_by_change"], strict=True
+        )
+        if change["field_path"] == "default_parameters.alpha.leaf"
+    ]
+    assert {
+        (change["new_display"], raw_details[associated[0]]["field"])
+        for change, associated in alpha_rows
+    } == {
+        ("1", "default_parameters"),
+        ("4", "default_parameters.alpha"),
+        ("5", "default_parameters.alpha"),
+    }
+    for change, associated in alpha_rows:
+        assert len(associated) == 1
+        evidence = raw_details[associated[0]]
+        if evidence["field"] == "default_parameters":
+            assert evidence["new_value"]["alpha"]["leaf"] == int(
+                change["new_display"]
+            )
+        else:
+            assert evidence["new_value"]["leaf"] == int(change["new_display"])
+    parent_origin = None
+    for child in ("default_parameters.beta", "default_parameters.gamma"):
+        associated = by_path[child][0]
+        assert len(associated) == 1
+        assert raw_details[associated[0]]["field"] == "default_parameters"
+        parent_origin = parent_origin or associated[0]
+        assert associated[0] == parent_origin
+    for exact in ("context_length", "status"):
+        associated = by_path[exact][0]
+        assert len(associated) == 1
+        assert raw_details[associated[0]]["field"] == exact
+
+    assert len(entry["change_ids"]) == len(set(entry["change_ids"]))
+    assert set(entry["change_ids"]) == source_ids
+
+
+def test_activity_associates_same_day_exact_transitions_by_value(tmp_path) -> None:
+    path = tmp_path / "fixture.db"
+    facts = build_fixture_db(path)
+    model_id = facts.price_step[0]
+    Store(path).record_field_changes(
+        provider_id=EXAMPLE_PROVIDER.provider_id,
+        from_scrape_id=facts.scrape_ids[1],
+        to_scrape_id=facts.scrape_ids[2],
+        deltas=(
+            ModelDelta(
+                "changed",
+                model_id,
+                "Synthetic Test Model A",
+                (
+                    FieldChange("pricing.prompt", 0.0000035, 0.000004),
+                ),
+            ),
+        ),
+        detected_at="2026-08-12T12:30:00+00:00",
+    )
+    db = open_readonly(path)
+    try:
+        context = _context(db)
+        result = api.activity(
+            context,
+            {
+                "providers": EXAMPLE_PROVIDER.provider_id,
+                "from": "2026-08-12",
+                "to": "2026-08-12",
+                "models": model_id,
+                "detail": "all",
+            },
+        )
+        entry = next(
+            item
+            for item in result["entries"]
+            if sum(
+                change["field_path"] == "pricing.prompt"
+                for change in item["changes"]
+            ) == 2
+        )
+        price_rows = [
+            (change, associated)
+            for change, associated in zip(
+                entry["changes"], entry["change_ids_by_change"], strict=True
+            )
+            if change["field_path"] == "pricing.prompt"
+        ]
+        evidence = [
+            api.change(context, {"change_id": str(associated[0])})
+            for _, associated in price_rows
+        ]
+    finally:
+        db.close_all()
+
+    assert [
+        (change["old_display"], change["new_display"])
+        for change, _ in price_rows
+    ] == [("$2.00", "$3.50"), ("$3.50", "$4.00")]
+    assert [
+        (detail["rendered"]["old_display"], detail["rendered"]["new_display"])
+        for detail in evidence
+    ] == [("$2.00", "$3.50"), ("$3.50", "$4.00")]
+    assert len({associated[0] for _, associated in price_rows}) == 2
+
+
+@pytest.mark.parametrize(
+    ("value", "relative", "expected"),
+    (
+        ([{"score": 7}], "[0].score", 7),
+        (
+            [
+                {"tier": "small", "price": 2},
+                {"tier": "large", "price": 4},
+            ],
+            "[tier=large].price",
+            4,
+        ),
+        (
+            {"primary": {"tier": "large", "price": 5}},
+            "[tier=large].price",
+            5,
+        ),
+        ({"known": 1}, ".missing", None),
+    ),
+)
+def test_structural_provenance_extracts_supported_relative_paths(
+    value, relative, expected
+) -> None:
+    assert api._extract_relative(value, relative) == expected
 
 
 def test_heatmap_classifies_each_distinct_field_once(browse_context, monkeypatch) -> None:
@@ -840,6 +1078,7 @@ def test_empty_history_endpoint_responses(tmp_path) -> None:
         "page_size": 100,
         "entries": [],
         "rollups": {"squelched": [], "non_squelched": [], "noop": []},
+        "rollups_by_date": {},
     }
     assert heatmap == []
     assert model_rows == []

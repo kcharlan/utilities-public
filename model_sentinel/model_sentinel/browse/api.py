@@ -234,6 +234,193 @@ def _count_hidden(
     }
 
 
+def _change_ids_by_rendered_change(
+    changes: Sequence[FieldChange],
+    rows: Sequence[dict[str, Any]],
+) -> list[list[int]]:
+    candidates: list[tuple[Any, list[int]]] = []
+    for change in changes:
+        exact_rows = [
+            row
+            for row in rows
+            if row["field_name"] == change.field_name
+            and _same_value(row["old_value"], change.old_value)
+            and _same_value(row["new_value"], change.new_value)
+        ]
+        if exact_rows:
+            key = (
+                "exact",
+                change.field_name,
+                _canonical_value(change.old_value),
+                _canonical_value(change.new_value),
+            )
+            matching_rows = exact_rows
+        else:
+            structural_rows = [
+                row
+                for row in rows
+                if row["field_name"]
+                and (
+                    change.field_name.startswith(row["field_name"] + ".")
+                    or change.field_name.startswith(row["field_name"] + "[")
+                )
+                and _structural_row_matches(row, change)
+            ]
+            if structural_rows:
+                longest = max(len(row["field_name"]) for row in structural_rows)
+                matching_rows = [
+                    row
+                    for row in structural_rows
+                    if len(row["field_name"]) == longest
+                ]
+                origin = matching_rows[0]["field_name"]
+                key = (
+                    "parent",
+                    origin,
+                    change.field_name,
+                    _canonical_value(change.old_value),
+                    _canonical_value(change.new_value),
+                )
+            else:
+                key = None
+                matching_rows = []
+        candidates.append(
+            (key, [row["change_id"] for row in matching_rows])
+        )
+
+    totals = Counter(key for key, _ in candidates if key is not None)
+    cursors: Counter[Any] = Counter()
+    associations: list[list[int]] = []
+    for key, ids in candidates:
+        if key is None or not ids:
+            associations.append([])
+            continue
+        cursor = cursors[key]
+        cursors[key] += 1
+        if cursor >= len(ids):
+            associations.append([])
+        elif cursors[key] == totals[key]:
+            associations.append(ids[cursor:])
+        else:
+            associations.append(ids[cursor : cursor + 1])
+    return associations
+
+
+def _canonical_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return (
+            "dict",
+            tuple(
+                (key, _canonical_value(child))
+                for key, child in sorted(value.items())
+            ),
+        )
+    if isinstance(value, (list, tuple)):
+        return ("sequence", tuple(_canonical_value(child) for child in value))
+    return ("scalar", value)
+
+
+def _same_value(left: Any, right: Any) -> bool:
+    return _canonical_value(left) == _canonical_value(right)
+
+
+def _relative_segments(relative: str) -> list[tuple[str, Any]] | None:
+    segments: list[tuple[str, Any]] = []
+    index = 0
+    while index < len(relative):
+        if relative[index] == ".":
+            end = index + 1
+            while end < len(relative) and relative[end] not in ".[":
+                end += 1
+            if end == index + 1:
+                return None
+            segments.append(("key", relative[index + 1 : end]))
+            index = end
+            continue
+        if relative[index] == "[":
+            end = relative.find("]", index + 1)
+            if end < 0:
+                return None
+            content = relative[index + 1 : end]
+            if content.isdecimal():
+                segments.append(("index", int(content)))
+            else:
+                conditions = []
+                for part in content.split(","):
+                    if "=" not in part:
+                        return None
+                    key, expected = part.split("=", 1)
+                    conditions.append((key, expected))
+                segments.append(("condition", tuple(conditions)))
+            index = end + 1
+            continue
+        return None
+    return segments
+
+
+def _extract_relative(value: Any, relative: str) -> Any:
+    if value is None:
+        return None
+    segments = _relative_segments(relative)
+    if segments is None:
+        return _MISSING
+    current = value
+    for kind, selector in segments:
+        if current is None:
+            return None
+        if kind == "key":
+            if not isinstance(current, dict):
+                return _MISSING
+            if selector not in current:
+                return None
+            current = current[selector]
+        elif kind == "index":
+            if not isinstance(current, (list, tuple)):
+                return _MISSING
+            if selector >= len(current):
+                return None
+            current = current[selector]
+        else:
+            if isinstance(current, dict):
+                possible = [current, *current.values()]
+            elif isinstance(current, (list, tuple)):
+                possible = list(current)
+            else:
+                return _MISSING
+            selected = next(
+                (
+                    item
+                    for item in possible
+                    if isinstance(item, dict)
+                    and all(
+                        key in item and str(item[key]) == expected
+                        for key, expected in selector
+                    )
+                ),
+                _MISSING,
+            )
+            if selected is _MISSING:
+                return None
+            current = selected
+    return current
+
+
+def _structural_row_matches(
+    row: Mapping[str, Any],
+    change: FieldChange,
+) -> bool:
+    raw_field = row["field_name"]
+    relative = change.field_name[len(raw_field) :]
+    old_value = _extract_relative(row["old_value"], relative)
+    new_value = _extract_relative(row["new_value"], relative)
+    return (
+        old_value is not _MISSING
+        and new_value is not _MISSING
+        and _same_value(old_value, change.old_value)
+        and _same_value(new_value, change.new_value)
+    )
+
+
 def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
     common = ctx.parse_common(params)
     page = _integer(params, "page", 1)
@@ -256,6 +443,7 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
 
     serialized: list[dict[str, Any]] = []
     plans = []
+    plans_by_date: dict[date, list[tuple[Any, ProviderProfile]]] = defaultdict(list)
     for (day, provider_id), rows in source.items():
         by_model: dict[str, list[dict[str, Any]]] = defaultdict(list)
         rows_by_model: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -265,6 +453,7 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         profile = ctx.profiles[provider_id]
         plan = plan_changes_provider(by_model, ctx.policy_for(common.detail), profile)
         plans.append((plan, profile))
+        plans_by_date[day].append((plan, profile))
         presence_offsets: Counter[tuple[str, str]] = Counter()
         for grouping in group_planned_entries_by_bulk(plan.entries):
             entries = list(grouping.entries)
@@ -297,8 +486,8 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
             if original_kind == "changed" and not changes and not any(hidden.values()):
                 continue
             if original_kind == "changed":
-                change_ids = [
-                    row["change_id"]
+                eligible_rows = [
+                    row
                     for entry in entries
                     for row in rows_by_model[entry.model_id]
                     if row["change_kind"] not in ("added", "removed")
@@ -307,6 +496,50 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
                         or row["field_name"] is not None
                         and profile.categorize(row["field_name"]) in category_filter
                     )
+                ]
+                change_ids_by_change = [[] for _ in changes]
+                for entry in entries:
+                    model_rows = [
+                        row
+                        for row in eligible_rows
+                        if row["provider_model_id"] == entry.model_id
+                    ]
+                    entry_changes = list(
+                        entry.display.visible if entry.display else ()
+                    )
+                    if category_filter:
+                        entry_changes = [
+                            change
+                            for change in entry_changes
+                            if profile.categorize(change.field_name)
+                            in category_filter
+                        ]
+                    model_associations = _change_ids_by_rendered_change(
+                        entry_changes,
+                        model_rows,
+                    )
+                    for index, associated_ids in enumerate(
+                        model_associations[: len(change_ids_by_change)]
+                    ):
+                        change_ids_by_change[index].extend(associated_ids)
+                primary_ids: list[int] = []
+                used_ids: set[int] = set()
+                for associated_ids in change_ids_by_change:
+                    matching = next(
+                        (
+                            change_id
+                            for change_id in associated_ids
+                            if change_id not in used_ids
+                        ),
+                        None,
+                    )
+                    if matching is not None:
+                        primary_ids.append(matching)
+                        used_ids.add(matching)
+                change_ids = primary_ids + [
+                    row["change_id"]
+                    for row in eligible_rows
+                    if row["change_id"] not in used_ids
                 ]
             else:
                 presence_rows = [
@@ -318,6 +551,7 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
                 offset = presence_offsets[presence_key]
                 change_ids = presence_rows[offset : offset + 1]
                 presence_offsets[presence_key] += 1
+                change_ids_by_change = []
             item = {
                 "date": day.isoformat(),
                 "provider_id": provider_id,
@@ -327,6 +561,7 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
                 "changes": [rendered_change_to_json(classify_change(change, profile=profile)) for change in changes],
                 "hidden": hidden,
                 "change_ids": change_ids,
+                "change_ids_by_change": change_ids_by_change,
             }
             if kind == "bulk":
                 item["bulk_models"] = [
@@ -347,6 +582,15 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
             categories=category_filter,
             kinds=kind_filter,
         ),
+        "rollups_by_date": {
+            day.isoformat(): _rollup_json(
+                day_plans,
+                models=model_filter,
+                categories=category_filter,
+                kinds=kind_filter,
+            )
+            for day, day_plans in sorted(plans_by_date.items())
+        },
     }
 
 

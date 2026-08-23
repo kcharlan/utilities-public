@@ -633,6 +633,32 @@ def test_app_root_is_not_a_page_wide_live_region() -> None:
     assert "aria-live" not in main_attributes
 
 
+def test_activity_frontend_preserves_list_semantics_and_date_local_rollups() -> None:
+    source = _read_asset("app.js")
+
+    assert source.index('if (change.kind === "list"') < source.index(
+        'if (change.semantic === "cost"'
+    )
+    assert (
+        'return change.list_added && change.list_added.length ? "capability" : "dim";'
+        in source
+    )
+    assert "data.rollups_by_date[day]" in source
+    assert "rollupLine(group.date)" in source
+    assert "data.rollups.squelched" not in source
+    assert "entry.change_ids_by_change[index]" in source
+    assert "entry.change_ids[Math.min(index" not in source
+
+
+def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:
+    source = _read_asset("app.js")
+
+    assert "from: clamp(shiftDay(state.to, -179), meta.date_span)" in source
+    assert "detail=${state.detail}" in source
+    assert 'detail === "all"' in source
+    assert 'detail === "squelched"' in source
+
+
 @pytest.mark.parametrize(
     "source",
     [
