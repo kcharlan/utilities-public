@@ -373,6 +373,205 @@
     return html`<div class="activity"><${Heatmap} rows=${heat.data} from=${state.from} to=${state.to} detail=${state.detail} write=${write} loading=${heat.loading} /><div class="activity-grid"><${Facets} meta=${meta} state=${state} write=${write} modelOptions=${models.data || []} /><${Feed} data=${feed.data} loading=${feed.loading} hasMore=${feed.hasMore} loadMore=${feed.loadMore} openModel=${openModel} openRaw=${openRaw} write=${write} /></div></div>`;
   }
 
+  function pinParts(pin, providers) {
+    const provider = [...providers].sort((a, b) => b.id.length - a.id.length).find(item => pin.startsWith(`${item.id}/`));
+    return provider ? {provider, model: pin.slice(provider.id.length + 1)} : {provider: null, model: pin};
+  }
+
+  function Pins({meta, pins, providers, write, inputRef, toast}) {
+    const [query, setQuery] = useState("");
+    const [debouncedQuery, setDebouncedQuery] = useState("");
+    useEffect(() => {
+      const timer = setTimeout(() => setDebouncedQuery(query), 150);
+      return () => clearTimeout(timer);
+    }, [query]);
+    const results = useApi("/api/models", {providers, q: debouncedQuery, limit: 20}, Boolean(debouncedQuery.trim() && providers.length));
+    const add = item => {
+      const pin = `${item.provider_id}/${item.model_id}`;
+      const next = pins.filter(value => value !== pin);
+      next.push(pin);
+      if (next.length > meta.pin_limit) {
+        const dropped = next.splice(0, next.length - meta.pin_limit);
+        toast(`Pin limit reached. Dropped ${dropped.join(", ")}.`);
+      }
+      write({pins: next});
+      setQuery("");
+    };
+    return html`<section class="pins" aria-labelledby="pins-title">
+      <header><div><p>01 / specimens</p><h2 id="pins-title">Pinned models</h2></div><span>${pins.length} / ${meta.pin_limit}</span></header>
+      <ol>${pins.map((pin, index) => {
+        const parts = pinParts(pin, meta.providers);
+        return html`<li key=${pin}><i style=${`--pin-color: var(--series-${index + 1})`}></i><span><strong>${parts.model}</strong><small>${parts.provider ? parts.provider.label : pin}</small></span><button type="button" aria-label=${`Remove ${parts.model}`} onClick=${() => write({pins: pins.filter(value => value !== pin)})}>×</button></li>`;
+      })}</ol>
+      <div class="pin-search"><label for="pin-query">Add model</label><input id="pin-query" ref=${inputRef} type="search" autocomplete="off" value=${query} placeholder="Search model id or name" onInput=${event => setQuery(event.currentTarget.value)} onKeyDown=${event => {
+        if (event.key === "Escape") setQuery("");
+        else if (event.key === "ArrowDown") { const first = event.currentTarget.nextElementSibling && event.currentTarget.nextElementSibling.querySelector("button"); if (first) { event.preventDefault(); first.focus(); } }
+      }} />
+        ${query.trim() && html`<div class="typeahead" role="listbox" aria-label="Model search results">${results.loading ? html`<p>Searching local history…</p>` : results.error ? html`<p>${results.error.message}</p>` : results.data && results.data.length ? results.data.map(item => html`<button type="button" role="option" aria-selected="false" key=${`${item.provider_id}/${item.model_id}`} onClick=${() => add(item)}><strong>${item.display_name || item.model_id}</strong><span>${item.provider_id} / ${item.model_id}</span></button>`) : html`<p>No matching models</p>`}</div>`}
+      </div>
+    </section>`;
+  }
+
+  function AspectChoice({aspect, selected, write}) {
+    return html`<label class="aspect-choice"><input type="checkbox" checked=${selected.includes(aspect.id)} onChange=${() => write({aspects: selected.includes(aspect.id) ? selected.filter(value => value !== aspect.id) : [...selected, aspect.id]})} /><span><strong>${aspect.label}</strong>${aspect.qualifier && html`<small>${aspect.qualifier}</small>`}</span><em>${aspect.unit || aspect.kind}</em></label>`;
+  }
+
+  function AspectPicker({meta, pins, selected, write}) {
+    const pinProviders = new Set(pins.map(pin => pinParts(pin, meta.providers).provider).filter(Boolean).map(provider => provider.id));
+    const available = meta.aspects.filter(aspect => pinProviders.has(aspect.provider_id));
+    const regular = available.filter(aspect => !aspect.squelched);
+    const squelched = available.filter(aspect => aspect.squelched);
+    return html`<section class="aspect-picker" aria-labelledby="aspects-title"><header><p>02 / dimensions</p><h2 id="aspects-title">Aspects</h2></header>
+      ${meta.categories.map(category => {
+        const aspects = regular.filter(aspect => aspect.category === category);
+        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${selected} write=${write} />`)}</fieldset>` : null;
+      })}
+      ${squelched.length ? html`<details class="squelched-aspects"><summary>Benchmarks / other squelched <span>${squelched.length}</span></summary>${meta.categories.map(category => {
+        const aspects = squelched.filter(aspect => aspect.category === category);
+        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${selected} write=${write} />`)}</fieldset>` : null;
+      })}</details>` : null}
+      ${pins.length && !available.length ? html`<p class="aside-note">No timeline aspects are available for these providers.</p>` : null}
+    </section>`;
+  }
+
+  function cssSeries(index) {
+    return getComputedStyle(document.documentElement).getPropertyValue(`--series-${index + 1}`).trim();
+  }
+  function cssToken(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function epochDay(value) { return new Date(value * 1000).toISOString().slice(0, 10); }
+  function epochForDay(value) { return Date.parse(`${value}T12:00:00Z`) / 1000; }
+
+  function focusPlotSeries(plots, model, focus) {
+    for (const record of plots.current.values()) {
+      const index = record.models.indexOf(model) + 1;
+      if (index > 0) record.u.setSeries(index, {focus: true});
+      if (index > 0 && !focus) record.u.setSeries(index, {focus: false});
+    }
+  }
+
+  function setTimelineCursor(plots, epoch) {
+    for (const record of plots.current.values()) {
+      const left = epoch == null ? -10 : record.u.valToPos(epoch, "x");
+      record.u.setCursor({left, top: -10});
+    }
+  }
+
+  function TimelinePanel({aspect, axis, items, pins, plots, write}) {
+    const host = useRef(null);
+    useEffect(() => {
+      if (!host.current || !axis.length) return;
+      let zoomTimer = null, ready = false;
+      const x = axis.map(point => Date.parse(point.completed_at) / 1000);
+      const models = items.map(item => item.model);
+      const options = {
+        width: Math.max(320, host.current.clientWidth), height: 260,
+        scales: {x: {time: true}},
+        axes: [
+          {stroke: cssToken("--ink-muted"), grid: {stroke: cssToken("--border"), width: 1}, ticks: {stroke: cssToken("--border"), width: 1}},
+          {label: aspect.unit || "value", size: 70, stroke: cssToken("--ink-muted"), grid: {stroke: cssToken("--border"), width: 1}, ticks: {stroke: cssToken("--border"), width: 1}}
+        ],
+        cursor: {drag: {x: true, y: false, setScale: true}, sync: {key: "ms-browse"}},
+        legend: {show: false},
+        series: [{label: "Observed at"}, ...items.map(item => {
+          const index = pins.indexOf(item.model);
+          return {label: item.model, stroke: cssSeries(index), width: 2, spanGaps: false, paths: uPlot.paths.stepped({align: 1})};
+        })],
+        hooks: {ready: [() => { ready = true; }], setScale: [(u, key) => {
+          if (!ready || key !== "x") return;
+          clearTimeout(zoomTimer);
+          zoomTimer = setTimeout(() => {
+            const {min, max} = u.scales.x;
+            if (Number.isFinite(min) && Number.isFinite(max)) write({from: epochDay(min), to: epochDay(max)});
+          }, 220);
+        }]}
+      };
+      const u = new uPlot(options, [x, ...items.map(item => item.values)], host.current);
+      plots.current.set(aspect.id, {u, models});
+      const observer = new ResizeObserver(entries => {
+        const width = Math.floor(entries[0].contentRect.width);
+        if (width > 0 && width !== u.width) u.setSize({width, height: 260});
+      });
+      observer.observe(host.current);
+      return () => { ready = false; clearTimeout(zoomTimer); observer.disconnect(); plots.current.delete(aspect.id); u.destroy(); };
+    }, [aspect.id, axis, items, pins, write]);
+    return html`<div ref=${host} class="plot-host"></div>`;
+  }
+
+  function listToneAt(hashes, index) {
+    let tone = 0, previous = null;
+    for (let position = 0; position <= index; position += 1) {
+      const hash = hashes[position];
+      if (hash == null) continue;
+      if (previous != null && hash !== previous) tone = tone ? 0 : 1;
+      previous = hash;
+    }
+    return tone;
+  }
+
+  function StateStrip({aspect, axis, items, pins, providers}) {
+    return html`<div class="state-strip" style=${`--axis-count: ${Math.max(1, axis.length)}`}>
+      ${pins.map((pin, pinIndex) => {
+        const item = items.find(value => value.model === pin);
+        return html`<div class="state-strip-row" key=${pin}><strong title=${pin}><i style=${`background: var(--series-${pinIndex + 1})`}></i>${pinParts(pin, providers).model}</strong><div>${axis.map((point, index) => {
+          const value = item ? item.values[index] : null;
+          const hash = item && item.list_hash[index];
+          const label = aspect.kind === "boolean" ? (value === null ? "missing" : value ? "true" : "false") : value === null ? "missing" : aspect.kind === "list" ? `${value} members · ${hash || "empty"}` : String(value);
+          let state = "missing";
+          if (aspect.kind === "boolean") state = value === null ? "missing" : value ? "true" : "false";
+          else if (value !== null) state = `list-${listToneAt(aspect.kind === "list" ? item.list_hash : item.values, index)}`;
+          return html`<span key=${`${point.scrape_id}-${point.provider_id}`} class=${state} title=${`${point.date} · ${label}`}></span>`;
+        })}</div></div>`;
+      })}
+    </div>`;
+  }
+
+  function eventTone(event) {
+    if (event.semantic === "cost") return event.direction === "up" ? "cost-up" : event.direction === "down" ? "cost-down" : "dim";
+    if (event.semantic === "capacity") return "capacity";
+    if (event.semantic === "capability" || event.kind === "list") return "capability";
+    if (event.semantic === "coverage") return event.direction === "added" ? "presence-added" : "presence-removed";
+    return "dim";
+  }
+
+  function EventRail({events, from, to, plots, openRaw}) {
+    const start = epochForDay(from), end = epochForDay(to), span = Math.max(86400, end - start);
+    return html`<section class="event-rail" aria-labelledby="rail-title"><header><div><p>03 / interventions</p><h2 id="rail-title">Event rail</h2></div><span>${events.length} events</span></header><div class="rail-track">${events.map((event, index) => {
+      const offset = Math.max(0, Math.min(100, (epochForDay(event.date) - start) / span * 100));
+      return html`<button type="button" key=${event.change_id} class=${`event-mark ${eventTone(event)}${event.squelched ? " is-squelched" : ""}`} style=${`left: ${offset}%; --rail-lane: ${index % 3}`} aria-label=${`${event.date}: ${event.model}, ${event.field || event.kind}`} title=${`${event.date} · ${event.model} · ${event.field || event.kind}`} onClick=${() => openRaw(event.change_id)} onMouseEnter=${() => setTimelineCursor(plots, epochForDay(event.date))} onMouseLeave=${() => setTimelineCursor(plots, null)} onFocus=${() => setTimelineCursor(plots, epochForDay(event.date))} onBlur=${() => setTimelineCursor(plots, null)}></button>`;
+    })}</div></section>`;
+  }
+
+  function PanelStack({meta, aspects, pins, data, plots, write, themeKey}) {
+    const lookup = new Map(meta.aspects.map(aspect => [aspect.id, aspect]));
+    return html`<div class="panel-stack">${aspects.map(aspectId => {
+      const aspect = lookup.get(aspectId);
+      if (!aspect) return null;
+      const items = (data.series || []).filter(item => item.aspect === aspect.id);
+      const state = aspect.kind === "boolean" || aspect.kind === "list" || aspect.kind === "scalar";
+      return html`<section class="timeline-panel instrument" key=${`${aspect.id}:${themeKey}`}><header class="panel-heading"><div><p>${aspect.category}</p><h2>${aspect.label}${aspect.qualifier ? html`<small>${aspect.qualifier}</small>` : null}</h2></div><span>${aspect.unit || aspect.kind}</span></header>
+        <div class="panel-legend">${items.map(item => { const index = pins.indexOf(item.model); return html`<button type="button" key=${item.model} onMouseEnter=${() => focusPlotSeries(plots, item.model, true)} onMouseLeave=${() => focusPlotSeries(plots, item.model, false)} onFocus=${() => focusPlotSeries(plots, item.model, true)} onBlur=${() => focusPlotSeries(plots, item.model, false)}><i style=${`background: var(--series-${index + 1})`}></i>${pinParts(item.model, meta.providers).model}</button>`; })}</div>
+        ${state ? html`<${StateStrip} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} providers=${meta.providers} />` : html`<${TimelinePanel} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} plots=${plots} write=${write} />`}
+      </section>`;
+    })}</div>`;
+  }
+
+  function Models({meta, state, write, inputRef, openRaw, reportError, toast, themeKey}) {
+    const pins = state.pins || [], aspects = state.aspects || [];
+    const pinProviders = new Set(pins.map(pin => pinParts(pin, meta.providers).provider).filter(Boolean).map(provider => provider.id));
+    const aspectLookup = new Map(meta.aspects.map(aspect => [aspect.id, aspect]));
+    const activeAspects = aspects.filter(id => aspectLookup.has(id) && pinProviders.has(aspectLookup.get(id).provider_id));
+    const params = {models: pins, aspects: activeAspects, providers: state.providers, from: state.from, to: state.to, detail: state.detail};
+    const enabled = Boolean(pins.length && activeAspects.length);
+    const series = useApi("/api/series", params, enabled);
+    const events = useApi("/api/events", {models: pins, providers: state.providers, from: state.from, to: state.to, detail: state.detail}, Boolean(pins.length));
+    const plots = useRef(new Map());
+    useEffect(() => reportError(series.error || events.error, series.error ? series.reload : events.reload), [series.error, events.error]);
+    return html`<div class="models-view"><aside class="instrument model-controls"><${Pins} meta=${meta} pins=${pins} providers=${state.providers} write=${write} inputRef=${inputRef} toast=${toast} /><${AspectPicker} meta=${meta} pins=${pins} selected=${aspects} write=${write} /></aside><main class="timeline-workbench">
+      ${pins.length ? html`<${EventRail} events=${events.data || []} from=${state.from} to=${state.to} plots=${plots} openRaw=${openRaw} />` : null}
+      ${!pins.length ? html`<div class="empty"><b>+</b><div><h2>Pin a model to begin</h2><p>Search the saved catalog at left, or press <kbd>/</kbd> from anywhere.</p></div></div>` : !activeAspects.length ? html`<div class="empty"><b>↗</b><div><h2>Select an aspect</h2><p>Pricing, limits, capabilities, and benchmark histories are available at left.</p></div></div>` : series.loading && !series.data ? html`<div class="loading"><i></i><p>Aligning saved snapshots…</p></div>` : series.data ? html`<${PanelStack} meta=${meta} aspects=${activeAspects} pins=${pins} data=${series.data} plots=${plots} write=${write} themeKey=${themeKey} />` : null}
+    </main></div>`;
+  }
+
   function Placeholder({view, inputRef}) {
     const models = view === "models";
     return html`<section class="instrument placeholder"><p>${models ? "timeline laboratory" : "snapshot registry"}</p><h2>${models ? "Models" : "Catalog"}</h2><p>${models ? "Pinned model timelines are the next instrument in this console." : "Snapshot comparison is reserved for the next console module."}</p>${models && html`<label>Model typeahead<input ref=${inputRef} type="search" placeholder="Available with model timelines" readonly aria-describedby="model-staged" /></label>`}<span id=${models ? "model-staged" : undefined}>Module staged · state preserved</span></section>`;
@@ -412,7 +611,7 @@
     const [state, write, replaceState] = useHashState();
     const metaRequest = useApi("/api/meta", {});
     const [theme, setTheme] = useState(() => { try { const value = localStorage.getItem(THEME_KEY); return THEMES.includes(value) ? value : "system"; } catch (error) { return "system"; } });
-    const [, repaint] = useState(0), [drawer, setDrawer] = useState(null), [toast, setToast] = useState(""), [viewError, setViewError] = useState({});
+    const [themeRevision, repaint] = useState(0), [drawer, setDrawer] = useState(null), [toast, setToast] = useState(""), [viewError, setViewError] = useState({});
     const inputRef = useRef(null);
     useEffect(() => {
       if (theme === "system") document.documentElement.removeAttribute("data-theme"); else document.documentElement.dataset.theme = theme;
@@ -451,7 +650,7 @@
       write({view: "models", pins, from: clamp(shiftDay(date, -30), meta.date_span), to: clamp(shiftDay(date, 30), meta.date_span)});
     };
     return html`<div class="app-shell"><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
-      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : html`<${Placeholder} view=${resolved.view} inputRef=${inputRef} />`}
+      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Placeholder} view=${resolved.view} inputRef=${inputRef} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
   render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));

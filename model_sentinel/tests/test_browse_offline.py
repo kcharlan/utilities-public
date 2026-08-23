@@ -722,6 +722,83 @@ def test_narrow_layout_contract_keeps_outer_shell_bounded() -> None:
     assert "width: 100%" in source
 
 
+def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
+    source = _read_asset("app.js")
+
+    assert "function Models(" in source
+    assert "function Pins(" in source
+    assert "function AspectPicker(" in source
+    assert "function PanelStack(" in source
+    assert "function EventRail(" in source
+    assert 'useApi("/api/models"' in source
+    assert 'useApi("/api/series"' in source
+    assert 'useApi("/api/events"' in source
+    assert "setTimeout(() => setDebouncedQuery(query), 150)" in source
+    assert "meta.pin_limit" in source
+    assert "meta.categories" in source
+    assert "aspect.squelched" in source
+
+
+def test_models_numeric_panels_use_stepped_synced_uplot_contract() -> None:
+    source = _read_asset("app.js")
+
+    assert "uPlot.paths.stepped({align: 1})" in source
+    assert "spanGaps: false" in source
+    assert 'time: true' in source
+    assert 'key: "ms-browse"' in source
+    assert "point.completed_at" in source
+    assert "getPropertyValue(`--series-${index + 1}`)" in source
+    assert "u.setSeries(index, {focus: true})" in source
+    assert "setScale" in source
+    assert "write({from: epochDay(min), to: epochDay(max)})" in source
+    assert "key=${`${aspect.id}:${themeKey}`}" in source
+    assert 'stroke: cssToken("--ink-muted")' in source
+    assert 'stroke: cssToken("--border")' in source
+
+
+def test_models_state_strips_and_event_rail_preserve_semantics() -> None:
+    source = _read_asset("app.js")
+    styles = _read_asset("app.css")
+
+    assert "function StateStrip(" in source
+    assert 'aspect.kind === "boolean" || aspect.kind === "list"' in source
+    assert 'aspect.kind === "scalar"' in source
+    assert 'String(value)' in source
+    assert "item.list_hash[index]" in source
+    assert 'value === null ? "missing" : value ? "true" : "false"' in source
+    assert "function eventTone(event)" in source
+    assert 'event.semantic === "cost"' in source
+    assert 'event.semantic === "capacity"' in source
+    assert 'event.semantic === "coverage"' in source
+    assert "openRaw(event.change_id)" in source
+    assert "setTimelineCursor(plots, epochForDay(event.date))" in source
+    assert ".state-strip-row" in styles
+    assert "height: 56px" in styles
+    assert ".event-mark.is-squelched" in styles
+    assert "opacity: 0.4" in styles
+
+
+def test_models_filters_orphaned_aspects_and_only_flips_list_tint_on_change() -> None:
+    source = _read_asset("app.js")
+
+    assert "const activeAspects = aspects.filter" in source
+    assert "aspects: activeAspects" in source
+    assert "function listToneAt(hashes, index)" in source
+    assert "hash !== previous" in source
+    assert 'listToneAt(aspect.kind === "list" ? item.list_hash : item.values, index)' in source
+
+
+def test_models_empty_conditional_collections_do_not_render_zero_text() -> None:
+    source = _read_asset("app.js")
+
+    assert "return aspects.length ? html`" in source
+    assert "squelched.length ? html`" in source
+    assert "pins.length ? html`<${EventRail}" in source
+    assert "aspects.length && html`" not in source
+    assert "squelched.length && html`" not in source
+    assert "pins.length && html`<${EventRail}" not in source
+
+
 @pytest.mark.parametrize(
     "source",
     [
