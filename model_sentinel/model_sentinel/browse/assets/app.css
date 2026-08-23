@@ -193,7 +193,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -887,10 +888,132 @@ legend,
 .state-strip-row span.list-1 { background: color-mix(in srgb, var(--capacity) 72%, var(--panel)); }
 .state-strip-row span:hover { outline: 2px solid var(--ink-strong); outline-offset: -2px; }
 
+.catalog-view {
+  display: grid;
+  grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
+}
+.catalog-controls {
+  position: sticky;
+  top: 9.5rem;
+  display: grid;
+  gap: 1rem;
+  align-self: start;
+  max-height: calc(100vh - 11rem);
+  overflow-y: auto;
+}
+.catalog-pickers > div { display: grid; gap: 0.65rem; padding: 0.8rem; }
+.catalog-pickers label,
+.catalog-toolbar label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--ink-muted);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.catalog-pickers select,
+.catalog-toolbar input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.35rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  color: var(--ink-strong);
+  background: var(--ground);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.7rem;
+}
+.column-chooser > div { max-height: 27rem; overflow-y: auto; }
+.column-chooser fieldset { display: grid; gap: 0.38rem; padding: 0.7rem 0.8rem; border-block-end: 1px solid var(--border); }
+.column-chooser label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.5rem; align-items: start; color: var(--ink-strong); cursor: pointer; font-size: 0.7rem; }
+.column-chooser input { margin-block-start: 0.12rem; accent-color: var(--accent); }
+.column-chooser label span { display: grid; }
+.column-chooser label small { color: var(--ink-muted); font-size: 0.58rem; }
+.feed-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 2.7rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.feed-link:hover { color: var(--panel); background: var(--accent); }
+.catalog-workbench { display: grid; align-content: start; gap: 1rem; min-width: 0; }
+.catalog-table-panel { min-width: 0; overflow: hidden; }
+.catalog-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 22rem);
+  gap: 1rem;
+  align-items: end;
+  padding: 0.85rem 1rem;
+  border-block-end: 1px solid var(--border);
+}
+.catalog-toolbar > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15rem 1rem; align-items: baseline; }
+.catalog-toolbar p { grid-column: 1 / -1; margin: 0; color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
+.catalog-toolbar h2 { margin: 0; color: var(--ink-strong); font-size: 0.95rem; }
+.catalog-toolbar > div > span { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.64rem; }
+.catalog-table-wrap { max-height: calc(100vh - 18rem); overflow: auto; }
+.catalog-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; }
+.catalog-table th,
+.catalog-table td { min-width: 9rem; padding: 0.62rem 0.7rem; border-inline-end: 1px solid var(--border); border-block-end: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.catalog-table th:first-child { min-width: 15rem; }
+.catalog-table thead th { position: sticky; z-index: 4; top: 0; padding: 0; color: var(--ink-strong); background: var(--panel-raised); box-shadow: 0 1px 0 var(--border-strong); }
+.catalog-table thead button { display: flex; gap: 0.45rem; align-items: center; justify-content: space-between; width: 100%; padding: 0.55rem 0.7rem 0.12rem; border: 0; text-align: left; background: transparent; cursor: pointer; font-size: 0.68rem; font-weight: 700; }
+.catalog-table thead button:hover { color: var(--accent); }
+.catalog-table thead th > small { display: block; padding: 0 0.7rem 0.45rem; color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.54rem; font-weight: 400; }
+.catalog-table tbody th { position: relative; padding-inline-start: 0.9rem; background: var(--panel); }
+.catalog-table tbody th strong,
+.catalog-table tbody th small { display: block; max-width: 20rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-table tbody th strong { color: var(--ink-strong); font-size: 0.7rem; }
+.catalog-table tbody th small { margin-block-start: 0.12rem; color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.57rem; font-weight: 400; }
+.catalog-table tbody th em { display: inline-block; margin-block-start: 0.35rem; padding: 0.1rem 0.32rem; border: 1px solid currentColor; font-size: 0.52rem; font-style: normal; text-transform: uppercase; }
+.catalog-table td { color: var(--ink); background: var(--panel); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.67rem; }
+.catalog-table tbody tr:hover td,
+.catalog-table tbody tr:hover th { background: var(--ground); }
+.catalog-row.--presence-added > th { border-inline-start: 4px solid var(--presence-added); }
+.catalog-row.--presence-removed > th { border-inline-start: 4px solid var(--presence-removed); }
+.catalog-row.--presence-added > th em { color: var(--presence-added); }
+.catalog-row.--presence-removed > th em { color: var(--presence-removed); }
+.cell-diff { display: grid; grid-template-columns: minmax(0, auto) auto minmax(0, auto); gap: 0.32rem; align-items: center; }
+.cell-diff del { color: var(--ink-muted); text-decoration-thickness: 1px; }
+.cell-diff b { color: currentColor; }
+.cell-diff ins { color: currentColor; font-weight: 700; text-decoration: none; }
+.spark-trigger { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.55rem; align-items: center; width: 100%; padding: 0; border: 0; text-align: left; background: transparent; cursor: pointer; }
+.spark-trigger:hover i { color: var(--panel); background: var(--accent); }
+.spark-trigger > i { display: grid; place-items: center; width: 1.35rem; height: 1.35rem; border: 1px solid var(--border); color: var(--accent); font-style: normal; }
+.catalog-pager { display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 0.8rem; color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.62rem; }
+.catalog-pager div { display: flex; gap: 0.4rem; }
+.catalog-pager button { padding: 0.35rem 0.6rem; border: 1px solid var(--border); background: var(--ground); cursor: pointer; font-size: 0.66rem; }
+.catalog-pager button:disabled { cursor: default; opacity: 0.45; }
+
+.spark-layer { position: fixed; z-index: 110; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(0 0 0 / 45%); }
+.spark-popover { width: min(31rem, 100%); border: 1px solid var(--border-strong); color: var(--ink); background: var(--panel-raised); box-shadow: 0 1.2rem 4rem rgb(0 0 0 / 38%); }
+.spark-popover > header { display: flex; justify-content: space-between; padding: 0.75rem 0.8rem; border-block-end: 1px solid var(--border); }
+.spark-popover header p,
+.spark-popover header h2 { margin: 0; }
+.spark-popover header p { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.58rem; }
+.spark-popover header h2 { margin-block-start: 0.1rem; color: var(--ink-strong); font-size: 0.86rem; }
+.spark-popover header button { width: 2rem; height: 2rem; border: 1px solid var(--border); background: var(--ground); cursor: pointer; font-size: 1.2rem; }
+.spark-host { width: 100%; min-height: 80px; overflow: hidden; padding-block: 0.55rem; }
+.spark-loading { min-height: 80px; padding: 1rem; color: var(--ink-muted); font-size: 0.7rem; }
+.spark-popover > footer { display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 0.8rem; border-block-start: 1px solid var(--border); }
+.spark-popover footer span { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.6rem; }
+.spark-popover footer button { padding: 0.42rem 0.68rem; border: 1px solid var(--accent); color: var(--panel); background: var(--accent); cursor: pointer; font-size: 0.68rem; font-weight: 700; }
+
 @media (max-width: 76rem) {
   .filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .facets { top: 13rem; }
   .model-controls { top: 13rem; }
+  .catalog-controls { top: 13rem; }
 }
 
 @media (max-width: 48rem) {
@@ -906,6 +1029,10 @@ legend,
   .feed-entry > header { align-items: start; flex-direction: column; }
   .models-view { grid-template-columns: 1fr; }
   .model-controls { position: static; max-height: none; }
+  .catalog-view { grid-template-columns: 1fr; }
+  .catalog-controls { position: static; max-height: none; }
+  .catalog-toolbar { grid-template-columns: 1fr; }
+  .catalog-table-wrap { max-height: 38rem; }
   .state-strip-row { grid-template-columns: minmax(6rem, 8rem) minmax(0, 1fr); }
   .drawer dl,
   .scrapes { grid-template-columns: 1fr; }

@@ -588,13 +588,15 @@ def test_catalog_raw_price_diff_and_change_lookup(browse_context) -> None:
     context, facts = browse_context
     model, old_scrape, new_scrape, *_ = facts.price_step
     aspect = f"{EXAMPLE_PROVIDER.provider_id}:input_price"
+    reasoning_aspect = f"{EXAMPLE_PROVIDER.provider_id}:path:reasoning"
+    canonical_reasoning = f"{EXAMPLE_PROVIDER.provider_id}:reasoning_supported"
     result = api.catalog(
         context,
         {
             "provider": EXAMPLE_PROVIDER.provider_id,
             "as_of": str(new_scrape),
             "compare": str(old_scrape),
-            "columns": aspect,
+            "columns": f"{aspect},{reasoning_aspect},{canonical_reasoning}",
         },
     )
     row = next(row for row in result["rows"] if row["model_id"] == model)
@@ -606,6 +608,16 @@ def test_catalog_raw_price_diff_and_change_lookup(browse_context) -> None:
     assert cell["display"] == "$3.50"
     assert cell["change"]["old_display"] == "$2.00"
     assert cell["change"]["new_display"] == "$3.50"
+    unchanged = next(
+        candidate for candidate in result["rows"]
+        if candidate["presence"] == "present" and candidate["model_id"] != model
+    )
+    assert unchanged["cells"][aspect]["old_display"] == "$2.00"
+    assert unchanged["cells"][aspect]["display"] == "$2.00"
+    assert unchanged["cells"][reasoning_aspect]["old_display"] == "off"
+    assert unchanged["cells"][reasoning_aspect]["display"] == "off"
+    assert unchanged["cells"][canonical_reasoning]["old_display"] == "off"
+    assert unchanged["cells"][canonical_reasoning]["display"] == "off"
 
     price_entry = next(
         entry

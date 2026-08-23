@@ -866,6 +866,66 @@ def test_models_empty_conditional_collections_do_not_render_zero_text() -> None:
     assert "pins.length && html`<${EventRail}" not in source
 
 
+def test_catalog_frontend_uses_provider_scoped_saved_scrapes_and_canonical_defaults() -> None:
+    source = _read_asset("app.js")
+
+    assert "function Catalog(" in source
+    assert "function Pickers(" in source
+    assert "function ColumnChooser(" in source
+    assert 'scrape.status === "success" && scrape.saved' in source
+    assert "scrape.provider_id === providerId" in source
+    assert 'aspect.source === "column"' in source
+    assert '["Pricing", "Context & Limits", "Capabilities"].includes(aspect.category)' in source
+    assert 'useApi("/api/catalog"' in source
+    assert 'page_size: CATALOG_PAGE_SIZE' in source
+    assert "patch.asof = String(asOf.scrape_id)" in source
+    assert "patch.cols = columns" in source
+    assert "disabled=${!catalogScrapes(meta, provider.id).length}" in source
+    assert 'const sort = state.sort === "model_id" || columns.includes(state.sort) ? state.sort : "model_id"' in source
+    assert 'const dir = ["asc", "desc"].includes(state.dir) ? state.dir : "asc"' in source
+    assert "patch.sort = sort" in source
+    assert "patch.dir = dir" in source
+
+
+def test_catalog_table_supports_filter_sort_paging_and_semantic_diffs() -> None:
+    source = _read_asset("app.js")
+    styles = _read_asset("app.css")
+
+    assert "function CatalogTable(" in source
+    assert 'type="search" value=${state.q || ""}' in source
+    assert 'aria-sort=${sortAria("model_id")}' in source
+    assert "write({sort: aspect.id, dir: nextSortDirection(aspect.id)})" in source
+    assert "Math.ceil(data.total / CATALOG_PAGE_SIZE)" in source
+    assert "cellChanged(cell)" in source
+    assert "semantic(cell.change)" in source
+    assert '`catalog-row --presence-${row.presence}`' in source
+    assert "position: sticky" in styles
+    assert "font-variant-numeric: tabular-nums" in styles
+    assert ".--presence-added" in styles
+    assert ".--presence-removed" in styles
+
+
+def test_catalog_sparkline_uses_full_series_span_and_links_to_models() -> None:
+    source = _read_asset("app.js")
+
+    assert "function SparklinePopover(" in source
+    assert 'useApi("/api/series", {models: pin, aspects: aspect.id}' in source
+    assert "height: 80" in source
+    assert "uPlot.paths.stepped({align: 1})" in source
+    assert 'write({view: "models", pins, aspects: [aspect.id]' in source
+    assert "Open timeline" in source
+    assert 'event.key === "Escape"' in source
+
+
+def test_catalog_feed_cross_link_bounds_activity_to_compared_scrapes() -> None:
+    source = _read_asset("app.js")
+
+    assert "Show as feed" in source
+    assert 'write({view: "activity", providers: [providerId], from: dates[0], to: dates[1]})' in source
+    assert "compare.completed_at" in source
+    assert "asOf.completed_at" in source
+
+
 @pytest.mark.parametrize(
     "source",
     [

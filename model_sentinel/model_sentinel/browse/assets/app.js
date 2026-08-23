@@ -7,6 +7,7 @@
   const THEMES = ["system", "light", "dark"];
   const VIEWS = ["activity", "models", "catalog"];
   const ASPECT_LIMIT = 12;
+  const CATALOG_PAGE_SIZE = 50;
   const LIST_KEYS = new Set(["providers", "models", "categories", "kinds", "pins", "aspects", "cols"]);
   const HASH_KEYS = ["view", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "cols", "q", "sort", "dir"];
 
@@ -640,9 +641,115 @@
     </main></div>`;
   }
 
-  function Placeholder({view, inputRef}) {
-    const models = view === "models";
-    return html`<section class="instrument placeholder"><p>${models ? "timeline laboratory" : "snapshot registry"}</p><h2>${models ? "Models" : "Catalog"}</h2><p>${models ? "Pinned model timelines are the next instrument in this console." : "Snapshot comparison is reserved for the next console module."}</p>${models && html`<label>Model typeahead<input ref=${inputRef} type="search" placeholder="Available with model timelines" readonly aria-describedby="model-staged" /></label>`}<span id=${models ? "model-staged" : undefined}>Module staged · state preserved</span></section>`;
+  function catalogScrapes(meta, providerId) {
+    return meta.scrapes.filter(scrape => scrape.provider_id === providerId && scrape.status === "success" && scrape.saved)
+      .sort((left, right) => right.completed_at.localeCompare(left.completed_at) || right.scrape_id - left.scrape_id);
+  }
+
+  function defaultCatalogColumns(meta, providerId) {
+    return meta.aspects.filter(aspect => aspect.provider_id === providerId && aspect.source === "column"
+      && ["Pricing", "Context & Limits", "Capabilities"].includes(aspect.category)).map(aspect => aspect.id);
+  }
+
+  function scrapeLabel(scrape) {
+    return `${scrape.date} · ${scrape.model_count} ${scrape.model_count === 1 ? "model" : "models"}`;
+  }
+
+  function Pickers({meta, providerId, scrapes, asOf, compare, write}) {
+    const earlier = scrapes.filter(scrape => asOf && (scrape.completed_at < asOf.completed_at
+      || scrape.completed_at === asOf.completed_at && scrape.scrape_id < asOf.scrape_id));
+    return html`<section class="catalog-pickers instrument" aria-labelledby="catalog-pickers-title"><header class="section-heading"><div><p>01 / coordinates</p><h2 id="catalog-pickers-title">Snapshot coordinates</h2></div><span>Saved records only</span></header><div>
+      <label>Provider<select value=${providerId} onChange=${event => write({providers: [event.currentTarget.value], asof: null, compare: null, cols: null, sort: null, dir: null})}>${meta.providers.map(provider => html`<option key=${provider.id} value=${provider.id} disabled=${!catalogScrapes(meta, provider.id).length}>${provider.label}</option>`)}</select></label>
+      <label>As of<select value=${asOf ? String(asOf.scrape_id) : ""} onChange=${event => write({asof: event.currentTarget.value, compare: null})}>${scrapes.map(scrape => html`<option key=${scrape.scrape_id} value=${scrape.scrape_id}>${scrapeLabel(scrape)}</option>`)}</select></label>
+      <label>Compare<select value=${compare ? String(compare.scrape_id) : ""} onChange=${event => write({compare: event.currentTarget.value || null})}><option value="">None</option>${earlier.map(scrape => html`<option key=${scrape.scrape_id} value=${scrape.scrape_id}>${scrapeLabel(scrape)}</option>`)}</select></label>
+    </div></section>`;
+  }
+
+  function ColumnChooser({aspects, selected, write}) {
+    const groups = [...new Set(aspects.map(aspect => aspect.category))];
+    const toggle = id => write({cols: selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id]});
+    return html`<section class="column-chooser instrument" aria-labelledby="column-title"><header class="section-heading"><div><p>02 / projection</p><h2 id="column-title">Columns</h2></div><span>${selected.length} visible</span></header><div>${groups.map(group => html`<fieldset key=${group}><legend>${group}</legend>${aspects.filter(aspect => aspect.category === group).map(aspect => html`<label key=${aspect.id}><input type="checkbox" checked=${selected.includes(aspect.id)} onChange=${() => toggle(aspect.id)} /><span>${aspect.label}${aspect.qualifier || aspect.source === "path" ? html`<small>${aspect.qualifier || aspect.path}</small>` : null}</span></label>`)}</fieldset>`)}</div></section>`;
+  }
+
+  function cellChanged(cell) {
+    return Object.prototype.hasOwnProperty.call(cell, "old_value") && JSON.stringify(cell.old_value) !== JSON.stringify(cell.value);
+  }
+
+  function SparklinePopover({meta, pin, aspect, write, close}) {
+    const host = useRef(null), closeRef = useRef(null), previous = useRef(null);
+    const request = useApi("/api/series", {models: pin, aspects: aspect.id}, Boolean(pin && aspect));
+    useEffect(() => {
+      previous.current = document.activeElement;
+      const timer = setTimeout(() => closeRef.current && closeRef.current.focus(), 0);
+      const keyboard = event => { if (event.key === "Escape") close(); };
+      addEventListener("keydown", keyboard);
+      return () => { clearTimeout(timer); removeEventListener("keydown", keyboard); previous.current && previous.current.focus(); };
+    }, []);
+    useEffect(() => {
+      if (!host.current || !request.data || !request.data.axis.length) return;
+      const item = request.data.series[0];
+      if (!item) return;
+      const x = request.data.axis.map(point => Date.parse(point.completed_at) / 1000);
+      const options = {
+        width: Math.max(260, host.current.clientWidth), height: 80,
+        scales: {x: {time: true}}, axes: [], cursor: {show: true}, legend: {show: false},
+        series: [{}, {stroke: cssToken("--accent"), width: 2, spanGaps: false, paths: uPlot.paths.stepped({align: 1})}]
+      };
+      const plot = new uPlot(options, [x, item.values], host.current);
+      return () => plot.destroy();
+    }, [request.data]);
+    const parts = pinParts(pin, meta.providers), pins = [pin];
+    return html`<div class="spark-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section class="spark-popover" role="dialog" aria-modal="true" aria-labelledby="spark-title"><header><div><p>${parts.model}</p><h2 id="spark-title">${aspect.label} over full history</h2></div><button ref=${closeRef} type="button" aria-label="Close sparkline" onClick=${close}>×</button></header><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="spark-loading">Loading series…</div>` : html`<div ref=${host} class="spark-host"></div>`}<footer><span>${aspect.unit || aspect.kind}</span><button type="button" onClick=${() => { write({view: "models", pins, aspects: [aspect.id], from: meta.date_span.first, to: meta.date_span.last}); close(); }}>Open timeline</button></footer></section></div>`;
+  }
+
+  function CatalogTable({data, aspects, state, write, page, setPage, openSparkline}) {
+    const aspectLookup = new Map(aspects.map(aspect => [aspect.id, aspect]));
+    const nextSortDirection = id => state.sort === id && state.dir !== "desc" ? "desc" : "asc";
+    const sortAria = id => state.sort === id ? (state.dir === "desc" ? "descending" : "ascending") : "none";
+    const pages = Math.max(1, Math.ceil(data.total / CATALOG_PAGE_SIZE));
+    return html`<section class="catalog-table-panel instrument" aria-labelledby="catalog-table-title"><header class="catalog-toolbar"><div><p>03 / registry</p><h2 id="catalog-table-title">Model catalog</h2><span>${data.total} records</span></div><label>Filter models<input type="search" value=${state.q || ""} placeholder="ID or display name" onInput=${event => write({q: event.currentTarget.value || null})} /></label></header><div class="catalog-table-wrap"><table class="catalog-table"><thead><tr><th aria-sort=${sortAria("model_id")}><button type="button" onClick=${() => write({sort: "model_id", dir: nextSortDirection("model_id")})}>Model <span>↕</span></button></th>${aspects.map(aspect => html`<th key=${aspect.id} aria-sort=${sortAria(aspect.id)}><button type="button" onClick=${() => write({sort: aspect.id, dir: nextSortDirection(aspect.id)})}>${aspect.label}<span>↕</span></button><small>${aspect.unit || aspect.qualifier || aspect.kind}</small></th>`)}</tr></thead><tbody>${data.rows.map(row => html`<tr key=${row.model_id} class=${`catalog-row --presence-${row.presence}`}><th scope="row"><strong>${row.display_name || row.model_id}</strong><small>${row.model_id}</small>${row.presence !== "present" ? html`<em>${row.presence}</em>` : null}</th>${aspects.map(aspect => {
+      const cell = row.cells[aspect.id], changed = cell && cellChanged(cell), numeric = ["price", "count", "numeric"].includes(aspect.kind);
+      const content = changed ? html`<span class=${`cell-diff ${semantic(cell.change)}`}><del>${cell.old_display}</del><b>→</b><ins>${cell.display}</ins></span>` : html`<span>${cell ? cell.display : "—"}</span>`;
+      return html`<td key=${aspect.id} class=${changed ? `is-changed ${semantic(cell.change)}` : ""}>${numeric && cell && (typeof cell.value === "number" || typeof cell.old_value === "number") ? html`<button type="button" class="spark-trigger" aria-label=${`Open ${aspect.label} history for ${row.model_id}`} onClick=${() => openSparkline({pin: `${data.as_of.provider_id}/${row.model_id}`, aspect: aspectLookup.get(aspect.id)})}>${content}<i>⌁</i></button>` : content}</td>`;
+    })}</tr>`)}</tbody></table></div><footer class="catalog-pager"><span>Page ${page} of ${pages}</span><div><button type="button" disabled=${page <= 1} onClick=${() => setPage(Math.max(1, page - 1))}>Previous</button><button type="button" disabled=${page >= pages} onClick=${() => setPage(Math.min(pages, page + 1))}>Next</button></div></footer></section>`;
+  }
+
+  function Catalog({meta, state, write}) {
+    const providerIds = meta.providers.map(provider => provider.id);
+    const availableProvider = providerIds.find(id => catalogScrapes(meta, id).length);
+    const providerId = state.providers.find(id => catalogScrapes(meta, id).length) || availableProvider || state.providers[0];
+    const scrapes = catalogScrapes(meta, providerId), requestedAsOf = Number(state.asof);
+    const asOf = scrapes.find(scrape => scrape.scrape_id === requestedAsOf) || scrapes[0] || null;
+    const compare = scrapes.find(scrape => scrape.scrape_id === Number(state.compare) && asOf && (scrape.completed_at < asOf.completed_at || scrape.completed_at === asOf.completed_at && scrape.scrape_id < asOf.scrape_id)) || null;
+    const providerAspects = meta.aspects.filter(aspect => aspect.provider_id === providerId);
+    const known = new Set(providerAspects.map(aspect => aspect.id));
+    const requestedColumns = (state.cols || []).filter(id => known.has(id));
+    const columns = requestedColumns.length ? requestedColumns : defaultCatalogColumns(meta, providerId);
+    const sort = state.sort === "model_id" || columns.includes(state.sort) ? state.sort : "model_id";
+    const dir = ["asc", "desc"].includes(state.dir) ? state.dir : "asc";
+    const [page, setPage] = useState(1), [sparkline, setSparkline] = useState(null);
+    const requestKey = JSON.stringify([providerId, asOf && asOf.scrape_id, compare && compare.scrape_id, columns, state.q, sort, dir]);
+    useEffect(() => {
+      if (!providerId || !asOf) return;
+      const patch = {};
+      if (!state.providers.includes(providerId)) patch.providers = [providerId];
+      if (String(state.asof || "") !== String(asOf.scrape_id)) patch.asof = String(asOf.scrape_id);
+      if (state.compare && !compare) patch.compare = null;
+      if (!requestedColumns.length) patch.cols = columns;
+      if (state.sort !== sort) patch.sort = sort;
+      if (state.dir !== dir) patch.dir = dir;
+      if (Object.keys(patch).length) write(patch);
+    }, [providerId, asOf && asOf.scrape_id, compare && compare.scrape_id, columns.join(","), JSON.stringify(state.providers), state.asof, state.compare, requestedColumns.length, sort, dir]);
+    useEffect(() => setPage(1), [requestKey]);
+    const request = useApi("/api/catalog", {provider: providerId, as_of: asOf && asOf.scrape_id, compare: compare && compare.scrape_id, columns, q: state.q, sort, dir, page, page_size: CATALOG_PAGE_SIZE}, Boolean(providerId && asOf && columns.length));
+    const selectedAspects = columns.map(id => providerAspects.find(aspect => aspect.id === id)).filter(Boolean);
+    const showFeed = () => {
+      if (!compare || !asOf) return;
+      const dates = [compare.completed_at.slice(0, 10), asOf.completed_at.slice(0, 10)].sort();
+      write({view: "activity", providers: [providerId], from: dates[0], to: dates[1]});
+    };
+    if (!providerId || !asOf) return html`<div class="empty"><b>∅</b><div><h2>No saved snapshots</h2><p>This provider has no successful saved scrape to browse.</p></div></div>`;
+    return html`<div class="catalog-view"><aside class="catalog-controls"><${Pickers} meta=${meta} providerId=${providerId} scrapes=${scrapes} asOf=${asOf} compare=${compare} write=${write} /><${ColumnChooser} aspects=${providerAspects} selected=${columns} write=${write} />${compare ? html`<button class="feed-link" type="button" onClick=${showFeed}>Show as feed <span>↗</span></button>` : null}</aside><main class="catalog-workbench"><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="loading"><i></i><p>Resolving snapshot registry…</p></div>` : request.data ? html`<${CatalogTable} data=${request.data} aspects=${selectedAspects} state=${{...state, sort, dir}} write=${write} page=${page} setPage=${setPage} openSparkline=${setSparkline} />` : null}</main>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} />` : null}</div>`;
   }
 
   function RawDrawer({id, close}) {
@@ -718,7 +825,7 @@
       write({view: "models", pins, from: clamp(shiftDay(date, -30), meta.date_span), to: clamp(shiftDay(date, 30), meta.date_span)});
     };
     return html`<div class="app-shell"><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
-      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Placeholder} view=${resolved.view} inputRef=${inputRef} />`}
+      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
   render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));

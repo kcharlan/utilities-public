@@ -951,12 +951,29 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
             old_raw = _raw_aspect_value(old_row, aspect, profile)
             stored = _catalog_machine_value(new_row, aspect, new_raw, profile)
             rendered = classify_change(FieldChange(aspect.field_name, old_raw, new_raw), profile=profile)
-            cell = {"value": stored, "display": rendered.new_display, "unit": aspect.unit}
+            new_display = rendered.new_display
+            old_display = rendered.old_display
+            rendered_json = rendered_change_to_json(rendered)
+            if aspect.kind == "boolean":
+                old_display = "—" if old_raw is None else "on" if bool(old_raw) else "off"
+                new_display = "—" if new_raw is None else "on" if bool(new_raw) else "off"
+                rendered_json = {
+                    **rendered_json,
+                    "old_display": old_display,
+                    "new_display": new_display,
+                }
+            elif compare is not None and _same_value(old_raw, new_raw):
+                stable = classify_change(
+                    FieldChange(aspect.field_name, None, new_raw),
+                    profile=profile,
+                )
+                new_display = old_display = stable.new_display
+            cell = {"value": stored, "display": new_display, "unit": aspect.unit}
             if compare is not None:
                 cell.update({
                     "old_value": _catalog_machine_value(old_row, aspect, old_raw, profile),
-                    "old_display": rendered.old_display,
-                    "change": rendered_change_to_json(rendered),
+                    "old_display": old_display,
+                    "change": rendered_json,
                 })
             cells[aspect.id] = cell
         output.append({"model_id": model_id, "display_name": display_name, "presence": presence, "cells": cells})
