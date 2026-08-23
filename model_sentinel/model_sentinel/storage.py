@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -531,52 +531,13 @@ class Store:
         until: date | None = None,
     ) -> tuple[dict[str, Any], ...]:
         with self._connect() as connection:
-            query = """
-                SELECT fc.provider_id, fc.provider_model_id, fc.change_kind,
-                       fc.field_name, fc.old_value_json, fc.new_value_json,
-                       fc.detected_at, p.label AS provider_label,
-                       (
-                           SELECT sm.display_name
-                           FROM snapshot_models sm
-                           JOIN scrapes s ON s.scrape_id = sm.scrape_id
-                           WHERE sm.provider_id = fc.provider_id
-                             AND sm.provider_model_id = fc.provider_model_id
-                           ORDER BY datetime(s.completed_at) DESC, s.scrape_id DESC
-                           LIMIT 1
-                       ) AS display_name
-                FROM field_changes fc
-                JOIN providers p ON p.provider_id = fc.provider_id
-                WHERE fc.from_scrape_id IS NOT NULL
-                ORDER BY datetime(fc.detected_at) ASC, fc.provider_id,
-                         fc.provider_model_id, fc.change_id
-            """
-            rows = connection.execute(query).fetchall()
-
-        results: list[dict[str, Any]] = []
-        for row in rows:
-            detected_at = row["detected_at"]
-            detected_date = local_date_for(detected_at)
-            if since and detected_date < since:
-                continue
-            if until and detected_date > until:
-                continue
-            if provider_id and row["provider_id"] != provider_id:
-                continue
-
-            display_name = row["display_name"] or row["provider_model_id"]
-
-            results.append({
-                "provider_id": row["provider_id"],
-                "provider_label": row["provider_label"],
-                "provider_model_id": row["provider_model_id"],
-                "display_name": display_name,
-                "change_kind": row["change_kind"],
-                "field_name": row["field_name"],
-                "old_value": _load_json_value(row["old_value_json"]),
-                "new_value": _load_json_value(row["new_value_json"]),
-                "detected_at": detected_at,
-            })
-        return tuple(results)
+            rows = recent_change_rows(
+                connection,
+                provider_id=provider_id,
+                since=since,
+                until=until,
+            )
+        return tuple({key: value for key, value in row.items() if key != "change_id"} for row in rows)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path)
@@ -596,7 +557,79 @@ def _from_db_bool(value: int | None) -> bool | None:
     return bool(value)
 
 
-def _load_json_value(value: str | None) -> Any:
+def recent_change_rows(
+    connection: sqlite3.Connection,
+    *,
+    provider_id: str | None,
+    since: date | None,
+    until: date | None,
+) -> tuple[dict[str, Any], ...]:
+    query = """
+        WITH latest AS (
+            SELECT sm.provider_id, sm.provider_model_id, sm.display_name,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY sm.provider_id, sm.provider_model_id
+                       ORDER BY s.completed_at DESC, s.scrape_id DESC
+                   ) AS rn
+            FROM snapshot_models sm
+            JOIN scrapes s ON s.scrape_id = sm.scrape_id
+        )
+        SELECT fc.change_id, fc.provider_id, fc.provider_model_id, fc.change_kind,
+               fc.field_name, fc.old_value_json, fc.new_value_json, fc.detected_at,
+               p.label AS provider_label, l.display_name
+        FROM field_changes fc
+        JOIN providers p ON p.provider_id = fc.provider_id
+        LEFT JOIN latest l
+               ON l.provider_id = fc.provider_id
+              AND l.provider_model_id = fc.provider_model_id
+              AND l.rn = 1
+        WHERE fc.from_scrape_id IS NOT NULL
+    """
+    parameters: list[str] = []
+    if provider_id is not None:
+        query += " AND fc.provider_id = ?"
+        parameters.append(provider_id)
+    if since is not None:
+        lower_bound = (datetime.combine(since, time.min) - timedelta(days=1)).isoformat()
+        query += " AND fc.detected_at >= ?"
+        parameters.append(lower_bound)
+    if until is not None:
+        upper_bound = (datetime.combine(until, time.max) + timedelta(days=1)).isoformat()
+        query += " AND fc.detected_at <= ?"
+        parameters.append(upper_bound)
+    query += " ORDER BY fc.detected_at ASC, fc.provider_id, fc.provider_model_id, fc.change_id"
+
+    rows = connection.execute(query, parameters).fetchall()
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        detected_at = row["detected_at"]
+        detected_date = local_date_for(detected_at)
+        if since is not None and detected_date < since:
+            continue
+        if until is not None and detected_date > until:
+            continue
+
+        results.append(
+            {
+                "change_id": int(row["change_id"]),
+                "provider_id": row["provider_id"],
+                "provider_label": row["provider_label"],
+                "provider_model_id": row["provider_model_id"],
+                "display_name": row["display_name"] or row["provider_model_id"],
+                "change_kind": row["change_kind"],
+                "field_name": row["field_name"],
+                "old_value": load_json_value(row["old_value_json"]),
+                "new_value": load_json_value(row["new_value_json"]),
+                "detected_at": detected_at,
+            }
+        )
+    return tuple(results)
+
+
+def load_json_value(value: str | None) -> Any:
     if value is None:
         return None
     return json.loads(value)
+
+
+_load_json_value = load_json_value
