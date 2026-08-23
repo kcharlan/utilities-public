@@ -911,10 +911,13 @@ def test_catalog_table_supports_filter_sort_paging_and_semantic_diffs() -> None:
 
 def test_catalog_suppresses_stale_rows_and_replaces_debounced_search_hashes() -> None:
     source = _read_asset("app.js")
+    use_api = source[source.index("function useApi("):source.index("function activityEntryId(")]
 
-    assert "const resourceKey = JSON.stringify([path, params, enabled])" in source
-    assert "key: resourceKey" in source
-    assert "fresh: state.key === resourceKey" in source
+    assert "const resourceKey = JSON.stringify([path, params, enabled])" in use_api
+    assert "key: resourceKey" in use_api
+    assert "fresh: state.key === resourceKey" in use_api
+    assert "setState(current => ({...current, loading: true, error: null}))" in use_api
+    assert "key: null, loading: true" not in use_api
     assert "function CatalogSearch({value, replaceState})" in source
     assert "setTimeout(() => replaceState({q: draft || null}), 250)" in source
     assert "onInput=${event => setDraft(event.currentTarget.value)}" in source

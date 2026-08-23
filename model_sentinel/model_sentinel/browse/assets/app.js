@@ -95,7 +95,7 @@
     useEffect(() => {
       if (!enabled) { setState(current => ({...current, loading: false, error: null})); return; }
       const controller = new AbortController();
-      setState(current => ({...current, key: null, loading: true, error: null}));
+      setState(current => ({...current, loading: true, error: null}));
       api.get(path, params, controller.signal).then(
         data => setState({data, key: resourceKey, loading: false, error: null}),
         error => error.name !== "AbortError" && setState(current => ({...current, loading: false, error}))
