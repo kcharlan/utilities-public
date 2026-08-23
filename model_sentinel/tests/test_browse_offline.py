@@ -750,10 +750,35 @@ def test_models_numeric_panels_use_stepped_synced_uplot_contract() -> None:
     assert "getPropertyValue(`--series-${index + 1}`)" in source
     assert "u.setSeries(index, {focus: true})" in source
     assert "setScale" in source
-    assert "write({from: epochDay(min), to: epochDay(max)})" in source
+    assert "write({from: localDayFromEpoch(min), to: localDayFromEpoch(max)})" in source
     assert "key=${`${aspect.id}:${themeKey}`}" in source
     assert 'stroke: cssToken("--ink-muted")' in source
     assert 'stroke: cssToken("--border")' in source
+
+
+def test_models_legend_reset_and_local_date_zoom_regressions() -> None:
+    source = _read_asset("app.js")
+
+    assert "record.u.setSeries(null, {focus: false})" in source
+    assert "if (!focus)" in source
+    assert source.index("if (!focus)") < source.index("record.u.setSeries(index, {focus: true})")
+    assert "function localDayFromEpoch(value)" in source
+    assert "date.getFullYear()" in source
+    assert "date.getMonth() + 1" in source
+    assert "date.getDate()" in source
+    assert "new Date(value * 1000).toISOString()" not in source
+
+
+def test_models_pointer_zoom_fallback_updates_hash_for_non_mouse_drags() -> None:
+    source = _read_asset("app.js")
+
+    assert 'addEventListener("pointerdown"' in source
+    assert 'addEventListener("pointerup"' in source
+    assert "event.pointerType === \"mouse\"" in source
+    assert "u.posToVal(" in source
+    assert "queueZoomWrite(" in source
+    assert 'removeEventListener("pointerdown"' in source
+    assert 'removeEventListener("pointerup"' in source
 
 
 def test_models_state_strips_and_event_rail_preserve_semantics() -> None:

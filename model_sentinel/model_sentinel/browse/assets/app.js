@@ -438,14 +438,18 @@
     return getComputedStyle(document.documentElement).getPropertyValue(`--series-${index + 1}`).trim();
   }
   function cssToken(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
-  function epochDay(value) { return new Date(value * 1000).toISOString().slice(0, 10); }
+  function localDayFromEpoch(value) {
+    const date = new Date(value * 1000);
+    const pad = part => String(part).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
   function epochForDay(value) { return Date.parse(`${value}T12:00:00Z`) / 1000; }
 
   function focusPlotSeries(plots, model, focus) {
     for (const record of plots.current.values()) {
+      if (!focus) { record.u.setSeries(null, {focus: false}); continue; }
       const index = record.models.indexOf(model) + 1;
       if (index > 0) record.u.setSeries(index, {focus: true});
-      if (index > 0 && !focus) record.u.setSeries(index, {focus: false});
     }
   }
 
@@ -463,6 +467,12 @@
       let zoomTimer = null, ready = false;
       const x = axis.map(point => Date.parse(point.completed_at) / 1000);
       const models = items.map(item => item.model);
+      const queueZoomWrite = (min, max) => {
+        clearTimeout(zoomTimer);
+        zoomTimer = setTimeout(() => {
+          if (Number.isFinite(min) && Number.isFinite(max)) write({from: localDayFromEpoch(min), to: localDayFromEpoch(max)});
+        }, 220);
+      };
       const options = {
         width: Math.max(320, host.current.clientWidth), height: 260,
         scales: {x: {time: true}},
@@ -478,21 +488,36 @@
         })],
         hooks: {ready: [() => { ready = true; }], setScale: [(u, key) => {
           if (!ready || key !== "x") return;
-          clearTimeout(zoomTimer);
-          zoomTimer = setTimeout(() => {
-            const {min, max} = u.scales.x;
-            if (Number.isFinite(min) && Number.isFinite(max)) write({from: epochDay(min), to: epochDay(max)});
-          }, 220);
+          queueZoomWrite(u.scales.x.min, u.scales.x.max);
         }]}
       };
       const u = new uPlot(options, [x, ...items.map(item => item.values)], host.current);
+      const over = u.root.querySelector(".u-over");
+      let pointerStart = null;
+      const pointerDown = event => {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        pointerStart = event.clientX;
+      };
+      const pointerUp = event => {
+        if (pointerStart == null) return;
+        const start = pointerStart;
+        pointerStart = null;
+        if (Math.abs(event.clientX - start) < 6) return;
+        const bounds = over.getBoundingClientRect();
+        const left = Math.max(0, Math.min(bounds.width, start - bounds.left));
+        const right = Math.max(0, Math.min(bounds.width, event.clientX - bounds.left));
+        const values = [u.posToVal(left, "x"), u.posToVal(right, "x")].sort((a, b) => a - b);
+        queueZoomWrite(values[0], values[1]);
+      };
+      over.addEventListener("pointerdown", pointerDown);
+      over.addEventListener("pointerup", pointerUp);
       plots.current.set(aspect.id, {u, models});
       const observer = new ResizeObserver(entries => {
         const width = Math.floor(entries[0].contentRect.width);
         if (width > 0 && width !== u.width) u.setSize({width, height: 260});
       });
       observer.observe(host.current);
-      return () => { ready = false; clearTimeout(zoomTimer); observer.disconnect(); plots.current.delete(aspect.id); u.destroy(); };
+      return () => { ready = false; clearTimeout(zoomTimer); over.removeEventListener("pointerdown", pointerDown); over.removeEventListener("pointerup", pointerUp); observer.disconnect(); plots.current.delete(aspect.id); u.destroy(); };
     }, [aspect.id, axis, items, pins, write]);
     return html`<div ref=${host} class="plot-host"></div>`;
   }
