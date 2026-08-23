@@ -1,7 +1,7 @@
 # `model-sentinel browse` — History Browser Design
 
 Date: 2026-08-23
-Status: approved design, awaiting implementation plan
+Status: approved design; implementation plan at `docs/model_sentinel_browse_implementation_plan.md`
 Precursor: [`docs/model_sentinel_browser_design_proposals.md`](../../model_sentinel_browser_design_proposals.md)
 (three approaches, recommendation, decisions)
 
@@ -196,8 +196,13 @@ scrapes of that provider in range:
 { "scrapes": [{scrape_id, date, completed_at}…],               # x-axis per provider
   "series": [{model, aspect, values: [v|null…], unit, scale, kind}] }
 ```
-Values are **display-ready**: prices already multiplied by the aspect's
-scale (so `$ / 1M tokens`), booleans as 0/1/null, lists as their length
+Values are **display-ready** in the profile's unit (`$ / 1M tokens`).
+Canonical price columns of `snapshot_models` are **already normalized**
+at save time (`normalize._normalize_price`) and are returned as stored;
+only metadata-path price aspects are raw and are scaled server-side by
+their `resolve_price_rule` factors. Scaling a canonical column again
+would inflate it by the provider factor and is a correctness defect.
+Booleans as 0/1/null, lists as their length
 with the member list available via `/api/catalog` — list aspects are drawn
 as a state strip that changes color on membership change, so the series
 also carries `list_hash: [...]` (a stable hash per point) for that purpose.
