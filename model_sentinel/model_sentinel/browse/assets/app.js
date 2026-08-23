@@ -27,7 +27,7 @@
       }
       return result;
     },
-    write(partial) {
+    write(partial, replace = false) {
       const next = {...this.read(), ...partial};
       const pairs = [];
       for (const key of HASH_KEYS) {
@@ -39,7 +39,9 @@
         pairs.push(`${encodeURIComponent(key)}=${encoded}`);
       }
       const target = pairs.length ? `#${pairs.join("&")}` : "";
-      if (target !== location.hash) location.hash = target;
+      if (target === location.hash) return;
+      if (replace) history.replaceState(history.state, "", target || `${location.pathname}${location.search}`);
+      else location.hash = target;
     }
   };
 
@@ -75,7 +77,12 @@
       addEventListener("hashchange", update);
       return () => removeEventListener("hashchange", update);
     }, []);
-    return [state, useCallback(value => hashState.write(value), [])];
+    const write = useCallback(value => hashState.write(value), []);
+    const replaceState = useCallback(value => {
+      hashState.write(value, true);
+      setState(hashState.read());
+    }, []);
+    return [state, write, replaceState];
   }
 
   function useApi(path, params, enabled = true) {
@@ -95,6 +102,49 @@
     return {...state, reload: useCallback(() => setRevision(value => value + 1), [])};
   }
 
+  function activityEntryId(entry) {
+    const ids = entry.change_ids || [];
+    return [entry.date, entry.provider_id, entry.kind, entry.model_id || "", ids.join(".")].join("|");
+  }
+
+  function mergeActivityPages(current, incoming, page) {
+    if (page === 1 || !current) return incoming;
+    const entries = [], seen = new Set();
+    for (const entry of [...current.entries, ...incoming.entries]) {
+      const identity = activityEntryId(entry);
+      if (!seen.has(identity)) { seen.add(identity); entries.push(entry); }
+    }
+    return {...incoming, entries};
+  }
+
+  function usePagedApi(path, params, enabled = true) {
+    const requestKey = JSON.stringify([path, params, enabled]);
+    const [cursor, setCursor] = useState({key: requestKey, page: 1});
+    const [state, setState] = useState({data: null, loading: enabled, error: null});
+    const [revision, setRevision] = useState(0);
+    const page = cursor.key === requestKey ? cursor.page : 1;
+    const key = JSON.stringify([requestKey, page, revision]);
+    useEffect(() => {
+      if (cursor.key !== requestKey) setCursor({key: requestKey, page: 1});
+      if (!enabled) { setState(current => ({...current, loading: false, error: null})); return; }
+      const controller = new AbortController();
+      setState(current => ({...current, loading: true, error: null}));
+      api.get(path, {...params, page}, controller.signal).then(
+        data => setState(current => ({data: mergeActivityPages(current.data, data, page), loading: false, error: null})),
+        error => error.name !== "AbortError" && setState(current => ({...current, loading: false, error}))
+      );
+      return () => controller.abort();
+    }, [key]);
+    const loaded = state.data && state.data.entries ? state.data.entries.length : 0;
+    const hasMore = Boolean(state.data && loaded < state.data.total);
+    return {
+      ...state,
+      hasMore,
+      loadMore: useCallback(() => setCursor(current => ({key: requestKey, page: current.key === requestKey ? current.page + 1 : 2})), [requestKey]),
+      reload: useCallback(() => { setCursor({key: requestKey, page: 1}); setRevision(value => value + 1); }, [requestKey])
+    };
+  }
+
   function shiftDay(iso, amount) {
     const date = new Date(`${iso}T12:00:00Z`);
     date.setUTCDate(date.getUTCDate() + amount);
@@ -106,6 +156,45 @@
     let providers = meta.providers.filter(provider => provider.enabled).map(provider => provider.id);
     if (!providers.length) providers = meta.providers.map(provider => provider.id);
     return {view: "activity", providers, from: span ? clamp(shiftDay(span.last, -30), span) : "", to: span ? span.last : "", detail: meta.detail_default};
+  }
+
+  function validDate(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(`${value}T12:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  }
+
+  function resolveState(meta, state) {
+    const fallback = defaults(meta), span = meta.date_span;
+    const knownProviders = new Set(meta.providers.map(provider => provider.id));
+    const knownCategories = new Set(meta.categories || []);
+    const kinds = new Set(["added", "removed", "changed"]);
+    const list = (value, allowed) => Array.isArray(value)
+      ? value.filter(item => typeof item === "string" && item && (!allowed || allowed.has(item)))
+      : [];
+    const resolved = {...state};
+    resolved.view = VIEWS.includes(state.view) ? state.view : fallback.view;
+    resolved.detail = ["default", "all", "squelched"].includes(state.detail) ? state.detail : fallback.detail;
+    resolved.providers = list(state.providers, knownProviders);
+    if (!resolved.providers.length) resolved.providers = fallback.providers;
+    resolved.categories = list(state.categories, knownCategories);
+    resolved.kinds = list(state.kinds, kinds);
+    for (const key of ["models", "pins", "aspects", "cols"]) resolved[key] = list(state[key]);
+    if (span) {
+      resolved.from = validDate(state.from) ? clamp(state.from, span) : fallback.from;
+      resolved.to = validDate(state.to) ? clamp(state.to, span) : fallback.to;
+      if (resolved.from > resolved.to) { resolved.from = fallback.from; resolved.to = fallback.to; }
+    } else { resolved.from = ""; resolved.to = ""; }
+    return resolved;
+  }
+
+  class ErrorBoundary extends preact.Component {
+    constructor(props) { super(props); this.state = {error: null}; }
+    static getDerivedStateFromError(error) { return {error}; }
+    render(props, state) {
+      if (!state.error) return props.children;
+      return html`<section class="error-banner fatal" role="alert"><div><strong>The browser could not render this view</strong><span>Reset the URL filters or reload the local console.</span></div><button type="button" onClick=${() => location.reload()}>Reload</button></section>`;
+    }
   }
 
   function ErrorBanner({error, reload}) {
@@ -139,7 +228,7 @@
       </section>`;
   }
 
-  function Heatmap({rows, to, detail, write, loading}) {
+  function Heatmap({rows, from, to, detail, write, loading}) {
     const drag = useRef(null);
     const moved = useRef(false);
     const days = useMemo(() => {
@@ -155,13 +244,26 @@
     return html`
       <section class="instrument heatmap-panel" aria-labelledby="heat-title">
         <header class="section-heading"><div><p>01 / signal density</p><h2 id="heat-title">180-day activity field</h2></div><span>${loading ? "Sampling history…" : "Visible changes · presence marked"}</span></header>
-        <div class="heatmap-scroll"><div class="heatmap" role="grid" aria-label="Daily change activity">${days.map(day => {
+        <div class="heatmap-scroll"><div class="heatmap">${days.map((day, index) => {
           const row = data.get(day) || {changed: 0, added: 0, removed: 0, squelched: 0};
           const visible = visibleCount(row);
           const level = visible ? Math.min(3, Math.ceil(visible / max * 3)) : 0;
-          return html`<button type="button" role="gridcell" key=${day} data-date=${day} class=${`heat-cell heat-${level}`} aria-label=${`${day}: ${visible} visible changes, ${row.added} added, ${row.removed} removed`} title=${`${day} · ${visible} visible in ${detail} detail · ${row.squelched} squelched`}
+          return html`<button type="button" key=${day} data-date=${day} tabIndex=${day === to ? 0 : -1} aria-pressed=${day >= from && day <= to} class=${`heat-cell heat-${level}`} aria-label=${`${day}: ${visible} visible changes, ${row.added} added, ${row.removed} removed`} title=${`${day} · ${visible} visible in ${detail} detail · ${row.squelched} squelched`}
             onPointerDown=${event => { drag.current = day; moved.current = false; event.currentTarget.setPointerCapture(event.pointerId); }}
             onPointerUp=${event => { if (!drag.current) return; const target = document.elementFromPoint(event.clientX, event.clientY); const end = target && target.closest("[data-date]"); const range = [drag.current, end ? end.dataset.date : day].sort(); moved.current = range[0] !== range[1]; write({from: range[0], to: range[1]}); drag.current = null; }}
+            onKeyDown=${event => {
+              let target = null;
+              if (event.key === "ArrowLeft") target = index - 1;
+              else if (event.key === "ArrowRight") target = index + 1;
+              else if (event.key === "ArrowUp") target = index - 7;
+              else if (event.key === "ArrowDown") target = index + 7;
+              else if (event.key === "Home") target = 0;
+              else if (event.key === "End") target = days.length - 1;
+              if (target == null) return;
+              event.preventDefault();
+              const next = event.currentTarget.parentElement.querySelector(`[data-date="${days[Math.max(0, Math.min(days.length - 1, target))]}"]`);
+              if (next) next.focus();
+            }}
             onClick=${() => { if (!moved.current) write({from: day, to: day}); moved.current = false; }}>
             <span>${day.slice(8)}</span><em>${row.added ? html`<i class="added"></i>` : null}${row.removed ? html`<i class="removed"></i>` : null}</em>
           </button>`;
@@ -219,7 +321,7 @@
     </article>`;
   }
 
-  function Feed({data, loading, openModel, openRaw, write}) {
+  function Feed({data, loading, hasMore, loadMore, openModel, openRaw, write}) {
     const groups = useMemo(() => {
       const result = [];
       for (const entry of data && data.entries || []) {
@@ -241,13 +343,14 @@
       <header class="section-heading"><div><p>03 / event record</p><h2 id="feed-title">Observed changes</h2></div><span>${data ? `${data.total} grouped events` : "Awaiting sample"}</span></header>
       ${loading && !data && html`<div class="loading"><i></i><p>Reconstructing the field log…</p></div>`}
       ${data && !data.entries.length && html`<div class="empty"><b>∅</b><div><h2>No changes in this slice</h2><p>Widen the date range or clear a facet.</p></div></div>`}
-      ${groups.map(group => html`<section class="date-block" key=${group.date}><header><time datetime=${group.date}>${new Date(`${group.date}T12:00:00Z`).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC"})}</time><span>${String(group.entries.length).padStart(2,"0")} entries</span></header><div>${group.entries.map((entry,index) => html`<${Entry} key=${`${entry.provider_id}-${entry.model_id}-${index}`} entry=${entry} openModel=${openModel} openRaw=${openRaw} />`)}${rollupLine(group.date)}</div></section>`)}
+      ${groups.map(group => html`<section class="date-block" key=${group.date}><header><time datetime=${group.date}>${new Date(`${group.date}T12:00:00Z`).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC"})}</time><span>${String(group.entries.length).padStart(2,"0")} entries</span></header><div>${group.entries.map(entry => html`<${Entry} key=${activityEntryId(entry)} entry=${entry} openModel=${openModel} openRaw=${openRaw} />`)}${rollupLine(group.date)}</div></section>`)}
+      ${data && hasMore && html`<div class="feed-more"><button type="button" disabled=${loading} onClick=${loadMore}>${loading ? "Loading more changes…" : "Load more changes"}</button><span>${data.entries.length} of ${data.total} events loaded</span></div>`}
     </section>`;
   }
 
   function Activity({meta, state, write, openRaw, openModel, reportError}) {
     const common = {providers: state.providers, from: state.from, to: state.to, detail: state.detail};
-    const feed = useApi("/api/activity", {...common, models: state.models, categories: state.categories, kinds: state.kinds, page_size: 500}, Boolean(state.from && state.to));
+    const feed = usePagedApi("/api/activity", {...common, models: state.models, categories: state.categories, kinds: state.kinds, page_size: 500}, Boolean(state.from && state.to));
     const heat = useApi("/api/heatmap", {
       providers: state.providers,
       from: clamp(shiftDay(state.to, -179), meta.date_span),
@@ -256,7 +359,7 @@
     }, Boolean(state.to));
     const models = useApi("/api/models", {providers: state.providers, limit: 50}, Boolean(state.providers && state.providers.length));
     useEffect(() => reportError(feed.error || heat.error || models.error, feed.error ? feed.reload : heat.error ? heat.reload : models.reload), [feed.error, heat.error, models.error]);
-    return html`<div class="activity"><${Heatmap} rows=${heat.data} to=${state.to} detail=${state.detail} write=${write} loading=${heat.loading} /><div class="activity-grid"><${Facets} meta=${meta} state=${state} write=${write} modelOptions=${models.data || []} /><${Feed} data=${feed.data} loading=${feed.loading} openModel=${openModel} openRaw=${openRaw} write=${write} /></div></div>`;
+    return html`<div class="activity"><${Heatmap} rows=${heat.data} from=${state.from} to=${state.to} detail=${state.detail} write=${write} loading=${heat.loading} /><div class="activity-grid"><${Facets} meta=${meta} state=${state} write=${write} modelOptions=${models.data || []} /><${Feed} data=${feed.data} loading=${feed.loading} hasMore=${feed.hasMore} loadMore=${feed.loadMore} openModel=${openModel} openRaw=${openRaw} write=${write} /></div></div>`;
   }
 
   function Placeholder({view, inputRef}) {
@@ -295,7 +398,7 @@
   }
 
   function App() {
-    const [state, write] = useHashState();
+    const [state, write, replaceState] = useHashState();
     const metaRequest = useApi("/api/meta", {});
     const [theme, setTheme] = useState(() => { try { const value = localStorage.getItem(THEME_KEY); return THEMES.includes(value) ? value : "system"; } catch (error) { return "system"; } });
     const [, repaint] = useState(0), [drawer, setDrawer] = useState(null), [toast, setToast] = useState(""), [viewError, setViewError] = useState({});
@@ -312,7 +415,7 @@
       if (!metaRequest.data) return;
       const missing = {};
       for (const [key, value] of Object.entries(defaults(metaRequest.data))) if (state[key] == null || state[key] === "" || Array.isArray(state[key]) && !state[key].length) missing[key] = value;
-      if (Object.keys(missing).length) write(missing);
+      if (Object.keys(missing).length) replaceState(missing);
     }, [metaRequest.data, JSON.stringify(state)]);
     useEffect(() => {
       const key = event => {
@@ -329,8 +432,7 @@
     if (metaRequest.error && !metaRequest.data) return html`<${ErrorBanner} error=${metaRequest.error} reload=${metaRequest.reload} />`;
     const meta = metaRequest.data;
     if (!meta) return null;
-    const resolved = {...defaults(meta), ...state};
-    resolved.view = VIEWS.includes(resolved.view) ? resolved.view : "activity";
+    const resolved = resolveState(meta, state);
     const openModel = (provider, model, name, date) => {
       const pin = `${provider}/${model}`, pins = (resolved.pins || []).filter(value => value !== pin);
       pins.push(pin);
@@ -341,5 +443,5 @@
       ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : html`<${Placeholder} view=${resolved.view} inputRef=${inputRef} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
-  render(html`<${App} />`, document.getElementById("app"));
+  render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
 })();

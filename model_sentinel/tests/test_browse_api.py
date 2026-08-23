@@ -395,6 +395,55 @@ def test_activity_associates_same_day_exact_transitions_by_value(tmp_path) -> No
     assert len({associated[0] for _, associated in price_rows}) == 2
 
 
+def test_activity_pages_more_than_five_hundred_stable_entries(tmp_path) -> None:
+    path = tmp_path / "fixture.db"
+    facts = build_fixture_db(path)
+    Store(path).record_field_changes(
+        provider_id=EXAMPLE_PROVIDER.provider_id,
+        from_scrape_id=facts.scrape_ids[-2],
+        to_scrape_id=facts.scrape_ids[-1],
+        deltas=tuple(
+            ModelDelta(
+                "changed",
+                f"fake-org/paged-model-{index:03d}",
+                f"Synthetic Paged Model {index:03d}",
+                (FieldChange("status", "queued", "ready"),),
+            )
+            for index in range(501)
+        ),
+        detected_at="2026-08-19T12:00:00+00:00",
+    )
+    db = open_readonly(path)
+    try:
+        context = _context(db)
+        common = {
+            "providers": EXAMPLE_PROVIDER.provider_id,
+            "from": "2026-08-19",
+            "to": "2026-08-19",
+            "page_size": "500",
+        }
+        first = api.activity(context, {**common, "page": "1"})
+        second = api.activity(context, {**common, "page": "2"})
+    finally:
+        db.close_all()
+
+    assert first["total"] == second["total"] == 501
+    assert len(first["entries"]) == 500
+    assert len(second["entries"]) == 1
+    first_ids = {
+        change_id
+        for entry in first["entries"]
+        for change_id in entry["change_ids"]
+    }
+    second_ids = {
+        change_id
+        for entry in second["entries"]
+        for change_id in entry["change_ids"]
+    }
+    assert first_ids.isdisjoint(second_ids)
+    assert len(first_ids | second_ids) == 501
+
+
 @pytest.mark.parametrize(
     ("value", "relative", "expected"),
     (

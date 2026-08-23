@@ -659,6 +659,54 @@ def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:
     assert 'detail === "squelched"' in source
 
 
+def test_frontend_pages_activity_and_merges_stable_entry_identities() -> None:
+    source = _read_asset("app.js")
+
+    assert "function usePagedApi(" in source
+    assert "function activityEntryId(" in source
+    assert "mergeActivityPages(current.data, data, page)" in source
+    assert "api.get(path, {...params, page}" in source
+    assert "loadMore" in source
+    assert "hasMore" in source
+    assert "Load more changes" in source
+
+
+def test_frontend_replaces_initial_defaults_and_sanitizes_hash_state() -> None:
+    source = _read_asset("app.js")
+
+    assert "history.replaceState(" in source
+    assert "replaceState(missing)" in source
+    assert "function resolveState(meta, state)" in source
+    assert "function validDate(" in source
+    assert "validDate(state.from) ? clamp(state.from, span) : fallback.from" in source
+    assert "validDate(state.to) ? clamp(state.to, span) : fallback.to" in source
+    assert "if (resolved.from > resolved.to)" in source
+    assert 'resolved.detail = ["default", "all", "squelched"].includes(state.detail)' in source
+    assert "class ErrorBoundary extends preact.Component" in source
+    assert "<${ErrorBoundary}><${App} /></${ErrorBoundary}>" in source
+
+
+def test_heatmap_uses_roving_buttons_without_incomplete_grid_roles() -> None:
+    source = _read_asset("app.js")
+
+    assert 'role="grid"' not in source
+    assert 'role="gridcell"' not in source
+    assert "tabIndex=${day === to ? 0 : -1}" in source
+    assert 'event.key === "ArrowLeft"' in source
+    assert 'event.key === "Home"' in source
+    assert "aria-pressed=${day >= from && day <= to}" in source
+
+
+def test_narrow_layout_contract_keeps_outer_shell_bounded() -> None:
+    source = _read_asset("app.css")
+
+    assert "minmax(0, 1fr)" in source
+    assert ".filter-row > *" in source
+    assert "min-width: 0" in source
+    assert ".dates input" in source
+    assert "width: 100%" in source
+
+
 @pytest.mark.parametrize(
     "source",
     [
