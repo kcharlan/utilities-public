@@ -879,7 +879,8 @@ def test_catalog_frontend_uses_provider_scoped_saved_scrapes_and_canonical_defau
     assert 'useApi("/api/catalog"' in source
     assert 'page_size: CATALOG_PAGE_SIZE' in source
     assert "patch.asof = String(asOf.scrape_id)" in source
-    assert "patch.cols = columns" in source
+    assert "const requestedColumns = [...new Set((state.cols || []).filter(id => known.has(id)))]" in source
+    assert "if (!sameList(state.cols || [], columns)) patch.cols = columns" in source
     assert "disabled=${!catalogScrapes(meta, provider.id).length}" in source
     assert 'const sort = state.sort === "model_id" || columns.includes(state.sort) ? state.sort : "model_id"' in source
     assert 'const dir = ["asc", "desc"].includes(state.dir) ? state.dir : "asc"' in source
@@ -915,6 +916,9 @@ def test_catalog_sparkline_uses_full_series_span_and_links_to_models() -> None:
     assert 'write({view: "models", pins, aspects: [aspect.id]' in source
     assert "Open timeline" in source
     assert 'event.key === "Escape"' in source
+    assert "function SparklinePopover({meta, pin, aspect, write, close, themeKey})" in source
+    assert "}, [request.data, themeKey])" in source
+    assert "themeKey=${themeKey}" in source
 
 
 def test_catalog_feed_cross_link_bounds_activity_to_compared_scrapes() -> None:
@@ -922,8 +926,9 @@ def test_catalog_feed_cross_link_bounds_activity_to_compared_scrapes() -> None:
 
     assert "Show as feed" in source
     assert 'write({view: "activity", providers: [providerId], from: dates[0], to: dates[1]})' in source
-    assert "compare.completed_at" in source
-    assert "asOf.completed_at" in source
+    assert "const dates = [compare.date, asOf.date].sort()" in source
+    assert "compare.completed_at.slice" not in source
+    assert "asOf.completed_at.slice" not in source
 
 
 @pytest.mark.parametrize(

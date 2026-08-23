@@ -671,11 +671,15 @@
     return html`<section class="column-chooser instrument" aria-labelledby="column-title"><header class="section-heading"><div><p>02 / projection</p><h2 id="column-title">Columns</h2></div><span>${selected.length} visible</span></header><div>${groups.map(group => html`<fieldset key=${group}><legend>${group}</legend>${aspects.filter(aspect => aspect.category === group).map(aspect => html`<label key=${aspect.id}><input type="checkbox" checked=${selected.includes(aspect.id)} onChange=${() => toggle(aspect.id)} /><span>${aspect.label}${aspect.qualifier || aspect.source === "path" ? html`<small>${aspect.qualifier || aspect.path}</small>` : null}</span></label>`)}</fieldset>`)}</div></section>`;
   }
 
+  function sameList(left, right) {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+
   function cellChanged(cell) {
     return Object.prototype.hasOwnProperty.call(cell, "old_value") && JSON.stringify(cell.old_value) !== JSON.stringify(cell.value);
   }
 
-  function SparklinePopover({meta, pin, aspect, write, close}) {
+  function SparklinePopover({meta, pin, aspect, write, close, themeKey}) {
     const host = useRef(null), closeRef = useRef(null), previous = useRef(null);
     const request = useApi("/api/series", {models: pin, aspects: aspect.id}, Boolean(pin && aspect));
     useEffect(() => {
@@ -697,7 +701,7 @@
       };
       const plot = new uPlot(options, [x, item.values], host.current);
       return () => plot.destroy();
-    }, [request.data]);
+    }, [request.data, themeKey]);
     const parts = pinParts(pin, meta.providers), pins = [pin];
     return html`<div class="spark-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section class="spark-popover" role="dialog" aria-modal="true" aria-labelledby="spark-title"><header><div><p>${parts.model}</p><h2 id="spark-title">${aspect.label} over full history</h2></div><button ref=${closeRef} type="button" aria-label="Close sparkline" onClick=${close}>×</button></header><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="spark-loading">Loading series…</div>` : html`<div ref=${host} class="spark-host"></div>`}<footer><span>${aspect.unit || aspect.kind}</span><button type="button" onClick=${() => { write({view: "models", pins, aspects: [aspect.id], from: meta.date_span.first, to: meta.date_span.last}); close(); }}>Open timeline</button></footer></section></div>`;
   }
@@ -714,7 +718,7 @@
     })}</tr>`)}</tbody></table></div><footer class="catalog-pager"><span>Page ${page} of ${pages}</span><div><button type="button" disabled=${page <= 1} onClick=${() => setPage(Math.max(1, page - 1))}>Previous</button><button type="button" disabled=${page >= pages} onClick=${() => setPage(Math.min(pages, page + 1))}>Next</button></div></footer></section>`;
   }
 
-  function Catalog({meta, state, write}) {
+  function Catalog({meta, state, write, themeKey}) {
     const providerIds = meta.providers.map(provider => provider.id);
     const availableProvider = providerIds.find(id => catalogScrapes(meta, id).length);
     const providerId = state.providers.find(id => catalogScrapes(meta, id).length) || availableProvider || state.providers[0];
@@ -723,7 +727,7 @@
     const compare = scrapes.find(scrape => scrape.scrape_id === Number(state.compare) && asOf && (scrape.completed_at < asOf.completed_at || scrape.completed_at === asOf.completed_at && scrape.scrape_id < asOf.scrape_id)) || null;
     const providerAspects = meta.aspects.filter(aspect => aspect.provider_id === providerId);
     const known = new Set(providerAspects.map(aspect => aspect.id));
-    const requestedColumns = (state.cols || []).filter(id => known.has(id));
+    const requestedColumns = [...new Set((state.cols || []).filter(id => known.has(id)))];
     const columns = requestedColumns.length ? requestedColumns : defaultCatalogColumns(meta, providerId);
     const sort = state.sort === "model_id" || columns.includes(state.sort) ? state.sort : "model_id";
     const dir = ["asc", "desc"].includes(state.dir) ? state.dir : "asc";
@@ -735,21 +739,21 @@
       if (!state.providers.includes(providerId)) patch.providers = [providerId];
       if (String(state.asof || "") !== String(asOf.scrape_id)) patch.asof = String(asOf.scrape_id);
       if (state.compare && !compare) patch.compare = null;
-      if (!requestedColumns.length) patch.cols = columns;
+      if (!sameList(state.cols || [], columns)) patch.cols = columns;
       if (state.sort !== sort) patch.sort = sort;
       if (state.dir !== dir) patch.dir = dir;
       if (Object.keys(patch).length) write(patch);
-    }, [providerId, asOf && asOf.scrape_id, compare && compare.scrape_id, columns.join(","), JSON.stringify(state.providers), state.asof, state.compare, requestedColumns.length, sort, dir]);
+    }, [providerId, asOf && asOf.scrape_id, compare && compare.scrape_id, columns.join(","), JSON.stringify(state.providers), JSON.stringify(state.cols || []), state.asof, state.compare, sort, dir]);
     useEffect(() => setPage(1), [requestKey]);
     const request = useApi("/api/catalog", {provider: providerId, as_of: asOf && asOf.scrape_id, compare: compare && compare.scrape_id, columns, q: state.q, sort, dir, page, page_size: CATALOG_PAGE_SIZE}, Boolean(providerId && asOf && columns.length));
     const selectedAspects = columns.map(id => providerAspects.find(aspect => aspect.id === id)).filter(Boolean);
     const showFeed = () => {
       if (!compare || !asOf) return;
-      const dates = [compare.completed_at.slice(0, 10), asOf.completed_at.slice(0, 10)].sort();
+      const dates = [compare.date, asOf.date].sort();
       write({view: "activity", providers: [providerId], from: dates[0], to: dates[1]});
     };
     if (!providerId || !asOf) return html`<div class="empty"><b>∅</b><div><h2>No saved snapshots</h2><p>This provider has no successful saved scrape to browse.</p></div></div>`;
-    return html`<div class="catalog-view"><aside class="catalog-controls"><${Pickers} meta=${meta} providerId=${providerId} scrapes=${scrapes} asOf=${asOf} compare=${compare} write=${write} /><${ColumnChooser} aspects=${providerAspects} selected=${columns} write=${write} />${compare ? html`<button class="feed-link" type="button" onClick=${showFeed}>Show as feed <span>↗</span></button>` : null}</aside><main class="catalog-workbench"><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="loading"><i></i><p>Resolving snapshot registry…</p></div>` : request.data ? html`<${CatalogTable} data=${request.data} aspects=${selectedAspects} state=${{...state, sort, dir}} write=${write} page=${page} setPage=${setPage} openSparkline=${setSparkline} />` : null}</main>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} />` : null}</div>`;
+    return html`<div class="catalog-view"><aside class="catalog-controls"><${Pickers} meta=${meta} providerId=${providerId} scrapes=${scrapes} asOf=${asOf} compare=${compare} write=${write} /><${ColumnChooser} aspects=${providerAspects} selected=${columns} write=${write} />${compare ? html`<button class="feed-link" type="button" onClick=${showFeed}>Show as feed <span>↗</span></button>` : null}</aside><main class="catalog-workbench"><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="loading"><i></i><p>Resolving snapshot registry…</p></div>` : request.data ? html`<${CatalogTable} data=${request.data} aspects=${selectedAspects} state=${{...state, sort, dir}} write=${write} page=${page} setPage=${setPage} openSparkline=${setSparkline} />` : null}</main>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
   }
 
   function RawDrawer({id, close}) {
@@ -825,7 +829,7 @@
       write({view: "models", pins, from: clamp(shiftDay(date, -30), meta.date_span), to: clamp(shiftDay(date, 30), meta.date_span)});
     };
     return html`<div class="app-shell"><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
-      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} />`}
+      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} themeKey=${`${theme}:${themeRevision}`} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
   render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
