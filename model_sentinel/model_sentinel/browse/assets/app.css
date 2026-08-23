@@ -843,6 +843,7 @@ legend,
 .aspect-choice > span { display: grid; min-width: 0; }
 .aspect-choice strong { color: var(--ink-strong); font-size: 0.72rem; font-weight: 600; }
 .aspect-choice small { color: var(--ink-muted); font-size: 0.59rem; }
+.aspect-choice .aspect-provider { color: var(--accent); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
 .aspect-choice em { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.55rem; font-style: normal; }
 .squelched-aspects > summary { padding: 0.75rem; color: var(--ink-muted); cursor: pointer; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.62rem; font-weight: 700; }
 .squelched-aspects > summary span { float: right; }
@@ -851,7 +852,7 @@ legend,
 .timeline-workbench,
 .panel-stack { display: grid; gap: 1rem; min-width: 0; }
 .event-rail { overflow: hidden; border: 1px solid var(--border); background: var(--panel); }
-.rail-track { position: relative; height: 3.2rem; margin: 0 1rem 0.6rem; border-block-end: 1px solid var(--border-strong); background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), var(--border) 10%); }
+.rail-track { position: relative; height: calc(2rem + var(--rail-lanes) * 0.7rem); min-height: 3.2rem; margin: 0 1rem 0.6rem; border-block-end: 1px solid var(--border-strong); background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), var(--border) 10%); }
 .event-mark { position: absolute; bottom: calc(0.2rem + var(--rail-lane) * 0.7rem); width: 0.55rem; height: 1.35rem; padding: 0; border: 1px solid var(--panel); border-radius: 0; transform: translateX(-50%); cursor: pointer; box-shadow: 0 0 0 1px currentColor; }
 .event-mark.cost-up { color: var(--cost-up); background: var(--cost-up); }
 .event-mark.cost-down { color: var(--cost-down); background: var(--cost-down); }
@@ -865,6 +866,7 @@ legend,
 .timeline-panel { min-width: 0; overflow: hidden; }
 .panel-heading h2 { display: flex; gap: 0.45rem; align-items: baseline; }
 .panel-heading h2 small { color: var(--ink-muted); font-size: 0.62rem; font-weight: 400; }
+.panel-heading h2 .panel-provider { padding: 0.12rem 0.3rem; border: 1px solid var(--border); color: var(--accent); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.55rem; text-transform: uppercase; }
 .panel-legend { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.55rem 0.75rem; border-block-end: 1px solid var(--border); }
 .panel-legend button { display: inline-flex; gap: 0.35rem; align-items: center; max-width: 18rem; padding: 0.28rem 0.45rem; border: 1px solid transparent; color: var(--ink-muted); background: transparent; cursor: pointer; font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-legend button:hover,

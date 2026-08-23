@@ -6,6 +6,7 @@
   const THEME_KEY = "model_sentinel.browse.theme";
   const THEMES = ["system", "light", "dark"];
   const VIEWS = ["activity", "models", "catalog"];
+  const ASPECT_LIMIT = 12;
   const LIST_KEYS = new Set(["providers", "models", "categories", "kinds", "pins", "aspects", "cols"]);
   const HASH_KEYS = ["view", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "cols", "q", "sort", "dir"];
 
@@ -190,7 +191,8 @@
     if (!resolved.providers.length) resolved.providers = fallback.providers;
     resolved.categories = list(state.categories, knownCategories);
     resolved.kinds = list(state.kinds, kinds);
-    for (const key of ["models", "pins", "aspects", "cols"]) resolved[key] = list(state[key]);
+    for (const key of ["models", "pins", "cols"]) resolved[key] = list(state[key]);
+    resolved.aspects = list(state.aspects).slice(0, ASPECT_LIMIT);
     if (span) {
       resolved.from = validDate(state.from) ? clamp(state.from, span) : fallback.from;
       resolved.to = validDate(state.to) ? clamp(state.to, span) : fallback.to;
@@ -412,23 +414,45 @@
     </section>`;
   }
 
-  function AspectChoice({aspect, selected, write}) {
-    return html`<label class="aspect-choice"><input type="checkbox" checked=${selected.includes(aspect.id)} onChange=${() => write({aspects: selected.includes(aspect.id) ? selected.filter(value => value !== aspect.id) : [...selected, aspect.id]})} /><span><strong>${aspect.label}</strong>${aspect.qualifier && html`<small>${aspect.qualifier}</small>`}</span><em>${aspect.unit || aspect.kind}</em></label>`;
+  function ambiguousAspectIds(aspects) {
+    const groups = new Map();
+    for (const aspect of aspects) {
+      const signature = [aspect.label, aspect.qualifier || "", aspect.unit || aspect.kind].join("|");
+      const group = groups.get(signature) || [];
+      group.push(aspect);
+      groups.set(signature, group);
+    }
+    const result = new Set();
+    for (const group of groups.values()) {
+      if (new Set(group.map(aspect => aspect.provider_id)).size > 1) for (const aspect of group) result.add(aspect.id);
+    }
+    return result;
   }
 
-  function AspectPicker({meta, pins, selected, write}) {
+  function AspectChoice({aspect, selected, write, toast, showProvider, providerLabel}) {
+    const toggle = () => {
+      if (selected.includes(aspect.id)) { write({aspects: selected.filter(value => value !== aspect.id)}); return; }
+      if (selected.length >= ASPECT_LIMIT) { toast(`You can compare at most ${ASPECT_LIMIT} aspects.`); return; }
+      write({aspects: [...selected, aspect.id]});
+    };
+    return html`<label class="aspect-choice"><input type="checkbox" checked=${selected.includes(aspect.id)} onChange=${toggle} /><span><strong>${aspect.label}</strong>${aspect.qualifier && html`<small>${aspect.qualifier}</small>`}${showProvider && html`<small class="aspect-provider">${providerLabel}</small>`}</span><em>${aspect.unit || aspect.kind}</em></label>`;
+  }
+
+  function AspectPicker({meta, pins, selected, write, toast}) {
     const pinProviders = new Set(pins.map(pin => pinParts(pin, meta.providers).provider).filter(Boolean).map(provider => provider.id));
     const available = meta.aspects.filter(aspect => pinProviders.has(aspect.provider_id));
     const regular = available.filter(aspect => !aspect.squelched);
     const squelched = available.filter(aspect => aspect.squelched);
+    const ambiguous = ambiguousAspectIds(available);
+    const providerLabels = Object.fromEntries(meta.providers.map(provider => [provider.id, provider.label]));
     return html`<section class="aspect-picker" aria-labelledby="aspects-title"><header><p>02 / dimensions</p><h2 id="aspects-title">Aspects</h2></header>
       ${meta.categories.map(category => {
         const aspects = regular.filter(aspect => aspect.category === category);
-        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${selected} write=${write} />`)}</fieldset>` : null;
+        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${selected} write=${write} toast=${toast} showProvider=${ambiguous.has(aspect.id)} providerLabel=${providerLabels[aspect.provider_id]} />`)}</fieldset>` : null;
       })}
       ${squelched.length ? html`<details class="squelched-aspects"><summary>Benchmarks / other squelched <span>${squelched.length}</span></summary>${meta.categories.map(category => {
         const aspects = squelched.filter(aspect => aspect.category === category);
-        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${selected} write=${write} />`)}</fieldset>` : null;
+        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${selected} write=${write} toast=${toast} showProvider=${ambiguous.has(aspect.id)} providerLabel=${providerLabels[aspect.provider_id]} />`)}</fieldset>` : null;
       })}</details>` : null}
       ${pins.length && !available.length ? html`<p class="aside-note">No timeline aspects are available for these providers.</p>` : null}
     </section>`;
@@ -558,22 +582,38 @@
     return "dim";
   }
 
+  function allocateEventLanes(events) {
+    const counts = new Map();
+    let max = 1;
+    const allocated = events.map(event => {
+      const lane = counts.get(event.date) || 0;
+      counts.set(event.date, lane + 1);
+      max = Math.max(max, lane + 1);
+      return {...event, lane};
+    });
+    return {events: allocated, max};
+  }
+
   function EventRail({events, from, to, plots, openRaw}) {
     const start = epochForDay(from), end = epochForDay(to), span = Math.max(86400, end - start);
-    return html`<section class="event-rail" aria-labelledby="rail-title"><header><div><p>03 / interventions</p><h2 id="rail-title">Event rail</h2></div><span>${events.length} events</span></header><div class="rail-track">${events.map((event, index) => {
+    const lanes = allocateEventLanes(events);
+    return html`<section class="event-rail" aria-labelledby="rail-title"><header><div><p>03 / interventions</p><h2 id="rail-title">Event rail</h2></div><span>${events.length} events</span></header><div class="rail-track" style=${`--rail-lanes: ${lanes.max}`}>${lanes.events.map(event => {
       const offset = Math.max(0, Math.min(100, (epochForDay(event.date) - start) / span * 100));
-      return html`<button type="button" key=${event.change_id} class=${`event-mark ${eventTone(event)}${event.squelched ? " is-squelched" : ""}`} style=${`left: ${offset}%; --rail-lane: ${index % 3}`} aria-label=${`${event.date}: ${event.model}, ${event.field || event.kind}`} title=${`${event.date} · ${event.model} · ${event.field || event.kind}`} onClick=${() => openRaw(event.change_id)} onMouseEnter=${() => setTimelineCursor(plots, epochForDay(event.date))} onMouseLeave=${() => setTimelineCursor(plots, null)} onFocus=${() => setTimelineCursor(plots, epochForDay(event.date))} onBlur=${() => setTimelineCursor(plots, null)}></button>`;
+      return html`<button type="button" key=${event.change_id} class=${`event-mark ${eventTone(event)}${event.squelched ? " is-squelched" : ""}`} style=${`left: ${offset}%; --rail-lane: ${event.lane}`} aria-label=${`${event.date}: ${event.model}, ${event.field || event.kind}`} title=${`${event.date} · ${event.model} · ${event.field || event.kind}`} onClick=${() => openRaw(event.change_id)} onMouseEnter=${() => setTimelineCursor(plots, epochForDay(event.date))} onMouseLeave=${() => setTimelineCursor(plots, null)} onFocus=${() => setTimelineCursor(plots, epochForDay(event.date))} onBlur=${() => setTimelineCursor(plots, null)}></button>`;
     })}</div></section>`;
   }
 
   function PanelStack({meta, aspects, pins, data, plots, write, themeKey}) {
     const lookup = new Map(meta.aspects.map(aspect => [aspect.id, aspect]));
+    const selectedAspects = aspects.map(id => lookup.get(id)).filter(Boolean);
+    const ambiguous = ambiguousAspectIds(selectedAspects);
+    const providerLabels = Object.fromEntries(meta.providers.map(provider => [provider.id, provider.label]));
     return html`<div class="panel-stack">${aspects.map(aspectId => {
       const aspect = lookup.get(aspectId);
       if (!aspect) return null;
       const items = (data.series || []).filter(item => item.aspect === aspect.id);
       const state = aspect.kind === "boolean" || aspect.kind === "list" || aspect.kind === "scalar";
-      return html`<section class="timeline-panel instrument" key=${`${aspect.id}:${themeKey}`}><header class="panel-heading"><div><p>${aspect.category}</p><h2>${aspect.label}${aspect.qualifier ? html`<small>${aspect.qualifier}</small>` : null}</h2></div><span>${aspect.unit || aspect.kind}</span></header>
+      return html`<section class="timeline-panel instrument" key=${`${aspect.id}:${themeKey}`}><header class="panel-heading"><div><p>${aspect.category}</p><h2>${aspect.label}${aspect.qualifier ? html`<small>${aspect.qualifier}</small>` : null}${ambiguous.has(aspect.id) ? html`<small class="panel-provider">${providerLabels[aspect.provider_id]}</small>` : null}</h2></div><span>${aspect.unit || aspect.kind}</span></header>
         <div class="panel-legend">${items.map(item => { const index = pins.indexOf(item.model); return html`<button type="button" key=${item.model} onMouseEnter=${() => focusPlotSeries(plots, item.model, true)} onMouseLeave=${() => focusPlotSeries(plots, item.model, false)} onFocus=${() => focusPlotSeries(plots, item.model, true)} onBlur=${() => focusPlotSeries(plots, item.model, false)}><i style=${`background: var(--series-${index + 1})`}></i>${pinParts(item.model, meta.providers).model}</button>`; })}</div>
         ${state ? html`<${StateStrip} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} providers=${meta.providers} />` : html`<${TimelinePanel} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} plots=${plots} write=${write} />`}
       </section>`;
@@ -591,7 +631,7 @@
     const events = useApi("/api/events", {models: pins, providers: state.providers, from: state.from, to: state.to, detail: state.detail}, Boolean(pins.length));
     const plots = useRef(new Map());
     useEffect(() => reportError(series.error || events.error, series.error ? series.reload : events.reload), [series.error, events.error]);
-    return html`<div class="models-view"><aside class="instrument model-controls"><${Pins} meta=${meta} pins=${pins} providers=${state.providers} write=${write} inputRef=${inputRef} toast=${toast} /><${AspectPicker} meta=${meta} pins=${pins} selected=${aspects} write=${write} /></aside><main class="timeline-workbench">
+    return html`<div class="models-view"><aside class="instrument model-controls"><${Pins} meta=${meta} pins=${pins} providers=${state.providers} write=${write} inputRef=${inputRef} toast=${toast} /><${AspectPicker} meta=${meta} pins=${pins} selected=${aspects} write=${write} toast=${toast} /></aside><main class="timeline-workbench">
       ${pins.length ? html`<${EventRail} events=${events.data || []} from=${state.from} to=${state.to} plots=${plots} openRaw=${openRaw} />` : null}
       ${!pins.length ? html`<div class="empty"><b>+</b><div><h2>Pin a model to begin</h2><p>Search the saved catalog at left, or press <kbd>/</kbd> from anywhere.</p></div></div>` : !activeAspects.length ? html`<div class="empty"><b>↗</b><div><h2>Select an aspect</h2><p>Pricing, limits, capabilities, and benchmark histories are available at left.</p></div></div>` : series.loading && !series.data ? html`<div class="loading"><i></i><p>Aligning saved snapshots…</p></div>` : series.data ? html`<${PanelStack} meta=${meta} aspects=${activeAspects} pins=${pins} data=${series.data} plots=${plots} write=${write} themeKey=${themeKey} />` : null}
     </main></div>`;

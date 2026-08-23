@@ -739,6 +739,16 @@ def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
     assert "aspect.squelched" in source
 
 
+def test_models_aspect_limit_is_enforced_for_hash_and_picker() -> None:
+    source = _read_asset("app.js")
+
+    assert "const ASPECT_LIMIT = 12" in source
+    assert "resolved.aspects = list(state.aspects).slice(0, ASPECT_LIMIT)" in source
+    assert "if (selected.length >= ASPECT_LIMIT)" in source
+    assert "You can compare at most ${ASPECT_LIMIT} aspects." in source
+    assert "toast=${toast}" in source
+
+
 def test_models_numeric_panels_use_stepped_synced_uplot_contract() -> None:
     source = _read_asset("app.js")
 
@@ -801,6 +811,28 @@ def test_models_state_strips_and_event_rail_preserve_semantics() -> None:
     assert "height: 56px" in styles
     assert ".event-mark.is-squelched" in styles
     assert "opacity: 0.4" in styles
+
+
+def test_event_rail_allocates_a_distinct_lane_for_every_same_day_event() -> None:
+    source = _read_asset("app.js")
+    styles = _read_asset("app.css")
+
+    assert "function allocateEventLanes(events)" in source
+    assert "const lane = counts.get(event.date) || 0" in source
+    assert "counts.set(event.date, lane + 1)" in source
+    assert "--rail-lanes: ${lanes.max}" in source
+    assert "event.lane" in source
+    assert "height: calc(2rem + var(--rail-lanes) * 0.7rem)" in styles
+
+
+def test_ambiguous_aspects_include_provider_labels_in_picker_and_panels() -> None:
+    source = _read_asset("app.js")
+
+    assert "function ambiguousAspectIds(aspects)" in source
+    assert "showProvider=${ambiguous.has(aspect.id)}" in source
+    assert "providerLabel=${providerLabels[aspect.provider_id]}" in source
+    assert 'class="aspect-provider"' in source
+    assert 'class="panel-provider"' in source
 
 
 def test_models_filters_orphaned_aspects_and_only_flips_list_tint_on_change() -> None:
