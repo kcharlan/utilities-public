@@ -13,6 +13,7 @@ from model_sentinel.config import ProviderConfig
 from model_sentinel.models import BaselineInfo
 from model_sentinel.storage import Store
 from model_sentinel.time_utils import to_local_human
+from tests.browse_fixtures import build_fixture_db
 
 
 def _write_config_files(root: Path) -> Path:
@@ -39,6 +40,71 @@ def _write_config_files(root: Path) -> Path:
         encoding="utf-8",
     )
     return runtime_home
+
+
+def test_browse_help_lists_browser_options(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["browse", "--help"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert "--port" in captured.out
+    assert "--no-open" in captured.out
+    assert "--provider" in captured.out
+
+
+def test_browse_missing_database_exits_without_creating_it(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    database_path = runtime_home / "model_sentinel.db"
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["browse"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert captured.err == (
+        f"Model Sentinel database not found at {database_path}. "
+        "Run 'model-sentinel scan --save' first.\n"
+    )
+    assert not database_path.exists()
+
+
+def test_browse_dispatches_before_runtime_writes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    build_fixture_db(runtime_home / "model_sentinel.db")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    def reject_write(*args, **kwargs):
+        raise AssertionError("browse attempted a runtime write")
+
+    monkeypatch.setattr(Store, "upsert_provider_configs", reject_write)
+    monkeypatch.setattr(
+        "model_sentinel.config.RuntimePaths.ensure_directories",
+        reject_write,
+    )
+    received: dict[str, object] = {}
+
+    def fake_run_browse(**kwargs) -> int:
+        received.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("model_sentinel.browse.server.run_browse", fake_run_browse)
+
+    assert cli.main(["browse", "--no-open", "--port", "8123"]) == 0
+    assert received["loaded"].runtime_paths.runtime_home == runtime_home
+    assert received["port"] == 8123
+    assert received["open_browser"] is False
+    assert received["initial_provider"] is None
+    assert received["db"].connection().execute("PRAGMA query_only").fetchone()[0] == 1
+    received["db"].close_all()
 
 
 def test_version_is_configuration_free(tmp_path: Path, monkeypatch, capsys) -> None:

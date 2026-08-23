@@ -40,7 +40,7 @@ from .storage import Store
 from .time_utils import local_today, now_utc
 
 
-COMMANDS = {"scan", "history", "changes", "providers", "healthcheck"}
+COMMANDS = {"scan", "history", "changes", "providers", "healthcheck", "browse"}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -57,6 +57,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded = load_config(project_root)
     except ConfigError as exc:
         parser.exit(status=2, message=f"{exc}\n")
+
+    if args.command == "browse":
+        try:
+            return run_browse_command(args=args, loaded=loaded)
+        except ConfigError as exc:
+            parser.exit(status=2, message=f"{exc}\n")
 
     loaded.runtime_paths.ensure_directories()
     logger = _configure_logger(loaded)
@@ -104,6 +110,8 @@ def build_parser() -> argparse.ArgumentParser:
             "      Show all recorded changes across all providers since March 1.\n\n"
             "  model_sentinel changes --provider openrouter --since 2026-03-01 --until 2026-03-14\n"
             "      Show OpenRouter changes in a specific date range.\n\n"
+            "  model_sentinel browse --no-open\n"
+            "      Start the read-only local history browser without opening a browser window.\n\n"
             "First run:\n"
             "  If no baseline exists yet, run:\n"
             "      model_sentinel scan --save\n"
@@ -196,6 +204,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     providers_parser.add_argument("--format", choices=("text", "json", "markdown"), default="text")
 
+    browse_parser = subparsers.add_parser(
+        "browse",
+        help="Explore saved model history in a read-only local browser.",
+    )
+    browse_parser.add_argument("--port", type=int, default=8110, help="preferred local server port")
+    browse_parser.add_argument("--no-open", action="store_true", help="do not open a browser window")
+    browse_parser.add_argument("--provider", help="initial configured provider ID")
+
     healthcheck_parser = subparsers.add_parser(
         "healthcheck",
         help="Validate config, secrets, and runtime readiness.",
@@ -211,6 +227,48 @@ def build_parser() -> argparse.ArgumentParser:
     healthcheck_parser.add_argument("--format", choices=("text", "json", "markdown"), default="text")
 
     return parser
+
+
+def run_browse_command(*, args: argparse.Namespace, loaded) -> int:
+    from .browse.readonly import MissingDatabaseError, SchemaError, open_readonly
+    from .browse.server import run_browse
+
+    logger = logging.getLogger("model_sentinel.browse")
+    logger.handlers.clear()
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.WARNING)
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+
+    validate_selected_providers(loaded.providers, provider_id=args.provider)
+    database_path = loaded.runtime_paths.database_path
+    try:
+        database = open_readonly(database_path)
+    except MissingDatabaseError:
+        print(
+            f"Model Sentinel database not found at {database_path}. "
+            "Run 'model-sentinel scan --save' first.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from None
+    except SchemaError as exc:
+        print(
+            f"Model Sentinel database schema is missing required object: {exc.missing}.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from None
+
+    try:
+        return run_browse(
+            db=database,
+            loaded=loaded,
+            port=args.port,
+            open_browser=not args.no_open,
+            initial_provider=args.provider,
+        )
+    finally:
+        database.close_all()
 
 
 def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.Logger) -> int:
