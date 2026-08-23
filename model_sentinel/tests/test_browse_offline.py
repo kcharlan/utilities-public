@@ -671,6 +671,17 @@ def test_frontend_pages_activity_and_merges_stable_entry_identities() -> None:
     assert "Load more changes" in source
 
 
+def test_activity_load_more_is_locked_and_advances_from_server_page() -> None:
+    source = _read_asset("app.js")
+
+    assert "const inFlight = useRef(null)" in source
+    assert "if (inFlight.current" in source
+    assert "state.key !== requestKey" in source
+    assert "page: state.data.page + 1" in source
+    assert "current.page + 1" not in source
+    assert "state.key === requestKey" in source
+
+
 def test_frontend_replaces_initial_defaults_and_sanitizes_hash_state() -> None:
     source = _read_asset("app.js")
 
@@ -695,6 +706,10 @@ def test_heatmap_uses_roving_buttons_without_incomplete_grid_roles() -> None:
     assert 'event.key === "ArrowLeft"' in source
     assert 'event.key === "Home"' in source
     assert "aria-pressed=${day >= from && day <= to}" in source
+    assert 'event.key === "ArrowLeft") target = index - 7' in source
+    assert 'event.key === "ArrowRight") target = index + 7' in source
+    assert 'event.key === "ArrowUp") target = index - 1' in source
+    assert 'event.key === "ArrowDown") target = index + 1' in source
 
 
 def test_narrow_layout_contract_keeps_outer_shell_bounded() -> None:

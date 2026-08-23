@@ -120,28 +120,39 @@
   function usePagedApi(path, params, enabled = true) {
     const requestKey = JSON.stringify([path, params, enabled]);
     const [cursor, setCursor] = useState({key: requestKey, page: 1});
-    const [state, setState] = useState({data: null, loading: enabled, error: null});
+    const [state, setState] = useState({data: null, key: null, loading: enabled, error: null});
     const [revision, setRevision] = useState(0);
+    const inFlight = useRef(null);
     const page = cursor.key === requestKey ? cursor.page : 1;
     const key = JSON.stringify([requestKey, page, revision]);
     useEffect(() => {
       if (cursor.key !== requestKey) setCursor({key: requestKey, page: 1});
-      if (!enabled) { setState(current => ({...current, loading: false, error: null})); return; }
+      if (!enabled) { inFlight.current = null; setState(current => ({...current, loading: false, error: null})); return; }
       const controller = new AbortController();
+      inFlight.current = key;
       setState(current => ({...current, loading: true, error: null}));
       api.get(path, {...params, page}, controller.signal).then(
-        data => setState(current => ({data: mergeActivityPages(current.data, data, page), loading: false, error: null})),
+        data => setState(current => ({data: mergeActivityPages(current.data, data, page), key: requestKey, loading: false, error: null})),
         error => error.name !== "AbortError" && setState(current => ({...current, loading: false, error}))
-      );
+      ).finally(() => { if (inFlight.current === key) inFlight.current = null; });
       return () => controller.abort();
     }, [key]);
     const loaded = state.data && state.data.entries ? state.data.entries.length : 0;
-    const hasMore = Boolean(state.data && loaded < state.data.total);
+    const fresh = state.key === requestKey;
+    const loading = Boolean(enabled && (state.loading || !fresh));
+    const hasMore = Boolean(fresh && state.data && loaded < state.data.total);
+    const loadMore = useCallback(() => {
+      if (inFlight.current || state.loading || state.key !== requestKey || !state.data) return;
+      if (state.data.entries.length >= state.data.total) return;
+      inFlight.current = "paging";
+      setCursor({key: requestKey, page: state.data.page + 1});
+    }, [requestKey, state.data, state.key, state.loading]);
     return {
       ...state,
+      loading,
       hasMore,
-      loadMore: useCallback(() => setCursor(current => ({key: requestKey, page: current.key === requestKey ? current.page + 1 : 2})), [requestKey]),
-      reload: useCallback(() => { setCursor({key: requestKey, page: 1}); setRevision(value => value + 1); }, [requestKey])
+      loadMore,
+      reload: useCallback(() => { inFlight.current = "reload"; setCursor({key: requestKey, page: 1}); setRevision(value => value + 1); }, [requestKey])
     };
   }
 
@@ -253,10 +264,10 @@
             onPointerUp=${event => { if (!drag.current) return; const target = document.elementFromPoint(event.clientX, event.clientY); const end = target && target.closest("[data-date]"); const range = [drag.current, end ? end.dataset.date : day].sort(); moved.current = range[0] !== range[1]; write({from: range[0], to: range[1]}); drag.current = null; }}
             onKeyDown=${event => {
               let target = null;
-              if (event.key === "ArrowLeft") target = index - 1;
-              else if (event.key === "ArrowRight") target = index + 1;
-              else if (event.key === "ArrowUp") target = index - 7;
-              else if (event.key === "ArrowDown") target = index + 7;
+              if (event.key === "ArrowLeft") target = index - 7;
+              else if (event.key === "ArrowRight") target = index + 7;
+              else if (event.key === "ArrowUp") target = index - 1;
+              else if (event.key === "ArrowDown") target = index + 1;
               else if (event.key === "Home") target = 0;
               else if (event.key === "End") target = days.length - 1;
               if (target == null) return;
