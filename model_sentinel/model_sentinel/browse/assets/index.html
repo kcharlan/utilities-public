@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Model Sentinel History</title>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src 'self';
+                 script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';
+                 img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <script>
+    (() => {
+      try {
+        const key = "model_sentinel.browse.theme";
+        const stored = localStorage.getItem(key);
+        const theme = ["system", "light", "dark"].includes(stored)
+          ? stored
+          : "system";
+        if (theme !== "system") {
+          document.documentElement.dataset.theme = theme;
+        }
+      } catch (error) {
+        /* Browser storage can be unavailable without preventing startup. */
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="vendor/uPlot.min.css">
+  <link rel="stylesheet" href="app.css">
+  <script defer src="vendor/preact.umd.js"></script>
+  <script defer src="vendor/hooks.umd.js"></script>
+  <script defer src="vendor/htm.umd.js"></script>
+  <script defer src="vendor/uPlot.iife.min.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="shell-header">
+    <p class="eyebrow">Local model intelligence</p>
+    <h1>Model Sentinel</h1>
+    <p class="shell-status">History browser</p>
+  </header>
+  <main id="app" tabindex="-1" aria-label="Model history browser">
+    <noscript>JavaScript is required to browse model history.</noscript>
+  </main>
+</body>
+</html>
