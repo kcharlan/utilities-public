@@ -180,6 +180,7 @@
     const fallback = defaults(meta), span = meta.date_span;
     const knownProviders = new Set(meta.providers.map(provider => provider.id));
     const knownCategories = new Set(meta.categories || []);
+    const knownAspects = new Set(meta.aspects.map(aspect => aspect.id));
     const kinds = new Set(["added", "removed", "changed"]);
     const list = (value, allowed) => Array.isArray(value)
       ? value.filter(item => typeof item === "string" && item && (!allowed || allowed.has(item)))
@@ -192,7 +193,7 @@
     resolved.categories = list(state.categories, knownCategories);
     resolved.kinds = list(state.kinds, kinds);
     for (const key of ["models", "pins", "cols"]) resolved[key] = list(state[key]);
-    resolved.aspects = list(state.aspects).slice(0, ASPECT_LIMIT);
+    resolved.aspects = list(state.aspects, knownAspects).slice(0, ASPECT_LIMIT);
     if (span) {
       resolved.from = validDate(state.from) ? clamp(state.from, span) : fallback.from;
       resolved.to = validDate(state.to) ? clamp(state.to, span) : fallback.to;
@@ -441,6 +442,8 @@
   function AspectPicker({meta, pins, selected, write, toast}) {
     const pinProviders = new Set(pins.map(pin => pinParts(pin, meta.providers).provider).filter(Boolean).map(provider => provider.id));
     const available = meta.aspects.filter(aspect => pinProviders.has(aspect.provider_id));
+    const availableIds = new Set(available.map(aspect => aspect.id));
+    const visibleSelected = selected.filter(id => availableIds.has(id));
     const regular = available.filter(aspect => !aspect.squelched);
     const squelched = available.filter(aspect => aspect.squelched);
     const ambiguous = ambiguousAspectIds(available);
@@ -448,11 +451,11 @@
     return html`<section class="aspect-picker" aria-labelledby="aspects-title"><header><p>02 / dimensions</p><h2 id="aspects-title">Aspects</h2></header>
       ${meta.categories.map(category => {
         const aspects = regular.filter(aspect => aspect.category === category);
-        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${selected} write=${write} toast=${toast} showProvider=${ambiguous.has(aspect.id)} providerLabel=${providerLabels[aspect.provider_id]} />`)}</fieldset>` : null;
+        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${visibleSelected} write=${write} toast=${toast} showProvider=${ambiguous.has(aspect.id)} providerLabel=${providerLabels[aspect.provider_id]} />`)}</fieldset>` : null;
       })}
       ${squelched.length ? html`<details class="squelched-aspects"><summary>Benchmarks / other squelched <span>${squelched.length}</span></summary>${meta.categories.map(category => {
         const aspects = squelched.filter(aspect => aspect.category === category);
-        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${selected} write=${write} toast=${toast} showProvider=${ambiguous.has(aspect.id)} providerLabel=${providerLabels[aspect.provider_id]} />`)}</fieldset>` : null;
+        return aspects.length ? html`<fieldset key=${category}><legend>${category}</legend>${aspects.map(aspect => html`<${AspectChoice} key=${aspect.id} aspect=${aspect} selected=${visibleSelected} write=${write} toast=${toast} showProvider=${ambiguous.has(aspect.id)} providerLabel=${providerLabels[aspect.provider_id]} />`)}</fieldset>` : null;
       })}</details>` : null}
       ${pins.length && !available.length ? html`<p class="aside-note">No timeline aspects are available for these providers.</p>` : null}
     </section>`;

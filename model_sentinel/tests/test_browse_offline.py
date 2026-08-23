@@ -743,10 +743,20 @@ def test_models_aspect_limit_is_enforced_for_hash_and_picker() -> None:
     source = _read_asset("app.js")
 
     assert "const ASPECT_LIMIT = 12" in source
-    assert "resolved.aspects = list(state.aspects).slice(0, ASPECT_LIMIT)" in source
+    assert "const knownAspects = new Set(meta.aspects.map(aspect => aspect.id))" in source
+    assert "resolved.aspects = list(state.aspects, knownAspects).slice(0, ASPECT_LIMIT)" in source
     assert "if (selected.length >= ASPECT_LIMIT)" in source
     assert "You can compare at most ${ASPECT_LIMIT} aspects." in source
     assert "toast=${toast}" in source
+
+
+def test_models_picker_prunes_orphaned_provider_aspects_before_counting() -> None:
+    source = _read_asset("app.js")
+
+    assert "const availableIds = new Set(available.map(aspect => aspect.id))" in source
+    assert "const visibleSelected = selected.filter(id => availableIds.has(id))" in source
+    assert "selected=${visibleSelected}" in source
+    assert "selected=${selected}" not in source[source.index("function AspectPicker("):source.index("function cssSeries(")]
 
 
 def test_models_numeric_panels_use_stepped_synced_uplot_contract() -> None:
