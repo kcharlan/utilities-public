@@ -84,7 +84,7 @@ Do not re-derive these; do not contradict them without new measurement.
 - Produces `storage.recent_change_rows(connection: sqlite3.Connection, *, provider_id: str | None, since: date | None, until: date | None) -> tuple[dict[str, Any], ...]` — a module-level function taking a caller-supplied connection so a read-only connection can be used.
 - `Store.recent_changes(...)` keeps its exact signature and return value and becomes a thin wrapper: open `self._connect()`, delegate, return.
 - Produces `storage.load_json_value(value: str | None) -> Any` as the public name for `_load_json_value` (keep `_load_json_value = load_json_value` alias so nothing breaks).
-- The returned dicts gain **one** new key, `change_id`, and are otherwise byte-identical to today's output (same keys, same types, same order).
+- **`change_id` is exposed only on `recent_change_rows`** (user decision, 2026-08-23). `Store.recent_changes` strips it, so its output stays byte-identical to today's — same 9 keys (`change_kind, detected_at, display_name, field_name, new_value, old_value, provider_id, provider_label, provider_model_id`), same types, same order. `changes --format json` dumps those rows verbatim (`reporting.py:1427`), so this keeps the shipped artifact unchanged. The browser's Activity endpoint calls `recent_change_rows` directly and gets `change_id`.
 
 **Required query shape** (this is load-bearing; the correlated subquery is the defect):
 
@@ -127,7 +127,7 @@ Notes that must be honored:
   ```
   Do **not** delete the Python `local_date_for` filter — it remains the source of truth for boundary rows.
 
-- [ ] **Step 1: Write the equivalence test first.** In `tests/test_storage.py`, build a store with several providers, models, scrapes and changes (including one model that appears in `field_changes` but has no `snapshot_models` row, and rows on local-date boundaries near midnight). Capture `Store.recent_changes(...)` output for several `(provider_id, since, until)` combinations **before** touching the implementation by copying the current method body into the test file as `_legacy_recent_changes(store, ...)`. Assert new output equals legacy output after dropping the `change_id` key, for every combination including `None/None/None`.
+- [ ] **Step 1: Write the equivalence test first.** In `tests/test_storage.py`, build a store with several providers, models, scrapes and changes (including one model that appears in `field_changes` but has no `snapshot_models` row, and rows on local-date boundaries near midnight). Capture `Store.recent_changes(...)` output for several `(provider_id, since, until)` combinations **before** touching the implementation by copying the current method body into the test file as `_legacy_recent_changes(store, ...)`. Assert new output equals legacy output **exactly** — no key dropping, since `Store.recent_changes` must not gain a field — for every combination including `None/None/None`. Add a separate assertion that `recent_change_rows` *does* carry `change_id` and that `set(store_row) == set(raw_row) - {'change_id'}`.
 - [ ] **Step 2: Run it — it passes against the unmodified implementation** (this proves the harness is sound). Run: `pytest tests/test_storage.py -k recent_changes -v`.
 - [ ] **Step 3: Add a performance guard test.** Build a store with ~300 models × ~20 scrapes and ~2,000 change rows; assert `recent_change_rows` over the whole range completes in under 2 seconds (`time.perf_counter`). Verify this test **fails** against the old implementation before you change it.
 - [ ] **Step 4: Implement `recent_change_rows`, rewire `Store.recent_changes`, publish `load_json_value`.**
@@ -416,14 +416,18 @@ Single IIFE: `const {h, render} = preact; const {useState, useEffect, useMemo, u
 - [ ] Leave the installed standalone at `~/Library/Scripts/model-sentinel` alone unless the user asks for a rebuild; if you do not rebuild, say so explicitly in the final report.
 - [ ] Commit `Document model-sentinel browse`.
 
+## Decisions on record (2026-08-23, approved by the user)
+
+- **Task 0 is in scope.** Fixing `Store.recent_changes` ships as part of this work. It is required: the browser needs the same rows per request, and a second query would duplicate logic.
+- **`change_id` is exposed only on `recent_change_rows`.** `Store.recent_changes` and therefore `changes --format json` are unchanged.
+
 ## Open items the implementer must not silently decide
 
-1. **`changes` output shape.** Task 0 adds `change_id` to `recent_changes` rows. `render_changes_report(format_name="json")` dumps those rows verbatim (`reporting.py:1427`), so the JSON artifact gains a field. That is a visible output change to a shipped command. It is almost certainly fine, but call it out in the Task 0 commit and in the final report rather than burying it. If the user objects, strip `change_id` in `Store.recent_changes` and expose it only on `recent_change_rows`.
-2. **Vendor download requires one-time network access.** If the executing environment is offline, Task 5 blocks. Stop and report; do not substitute different libraries or versions, and do not fall back to a CDN.
+1. **Vendor download requires one-time network access.** If the executing environment is offline, Task 5 blocks. Stop and report; do not substitute different libraries or versions, and do not fall back to a CDN.
 
 ## Self-review against the spec
 
 - §1 decisions → Tasks 1 (read-only, dispatch), 5 (offline, vendored, theme), 7–9 (views, pin cap), 2 (benchmarks first-class + squelched flag).
 - §3 CLI → Tasks 1, 6. §4 layout → all. §5 endpoints → Tasks 3, 4, 6; §5.1 aspects → Task 2. §6.1–6.5 → Tasks 7–9; §6.6 → Tasks 5, 7, 8. §7 errors → Tasks 1, 4, 6, 7 (plus the 503 busy path, which the spec did not anticipate). §8 → Task 10. §9 tests → every task. §10 docs → Task 11.
-- Spec amendments this review forces, to be applied when Task 4 lands: §5 `/api/series` returns a union `axis`, not a single per-provider `scrapes` list; §5 `/api/activity` bulk groups come from new `group_planned_entries_by_bulk`, not from the changes planner; §5 `/api/meta` returns `categories`; §7 gains the 503 busy response; §1 "no config of its own" is unchanged but now explicitly excludes `ensure_directories`.
+- **Spec amendments are already applied** (2026-08-23), so spec and plan agree and the executor can trust either: §2 records the storage fix as an in-scope prerequisite; §3 names `ensure_directories`/`_configure_logger` as writes and specifies per-thread connections; §5 `/api/meta` returns `categories`, `bulk_min_models` and DB-only providers; `/api/activity` sources from `recent_change_rows` and gains `kind: "bulk"` with `bulk_models`; `/api/heatmap` uses `visibility_of` and Python-side local bucketing; `/api/series` returns a union `axis`; `/api/catalog` requires raw values; §7 gains the 503 busy response.
 - Names used consistently throughout: `recent_change_rows`, `load_json_value`, `profile_field_candidate`, `open_readonly`, `ReadOnlyDatabase`, `DatabaseBusyError`, `build_aspect_catalog`, `Aspect`, `plan_changes_provider`, `detail_policy_from_settings`, `profiles_for`, `visibility_of`, `group_planned_entries_by_bulk`, `ApiContext`, `BadRequest`, `NotFound`, `rendered_change_to_json`, `find_free_port`, `make_server`, `run_browse`, `run_browse_command`, `build_fixture_db`, `FixtureFacts`.

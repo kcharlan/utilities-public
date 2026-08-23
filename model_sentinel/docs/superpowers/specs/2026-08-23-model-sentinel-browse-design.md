@@ -16,9 +16,18 @@ Precursor: [`docs/model_sentinel_browser_design_proposals.md`](../../model_senti
 | Frontend libs | **Preact + htm + uPlot**, vendored as minified files with their MIT LICENSE texts under `model_sentinel/browse/assets/vendor/`. Hand-written CSS; no Tailwind. |
 | Benchmarks | First-class aspect family in Models; squelched in Activity by default (existing squelch patterns). |
 | Multi-model cap | Models view pins at most **8** models. |
-| Writes | The browser **never writes**: DB opened `mode=ro`, no cache, no config of its own; view state lives only in the URL hash. |
+| Writes | The browser **never writes**: DB opened `mode=ro` with `PRAGMA query_only = ON`, no cache, no config of its own; view state lives only in the URL hash. This explicitly excludes `runtime_paths.ensure_directories()`, which creates `logs/` and `reports/` — `browse` dispatches before it, and configures its own stderr logger rather than opening the rotating log file. |
 
 ## 2. Scope
+
+**Prerequisite (in scope).** `Store.recent_changes` is quadratic: a per-row
+correlated subquery over `snapshot_models` with no date predicate in SQL. It
+is measured at 280 s for the full history and 310 s for a one-month range, and
+the shipped `changes --since <3 days ago>` takes 5 m 12 s. The Activity view
+needs those rows on every request, and a second query would duplicate logic,
+so the fix ships with this work as Task 0 of the plan. `Store.recent_changes`
+keeps its exact output; the new `recent_change_rows` carries `change_id` for
+the browser.
 
 In scope for this spec (one implementation plan):
 
@@ -54,17 +63,23 @@ Configuration it needs, identical to what `changes` needs today:
 patterns), and the database at `runtime_paths.database_path`.
 `MODEL_SENTINEL_HOME` is honored through the existing `load_config`.
 
-**Dispatch (load-bearing).** `cli.main()` currently calls
+**Dispatch (load-bearing).** `cli.main()` calls
+`loaded.runtime_paths.ensure_directories()`, `_configure_logger(loaded)`,
 `store.initialize()` and `store.upsert_provider_configs(...)` for every
-command except `healthcheck`; both write. `browse` must be dispatched
-*before* that block (next to the `healthcheck` branch), after `load_config`
-succeeds. It constructs its own read-only connection:
+command except `healthcheck`; all of those write (the first creates
+directories, the second opens the rotating log). `browse` must be dispatched
+*before* that block, immediately after `load_config` succeeds, and must
+configure its own stderr logger. It constructs read-only connections:
 
 ```python
-sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True, check_same_thread=False)
+sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True)
 ```
 
 (`Path.as_uri()` yields `file:///…`, which SQLite accepts with `?mode=ro`.)
+**One connection per thread**, held in a `threading.local()` — the server is a
+`ThreadingHTTPServer` and a single connection shared across request threads is
+unsafe even read-only. Each connection sets `PRAGMA query_only = ON` and
+`PRAGMA busy_timeout = 5000`.
 If the database file does not exist, exit 2 with a message naming the path
 and suggesting `model-sentinel scan --save`; do not create it.
 
@@ -119,8 +134,15 @@ One call on page load. Returns:
 - `scrapes`: `[{scrape_id, provider_id, date, completed_at, status, saved, model_count}]`
   (all scrapes; ~200 rows is fine, and Catalog needs the exact list)
 - `aspects`: the aspect catalog (§5.1)
+- `categories`: the ordered category list (`Pricing`, `Context & Limits`, `Capabilities`,
+  `Parameters`, `Benchmarks`, `Other`) — the client must not infer facets from `aspects`
 - `detail_default`: the configured detail mode
 - `pin_limit`: 8
+- `bulk_min_models`: 3
+
+`providers` lists configured providers **and** any provider present only in the `providers`
+DB table, flagged `configured: false`; history must not vanish when a provider is removed
+from `providers.env`.
 
 ### 5.1 Aspect catalog (`browse/aspects.py`)
 
@@ -152,14 +174,25 @@ Params: `providers, from, to, detail, models` (comma list, optional),
 `categories` (comma list of profile category names, optional), `kinds`
 (`added,removed,changed`), `page`, `page_size` (default 100, max 500).
 
-Source rows come from `Store.recent_changes(provider_id, since, until)`
-(per provider when several are selected). Rendering **reuses the `changes`
-report planner**: `reporting._plan_changes_report_provider` becomes public
-(`plan_changes_provider`) with no behavior change, so the browser's feed
-shows exactly the entries, bulk groups and hidden rollups the HTML `changes`
-report shows. Each visible `FieldChange` is serialized through
+Source rows come from `storage.recent_change_rows(connection, ...)` — the
+connection-taking function introduced by the storage performance fix, which
+also carries `change_id`. Rendering **reuses the `changes` report planner**:
+`reporting._plan_changes_report_provider` becomes public
+(`plan_changes_provider`) with no behavior change, so the feed shows exactly
+the entries and hidden rollups the HTML `changes` report shows.
+
+**Bulk groups are not free.** The changes planner does *not* consolidate
+repetitive list changes — that logic lives in the scan planner
+(`_plan_provider_changes`). Activity therefore applies a new
+`reporting.group_planned_entries_by_bulk`, which reuses the existing
+`_bulk_change_signature` and `BULK_CHANGE_MIN_MODELS` rather than inventing a
+second rule, and is additive (no existing renderer calls it, so `changes`
+output is unchanged).
+
+Each visible `FieldChange` is serialized through
 `change_render.classify_change` → `dataclasses.asdict(RenderedChange)`
-(with `price_rule` flattened to `{unit, scale}`), so `kind/direction/semantic`
+verbatim — that output is already JSON-serializable and `price_rule` is
+already a nested dict (its unit key is `unit_label`). `kind/direction/semantic`
 drive color in the client and the client does no formatting of its own.
 
 Response:
@@ -167,7 +200,8 @@ Response:
 { "total": N, "page": p, "page_size": s,
   "entries": [
     {"date": "2026-08-21", "provider_id": ..., "model_id": ..., "display_name": ...,
-     "kind": "added"|"removed"|"changed",
+     "kind": "added"|"removed"|"changed"|"bulk",
+     "bulk_models": [{model_id, display_name}…],   # bulk only
      "changes": [RenderedChange…],          # changed only, visible rows
      "hidden": {"squelched": n, "unclassified": n, "noop": n},
      "change_ids": [...] }                    # for /api/change drill-in
@@ -183,19 +217,27 @@ apply after planning too, so counts stay consistent with the report.
 Params: `providers, from, to, detail`. Returns `[{date, changed, added,
 removed, squelched}]` per local date. Counts come from one SQL `GROUP BY`
 on `field_changes` joined to nothing; `squelched` is computed by applying
-`reporting.classify_detail_visibility` to each distinct `field_name` once
-and summing by date (distinct field names ≈ a few hundred).
+`reporting.visibility_of` to each distinct `field_name` once and summing by
+date (51 distinct field names in practice). **`visibility_of`, not
+`classify_detail_visibility`**: added/removed rows store `field_name = NULL`
+and the raw helper raises `TypeError` on `None`. Local-date bucketing happens
+in Python via `local_date_for` — never SQL `date()`, which is UTC and
+mis-buckets evening scans.
 
 ### `GET /api/series`
 Params: `models` (comma list of `provider_id/model_id`, ≤ 8), `aspects`
 (comma list of aspect ids, ≤ 12), `from, to`.
 
-Returns, per model × aspect, the **dense** series over saved successful
-scrapes of that provider in range:
+Returns the **dense** series over saved successful scrapes in range, aligned
+to a single **union time axis** across every provider involved — pins may span
+providers, so a per-provider x-axis cannot be expressed in one response:
 ```
-{ "scrapes": [{scrape_id, date, completed_at}…],               # x-axis per provider
-  "series": [{model, aspect, values: [v|null…], unit, scale, kind}] }
+{ "axis": [{scrape_id, provider_id, date, completed_at, t}…],
+  "series": [{model, aspect, provider_id, kind, unit,
+              values: [v|null…], list_hash: [h|null…]}] }
 ```
+Each series is `null` at every axis index belonging to another provider or to
+a scrape where that model was absent.
 Values are **display-ready** in the profile's unit (`$ / 1M tokens`).
 Canonical price columns of `snapshot_models` are **already normalized**
 at save time (`normalize._normalize_price`) and are returned as stored;
@@ -212,7 +254,9 @@ there; an absent model is a fact, not zero).
 SQL: one statement per provider, `SELECT scrape_id, provider_model_id,
 <columns…>, json_extract(metadata_json, …) … FROM snapshot_models WHERE
 scrape_id IN (saved successful scrapes in range) AND provider_model_id IN
-(…)`, pivoted in Python. Fewer than 8 × 170 rows; no index needed.
+(…)`, pivoted onto the union axis in Python. Fewer than 8 × 170 rows; measured
+at 0.032 s for one model, no index needed. Column and path identifiers come
+only from the aspect catalog's whitelist; all values are bound parameters.
 
 ### `GET /api/events`
 Params: `models` (≤ 8), `from, to, detail`. The sparse companion to
@@ -235,8 +279,15 @@ marked removed):
             cells: {aspect_id: {value, display, unit,
                                 old_value?, old_display?, change?: RenderedChange}}}] }
 ```
-Diff cells reuse `classify_change` on the raw pair, so the table colors
-with the same semantics as the feed.
+Diff cells reuse `classify_change` on the **raw** pair, so the table colors
+with the same semantics as the feed. The raw pair is mandatory: canonical
+price columns are already normalized at save time, and feeding one back into
+`classify_change` re-applies the provider factor — `2.0 → 3.5` renders as
+`$2000000.00 → $3500000.00`. Resolve the raw values from each snapshot's
+`metadata_json` with `normalize.profile_field_candidate`, which reproduces the
+same per-model candidate path the normalizer chose; there is no static
+column→path map, because `profile.normalized_fields` is an ordered candidate
+list whose winner varies by model.
 
 ### `GET /api/change/{change_id}`
 Raw record: `{change_id, provider_id, model_id, field, kind, old_value,
@@ -365,6 +416,10 @@ ground. A stamp is applied before first paint (inline script in
   `EmptyState` explaining that nothing has been saved yet.
 - Schema mismatch (a required table/column missing): exit 2 naming the
   missing object; never render partial data.
+- **Database busy**: a scheduled scan holds an exclusive lock (journal mode is
+  `delete`, so this is a real concurrent case, not theoretical). Connections set
+  `PRAGMA busy_timeout = 5000`; a still-locked query returns **503** with
+  `{"error": "The database is busy — a scan may be writing. Try again in a moment."}`.
 - API errors: JSON `{error}` with status; the client shows an `ErrorBanner`
   with the message and keeps the last good state — never a blank page.
 - Bad query parameters (unparseable date, `from > to`, unknown provider,
