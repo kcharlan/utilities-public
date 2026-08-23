@@ -1,13 +1,17 @@
 from pathlib import Path
 
 from argparse import Namespace
+import http.server
 import json
 import os
+import threading
+import urllib.request
 
 import pytest
 
 import model_sentinel.cli as cli
 from model_sentinel.__init__ import __version__
+from model_sentinel.browse import server as browse_server_module
 from model_sentinel.build_info import format_build_info
 from model_sentinel.config import ProviderConfig
 from model_sentinel.models import BaselineInfo
@@ -105,6 +109,178 @@ def test_browse_dispatches_before_runtime_writes(
     assert received["initial_provider"] is None
     assert received["db"].connection().execute("PRAGMA query_only").fetchone()[0] == 1
     received["db"].close_all()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_fragment", "expected_open_calls"),
+    (
+        (("browse", "--port", "0", "--no-open"), None, 0),
+        (("browse", "--port", "0"), None, 1),
+        (("browse", "--port", "0", "--provider", "openrouter"), "#providers=openrouter", 1),
+    ),
+)
+def test_browse_server_lifecycle_and_browser_open(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    arguments: tuple[str, ...],
+    expected_fragment: str | None,
+    expected_open_calls: int,
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    build_fixture_db(runtime_home / "model_sentinel.db")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    lifecycle: list[str] = []
+    opened: list[str] = []
+    opener_called = threading.Event()
+    opener_threads: list[tuple[str, bool]] = []
+
+    def interrupt(self, *args, **kwargs):
+        lifecycle.append("serve")
+        if expected_open_calls:
+            assert opener_called.wait(timeout=5)
+        raise KeyboardInterrupt
+
+    def shutdown(self):
+        lifecycle.append("shutdown")
+
+    from model_sentinel.browse.readonly import ReadOnlyDatabase
+
+    real_server_close = http.server.ThreadingHTTPServer.server_close
+    real_database_close = ReadOnlyDatabase.close_all
+
+    def server_close(self):
+        lifecycle.append("server-close")
+        real_server_close(self)
+
+    def database_close(self):
+        lifecycle.append("database-close")
+        real_database_close(self)
+
+    monkeypatch.setattr("http.server.ThreadingHTTPServer.serve_forever", interrupt)
+    monkeypatch.setattr("http.server.ThreadingHTTPServer.shutdown", shutdown)
+    monkeypatch.setattr("http.server.ThreadingHTTPServer.server_close", server_close)
+    monkeypatch.setattr(ReadOnlyDatabase, "close_all", database_close)
+
+    def record_open(url: str) -> None:
+        opened.append(url)
+        current = threading.current_thread()
+        opener_threads.append((current.name, current.daemon))
+        opener_called.set()
+
+    monkeypatch.setattr("webbrowser.open", record_open)
+
+    assert cli.main(list(arguments)) == 0
+    captured = capsys.readouterr()
+    line = captured.out.strip()
+    assert line.startswith("Model Sentinel browser: http://127.0.0.1:")
+    assert line.endswith("/")
+    assert lifecycle == [
+        "serve",
+        "shutdown",
+        "server-close",
+        "database-close",
+        "database-close",
+    ]
+    assert len(opened) == expected_open_calls
+    if opened:
+        assert opened[0].startswith(line.removeprefix("Model Sentinel browser: "))
+        assert (expected_fragment or "") in opened[0]
+        assert opener_threads == [("model-sentinel-browser-opener", True)]
+
+
+def test_browse_continues_when_browser_open_raises(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    build_fixture_db(runtime_home / "model_sentinel.db")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    warning_logged = threading.Event()
+
+    def interrupt(self, *args, **kwargs):
+        assert warning_logged.wait(timeout=5)
+        raise KeyboardInterrupt
+
+    def reject_open(url: str):
+        raise RuntimeError("synthetic browser unavailable")
+
+    browse_logger = browse_server_module._LOG
+    real_warning = browse_logger.warning
+
+    def record_warning(*args, **kwargs):
+        real_warning(*args, **kwargs)
+        warning_logged.set()
+
+    monkeypatch.setattr("http.server.ThreadingHTTPServer.serve_forever", interrupt)
+    monkeypatch.setattr("http.server.ThreadingHTTPServer.shutdown", lambda self: None)
+    monkeypatch.setattr("webbrowser.open", reject_open)
+    monkeypatch.setattr(browse_logger, "warning", record_warning)
+
+    assert cli.main(["browse", "--port", "0"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.startswith("Model Sentinel browser: http://127.0.0.1:")
+    assert "Could not open browser" in captured.err
+
+
+def test_browse_opener_can_fetch_root_before_returning(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    build_fixture_db(runtime_home / "model_sentinel.db")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    captured_server: dict[str, http.server.ThreadingHTTPServer] = {}
+    result: dict[str, object] = {}
+    opener_finished = threading.Event()
+    serve_started = threading.Event()
+    real_make_server = browse_server_module.make_server
+    real_serve_forever = http.server.ThreadingHTTPServer.serve_forever
+
+    def capture_server(ctx, *, host="127.0.0.1", port):
+        server = real_make_server(ctx, host=host, port=port)
+        captured_server["server"] = server
+        return server
+
+    def observed_serve_forever(self, *args, **kwargs):
+        serve_started.set()
+        return real_serve_forever(self, poll_interval=0.01)
+
+    def synchronous_open(url: str) -> None:
+        current = threading.current_thread()
+        result["thread"] = (current.name, current.daemon)
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                result["status"] = response.status
+                result["body"] = response.read()
+            captured_server["server"].shutdown()
+        except Exception as exc:
+            result["error"] = exc
+        finally:
+            opener_finished.set()
+
+    def stop_after_failed_open() -> None:
+        opener_finished.wait()
+        if result.get("status") != 200:
+            serve_started.wait()
+            captured_server["server"].shutdown()
+
+    stopper = threading.Thread(target=stop_after_failed_open, daemon=True)
+    stopper.start()
+    monkeypatch.setattr(browse_server_module, "make_server", capture_server)
+    monkeypatch.setattr(
+        http.server.ThreadingHTTPServer,
+        "serve_forever",
+        observed_serve_forever,
+    )
+    monkeypatch.setattr("webbrowser.open", synchronous_open)
+
+    assert cli.main(["browse", "--port", "0"]) == 0
+    stopper.join()
+    captured = capsys.readouterr()
+    assert captured.out.startswith("Model Sentinel browser: http://127.0.0.1:")
+    assert result["status"] == 200
+    assert b"app.js" in result["body"]
+    assert result["thread"] == ("model-sentinel-browser-opener", True)
 
 
 def test_version_is_configuration_free(tmp_path: Path, monkeypatch, capsys) -> None:
