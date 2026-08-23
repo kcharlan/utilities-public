@@ -30,8 +30,7 @@ In scope for this spec (one implementation plan):
 
 Out of scope (explicitly deferred): market aggregates across all models
 (median lines, counts-of-✓ over time), scrape-health view, CSV export,
-unlimited pins / band charts, a light-vs-dark theme toggle beyond honoring
-`prefers-color-scheme`.
+unlimited pins / band charts.
 
 ## 3. Runtime requirements and CLI
 
@@ -320,11 +319,37 @@ button → Activity with `from/to` set to the two scrapes' dates.
 Inherits the report's rules exactly: red/green mean cost direction and
 nothing else, except the presence list and run status; amber capacity; blue
 capability/list membership; dim informational. Dark industrial palette to
-match the HTML reports, with a light palette under `prefers-color-scheme:
-light`, all via CSS custom properties defined on `:root`. Monospace for
+match the HTML reports, plus a light palette; both are complete token sets
+defined as CSS custom properties (see §6.6). Monospace for
 values, tabular numerals everywhere digits align. `prefers-reduced-motion`
 disables highlight animations. Keyboard: `/` focuses the model typeahead,
 `1/2/3` switch views, `Esc` closes drawers/popovers.
+
+### 6.6 Theme: system, light, dark
+
+Three states, supported from day one. A segmented control in the filter
+bar offers **System / Light / Dark**; `System` follows
+`prefers-color-scheme` live (a `matchMedia` change listener re-applies
+without reload). The choice persists in `localStorage` under
+`model_sentinel.browse.theme` (`"system" | "light" | "dark"`, default
+`"system"` when absent or unparseable). This is page-side browser storage,
+not a file the tool writes, so the read-only and no-config guarantees in §1
+are unaffected; it is deliberately **not** part of the URL hash, because a
+theme is a viewer preference and must not travel with a shared link.
+
+CSS structure (load-bearing, the classic unreadable-page bug otherwise):
+the bare `:root` block defines the **complete** light palette; `@media
+(prefers-color-scheme: dark)` redefines only the tokens, guarded as
+`:root:not([data-theme="light"])`; `:root[data-theme="dark"]` redefines
+them again so an explicit choice wins in both directions. The app stamps
+`data-theme="light"|"dark"` on `<html>` for an explicit choice and removes
+the attribute for `System`. Components take every color from the tokens;
+no color may be declared only inside a media or `[data-theme]` block. uPlot
+series and axis colors are read from the tokens at render time and the
+charts re-render on theme change. The cost/capacity/capability semantic
+colors keep their meaning in both palettes with contrast checked on each
+ground. A stamp is applied before first paint (inline script in
+`index.html` reading `localStorage`) to avoid a flash of the wrong theme.
 
 ## 7. Error handling
 
@@ -390,6 +415,11 @@ churn. Must not reproduce any real provider values.
   `--provider` validation, dispatch occurs before `store.initialize()`
   (assert via a mock that `upsert_provider_configs` is not called).
 - `test_install_standalone.py`: §8 additions.
+- `test_browse_theme.py`: static check of `app.css` — every custom property
+  set inside a `prefers-color-scheme` or `[data-theme]` block is also set on
+  bare `:root`; the dark media block is guarded with
+  `:root:not([data-theme="light"])`; `index.html` contains the pre-paint
+  theme stamp script and no external URL.
 - Front end: no JS test runner is added. Behavior that matters is in the
   API contract above; the offline test and a smoke test that the served
   HTML references exactly the vendored scripts are the guard.
