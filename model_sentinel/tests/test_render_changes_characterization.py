@@ -102,6 +102,7 @@ import time
 from tests.html_probe import absent_side_cells
 
 from model_sentinel.reporting import render_changes_report
+from model_sentinel import reporting
 from model_sentinel.provider_profiles import OPENROUTER_PROFILE
 
 # Pin the process timezone to UTC before any golden constant below is defined,
@@ -118,6 +119,17 @@ SINCE = "2026-07-01"
 # OpenRouter-style per-token pricing, so the normalized `$X.XX / 1M` figures in
 # the goldens are the product of a real conversion rather than an identity.
 PRICE_MULTIPLIER, PRICE_DIVISOR = 1000000, 1
+
+
+def test_changes_renderer_does_not_consume_additive_bulk_grouping(monkeypatch) -> None:
+    monkeypatch.setattr(
+        reporting,
+        "group_planned_entries_by_bulk",
+        lambda entries: (_ for _ in ()).throw(AssertionError("renderer consumed grouping")),
+        raising=False,
+    )
+
+    assert render("text") == EXPECTED_TEXT
 
 
 # ---------------------------------------------------------------------------

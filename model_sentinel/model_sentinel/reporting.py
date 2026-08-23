@@ -954,6 +954,46 @@ class _PlannedChangeEntry:
 
 
 @dataclass(frozen=True)
+class BulkGrouping:
+    signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] | None
+    entries: tuple[_PlannedChangeEntry, ...]
+
+
+def group_planned_entries_by_bulk(
+    entries: tuple[_PlannedChangeEntry, ...],
+) -> tuple[BulkGrouping, ...]:
+    signatures: dict[int, tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]] = {}
+    by_signature: dict[
+        tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
+        list[_PlannedChangeEntry],
+    ] = defaultdict(list)
+    for entry in entries:
+        if entry.kind != "changed" or entry.display is None:
+            continue
+        signature = _bulk_change_signature(entry.display)
+        if signature is not None:
+            signatures[id(entry)] = signature
+            by_signature[signature].append(entry)
+
+    grouped = {
+        signature: tuple(members)
+        for signature, members in by_signature.items()
+        if len(members) >= BULK_CHANGE_MIN_MODELS
+    }
+    emitted: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]] = set()
+    result: list[BulkGrouping] = []
+    for entry in entries:
+        signature = signatures.get(id(entry))
+        if signature in grouped:
+            if signature not in emitted:
+                result.append(BulkGrouping(signature, grouped[signature]))
+                emitted.add(signature)
+            continue
+        result.append(BulkGrouping(signature, (entry,)))
+    return tuple(result)
+
+
+@dataclass(frozen=True)
 class _ChangesProviderPlan:
     entries: tuple[_PlannedChangeEntry, ...]
     rollups: _HiddenRollups
