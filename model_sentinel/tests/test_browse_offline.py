@@ -886,6 +886,9 @@ def test_catalog_frontend_uses_provider_scoped_saved_scrapes_and_canonical_defau
     assert 'const dir = ["asc", "desc"].includes(state.dir) ? state.dir : "asc"' in source
     assert "patch.sort = sort" in source
     assert "patch.dir = dir" in source
+    assert "function Catalog({meta, state, write, replaceState, themeKey})" in source
+    assert "if (Object.keys(patch).length) replaceState(patch)" in source
+    assert "replaceState=${replaceState}" in source
 
 
 def test_catalog_table_supports_filter_sort_paging_and_semantic_diffs() -> None:
@@ -893,7 +896,7 @@ def test_catalog_table_supports_filter_sort_paging_and_semantic_diffs() -> None:
     styles = _read_asset("app.css")
 
     assert "function CatalogTable(" in source
-    assert 'type="search" value=${state.q || ""}' in source
+    assert 'type="search" value=${draft}' in source
     assert 'aria-sort=${sortAria("model_id")}' in source
     assert "write({sort: aspect.id, dir: nextSortDirection(aspect.id)})" in source
     assert "Math.ceil(data.total / CATALOG_PAGE_SIZE)" in source
@@ -904,6 +907,19 @@ def test_catalog_table_supports_filter_sort_paging_and_semantic_diffs() -> None:
     assert "font-variant-numeric: tabular-nums" in styles
     assert ".--presence-added" in styles
     assert ".--presence-removed" in styles
+
+
+def test_catalog_suppresses_stale_rows_and_replaces_debounced_search_hashes() -> None:
+    source = _read_asset("app.js")
+
+    assert "const resourceKey = JSON.stringify([path, params, enabled])" in source
+    assert "key: resourceKey" in source
+    assert "fresh: state.key === resourceKey" in source
+    assert "function CatalogSearch({value, replaceState})" in source
+    assert "setTimeout(() => replaceState({q: draft || null}), 250)" in source
+    assert "onInput=${event => setDraft(event.currentTarget.value)}" in source
+    assert 'onInput=${event => write({q:' not in source
+    assert "const catalogData = request.fresh ? request.data : null" in source
 
 
 def test_catalog_sparkline_uses_full_series_span_and_links_to_models() -> None:
@@ -919,6 +935,22 @@ def test_catalog_sparkline_uses_full_series_span_and_links_to_models() -> None:
     assert "function SparklinePopover({meta, pin, aspect, write, close, themeKey})" in source
     assert "}, [request.data, themeKey])" in source
     assert "themeKey=${themeKey}" in source
+
+
+def test_catalog_sparkline_traps_focus_inerts_background_and_resizes() -> None:
+    source = _read_asset("app.js")
+    styles = _read_asset("app.css")
+    sparkline = source[source.index("function SparklinePopover("):source.index("function CatalogTable(")]
+
+    assert 'if (event.key !== "Tab") return' in sparkline
+    assert "const focusable = panel && [...panel.querySelectorAll" in sparkline
+    assert "element.inert = true" in sparkline
+    assert "element.inert = false" in sparkline
+    assert "const observer = new ResizeObserver" in sparkline
+    assert "plot.setSize({width, height: 80})" in sparkline
+    assert "observer.disconnect()" in sparkline
+    assert ".spark-host .uplot" in styles
+    assert "max-width: 100%" in styles[styles.index(".spark-host .uplot"):]
 
 
 def test_catalog_feed_cross_link_bounds_activity_to_compared_scrapes() -> None:

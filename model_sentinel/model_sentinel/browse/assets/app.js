@@ -88,20 +88,21 @@
   }
 
   function useApi(path, params, enabled = true) {
-    const [state, setState] = useState({data: null, loading: enabled, error: null});
+    const [state, setState] = useState({data: null, key: null, loading: enabled, error: null});
     const [revision, setRevision] = useState(0);
-    const key = JSON.stringify([path, params, enabled, revision]);
+    const resourceKey = JSON.stringify([path, params, enabled]);
+    const key = JSON.stringify([resourceKey, revision]);
     useEffect(() => {
       if (!enabled) { setState(current => ({...current, loading: false, error: null})); return; }
       const controller = new AbortController();
-      setState(current => ({...current, loading: true, error: null}));
+      setState(current => ({...current, key: null, loading: true, error: null}));
       api.get(path, params, controller.signal).then(
-        data => setState({data, loading: false, error: null}),
+        data => setState({data, key: resourceKey, loading: false, error: null}),
         error => error.name !== "AbortError" && setState(current => ({...current, loading: false, error}))
       );
       return () => controller.abort();
     }, [key]);
-    return {...state, reload: useCallback(() => setRevision(value => value + 1), [])};
+    return {...state, fresh: state.key === resourceKey, reload: useCallback(() => setRevision(value => value + 1), [])};
   }
 
   function activityEntryId(entry) {
@@ -685,40 +686,82 @@
     useEffect(() => {
       previous.current = document.activeElement;
       const timer = setTimeout(() => closeRef.current && closeRef.current.focus(), 0);
-      const keyboard = event => { if (event.key === "Escape") close(); };
+      const layer = closeRef.current && closeRef.current.closest(".spark-layer");
+      const inerted = [];
+      let branch = layer;
+      while (branch && branch.parentElement) {
+        const parent = branch.parentElement;
+        for (const element of parent.children) {
+          if (element !== branch && !element.inert) { element.inert = true; inerted.push(element); }
+        }
+        branch = parent;
+        if (parent === document.body) break;
+      }
+      const keyboard = event => {
+        if (event.key === "Escape") { close(); return; }
+        if (event.key !== "Tab") return;
+        const panel = closeRef.current && closeRef.current.closest('[role="dialog"]');
+        const focusable = panel && [...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(element => !element.disabled);
+        if (!focusable || !focusable.length) return;
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      };
       addEventListener("keydown", keyboard);
-      return () => { clearTimeout(timer); removeEventListener("keydown", keyboard); previous.current && previous.current.focus(); };
+      return () => {
+        clearTimeout(timer);
+        removeEventListener("keydown", keyboard);
+        for (const element of inerted) element.inert = false;
+        previous.current && previous.current.focus();
+      };
     }, []);
     useEffect(() => {
       if (!host.current || !request.data || !request.data.axis.length) return;
       const item = request.data.series[0];
       if (!item) return;
       const x = request.data.axis.map(point => Date.parse(point.completed_at) / 1000);
+      const element = host.current;
       const options = {
-        width: Math.max(260, host.current.clientWidth), height: 80,
+        width: Math.max(1, Math.floor(element.clientWidth)), height: 80,
         scales: {x: {time: true}}, axes: [], cursor: {show: true}, legend: {show: false},
         series: [{}, {stroke: cssToken("--accent"), width: 2, spanGaps: false, paths: uPlot.paths.stepped({align: 1})}]
       };
-      const plot = new uPlot(options, [x, item.values], host.current);
-      return () => plot.destroy();
+      const plot = new uPlot(options, [x, item.values], element);
+      const observer = new ResizeObserver(entries => {
+        const width = Math.max(1, Math.floor(entries[0].contentRect.width));
+        if (width !== plot.width) plot.setSize({width, height: 80});
+      });
+      observer.observe(element);
+      return () => { observer.disconnect(); plot.destroy(); };
     }, [request.data, themeKey]);
     const parts = pinParts(pin, meta.providers), pins = [pin];
     return html`<div class="spark-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section class="spark-popover" role="dialog" aria-modal="true" aria-labelledby="spark-title"><header><div><p>${parts.model}</p><h2 id="spark-title">${aspect.label} over full history</h2></div><button ref=${closeRef} type="button" aria-label="Close sparkline" onClick=${close}>×</button></header><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="spark-loading">Loading series…</div>` : html`<div ref=${host} class="spark-host"></div>`}<footer><span>${aspect.unit || aspect.kind}</span><button type="button" onClick=${() => { write({view: "models", pins, aspects: [aspect.id], from: meta.date_span.first, to: meta.date_span.last}); close(); }}>Open timeline</button></footer></section></div>`;
   }
 
-  function CatalogTable({data, aspects, state, write, page, setPage, openSparkline}) {
+  function CatalogSearch({value, replaceState}) {
+    const [draft, setDraft] = useState(value || "");
+    useEffect(() => setDraft(value || ""), [value]);
+    useEffect(() => {
+      if (draft === (value || "")) return;
+      const timer = setTimeout(() => replaceState({q: draft || null}), 250);
+      return () => clearTimeout(timer);
+    }, [draft, value, replaceState]);
+    return html`<label>Filter models<input type="search" value=${draft} placeholder="ID or display name" onInput=${event => setDraft(event.currentTarget.value)} /></label>`;
+  }
+
+  function CatalogTable({data, aspects, state, write, replaceState, page, setPage, openSparkline}) {
     const aspectLookup = new Map(aspects.map(aspect => [aspect.id, aspect]));
     const nextSortDirection = id => state.sort === id && state.dir !== "desc" ? "desc" : "asc";
     const sortAria = id => state.sort === id ? (state.dir === "desc" ? "descending" : "ascending") : "none";
     const pages = Math.max(1, Math.ceil(data.total / CATALOG_PAGE_SIZE));
-    return html`<section class="catalog-table-panel instrument" aria-labelledby="catalog-table-title"><header class="catalog-toolbar"><div><p>03 / registry</p><h2 id="catalog-table-title">Model catalog</h2><span>${data.total} records</span></div><label>Filter models<input type="search" value=${state.q || ""} placeholder="ID or display name" onInput=${event => write({q: event.currentTarget.value || null})} /></label></header><div class="catalog-table-wrap"><table class="catalog-table"><thead><tr><th aria-sort=${sortAria("model_id")}><button type="button" onClick=${() => write({sort: "model_id", dir: nextSortDirection("model_id")})}>Model <span>↕</span></button></th>${aspects.map(aspect => html`<th key=${aspect.id} aria-sort=${sortAria(aspect.id)}><button type="button" onClick=${() => write({sort: aspect.id, dir: nextSortDirection(aspect.id)})}>${aspect.label}<span>↕</span></button><small>${aspect.unit || aspect.qualifier || aspect.kind}</small></th>`)}</tr></thead><tbody>${data.rows.map(row => html`<tr key=${row.model_id} class=${`catalog-row --presence-${row.presence}`}><th scope="row"><strong>${row.display_name || row.model_id}</strong><small>${row.model_id}</small>${row.presence !== "present" ? html`<em>${row.presence}</em>` : null}</th>${aspects.map(aspect => {
+    return html`<section class="catalog-table-panel instrument" aria-labelledby="catalog-table-title"><header class="catalog-toolbar"><div><p>03 / registry</p><h2 id="catalog-table-title">Model catalog</h2><span>${data.total} records</span></div><${CatalogSearch} value=${state.q} replaceState=${replaceState} /></header><div class="catalog-table-wrap"><table class="catalog-table"><thead><tr><th aria-sort=${sortAria("model_id")}><button type="button" onClick=${() => write({sort: "model_id", dir: nextSortDirection("model_id")})}>Model <span>↕</span></button></th>${aspects.map(aspect => html`<th key=${aspect.id} aria-sort=${sortAria(aspect.id)}><button type="button" onClick=${() => write({sort: aspect.id, dir: nextSortDirection(aspect.id)})}>${aspect.label}<span>↕</span></button><small>${aspect.unit || aspect.qualifier || aspect.kind}</small></th>`)}</tr></thead><tbody>${data.rows.map(row => html`<tr key=${row.model_id} class=${`catalog-row --presence-${row.presence}`}><th scope="row"><strong>${row.display_name || row.model_id}</strong><small>${row.model_id}</small>${row.presence !== "present" ? html`<em>${row.presence}</em>` : null}</th>${aspects.map(aspect => {
       const cell = row.cells[aspect.id], changed = cell && cellChanged(cell), numeric = ["price", "count", "numeric"].includes(aspect.kind);
       const content = changed ? html`<span class=${`cell-diff ${semantic(cell.change)}`}><del>${cell.old_display}</del><b>→</b><ins>${cell.display}</ins></span>` : html`<span>${cell ? cell.display : "—"}</span>`;
       return html`<td key=${aspect.id} class=${changed ? `is-changed ${semantic(cell.change)}` : ""}>${numeric && cell && (typeof cell.value === "number" || typeof cell.old_value === "number") ? html`<button type="button" class="spark-trigger" aria-label=${`Open ${aspect.label} history for ${row.model_id}`} onClick=${() => openSparkline({pin: `${data.as_of.provider_id}/${row.model_id}`, aspect: aspectLookup.get(aspect.id)})}>${content}<i>⌁</i></button>` : content}</td>`;
     })}</tr>`)}</tbody></table></div><footer class="catalog-pager"><span>Page ${page} of ${pages}</span><div><button type="button" disabled=${page <= 1} onClick=${() => setPage(Math.max(1, page - 1))}>Previous</button><button type="button" disabled=${page >= pages} onClick=${() => setPage(Math.min(pages, page + 1))}>Next</button></div></footer></section>`;
   }
 
-  function Catalog({meta, state, write, themeKey}) {
+  function Catalog({meta, state, write, replaceState, themeKey}) {
     const providerIds = meta.providers.map(provider => provider.id);
     const availableProvider = providerIds.find(id => catalogScrapes(meta, id).length);
     const providerId = state.providers.find(id => catalogScrapes(meta, id).length) || availableProvider || state.providers[0];
@@ -742,10 +785,11 @@
       if (!sameList(state.cols || [], columns)) patch.cols = columns;
       if (state.sort !== sort) patch.sort = sort;
       if (state.dir !== dir) patch.dir = dir;
-      if (Object.keys(patch).length) write(patch);
+      if (Object.keys(patch).length) replaceState(patch);
     }, [providerId, asOf && asOf.scrape_id, compare && compare.scrape_id, columns.join(","), JSON.stringify(state.providers), JSON.stringify(state.cols || []), state.asof, state.compare, sort, dir]);
     useEffect(() => setPage(1), [requestKey]);
     const request = useApi("/api/catalog", {provider: providerId, as_of: asOf && asOf.scrape_id, compare: compare && compare.scrape_id, columns, q: state.q, sort, dir, page, page_size: CATALOG_PAGE_SIZE}, Boolean(providerId && asOf && columns.length));
+    const catalogData = request.fresh ? request.data : null;
     const selectedAspects = columns.map(id => providerAspects.find(aspect => aspect.id === id)).filter(Boolean);
     const showFeed = () => {
       if (!compare || !asOf) return;
@@ -753,7 +797,7 @@
       write({view: "activity", providers: [providerId], from: dates[0], to: dates[1]});
     };
     if (!providerId || !asOf) return html`<div class="empty"><b>∅</b><div><h2>No saved snapshots</h2><p>This provider has no successful saved scrape to browse.</p></div></div>`;
-    return html`<div class="catalog-view"><aside class="catalog-controls"><${Pickers} meta=${meta} providerId=${providerId} scrapes=${scrapes} asOf=${asOf} compare=${compare} write=${write} /><${ColumnChooser} aspects=${providerAspects} selected=${columns} write=${write} />${compare ? html`<button class="feed-link" type="button" onClick=${showFeed}>Show as feed <span>↗</span></button>` : null}</aside><main class="catalog-workbench"><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="loading"><i></i><p>Resolving snapshot registry…</p></div>` : request.data ? html`<${CatalogTable} data=${request.data} aspects=${selectedAspects} state=${{...state, sort, dir}} write=${write} page=${page} setPage=${setPage} openSparkline=${setSparkline} />` : null}</main>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
+    return html`<div class="catalog-view"><aside class="catalog-controls"><${Pickers} meta=${meta} providerId=${providerId} scrapes=${scrapes} asOf=${asOf} compare=${compare} write=${write} /><${ColumnChooser} aspects=${providerAspects} selected=${columns} write=${write} />${compare ? html`<button class="feed-link" type="button" onClick=${showFeed}>Show as feed <span>↗</span></button>` : null}</aside><main class="catalog-workbench"><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !catalogData ? html`<div class="loading"><i></i><p>Resolving snapshot registry…</p></div>` : catalogData ? html`<${CatalogTable} data=${catalogData} aspects=${selectedAspects} state=${{...state, sort, dir}} write=${write} replaceState=${replaceState} page=${page} setPage=${setPage} openSparkline=${setSparkline} />` : null}</main>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
   }
 
   function RawDrawer({id, close}) {
@@ -829,7 +873,7 @@
       write({view: "models", pins, from: clamp(shiftDay(date, -30), meta.date_span), to: clamp(shiftDay(date, 30), meta.date_span)});
     };
     return html`<div class="app-shell"><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
-      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} themeKey=${`${theme}:${themeRevision}`} />`}
+      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} themeKey=${`${theme}:${themeRevision}`} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
   render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));

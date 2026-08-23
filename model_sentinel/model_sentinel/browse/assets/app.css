@@ -1003,7 +1003,8 @@ legend,
 .spark-popover header p { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.58rem; }
 .spark-popover header h2 { margin-block-start: 0.1rem; color: var(--ink-strong); font-size: 0.86rem; }
 .spark-popover header button { width: 2rem; height: 2rem; border: 1px solid var(--border); background: var(--ground); cursor: pointer; font-size: 1.2rem; }
-.spark-host { width: 100%; min-height: 80px; overflow: hidden; padding-block: 0.55rem; }
+.spark-host { width: 100%; min-width: 0; min-height: 80px; overflow: hidden; padding-block: 0.55rem; }
+.spark-host .uplot { max-width: 100%; }
 .spark-loading { min-height: 80px; padding: 1rem; color: var(--ink-muted); font-size: 0.7rem; }
 .spark-popover > footer { display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 0.8rem; border-block-start: 1px solid var(--border); }
 .spark-popover footer span { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.6rem; }
