@@ -9,10 +9,13 @@ override must provide matching predicate callables as well.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .config import ProviderConfig
 
 
 PathCandidates = tuple[tuple[str, ...], ...]
@@ -482,3 +485,14 @@ def resolve_profile(
     """Resolve ``kind`` with a generic fallback and bind pricing factors."""
     profile = PROFILE_REGISTRY.get(kind.lower(), GENERIC_PROFILE)
     return profile.with_pricing(price_multiplier, price_divisor)
+
+
+def profiles_for(providers: Iterable[ProviderConfig]) -> dict[str, ProviderProfile]:
+    return {
+        provider.provider_id: resolve_profile(
+            provider.kind,
+            price_multiplier=provider.price_multiplier,
+            price_divisor=provider.price_divisor,
+        )
+        for provider in providers
+    }

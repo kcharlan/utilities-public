@@ -1,6 +1,7 @@
 import json
 import re
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,6 +34,7 @@ from model_sentinel.provider_profiles import (
     PER_MILLION_TOKENS_TARGET,
     PriceDisplayRule,
 )
+from model_sentinel import cli
 
 
 _INHERITED_PRICE_PROFILE = replace(
@@ -45,6 +47,31 @@ _INHERITED_PRICE_PROFILE = replace(
     ),
     primary_price_comparison_group=None,
 )
+
+
+def test_shared_reporting_helper_aliases_and_detail_policy() -> None:
+    assert reporting.plan_changes_provider is reporting._plan_changes_report_provider
+    settings = SimpleNamespace(
+        report_detail="default",
+        report_show_fields=("pricing.*",),
+        report_squelch_fields=("benchmarks.*",),
+        report_unclassified_limit=7,
+    )
+    loaded = SimpleNamespace(settings=settings)
+    args = SimpleNamespace(detail="all")
+
+    assert reporting.detail_policy_from_settings(settings, mode="all") == cli._report_detail_policy(
+        args=args, loaded=loaded
+    )
+
+
+def test_visibility_of_guards_presence_rows() -> None:
+    policy = make_report_detail_policy()
+
+    assert reporting.visibility_of(None, policy) == "presence"
+    assert reporting.visibility_of("pricing.prompt", policy) == reporting.classify_detail_visibility(
+        "pricing.prompt", policy
+    )
 
 
 def classify_change(

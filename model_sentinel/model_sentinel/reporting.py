@@ -312,6 +312,26 @@ def classify_detail_visibility(
     return "unclassified"
 
 
+def visibility_of(
+    field_name: str | None,
+    policy: ReportDetailPolicy,
+) -> Literal["presence", "shown", "squelched", "unclassified"]:
+    return "presence" if field_name is None else classify_detail_visibility(field_name, policy)
+
+
+def detail_policy_from_settings(
+    settings: Any,
+    *,
+    mode: str | None = None,
+) -> ReportDetailPolicy:
+    return make_report_detail_policy(
+        mode=mode or getattr(settings, "report_detail", "default"),
+        show_fields=getattr(settings, "report_show_fields", DEFAULT_REPORT_SHOW_FIELDS),
+        squelch_fields=getattr(settings, "report_squelch_fields", DEFAULT_REPORT_SQUELCH_FIELDS),
+        unclassified_limit=getattr(settings, "report_unclassified_limit", 20),
+    )
+
+
 def filter_field_changes_for_detail(
     field_changes: tuple[FieldChange, ...],
     policy: ReportDetailPolicy,
@@ -944,7 +964,7 @@ class _ChangesProviderPlan:
         return not self.entries and not self.rollups.any_hidden
 
 
-def _plan_changes_report_provider(
+def plan_changes_provider(
     models: dict[str, list[dict[str, Any]]],
     policy: ReportDetailPolicy,
     profile: ProviderProfile,
@@ -996,6 +1016,9 @@ def _plan_changes_report_provider(
             continue
         entries.append(_PlannedChangeEntry(model_id, display_name, "changed", plan))
     return _ChangesProviderPlan(tuple(entries), _collect_hidden_rollups(planned_displays))
+
+
+_plan_changes_report_provider = plan_changes_provider
 
 
 def _visible_history_events(
@@ -1507,7 +1530,7 @@ def render_changes_report(
                 group_provider_id,
                 GENERIC_PROFILE,
             )
-            plan = _plan_changes_report_provider(
+            plan = plan_changes_provider(
                 models,
                 detail_policy,
                 profile,
@@ -4802,7 +4825,7 @@ def _render_changes_html(
                 group_provider_id,
                 GENERIC_PROFILE,
             )
-            provider_plan = _plan_changes_report_provider(
+            provider_plan = plan_changes_provider(
                 models,
                 detail_policy,
                 profile,

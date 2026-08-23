@@ -14,6 +14,7 @@ from model_sentinel.provider_profiles import (
     default_categorize,
     default_is_price_amount_field,
     resolve_profile,
+    profiles_for,
 )
 from model_sentinel.providers import ProviderFetchError, extract_model_list
 
@@ -45,6 +46,17 @@ def test_resolve_openrouter_profile_with_bound_pricing() -> None:
     assert profile.pricing_field_order == OPENROUTER_PROFILE.pricing_field_order
     assert profile.price_multiplier == 1_000_000
     assert profile.price_divisor == 2
+
+
+def test_profiles_for_binds_each_provider_factors(synthetic_provider: ProviderConfig) -> None:
+    profiles = profiles_for((synthetic_provider,))
+
+    assert tuple(profiles) == (synthetic_provider.provider_id,)
+    assert profiles[synthetic_provider.provider_id] == resolve_profile(
+        synthetic_provider.kind,
+        price_multiplier=synthetic_provider.price_multiplier,
+        price_divisor=synthetic_provider.price_divisor,
+    )
 
 
 @pytest.mark.parametrize("kind", ("abacus", "never-heard-of-it"))

@@ -22,12 +22,13 @@ from .diffing import compare_models
 from .models import BaselineInfo, ModelDelta, ProviderScanResult
 from .normalize import normalize_models
 from .notifications import send_notification
-from .provider_profiles import PROFILE_REGISTRY, resolve_profile
+from .provider_profiles import PROFILE_REGISTRY, profiles_for, resolve_profile
 from .providers import ProviderFetchError, fetch_raw_models
 from .reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     DEFAULT_REPORT_SQUELCH_FIELDS,
     ReportDetailPolicy,
+    detail_policy_from_settings,
     render_changes_report,
     render_healthcheck_report,
     render_history_report,
@@ -563,14 +564,7 @@ def run_changes(*, args: argparse.Namespace, loaded, store: Store) -> int:
         since=args.since,
         until=args.until,
     )
-    provider_profiles = {
-        p.provider_id: resolve_profile(
-            p.kind,
-            price_multiplier=p.price_multiplier,
-            price_divisor=p.price_divisor,
-        )
-        for p in loaded.providers
-    }
+    provider_profiles = profiles_for(loaded.providers)
     since_iso = args.since.isoformat() if args.since else None
     until_iso = args.until.isoformat() if args.until else None
     report = render_changes_report(
@@ -877,12 +871,9 @@ def _add_scan_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _report_detail_policy(*, args: argparse.Namespace, loaded) -> ReportDetailPolicy:
-    mode = getattr(args, "detail", None) or getattr(loaded.settings, "report_detail", "default")
-    return make_report_detail_policy(
-        mode=mode,
-        show_fields=getattr(loaded.settings, "report_show_fields", DEFAULT_REPORT_SHOW_FIELDS),
-        squelch_fields=getattr(loaded.settings, "report_squelch_fields", DEFAULT_REPORT_SQUELCH_FIELDS),
-        unclassified_limit=getattr(loaded.settings, "report_unclassified_limit", 20),
+    return detail_policy_from_settings(
+        loaded.settings,
+        mode=getattr(args, "detail", None),
     )
 
 
