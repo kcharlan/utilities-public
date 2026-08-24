@@ -44,6 +44,18 @@ from .time_utils import local_today, now_utc
 COMMANDS = {"scan", "history", "changes", "providers", "healthcheck", "browse"}
 
 
+def _invocation_name(argv0: str | None = None) -> str:
+    value = sys.argv[0] if argv0 is None else argv0
+    if not value or not value.strip():
+        return "model-sentinel"
+    path = Path(value)
+    if path.name == "__main__.py" and path.parent.name == "model_sentinel":
+        return "python -m model_sentinel"
+    if path.name not in {"", ".", "..", "__main__.py"}:
+        return path.name
+    return "model-sentinel"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw_argv = list(argv if argv is not None else sys.argv[1:])
     parser = build_parser()
@@ -84,8 +96,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    invocation = _invocation_name()
     parser = argparse.ArgumentParser(
-        prog="model_sentinel",
+        prog=invocation,
         description="Track LLM provider model-list changes over time.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -93,35 +106,35 @@ def build_parser() -> argparse.ArgumentParser:
             "  Fetch enabled providers, compare to a saved baseline, print a report,\n"
             "  and do not save a new snapshot unless explicitly requested.\n\n"
             "Examples:\n"
-            "  model_sentinel\n"
+            f"  {invocation}\n"
             "      Compare current provider lists to the previous saved baseline.\n\n"
-            "  model_sentinel scan --save\n"
+            f"  {invocation} scan --save\n"
             "      Fetch provider lists and save a new baseline snapshot.\n\n"
-            "  model_sentinel history --provider openrouter --model chatgpt-5.2\n"
+            f"  {invocation} history --provider openrouter --model chatgpt-5.2\n"
             "      Show saved history for one provider/model pair.\n\n"
-            "  model_sentinel history --provider openrouter --model list\n"
+            f"  {invocation} history --provider openrouter --model list\n"
             "      List known saved model IDs for OpenRouter.\n\n"
-            "  model_sentinel history --provider openrouter --model list chatgpt\n"
+            f"  {invocation} history --provider openrouter --model list chatgpt\n"
             "      Filter the saved model list by partial match on model ID or display name.\n\n"
-            "  model_sentinel providers\n"
+            f"  {invocation} providers\n"
             "      Show configured providers and whether their credential env vars are present.\n\n"
-            "  model_sentinel healthcheck\n"
+            f"  {invocation} healthcheck\n"
             "      Validate config, credentials, and runtime readiness.\n\n"
-            "  model_sentinel changes --since 2026-03-01\n"
+            f"  {invocation} changes --since 2026-03-01\n"
             "      Show all recorded changes across all providers since March 1.\n\n"
-            "  model_sentinel changes --provider openrouter --since 2026-03-01 --until 2026-03-14\n"
+            f"  {invocation} changes --provider openrouter --since 2026-03-01 --until 2026-03-14\n"
             "      Show OpenRouter changes in a specific date range.\n\n"
-            "  model_sentinel browse --no-open\n"
+            f"  {invocation} browse --no-open\n"
             "      Start the read-only local history browser without opening a browser window.\n\n"
             "First run:\n"
             "  If no baseline exists yet, run:\n"
-            "      model_sentinel scan --save\n"
+            f"      {invocation} scan --save\n"
         ),
     )
     parser.add_argument(
         "--version",
         action="version",
-        version=f"model_sentinel {__version__} {format_build_info(full_hash=True)}",
+        version=f"{invocation} {__version__} {format_build_info(full_hash=True)}",
     )
     subparsers = parser.add_subparsers(dest="command", required=False)
 
@@ -131,13 +144,13 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  model_sentinel scan\n"
+            f"  {invocation} scan\n"
             "      Compare all enabled providers against the previous saved baseline.\n\n"
-            "  model_sentinel scan --save\n"
+            f"  {invocation} scan --save\n"
             "      Save a new snapshot after reporting differences.\n\n"
-            "  model_sentinel scan --provider abacus --save --format json --output abacus.json\n"
+            f"  {invocation} scan --provider abacus --save --format json --output abacus.json\n"
             "      Save a new Abacus snapshot and write a JSON report.\n\n"
-            "  model_sentinel scan --baseline-date 2025-10-31\n"
+            f"  {invocation} scan --baseline-date 2025-10-31\n"
             "      Compare against a saved scrape from 2025-10-31.\n"
         ),
     )
@@ -149,15 +162,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  model_sentinel history --provider openrouter --model chatgpt-5.2\n"
+            f"  {invocation} history --provider openrouter --model chatgpt-5.2\n"
             "      Show the saved history for that model on OpenRouter.\n\n"
-            "  model_sentinel history --provider openrouter --model list\n"
+            f"  {invocation} history --provider openrouter --model list\n"
             "      List known saved model IDs for OpenRouter.\n\n"
-            "  model_sentinel history --provider openrouter --model list chatgpt\n"
+            f"  {invocation} history --provider openrouter --model list chatgpt\n"
             "      Filter the saved model list by partial match on model ID or display name.\n\n"
-            "  model_sentinel history --provider abacus --model gpt-4.1 --since 2025-01-01\n"
+            f"  {invocation} history --provider abacus --model gpt-4.1 --since 2025-01-01\n"
             "      Show changes since January 1, 2025.\n\n"
-            "  model_sentinel history --provider openrouter --model chatgpt-5.2 \\\n"
+            f"  {invocation} history --provider openrouter --model chatgpt-5.2 \\\n"
             "      --since 2025-01-01 --until 2025-12-31\n"
             "      Show changes within the inclusive 2025 date range.\n"
         ),
@@ -177,13 +190,13 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  model_sentinel changes --since 2026-03-01\n"
+            f"  {invocation} changes --since 2026-03-01\n"
             "      Show all changes since March 1 across all providers.\n\n"
-            "  model_sentinel changes --since 2026-03-01 --until 2026-03-14\n"
+            f"  {invocation} changes --since 2026-03-01 --until 2026-03-14\n"
             "      Show changes within a date range.\n\n"
-            "  model_sentinel changes --provider openrouter --since 2026-03-01\n"
+            f"  {invocation} changes --provider openrouter --since 2026-03-01\n"
             "      Show changes for one provider only.\n\n"
-            "  model_sentinel changes\n"
+            f"  {invocation} changes\n"
             "      Show all recorded changes (full history).\n"
         ),
     )
@@ -198,9 +211,9 @@ def build_parser() -> argparse.ArgumentParser:
     providers_parser.formatter_class = argparse.RawDescriptionHelpFormatter
     providers_parser.epilog = (
         "examples:\n"
-        "  model_sentinel providers\n"
+        f"  {invocation} providers\n"
         "      Show configured providers and whether they are enabled.\n\n"
-        "  model_sentinel providers --format json\n"
+        f"  {invocation} providers --format json\n"
         "      Emit provider configuration summary as JSON.\n"
     )
     providers_parser.add_argument("--format", choices=("text", "json", "markdown"), default="text")
@@ -219,9 +232,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  model_sentinel healthcheck\n"
+            f"  {invocation} healthcheck\n"
             "      Run a human-readable readiness check.\n\n"
-            "  model_sentinel healthcheck --format json\n"
+            f"  {invocation} healthcheck --format json\n"
             "      Emit structured validation results.\n"
         ),
     )

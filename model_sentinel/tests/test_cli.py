@@ -4,6 +4,8 @@ from argparse import Namespace
 import http.server
 import json
 import os
+import subprocess
+import sys
 import threading
 import urllib.request
 
@@ -18,6 +20,68 @@ from model_sentinel.models import BaselineInfo
 from model_sentinel.storage import Store
 from model_sentinel.time_utils import to_local_human
 from tests.browse_fixtures import build_fixture_db
+
+
+@pytest.mark.parametrize(
+    ("argv0", "expected"),
+    (
+        ("/opt/tools/renamed-sentinel", "renamed-sentinel"),
+        ("/tmp/model-sentinel.pyz", "model-sentinel.pyz"),
+        ("/checkout/model_sentinel/__main__.py", "python -m model_sentinel"),
+        ("", "model-sentinel"),
+        (".", "model-sentinel"),
+        ("..", "model-sentinel"),
+        ("__main__.py", "model-sentinel"),
+    ),
+)
+def test_invocation_name_resolves_display_command(argv0: str, expected: str) -> None:
+    assert cli._invocation_name(argv0) == expected
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ("--help",),
+        ("scan", "--help"),
+        ("history", "--help"),
+        ("changes", "--help"),
+        ("providers", "--help"),
+        ("browse", "--help"),
+        ("healthcheck", "--help"),
+    ),
+)
+def test_help_uses_renamed_executable_throughout(
+    arguments: tuple[str, ...],
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["/opt/tools/renamed-sentinel"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(list(arguments))
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert "usage: renamed-sentinel" in captured.out
+    assert "model_sentinel" not in captured.out
+
+
+def test_module_help_uses_module_invocation_throughout() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+
+    result = subprocess.run(
+        [sys.executable, "-m", "model_sentinel", "--help"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert "usage: python -m model_sentinel" in result.stdout
+    assert "  python -m model_sentinel scan --save" in result.stdout
+    assert "  model_sentinel scan --save" not in result.stdout
 
 
 def _write_config_files(root: Path) -> Path:
@@ -286,6 +350,7 @@ def test_browse_opener_can_fetch_root_before_returning(
 def test_version_is_configuration_free(tmp_path: Path, monkeypatch, capsys) -> None:
     runtime_home = tmp_path / "missing-runtime-home"
     monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setattr(sys, "argv", ["/opt/tools/renamed-sentinel"])
 
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["--version"])
@@ -293,7 +358,7 @@ def test_version_is_configuration_free(tmp_path: Path, monkeypatch, capsys) -> N
     captured = capsys.readouterr()
     assert exc_info.value.code == 0
     assert captured.out.strip() == (
-        f"model_sentinel {__version__} {format_build_info(full_hash=True)}"
+        f"renamed-sentinel {__version__} {format_build_info(full_hash=True)}"
     )
     assert captured.err == ""
     assert not runtime_home.exists()
