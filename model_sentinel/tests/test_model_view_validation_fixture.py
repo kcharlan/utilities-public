@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -19,6 +20,26 @@ EXPECTED_MODEL_IDS = tuple(
 EXPECTED_TIMESTAMPS = tuple(
     f"2040-02-{day:02d}T15:00:00+00:00" for day in range(1, 6)
 )
+
+
+def test_repository_containment_detects_case_insensitive_alias() -> None:
+    from tests import model_view_validation_fixture as fixture
+
+    repository_root = Path(__file__).resolve().parents[2]
+    capitalization_alias = repository_root.with_name(repository_root.name.upper())
+    if not capitalization_alias.exists() or not os.path.samefile(
+        capitalization_alias,
+        repository_root,
+    ):
+        pytest.skip("requires a case-insensitive filesystem")
+
+    candidate = (
+        capitalization_alias
+        / "MODEL_SENTINEL"
+        / "synthetic-validation-runtime-must-not-exist"
+    )
+
+    assert fixture._is_within_repository(candidate, repository_root)
 
 
 def _validation_context(runtime_home: Path):

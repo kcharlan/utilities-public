@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -40,7 +41,7 @@ _CHANGING_INPUT_PRICES = (
 
 def _prepare_empty_runtime_home(runtime_home: Path) -> Path:
     resolved = runtime_home.expanduser().resolve()
-    if resolved == _GIT_REPOSITORY_ROOT or _GIT_REPOSITORY_ROOT in resolved.parents:
+    if _is_within_repository(resolved, _GIT_REPOSITORY_ROOT):
         raise ValueError(
             f"Synthetic validation runtime must be outside the git repository: {resolved}"
         )
@@ -51,7 +52,20 @@ def _prepare_empty_runtime_home(runtime_home: Path) -> Path:
             )
     else:
         resolved.mkdir(parents=True)
+        resolved = runtime_home.expanduser().resolve()
+        if _is_within_repository(resolved, _GIT_REPOSITORY_ROOT):
+            raise ValueError(
+                f"Synthetic validation runtime must be outside the git repository: {resolved}"
+            )
     return resolved
+
+
+def _is_within_repository(candidate: Path, repository_root: Path) -> bool:
+    resolved = candidate.expanduser().resolve()
+    return any(
+        ancestor.exists() and os.path.samefile(ancestor, repository_root)
+        for ancestor in (resolved, *resolved.parents)
+    )
 
 
 def _write_config(runtime_home: Path) -> None:
