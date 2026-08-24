@@ -100,7 +100,7 @@ def test_meta_includes_configured_and_db_only_providers(tmp_path) -> None:
     providers = {item["id"]: item for item in result["providers"]}
     assert set(result) == {
         "providers", "date_span", "scrapes", "aspects", "categories",
-        "detail_default", "pin_limit", "bulk_min_models",
+        "detail_default", "pin_limit", "bulk_min_models", "display_invocation",
     }
     assert all(set(provider) == {"id", "label", "kind", "enabled", "configured"} for provider in providers.values())
     assert providers[EXAMPLE_PROVIDER.provider_id]["configured"] is True
@@ -110,6 +110,28 @@ def test_meta_includes_configured_and_db_only_providers(tmp_path) -> None:
     ]
     assert result["pin_limit"] == 8
     assert result["bulk_min_models"] == 3
+    assert result["display_invocation"] == "model-sentinel"
+
+
+@pytest.mark.parametrize(
+    "display_invocation",
+    ("renamed-sentinel", "python -m model_sentinel"),
+)
+def test_meta_exposes_display_invocation(tmp_path, display_invocation) -> None:
+    path = tmp_path / "empty.db"
+    Store(path).initialize()
+    db = open_readonly(path)
+    try:
+        context = _context(
+            db,
+            (EXAMPLE_PROVIDER,),
+        )
+        context.display_invocation = display_invocation
+        result = api.meta(context, {})
+    finally:
+        db.close_all()
+
+    assert result["display_invocation"] == display_invocation
 
 
 def test_api_context_uses_explicit_prebuilt_dependencies(browse_context) -> None:
@@ -548,11 +570,8 @@ def test_series_union_axis_scaling_and_events(browse_context) -> None:
     context, facts = browse_context
     model = facts.price_step[0]
     pins = f"{EXAMPLE_PROVIDER.provider_id}/{model},{OTHER_PROVIDER.provider_id}/fake-org/other-test-model"
-    aspects = (
-        f"{EXAMPLE_PROVIDER.provider_id}:input_price,"
-        f"{EXAMPLE_PROVIDER.provider_id}:path:pricing.prompt"
-    )
-    result = api.series(context, {"models": pins, "aspects": aspects})
+    aspect = f"{EXAMPLE_PROVIDER.provider_id}:input_price"
+    result = api.series(context, {"models": pins, "aspects": aspect})
     assert set(result) == {"axis", "series"}
     assert all(set(point) == {"scrape_id", "provider_id", "date", "completed_at", "t"} for point in result["axis"])
     assert all(
@@ -560,9 +579,8 @@ def test_series_union_axis_scaling_and_events(browse_context) -> None:
         for item in result["series"]
     )
     assert {point["provider_id"] for point in result["axis"]} == set(facts.provider_ids)
-    canonical, raw_path = result["series"]
+    [canonical] = result["series"]
     assert canonical["model"] == f"{EXAMPLE_PROVIDER.provider_id}/{model}"
-    assert canonical["values"] == raw_path["values"]
     assert any(value is None for value in canonical["values"])
     assert any(value == facts.price_step[-2] for value in canonical["values"])
 

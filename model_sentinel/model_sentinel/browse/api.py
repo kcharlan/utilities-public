@@ -62,6 +62,7 @@ class ApiContext:
     profiles: dict[str, ProviderProfile]
     settings: Any
     aspects: tuple[Aspect, ...]
+    display_invocation: str = "model-sentinel"
 
     def policy_for(self, detail: str | None) -> ReportDetailPolicy:
         return detail_policy_from_settings(self.settings, mode=detail)
@@ -171,6 +172,7 @@ def meta(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         "aspects": [aspect.to_json() for aspect in ctx.aspects],
         "categories": list(CATEGORIES),
         "detail_default": getattr(ctx.settings, "report_detail", "default"),
+        "display_invocation": ctx.display_invocation,
         "pin_limit": PIN_LIMIT,
         "bulk_min_models": BULK_CHANGE_MIN_MODELS,
     }

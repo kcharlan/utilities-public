@@ -904,6 +904,7 @@
     if (metaRequest.error && !metaRequest.data) return html`<${ErrorBanner} error=${metaRequest.error} reload=${metaRequest.reload} />`;
     const meta = metaRequest.data;
     if (!meta) return null;
+    const invocation = meta.display_invocation || "model-sentinel";
     const resolved = resolveState(meta, state);
     const openModel = (provider, model, name, date) => {
       const pin = `${provider}/${model}`, pins = (resolved.pins || []).filter(value => value !== pin);
@@ -912,7 +913,7 @@
       write({view: "models", pins, from: clamp(shiftDay(date, -30), meta.date_span), to: clamp(shiftDay(date, 30), meta.date_span)});
     };
     return html`<div class="app-shell"><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
-      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>model-sentinel scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} themeKey=${`${theme}:${themeRevision}`} />`}
+      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>${invocation} scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} themeKey=${`${theme}:${themeRevision}`} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
   render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));

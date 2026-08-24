@@ -418,7 +418,11 @@ def test_run_browse_closes_database_when_server_creation_fails(
         close_calls += 1
         real_close()
 
-    def reject_server(*args, **kwargs):
+    captured_context = None
+
+    def reject_server(ctx, *args, **kwargs):
+        nonlocal captured_context
+        captured_context = ctx
         raise OSError(errno.EACCES, "synthetic bind failure")
 
     monkeypatch.setattr(db, "close_all", tracked_close)
@@ -435,6 +439,8 @@ def test_run_browse_closes_database_when_server_creation_fails(
             port=0,
             open_browser=False,
             initial_provider=None,
+            display_invocation="renamed-sentinel",
         )
 
     assert close_calls == 1
+    assert captured_context.display_invocation == "renamed-sentinel"

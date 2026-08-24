@@ -137,6 +137,9 @@ One call on page load. Returns:
 - `categories`: the ordered category list (`Pricing`, `Context & Limits`, `Capabilities`,
   `Parameters`, `Benchmarks`, `Other`) — the client must not infer facets from `aspects`
 - `detail_default`: the configured detail mode
+- `display_invocation`: string display-only command prefix resolved from the current process
+  invocation (for example, a renamed executable basename or `python -m model_sentinel`);
+  the client falls back to `model-sentinel` only when this field is absent or empty
 - `pin_limit`: 8
 - `bulk_min_models`: 3
 
