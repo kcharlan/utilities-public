@@ -74,13 +74,16 @@ stage_zipapp_source() {
 
   cp "$SCRIPT_DIR/__main__.py" "$STAGING_DIR/__main__.py"
   cp "$SCRIPT_DIR/model_sentinel/"*.py "$STAGING_DIR/model_sentinel/"
+  cp -R "$SCRIPT_DIR/model_sentinel/browse" "$STAGING_DIR/model_sentinel/browse"
+  find "$STAGING_DIR" -type d -name '__pycache__' -prune -exec rm -rf {} +
+  find "$STAGING_DIR" -type f -name '*.pyc' -delete
 }
 
 stage_zipapp_source
 
 SOURCE_HASH="$(
   cd "$STAGING_DIR"
-  find . -type f -name '*.py' \
+  find . -type f \
     ! -path './model_sentinel/_packaged_build.py' \
     -exec shasum -a 256 {} \; \
     | LC_ALL=C sort \

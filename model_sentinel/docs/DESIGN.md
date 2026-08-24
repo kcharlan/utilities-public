@@ -14,6 +14,7 @@ lists exposed by LLM providers. It:
 - reports added and removed models and field-level metadata changes
 - optionally saves the new snapshot and its change history in SQLite
 - supports historical and cross-provider change queries
+- serves a read-only, fully offline local browser for saved history
 
 The authenticated model-list response is the source of truth for availability.
 Presence means "advertised to this credential"; Model Sentinel does not invoke
@@ -23,7 +24,7 @@ The current design deliberately does not:
 
 - merge equivalent models across providers
 - make provider inference calls
-- provide a web UI or long-running service
+- provide a remotely hosted or long-running service
 - store raw provider responses outside the normalized snapshot
 - embed secrets in project or runtime configuration
 
@@ -246,6 +247,16 @@ date filtering.
 
 Public report entry points cover scans, history, known-model lists,
 cross-provider changes, provider configuration, and healthcheck results.
+
+### History browser
+
+The `browse` subcommand serves one packaged Preact SPA with Activity, Models,
+and Catalog views over a per-thread, read-only SQLite connection. It dispatches
+before runtime directory or rotating-log initialization, serves only vendored
+assets, and keeps shareable view state in the URL hash. Theme preference is
+the sole browser-local state. The API contracts, interaction model, visual
+semantics, failure behavior, and packaging constraints are defined in the
+[Model Sentinel Browse design](./superpowers/specs/2026-08-23-model-sentinel-browse-design.md).
 
 Format support is intentionally command-specific:
 

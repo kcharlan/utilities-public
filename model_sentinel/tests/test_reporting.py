@@ -1,10 +1,15 @@
 import json
 import re
+import sqlite3
 from dataclasses import replace
+from datetime import date
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tests.html_probe import absent_side_cells, summary_change_cells
+from tests.browse_fixtures import EXAMPLE_PROVIDER, build_fixture_db
 
 from model_sentinel import reporting
 from model_sentinel.change_render import (
@@ -33,6 +38,9 @@ from model_sentinel.provider_profiles import (
     PER_MILLION_TOKENS_TARGET,
     PriceDisplayRule,
 )
+from model_sentinel import cli
+from model_sentinel.provider_profiles import profiles_for
+from model_sentinel.storage import recent_change_rows
 
 
 _INHERITED_PRICE_PROFILE = replace(
@@ -45,6 +53,65 @@ _INHERITED_PRICE_PROFILE = replace(
     ),
     primary_price_comparison_group=None,
 )
+
+
+def test_shared_reporting_helper_aliases_and_detail_policy() -> None:
+    assert reporting.plan_changes_provider is reporting._plan_changes_report_provider
+    settings = SimpleNamespace(
+        report_detail="default",
+        report_show_fields=("pricing.*",),
+        report_squelch_fields=("benchmarks.*",),
+        report_unclassified_limit=7,
+    )
+    loaded = SimpleNamespace(settings=settings)
+    args = SimpleNamespace(detail="all")
+
+    assert reporting.detail_policy_from_settings(settings, mode="all") == cli._report_detail_policy(
+        args=args, loaded=loaded
+    )
+
+
+def test_visibility_of_guards_presence_rows() -> None:
+    policy = make_report_detail_policy()
+
+    assert reporting.visibility_of(None, policy) == "presence"
+    assert reporting.visibility_of("pricing.prompt", policy) == reporting.classify_detail_visibility(
+        "pricing.prompt", policy
+    )
+
+
+def test_bulk_groups_planned_fixture_list_changes_only(tmp_path: Path) -> None:
+    database_path = tmp_path / "fixture.db"
+    facts = build_fixture_db(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        bulk_rows = recent_change_rows(
+            connection,
+            provider_id=EXAMPLE_PROVIDER.provider_id,
+            since=date(2026, 8, 15),
+            until=date(2026, 8, 15),
+        )
+        price_rows = recent_change_rows(
+            connection,
+            provider_id=EXAMPLE_PROVIDER.provider_id,
+            since=date(2026, 8, 12),
+            until=date(2026, 8, 12),
+        )
+    profile = profiles_for((EXAMPLE_PROVIDER,))[EXAMPLE_PROVIDER.provider_id]
+
+    def planned(rows: list[dict]) -> tuple:
+        models: dict[str, list[dict]] = {}
+        for row in rows:
+            models.setdefault(row["provider_model_id"], []).append(row)
+        return reporting.plan_changes_provider(
+            models, make_report_detail_policy(), profile
+        ).entries
+
+    groups = reporting.group_planned_entries_by_bulk((*planned(price_rows), *planned(bulk_rows)))
+
+    assert [len(group.entries) for group in groups] == [1, len(facts.bulk_list_models)]
+    assert tuple(entry.model_id for entry in groups[1].entries) == facts.bulk_list_models
+    assert groups[0].entries[0].model_id == facts.price_step[0]
 
 
 def classify_change(

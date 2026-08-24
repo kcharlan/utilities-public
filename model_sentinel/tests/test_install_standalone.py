@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import json
 import os
-from pathlib import Path
+import queue
 import re
 import shutil
 import stat
 import subprocess
 import sys
+import threading
+import urllib.request
+import zipfile
+from pathlib import Path
+
+from tests.browse_fixtures import build_fixture_db
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +101,122 @@ def test_installer_embeds_provenance_and_check_detects_source_drift(tmp_path: Pa
     assert "stale" in (stale.stdout + stale.stderr).lower()
     assert target.read_bytes() == original_bytes
     assert target.stat().st_mtime_ns == original_mtime
+
+
+def test_standalone_contains_every_browse_runtime_asset(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    target = tmp_path / "synthetic-bin" / "model-sentinel"
+
+    installed = _run_installer(project, env, str(target))
+
+    assert installed.returncode == 0, installed.stderr
+    with zipfile.ZipFile(target) as archive:
+        names = set(archive.namelist())
+    expected_assets = {
+        "model_sentinel/browse/assets/index.html",
+        "model_sentinel/browse/assets/app.js",
+        "model_sentinel/browse/assets/app.css",
+        "model_sentinel/browse/assets/vendor/VERSIONS.md",
+        "model_sentinel/browse/assets/vendor/hooks.umd.js",
+        "model_sentinel/browse/assets/vendor/htm.LICENSE",
+        "model_sentinel/browse/assets/vendor/htm.umd.js",
+        "model_sentinel/browse/assets/vendor/preact.LICENSE",
+        "model_sentinel/browse/assets/vendor/preact.umd.js",
+        "model_sentinel/browse/assets/vendor/uPlot.iife.min.js",
+        "model_sentinel/browse/assets/vendor/uPlot.min.css",
+        "model_sentinel/browse/assets/vendor/uplot.LICENSE",
+    }
+    packaged_assets = {
+        name
+        for name in names
+        if name.startswith("model_sentinel/browse/assets/")
+        and not name.endswith("/")
+    }
+    assert packaged_assets == expected_assets
+    assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
+
+
+def test_check_detects_browse_css_drift(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    target = tmp_path / "synthetic-bin" / "model-sentinel"
+
+    installed = _run_installer(project, env, str(target))
+    assert installed.returncode == 0, installed.stderr
+    current = _run_installer(project, env, "--check", str(target))
+    assert current.returncode == 0, current.stderr
+
+    original_bytes = target.read_bytes()
+    original_mtime = target.stat().st_mtime_ns
+    css_path = project / "model_sentinel" / "browse" / "assets" / "app.css"
+    css_path.write_text(
+        css_path.read_text(encoding="utf-8")
+        + "\n/* Synthetic stylesheet drift for installer freshness coverage. */\n",
+        encoding="utf-8",
+    )
+
+    stale = _run_installer(project, env, "--check", str(target))
+
+    assert stale.returncode == 1
+    assert "stale" in (stale.stdout + stale.stderr).lower()
+    assert target.read_bytes() == original_bytes
+    assert target.stat().st_mtime_ns == original_mtime
+
+
+def test_built_standalone_serves_packaged_browse_assets(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    runtime_home = Path(env["MODEL_SENTINEL_HOME"])
+    target = tmp_path / "synthetic-bin" / "model-sentinel"
+
+    installed = _run_installer(project, env, str(target))
+    assert installed.returncode == 0, installed.stderr
+    build_fixture_db(runtime_home / "model_sentinel.db")
+
+    process = subprocess.Popen(
+        [str(target), "browse", "--no-open", "--port", "0"],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    lines: queue.Queue[str] = queue.Queue()
+
+    def read_stdout() -> None:
+        for line in process.stdout:
+            lines.put(line)
+
+    threading.Thread(target=read_stdout, daemon=True).start()
+    try:
+        try:
+            line = lines.get(timeout=10)
+        except queue.Empty as exc:
+            returncode = process.poll()
+            detail = "still running"
+            if returncode is not None and process.stderr is not None:
+                detail = f"exited {returncode}: {process.stderr.read()}"
+            raise AssertionError(
+                f"standalone did not print its browser URL ({detail})"
+            ) from exc
+        assert line.startswith("Model Sentinel browser: http://127.0.0.1:")
+        base_url = line.removeprefix("Model Sentinel browser: ").strip()
+
+        with urllib.request.urlopen(base_url, timeout=5) as response:
+            assert response.status == 200
+            assert b'id="app"' in response.read()
+        with urllib.request.urlopen(f"{base_url}api/meta", timeout=5) as response:
+            assert response.status == 200
+            assert json.load(response)["pin_limit"] == 8
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def test_check_is_read_only_when_the_target_is_missing(tmp_path: Path) -> None:

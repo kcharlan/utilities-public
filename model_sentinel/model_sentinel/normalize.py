@@ -104,11 +104,11 @@ def _profile_field(
     skipped exactly as they were before profiles moved the candidate paths out
     of this module.
     """
-    value, _ = _profile_field_candidate(raw_model, profile, field_name)
+    value, _ = profile_field_candidate(raw_model, profile, field_name)
     return value
 
 
-def _profile_field_candidate(
+def profile_field_candidate(
     raw_model: dict[str, Any],
     profile: ProviderProfile,
     field_name: str,
@@ -121,12 +121,15 @@ def _profile_field_candidate(
     return None, None
 
 
+_profile_field_candidate = profile_field_candidate
+
+
 def _profile_price(
     raw_model: dict[str, Any],
     profile: ProviderProfile,
     field_name: str,
 ) -> float | None:
-    value, field_path = _profile_field_candidate(raw_model, profile, field_name)
+    value, field_path = profile_field_candidate(raw_model, profile, field_name)
     coerced = _coerce_float(value)
     if coerced is None or field_path is None:
         return None

@@ -15,6 +15,8 @@ The CLI is implemented and includes:
 - SQLite-backed saved snapshots and change history
 - `history` queries for a provider/model pair
 - `changes` cross-provider/cross-model change log with date range filtering
+- `browse` read-only, fully offline history browser with Activity, Models, and
+  Catalog views
 - `providers` config inspection
 - `healthcheck` runtime/config validation
 - text, JSON, and Markdown output for scan, history, provider, and healthcheck
@@ -290,6 +292,10 @@ case-insensitive match against model ID or display name.
 
 Unlike `history` (which targets a single provider/model pair), `changes` gives a cross-cutting view of everything that changed — useful for catching up after missed alerts or reviewing a period of drift.
 
+The history query now uses one windowed latest-model join and pushes bounded
+date prefilters into SQLite, so even a short `--since` range stays fast as the
+database grows.
+
 Human-readable `changes` output honors the same report detail policy as `scan`. Use `--detail all` for full field payloads.
 
 When records exist and `--output` is omitted, `changes` also saves its primary
@@ -298,6 +304,41 @@ report directory. The primary artifact contains text by default; with
 `--format json`, its contents are JSON even though the managed filename still
 uses `.txt`. Supplying `--output` writes only the requested text or JSON
 artifact.
+
+### Browse History
+
+```bash
+./model-sentinel browse
+./model-sentinel browse --provider openrouter
+./model-sentinel browse --no-open --port 8110
+```
+
+`browse` starts a local history browser over the existing SQLite database:
+
+- **Activity** is an event-first feed with a 180-day heatmap, provider and
+  change facets, bulk-change groups, and raw-value detail.
+- **Models** pins up to eight provider/model pairs and compares their saved
+  aspects on synchronized timelines and an event rail.
+- **Catalog** compares saved provider snapshots in a sortable table, with
+  per-cell history sparklines and links back to the timeline or feed.
+
+The browser is read-only: it opens SQLite in read-only/query-only mode and does
+not create or update database, config, log, report, or cache files. It is also
+fully offline; Preact, htm, uPlot, CSS, and every other page asset are packaged
+with Model Sentinel, so viewing history makes no network request.
+
+The URL hash contains the selected view and filters, making browser
+back/forward and copied local URLs reproducible. Press `/` to switch to Models
+and focus its model search, `1`, `2`, or `3` to switch views, and `Esc` to close
+drawers or popovers. The theme control supports System, Light, and Dark; the
+choice is stored only in browser `localStorage`, not in Model Sentinel's
+runtime home.
+
+`browse` requires readable `providers.env` and `settings.env` files plus an
+existing database containing at least the Model Sentinel schema. Run
+`./setup.sh` if the config files are absent and `./model-sentinel scan --save`
+to create the first saved snapshot. Provider credentials and network access
+are not required to browse saved history.
 
 ### Inspect Configured Providers
 
@@ -336,6 +377,7 @@ Built-in help is intended to be complete:
 ./model-sentinel scan --help
 ./model-sentinel history --help
 ./model-sentinel changes --help
+./model-sentinel browse --help
 ./model-sentinel providers --help
 ./model-sentinel healthcheck --help
 ```
