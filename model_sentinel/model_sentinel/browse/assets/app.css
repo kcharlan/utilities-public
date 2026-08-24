@@ -877,36 +877,33 @@ legend,
 .plot-host .uplot { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
 
 .state-strip { display: grid; gap: 1px; min-width: 0; background: var(--border); }
-.state-strip-row { display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr); height: 56px; background: var(--panel); }
+.state-strip-row { position: relative; display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr); height: 56px; background: var(--panel); }
 .state-strip-row > strong { display: flex; gap: 0.45rem; align-items: center; min-width: 0; padding: 0.5rem 0.65rem; overflow: hidden; color: var(--ink-strong); font-size: 0.65rem; text-overflow: ellipsis; white-space: nowrap; }
 .state-strip-row > strong i { flex: 0 0 auto; width: 0.45rem; height: 1.25rem; }
 .state-strip-row > div { display: grid; grid-template-columns: repeat(var(--axis-count), minmax(1px, 1fr)); gap: 1px; min-width: 0; background: var(--border); }
-.state-strip-row span { position: relative; min-width: 0; background: transparent; }
-.state-strip-row span.true { background: var(--capability); }
-.state-strip-row span.false { background: var(--dim); }
-.state-strip-row span.list-0 { background: color-mix(in srgb, var(--capability) 78%, var(--panel)); }
-.state-strip-row span.list-1 { background: color-mix(in srgb, var(--capacity) 72%, var(--panel)); }
-.state-strip-row span:hover { outline: 2px solid var(--ink-strong); outline-offset: -2px; }
-.state-strip-row span:hover::after,
-.state-strip-row span:focus-visible::after {
+.state-strip-row [data-state-segment] { position: relative; min-width: 0; background: transparent; }
+.state-strip-row [data-state-segment].true { background: var(--capability); }
+.state-strip-row [data-state-segment].false { background: var(--dim); }
+.state-strip-row [data-state-segment].list-0 { background: color-mix(in srgb, var(--capability) 78%, var(--panel)); }
+.state-strip-row [data-state-segment].list-1 { background: color-mix(in srgb, var(--capacity) 72%, var(--panel)); }
+.state-strip-row [data-state-segment]:hover { outline: 2px solid var(--ink-strong); outline-offset: -2px; }
+.state-strip-row > .state-tooltip {
   position: absolute;
   z-index: 40;
   bottom: calc(100% + 0.35rem);
-  left: 50%;
-  width: max-content;
-  max-width: min(24rem, 70vw);
+  inset-inline: 0.5rem;
+  width: auto;
+  max-width: calc(100% - 1rem);
   padding: 0.4rem 0.55rem;
   border: 1px solid var(--border-strong);
   color: var(--ink-strong);
   background: var(--panel-raised);
   box-shadow: 0 0.45rem 1.2rem var(--shadow);
-  content: attr(data-tooltip);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 0.62rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
   pointer-events: none;
-  transform: translateX(-50%);
   white-space: normal;
 }
 

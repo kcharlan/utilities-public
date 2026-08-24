@@ -575,33 +575,45 @@
     return `${prefix}${String(value)}`;
   }
 
+  const axisKey = point => `${point.provider_id}:${point.scrape_id}`;
+
+  function StateStripRow({aspect, axis, item, pin, pinIndex, providers}) {
+    const [activeKey, setActiveKey] = useState(() => axis.length ? axisKey(axis[0]) : "");
+    const [tooltip, setTooltip] = useState("");
+    const identity = axis.map(axisKey).join("|");
+    useEffect(() => {
+      if (!axis.some(point => axisKey(point) === activeKey)) setActiveKey(axis.length ? axisKey(axis[0]) : "");
+    }, [identity, activeKey]);
+    const tooltipId = `state-tip-${aspect.id}-${pinIndex}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+    return html`<div class="state-strip-row"><strong title=${pin}><i style=${`background: var(--series-${pinIndex + 1})`}></i>${pinParts(pin, providers).model}</strong><div>${axis.map((point, index) => {
+      const value = item ? item.values[index] : null;
+      const members = item && item.members[index];
+      const label = stateSegmentLabel(aspect, point, pin, value, members, providers);
+      let state = "missing";
+      if (aspect.kind === "boolean") state = value === null ? "missing" : value ? "true" : "false";
+      else if (value !== null) state = `list-${listToneAt(aspect.kind === "list" ? item.list_hash : item.values, index)}`;
+      return html`<span key=${axisKey(point)} class=${state} role="img" data-state-segment tabIndex=${axisKey(point) === activeKey ? 0 : -1} aria-label=${label} aria-describedby=${tooltip === label ? tooltipId : undefined} title=${label} onMouseEnter=${() => setTooltip(label)} onMouseLeave=${() => setTooltip("")} onFocus=${() => setTooltip(label)} onBlur=${() => setTooltip("")} onKeyDown=${event => {
+        const segments = [...event.currentTarget.parentElement.querySelectorAll("[data-state-segment]")];
+        const current = segments.indexOf(event.currentTarget);
+        let target = null;
+        if (event.key === "ArrowLeft") target = current - 1;
+        else if (event.key === "ArrowRight") target = current + 1;
+        else if (event.key === "Home") target = 0;
+        else if (event.key === "End") target = segments.length - 1;
+        if (target == null) return;
+        event.preventDefault();
+        const bounded = Math.max(0, Math.min(segments.length - 1, target));
+        setActiveKey(axisKey(axis[bounded]));
+        segments[bounded].focus();
+      }}></span>`;
+    })}</div>${tooltip && html`<span id=${tooltipId} class="state-tooltip" role="tooltip">${tooltip}</span>`}</div>`;
+  }
+
   function StateStrip({aspect, axis, items, pins, providers}) {
     return html`<div class="state-strip" style=${`--axis-count: ${Math.max(1, axis.length)}`}>
       ${pins.map((pin, pinIndex) => {
         const item = items.find(value => value.model === pin);
-        return html`<div class="state-strip-row" key=${pin}><strong title=${pin}><i style=${`background: var(--series-${pinIndex + 1})`}></i>${pinParts(pin, providers).model}</strong><div>${axis.map((point, index) => {
-          const value = item ? item.values[index] : null;
-          const members = item && item.members[index];
-          const label = stateSegmentLabel(aspect, point, pin, value, members, providers);
-          let state = "missing";
-          if (aspect.kind === "boolean") state = value === null ? "missing" : value ? "true" : "false";
-          else if (value !== null) state = `list-${listToneAt(aspect.kind === "list" ? item.list_hash : item.values, index)}`;
-          return html`<span key=${`${point.scrape_id}-${point.provider_id}`} class=${state} role="img" data-state-segment tabIndex=${index === 0 ? 0 : -1} aria-label=${label} data-tooltip=${label} title=${label} onKeyDown=${event => {
-            const segments = [...event.currentTarget.parentElement.querySelectorAll("[data-state-segment]")];
-            const current = segments.indexOf(event.currentTarget);
-            let target = null;
-            if (event.key === "ArrowLeft") target = current - 1;
-            else if (event.key === "ArrowRight") target = current + 1;
-            else if (event.key === "Home") target = 0;
-            else if (event.key === "End") target = segments.length - 1;
-            if (target == null) return;
-            event.preventDefault();
-            const next = segments[Math.max(0, Math.min(segments.length - 1, target))];
-            event.currentTarget.tabIndex = -1;
-            next.tabIndex = 0;
-            next.focus();
-          }}></span>`;
-        })}</div></div>`;
+        return html`<${StateStripRow} key=${pin} aspect=${aspect} axis=${axis} item=${item} pin=${pin} pinIndex=${pinIndex} providers=${providers} />`;
       })}
     </div>`;
   }

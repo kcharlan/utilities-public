@@ -830,16 +830,26 @@ def test_state_strip_exposes_members_and_roving_keyboard_tooltips() -> None:
     assert "function stateSegmentLabel(" in source
     assert "item.members[index]" in source
     assert "Actual members:" in source
-    assert 'tabIndex=${index === 0 ? 0 : -1}' in source
+    assert "function StateStripRow(" in source
+    assert "const [activeKey, setActiveKey] = useState(" in source
+    assert "const axisKey = point => `${point.provider_id}:${point.scrape_id}`" in source
+    assert "if (!axis.some(point => axisKey(point) === activeKey))" in source
+    assert "tabIndex=${axisKey(point) === activeKey ? 0 : -1}" in source
+    assert "event.currentTarget.tabIndex = -1" not in source
+    assert "next.tabIndex = 0" not in source
     assert 'event.key === "ArrowLeft"' in source
     assert 'event.key === "ArrowRight"' in source
     assert 'event.key === "Home"' in source
     assert 'event.key === "End"' in source
     assert "aria-label=${label}" in source
     assert 'role="img"' in source
-    assert "data-tooltip=${label}" in source
-    assert '.state-strip-row span:hover::after' in styles
-    assert '.state-strip-row span:focus-visible::after' in styles
+    assert "setTooltip(label)" in source
+    assert 'class="state-tooltip"' in source
+    assert "role=\"tooltip\"" in source
+    assert ".state-strip-row > .state-tooltip" in styles
+    assert "inset-inline: 0.5rem" in styles
+    assert "max-width: calc(100% - 1rem)" in styles
+    assert ".state-strip-row span:hover::after" not in styles
 
 
 def test_event_rail_allocates_a_distinct_lane_for_every_same_day_event() -> None:
