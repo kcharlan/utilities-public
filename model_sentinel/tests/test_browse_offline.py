@@ -821,6 +821,52 @@ def test_model_typeahead_placement_tracks_viewport_and_anchor() -> None:
     assert not re.search(r": \{[^}]*\bbottom\s*:", placement)
 
 
+def test_model_typeahead_hides_anchors_outside_viewport_or_sidebar_clip() -> None:
+    source = _read_asset("app.js")
+    intersection = source[
+        source.index("function rectanglesIntersect(") : source.index(
+            "function typeaheadPlacement("
+        )
+    ]
+    overlay = source[
+        source.index("function TypeaheadOverlay(") : source.index("function Pins(")
+    ]
+
+    assert "rect.right > boundary.left" in intersection
+    assert "rect.left < boundary.right" in intersection
+    assert "rect.bottom > boundary.top" in intersection
+    assert "rect.top < boundary.bottom" in intersection
+    assert "left: 0" in overlay
+    assert "top: 0" in overlay
+    assert "right: window.innerWidth" in overlay
+    assert "bottom: window.innerHeight" in overlay
+    clip_match = re.search(r'const (\w+) = \w+\.closest\("\.model-controls"\);', overlay)
+    assert clip_match is not None
+    clip = re.escape(clip_match.group(1))
+    assert re.search(r"!rectanglesIntersect\(\w+, \w+\)", overlay)
+    assert re.search(
+        rf"{clip} && !rectanglesIntersect\(\w+, {clip}\.getBoundingClientRect\(\)\)",
+        overlay,
+    )
+    assert re.search(
+        r"if \([^)]*rectanglesIntersect.*?\) \{\s*setPlacement\(null\);\s*return;",
+        overlay,
+        re.DOTALL,
+    )
+
+    scroll_match = re.search(
+        r'window\.addEventListener\("scroll", (\w+), true\)', overlay
+    )
+    assert scroll_match is not None
+    schedule = re.escape(scroll_match.group(1))
+    assert re.search(
+        rf"const {schedule} = \(\) => \{{.*?window\.requestAnimationFrame\(\w+\)",
+        overlay,
+        re.DOTALL,
+    )
+    assert "}, [anchorRef, open]);" in overlay
+
+
 def test_model_typeahead_preserves_listbox_keyboard_contract() -> None:
     source = _read_asset("app.js")
     overlay = source[

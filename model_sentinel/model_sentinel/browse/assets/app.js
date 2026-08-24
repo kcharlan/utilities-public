@@ -383,6 +383,13 @@
     return provider ? {provider, model: pin.slice(provider.id.length + 1)} : {provider: null, model: pin};
   }
 
+  function rectanglesIntersect(rect, boundary) {
+    return rect.right > boundary.left
+      && rect.left < boundary.right
+      && rect.bottom > boundary.top
+      && rect.top < boundary.bottom;
+  }
+
   function typeaheadPlacement(anchor, viewport, margin = 8) {
     const below = Math.max(0, viewport.height - anchor.bottom - margin);
     const above = Math.max(0, anchor.top - margin);
@@ -438,7 +445,13 @@
           setPlacement(null);
           return;
         }
-        setPlacement(typeaheadPlacement(bounds, {width: window.innerWidth, height: window.innerHeight}));
+        const viewportBounds = {left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight};
+        const clippingAncestor = anchor.closest(".model-controls");
+        if (!rectanglesIntersect(bounds, viewportBounds) || (clippingAncestor && !rectanglesIntersect(bounds, clippingAncestor.getBoundingClientRect()))) {
+          setPlacement(null);
+          return;
+        }
+        setPlacement(typeaheadPlacement(bounds, viewportBounds));
       };
       const schedule = () => {
         if (frame !== null) return;
