@@ -94,21 +94,34 @@ def _add_out_of_order_saved_scrapes(database_path: Path) -> None:
     )
     assert newer_scrape < older_scrape
     with sqlite3.connect(database_path) as connection:
-        connection.execute(
+        connection.executemany(
             """INSERT INTO field_changes (
                    provider_id, from_scrape_id, to_scrape_id, provider_model_id,
                    change_kind, field_name, old_value_json, new_value_json, detected_at
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                EXAMPLE_PROVIDER.provider_id,
-                older_scrape,
-                newer_scrape,
-                "fake-org/chronology-test-model",
-                "changed",
-                "chronology_probe",
-                '"older text"',
-                "42",
-                "2026-08-21T12:00:00+00:00",
+                (
+                    EXAMPLE_PROVIDER.provider_id,
+                    older_scrape,
+                    newer_scrape,
+                    "fake-org/chronology-test-model",
+                    "changed",
+                    "chronology_probe",
+                    '"older text"',
+                    "42",
+                    "2026-08-21T12:00:00+00:00",
+                ),
+                (
+                    EXAMPLE_PROVIDER.provider_id,
+                    older_scrape,
+                    newer_scrape,
+                    "fake-org/chronology-test-model",
+                    "removed",
+                    "pricing.prompt",
+                    "0.000005",
+                    None,
+                    "2026-08-21T12:00:00+00:00",
+                ),
             ),
         )
 
@@ -132,6 +145,23 @@ def test_catalog_resolves_column_price_path_and_does_not_rescale_canonical_value
     assert aspect.multiplier == 1
     assert aspect.divisor == 1
     assert aspect.field_name == "pricing.prompt"
+
+
+def test_catalog_omits_discovered_paths_represented_by_canonical_aspects(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "fixture.db"
+    build_fixture_db(database_path)
+
+    by_id = {aspect.id: aspect for aspect in _catalog(database_path)}
+
+    assert by_id["example-provider:input_price"].field_name == "pricing.prompt"
+    assert "example-provider:path:pricing.prompt" not in by_id
+    assert by_id["example-provider:context_window"].field_name == "context_length"
+    assert "example-provider:path:context_length" not in by_id
+
+    assert "example-provider:path:supported_parameters" in by_id
+    assert "example-provider:path:benchmarks.design_arena.score" in by_id
 
 
 def test_representative_path_uses_completion_chronology_not_insertion_order(
@@ -158,17 +188,21 @@ def test_sampled_json_type_uses_completion_chronology_not_insertion_order(
     assert by_id["example-provider:path:chronology_probe"].kind == "numeric"
 
 
-def test_catalog_scales_raw_path_prices(tmp_path: Path) -> None:
+def test_catalog_retains_same_label_price_at_a_distinct_path(tmp_path: Path) -> None:
     database_path = tmp_path / "fixture.db"
     build_fixture_db(database_path)
+    _add_out_of_order_saved_scrapes(database_path)
 
     by_id = {aspect.id: aspect for aspect in _catalog(database_path)}
-    aspect = by_id["example-provider:path:pricing.prompt"]
+    canonical = by_id["example-provider:input_price"]
+    discovered = by_id["example-provider:path:pricing.prompt"]
 
-    assert aspect.kind == "price"
-    assert aspect.unit == "/1M tokens"
-    assert aspect.multiplier == 1_000_000
-    assert aspect.divisor == 1
+    assert canonical.field_name == "pricing.input"
+    assert discovered.label == canonical.label
+    assert discovered.kind == "price"
+    assert discovered.unit == "/1M tokens"
+    assert discovered.multiplier == 1_000_000
+    assert discovered.divisor == 1
 
 
 def test_catalog_classifies_benchmarks_lists_and_token_columns(tmp_path: Path) -> None:
@@ -252,8 +286,5 @@ def test_catalog_order_and_json_are_deterministic(tmp_path: Path) -> None:
     )
     ids = [aspect.id for aspect in first]
     assert ids.index("example-provider:input_price") < ids.index(
-        "example-provider:output_price"
-    )
-    assert ids.index("example-provider:path:pricing.prompt") < ids.index(
         "example-provider:output_price"
     )

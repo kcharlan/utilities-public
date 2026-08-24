@@ -83,11 +83,13 @@ def build_aspect_catalog(
     connection = db.connection()
     latest_models = _latest_models_by_provider(connection, profiles)
     aspects: list[Aspect] = []
+    canonical_identities: set[tuple[str, str]] = set()
 
     for provider_id, profile in profiles.items():
         raw_models = latest_models.get(provider_id, ())
         for column in _CANONICAL_COLUMNS:
             field_name = _representative_field_name(column, profile, raw_models)
+            canonical_identities.add((provider_id, field_name))
             aspects.append(
                 _make_aspect(
                     provider_id=provider_id,
@@ -112,6 +114,8 @@ def build_aspect_catalog(
         if profile is None:
             continue
         path = str(row["field_name"])
+        if (provider_id, path) in canonical_identities:
+            continue
         if not _safe_path(path):
             _LOG.debug("Skipping unsafe metadata aspect path %r for %s", path, provider_id)
             continue

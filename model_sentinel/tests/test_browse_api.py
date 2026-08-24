@@ -570,11 +570,8 @@ def test_series_union_axis_scaling_and_events(browse_context) -> None:
     context, facts = browse_context
     model = facts.price_step[0]
     pins = f"{EXAMPLE_PROVIDER.provider_id}/{model},{OTHER_PROVIDER.provider_id}/fake-org/other-test-model"
-    aspects = (
-        f"{EXAMPLE_PROVIDER.provider_id}:input_price,"
-        f"{EXAMPLE_PROVIDER.provider_id}:path:pricing.prompt"
-    )
-    result = api.series(context, {"models": pins, "aspects": aspects})
+    aspect = f"{EXAMPLE_PROVIDER.provider_id}:input_price"
+    result = api.series(context, {"models": pins, "aspects": aspect})
     assert set(result) == {"axis", "series"}
     assert all(set(point) == {"scrape_id", "provider_id", "date", "completed_at", "t"} for point in result["axis"])
     assert all(
@@ -582,9 +579,8 @@ def test_series_union_axis_scaling_and_events(browse_context) -> None:
         for item in result["series"]
     )
     assert {point["provider_id"] for point in result["axis"]} == set(facts.provider_ids)
-    canonical, raw_path = result["series"]
+    [canonical] = result["series"]
     assert canonical["model"] == f"{EXAMPLE_PROVIDER.provider_id}/{model}"
-    assert canonical["values"] == raw_path["values"]
     assert any(value is None for value in canonical["values"])
     assert any(value == facts.price_step[-2] for value in canonical["values"])
 
