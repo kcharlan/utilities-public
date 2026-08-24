@@ -383,11 +383,16 @@
     return provider ? {provider, model: pin.slice(provider.id.length + 1)} : {provider: null, model: pin};
   }
 
-  function rectanglesIntersect(rect, boundary) {
-    return rect.right > boundary.left
-      && rect.left < boundary.right
-      && rect.bottom > boundary.top
-      && rect.top < boundary.bottom;
+  function rectangleIntersection(first, second) {
+    const intersection = {
+      left: Math.max(first.left, second.left),
+      top: Math.max(first.top, second.top),
+      right: Math.min(first.right, second.right),
+      bottom: Math.min(first.bottom, second.bottom)
+    };
+    return intersection.right > intersection.left && intersection.bottom > intersection.top
+      ? intersection
+      : null;
   }
 
   function typeaheadPlacement(anchor, viewport, margin = 8) {
@@ -447,7 +452,10 @@
         }
         const viewportBounds = {left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight};
         const clippingAncestor = anchor.closest(".model-controls");
-        if (!rectanglesIntersect(bounds, viewportBounds) || (clippingAncestor && !rectanglesIntersect(bounds, clippingAncestor.getBoundingClientRect()))) {
+        const visibleBounds = clippingAncestor
+          ? rectangleIntersection(viewportBounds, clippingAncestor.getBoundingClientRect())
+          : viewportBounds;
+        if (!visibleBounds || !rectangleIntersection(bounds, visibleBounds)) {
           setPlacement(null);
           return;
         }

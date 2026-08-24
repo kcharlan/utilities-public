@@ -824,7 +824,7 @@ def test_model_typeahead_placement_tracks_viewport_and_anchor() -> None:
 def test_model_typeahead_hides_anchors_outside_viewport_or_sidebar_clip() -> None:
     source = _read_asset("app.js")
     intersection = source[
-        source.index("function rectanglesIntersect(") : source.index(
+        source.index("function rectangleIntersection(") : source.index(
             "function typeaheadPlacement("
         )
     ]
@@ -832,10 +832,18 @@ def test_model_typeahead_hides_anchors_outside_viewport_or_sidebar_clip() -> Non
         source.index("function TypeaheadOverlay(") : source.index("function Pins(")
     ]
 
-    assert "rect.right > boundary.left" in intersection
-    assert "rect.left < boundary.right" in intersection
-    assert "rect.bottom > boundary.top" in intersection
-    assert "rect.top < boundary.bottom" in intersection
+    result_match = re.search(r"const (\w+) = \{", intersection)
+    assert result_match is not None
+    result = re.escape(result_match.group(1))
+    assert "left: Math.max(first.left, second.left)" in intersection
+    assert "top: Math.max(first.top, second.top)" in intersection
+    assert "right: Math.min(first.right, second.right)" in intersection
+    assert "bottom: Math.min(first.bottom, second.bottom)" in intersection
+    assert re.search(
+        rf"{result}\.right > {result}\.left && {result}\.bottom > {result}\.top",
+        intersection,
+    )
+    assert re.search(rf"\? {result}\s*: null", intersection)
     assert "left: 0" in overlay
     assert "top: 0" in overlay
     assert "right: window.innerWidth" in overlay
@@ -843,15 +851,15 @@ def test_model_typeahead_hides_anchors_outside_viewport_or_sidebar_clip() -> Non
     clip_match = re.search(r'const (\w+) = \w+\.closest\("\.model-controls"\);', overlay)
     assert clip_match is not None
     clip = re.escape(clip_match.group(1))
-    assert re.search(r"!rectanglesIntersect\(\w+, \w+\)", overlay)
-    assert re.search(
-        rf"{clip} && !rectanglesIntersect\(\w+, {clip}\.getBoundingClientRect\(\)\)",
+    visible_match = re.search(
+        rf"const (\w+) = {clip}\s*\? rectangleIntersection\(\w+, {clip}\.getBoundingClientRect\(\)\)\s*: \w+;",
         overlay,
     )
+    assert visible_match is not None
+    visible = re.escape(visible_match.group(1))
     assert re.search(
-        r"if \([^)]*rectanglesIntersect.*?\) \{\s*setPlacement\(null\);\s*return;",
+        rf"if \(!{visible} \|\| !rectangleIntersection\(\w+, {visible}\)\) \{{\s*setPlacement\(null\);\s*return;",
         overlay,
-        re.DOTALL,
     )
 
     scroll_match = re.search(
