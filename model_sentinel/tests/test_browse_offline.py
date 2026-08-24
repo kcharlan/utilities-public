@@ -747,6 +747,172 @@ def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
     assert "aspect.squelched" in source
 
 
+def test_model_typeahead_portal_escapes_sidebar_and_cleans_up() -> None:
+    source = _read_asset("app.js")
+    portal = source[
+        source.index("function Portal(") : source.index("function TypeaheadOverlay(")
+    ]
+    host_match = re.search(
+        r"const (\w+) = useMemo\(\(\) => \{(?P<factory>.*?)\}, \[\]\);",
+        portal,
+        re.DOTALL,
+    )
+
+    assert host_match is not None
+    factory = host_match.group("factory")
+    element_match = re.search(r'const (\w+) = document\.createElement\("div"\)', factory)
+    assert element_match is not None
+    element = re.escape(element_match.group(1))
+    assert re.search(rf'{element}\.dataset\.modelSentinelPortal = "typeahead"', factory)
+    assert re.search(rf"return {element};", factory)
+    host = re.escape(host_match.group(1))
+    assert portal.count('document.createElement("div")') == 1
+    assert len(re.findall(r"useEffect\(\(\) => \{", portal)) == 2
+    assert re.search(rf"document\.body\.appendChild\({host}\)", portal)
+    assert re.search(rf"render\(children, {host}\)", portal)
+    assert re.search(rf"render\(null, {host}\).*?{host}\.remove\(\)", portal, re.DOTALL)
+    assert portal.count("render(null,") == 1
+    assert portal.index("render(null,") < portal.index("render(children,")
+
+
+def test_model_typeahead_placement_tracks_viewport_and_anchor() -> None:
+    source = _read_asset("app.js")
+    placement = source[
+        source.index("function typeaheadPlacement(") : source.index("function Portal(")
+    ]
+
+    assert "margin = 8" in placement
+    below_match = re.search(
+        r"const (\w+) = Math\.max\(0, viewport\.height - anchor\.bottom\);",
+        placement,
+    )
+    above_match = re.search(r"const (\w+) = Math\.max\(0, anchor\.top\);", placement)
+    assert below_match is not None and above_match is not None
+    below, above = map(re.escape, (below_match.group(1), above_match.group(1)))
+    flip_match = re.search(
+        rf"const (\w+) = {below} < 160 && {above} > {below};", placement
+    )
+    assert flip_match is not None
+    flip = re.escape(flip_match.group(1))
+    available_match = re.search(
+        rf"const (\w+) = {flip} \? {above} : {below};", placement
+    )
+    assert available_match is not None
+    available = re.escape(available_match.group(1))
+    width_limit_match = re.search(
+        r"const (\w+) = Math\.max\(0, viewport\.width - 2 \* margin\);",
+        placement,
+    )
+    assert width_limit_match is not None
+    width_limit = re.escape(width_limit_match.group(1))
+    width_match = re.search(
+        rf"const (\w+) = Math\.min\(Math\.max\(anchor\.width, 352\), {width_limit}\);",
+        placement,
+    )
+    assert width_match is not None
+    width = re.escape(width_match.group(1))
+    assert re.search(rf"viewport\.width - margin - {width}", placement)
+    assert re.search(rf"Math\.max\(0, Math\.min\({available}, 320\)\)", placement)
+    assert re.search(r"\? \{[^}]*bottom: viewport\.height - anchor\.top[^}]*\}", placement)
+    assert re.search(r": \{[^}]*top: anchor\.bottom[^}]*\}", placement)
+    assert not re.search(r"\? \{[^}]*\btop\s*:", placement)
+    assert not re.search(r": \{[^}]*\bbottom\s*:", placement)
+
+
+def test_model_typeahead_preserves_listbox_keyboard_contract() -> None:
+    source = _read_asset("app.js")
+    overlay = source[
+        source.index("function TypeaheadOverlay(") : source.index("function Pins(")
+    ]
+    pins = source[source.index("function Pins(") : source.index("function ambiguousAspectIds(")]
+
+    assert "getBoundingClientRect()" in overlay
+    assert "typeaheadPlacement(" in overlay
+    resize_match = re.search(r'window\.addEventListener\("resize", (\w+)\)', overlay)
+    scroll_match = re.search(r'window\.addEventListener\("scroll", (\w+), true\)', overlay)
+    assert resize_match is not None and scroll_match is not None
+    assert re.search(
+        rf'window\.removeEventListener\("resize", {re.escape(resize_match.group(1))}\)',
+        overlay,
+    )
+    assert re.search(
+        rf'window\.removeEventListener\("scroll", {re.escape(scroll_match.group(1))}, true\)',
+        overlay,
+    )
+    observer_match = re.search(r"const (\w+) = new ResizeObserver\(", overlay)
+    assert observer_match is not None
+    observer = re.escape(observer_match.group(1))
+    assert re.search(rf"{observer}\.observe\(", overlay)
+    frame_match = re.search(r"let (\w+) = null;", overlay)
+    assert frame_match is not None
+    frame = re.escape(frame_match.group(1))
+    assert re.search(
+        rf"if \({frame} !== null\) return;\s*{frame} = window\.requestAnimationFrame",
+        overlay,
+    )
+    assert re.search(rf"window\.cancelAnimationFrame\({frame}\)", overlay)
+    assert re.search(rf"{observer}\.disconnect\(\)", overlay)
+    assert re.search(
+        r"if \(!\w+ \|\| !\w+\.isConnected\) \{\s*setPlacement\(null\);\s*return;",
+        overlay,
+    )
+    assert "placement ?" in overlay
+    assert "style=${placement}" in overlay
+
+    listbox_match = re.search(r'const (\w+) = "pin-results";', pins)
+    query_match = re.search(r'const \[(\w+), (\w+)\] = useState\(""\);', pins)
+    assert listbox_match is not None and query_match is not None
+    query, clear_query = map(re.escape, query_match.groups())
+    open_match = re.search(rf"const (\w+) = Boolean\({query}\.trim\(\)\);", pins)
+    assert open_match is not None
+    listbox_id = re.escape(listbox_match.group(1))
+    open_state = re.escape(open_match.group(1))
+    assert re.search(rf"aria-expanded=\$\{{{open_state}\}}", pins)
+    assert re.search(
+        rf"aria-controls=\$\{{{open_state} \? {listbox_id} : undefined\}}", pins
+    )
+    option_match = re.search(
+        rf'const (\w+) = document\.getElementById\({listbox_id}\)\?\.querySelector\("button"\)',
+        pins,
+    )
+    assert option_match is not None
+    option = re.escape(option_match.group(1))
+    assert "event.preventDefault()" in pins
+    assert re.search(rf"{option}\.focus\(\)", pins)
+    assert "nextElementSibling" not in pins
+    assert 'role="listbox"' in pins
+    assert 'role="option"' in pins
+    assert 'event.key === "Escape"' in pins
+    assert len(re.findall(rf'{clear_query}\(""\)', pins)) >= 2
+    assert re.search(rf"open=\$\{{{open_state}\}}", pins)
+
+
+def test_model_typeahead_css_is_fixed_bounded_overlay() -> None:
+    styles = _read_asset("app.css")
+
+    def declarations(selector: str) -> str:
+        match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", styles)
+        assert match is not None, selector
+        return match.group(1)
+
+    typeahead = declarations(".typeahead")
+    assert "position: fixed" in typeahead
+    assert "overflow-y: auto" in typeahead
+    assert "z-index: 90" in typeahead
+    assert all(
+        property_name not in typeahead
+        for property_name in ("top:", "right:", "bottom:", "left:", "width:", "max-height:")
+    )
+    assert "z-index: 100" in declarations(".drawer-layer")
+    assert "z-index: 110" in declarations(".spark-layer")
+    assert "z-index: 120" in declarations(".toast-region")
+
+    controls = declarations(".model-controls")
+    assert "position: sticky" in controls
+    assert "max-height: calc(100vh - 11rem)" in controls
+    assert "overflow-y: auto" in controls
+
+
 def test_models_aspect_limit_is_enforced_for_hash_and_picker() -> None:
     source = _read_asset("app.js")
 

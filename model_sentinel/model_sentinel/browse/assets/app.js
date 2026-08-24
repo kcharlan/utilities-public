@@ -383,9 +383,89 @@
     return provider ? {provider, model: pin.slice(provider.id.length + 1)} : {provider: null, model: pin};
   }
 
+  function typeaheadPlacement(anchor, viewport, margin = 8) {
+    const below = Math.max(0, viewport.height - anchor.bottom);
+    const above = Math.max(0, anchor.top);
+    const placeAbove = below < 160 && above > below;
+    const available = placeAbove ? above : below;
+    const widthLimit = Math.max(0, viewport.width - 2 * margin);
+    const width = Math.min(Math.max(anchor.width, 352), widthLimit);
+    const maxLeft = Math.max(0, viewport.width - margin - width);
+    const minLeft = Math.min(margin, maxLeft);
+    const left = Math.max(minLeft, Math.min(anchor.left, maxLeft));
+    const maxHeight = Math.max(0, Math.min(available, 320));
+    return placeAbove
+      ? {left, width, maxHeight, bottom: viewport.height - anchor.top}
+      : {left, width, maxHeight, top: anchor.bottom};
+  }
+
+  function Portal({children}) {
+    const host = useMemo(() => {
+      const element = document.createElement("div");
+      element.dataset.modelSentinelPortal = "typeahead";
+      return element;
+    }, []);
+    useEffect(() => {
+      document.body.appendChild(host);
+      return () => {
+        render(null, host);
+        host.remove();
+      };
+    }, [host]);
+    useEffect(() => {
+      render(children, host);
+    }, [children, host]);
+    return null;
+  }
+
+  function TypeaheadOverlay({anchorRef, open, children}) {
+    const [placement, setPlacement] = useState(null);
+    useEffect(() => {
+      if (!open) {
+        setPlacement(null);
+        return;
+      }
+      let frame = null;
+      const measure = () => {
+        frame = null;
+        const anchor = anchorRef.current;
+        if (!anchor || !anchor.isConnected) {
+          setPlacement(null);
+          return;
+        }
+        const bounds = anchor.getBoundingClientRect();
+        if (bounds.width <= 0 || bounds.height <= 0 || ![bounds.left, bounds.top, bounds.right, bounds.bottom].every(Number.isFinite)) {
+          setPlacement(null);
+          return;
+        }
+        setPlacement(typeaheadPlacement(bounds, {width: window.innerWidth, height: window.innerHeight}));
+      };
+      const schedule = () => {
+        if (frame !== null) return;
+        frame = window.requestAnimationFrame(measure);
+      };
+      const observer = new ResizeObserver(schedule);
+      const anchor = anchorRef.current;
+      if (anchor) observer.observe(anchor);
+      window.addEventListener("resize", schedule);
+      window.addEventListener("scroll", schedule, true);
+      schedule();
+      return () => {
+        if (frame !== null) window.cancelAnimationFrame(frame);
+        observer.disconnect();
+        window.removeEventListener("resize", schedule);
+        window.removeEventListener("scroll", schedule, true);
+      };
+    }, [anchorRef, open]);
+    if (!open) return null;
+    return html`<${Portal}>${placement ? html`<div class="typeahead" style=${placement}>${children}</div>` : null}</${Portal}>`;
+  }
+
   function Pins({meta, pins, providers, write, inputRef, toast}) {
     const [query, setQuery] = useState("");
     const [debouncedQuery, setDebouncedQuery] = useState("");
+    const listboxId = "pin-results";
+    const open = Boolean(query.trim());
     useEffect(() => {
       const timer = setTimeout(() => setDebouncedQuery(query), 150);
       return () => clearTimeout(timer);
@@ -408,11 +488,11 @@
         const parts = pinParts(pin, meta.providers);
         return html`<li key=${pin}><i style=${`--pin-color: var(--series-${index + 1})`}></i><span><strong>${parts.model}</strong><small>${parts.provider ? parts.provider.label : pin}</small></span><button type="button" aria-label=${`Remove ${parts.model}`} onClick=${() => write({pins: pins.filter(value => value !== pin)})}>×</button></li>`;
       })}</ol>
-      <div class="pin-search"><label for="pin-query">Add model</label><input id="pin-query" ref=${inputRef} type="search" autocomplete="off" value=${query} placeholder="Search model id or name" onInput=${event => setQuery(event.currentTarget.value)} onKeyDown=${event => {
+      <div class="pin-search"><label for="pin-query">Add model</label><input id="pin-query" ref=${inputRef} type="search" autocomplete="off" value=${query} placeholder="Search model id or name" aria-expanded=${open} aria-controls=${open ? listboxId : undefined} onInput=${event => setQuery(event.currentTarget.value)} onKeyDown=${event => {
         if (event.key === "Escape") setQuery("");
-        else if (event.key === "ArrowDown") { const first = event.currentTarget.nextElementSibling && event.currentTarget.nextElementSibling.querySelector("button"); if (first) { event.preventDefault(); first.focus(); } }
+        else if (event.key === "ArrowDown") { const first = document.getElementById(listboxId)?.querySelector("button"); if (first) { event.preventDefault(); first.focus(); } }
       }} />
-        ${query.trim() && html`<div class="typeahead" role="listbox" aria-label="Model search results">${results.loading ? html`<p>Searching local history…</p>` : results.error ? html`<p>${results.error.message}</p>` : results.data && results.data.length ? results.data.map(item => html`<button type="button" role="option" aria-selected="false" key=${`${item.provider_id}/${item.model_id}`} onClick=${() => add(item)}><strong>${item.display_name || item.model_id}</strong><span>${item.provider_id} / ${item.model_id}</span></button>`) : html`<p>No matching models</p>`}</div>`}
+        <${TypeaheadOverlay} anchorRef=${inputRef} open=${open}><div id=${listboxId} role="listbox" aria-label="Model search results">${results.loading ? html`<p>Searching local history…</p>` : results.error ? html`<p>${results.error.message}</p>` : results.data && results.data.length ? results.data.map(item => html`<button type="button" role="option" aria-selected="false" key=${`${item.provider_id}/${item.model_id}`} onClick=${() => add(item)}><strong>${item.display_name || item.model_id}</strong><span>${item.provider_id} / ${item.model_id}</span></button>`) : html`<p>No matching models</p>`}</div></${TypeaheadOverlay}>
       </div>
     </section>`;
   }

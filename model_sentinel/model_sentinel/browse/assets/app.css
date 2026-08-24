@@ -828,7 +828,7 @@ legend,
 .pin-search { position: relative; padding: 0.8rem; border-block-end: 1px solid var(--border); }
 .pin-search label { display: block; margin-block-end: 0.25rem; color: var(--ink-muted); font-size: 0.64rem; font-weight: 700; text-transform: uppercase; }
 .pin-search input { width: 100%; min-height: 2.35rem; padding: 0.5rem 0.65rem; border: 1px solid var(--border-strong); color: var(--ink-strong); background: var(--ground); }
-.typeahead { position: absolute; z-index: 30; right: 0.8rem; left: 0.8rem; max-height: 20rem; overflow-y: auto; border: 1px solid var(--border-strong); background: var(--panel-raised); box-shadow: 0 0.8rem 2rem var(--shadow); }
+.typeahead { position: fixed; z-index: 90; overflow-y: auto; border: 1px solid var(--border-strong); background: var(--panel-raised); box-shadow: 0 0.8rem 2rem var(--shadow); }
 .typeahead button { display: grid; gap: 0.12rem; width: 100%; padding: 0.6rem; border: 0; border-block-end: 1px solid var(--border); text-align: left; background: transparent; cursor: pointer; }
 .typeahead button:hover,
 .typeahead button:focus { background: var(--ground); }
