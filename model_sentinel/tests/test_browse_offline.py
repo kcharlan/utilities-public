@@ -1006,6 +1006,141 @@ def test_models_numeric_panels_use_stepped_synced_uplot_contract() -> None:
     assert 'stroke: cssToken("--border")' in source
 
 
+def test_numeric_timeline_tooltip_preserves_exact_all_model_values() -> None:
+    source = _read_asset("app.js")
+
+    assert "function timelineTooltipValue(value)" in source
+    helper = source[
+        source.index("function timelineTooltipValue(value)") : source.index(
+            "function timelineTooltipPlugin("
+        )
+    ]
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    panel = source[
+        source.index("function TimelinePanel(") : source.index("function listToneAt(")
+    ]
+
+    assert re.search(
+        r'typeof value === "number"\s*&&\s*Number\.isFinite\(value\)\s*\?\s*String\(value\)\s*:\s*"—"',
+        helper,
+    )
+    assert "toFixed" not in helper
+    assert "toPrecision" not in helper
+    assert "toLocaleString" not in helper
+    assert "u.cursor.idx" in plugin
+    assert "axis[index].completed_at" in plugin
+    assert "item.values[index]" in plugin
+    assert "for (const item of items)" in plugin
+    assert "pinParts(item.model, providers).model" in plugin
+    assert "cssSeries(pins.indexOf(item.model))" in plugin
+    assert "timelineTooltipValue(value)" in plugin
+    assert "textContent" in plugin
+    assert "innerHTML" not in plugin
+    assert "filter(" not in plugin
+    assert "plugins: [timelineTooltipPlugin({aspect, axis, items, pins, providers})]" in panel
+    assert "function TimelinePanel({aspect, axis, items, pins, providers, plots, write})" in source
+    assert "providers=${meta.providers}" in source[
+        source.index("function PanelStack(") : source.index("function Models(")
+    ]
+
+
+def test_numeric_timeline_tooltip_guards_pre_ready_cursor_and_cleans_up() -> None:
+    source = _read_asset("app.js")
+
+    assert "function timelineTooltipPlugin(" in source
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    cursor = plugin[plugin.index("setCursor:") : plugin.index("destroy:")]
+    destroy = plugin[plugin.index("destroy:") :]
+
+    assert re.search(r"setCursor:\s*\[\s*u\s*=>\s*\{\s*if \(!over \|\| !tooltip\) return;", cursor)
+    assert 'u.root.querySelector(".u-over")' in plugin
+    assert 'document.createElement("div")' in plugin
+    assert 'tooltip.setAttribute("role", "tooltip")' in plugin
+    assert "over.appendChild(tooltip)" in plugin
+    assert 'addEventListener("pointerenter"' in plugin
+    assert 'addEventListener("pointerleave"' in plugin
+    assert 'removeEventListener("pointerenter"' in destroy
+    assert 'removeEventListener("pointerleave"' in destroy
+    assert "tooltip.remove()" in destroy
+    assert "if (!over) return" in destroy
+
+
+def test_numeric_timeline_tooltip_is_pointer_gated_and_edge_bounded() -> None:
+    source = _read_asset("app.js")
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+
+    assert "let active = false" in plugin
+    assert re.search(r"pointerEnter\s*=\s*\(\)\s*=>\s*\{\s*active = true;", plugin)
+    assert re.search(
+        r"pointerLeave\s*=\s*\(\)\s*=>\s*\{\s*active = false;\s*tooltip\.hidden = true;",
+        plugin,
+    )
+    assert re.search(r"if \(!active \|\| !Number\.isInteger\(index\)", plugin)
+    assert "u.cursor.left" in plugin
+    assert "u.cursor.top" in plugin
+    assert "tooltip.offsetWidth" in plugin
+    assert "tooltip.offsetHeight" in plugin
+    assert "over.clientWidth" in plugin
+    assert "over.clientHeight" in plugin
+    assert "tooltip.style.maxHeight" in plugin
+    assert "rows.style.maxHeight" in plugin
+    assert re.search(r"header\.offsetHeight\s*\+\s*footer\.offsetHeight", plugin)
+    assert re.search(r"cursorLeft\s*\+\s*gap\s*\+\s*tooltipWidth\s*<=\s*over\.clientWidth", plugin)
+    assert "Math.max(inset, Math.min(" in plugin
+    assert "tooltip.style.left" in plugin
+    assert "tooltip.style.top" in plugin
+    assert "lastIndex" not in plugin
+
+
+def test_numeric_timeline_tooltip_css_keeps_eight_value_rows_visible() -> None:
+    styles = _read_asset("app.css")
+
+    def declarations(selector: str) -> str:
+        match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", styles)
+        assert match is not None, selector
+        return match.group(1)
+
+    tooltip = declarations(".plot-host .timeline-tooltip")
+    rows = declarations(".plot-host .timeline-tooltip-rows")
+    row = declarations(".plot-host .timeline-tooltip-row")
+    model = declarations(".plot-host .timeline-tooltip-model")
+    value = declarations(".plot-host .timeline-tooltip-value")
+    header = declarations(".plot-host .timeline-tooltip-header")
+    footer = declarations(".plot-host .timeline-tooltip-footer")
+
+    assert "position: absolute" in tooltip
+    assert "pointer-events: none" in tooltip
+    assert "max-width: calc(100% - 1rem)" in tooltip
+    assert "background: var(--panel-raised)" in tooltip
+    assert "border: 1px solid var(--border-strong)" in tooltip
+    assert "box-shadow:" in tooltip and "var(--shadow)" in tooltip
+    assert 'font-family: ui-monospace, "SFMono-Regular", Consolas, monospace' in tooltip
+    assert "display: none" in declarations(".plot-host .timeline-tooltip[hidden]")
+    assert "min-height: 0" in rows
+    assert "overflow-y: auto" in rows
+    assert "grid-template-columns: minmax(0, 1fr) auto" in row
+    assert "min-width: 0" in model
+    assert "text-overflow: ellipsis" in model
+    assert "white-space: nowrap" in model
+    assert "flex-shrink: 0" in value
+    assert "text-align: right" in value
+    assert "white-space: nowrap" in value
+    assert "border-block-end:" in header
+    assert "border-block-start:" in footer
+
+
 def test_models_legend_reset_and_local_date_zoom_regressions() -> None:
     source = _read_asset("app.js")
 

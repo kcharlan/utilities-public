@@ -590,7 +590,97 @@
     }
   }
 
-  function TimelinePanel({aspect, axis, items, pins, plots, write}) {
+  function timelineTooltipValue(value) {
+    return typeof value === "number" && Number.isFinite(value) ? String(value) : "—";
+  }
+
+  function timelineTooltipPlugin({aspect, axis, items, pins, providers}) {
+    let over = null, tooltip = null, header = null, rows = null, footer = null;
+    let active = false;
+    const pointerEnter = () => { active = true; };
+    const pointerLeave = () => {
+      active = false;
+      tooltip.hidden = true;
+    };
+    return {hooks: {
+      ready: [u => {
+        over = u.root.querySelector(".u-over");
+        if (!over) return;
+        tooltip = document.createElement("div");
+        tooltip.className = "timeline-tooltip";
+        tooltip.setAttribute("role", "tooltip");
+        tooltip.hidden = true;
+        header = document.createElement("div");
+        header.className = "timeline-tooltip-header";
+        rows = document.createElement("div");
+        rows.className = "timeline-tooltip-rows";
+        footer = document.createElement("div");
+        footer.className = "timeline-tooltip-footer";
+        tooltip.append(header, rows, footer);
+        over.appendChild(tooltip);
+        over.addEventListener("pointerenter", pointerEnter);
+        over.addEventListener("pointerleave", pointerLeave);
+      }],
+      setCursor: [u => {
+        if (!over || !tooltip) return;
+        const index = u.cursor.idx;
+        if (!active || !Number.isInteger(index) || index < 0 || index >= axis.length) {
+          tooltip.hidden = true;
+          return;
+        }
+        header.textContent = new Date(axis[index].completed_at).toLocaleString();
+        rows.replaceChildren();
+        for (const item of items) {
+          const value = item.values[index];
+          const row = document.createElement("div");
+          row.className = "timeline-tooltip-row";
+          const model = document.createElement("div");
+          model.className = "timeline-tooltip-model";
+          const swatch = document.createElement("i");
+          swatch.className = "timeline-tooltip-swatch";
+          swatch.style.background = cssSeries(pins.indexOf(item.model));
+          const name = document.createElement("span");
+          name.textContent = pinParts(item.model, providers).model;
+          const valueElement = document.createElement("span");
+          valueElement.className = "timeline-tooltip-value";
+          valueElement.textContent = timelineTooltipValue(value);
+          model.append(swatch, name);
+          row.append(model, valueElement);
+          rows.appendChild(row);
+        }
+        footer.textContent = aspect.unit ? `${aspect.unit} · — = no observation` : "— = no observation";
+
+        const inset = 8, gap = 10;
+        tooltip.style.left = "0px";
+        tooltip.style.top = "0px";
+        tooltip.style.maxHeight = `${Math.max(0, over.clientHeight - inset * 2)}px`;
+        rows.style.maxHeight = "none";
+        tooltip.hidden = false;
+        const chromeHeight = header.offsetHeight + footer.offsetHeight + 2;
+        rows.style.maxHeight = `${Math.max(0, over.clientHeight - inset * 2 - chromeHeight)}px`;
+        const tooltipWidth = tooltip.offsetWidth;
+        const tooltipHeight = tooltip.offsetHeight;
+        const cursorLeft = u.cursor.left;
+        const cursorTop = u.cursor.top;
+        const preferredLeft = cursorLeft + gap + tooltipWidth <= over.clientWidth
+          ? cursorLeft + gap
+          : cursorLeft - gap - tooltipWidth;
+        const left = Math.max(inset, Math.min(preferredLeft, Math.max(inset, over.clientWidth - inset - tooltipWidth)));
+        const top = Math.max(inset, Math.min(cursorTop + gap, Math.max(inset, over.clientHeight - inset - tooltipHeight)));
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${top}px`;
+      }],
+      destroy: [() => {
+        if (!over) return;
+        over.removeEventListener("pointerenter", pointerEnter);
+        over.removeEventListener("pointerleave", pointerLeave);
+        if (tooltip) tooltip.remove();
+        over = tooltip = header = rows = footer = null;
+      }]
+    }};
+  }
+
+  function TimelinePanel({aspect, axis, items, pins, providers, plots, write}) {
     const host = useRef(null);
     useEffect(() => {
       if (!host.current || !axis.length) return;
@@ -612,6 +702,7 @@
         ],
         cursor: {drag: {x: true, y: false, setScale: true}, sync: {key: "ms-browse"}},
         legend: {show: false},
+        plugins: [timelineTooltipPlugin({aspect, axis, items, pins, providers})],
         series: [{label: "Observed at"}, ...items.map(item => {
           const index = pins.indexOf(item.model);
           return {label: item.model, stroke: cssSeries(index), width: 2, spanGaps: false, paths: uPlot.paths.stepped({align: 1})};
@@ -760,7 +851,7 @@
       const state = aspect.kind === "boolean" || aspect.kind === "list" || aspect.kind === "scalar";
       return html`<section class="timeline-panel instrument" key=${`${aspect.id}:${themeKey}`}><header class="panel-heading"><div><p>${aspect.category}</p><h2>${aspect.label}${aspect.qualifier ? html`<small>${aspect.qualifier}</small>` : null}${ambiguous.has(aspect.id) ? html`<small class="panel-provider">${providerLabels[aspect.provider_id]}</small>` : null}</h2></div><span>${aspect.unit || aspect.kind}</span></header>
         <div class="panel-legend">${items.map(item => { const index = pins.indexOf(item.model); return html`<button type="button" key=${item.model} onMouseEnter=${() => focusPlotSeries(plots, item.model, true)} onMouseLeave=${() => focusPlotSeries(plots, item.model, false)} onFocus=${() => focusPlotSeries(plots, item.model, true)} onBlur=${() => focusPlotSeries(plots, item.model, false)}><i style=${`background: var(--series-${index + 1})`}></i>${pinParts(item.model, meta.providers).model}</button>`; })}</div>
-        ${state ? html`<${StateStrip} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} providers=${meta.providers} />` : html`<${TimelinePanel} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} plots=${plots} write=${write} />`}
+        ${state ? html`<${StateStrip} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} providers=${meta.providers} />` : html`<${TimelinePanel} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} providers=${meta.providers} plots=${plots} write=${write} />`}
       </section>`;
     })}</div>`;
   }
