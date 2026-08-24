@@ -260,9 +260,10 @@ def run_browse_command(*, args: argparse.Namespace, loaded) -> int:
     try:
         database = open_readonly(database_path)
     except MissingDatabaseError:
+        invocation = _invocation_name()
         print(
             f"Model Sentinel database not found at {database_path}. "
-            "Run 'model-sentinel scan --save' first.",
+            f"Run '{invocation} scan --save' first.",
             file=sys.stderr,
         )
         raise SystemExit(2) from None
@@ -697,6 +698,7 @@ def run_healthcheck(*, args: argparse.Namespace, project_root: Path) -> int:
 
 
 def _resolve_baseline(store: Store, provider_id: str, args: argparse.Namespace) -> BaselineInfo | None | str:
+    invocation = _invocation_name()
     if args.baseline_date:
         baseline = store.get_baseline_for_date(provider_id, target_date=args.baseline_date)
         if baseline is not None:
@@ -710,7 +712,7 @@ def _resolve_baseline(store: Store, provider_id: str, args: argparse.Namespace) 
         if subsequent:
             details.append(f"Nearest subsequent saved scrape: {subsequent}")
         if not prior and not subsequent:
-            details.append("Run `model_sentinel scan --save` to create the initial baseline.")
+            details.append(f"Run `{invocation} scan --save` to create the initial baseline.")
         return " ".join(details)
     if args.baseline == "previous-day":
         baseline = store.get_previous_day_baseline(provider_id, current_date=local_today())
@@ -719,7 +721,7 @@ def _resolve_baseline(store: Store, provider_id: str, args: argparse.Namespace) 
                 return None
             return (
                 f"No saved prior-day baseline exists for provider '{provider_id}'. "
-                "Run `model_sentinel scan --save` to create an initial baseline."
+                f"Run `{invocation} scan --save` to create an initial baseline."
             )
         return baseline
     baseline = store.get_latest_saved_baseline(provider_id)
@@ -728,7 +730,7 @@ def _resolve_baseline(store: Store, provider_id: str, args: argparse.Namespace) 
             return None
         return (
             f"No saved baseline exists for provider '{provider_id}'. "
-            "Run `model_sentinel scan --save` to create the initial baseline, then rerun compare mode."
+            f"Run `{invocation} scan --save` to create the initial baseline, then rerun compare mode."
         )
     return baseline
 

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from argparse import Namespace
+from datetime import date
 import http.server
 import json
 import os
@@ -39,19 +40,23 @@ def test_invocation_name_resolves_display_command(argv0: str, expected: str) -> 
 
 
 @pytest.mark.parametrize(
-    "arguments",
+    ("arguments", "example_line"),
     (
-        ("--help",),
-        ("scan", "--help"),
-        ("history", "--help"),
-        ("changes", "--help"),
-        ("providers", "--help"),
-        ("browse", "--help"),
-        ("healthcheck", "--help"),
+        (("--help",), "  renamed-sentinel scan --save"),
+        (("scan", "--help"), "  renamed-sentinel scan --save"),
+        (
+            ("history", "--help"),
+            "  renamed-sentinel history --provider openrouter --model list",
+        ),
+        (("changes", "--help"), "  renamed-sentinel changes --since 2026-03-01"),
+        (("providers", "--help"), "  renamed-sentinel providers --format json"),
+        (("browse", "--help"), None),
+        (("healthcheck", "--help"), "  renamed-sentinel healthcheck --format json"),
     ),
 )
 def test_help_uses_renamed_executable_throughout(
     arguments: tuple[str, ...],
+    example_line: str | None,
     monkeypatch,
     capsys,
 ) -> None:
@@ -63,7 +68,10 @@ def test_help_uses_renamed_executable_throughout(
     captured = capsys.readouterr()
     assert exc_info.value.code == 0
     assert "usage: renamed-sentinel" in captured.out
+    if example_line is not None:
+        assert example_line in captured.out
     assert "model_sentinel" not in captured.out
+    assert "model-sentinel" not in captured.out
 
 
 def test_module_help_uses_module_invocation_throughout() -> None:
@@ -129,6 +137,7 @@ def test_browse_missing_database_exits_without_creating_it(
     runtime_home = _write_config_files(tmp_path)
     database_path = runtime_home / "model_sentinel.db"
     monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setattr(sys, "argv", ["/opt/tools/renamed-sentinel"])
 
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["browse"])
@@ -137,8 +146,10 @@ def test_browse_missing_database_exits_without_creating_it(
     assert exc_info.value.code == 2
     assert captured.err == (
         f"Model Sentinel database not found at {database_path}. "
-        "Run 'model-sentinel scan --save' first.\n"
+        "Run 'renamed-sentinel scan --save' first.\n"
     )
+    assert "model_sentinel scan --save" not in captured.err
+    assert "model-sentinel scan --save" not in captured.err
     assert not database_path.exists()
 
 
@@ -376,6 +387,7 @@ def test_default_scan_without_baseline_explains_next_step(tmp_path: Path, monkey
     runtime_home = _write_config_files(tmp_path)
     monkeypatch.setenv("OPENROUTER_AI_CREDS", "token")
     monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setattr(sys, "argv", ["/checkout/model-sentinel"])
 
     exit_code = cli.main([])
     captured = capsys.readouterr()
@@ -386,7 +398,7 @@ def test_default_scan_without_baseline_explains_next_step(tmp_path: Path, monkey
     assert "executable=" in captured.err
     assert captured.err.index("Runtime build:") < captured.err.index("Scanning providers:")
     assert "No saved baseline exists for provider 'openrouter'" in captured.out
-    assert "model_sentinel scan --save" in captured.out
+    assert "model-sentinel scan --save" in captured.out
 
 
 def test_scan_logs_runtime_identity_before_a_credential_error(
@@ -414,6 +426,33 @@ def test_save_mode_allows_initial_baseline_without_prior_snapshot(tmp_path: Path
     store.initialize()
     args = Namespace(save=True, baseline="previous", baseline_date=None)
     assert cli._resolve_baseline(store, "openrouter", args) is None
+
+
+@pytest.mark.parametrize(
+    ("baseline", "baseline_date"),
+    (
+        ("previous", None),
+        ("previous-day", None),
+        ("previous", date(2026, 8, 24)),
+    ),
+)
+def test_missing_baseline_guidance_uses_renamed_executable(
+    tmp_path: Path,
+    monkeypatch,
+    baseline: str,
+    baseline_date: date | None,
+) -> None:
+    store = Store(tmp_path / ".model_sentinel" / "sentinel.db")
+    store.initialize()
+    args = Namespace(save=False, baseline=baseline, baseline_date=baseline_date)
+    monkeypatch.setattr(sys, "argv", ["/opt/tools/renamed-sentinel"])
+
+    result = cli._resolve_baseline(store, "openrouter", args)
+
+    assert isinstance(result, str)
+    assert "renamed-sentinel scan --save" in result
+    assert "model_sentinel scan --save" not in result
+    assert "model-sentinel scan --save" not in result
 
 
 def test_initial_saved_scan_reports_all_models_as_added(tmp_path: Path, monkeypatch, capsys) -> None:
