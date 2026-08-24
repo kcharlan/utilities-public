@@ -384,8 +384,8 @@
   }
 
   function typeaheadPlacement(anchor, viewport, margin = 8) {
-    const below = Math.max(0, viewport.height - anchor.bottom);
-    const above = Math.max(0, anchor.top);
+    const below = Math.max(0, viewport.height - anchor.bottom - margin);
+    const above = Math.max(0, anchor.top - margin);
     const placeAbove = below < 160 && above > below;
     const available = placeAbove ? above : below;
     const widthLimit = Math.max(0, viewport.width - 2 * margin);

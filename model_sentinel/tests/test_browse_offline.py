@@ -783,10 +783,12 @@ def test_model_typeahead_placement_tracks_viewport_and_anchor() -> None:
 
     assert "margin = 8" in placement
     below_match = re.search(
-        r"const (\w+) = Math\.max\(0, viewport\.height - anchor\.bottom\);",
+        r"const (\w+) = Math\.max\(0, viewport\.height - anchor\.bottom - margin\);",
         placement,
     )
-    above_match = re.search(r"const (\w+) = Math\.max\(0, anchor\.top\);", placement)
+    above_match = re.search(
+        r"const (\w+) = Math\.max\(0, anchor\.top - margin\);", placement
+    )
     assert below_match is not None and above_match is not None
     below, above = map(re.escape, (below_match.group(1), above_match.group(1)))
     flip_match = re.search(
