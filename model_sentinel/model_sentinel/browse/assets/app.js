@@ -590,6 +590,20 @@
     }
   }
 
+  function timelineTooltipCursorInside(cursor, over) {
+    return Number.isFinite(cursor.left) && Number.isFinite(cursor.top)
+      && cursor.left >= 0 && cursor.left <= over.clientWidth
+      && cursor.top >= 0 && cursor.top <= over.clientHeight;
+  }
+
+  function timelineTooltipVerticalLayout(overHeight, headerHeight, footerHeight, itemCount, inset = 8) {
+    const availableHeight = Math.max(0, overHeight - inset * 2 - headerHeight - footerHeight - 2);
+    const rowHeight = itemCount > 0
+      ? Math.max(0, Math.min(24, (availableHeight - 1) / itemCount))
+      : 0;
+    return {availableHeight, rowHeight};
+  }
+
   function timelineTooltipValue(value) {
     return typeof value === "number" && Number.isFinite(value) ? String(value) : "—";
   }
@@ -597,10 +611,38 @@
   function timelineTooltipPlugin({aspect, axis, items, pins, providers}) {
     let over = null, tooltip = null, header = null, rows = null, footer = null;
     let active = false;
+    let lastIndex = null;
     const pointerEnter = () => { active = true; };
     const pointerLeave = () => {
       active = false;
       tooltip.hidden = true;
+    };
+    const positionTooltip = u => {
+      const inset = 8, gap = 10;
+      tooltip.style.left = "0px";
+      tooltip.style.top = "0px";
+      tooltip.style.maxHeight = `${Math.max(0, over.clientHeight - inset * 2)}px`;
+      tooltip.hidden = false;
+      const vertical = timelineTooltipVerticalLayout(
+        over.clientHeight,
+        header.offsetHeight,
+        footer.offsetHeight,
+        items.length,
+        inset
+      );
+      rows.style.maxHeight = `${vertical.availableHeight}px`;
+      tooltip.style.setProperty("--timeline-tooltip-row-height", `${vertical.rowHeight}px`);
+      const tooltipWidth = tooltip.offsetWidth;
+      const tooltipHeight = tooltip.offsetHeight;
+      const cursorLeft = u.cursor.left;
+      const cursorTop = u.cursor.top;
+      const preferredLeft = cursorLeft + gap + tooltipWidth <= over.clientWidth
+        ? cursorLeft + gap
+        : cursorLeft - gap - tooltipWidth;
+      const left = Math.max(inset, Math.min(preferredLeft, Math.max(inset, over.clientWidth - inset - tooltipWidth)));
+      const top = Math.max(inset, Math.min(cursorTop + gap, Math.max(inset, over.clientHeight - inset - tooltipHeight)));
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
     };
     return {hooks: {
       ready: [u => {
@@ -624,51 +666,35 @@
       setCursor: [u => {
         if (!over || !tooltip) return;
         const index = u.cursor.idx;
-        if (!active || !Number.isInteger(index) || index < 0 || index >= axis.length) {
+        if (!active || !Number.isInteger(index) || index < 0 || index >= axis.length || !timelineTooltipCursorInside(u.cursor, over)) {
           tooltip.hidden = true;
           return;
         }
-        header.textContent = new Date(axis[index].completed_at).toLocaleString();
-        rows.replaceChildren();
-        for (const item of items) {
-          const value = item.values[index];
-          const row = document.createElement("div");
-          row.className = "timeline-tooltip-row";
-          const model = document.createElement("div");
-          model.className = "timeline-tooltip-model";
-          const swatch = document.createElement("i");
-          swatch.className = "timeline-tooltip-swatch";
-          swatch.style.background = cssSeries(pins.indexOf(item.model));
-          const name = document.createElement("span");
-          name.textContent = pinParts(item.model, providers).model;
-          const valueElement = document.createElement("span");
-          valueElement.className = "timeline-tooltip-value";
-          valueElement.textContent = timelineTooltipValue(value);
-          model.append(swatch, name);
-          row.append(model, valueElement);
-          rows.appendChild(row);
+        if (index !== lastIndex) {
+          header.textContent = new Date(axis[index].completed_at).toLocaleString();
+          rows.replaceChildren();
+          for (const item of items) {
+            const value = item.values[index];
+            const row = document.createElement("div");
+            row.className = "timeline-tooltip-row";
+            const model = document.createElement("div");
+            model.className = "timeline-tooltip-model";
+            const swatch = document.createElement("i");
+            swatch.className = "timeline-tooltip-swatch";
+            swatch.style.background = cssSeries(pins.indexOf(item.model));
+            const name = document.createElement("span");
+            name.textContent = pinParts(item.model, providers).model;
+            const valueElement = document.createElement("span");
+            valueElement.className = "timeline-tooltip-value";
+            valueElement.textContent = timelineTooltipValue(value);
+            model.append(swatch, name);
+            row.append(model, valueElement);
+            rows.appendChild(row);
+          }
+          footer.textContent = aspect.unit ? `${aspect.unit} · — = no observation` : "— = no observation";
+          lastIndex = index;
         }
-        footer.textContent = aspect.unit ? `${aspect.unit} · — = no observation` : "— = no observation";
-
-        const inset = 8, gap = 10;
-        tooltip.style.left = "0px";
-        tooltip.style.top = "0px";
-        tooltip.style.maxHeight = `${Math.max(0, over.clientHeight - inset * 2)}px`;
-        rows.style.maxHeight = "none";
-        tooltip.hidden = false;
-        const chromeHeight = header.offsetHeight + footer.offsetHeight + 2;
-        rows.style.maxHeight = `${Math.max(0, over.clientHeight - inset * 2 - chromeHeight)}px`;
-        const tooltipWidth = tooltip.offsetWidth;
-        const tooltipHeight = tooltip.offsetHeight;
-        const cursorLeft = u.cursor.left;
-        const cursorTop = u.cursor.top;
-        const preferredLeft = cursorLeft + gap + tooltipWidth <= over.clientWidth
-          ? cursorLeft + gap
-          : cursorLeft - gap - tooltipWidth;
-        const left = Math.max(inset, Math.min(preferredLeft, Math.max(inset, over.clientWidth - inset - tooltipWidth)));
-        const top = Math.max(inset, Math.min(cursorTop + gap, Math.max(inset, over.clientHeight - inset - tooltipHeight)));
-        tooltip.style.left = `${left}px`;
-        tooltip.style.top = `${top}px`;
+        positionTooltip(u);
       }],
       destroy: [() => {
         if (!over) return;

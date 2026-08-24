@@ -5,6 +5,7 @@ from html.parser import HTMLParser
 from importlib import resources
 from pathlib import PurePosixPath
 import re
+import subprocess
 from urllib.parse import urlsplit
 
 import pytest
@@ -1096,12 +1097,68 @@ def test_numeric_timeline_tooltip_is_pointer_gated_and_edge_bounded() -> None:
     assert "over.clientHeight" in plugin
     assert "tooltip.style.maxHeight" in plugin
     assert "rows.style.maxHeight" in plugin
-    assert re.search(r"header\.offsetHeight\s*\+\s*footer\.offsetHeight", plugin)
+    assert re.search(
+        r"timelineTooltipVerticalLayout\(\s*over\.clientHeight,\s*header\.offsetHeight,\s*footer\.offsetHeight,",
+        plugin,
+    )
     assert re.search(r"cursorLeft\s*\+\s*gap\s*\+\s*tooltipWidth\s*<=\s*over\.clientWidth", plugin)
     assert "Math.max(inset, Math.min(" in plugin
     assert "tooltip.style.left" in plugin
     assert "tooltip.style.top" in plugin
-    assert "lastIndex" not in plugin
+
+
+def test_numeric_timeline_tooltip_runtime_cursor_gate_rejects_synced_rail_position() -> None:
+    source = _read_asset("app.js")
+    helper = re.search(
+        r"  function timelineTooltipCursorInside\([^)]*\) \{.*?^  \}",
+        source,
+        re.DOTALL | re.MULTILINE,
+    )
+
+    assert helper is not None
+    probe = subprocess.run(
+        [
+            "node",
+            "-e",
+            f"""
+{helper.group(0)}
+const over = {{clientWidth: 801, clientHeight: 193}};
+if (timelineTooltipCursorInside({{left: 400, top: -10}}, over)) process.exit(1);
+if (timelineTooltipCursorInside({{left: Number.NaN, top: 50}}, over)) process.exit(2);
+if (timelineTooltipCursorInside({{left: 802, top: 50}}, over)) process.exit(3);
+if (!timelineTooltipCursorInside({{left: 400, top: 96}}, over)) process.exit(4);
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert probe.returncode == 0, probe.stderr
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    assert "!timelineTooltipCursorInside(u.cursor, over)" in plugin
+
+
+def test_numeric_timeline_tooltip_caches_content_but_always_repositions() -> None:
+    source = _read_asset("app.js")
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    cursor = plugin[plugin.index("setCursor:") : plugin.index("destroy:")]
+
+    assert "let lastIndex = null" in plugin
+    assert "if (index !== lastIndex)" in cursor
+    assert "lastIndex = index" in cursor
+    assert "rows.replaceChildren()" in cursor
+    assert "const positionTooltip = u =>" in plugin
+    assert "positionTooltip(u)" in cursor
+    assert cursor.index("lastIndex = index") < cursor.index("positionTooltip(u)")
 
 
 def test_numeric_timeline_tooltip_css_keeps_eight_value_rows_visible() -> None:
@@ -1129,8 +1186,10 @@ def test_numeric_timeline_tooltip_css_keeps_eight_value_rows_visible() -> None:
     assert 'font-family: ui-monospace, "SFMono-Regular", Consolas, monospace' in tooltip
     assert "display: none" in declarations(".plot-host .timeline-tooltip[hidden]")
     assert "min-height: 0" in rows
-    assert "overflow-y: auto" in rows
+    assert "overflow-y: hidden" in rows
     assert "grid-template-columns: minmax(0, 1fr) auto" in row
+    assert "height: var(--timeline-tooltip-row-height)" in row
+    assert "box-sizing: border-box" in row
     assert "min-width: 0" in model
     assert "text-overflow: ellipsis" in model
     assert "white-space: nowrap" in model
@@ -1139,6 +1198,47 @@ def test_numeric_timeline_tooltip_css_keeps_eight_value_rows_visible() -> None:
     assert "white-space: nowrap" in value
     assert "border-block-end:" in header
     assert "border-block-start:" in footer
+
+
+def test_numeric_timeline_tooltip_runtime_layout_keeps_eight_rows_visible() -> None:
+    source = _read_asset("app.js")
+    helper = re.search(
+        r"  function timelineTooltipVerticalLayout\([^)]*\) \{.*?^  \}",
+        source,
+        re.DOTALL | re.MULTILINE,
+    )
+
+    assert helper is not None
+    probe = subprocess.run(
+        [
+            "node",
+            "-e",
+            f"""
+{helper.group(0)}
+const layout = timelineTooltipVerticalLayout(193, 27, 27, 8);
+const viewport = {{top: 0, bottom: layout.availableHeight}};
+const rowRects = Array.from({{length: 8}}, (_, index) => ({{
+  top: index * layout.rowHeight,
+  bottom: (index + 1) * layout.rowHeight,
+}}));
+if (layout.rowHeight < 14) process.exit(1);
+if (!rowRects.every(rect => rect.top >= viewport.top && rect.bottom <= viewport.bottom)) process.exit(2);
+if (rowRects[7].bottom > viewport.bottom) process.exit(3);
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert probe.returncode == 0, probe.stderr
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    assert "timelineTooltipVerticalLayout(" in plugin
+    assert 'tooltip.style.setProperty("--timeline-tooltip-row-height"' in plugin
 
 
 def test_models_legend_reset_and_local_date_zoom_regressions() -> None:
