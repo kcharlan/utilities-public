@@ -153,13 +153,23 @@ def test_browse_missing_database_exits_without_creating_it(
     assert not database_path.exists()
 
 
-def test_browse_dispatches_before_runtime_writes(
+@pytest.mark.parametrize(
+    ("argv0", "expected_invocation"),
+    (
+        ("/opt/tools/renamed-sentinel", "renamed-sentinel"),
+        ("/checkout/model_sentinel/__main__.py", "python -m model_sentinel"),
+    ),
+)
+def test_browse_dispatches_resolved_invocation_before_runtime_writes(
     tmp_path: Path,
     monkeypatch,
+    argv0: str,
+    expected_invocation: str,
 ) -> None:
     runtime_home = _write_config_files(tmp_path)
     build_fixture_db(runtime_home / "model_sentinel.db")
     monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setattr(sys, "argv", [argv0])
 
     def reject_write(*args, **kwargs):
         raise AssertionError("browse attempted a runtime write")
@@ -182,6 +192,7 @@ def test_browse_dispatches_before_runtime_writes(
     assert received["port"] == 8123
     assert received["open_browser"] is False
     assert received["initial_provider"] is None
+    assert received["display_invocation"] == expected_invocation
     assert received["db"].connection().execute("PRAGMA query_only").fetchone()[0] == 1
     received["db"].close_all()
 

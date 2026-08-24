@@ -292,6 +292,7 @@ def run_browse(
     port: int,
     open_browser: bool,
     initial_provider: str | None,
+    display_invocation: str = "model-sentinel",
 ) -> int:
     server: ThreadingHTTPServer | None = None
     try:
@@ -310,6 +311,7 @@ def run_browse(
             profiles=profiles,
             settings=loaded.settings,
             aspects=aspects,
+            display_invocation=display_invocation,
         )
 
         server, resolved_port = _bind_server(ctx, port=port)

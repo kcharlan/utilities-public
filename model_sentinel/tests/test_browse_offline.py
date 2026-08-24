@@ -697,6 +697,14 @@ def test_frontend_replaces_initial_defaults_and_sanitizes_hash_state() -> None:
     assert "<${ErrorBoundary}><${App} /></${ErrorBoundary}>" in source
 
 
+def test_empty_history_guidance_uses_display_invocation_as_text() -> None:
+    source = _read_asset("app.js")
+
+    assert 'const invocation = meta.display_invocation || "model-sentinel";' in source
+    assert "<code>${invocation} scan --save</code>" in source
+    assert "<code>model-sentinel scan --save</code>" not in source
+
+
 def test_heatmap_uses_roving_buttons_without_incomplete_grid_roles() -> None:
     source = _read_asset("app.js")
 

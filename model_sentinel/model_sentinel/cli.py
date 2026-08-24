@@ -281,6 +281,7 @@ def run_browse_command(*, args: argparse.Namespace, loaded) -> int:
             port=args.port,
             open_browser=not args.no_open,
             initial_provider=args.provider,
+            display_invocation=_invocation_name(),
         )
     finally:
         database.close_all()
