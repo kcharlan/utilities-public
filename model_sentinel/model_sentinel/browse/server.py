@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import socket
+import sqlite3
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +18,7 @@ from ..reporting import detail_policy_from_settings
 from . import api, queries
 from .api import ApiContext, BadRequest, NotFound
 from .aspects import build_aspect_catalog
-from .readonly import DatabaseBusyError
+from .readonly import DatabaseBusyError, is_database_busy_error
 
 
 _LOG = logging.getLogger("model_sentinel.browse")
@@ -104,6 +105,12 @@ class _BrowseHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": exc.message})
         except DatabaseBusyError:
             self._send_json(503, {"error": _BUSY_MESSAGE})
+        except sqlite3.OperationalError as exc:
+            if is_database_busy_error(exc):
+                self._send_json(503, {"error": _BUSY_MESSAGE})
+                return
+            _LOG.exception("Browse request failed")
+            self._send_json(500, {"error": f"internal error: {type(exc).__name__}"})
         except Exception as exc:
             _LOG.exception("Browse request failed")
             self._send_json(500, {"error": f"internal error: {type(exc).__name__}"})

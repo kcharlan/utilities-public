@@ -22,6 +22,15 @@ class DatabaseBusyError(RuntimeError):
     """Raised when a concurrent writer prevents a browser query."""
 
 
+def is_database_busy_error(exc: sqlite3.OperationalError) -> bool:
+    """Return whether ``exc`` represents SQLite's busy/locked condition."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    message = str(exc).casefold()
+    return "locked" in message or "busy" in message
+
+
 _REQUIRED_SCHEMA: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "providers",

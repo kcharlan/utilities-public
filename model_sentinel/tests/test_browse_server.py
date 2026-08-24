@@ -4,6 +4,7 @@ import errno
 import hashlib
 import http.client
 import json
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -66,7 +67,7 @@ def browse_server(tmp_path: Path):
 
 def _request(server, method: str, target: str, *, host: str | None = None):
     port = server.server_address[1]
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     headers = {} if host is None else {"Host": host}
     connection.request(method, target, headers=headers)
     response = connection.getresponse()
@@ -308,6 +309,18 @@ def test_busy_and_unexpected_exceptions_have_safe_json_errors(
         "error": "The database is busy — a scan may be writing. Try again in a moment."
     }
 
+    def invalid_query(*args, **kwargs):
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("SELECT * FROM synthetic_busy_table")
+        finally:
+            connection.close()
+
+    monkeypatch.setattr(api, "meta", invalid_query)
+    status, _, body = _request(server, "GET", "/api/meta")
+    assert status == 500
+    assert json.loads(body) == {"error": "internal error: OperationalError"}
+
     def explode(*args, **kwargs):
         raise RuntimeError("synthetic private detail")
 
@@ -316,6 +329,33 @@ def test_busy_and_unexpected_exceptions_have_safe_json_errors(
     assert status == 500
     assert json.loads(body) == {"error": "internal error: RuntimeError"}
     assert b"private detail" not in body
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        "/api/activity",
+        "/api/series?models=example-provider/fake-org/test-model-a&aspects=example-provider:input_price",
+        "/api/events?models=example-provider/fake-org/test-model-a",
+    ),
+)
+def test_locked_database_returns_retryable_503_from_every_query_path(
+    browse_server, target: str
+) -> None:
+    server, _, database_path, _ = browse_server
+    writer = sqlite3.connect(database_path, timeout=0)
+    try:
+        writer.execute("BEGIN EXCLUSIVE")
+
+        status, _, body = _request(server, "GET", target)
+
+        assert status == 503
+        assert json.loads(body) == {
+            "error": "The database is busy — a scan may be writing. Try again in a moment."
+        }
+    finally:
+        writer.rollback()
+        writer.close()
 
 
 def test_concurrent_requests_use_distinct_thread_connections_and_do_not_write_fixture(

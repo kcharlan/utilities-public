@@ -9,7 +9,7 @@ from typing import Any, ParamSpec, TypeVar
 from ..storage import load_json_value
 from ..time_utils import local_date_for
 from .aspects import _CANONICAL_COLUMNS, _safe_path
-from .readonly import DatabaseBusyError
+from .readonly import DatabaseBusyError, is_database_busy_error
 
 
 _P = ParamSpec("_P")
@@ -23,8 +23,7 @@ def _translate_busy(function: Callable[_P, _R]) -> Callable[_P, _R]:
         try:
             return function(*args, **kwargs)
         except sqlite3.OperationalError as exc:
-            message = str(exc).casefold()
-            if "locked" in message or "busy" in message:
+            if is_database_busy_error(exc):
                 raise DatabaseBusyError(str(exc)) from exc
             raise
 
