@@ -65,9 +65,16 @@ def browse_server(tmp_path: Path):
     db.close_all()
 
 
-def _request(server, method: str, target: str, *, host: str | None = None):
+def _request(
+    server,
+    method: str,
+    target: str,
+    *,
+    host: str | None = None,
+    timeout: float = 5,
+):
     port = server.server_address[1]
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     headers = {} if host is None else {"Host": host}
     connection.request(method, target, headers=headers)
     response = connection.getresponse()
@@ -331,28 +338,32 @@ def test_busy_and_unexpected_exceptions_have_safe_json_errors(
     assert b"private detail" not in body
 
 
-@pytest.mark.parametrize(
-    "target",
-    (
+def test_locked_database_returns_retryable_503_from_every_query_path(
+    browse_server,
+) -> None:
+    targets = (
         "/api/activity",
         "/api/series?models=example-provider/fake-org/test-model-a&aspects=example-provider:input_price",
         "/api/events?models=example-provider/fake-org/test-model-a",
-    ),
-)
-def test_locked_database_returns_retryable_503_from_every_query_path(
-    browse_server, target: str
-) -> None:
+    )
     server, _, database_path, _ = browse_server
     writer = sqlite3.connect(database_path, timeout=0)
     try:
         writer.execute("BEGIN EXCLUSIVE")
 
-        status, _, body = _request(server, "GET", target)
+        with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+            responses = list(
+                pool.map(
+                    lambda target: _request(server, "GET", target, timeout=10),
+                    targets,
+                )
+            )
 
-        assert status == 503
-        assert json.loads(body) == {
-            "error": "The database is busy — a scan may be writing. Try again in a moment."
-        }
+        for target, (status, _, body) in zip(targets, responses, strict=True):
+            assert status == 503, target
+            assert json.loads(body) == {
+                "error": "The database is busy — a scan may be writing. Try again in a moment."
+            }, target
     finally:
         writer.rollback()
         writer.close()
