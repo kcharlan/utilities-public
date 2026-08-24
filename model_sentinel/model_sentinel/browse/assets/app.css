@@ -864,7 +864,7 @@ legend,
 .event-mark.dim { color: var(--dim); background: var(--dim); }
 .event-mark.is-squelched { opacity: 0.4; }
 
-.timeline-panel { min-width: 0; overflow: hidden; }
+.timeline-panel { min-width: 0; overflow: visible; }
 .panel-heading h2 { display: flex; gap: 0.45rem; align-items: baseline; }
 .panel-heading h2 small { color: var(--ink-muted); font-size: 0.62rem; font-weight: 400; }
 .panel-heading h2 .panel-provider { padding: 0.12rem 0.3rem; border: 1px solid var(--border); color: var(--accent); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.55rem; text-transform: uppercase; }
@@ -881,12 +881,34 @@ legend,
 .state-strip-row > strong { display: flex; gap: 0.45rem; align-items: center; min-width: 0; padding: 0.5rem 0.65rem; overflow: hidden; color: var(--ink-strong); font-size: 0.65rem; text-overflow: ellipsis; white-space: nowrap; }
 .state-strip-row > strong i { flex: 0 0 auto; width: 0.45rem; height: 1.25rem; }
 .state-strip-row > div { display: grid; grid-template-columns: repeat(var(--axis-count), minmax(1px, 1fr)); gap: 1px; min-width: 0; background: var(--border); }
-.state-strip-row span { min-width: 0; background: transparent; }
+.state-strip-row span { position: relative; min-width: 0; background: transparent; }
 .state-strip-row span.true { background: var(--capability); }
 .state-strip-row span.false { background: var(--dim); }
 .state-strip-row span.list-0 { background: color-mix(in srgb, var(--capability) 78%, var(--panel)); }
 .state-strip-row span.list-1 { background: color-mix(in srgb, var(--capacity) 72%, var(--panel)); }
 .state-strip-row span:hover { outline: 2px solid var(--ink-strong); outline-offset: -2px; }
+.state-strip-row span:hover::after,
+.state-strip-row span:focus-visible::after {
+  position: absolute;
+  z-index: 40;
+  bottom: calc(100% + 0.35rem);
+  left: 50%;
+  width: max-content;
+  max-width: min(24rem, 70vw);
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border-strong);
+  color: var(--ink-strong);
+  background: var(--panel-raised);
+  box-shadow: 0 0.45rem 1.2rem var(--shadow);
+  content: attr(data-tooltip);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  transform: translateX(-50%);
+  white-space: normal;
+}
 
 .catalog-view {
   display: grid;

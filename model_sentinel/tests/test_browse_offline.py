@@ -809,7 +809,7 @@ def test_models_state_strips_and_event_rail_preserve_semantics() -> None:
     assert 'aspect.kind === "boolean" || aspect.kind === "list"' in source
     assert 'aspect.kind === "scalar"' in source
     assert 'String(value)' in source
-    assert "item.list_hash[index]" in source
+    assert 'listToneAt(aspect.kind === "list" ? item.list_hash : item.values, index)' in source
     assert 'value === null ? "missing" : value ? "true" : "false"' in source
     assert "function eventTone(event)" in source
     assert 'event.semantic === "cost"' in source
@@ -821,6 +821,25 @@ def test_models_state_strips_and_event_rail_preserve_semantics() -> None:
     assert "height: 56px" in styles
     assert ".event-mark.is-squelched" in styles
     assert "opacity: 0.4" in styles
+
+
+def test_state_strip_exposes_members_and_roving_keyboard_tooltips() -> None:
+    source = _read_asset("app.js")
+    styles = _read_asset("app.css")
+
+    assert "function stateSegmentLabel(" in source
+    assert "item.members[index]" in source
+    assert "Actual members:" in source
+    assert 'tabIndex=${index === 0 ? 0 : -1}' in source
+    assert 'event.key === "ArrowLeft"' in source
+    assert 'event.key === "ArrowRight"' in source
+    assert 'event.key === "Home"' in source
+    assert 'event.key === "End"' in source
+    assert "aria-label=${label}" in source
+    assert 'role="img"' in source
+    assert "data-tooltip=${label}" in source
+    assert '.state-strip-row span:hover::after' in styles
+    assert '.state-strip-row span:focus-visible::after' in styles
 
 
 def test_event_rail_allocates_a_distinct_lane_for_every_same_day_event() -> None:

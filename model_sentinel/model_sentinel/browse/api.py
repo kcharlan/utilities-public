@@ -737,21 +737,22 @@ def series(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         for aspect in aspects:
             if aspect.provider_id != provider_id:
                 continue
-            values, hashes = [], []
+            values, hashes, members = [], [], []
             for point in axis:
                 row = values_by_provider[provider_id].get((point["scrape_id"], model_id)) if point["provider_id"] == provider_id else None
                 if row is None:
-                    value, value_hash = None, None
+                    raw = None
                 elif aspect.source == "column":
-                    value, value_hash = _series_value(aspect, row[aspect.column])
+                    raw = row[aspect.column]
                 else:
                     raw = _decode_path_value(row[queries.path_value_key(aspect.path)], row[queries.path_type_key(aspect.path)])
-                    value, value_hash = _series_value(aspect, raw)
+                value, value_hash = _series_value(aspect, raw)
                 values.append(value)
                 hashes.append(value_hash)
+                members.append(list(raw) if aspect.kind == "list" and isinstance(raw, list) else None)
             output.append(
                 {"model": f"{provider_id}/{model_id}", "aspect": aspect.id, "provider_id": provider_id, "kind": aspect.kind,
-                 "unit": aspect.unit, "values": values, "list_hash": hashes}
+                 "unit": aspect.unit, "values": values, "list_hash": hashes, "members": members}
             )
     return {"axis": axis_json, "series": output}
 

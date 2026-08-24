@@ -556,7 +556,7 @@ def test_series_union_axis_scaling_and_events(browse_context) -> None:
     assert set(result) == {"axis", "series"}
     assert all(set(point) == {"scrape_id", "provider_id", "date", "completed_at", "t"} for point in result["axis"])
     assert all(
-        set(item) == {"model", "aspect", "provider_id", "kind", "unit", "values", "list_hash"}
+        set(item) == {"model", "aspect", "provider_id", "kind", "unit", "values", "list_hash", "members"}
         for item in result["series"]
     )
     assert {point["provider_id"] for point in result["axis"]} == set(facts.provider_ids)
@@ -575,6 +575,13 @@ def test_series_union_axis_scaling_and_events(browse_context) -> None:
     )
     assert any(value == 2 for value in list_result["series"][0]["values"])
     assert any(value_hash is not None for value_hash in list_result["series"][0]["list_hash"])
+    list_series = list_result["series"][0]
+    observed_members = [members for members in list_series["members"] if members is not None]
+    assert observed_members
+    assert all(isinstance(members, list) for members in observed_members)
+    assert any("tools" in members for members in observed_members)
+    assert [len(members) if members is not None else None for members in list_series["members"]] == list_series["values"]
+    assert all(item["members"] == [None] * len(result["axis"]) for item in result["series"])
 
     events = api.events(context, {"models": f"{EXAMPLE_PROVIDER.provider_id}/{model}"})
     assert events
