@@ -677,6 +677,43 @@ def validate_policy(policy: Dict[str, Any]) -> Dict[str, Any]:
 
 SqlDdlToken = Tuple[str, str, str]
 
+SQLITE_CANONICAL_DDL_KEYWORDS = frozenset({
+    "action",
+    "and",
+    "asc",
+    "cascade",
+    "check",
+    "collate",
+    "constraint",
+    "create",
+    "default",
+    "deferrable",
+    "delete",
+    "desc",
+    "false",
+    "foreign",
+    "if",
+    "in",
+    "index",
+    "initially",
+    "is",
+    "key",
+    "match",
+    "no",
+    "not",
+    "null",
+    "on",
+    "or",
+    "primary",
+    "references",
+    "restrict",
+    "set",
+    "table",
+    "true",
+    "unique",
+    "update",
+})
+
 
 def _ascii_sql_lower(value: str) -> str:
     """Apply SQLite's ASCII-only case-insensitive identifier normalization."""
@@ -697,16 +734,55 @@ def _sql_ddl_token_is_word(token: SqlDdlToken, word: str) -> bool:
     return token[0] == "word" and token[1] == word
 
 
-def _canonical_sql_ddl_tokens(
-    tokens: Sequence[SqlDdlToken],
-) -> Tuple[Tuple[str, str], ...]:
-    canonical: List[Tuple[str, str]] = []
-    for kind, value, _quote in tokens:
-        if kind in {"word", "quoted_identifier"}:
-            canonical.append(("name", value))
-        else:
-            canonical.append((kind, value))
-    return tuple(canonical)
+def _sql_ddl_tokens_match(
+    actual_tokens: Sequence[SqlDdlToken],
+    expected_tokens: Sequence[SqlDdlToken],
+) -> bool:
+    if len(actual_tokens) != len(expected_tokens):
+        return False
+    for actual, expected in zip(actual_tokens, expected_tokens):
+        actual_kind, actual_value, _actual_quote = actual
+        expected_kind, expected_value, _expected_quote = expected
+        if actual_kind in {"word", "quoted_identifier"} and not actual_value.isascii():
+            return False
+        if expected_kind == "word":
+            if expected_value in SQLITE_CANONICAL_DDL_KEYWORDS:
+                if actual_kind != "word" or actual_value != expected_value:
+                    return False
+            elif (
+                actual_kind not in {"word", "quoted_identifier"}
+                or actual_value != expected_value
+            ):
+                return False
+        elif expected_kind == "quoted_identifier":
+            if (
+                actual_kind not in {"word", "quoted_identifier"}
+                or actual_value != expected_value
+            ):
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
+def _sql_ddl_clause_collections_match(
+    actual_clauses: Sequence[Sequence[SqlDdlToken]],
+    expected_clauses: Sequence[Sequence[SqlDdlToken]],
+) -> bool:
+    unmatched_actual = list(actual_clauses)
+    for expected_clause in expected_clauses:
+        match_index = next(
+            (
+                index
+                for index, actual_clause in enumerate(unmatched_actual)
+                if _sql_ddl_tokens_match(actual_clause, expected_clause)
+            ),
+            None,
+        )
+        if match_index is None:
+            return False
+        unmatched_actual.pop(match_index)
+    return not unmatched_actual
 
 
 def _tokenize_sqlite_ddl(sql: str) -> Tuple[SqlDdlToken, ...]:
@@ -769,6 +845,13 @@ def _tokenize_sqlite_ddl(sql: str) -> Tuple[SqlDdlToken, ...]:
                     character,
                 )
             )
+            continue
+        if character.isdigit():
+            token_end = index + 1
+            while token_end < length and sql[token_end].isdigit():
+                token_end += 1
+            tokens.append(_sql_ddl_token("number", sql[index:token_end]))
+            index = token_end
             continue
         if character.isalnum() or character in {"_", "$"}:
             token_end = index + 1
@@ -1328,6 +1411,7 @@ V4_INDEX_DESCENDING.update({
     "idx_device_registrations_mac_sequence": (0, 1),
     "idx_router_snapshot_history": (0, 0, 1, 1),
 })
+SQLITE_DATABASE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
 
 
 class StateStore:
@@ -1336,9 +1420,14 @@ class StateStore:
         self.db_path = Path(":memory:") if is_memory else db_path.expanduser()
         if not is_memory:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            if self.db_path.exists() and not self.db_path.is_file():
-                self._raise_schema_error("the database path is not an ordinary file")
-            if self.db_path.exists() and self.db_path.stat().st_size > 0:
+            artifacts = self._database_artifact_signature()
+            main_artifact = artifacts.get("")
+            has_sidecars = any(suffix != "" for suffix in artifacts)
+            if has_sidecars and (main_artifact is None or main_artifact[2] == 0):
+                self._raise_schema_error(
+                    "a SQLite sidecar or journal artifact exists without a non-empty main database"
+                )
+            if main_artifact is not None and main_artifact[2] > 0:
                 self._preflight_existing_database()
         self.conn = self._open_connection(":memory:" if is_memory else str(self.db_path))
         try:
@@ -1359,7 +1448,7 @@ class StateStore:
 
     def _database_artifact_signature(self) -> Dict[str, Tuple[int, int, int, int]]:
         signature: Dict[str, Tuple[int, int, int, int]] = {}
-        for suffix in ("", "-wal", "-shm"):
+        for suffix in SQLITE_DATABASE_ARTIFACT_SUFFIXES:
             artifact = Path(f"{self.db_path}{suffix}")
             if not artifact.exists():
                 continue
@@ -1388,7 +1477,7 @@ class StateStore:
                     attempt_directory.mkdir()
                     candidate_path = attempt_directory / "database.db"
                     try:
-                        for suffix in ("", "-wal", "-shm"):
+                        for suffix in SQLITE_DATABASE_ARTIFACT_SUFFIXES:
                             if suffix not in before:
                                 continue
                             shutil.copy2(
@@ -1586,10 +1675,9 @@ class StateStore:
                 if any(_sql_ddl_token_is_word(token, "check") for token in clause)
             ]
             expected_check_clauses = _expected_check_clauses(checks[table])
-            if sorted(
-                _canonical_sql_ddl_tokens(clause) for clause in actual_check_clauses
-            ) != sorted(
-                _canonical_sql_ddl_tokens(clause) for clause in expected_check_clauses
+            if not _sql_ddl_clause_collections_match(
+                actual_check_clauses,
+                tuple(expected_check_clauses),
             ):
                 self._raise_schema_error(
                     f"required table {table!r} has unexpected CHECK constraints"
@@ -1602,12 +1690,9 @@ class StateStore:
             expected_foreign_key_clauses = _expected_foreign_key_clauses(
                 foreign_keys.get(table, set())
             )
-            if sorted(
-                _canonical_sql_ddl_tokens(clause)
-                for clause in actual_foreign_key_clauses
-            ) != sorted(
-                _canonical_sql_ddl_tokens(clause)
-                for clause in expected_foreign_key_clauses
+            if not _sql_ddl_clause_collections_match(
+                actual_foreign_key_clauses,
+                tuple(expected_foreign_key_clauses),
             ):
                 self._raise_schema_error(
                     f"required table {table!r} has unexpected foreign-key SQL"
@@ -1665,9 +1750,10 @@ class StateStore:
                 self._raise_schema_error(
                     f"required index {index!r} has malformed SQL ({exc})"
                 )
-            if _canonical_sql_ddl_tokens(
-                actual_index_tokens
-            ) != _canonical_sql_ddl_tokens(_tokenize_sqlite_ddl(expected_index_sql)):
+            if not _sql_ddl_tokens_match(
+                actual_index_tokens,
+                _tokenize_sqlite_ddl(expected_index_sql),
+            ):
                 self._raise_schema_error(f"required index {index!r} has unexpected SQL")
 
         for table, expected in foreign_keys.items():

@@ -476,12 +476,56 @@ os._exit(0)
 
 def database_artifact_state(db_path: Path) -> dict[str, tuple[bytes, int, int]]:
     state = {}
-    for suffix in ("", "-wal", "-shm"):
+    for suffix in ("", "-wal", "-shm", "-journal"):
         artifact = Path(f"{db_path}{suffix}")
         if artifact.exists():
             stat = artifact.stat()
             state[suffix] = (artifact.read_bytes(), stat.st_size, stat.st_mtime_ns)
     return state
+
+
+def strand_hot_journal(db_path: Path, transient_schema_version: int) -> None:
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "CREATE TABLE synthetic_hot_journal_pages(id INTEGER PRIMARY KEY, payload TEXT)"
+    )
+    connection.executemany(
+        "INSERT INTO synthetic_hot_journal_pages VALUES(?, ?)",
+        [(index, "a" * 3000) for index in range(96)],
+    )
+    connection.commit()
+    connection.close()
+    child = """
+import os
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+assert connection.execute("PRAGMA journal_mode = DELETE").fetchone()[0] == "delete"
+connection.execute("PRAGMA synchronous = FULL")
+connection.execute("PRAGMA cache_size = 1")
+connection.execute("BEGIN IMMEDIATE")
+connection.execute(
+    "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+    (sys.argv[2],),
+)
+for index in range(96):
+    connection.execute(
+        "UPDATE synthetic_hot_journal_pages SET payload = ? WHERE id = ?",
+        ("b" * 3000, index),
+    )
+os._exit(0)
+"""
+    subprocess.run(
+        [sys.executable, "-c", child, str(db_path), str(transient_schema_version)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    journal_path = Path(f"{db_path}-journal")
+    assert journal_path.is_file()
+    assert journal_path.stat().st_size > 512
+    assert journal_path.read_bytes()[:8] == bytes.fromhex("d9d505f920a163d7")
 
 
 def test_empty_database_is_created_directly_as_schema_v4_with_foreign_keys_enabled(
@@ -527,6 +571,37 @@ def test_existing_zero_length_database_is_created_directly_as_schema_v4(
         assert store.get_metadata("schema_version") == "4"
     finally:
         store.close()
+
+
+@pytest.mark.parametrize(
+    ("main_state", "sidecars"),
+    [
+        ("zero", ("-wal", "-shm")),
+        ("zero", ("-wal",)),
+        ("zero", ("-shm",)),
+        ("absent", ("-wal", "-shm")),
+        ("absent", ("-journal",)),
+        ("zero", ("-journal",)),
+    ],
+)
+def test_missing_or_zero_main_with_sidecars_fails_closed_without_touching_artifacts(
+    tmp_path: Path,
+    main_state: str,
+    sidecars: tuple[str, ...],
+) -> None:
+    db_path = tmp_path / "orphaned-sidecars.db"
+    if main_state == "zero":
+        db_path.touch()
+    for suffix in sidecars:
+        Path(f"{db_path}{suffix}").write_bytes(
+            f"synthetic orphaned SQLite artifact {suffix}".encode("ascii")
+        )
+    before = database_artifact_state(db_path)
+
+    with pytest.raises(RuntimeError, match="sidecar|journal artifact"):
+        analyzer.StateStore(db_path)
+
+    assert database_artifact_state(db_path) == before
 
 
 def test_explicit_in_memory_database_uses_direct_v4_creation(
@@ -776,6 +851,47 @@ def test_valid_v3_with_stranded_wal_is_preflighted_then_migrated(tmp_path: Path)
         migrated.close()
 
 
+def test_unsupported_v3_with_hot_journal_is_rejected_without_recovering_original(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "unsupported-hot-journal.db"
+    build_v3_database(db_path, populate=False)
+    connection = sqlite3.connect(db_path)
+    connection.execute("UPDATE metadata SET value = '5' WHERE key = 'schema_version'")
+    connection.commit()
+    connection.close()
+    strand_hot_journal(db_path, transient_schema_version=3)
+    before = database_artifact_state(db_path)
+    assert set(before) == {"", "-journal"}
+
+    with pytest.raises(RuntimeError, match="schema version 5 is unsupported"):
+        analyzer.StateStore(db_path)
+
+    assert database_artifact_state(db_path) == before
+
+
+def test_valid_v3_with_hot_journal_is_recovered_on_copy_then_migrated(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "valid-hot-journal.db"
+    build_v3_database(db_path, populate=False)
+    strand_hot_journal(db_path, transient_schema_version=5)
+
+    migrated = analyzer.StateStore(db_path)
+    try:
+        assert migrated.get_metadata("schema_version") == "4"
+        assert [
+            tuple(row)
+            for row in migrated.conn.execute(
+                "SELECT DISTINCT substr(payload, 1, 1) "
+                "FROM synthetic_hot_journal_pages"
+            )
+        ] == [("a",)]
+        assert migrated.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        migrated.close()
+
+
 def test_v4_missing_required_device_observation_uniqueness_fails_closed(
     tmp_path: Path,
 ) -> None:
@@ -918,6 +1034,84 @@ def test_v4_boot_anchor_check_rejects_unicode_confusables_and_string_substitutio
         ).fetchone()[0] == 0
     finally:
         read_only.close()
+
+
+def test_v4_boot_anchor_check_rejects_double_quoted_null_keyword(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "quoted-null-check.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    original_check = (
+        "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL)"
+    )
+    rewrite_sqlite_schema_object(
+        db_path,
+        "router_boot_sessions",
+        lambda sql: sql.replace(
+            original_check,
+            original_check.replace("NULL", '"NULL"', 1),
+            1,
+        ),
+    )
+    before = database_artifact_state(db_path)
+
+    with pytest.raises(RuntimeError, match="router_boot_sessions.*CHECK"):
+        unexpected_store = analyzer.StateStore(db_path)
+        try:
+            router_id = unexpected_store.get_or_create_legacy_netgear_router_instance()
+            unexpected_store.conn.execute(
+                """
+                INSERT INTO router_boot_sessions(
+                  router_instance_id, session_key, trusted_local_anchor,
+                  adapter_boot_id, startup_signature, identity_version, created_at
+                ) VALUES(
+                  ?, 'synthetic-quoted-null-session', NULL, NULL,
+                  'synthetic-startup-signature', 'router-boot-session:v1', ?
+                )
+                """,
+                (router_id, "2037-01-01T00:00:00Z"),
+            )
+        finally:
+            unexpected_store.close()
+
+    assert database_artifact_state(db_path) == before
+
+
+@pytest.mark.parametrize(
+    ("sql_token", "substitution"),
+    [
+        ("CHECK", '"CHECK"'),
+        ("IS", '"IS"'),
+        ("NOT", '"NOT"'),
+        ("OR", '"OR"'),
+        ("NULL", "'NULL'"),
+        ("OR", "'OR'"),
+    ],
+)
+def test_v4_boot_anchor_check_rejects_quoted_keyword_or_literal_substitution(
+    tmp_path: Path,
+    sql_token: str,
+    substitution: str,
+) -> None:
+    db_path = tmp_path / "quoted-keyword-check.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    original_check = (
+        "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL)"
+    )
+    rewritten_check = original_check.replace(sql_token, substitution, 1)
+    rewrite_sqlite_schema_object(
+        db_path,
+        "router_boot_sessions",
+        lambda sql: sql.replace(original_check, rewritten_check, 1),
+    )
+    before = database_artifact_state(db_path)
+
+    with pytest.raises(RuntimeError):
+        analyzer.StateStore(db_path)
+
+    assert database_artifact_state(db_path) == before
 
 
 @pytest.mark.parametrize(
