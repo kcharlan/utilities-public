@@ -1981,10 +1981,12 @@ def test_tp_link_maps_wan_release_and_disconnect_with_boot_context() -> None:
         ("3002", "Internet is up", "INTERNET_CONNECTED"),
         ("3002", "Internet connected", "INTERNET_CONNECTED"),
         ("3002", "Internet is connected", "INTERNET_CONNECTED"),
+        ("3002", "Internet connected.", "INTERNET_CONNECTED"),
         ("3001", "Internet down", "INTERNET_DISCONNECTED"),
         ("3001", "Internet is down", "INTERNET_DISCONNECTED"),
         ("3001", "Internet disconnected", "INTERNET_DISCONNECTED"),
         ("3001", "Internet is disconnected", "INTERNET_DISCONNECTED"),
+        ("3001", "Internet is down!", "INTERNET_DISCONNECTED"),
     ],
 )
 def test_tp_link_maps_evidenced_internet_transition_phrases(
@@ -2101,6 +2103,134 @@ def test_tp_link_failed_startup_fragment_markers_do_not_create_boot_candidates(
     assert parsed.events[0].structured_evidence["action"] == "failure"
     assert parsed.events[0].boot_context_id is None
     assert parsed.boot_candidates == []
+
+
+@pytest.mark.parametrize(
+    ("component", "code", "message"),
+    [
+        ("inet", "3002", "Internet up timeout"),
+        ("inet", "3002", "Internet connected unsuccessfully"),
+        ("inet", "3002", "Internet up aborted"),
+        ("inet", "3002", "Internet up? no"),
+        ("inet", "3002", "Internet connected for synthetic maintenance"),
+        ("inet", "3001", "Internet down canceled"),
+        ("inet", "3001", "Internet down cancel"),
+        ("inet", "3002", "Internet up abort"),
+        ("dhcpc", "1104", "DHCP ACK timeout"),
+        ("dhcpc", "1104", "DHCP ACK timed-out"),
+        ("dhcpc", "1104", "Failed DHCP ACK"),
+        ("dhcpc", "1104", "DHCP NAK"),
+        ("dhcpc", "1101", "DHCP DISCOVER from synthetic-wan"),
+        ("dhcpc", "1102", "DHCP OFFER synthetic-address from 198.51.100.1"),
+        ("dhcpc", "1104", "DHCP ACK from synthetic-interface for 198.51.100.2"),
+        ("dhcpc", "1104", "DHCP ACK for MAC 02:00:00:00:00:02:03"),
+        ("dhcpc", "1103", "DHCP REQUEST for 198.51.100.2 retrying"),
+        ("service", "2001", "Starting network services timeout"),
+        ("service", "2001", "Starting network services for actor SYNTHETIC-NODE-ALPHA timed out"),
+    ],
+)
+def test_tp_link_only_complete_approved_outcomes_create_transitions_or_startup_context(
+    component: str,
+    code: str,
+    message: str,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            f"2042-06-15 11:59:58 {component}[201]: <3> {code} {message}",
+        ]),
+        "synthetic-non-outcome.log",
+        "tp-link-archer",
+    )
+    event = parsed.events[0]
+
+    assert event.event_key not in {
+        "WAN_DHCP_DISCOVER", "WAN_DHCP_OFFER", "WAN_DHCP_REQUEST", "WAN_DHCP_ACK",
+        "WAN_DHCP_RELEASE", "INTERNET_CONNECTED", "INTERNET_DISCONNECTED", "ROUTER_BOOT",
+    }
+    assert event.event_family == "ROUTER_SYSTEM"
+    assert event.boot_context_id is None
+    assert parsed.boot_candidates == []
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "expected_key"),
+    [
+        ("1101", "DHCP DISCOVER", "WAN_DHCP_DISCOVER"),
+        ("1101", "DHCP DISCOVER!", "WAN_DHCP_DISCOVER"),
+        ("1101", "DHCP DISCOVER from 02-00-00-00-00-02", "WAN_DHCP_DISCOVER"),
+        ("1102", "DHCP OFFER 198.51.100.2 from 198.51.100.1", "WAN_DHCP_OFFER"),
+        ("1102", "DHCP OFFER 2001:db8::2 from 2001:db8::1", "WAN_DHCP_OFFER"),
+        ("1103", "DHCP REQUEST for 198.51.100.2", "WAN_DHCP_REQUEST"),
+        (
+            "1104",
+            "DHCP ACK from 198.51.100.1 for 198.51.100.2 with MAC 02:00:00:00:00:02",
+            "WAN_DHCP_ACK",
+        ),
+        (
+            "1104",
+            "DHCP ACK from [2001:db8::1] for [2001:db8::2] with MAC 0200.0000.0002",
+            "WAN_DHCP_ACK",
+        ),
+        ("1104", "DHCP ACK for MAC 02-00-00-00-00-02", "WAN_DHCP_ACK"),
+        ("1105", "DHCP RELEASE 198.51.100.2 from 02:00:00:00:00:02", "WAN_DHCP_RELEASE"),
+    ],
+)
+def test_tp_link_wan_dhcp_transitions_require_complete_approved_grammars(
+    code: str,
+    message: str,
+    expected_key: str,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            f"2042-06-15 11:59:58 dhcpc[310]: <5> {code} {message}",
+        ]),
+        "synthetic-approved-dhcp.log",
+        "tp-link-archer",
+    )
+
+    assert parsed.events[0].event_key == expected_key
+    assert parsed.events[0].event_family == "WAN_DHCP"
+
+
+@pytest.mark.parametrize(
+    ("component", "code", "message", "expected_event_key"),
+    [
+        ("system", "1000", "System startup", "ROUTER_BOOT"),
+        ("system", "1000", "Router boot!", "ROUTER_BOOT"),
+        ("system", "1000", "Router booting.", "ROUTER_BOOT"),
+        ("service", "2001", "Starting network services", "SERVICE_2001_START"),
+        (
+            "service", "2001", "Starting network services for actor SYNTHETIC-NODE-ALPHA",
+            "SERVICE_2001_START",
+        ),
+        (
+            "service", "2001", "Starting network services for actor synthetic@example.invalid",
+            "SERVICE_2001_START",
+        ),
+        (
+            "service", "2001", 'Starting network services for actor "SYNTHETIC NODE ALPHA"',
+            "SERVICE_2001_START",
+        ),
+        ("service", "2003", "Initialize alternate network core", "SERVICE_2003_INITIALIZE"),
+    ],
+)
+def test_tp_link_boot_context_requires_complete_approved_startup_grammars(
+    component: str,
+    code: str,
+    message: str,
+    expected_event_key: str,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            f"2042-06-15 11:59:58 {component}[201]: <5> {code} {message}",
+        ]),
+        "synthetic-approved-startup.log",
+        "tp-link-archer",
+    )
+
+    assert parsed.events[0].event_key == expected_event_key
+    assert parsed.events[0].boot_context_id == "tp-link-boot-1"
+    assert len(parsed.boot_candidates) == 1
 
 
 def test_tp_link_missing_optional_headers_warn_without_discarding_body() -> None:

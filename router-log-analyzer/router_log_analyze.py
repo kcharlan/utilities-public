@@ -10,6 +10,7 @@ import argparse
 import copy
 import hashlib
 import html
+import ipaddress
 import json
 import math
 import os
@@ -1979,9 +1980,60 @@ class TpLinkArcherAdapter(RouterLogAdapter):
         "1104": "ack",
         "1105": "release",
     }
+    _dhcp_success_patterns = {
+        "1101": (
+            re.compile(r"DHCP\s+DISCOVER", re.IGNORECASE),
+            re.compile(r"DHCP\s+DISCOVER\s+from\s+(?P<source>\S+)", re.IGNORECASE),
+        ),
+        "1102": (
+            re.compile(r"DHCP\s+OFFER", re.IGNORECASE),
+            re.compile(
+                r"DHCP\s+OFFER\s+(?P<offered>\S+)\s+from\s+(?P<source>\S+)",
+                re.IGNORECASE,
+            ),
+        ),
+        "1103": (
+            re.compile(r"DHCP\s+REQUEST", re.IGNORECASE),
+            re.compile(r"DHCP\s+REQUEST\s+for\s+(?P<requested>\S+)", re.IGNORECASE),
+        ),
+        "1104": (
+            re.compile(r"DHCP\s+ACK", re.IGNORECASE),
+            re.compile(
+                r"DHCP\s+ACK\s+from\s+(?P<source>\S+)\s+for\s+(?P<assigned>\S+)"
+                r"(?:\s+with\s+MAC\s+(?P<mac>\S+))?",
+                re.IGNORECASE,
+            ),
+            re.compile(r"DHCP\s+ACK\s+for\s+MAC\s+(?P<mac>\S+)", re.IGNORECASE),
+        ),
+        "1105": (
+            re.compile(r"DHCP\s+RELEASE", re.IGNORECASE),
+            re.compile(
+                r"DHCP\s+RELEASE\s+(?P<released>\S+)\s+from\s+(?P<source>\S+)",
+                re.IGNORECASE,
+            ),
+        ),
+    }
+    _internet_success_patterns = {
+        "3002": re.compile(r"Internet\s+(?:is\s+)?(?:connected|up)", re.IGNORECASE),
+        "3001": re.compile(r"Internet\s+(?:is\s+)?(?:disconnected|down)", re.IGNORECASE),
+    }
+    _router_boot_pattern = re.compile(
+        r"(?:system\s+startup|router\s+boot(?:ing)?)",
+        re.IGNORECASE,
+    )
+    _startup_actor_token = (
+        r'(?:"[^"\r\n]{1,128}"|\'[^\'\r\n]{1,128}\'|'
+        r"[A-Za-z0-9][A-Za-z0-9._%+@-]{0,127})"
+    )
     _startup_fragment_patterns = {
-        ("service", "2001"): re.compile(r"^starting\s+network\s+services\b", re.IGNORECASE),
-        ("service", "2003"): re.compile(r"^initialize\s+alternate\s+network\s+core\b", re.IGNORECASE),
+        ("service", "2001"): re.compile(
+            rf"starting\s+network\s+services(?:\s+for\s+actor\s+{_startup_actor_token})?",
+            re.IGNORECASE,
+        ),
+        ("service", "2003"): re.compile(
+            rf"initialize\s+alternate\s+network\s+core(?:\s+for\s+actor\s+{_startup_actor_token})?",
+            re.IGNORECASE,
+        ),
     }
 
     def detect(self, text: str) -> float:
@@ -2215,25 +2267,56 @@ class TpLinkArcherAdapter(RouterLogAdapter):
     def _normalize_event(self, component: str, code: str, message: str) -> Tuple[str, str, str]:
         lowered = message.casefold()
         normalized_component = re.sub(r"[^a-z0-9]+", "_", component).strip("_").upper() or "COMPONENT"
-        if self._failure_pattern.search(lowered):
-            return f"{normalized_component}_{code}_FAILURE", "ROUTER_SYSTEM", "failure"
         action = next((candidate for candidate in self._approved_actions if re.search(rf"\b{candidate}\w*\b", lowered)), "other")
         dhcp_action = self._dhcp_transition_codes.get(code) if component == "dhcpc" else None
-        if dhcp_action is not None and re.search(rf"\bdhcp\s+{dhcp_action}\b", lowered):
+        if dhcp_action is not None and self._matches_dhcp_success(code, message):
             return f"WAN_DHCP_{dhcp_action.upper()}", "WAN_DHCP", dhcp_action
-        if component == "inet" and code == "3002" and re.search(
-            r"\binternet\s+(?:is\s+)?(?:connected|up)\b", lowered,
-        ):
+        outcome = self._without_benign_terminal_punctuation(message)
+        internet_pattern = self._internet_success_patterns.get(code) if component == "inet" else None
+        if internet_pattern is not None and internet_pattern.fullmatch(outcome) and code == "3002":
             return "INTERNET_CONNECTED", "WAN", "connected"
-        if component == "inet" and code == "3001" and re.search(
-            r"\binternet\s+(?:is\s+)?(?:disconnected|down)\b", lowered,
-        ):
+        if internet_pattern is not None and internet_pattern.fullmatch(outcome) and code == "3001":
             return "INTERNET_DISCONNECTED", "WAN", "disconnected"
-        if component == "system" and code == "1000" and re.fullmatch(
-            r"(?:system\s+startup|router\s+boot(?:ing)?)", lowered.strip(),
-        ):
+        if component == "system" and code == "1000" and self._router_boot_pattern.fullmatch(outcome):
             return "ROUTER_BOOT", "ROUTER_SYSTEM", "start"
+        if self._failure_pattern.search(lowered):
+            return f"{normalized_component}_{code}_FAILURE", "ROUTER_SYSTEM", "failure"
         return f"{normalized_component}_{code}_{action.upper()}", "ROUTER_SYSTEM", action
+
+    @staticmethod
+    def _without_benign_terminal_punctuation(message: str) -> str:
+        candidate = message.strip()
+        if candidate.endswith((".", "!")):
+            candidate = candidate[:-1].rstrip()
+        return candidate
+
+    def _matches_dhcp_success(self, code: str, message: str) -> bool:
+        candidate = self._without_benign_terminal_punctuation(message)
+        for pattern in self._dhcp_success_patterns.get(code, ()):
+            match = pattern.fullmatch(candidate)
+            if match is None:
+                continue
+            if all(
+                self._is_approved_address_token(value, exact_mac=name == "mac")
+                for name, value in match.groupdict().items()
+                if value is not None
+            ):
+                return True
+        return False
+
+    def _is_approved_address_token(self, value: str, *, exact_mac: bool) -> bool:
+        if self._normalize_exact_interface_mac(value) is not None:
+            return True
+        if exact_mac:
+            return False
+        unwrapped = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+        if value.startswith("[") != value.endswith("]"):
+            return False
+        try:
+            ipaddress.ip_address(unwrapped)
+        except ValueError:
+            return False
+        return True
 
     def _is_startup_marker(self, event: Event) -> bool:
         if event.structured_evidence.get("action") == "failure":
@@ -2241,7 +2324,8 @@ class TpLinkArcherAdapter(RouterLogAdapter):
         if event.event_key == "ROUTER_BOOT":
             return True
         pattern = self._startup_fragment_patterns.get((event.component or "", event.vendor_event_code or ""))
-        return pattern is not None and pattern.search(event.raw_label) is not None
+        outcome = self._without_benign_terminal_punctuation(event.raw_label)
+        return pattern is not None and pattern.fullmatch(outcome) is not None
 
     @staticmethod
     def _normalize_exact_interface_mac(value: str) -> Optional[str]:
