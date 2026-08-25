@@ -113,7 +113,7 @@ An adapter supplies a set of supported canonical keys/families rather than one c
 
 For the observed TP-Link format, the stable instance key is a digest of the adapter's canonical vendor namespace and the normalized LAN interface MAC address. Model is validated and stored as mutable metadata, not included in physical identity. A changed model string for the same canonical LAN MAC creates a warning and metadata observation rather than silently splitting history.
 
-The LAN MAC and WAN MAC values are registered as router-owned interfaces. They are excluded from client discovery even when they appear in WAN DHCP messages.
+The LAN MAC and WAN MAC values are registered as router-owned interfaces. They are excluded from client discovery for that active parsed router even when they appear in WAN DHCP messages. Historical ownership is retained as router metadata, not as a permanent global client blacklist: a former router interface may later be observed as a client behind a different router instance. A simultaneous cross-instance ownership/client conflict is reported as an identity warning.
 
 Malformed, all-zero, broadcast, or group/multicast LAN MAC values cannot derive persistent identity. Firmware version is mutable instance metadata. A firmware update does not create a new router instance. Reports use a friendly label rather than exposing the internal digest. The default label combines vendor and model with a generated short digest that is not a visible substring of a hardware address.
 
@@ -122,6 +122,8 @@ Malformed, all-zero, broadcast, or group/multicast LAN MAC values cannot derive 
 ### Portable device identity
 
 The existing device registry remains network-wide. MAC address, friendly name, allow/block status, connection type, and cluster membership survive router replacement. Baseline/config registration is recorded separately from run-derived observation provenance.
+
+Durable registrations retain import sequence and source. For each non-null registered field, the latest explicit import wins, preserving the current upsert behavior; omission from a later import does not revoke an older registration. Re-importing the same config digest confirms rather than duplicates its row. Each baseline import intentionally creates a new epoch and therefore a new registration source.
 
 Existing learned device behavior is retained. It is evaluated only when the active adapter declares semantically compatible device-level capabilities. Missing telemetry never contributes a zero observation.
 
@@ -168,7 +170,7 @@ WAN DHCP messages are router-scoped events such as WAN discover, offer, request,
 
 Recognized internet-up and internet-down signals may map to the existing canonical internet transition vocabulary. Boot context remains attached so startup recovery is not automatically treated as an independent outage.
 
-Unknown vendor codes remain reviewable under deterministic keys derived from component, code, and normalized action. Numeric codes and privacy-reduced structured evidence are retained. Complete raw lines are not written to SQLite by default and do not participate directly in occurrence identity. Persisted normalized messages remove address-like tokens and client names already represented through structured identity references. The original source export remains the audit source for future remapping.
+Unknown vendor codes remain reviewable under deterministic keys derived from component, code, and one adapter-approved action token from a small closed vocabulary with an `other` fallback. Volatile message text is evidence, not unbounded behavior vocabulary. Numeric codes and privacy-reduced structured evidence are retained. Complete raw lines are not written to SQLite by default and do not participate directly in occurrence identity. Persisted normalized messages remove address-like tokens and client names already represented through structured identity references. The original source export remains the audit source for future remapping.
 
 ### Client identities in future records
 
@@ -190,20 +192,20 @@ The adapter reconstructs TP-Link emission order from the newest-first body. A co
 - do not expand the observed run duration;
 - may contribute startup-sequence evidence within a resolved boot session.
 
-Backward corrections larger than five minutes or multiple corrections divide the body into clock segments. Only the final monotonic segment that reaches the near-export window is time-trusted; earlier segments are untrusted. These thresholds are adapter constants covered by fixtures rather than general anomaly-policy settings.
+Backward corrections larger than five minutes or multiple corrections divide the body into clock segments, classified independently per boot/clock epoch. A later boot-time correction does not retroactively invalidate a prior boot's already-synchronized segment. A backward correction at an explicit boot boundary starts a new untrusted epoch; a backward jump without boot evidence is clock-ambiguous rather than automatically treated as firmware-date pre-synchronization. The ambiguous interval is excluded from timing/duration learning without discarding surrounding valid calendar evidence. These thresholds are adapter constants covered by fixtures rather than general anomaly-policy settings.
 
-Boot sessions are detected from adapter-defined startup markers and transition sequences whether or not the clock was already correct. Before session assignment, each trusted record receives a session-independent match digest over router instance, router-local timestamp, component, process identifier, vendor code, severity, normalized message, and actor. A persisted boot session has a database identifier, router instance, optional trusted anchor, canonical startup signature, and the trusted match digests assigned to it. The signature uses stable component/code/action tokens and excludes timestamps, process identifiers, full messages, and dependence on the complete visible buffer.
+Boot sessions are detected from adapter-defined startup markers and transition sequences whether or not the clock was already correct. Before session assignment, each trusted record receives a timestamp-bearing session-independent match digest over router instance, router-local timestamp, component, process identifier, vendor code, severity, normalized message, and actor. A persisted boot session has a database identifier, router instance, trusted anchor or adapter-supplied unique boot identifier, canonical startup signature, and the trusted match digests assigned to it. The signature uses stable component/code/action tokens and excludes timestamps, process identifiers, full messages, and dependence on the complete visible buffer, but it is corroboration rather than unique identity.
 
 Session resolution follows this order:
 
-1. If a snapshot shares a trusted match digest with a persisted boot session, reuse that session.
+1. If a snapshot shares one unambiguous timestamp-bearing trusted match digest with a persisted boot session, reuse that session.
 2. Otherwise, match a canonical startup signature whose candidate trusted anchor exactly matches a persisted session anchor.
-3. Otherwise, an explicit boot marker creates a new session, using the first trusted boot occurrence as its anchor when available.
-4. A truncated pre-synchronization fragment with neither overlap nor a reliable anchor is shown but is not assigned to learned occurrence history.
+3. Otherwise, an explicit boot marker with a trusted anchor or adapter-supplied unique boot identifier creates a persistent session.
+4. An anchorless boot or truncated pre-synchronization fragment receives run-local report context but is not assigned to cross-run occurrence or behavior history. Exact whole-file duplicate handling still applies.
 
 This lets rolling snapshots reuse a previously persisted anchor instead of deriving identity from whichever event now happens to be first in the buffer. A later reboot with already-correct time still receives boot context from its startup markers and distinct trusted occurrences.
 
-Trusted non-boot events use their router-local timestamp in occurrence identity. Boot events additionally use the resolved persisted session identifier. Untrusted events require a resolved boot session; otherwise they remain report-only. If session resolution fails, the report explains that reliable cross-snapshot deduplication was unavailable for that segment.
+Trusted non-boot events use their router-local timestamp in occurrence identity. Boot events additionally use the resolved persisted session identifier. Untrusted events require a persistently resolved anchored boot session to enter cross-run occurrence evidence; otherwise they remain report-only. If session resolution fails, the report explains that reliable cross-snapshot deduplication was unavailable for that segment. Stable client identity and explicit non-temporal security evidence may still be actionable in the current report even when their timestamps are untrusted; they remain excluded from calendar, duration, and time-of-day learning.
 
 TP-Link snapshot imports do not use the current duration-based partial-run rule. Snapshot metrics are point observations at export time, and novel trusted body events are occurrences rather than evidence of continuous coverage.
 
@@ -211,7 +213,7 @@ TP-Link snapshot imports do not use the current duration-based partial-run rule.
 
 Whole-file hashes continue to identify byte-for-byte duplicate inputs, but uniqueness is scoped to `(router_instance_id, file_hash)`. Router detection and identity resolution therefore occur before duplicate-run lookup. Identical bytes may be imported for two explicitly different router instances without merging their state. A second semantic layer handles snapshots whose headers change while their event bodies overlap.
 
-Each normalized body occurrence receives a digest over:
+Each normalized body occurrence receives a versioned `occurrence-v1` digest over the following ordered fields with an explicit separator and null token:
 
 - router instance;
 - trusted router-local timestamp and, for boot events, the resolved boot-session identifier;
@@ -224,6 +226,8 @@ Each normalized body occurrence receives a digest over:
 
 The process identifier remains in the occurrence digest because two otherwise identical lines from distinct processes can represent separate emitted events. It does not participate in the learned event key because process identifiers are volatile behavior metadata. Exact repetitions of the full semantic tuple at the log's one-second resolution collapse to one occurrence, matching existing NETGEAR exact-duplicate behavior; source sequence is diagnostic and does not create multiplicity.
 
+All durable opaque identities (router instance/override, firmware profile, router subject, trusted overlap, startup signature, normalized message, and occurrence digest) carry an explicit versioned prefix and fixed field order/normalization contract. A future normalization change requires a migration or compatibility lookup rather than silently creating a second identity universe.
+
 Persistence separates canonical evidence from run provenance:
 
 - `router_event_occurrences` stores the canonical digest and privacy-reduced normalized evidence.
@@ -231,11 +235,13 @@ Persistence separates canonical evidence from run provenance:
 
 Occurrence classification happens before incident detection, anomaly detection, and scoring:
 
-`parse -> identify router -> classify clock/boot -> compute occurrence IDs -> classify novel/repeated against surviving run links -> analyze eligible novel occurrences -> persist atomically`
+`parse -> identify router -> classify clock/boot -> compute occurrence IDs -> classify novel/repeated against surviving run links -> analyze novelty/trust-aware eligible evidence -> persist atomically`
 
-The complete parsed set remains available for coverage, boot reconstruction, and repeated counts. Only novel eligible occurrences can create fresh body-event incidents, findings, scores, or learned daily behavior. New snapshot metrics are still analyzed and stored at their export timestamp. A fully repeated rejection or security event cannot alert again merely because the header changed.
+The complete within-run deduplicated occurrence set remains available for coverage, boot reconstruction, stable-client observation, detector context, and repeated counts. Context-sensitive detectors receive novelty/trust flags: repeated occurrences may supply sequence context, but a fresh body-event incident/finding/score requires at least one novel qualifying constituent. A fully repeated completed incident, rejection, or security event cannot alert again merely because the header changed. Learned router history represents each distinct eligible canonical occurrence with surviving provenance exactly once, independent of which ingest first owned it. New snapshot metrics are still analyzed and stored at their export timestamp.
 
 Reprocessing transactionally removes the replaced run's links before classifying its replacement. Canonical occurrences remain while any surviving run references them and are deleted only when no links remain. If the replacement no longer produces a digest, later snapshots that contained it still preserve its canonical evidence. A failed replacement restores the original run and all links.
+
+If the first run that contributed a learned occurrence is removed while another eligible run link survives, the occurrence remains represented once in learned history. An implementation may query distinct surviving occurrences directly or transactionally promote the earliest eligible surviving link as the materialized learning owner. Every run containing stable client identity evidence owns its own device observation even when its related router occurrence was repeated.
 
 The replacement transaction also removes the target run's device/router observations and daily behavior rows before any state-dependent finding is computed. The replacement analyzes against an effective state rebuilt from explicit registrations and all other surviving runs, so a device observed only by the old version of the target run cannot make its own replacement treat that device as previously known. Findings, scoring, new observations, and summary refreshes then complete inside the same transaction; any failure restores the original effective state.
 
@@ -257,10 +263,12 @@ Adds router instance, format, export timestamp, capabilities, body digest, and n
 
 ### Run-owned observations
 
-- `device_observations` records `(run_id, mac, seen_at, evidence_kind, attributes)` for client evidence.
-- `router_metadata_observations` records run-owned model, hardware, and firmware evidence.
-- `router_snapshot_metrics` records `run_id`, router instance, baseline epoch, export timestamp, the correlated count set, and learning inclusion/exclusion reason.
+- `device_observations` records `(run_id, mac, seen_at, evidence_kind, evidence_digest, attributes)` for client evidence, unique on those first five fields.
+- `router_metadata_observations` records exactly one run-owned model, hardware, and firmware observation per run.
+- `router_snapshot_metrics` records exactly one row per run with router instance, baseline epoch, export timestamp, the correlated count set, and learning inclusion/exclusion reason.
 - Existing daily behavior rows remain run-owned through `run_id`.
+
+Firmware profiles are durable versioned opaque identities over canonical vendor plus normalized firmware value/sentinel. They exclude model, hardware, router instance, and labels. A metadata observation references its effective profile when attribution is known; router behavior combines the profile with its router instance, so a shared firmware string never merges behavior across routers.
 
 Reprocessing replaces these rows transactionally. After replacement, device, router, and behavior-subject summary timestamps are recomputed from surviving observations plus explicit registrations. The same refresh removes orphan summary-only identities that have neither registration nor surviving observation.
 
@@ -286,16 +294,16 @@ Only schema v3 is supported for in-place upgrade. Older or structurally unexpect
 
 The v3 migration algorithm is:
 
-1. Read `metadata.schema_version` and validate the required v3 tables, columns, indexes, and reference counts.
-2. Outside a transaction, disable foreign-key enforcement for the SQLite table-rebuild procedure; record the prior setting.
+1. Read `metadata.schema_version` and validate the required v3 tables, columns, indexes, and reference counts without changing journal mode, creating WAL/SHM files, or performing any other write.
+2. After accepting valid v3, record relevant pragmas and reference counts; outside a transaction, disable foreign-key enforcement for the SQLite table-rebuild procedure.
 3. Begin one `IMMEDIATE` migration transaction.
-4. Create all new observation, router, boot-session, occurrence, and link tables.
-5. Insert one deterministic legacy NETGEAR router instance.
-6. Rebuild `runs` with the same primary-key values, the legacy router foreign key, new nullable/default metadata, and `UNIQUE(router_instance_id, file_hash)` instead of global file-hash uniqueness. Dependent run IDs remain unchanged.
-7. Backfill explicit device registrations from all legacy baseline-seed rows and baseline/config-sourced device rows, then backfill run-owned device observations from real-MAC legacy daily rows. Preserve legacy global `__SYSTEM__` device rows for audit but exclude them from new router-history queries.
+4. Create the new non-run-dependent router, firmware, and registration structures and insert one deterministic legacy NETGEAR router instance.
+5. Rebuild `runs` with the same primary-key values, the legacy router foreign key, new nullable/default metadata, and `UNIQUE(router_instance_id, file_hash)` instead of global file-hash uniqueness. Dependent run IDs remain unchanged.
+6. Only after the final `runs` table name exists, create the new run-owned observation, boot-session, occurrence, and link tables.
+7. Backfill explicit device registrations from all legacy baseline-seed rows and baseline/config-sourced device rows. Use migration-only legacy source keys: exact epoch keys for baseline seeds, a deterministic sentinel for config-sourced catalog rows because v3 did not retain the source file digest, and a catalog-preservation source for otherwise-unrepresented real-MAC device rows. Do not invent historical file provenance. Backfill run-owned device observations from real-MAC legacy daily rows, representing distinct first/last extrema separately. Preserve legacy global `__SYSTEM__` device rows for audit but exclude them from new router-history queries.
 8. Re-key legacy system subject-behavior rows and catalog entries to the legacy router and legacy firmware profile without changing their primary data or run references.
-9. Recompute identity/subject summaries from registrations and observations, recreate indexes, and validate source/destination row counts, composite uniqueness, non-null router assignments, and `PRAGMA foreign_key_check`.
-10. Write the new schema version last, commit, restore and enable `PRAGMA foreign_keys = ON`, then run the integrity checks again.
+9. Recompute identity/subject summaries from registrations and observations, recreate indexes, and validate source/destination row counts, composite uniqueness, non-null router assignments, every final child foreign-key declaration, `sqlite_master` references, and `PRAGMA foreign_key_check`.
+10. Write the new schema version last, commit, restore and enable `PRAGMA foreign_keys = ON`, apply/retain WAL only for the accepted database, then run the integrity checks again.
 
 Any failure rolls back the transaction and restores the connection pragma before returning an error. Running the migration again after success is a no-op. Every normal database connection enables foreign-key enforcement; the temporary disabled state exists only around the documented table rebuild.
 
@@ -326,12 +334,16 @@ Any failure rolls back the transaction and restores the connection pragma before
 The first three eligible observations establish a router-specific, firmware-specific warm-up inventory. Learned router behavior compares only with the same router instance, firmware profile, and active baseline epoch.
 
 - A later new router event type is MEDIUM by default after the three-observation warm-up.
-- Firmware change is a LOW router-instance observation and selects a new firmware behavior profile with its own warm-up. It does not reset snapshot-count history, portable device identity, or device behavior.
+- Firmware change between two known, distinct normalized profiles is a LOW router-instance observation and selects a new firmware behavior profile with its own warm-up. Missing/unknown firmware does not overwrite last-known transition state or emit a change; when a prior known profile exists it remains the effective profile for attribution. It does not reset snapshot-count history, portable device identity, or device behavior.
 - An unexpected transition from the learned running/enabled state to stopped/disabled defaults to MEDIUM before policy.
 - Firewall, access-control, rejection, and repeated security failures may escalate through explicit canonical mappings and policy.
 - Vendor syslog severity informs, but does not solely determine, analyzer severity.
 - Expected startup service churn is learned within boot context instead of generating recurring alerts.
 - Direct high-confidence security evidence such as an explicit client rejection or firewall failure remains eligible during firmware warm-up; only history-dependent router-behavior conclusions wait for the new profile.
+
+Rolling-buffer occurrences use chronological prior metadata to determine effective firmware. Records provably earlier than the prior known firmware observation remain with the earlier profile. Evidence in an unresolved upgrade interval remains reportable and deduplicable but is excluded from firmware-scoped behavior learning until an explicit upgrade/post-upgrade boot marker or equivalent adapter evidence resolves it.
+
+NETGEAR system events retain their current legacy finding kinds, history/warm-up semantics, score grouping, and report placement. Router-scoped storage may change internally, but it does not route legacy NETGEAR SYSTEM_ACTOR analysis through the new three-observation TP-Link/router warm-up path.
 
 The previously established metric-learning rule remains: stable metric-only anomalies may enter future numeric baselines, while partial, blocked-device, unknown/security, timing, and behavior anomalies remain quarantined as appropriate.
 
@@ -362,6 +374,8 @@ Reports must distinguish `unavailable` from `zero` and `normal`. For example, la
 
 The router security-config importer remains NETGEAR-specific until a real TP-Link client/config export defines another contract.
 
+Management-only invocations retain their existing ordering and behavior. When a management option is combined with a logfile, input loading, format validation, and persistent router-identity validation occur before any management mutation. A combined invocation with ambiguous/mismatched format or no persistent identity fails without applying the management change; this is the safety-first interpretation of the no-mutation-before-validation rule.
+
 ## Error Handling and Transactionality
 
 - Unknown or ambiguous formats fail before database mutation and show detection evidence.
@@ -369,6 +383,7 @@ The router security-config importer remains NETGEAR-specific until a real TP-Lin
 - Invalid or inconsistent correlated snapshot counts are retained for report diagnostics but all three metrics are omitted from learning.
 - Parsed events without stable router identity can be reported but cannot alter persistent router history without an explicit override.
 - A fully repeated body is a successful import, not an error.
+- Byte-identical NETGEAR input preserves current behavior: produce a fresh report under current policy/history but add no duplicate run or learning rows. For rolling-snapshot adapters, a byte-identical scoped input produces a deduplicated report without rescoring body or identical header evidence.
 - Run links, device/router observations, firmware evidence, snapshot metrics, occurrences, boot sessions, behavior rows, and derived summary refreshes commit or roll back atomically.
 - Schema migration follows the explicit v3 contract above and preserves all v3 device, run, finding, incident, and baseline records and identifiers.
 
@@ -399,12 +414,14 @@ All fixtures use unmistakably synthetic addresses, names, timestamps, firmware s
 - Distinct identity for a genuine later reboot.
 - A boot with already-correct time still receives boot context.
 - A truncated rolling snapshot reuses a persisted session through overlap without recomputing a new anchor.
-- Backward and multiple clock corrections follow the final-trusted-segment rule.
+- Backward and multiple clock corrections follow independent per-boot/clock-epoch trust classification.
+- Two boots in one rolling buffer retain independent trusted synchronized segments; a non-boot backward local-time adjustment is clock-ambiguous rather than pre-synchronization.
 - Repeated body plus changed header metrics.
 - Mixed overlapping and novel body events.
 - Safe behavior when no trusted boot anchor exists.
 - Fully repeated security evidence cannot create a new finding or score contribution.
 - Reprocessing one run cannot invalidate an occurrence still referenced by another run.
+- Reprocessing the first learning owner promotes or otherwise preserves one learned contribution through a surviving eligible repeated link.
 - Exact semantic tuples collapse while distinct process identifiers remain distinct.
 
 ### Persistence and migration tests
@@ -421,6 +438,7 @@ All fixtures use unmistakably synthetic addresses, names, timestamps, firmware s
 - Migration executed twice is a no-op.
 - Injected mid-migration failure rolls back all logical state and leaves schema version unchanged.
 - Foreign-key and row-count invariants pass after migration.
+- Every run-owned child declaration references the final `runs` table; unsupported schemas fail without journal-mode/WAL mutation.
 - Portable device history retained across router instances.
 - Router behavior isolated by instance and epoch.
 - Snapshot metric inclusion, exclusion, and uniqueness.
