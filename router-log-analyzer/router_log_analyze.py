@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, DefaultDict, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 
 DB_FILENAME = "network.db"
@@ -214,10 +214,14 @@ class RouterCapabilities:
     wan_transitions: bool = False
     snapshot_counts: bool = False
     potentially_trustworthy_router_local_time: bool = False
-    supported_event_keys: Set[str] = field(default_factory=set)
-    supported_event_families: Set[str] = field(default_factory=set)
+    supported_event_keys: FrozenSet[str] = field(default_factory=frozenset)
+    supported_event_families: FrozenSet[str] = field(default_factory=frozenset)
     coverage_mode: str = "continuous_log"
     snapshot_buffer_semantic_dedup: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "supported_event_keys", frozenset(self.supported_event_keys))
+        object.__setattr__(self, "supported_event_families", frozenset(self.supported_event_families))
 
     def to_json(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -230,15 +234,26 @@ class RouterCapabilities:
 class RouterIdentityCandidate:
     canonical_vendor: str
     lan_mac: Optional[str] = None
-    router_owned_interfaces: Set[str] = field(default_factory=set)
+    router_owned_interfaces: FrozenSet[str] = field(default_factory=frozenset)
     warnings: Tuple[str, ...] = ()
     persistence_safe_without_override: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "router_owned_interfaces", frozenset(self.router_owned_interfaces))
+
+    def to_json(self) -> Dict[str, Any]:
+        payload = asdict(self)
+        payload["router_owned_interfaces"] = sorted(self.router_owned_interfaces)
+        payload["warnings"] = list(self.warnings)
+        return payload
 
 
 @dataclass(frozen=True)
 class RouterSnapshotMetrics:
-    raw_total_clients: Optional[int] = None
-    raw_wifi_clients: Optional[int] = None
+    raw_total_clients: Optional[str] = None
+    raw_wifi_clients: Optional[str] = None
+    total_clients: Optional[int] = None
+    wifi_clients: Optional[int] = None
     derived_wired_clients: Optional[int] = None
     eligible: bool = False
     exclusion_reason: Optional[str] = None
@@ -533,6 +548,17 @@ def normalize_mac(value: Optional[str]) -> Optional[str]:
 
 def is_real_mac(value: Optional[str]) -> bool:
     return normalize_mac(value) is not None
+
+
+def is_identity_grade_mac(value: Optional[str]) -> bool:
+    """Return whether a syntactically valid MAC is safe as a stable client identity."""
+    normalized = normalize_mac(value)
+    if normalized is None:
+        return False
+    octets = bytes.fromhex(normalized.replace(":", ""))
+    if octets == b"\x00" * 6 or octets == b"\xff" * 6:
+        return False
+    return not bool(octets[0] & 1)
 
 
 def load_json_file(path: Path) -> Dict[str, Any]:
@@ -1751,6 +1777,7 @@ def _build_netgear_event_objects(
         raw_label = label_match.group(1) if label_match else ""
         event_key = adapter.normalize_event_key(raw_label)
         event_family = adapter.classify_event_family(event_key, line)
+        stable_client_identity = mac if is_identity_grade_mac(mac) else None
         candidates.append(
             Event(
                 timestamp=timestamp,
@@ -1761,8 +1788,8 @@ def _build_netgear_event_objects(
                 raw_label=raw_label,
                 raw_line=line,
                 source=source,
-                actor_scope="device" if is_real_mac(mac) else "router",
-                stable_client_identity=mac if is_real_mac(mac) else None,
+                actor_scope="device" if stable_client_identity is not None else "router",
+                stable_client_identity=stable_client_identity,
                 source_sequence=source_sequence,
                 raw_timestamp=timestamp_match.group("timestamp") if timestamp_match else None,
                 clock_trust="trusted",
@@ -1910,14 +1937,35 @@ ROUTER_LOG_ADAPTERS: Dict[str, RouterLogAdapter] = {
 }
 
 
+def _validate_adapter_detection_score(adapter: RouterLogAdapter, score: Any) -> float:
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise SystemExit(f"Adapter {adapter.cli_format} returned an invalid detection score.")
+    normalized_score = float(score)
+    if not math.isfinite(normalized_score) or not 0.0 <= normalized_score <= 1.0:
+        raise SystemExit(f"Adapter {adapter.cli_format} returned an invalid detection score.")
+    return normalized_score
+
+
+def _format_adapter_detection_score(score: float) -> str:
+    decimal_score = Decimal(str(score))
+    if decimal_score.as_tuple().exponent >= -2:
+        return f"{score:.2f}"
+    return format(decimal_score.normalize(), "f")
+
+
 def _adapter_selection_error(prefix: str, scored: Sequence[Tuple[RouterLogAdapter, float]]) -> SystemExit:
-    candidates = ", ".join(f"{adapter.cli_format}={score:.2f}" for adapter, score in scored)
+    candidates = ", ".join(
+        f"{adapter.cli_format}={_format_adapter_detection_score(score)}" for adapter, score in scored
+    )
     return SystemExit(f"{prefix} Available format confidence: {candidates}.")
 
 
 def select_router_adapter(text: str, requested_format: str = AUTO_FORMAT) -> RouterLogAdapter:
     if requested_format == AUTO_FORMAT:
-        scored = [(adapter, adapter.detect(text)) for adapter in ROUTER_LOG_ADAPTERS.values()]
+        scored = [
+            (adapter, _validate_adapter_detection_score(adapter, adapter.detect(text)))
+            for adapter in ROUTER_LOG_ADAPTERS.values()
+        ]
         scored.sort(key=lambda item: item[1], reverse=True)
         top_adapter, top_score = scored[0]
         if top_score < FORMAT_DETECTION_THRESHOLD:
@@ -5342,8 +5390,12 @@ def router_instance_override_key(canonical_vendor: str, value: str) -> str:
 
 def emit_nonpersistent_report(args: argparse.Namespace, parsed: ParsedRouterLog) -> None:
     """Report parsed current evidence without opening state for an identity-less adapter."""
+    if args.report or args.report_dir:
+        raise SystemExit("Non-persistent reports do not support --report or --report-dir.")
+    router_label = args.router_label.strip() if args.router_label and args.router_label.strip() else parsed.identity.canonical_vendor
     report = {
         "format_id": parsed.format_id,
+        "router_label": router_label,
         "parse_stats": asdict(parsed.parse_stats),
         "event_count": len(parsed.events),
         "persistence": {"available": False, "reason": "no_stable_router_identity"},
@@ -5352,7 +5404,7 @@ def emit_nonpersistent_report(args: argparse.Namespace, parsed: ParsedRouterLog)
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
-        print("Parsed router log without persistent state: no_stable_router_identity")
+        print(f"Parsed router log for {router_label} without persistent state: no_stable_router_identity")
 
 
 def is_in_windows(timestamp: datetime, windows: Sequence[Dict[str, Any]]) -> bool:

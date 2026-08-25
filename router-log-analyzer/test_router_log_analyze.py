@@ -552,6 +552,61 @@ def test_netgear_adapter_detects_and_normalizes_the_legacy_format() -> None:
     assert parsed.events == analyzer.parse_log_text(text, source="synthetic-netgear.log")[0]
 
 
+def test_router_snapshot_metrics_retains_invalid_raw_text_without_parsed_counts() -> None:
+    metrics = analyzer.RouterSnapshotMetrics(
+        raw_total_clients="many synthetic clients",
+        raw_wifi_clients="not-a-number",
+        total_clients=None,
+        wifi_clients=None,
+        derived_wired_clients=None,
+        eligible=False,
+        exclusion_reason="invalid_snapshot_counts",
+    )
+
+    serialized = analyzer.asdict(metrics)
+
+    assert serialized == {
+        "raw_total_clients": "many synthetic clients",
+        "raw_wifi_clients": "not-a-number",
+        "total_clients": None,
+        "wifi_clients": None,
+        "derived_wired_clients": None,
+        "eligible": False,
+        "exclusion_reason": "invalid_snapshot_counts",
+    }
+    assert json.loads(json.dumps(serialized)) == serialized
+
+
+def test_router_capability_and_identity_sets_are_immutable_across_results() -> None:
+    supplied_event_keys = {"SYNTHETIC_EVENT"}
+    supplied_interfaces = {"02:00:00:00:00:09"}
+    capabilities = analyzer.RouterCapabilities(supported_event_keys=supplied_event_keys)
+    identity = analyzer.RouterIdentityCandidate(
+        canonical_vendor="synthetic",
+        router_owned_interfaces=supplied_interfaces,
+    )
+    text = "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26"
+    parsed = analyzer.parse_router_log(text, "synthetic-netgear.log", "netgear")
+
+    supplied_event_keys.add("CALLER_MUTATION")
+    supplied_interfaces.add("02:00:00:00:00:0A")
+
+    assert capabilities.supported_event_keys == frozenset({"SYNTHETIC_EVENT"})
+    assert identity.router_owned_interfaces == frozenset({"02:00:00:00:00:09"})
+    with pytest.raises(AttributeError):
+        parsed.capabilities.supported_event_keys.add("RESULT_MUTATION")
+    assert analyzer.parse_router_log(text, "synthetic-netgear.log", "netgear").capabilities.supported_event_keys == (
+        parsed.capabilities.supported_event_keys
+    )
+    capabilities_json = parsed.capabilities.to_json()
+    identity_json = identity.to_json()
+    assert capabilities_json["supported_event_keys"] == sorted(parsed.capabilities.supported_event_keys)
+    assert capabilities_json["supported_event_families"] == sorted(parsed.capabilities.supported_event_families)
+    assert identity_json["router_owned_interfaces"] == ["02:00:00:00:00:09"]
+    assert json.loads(json.dumps(capabilities_json)) == capabilities_json
+    assert json.loads(json.dumps(identity_json)) == identity_json
+
+
 def test_explicit_netgear_format_is_accepted_before_state_store_construction(tmp_path: Path) -> None:
     log_path = tmp_path / "synthetic-netgear.log"
     db_path = tmp_path / "not-created-before-baseline-validation.db"
@@ -639,6 +694,81 @@ def test_auto_format_rejects_low_confidence_without_echoing_input() -> None:
     assert "netgear=0.00" in message
     assert "tp-link-archer=0.00" in message
     assert raw_input not in message
+
+
+@pytest.mark.parametrize(
+    "invalid_score",
+    [True, "0.95", float("nan"), float("inf"), float("-inf"), -0.01, 1.01],
+    ids=("bool", "non-numeric", "nan", "positive-infinity", "negative-infinity", "below-zero", "above-one"),
+)
+def test_auto_format_rejects_invalid_detector_scores_before_selection_or_state_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_score: object,
+) -> None:
+    class SyntheticAdapter(analyzer.RouterLogAdapter):
+        def __init__(self, format_id: str, cli_format: str, confidence: object) -> None:
+            self.format_id = format_id
+            self.cli_format = cli_format
+            self.confidence = confidence
+
+        def detect(self, text: str) -> float:
+            return self.confidence  # type: ignore[return-value]
+
+        def parse(self, text: str, source: str) -> analyzer.ParsedRouterLog:
+            raise AssertionError("invalid detection score must stop before parsing")
+
+    raw_input = "SYNTHETIC-INVALID-DETECTOR-INPUT-DO-NOT-ECHO"
+    db_path = tmp_path / "must-not-exist.db"
+    monkeypatch.setattr(
+        analyzer,
+        "ROUTER_LOG_ADAPTERS",
+        {
+            analyzer.FORMAT_NETGEAR: SyntheticAdapter(analyzer.FORMAT_NETGEAR, "netgear", invalid_score),
+            analyzer.FORMAT_TP_LINK_ARCHER: SyntheticAdapter(analyzer.FORMAT_TP_LINK_ARCHER, "tp-link-archer", 0.0),
+        },
+    )
+
+    with pytest.raises(SystemExit, match="netgear.*invalid detection score") as exc_info:
+        analyzer.select_router_adapter(raw_input, "auto")
+
+    assert raw_input not in str(exc_info.value)
+    log_path = tmp_path / "synthetic-invalid-detector.log"
+    log_path.write_text(raw_input, encoding="utf-8")
+    with pytest.raises(SystemExit, match="netgear.*invalid detection score"):
+        analyzer.main([str(log_path), "--db", str(db_path)])
+    assert not db_path.exists()
+
+
+def test_auto_format_low_confidence_diagnostic_preserves_subthreshold_precision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SyntheticAdapter(analyzer.RouterLogAdapter):
+        def __init__(self, format_id: str, cli_format: str, confidence: float) -> None:
+            self.format_id = format_id
+            self.cli_format = cli_format
+            self.confidence = confidence
+
+        def detect(self, text: str) -> float:
+            return self.confidence
+
+        def parse(self, text: str, source: str) -> analyzer.ParsedRouterLog:
+            raise AssertionError("low-confidence selection test should not parse")
+
+    monkeypatch.setattr(
+        analyzer,
+        "ROUTER_LOG_ADAPTERS",
+        {
+            analyzer.FORMAT_NETGEAR: SyntheticAdapter(analyzer.FORMAT_NETGEAR, "netgear", 0.7999),
+            analyzer.FORMAT_TP_LINK_ARCHER: SyntheticAdapter(analyzer.FORMAT_TP_LINK_ARCHER, "tp-link-archer", 0.0),
+        },
+    )
+
+    with pytest.raises(SystemExit, match="Could not confidently identify") as exc_info:
+        analyzer.select_router_adapter("synthetic content", "auto")
+
+    assert "netgear=0.7999" in str(exc_info.value)
+    assert "netgear=0.80" not in str(exc_info.value)
 
 
 def test_auto_format_rejects_ambiguous_high_confidence_adapters(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -833,6 +963,7 @@ def install_identityless_test_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
                 capabilities=analyzer.RouterCapabilities(coverage_mode="point_snapshot"),
                 identity=analyzer.RouterIdentityCandidate(
                     canonical_vendor="tp-link",
+                    lan_mac="02:00:00:00:00:FE",
                     persistence_safe_without_override=False,
                 ),
                 events=[],
@@ -939,6 +1070,60 @@ def test_identityless_log_emits_nonpersistent_report_without_creating_state(
     report = json.loads(capsys.readouterr().out)
     assert report["persistence"] == {"available": False, "reason": "no_stable_router_identity"}
     assert not db_path.exists()
+
+
+def test_identityless_log_includes_router_label_in_minimal_default_and_json_reports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    db_path = tmp_path / "must-not-exist.db"
+    router_label = "SYNTHETIC IDENTITYLESS ROUTER"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+
+    assert analyzer.main([
+        str(log_path), "--format", "tp-link-archer", "--router-label", router_label, "--db", str(db_path),
+    ]) == 0
+    assert router_label in capsys.readouterr().out
+    assert not db_path.exists()
+
+    assert analyzer.main([
+        str(log_path), "--format", "tp-link-archer", "--router-label", router_label, "--db", str(db_path), "--json",
+    ]) == 0
+    json_output = capsys.readouterr().out
+    report = json.loads(json_output)
+    assert report["router_label"] == router_label
+    assert "02:00:00:00:00:FE" not in json_output
+    assert not db_path.exists()
+
+
+@pytest.mark.parametrize(
+    "report_args",
+    [["--report", "json"], ["--report-dir", "synthetic-reports"]],
+    ids=("report-format", "report-directory"),
+)
+def test_identityless_log_rejects_unavailable_explicit_report_outputs_before_output_or_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    report_args: list[str],
+) -> None:
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+    args = [str(log_path), "--format", "tp-link-archer", "--db", str(db_path), *report_args]
+    if report_args[0] == "--report-dir":
+        args[-1] = str(tmp_path / report_args[-1])
+
+    with pytest.raises(SystemExit, match="Non-persistent reports do not support --report or --report-dir"):
+        analyzer.main(args)
+
+    assert capsys.readouterr().out == ""
+    assert not db_path.exists()
+    assert not (tmp_path / "synthetic-reports").exists()
 
 
 @pytest.mark.parametrize("stateful_form", ["positional_baseline", "explicit_config", "inferred_config", "reprocess"])
@@ -1110,6 +1295,31 @@ def test_netgear_adapter_preserves_source_and_clock_provenance_on_normalized_eve
     assert event.raw_timestamp == "Saturday, March 21, 2037 08:07:26"
     assert event.clock_trust == "trusted"
     assert event.clock_segment_id == "netgear-local-time"
+
+
+@pytest.mark.parametrize(
+    ("mac", "stable_client_identity", "actor_scope"),
+    [
+        ("00:00:00:00:00:00", None, "router"),
+        ("FF:FF:FF:FF:FF:FF", None, "router"),
+        ("01:00:5E:00:00:01", None, "router"),
+        ("02:00:00:00:00:08", "02:00:00:00:00:08", "device"),
+    ],
+    ids=("all-zero", "broadcast", "multicast", "locally-administered-unicast"),
+)
+def test_netgear_stable_client_identity_requires_an_identity_grade_mac(
+    mac: str,
+    stable_client_identity: str | None,
+    actor_scope: str,
+) -> None:
+    text = f"[DHCP IP: (192.0.2.25)] to MAC address {mac}, Saturday, March 21, 2037 08:07:26"
+
+    event = analyzer.parse_router_log(text, "synthetic-netgear.log", "netgear").events[0]
+
+    assert analyzer.is_real_mac(mac) is True
+    assert event.mac == mac
+    assert event.stable_client_identity == stable_client_identity
+    assert event.actor_scope == actor_scope
 
 
 def test_netgear_adapter_deduplication_preserves_normalized_event_provenance() -> None:
