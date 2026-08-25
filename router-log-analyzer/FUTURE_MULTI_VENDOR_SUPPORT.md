@@ -2,7 +2,9 @@
 
 This document captures a practical shape for evolving `router_log_analyze.py` from a NETGEAR-specific ingestion tool into a router-agnostic analyzer without rewriting the learning and anomaly engine.
 
-**Status:** Proposed architecture and roadmap. The current implementation supports NETGEAR-format exports only.
+**Status:** Historical proposal. The current implementation still supports NETGEAR-format exports only, but the approved [TP-Link Router-Instance Support Design](docs/superpowers/specs/2026-08-25-tp-link-router-instance-support-design.md) supersedes this document wherever the two conflict.
+
+The real TP-Link snapshot requirement validated the adapter principle while also requiring schema, capability, deduplication, router-instance, and reporting changes that this earlier proposal intentionally deferred.
 
 ## Current State
 
@@ -203,15 +205,14 @@ Result:
 
 ## What Should Not Change
 
-These parts should remain stable unless a real vendor requirement forces a change:
+These parts should remain stable unless a real vendor requirement forces a change. The TP-Link snapshot format is now that real requirement.
 
-- SQLite schema for learned history
-- Normalized `Event` structure
-- Most anomaly logic
-- Risk scoring
-- Reporting formats
+- Existing NETGEAR normalized behavior and canonical event meanings
+- Portable device identity and device-history semantics when adapters declare equivalent evidence
+- Existing NETGEAR anomaly severities, risk scoring, reports, and CLI behavior
+- The standalone copy-installed launcher contract
 
-The entire point is to isolate parser volatility from analysis stability.
+The approved TP-Link design deliberately changes the SQLite schema, normalized parse result, capability gating, semantic deduplication, and report content so repeated router snapshots cannot corrupt the otherwise stable analysis model.
 
 ## Known Areas That Depend On Canonical Events
 
@@ -235,26 +236,10 @@ Any future parser-generalization work should include:
 
 The architecture should be considered successful only if the parser layer changes without destabilizing the learned behavior model.
 
-## Suggested Initial File Shape
+## Selected Initial File Shape
 
-One possible shape:
-
-- `router_log_analyze.py`
-  - CLI, orchestration, analysis, persistence, reports
-- `formats/netgear.py`
-  - NETGEAR log parser
-  - NETGEAR config parser
-- `formats/linksys.py`
-  - Linksys parser when needed
-- `formats/profile_runtime.py`
-  - Generic profile-driven parser helper
-- `formats/profiles/*.json`
-  - Declarative profiles for simple formats
-
-This is only a reference shape, not a required design.
+Adapters remain logical classes inside `router_log_analyze.py`. This preserves the established single-file, copy-based installation contract. External profile files and required parser sidecars remain out of scope until another real format justifies changing that delivery model.
 
 ## Practical Recommendation
 
-When this work becomes necessary, start with Phase 1 only.
-
-Do not jump straight to a full multi-vendor framework before there is a second real router format in hand. The first step should be isolating the current NETGEAR parser cleanly. Once real Linksys or other sample exports are available, validate the architecture against those samples before adding more abstraction.
+Implement the approved TP-Link design rather than the hypothetical Linksys phase ordering above. Isolate NETGEAR behavior behind the in-launcher adapter boundary, add the observed TP-Link format, and make only the persistence and analysis changes required by snapshot semantics. Do not add a generic declarative profile runtime in this phase.
