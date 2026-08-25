@@ -46,6 +46,8 @@ MKTEMP_BIN="${MONEYDANCE_MKTEMP_BIN:-/usr/bin/mktemp}"
 MV_BIN="${MONEYDANCE_MV_BIN:-/bin/mv}"
 CHMOD_BIN="${MONEYDANCE_CHMOD_BIN:-/bin/chmod}"
 CMP_BIN="${MONEYDANCE_CMP_BIN:-/usr/bin/cmp}"
+OD_BIN="${MONEYDANCE_OD_BIN:-/usr/bin/od}"
+GREP_BIN="${MONEYDANCE_GREP_BIN:-/usr/bin/grep}"
 
 show_help() {
   cat <<'EOF'
@@ -493,7 +495,7 @@ validate_repair_preconditions() {
   [[ -t 0 && -t 1 ]] || config_error "--repair-config requires an interactive terminal on stdin and stdout."
   (( ! ${+MONEYDANCE_NAS_SERVER} )) || config_error "--repair-config cannot be used while MONEYDANCE_NAS_SERVER is set."
   [[ -e "${config_path}" && ! -L "${config_path}" && -f "${config_path}" && -r "${config_path}" && -w "${config_path}" ]] || config_error "The repair configuration must be a readable and writable regular file."
-  for required_bin in "${MOUNT_BIN}" "${STAT_BIN}" "${DATE_BIN}" "${MKTEMP_BIN}" "${MV_BIN}" "${CHMOD_BIN}" "${CMP_BIN}"; do
+  for required_bin in "${MOUNT_BIN}" "${STAT_BIN}" "${DATE_BIN}" "${MKTEMP_BIN}" "${MV_BIN}" "${CHMOD_BIN}" "${CMP_BIN}" "${OD_BIN}" "${GREP_BIN}"; do
     command -v "${required_bin}" >/dev/null 2>&1 || exit_with_error "A required config-repair command is unavailable; no configuration or backup files were changed."
   done
   capture_safe_config_directory || config_error "The repair configuration directory is not private and stable."
@@ -629,6 +631,7 @@ validated_repair_temp() {
 
 snapshot_repair_config() {
   local before_metadata after_metadata
+  typeset -a inspection_status=()
   before_metadata="${config_device}|${config_inode}|${config_owner}|${config_group}|${config_mode}|${config_size}"
   create_owned_config_temp "${config_path}" snapshot || return 1
   revalidate_config_directory || return 1
@@ -650,10 +653,17 @@ snapshot_repair_config() {
   # line endings remain valid config formatting and are preserved byte-for-byte.
   revalidate_config_directory || return 1
   validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
-  if /usr/bin/od -An -v -tu1 "${repair_snapshot_tmp}" 2>/dev/null |
-      /usr/bin/grep -Eq '(^|[[:space:]])(0|[1-8]|1[124-9]|2[0-9]|3[01]|127)([[:space:]]|$)' 2>/dev/null; then
+  if "${OD_BIN}" -An -v -tu1 "${repair_snapshot_tmp}" 2>/dev/null |
+      "${GREP_BIN}" -Eq '(^|[[:space:]])(0|[1-8]|1[124-9]|2[0-9]|3[01]|127)([[:space:]]|$)' 2>/dev/null; then
+    inspection_status=("${pipestatus[@]}")
+  else
+    inspection_status=("${pipestatus[@]}")
+  fi
+  (( ${#inspection_status[@]} == 2 )) || return 1
+  if [[ "${inspection_status[1]}" == 0 && "${inspection_status[2]}" == 0 ]]; then
     return 2
   fi
+  [[ "${inspection_status[1]}" == 0 && "${inspection_status[2]}" == 1 ]] || return 1
   return 0
 }
 

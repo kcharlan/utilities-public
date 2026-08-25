@@ -25,6 +25,8 @@ typeset -a MONEYDANCE_TEST_ENV_VARS=(
   MONEYDANCE_MV_BIN
   MONEYDANCE_CHMOD_BIN
   MONEYDANCE_CMP_BIN
+  MONEYDANCE_OD_BIN
+  MONEYDANCE_GREP_BIN
 )
 
 # Tests must never inherit operational settings or command overrides from the
@@ -949,6 +951,44 @@ for control_name in SOH DEL; do
   done
 done
 
+for inspector_failure in od grep; do
+  reset_repair_config
+  inspector_tool="${test_root}/repair-${inspector_failure}-failure"
+  inspector_mv="${test_root}/repair-${inspector_failure}-failure-mv"
+  inspector_mv_marker="${test_root}/repair-${inspector_failure}-failure-mv-called"
+  cat > "${inspector_tool}" <<EOF
+#!/bin/zsh
+print -r -- 'SYNTHETIC inspector diagnostic ${repair_config} synthetic-configured-private-host' >&2
+exit 89
+EOF
+  cat > "${inspector_mv}" <<EOF
+#!/bin/zsh
+print -r -- invoked > "${inspector_mv_marker}"
+exit 97
+EOF
+  chmod 755 "${inspector_tool}" "${inspector_mv}"
+  rm -f -- "${unique_candidate_marker}" "${inspector_mv_marker}"
+  : > "${candidate_log}"
+  : > "${candidate_logger_marker}"
+  typeset -a inspector_env=(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_MV_BIN="${inspector_mv}" MONEYDANCE_LOGGER_BIN="${candidate_logger}")
+  if [[ "${inspector_failure}" == od ]]; then
+    inspector_env+=(MONEYDANCE_OD_BIN="${inspector_tool}")
+  else
+    inspector_env+=(MONEYDANCE_GREP_BIN="${inspector_tool}")
+  fi
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both-stderr-file /usr/bin/env "${inspector_env[@]}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "${inspector_failure} inspection failure aborts operationally" 1 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "${inspector_failure} inspection failure preserves exact config bytes"; else fail "${inspector_failure} inspection failure preserves exact config bytes"; fi
+  [[ "$(stat -f '%Lp' "${repair_config}")" == 640 ]] && pass "${inspector_failure} inspection failure preserves config mode" || fail "${inspector_failure} inspection failure preserves config mode"
+  [[ ! -e "${unique_candidate_marker}" ]] && pass "${inspector_failure} inspection failure precedes mount" || fail "${inspector_failure} inspection failure precedes mount"
+  [[ ! -e "${inspector_mv_marker}" ]] && pass "${inspector_failure} inspection failure precedes MV_BIN" || fail "${inspector_failure} inspection failure precedes MV_BIN"
+  inspector_persistent="${PTY_STDERR}$(<"${candidate_log}")$(<"${candidate_logger_marker}")"
+  for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host 'SYNTHETIC inspector diagnostic'; do
+    assert_not_contains "${inspector_failure} inspection failure persistent sinks redact ${private_token}" "${inspector_persistent}" "${private_token}"
+  done
+done
+
 reset_repair_config
 configured_valid_mount="${test_root}/configured-valid-mount"
 make_mount_inventory_mock "${configured_valid_mount}" "${test_root}/configured-valid-called" \
@@ -1558,7 +1598,7 @@ for private_token in \
 done
 
 # Retention mode has no dependency on repair-only commands.
-normal_without_repair_tools="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_MV_BIN="${test_root}/missing-mv" MONEYDANCE_CHMOD_BIN="${test_root}/missing-chmod" MONEYDANCE_CMP_BIN="${test_root}/missing-cmp" "${SCRIPT}" --config "${candidate_config}" --dry-run 2>&1)"
+normal_without_repair_tools="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_MV_BIN="${test_root}/missing-mv" MONEYDANCE_CHMOD_BIN="${test_root}/missing-chmod" MONEYDANCE_CMP_BIN="${test_root}/missing-cmp" MONEYDANCE_OD_BIN="${test_root}/missing-od" MONEYDANCE_GREP_BIN="${test_root}/missing-grep" "${SCRIPT}" --config "${candidate_config}" --dry-run 2>&1)"
 assert_status "normal mode ignores repair-only command absence" 0 "$?"
 PTY_INPUT=""
 
