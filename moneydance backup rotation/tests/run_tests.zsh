@@ -119,6 +119,7 @@ assert_not_contains() {
 PTY_STATUS=0
 PTY_TRANSCRIPT=""
 PTY_NONTTY_STDOUT=""
+PTY_STDERR=""
 PTY_INPUT=""
 run_with_pty() {
   local timeout_seconds="$1"
@@ -126,6 +127,7 @@ run_with_pty() {
   shift 2
   local transcript_file="${test_root}/pty-transcript-${RANDOM}-${RANDOM}"
   local stdout_file="${test_root}/pty-stdout-${RANDOM}-${RANDOM}"
+  local stderr_file="${test_root}/pty-stderr-${RANDOM}-${RANDOM}"
   local input_file="${test_root}/pty-input-${RANDOM}-${RANDOM}"
   local expect_driver="${test_root}/pty-driver.exp"
   local child_pid deadline
@@ -135,10 +137,14 @@ run_with_pty() {
   PTY_STATUS=124
   PTY_TRANSCRIPT=""
   PTY_NONTTY_STDOUT=""
+  PTY_STDERR=""
   print -rn -- "${PTY_INPUT}" > "${input_file}"
   case "${tty_mode}" in
     both)
       pty_command=("$@")
+      ;;
+    both-stderr-file)
+      pty_command=(/bin/zsh -c 'stderr_file="$1"; shift; "$@" 2>"${stderr_file}"' pty-stderr-file "${stderr_file}" "$@")
       ;;
     stdin-only)
       pty_command=(/bin/zsh -c 'non_tty_stdout="$1"; shift; "$@" > "${non_tty_stdout}"' pty-stdin-only "${stdout_file}" "$@")
@@ -152,7 +158,7 @@ run_with_pty() {
   esac
 
   if [[ -n "${PTY_INPUT}" ]]; then
-    [[ "${tty_mode}" == both ]] || return 2
+    [[ "${tty_mode}" == both || "${tty_mode}" == both-stderr-file ]] || return 2
     if [[ ! -f "${expect_driver}" ]]; then
       print -r -- 'log_user 1
 eval spawn -noecho $argv
@@ -197,6 +203,7 @@ exit [lindex $result 3]' > "${expect_driver}"
   PTY_STATUS=$?
   PTY_TRANSCRIPT="$(<"${transcript_file}")"
   [[ ! -f "${stdout_file}" ]] || PTY_NONTTY_STDOUT="$(<"${stdout_file}")"
+  [[ ! -f "${stderr_file}" ]] || PTY_STDERR="$(<"${stderr_file}")"
   if (( timed_out )); then
     PTY_STATUS=124
     return 124
@@ -1006,22 +1013,23 @@ if [[ -f "${wrong_temp_path}" ]]; then pass "wrong-owner returned temp is not re
 rm -f -- "${wrong_temp_path}"
 
 reset_repair_config
-write_fail_count="${test_root}/write-fail-chmod-count"
-write_fail_chmod="${test_root}/write-fail-chmod"
-cat > "${write_fail_chmod}" <<EOF
+write_fail_count="${test_root}/write-fail-mktemp-count"
+write_fail_mktemp="${test_root}/write-fail-mktemp"
+cat > "${write_fail_mktemp}" <<EOF
 #!/bin/zsh
 count=0
 [[ ! -f "${write_fail_count}" ]] || count="\$(<"${write_fail_count}")"
 (( count += 1 ))
 print -r -- "\${count}" > "${write_fail_count}"
-/bin/chmod "\$@" || exit 1
+created="\$(/usr/bin/mktemp "\$@")" || exit 1
 if (( count == 2 )); then
-  /bin/chmod +a "$(/usr/bin/id -un) deny write" "\${@: -1}" || exit 1
+  /bin/chmod +a "$(/usr/bin/id -un) deny write" "\${created}" || exit 1
 fi
+print -r -- "\${created}"
 EOF
-chmod 755 "${write_fail_chmod}"
+chmod 755 "${write_fail_mktemp}"
 PTY_INPUT=$'yes\n'
-run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${write_fail_chmod}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${write_fail_mktemp}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "candidate write failure aborts repair" 1 "${PTY_STATUS}"
 if cmp -s "${repair_config}" "${repair_original}"; then pass "candidate write failure preserves original bytes"; else fail "candidate write failure preserves original bytes"; fi
 leftover_count="$(find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) | wc -l | tr -d ' ')"
@@ -1142,6 +1150,104 @@ run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_LOGG
 assert_status "post-activation logger failure cannot change successful repair status" 0 "${PTY_STATUS}"
 assert_contains "post-activation logger failure still leaves repaired config" "$(<"${repair_config}")" "NAS_SERVER  =  synthetic-candidate-private-one"
 assert_not_contains "post-activation logger diagnostic is suppressed" "${PTY_TRANSCRIPT}" "failing logger diagnostic"
+
+# Shell-owned private-path opens must suppress diagnostics before attempting
+# the open, including failures on the lock marker and repair candidate.
+reset_repair_config
+: > "${candidate_log}"
+: > "${candidate_logger_marker}"
+lock_open_stat="${test_root}/repair-lock-open-stat"
+cat > "${lock_open_stat}" <<'EOF'
+#!/bin/zsh
+target="${@: -1}"
+if [[ "${target}" == *.repair.lock ]]; then /bin/chmod 500 "${target}"; fi
+exec /usr/bin/stat "$@"
+EOF
+chmod 755 "${lock_open_stat}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${lock_open_stat}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "lock owner-marker open failure aborts repair" 1 "${PTY_STATUS}"
+for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host; do
+  assert_not_contains "lock open stderr redacts ${private_token}" "${PTY_STDERR}" "${private_token}"
+  assert_not_contains "lock open log redacts ${private_token}" "$(<"${candidate_log}")" "${private_token}"
+  assert_not_contains "lock open logger redacts ${private_token}" "$(<"${candidate_logger_marker}")" "${private_token}"
+done
+/bin/chmod 700 "${candidate_config_dir}/.repair-config.repair.lock" 2>/dev/null || true
+rm -rf -- "${candidate_config_dir}/.repair-config.repair.lock"
+
+reset_repair_config
+: > "${candidate_log}"
+: > "${candidate_logger_marker}"
+candidate_open_count="${test_root}/repair-candidate-open-count"
+candidate_open_record="${test_root}/repair-candidate-open-record"
+candidate_open_mktemp="${test_root}/repair-candidate-open-mktemp"
+cat > "${candidate_open_mktemp}" <<EOF
+#!/bin/zsh
+count=0; [[ ! -f "${candidate_open_count}" ]] || count="\$(<"${candidate_open_count}")"; (( count += 1 )); print -r -- "\${count}" > "${candidate_open_count}"
+created="\$(/usr/bin/mktemp "\$@")" || exit 1
+if (( count == 2 )); then
+  /bin/chmod +a "$(/usr/bin/id -un) deny write" "\${created}" || exit 1
+  print -r -- "\${created}" > "${candidate_open_record}"
+fi
+print -r -- "\${created}"
+EOF
+chmod 755 "${candidate_open_mktemp}"
+PTY_INPUT=$'yes\n'
+run_with_pty 10 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${candidate_open_mktemp}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "candidate shell-open failure aborts repair" 1 "${PTY_STATUS}"
+candidate_open_path="$(<"${candidate_open_record}")"
+for private_token in "${candidate_open_path}" "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host synthetic-candidate-private-one; do
+  assert_not_contains "candidate open stderr redacts ${private_token}" "${PTY_STDERR}" "${private_token}"
+  assert_not_contains "candidate open log redacts ${private_token}" "$(<"${candidate_log}")" "${private_token}"
+  assert_not_contains "candidate open logger redacts ${private_token}" "$(<"${candidate_logger_marker}")" "${private_token}"
+done
+
+# The candidate stays 0600 while bytes are generated and compared, and only
+# receives the original 0640 mode after content verification.
+reset_repair_config
+permission_order_record="${test_root}/repair-permission-order-record"
+permission_order_chmod="${test_root}/repair-permission-order-chmod"
+cat > "${permission_order_chmod}" <<EOF
+#!/bin/zsh
+mode="\$1"; target="\${@: -1}"
+state=empty; [[ ! -s "\${target}" ]] || state=nonempty
+print -r -- "\${mode}|\${state}|\${target:t}" >> "${permission_order_record}"
+exec /bin/chmod "\$@"
+EOF
+chmod 755 "${permission_order_chmod}"
+PTY_INPUT=$'yes\n'
+run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${permission_order_chmod}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "permission-ordering repair succeeds" 0 "${PTY_STATUS}"
+permission_order_text="$(<"${permission_order_record}")"
+assert_contains "original mode is applied only after candidate contains bytes" "${permission_order_text}" "640|nonempty|"
+assert_not_contains "original mode is never applied to an empty candidate" "${permission_order_text}" "640|empty|"
+
+# A hostile inherited umask cannot make the cooperating lock or owner marker
+# group/world accessible.
+reset_repair_config
+lock_mode_record="${test_root}/repair-lock-mode-record"
+lock_mode_stat="${test_root}/repair-lock-mode-stat"
+cat > "${lock_mode_stat}" <<EOF
+#!/bin/zsh
+target="\${@: -1}"
+if [[ "\${target}" == *.repair.lock ]]; then
+  dir_mode="\$(/usr/bin/stat -f '%Lp' -- "\${target}")" || exit 1
+  if [[ -f "\${target}/owner" ]]; then
+    owner_metadata="\$(/usr/bin/stat -f '%u|%Lp|%l' -- "\${target}/owner")" || exit 1
+    print -r -- "dir:\${dir_mode}|owner:\${owner_metadata}" >> "${lock_mode_record}"
+  else
+    print -r -- "dir:\${dir_mode}|owner:absent" >> "${lock_mode_record}"
+  fi
+fi
+exec /usr/bin/stat "\$@"
+EOF
+chmod 755 "${lock_mode_stat}"
+PTY_INPUT=$'n\n'
+run_with_pty 10 both /bin/zsh -c 'umask 000; exec "$@"' hostile-umask /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${lock_mode_stat}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "hostile inherited umask repair cancellation succeeds" 0 "${PTY_STATUS}"
+lock_mode_text="$(<"${lock_mode_record}")"
+assert_not_contains "repair lock never inherits permissive mode" "${lock_mode_text}" "dir:777"
+assert_contains "repair lock is restrictive and owner marker is validated" "${lock_mode_text}" "dir:700|owner:${EUID}|600|1"
 
 for mutation_kind in content mode replacement; do
   reset_repair_config

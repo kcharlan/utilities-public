@@ -343,6 +343,9 @@ repair_lock_pid=""
 repair_lock_device=""
 repair_lock_inode=""
 repair_lock_owner=""
+repair_lock_marker_device=""
+repair_lock_marker_inode=""
+repair_lock_marker_owner=""
 repair_snapshot_device=""
 repair_snapshot_inode=""
 repair_snapshot_owner=""
@@ -382,7 +385,15 @@ cleanup_repair_artifacts() {
     cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${repair_lock_dir}" 2>/dev/null)" || return 0
     IFS='|' read -r cleanup_device cleanup_inode cleanup_owner cleanup_group cleanup_mode cleanup_size cleanup_links <<< "${cleanup_metadata}"
     [[ "${cleanup_device}" == "${repair_lock_device}" && "${cleanup_inode}" == "${repair_lock_inode}" && "${cleanup_owner}" == "${repair_lock_owner}" && "${cleanup_owner}" == "${EUID}" ]] || return 0
-    /bin/rm -f -- "${repair_lock_dir}/owner" 2>/dev/null || true
+    local marker_path="${repair_lock_dir}/owner"
+    if [[ -n "${repair_lock_marker_inode:-}" ]]; then
+      cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${marker_path}" 2>/dev/null)" || return 0
+      IFS='|' read -r cleanup_device cleanup_inode cleanup_owner cleanup_group cleanup_mode cleanup_size cleanup_links <<< "${cleanup_metadata}"
+      [[ -f "${marker_path}" && ! -L "${marker_path}" && "${cleanup_device}" == "${repair_lock_marker_device}" && "${cleanup_inode}" == "${repair_lock_marker_inode}" && "${cleanup_owner}" == "${repair_lock_marker_owner}" && "${cleanup_owner}" == "${EUID}" && "${cleanup_mode}" == 600 && "${cleanup_links}" == 1 ]] || return 0
+      /bin/rm -f -- "${marker_path}" 2>/dev/null || true
+    elif [[ -e "${marker_path}" || -L "${marker_path}" ]]; then
+      return 0
+    fi
     /bin/rmdir -- "${repair_lock_dir}" 2>/dev/null || true
   fi
 }
@@ -467,6 +478,9 @@ acquire_repair_lock() {
   local config_base="${config_path:t}"
   local candidate_lock="${config_dir}/.${config_base}.repair.lock"
   local lock_metadata lock_device lock_inode lock_owner lock_group lock_mode lock_size lock_links
+  local marker_path marker_metadata marker_device marker_inode marker_owner marker_group marker_mode marker_size marker_links
+  local current_lock_device current_lock_inode current_lock_owner current_lock_group current_lock_mode current_lock_size current_lock_links
+  umask 077
   if ! /bin/mkdir -- "${candidate_lock}" 2>/dev/null; then
     return 1
   fi
@@ -475,16 +489,36 @@ acquire_repair_lock() {
     return 1
   fi
   IFS='|' read -r lock_device lock_inode lock_owner lock_group lock_mode lock_size lock_links <<< "${lock_metadata}"
-  [[ "${lock_owner}" == "${EUID}" ]] || return 1
+  [[ "${lock_owner}" == "${EUID}" && "${lock_mode}" == 700 ]] || return 1
   repair_lock_dir="${candidate_lock}"
   repair_lock_device="${lock_device}"
   repair_lock_inode="${lock_inode}"
   repair_lock_owner="${lock_owner}"
   repair_lock_pid="$$"
   repair_lock_owned=1
-  if ! print -r -- "$$" > "${repair_lock_dir}/owner" 2>/dev/null; then
+  marker_path="${repair_lock_dir}/owner"
+  if ! write_lock_owner_marker "${marker_path}" "$$" 2>/dev/null; then
     return 1
   fi
+  if ! marker_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${marker_path}" 2>/dev/null)"; then
+    return 1
+  fi
+  IFS='|' read -r marker_device marker_inode marker_owner marker_group marker_mode marker_size marker_links <<< "${marker_metadata}"
+  [[ -f "${marker_path}" && ! -L "${marker_path}" && "${marker_device}" == "${lock_device}" && "${marker_owner}" == "${EUID}" && "${marker_mode}" == 600 && "${marker_links}" == 1 && "${marker_size}" -gt 0 ]] || return 1
+  if ! lock_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${candidate_lock}" 2>/dev/null)"; then
+    return 1
+  fi
+  IFS='|' read -r current_lock_device current_lock_inode current_lock_owner current_lock_group current_lock_mode current_lock_size current_lock_links <<< "${lock_metadata}"
+  [[ "${current_lock_device}" == "${lock_device}" && "${current_lock_inode}" == "${lock_inode}" && "${current_lock_owner}" == "${lock_owner}" && "${current_lock_mode}" == 700 ]] || return 1
+  repair_lock_marker_device="${marker_device}"
+  repair_lock_marker_inode="${marker_inode}"
+  repair_lock_marker_owner="${marker_owner}"
+}
+
+write_lock_owner_marker() {
+  local marker_path="$1"
+  local owner_pid="$2"
+  print -r -- "${owner_pid}" > "${marker_path}"
 }
 
 validated_repair_temp() {
@@ -586,6 +620,12 @@ write_repair_candidate() {
   (( replacements == 1 ))
 }
 
+write_repair_candidate_to_path() {
+  local replacement_host="$1"
+  local output_path="$2"
+  write_repair_candidate "${replacement_host}" > "${output_path}"
+}
+
 run_repair_config() {
   local snapshot_result expected_metadata replacement_host answer
   trap cleanup_repair_artifacts EXIT INT TERM
@@ -650,22 +690,27 @@ run_repair_config() {
   fi
 
   create_owned_config_temp "${config_path}" candidate || repair_failure "Unable to create a private repair candidate. No configuration or backup files were changed."
-  if ! "${CHMOD_BIN}" "${config_mode}" "${repair_candidate_tmp}" 2>/dev/null; then
-    repair_failure "Unable to preserve configuration permissions. No configuration or backup files were changed."
-  fi
-  validated_repair_temp "${repair_candidate_tmp}" candidate "${config_mode}" || repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
-  if ! write_repair_candidate "${replacement_host}" > "${repair_candidate_tmp}" 2>/dev/null; then
+  validated_repair_temp "${repair_candidate_tmp}" candidate 600 || repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
+  if ! write_repair_candidate_to_path "${replacement_host}" "${repair_candidate_tmp}" 2>/dev/null; then
     repair_failure "Unable to write the private repair candidate. No configuration or backup files were changed."
   fi
-  validated_repair_temp "${repair_candidate_tmp}" candidate "${config_mode}" || repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
+  validated_repair_temp "${repair_candidate_tmp}" candidate 600 || repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
   if ! write_repair_candidate "${replacement_host}" 2>/dev/null | "${CMP_BIN}" -s -- "${repair_candidate_tmp}" - 2>/dev/null; then
     repair_failure "The private repair candidate could not be verified. No configuration or backup files were changed."
   fi
   metadata_matches_snapshot "${expected_metadata}" || repair_failure "The configuration changed during repair; the update was aborted. No backup files were changed."
+  validated_repair_temp "${repair_candidate_tmp}" candidate 600 || repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
+  if ! write_repair_candidate "${replacement_host}" 2>/dev/null | "${CMP_BIN}" -s -- "${repair_candidate_tmp}" - 2>/dev/null; then
+    repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
+  fi
+  if ! "${CHMOD_BIN}" "${config_mode}" "${repair_candidate_tmp}" 2>/dev/null; then
+    repair_failure "Unable to preserve configuration permissions. No configuration or backup files were changed."
+  fi
   validated_repair_temp "${repair_candidate_tmp}" candidate "${config_mode}" || repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
   if ! write_repair_candidate "${replacement_host}" 2>/dev/null | "${CMP_BIN}" -s -- "${repair_candidate_tmp}" - 2>/dev/null; then
     repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
   fi
+  metadata_matches_snapshot "${expected_metadata}" || repair_failure "The configuration changed during repair; the update was aborted. No backup files were changed."
   if ! "${MV_BIN}" -- "${repair_candidate_tmp}" "${config_path}" 2>/dev/null; then
     repair_failure "Unable to activate the repaired configuration. No configuration or backup files were changed."
   fi
