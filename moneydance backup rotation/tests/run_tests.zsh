@@ -1157,16 +1157,38 @@ reset_repair_config
 : > "${candidate_log}"
 : > "${candidate_logger_marker}"
 lock_open_stat="${test_root}/repair-lock-open-stat"
+lock_owner_open_marker="${test_root}/repair-lock-owner-open-attempted"
+lock_open_zdotdir="${test_root}/repair-lock-open-zdotdir"
+mkdir "${lock_open_zdotdir}"
+cat > "${lock_open_zdotdir}/.zshenv" <<'EOF'
+TRAPDEBUG() {
+  case "${ZSH_DEBUG_CMD}" in
+    ('print -r -- "${owner_pid}" > "${marker_path}"')
+      print -r -- invoked >> "${SYNTHETIC_LOCK_OWNER_OPEN_MARKER}"
+      ;;
+  esac
+}
+EOF
 cat > "${lock_open_stat}" <<'EOF'
 #!/bin/zsh
 target="${@: -1}"
-if [[ "${target}" == *.repair.lock ]]; then /bin/chmod 500 "${target}"; fi
+if [[ "${target}" == *.repair.lock ]]; then
+  captured_metadata="$(/usr/bin/stat "$@")" || exit 1
+  /bin/chmod 500 "${target}" || exit 1
+  print -r -- "${captured_metadata}"
+  exit 0
+fi
 exec /usr/bin/stat "$@"
 EOF
 chmod 755 "${lock_open_stat}"
 PTY_INPUT=$'yes\n'
-run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${lock_open_stat}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+run_with_pty 5 both-stderr-file /usr/bin/env ZDOTDIR="${lock_open_zdotdir}" SYNTHETIC_LOCK_OWNER_OPEN_MARKER="${lock_owner_open_marker}" HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${lock_open_stat}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "lock owner-marker open failure aborts repair" 1 "${PTY_STATUS}"
+if [[ -f "${lock_owner_open_marker}" ]]; then
+  pass "lock owner-marker open failure reaches the guarded shell open"
+else
+  fail "lock owner-marker open failure reaches the guarded shell open"
+fi
 for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host; do
   assert_not_contains "lock open stderr redacts ${private_token}" "${PTY_STDERR}" "${private_token}"
   assert_not_contains "lock open log redacts ${private_token}" "$(<"${candidate_log}")" "${private_token}"
