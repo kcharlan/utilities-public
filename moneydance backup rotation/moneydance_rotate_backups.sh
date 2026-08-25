@@ -417,7 +417,8 @@ cleanup_repair_artifacts() {
 
 inspect_path_acl() {
   local path="$1"
-  local acl_output acl_line acl_line_trimmed acl_entry_index
+  local acl_output acl_line acl_line_trimmed acl_entry_index acl_header_prefix
+  local acl_header_pattern='^[d-][r-][w-][xSs-][r-][w-][xSs-][r-][w-][xTt-][@+]?[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+'
   integer acl_index expected_acl_index
   typeset -a acl_lines=()
 
@@ -428,10 +429,16 @@ inspect_path_acl() {
   (( ${#acl_lines[@]} >= 1 )) || return 1
   # The first ls line contains the pathname and is deliberately never parsed
   # as an ACE. Subsequent lines must be indexed macOS ACL entries.
+  if [[ "${acl_lines[1]}" =~ "${acl_header_pattern}" ]]; then
+    acl_header_prefix="${MATCH}"
+  else
+    return 1
+  fi
+  (( ${#acl_lines[1]} > ${#acl_header_prefix} )) || return 1
   if [[ -d "${path}" && ! -L "${path}" ]]; then
-    [[ "${acl_lines[1]}" == d* ]] || return 1
+    [[ "${acl_header_prefix}" == d* ]] || return 1
   elif [[ -f "${path}" && ! -L "${path}" ]]; then
-    [[ "${acl_lines[1]}" == -* ]] || return 1
+    [[ "${acl_header_prefix}" == -* ]] || return 1
   else
     return 1
   fi
@@ -441,7 +448,7 @@ inspect_path_acl() {
     acl_entry_index="${acl_line_trimmed%%:*}"
     expected_acl_index=$(( acl_index - 2 ))
     [[ "${acl_entry_index}" == "${expected_acl_index}" ]] || return 1
-    if [[ ! "${acl_line}" =~ '^[[:space:]]*[0-9]+:[[:space:]]+[^[:space:]]+([[:space:]]+[A-Za-z_]+)*[[:space:]]+(allow|deny)[[:space:]]+[A-Za-z_,]+$' ]]; then
+    if [[ ! "${acl_line}" =~ '^[[:space:]]*[0-9]+:[[:space:]]+(user|group):[^[:space:]]+([[:space:]]+[A-Za-z_]+)*[[:space:]]+(allow|deny)[[:space:]]+[A-Za-z_,]+$' ]]; then
       return 1
     fi
     [[ "${acl_line}" != *[[:space:]]allow[[:space:]]* ]] || return 1

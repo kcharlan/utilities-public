@@ -898,6 +898,60 @@ else
 fi
 rmdir "${acl_probe}"
 
+# Injected parser cases run even when the test filesystem cannot create native
+# ACLs. Truncated long-listing headers and ACE-shaped non-ACE lines must fail
+# closed for both directory and regular-file inspection.
+acl_parser_mktemp="${test_root}/repair-acl-parser-mktemp-spy"
+acl_parser_mktemp_marker="${test_root}/repair-acl-parser-mktemp-called"
+acl_parser_mv="${test_root}/repair-acl-parser-mv-spy"
+acl_parser_mv_marker="${test_root}/repair-acl-parser-mv-called"
+cat > "${acl_parser_mktemp}" <<EOF
+#!/bin/zsh
+print -r -- invoked > "${acl_parser_mktemp_marker}"
+exec /usr/bin/mktemp "\$@"
+EOF
+cat > "${acl_parser_mv}" <<EOF
+#!/bin/zsh
+print -r -- invoked > "${acl_parser_mv_marker}"
+exit 97
+EOF
+chmod 755 "${acl_parser_mktemp}" "${acl_parser_mv}"
+for acl_parser_kind in header_dir header_file extra_dir extra_file; do
+  reset_repair_config
+  acl_parser_inspector="${test_root}/repair-acl-parser-${acl_parser_kind}"
+  cat > "${acl_parser_inspector}" <<EOF
+#!/bin/zsh
+target="\${@: -1}"
+case "${acl_parser_kind}" in
+  header_dir) [[ -d "\${target}" ]] && { print -r -- d; exit 0; } ;;
+  header_file) [[ -f "\${target}" ]] && { print -r -- -; exit 0; } ;;
+  extra_dir)
+    if [[ -d "\${target}" ]]; then /bin/ls -lde -- "\${target}" || exit 1; print -r -- ' 0: SYNTHETIC deny delete'; exit 0; fi
+    ;;
+  extra_file)
+    if [[ -f "\${target}" ]]; then /bin/ls -lde -- "\${target}" || exit 1; print -r -- ' 0: SYNTHETIC deny delete'; exit 0; fi
+    ;;
+esac
+exec /bin/ls -lde -- "\${target}"
+EOF
+  chmod 755 "${acl_parser_inspector}"
+  rm -f -- "${unique_candidate_marker}" "${acl_parser_mktemp_marker}" "${acl_parser_mv_marker}"
+  : > "${candidate_logger_marker}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_ACL_BIN="${acl_parser_inspector}" MONEYDANCE_MKTEMP_BIN="${acl_parser_mktemp}" MONEYDANCE_MV_BIN="${acl_parser_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "ACL parser rejects ${acl_parser_kind}" 2 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "ACL ${acl_parser_kind} rejection preserves exact bytes"; else fail "ACL ${acl_parser_kind} rejection preserves exact bytes"; fi
+  [[ "$(stat -f '%Lp' "${repair_config}")" == 640 ]] && pass "ACL ${acl_parser_kind} rejection preserves mode" || fail "ACL ${acl_parser_kind} rejection preserves mode"
+  [[ ! -e "${acl_parser_mktemp_marker}" ]] && pass "ACL ${acl_parser_kind} rejection precedes temp creation" || fail "ACL ${acl_parser_kind} rejection precedes temp creation"
+  [[ ! -e "${unique_candidate_marker}" ]] && pass "ACL ${acl_parser_kind} rejection precedes mount" || fail "ACL ${acl_parser_kind} rejection precedes mount"
+  [[ ! -e "${acl_parser_mv_marker}" ]] && pass "ACL ${acl_parser_kind} rejection precedes MV_BIN" || fail "ACL ${acl_parser_kind} rejection precedes MV_BIN"
+  acl_parser_persistent="${PTY_STDERR}$(<"${candidate_logger_marker}")"
+  [[ ! -f "${candidate_log}" ]] || acl_parser_persistent+="$(<"${candidate_log}")"
+  for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host; do
+    assert_not_contains "ACL ${acl_parser_kind} persistent sinks redact ${private_token}" "${acl_parser_persistent}" "${private_token}"
+  done
+done
+
 # A changed direct-directory identity must be detected again before mktemp can
 # open a snapshot path.
 reset_repair_config
