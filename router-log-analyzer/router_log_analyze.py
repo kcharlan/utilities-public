@@ -29,9 +29,24 @@ from typing import Any, Callable, DefaultDict, Dict, FrozenSet, List, Optional, 
 
 
 DB_FILENAME = "network.db"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+MIGRATABLE_SCHEMA_VERSION = 3
 FORMAT_NETGEAR = "netgear"
 FORMAT_TP_LINK_ARCHER = "tp_link_archer"
+LEGACY_NETGEAR_INSTANCE_KEY = hashlib.sha256(
+    b"router-instance:v1\0netgear\0legacy-default"
+).hexdigest()
+LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY = hashlib.sha256(
+    b"firmware-profile:v1\0netgear\0unknown-legacy-firmware"
+).hexdigest()
+LEGACY_NETGEAR_ROUTER_SUBJECT_KEY = hashlib.sha256(
+    (
+        "router-subject:v1\0"
+        + LEGACY_NETGEAR_INSTANCE_KEY
+        + "\0"
+        + LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY
+    ).encode("utf-8")
+).hexdigest()
 CLI_FORMAT_TO_ID = {
     "netgear": FORMAT_NETGEAR,
     "tp-link-archer": FORMAT_TP_LINK_ARCHER,
@@ -659,21 +674,1625 @@ def validate_policy(policy: Dict[str, Any]) -> Dict[str, Any]:
     return policy
 
 
+V3_REQUIRED_COLUMNS: Dict[str, Tuple[str, ...]] = {
+    "metadata": ("key", "value"),
+    "baseline_epochs": ("id", "created_at", "source_path", "source_hash", "label", "is_active"),
+    "baseline_seed_devices": (
+        "id", "epoch_id", "mac", "name", "dhcp_min", "dhcp_max", "dhcp_seed_weight",
+        "total_events_min", "total_events_max", "total_events_seed_weight", "active_hours_json",
+        "expected_windows_json", "expected_events_json", "pattern", "soft_max",
+    ),
+    "baseline_seed_clusters": (
+        "id", "epoch_id", "cluster_name", "mac_prefixes_json", "cluster_size",
+        "min_cluster_size", "cluster_time_window_seconds", "expected_windows_json",
+    ),
+    "policy_profiles": (
+        "id", "created_at", "name", "schema_version", "source_path", "source_hash",
+        "is_active", "policy_json",
+    ),
+    "runs": (
+        "id", "epoch_id", "policy_profile_id", "file_hash", "source_path", "ingested_at",
+        "observation_start", "observation_end", "observed_dates_json", "parsed_event_count",
+        "malformed_line_count", "export_noise_line_count", "risk_score", "status", "is_partial",
+    ),
+    "network_incidents": (
+        "id", "run_id", "incident_id", "incident_type", "confidence", "start", "restored_at",
+        "recovery_end", "disconnect_count", "connect_count", "affected_macs_json",
+        "event_counts_json", "explained_event_count", "active_known_devices",
+        "affected_device_fraction",
+    ),
+    "devices": ("mac", "name", "status", "connection_type", "source", "first_seen", "last_seen"),
+    "device_daily_stats": (
+        "id", "run_id", "epoch_id", "observed_date", "mac", "dhcp_count", "total_events",
+        "first_seen", "last_seen", "event_types_json", "active_hours_json", "included_in_learning",
+        "exclusion_reason",
+    ),
+    "device_event_daily_stats": (
+        "id", "run_id", "epoch_id", "observed_date", "mac", "event_key", "event_family", "count",
+        "first_seen", "last_seen", "hour_histogram_json", "included_in_learning", "exclusion_reason",
+    ),
+    "behavior_subjects": (
+        "subject_key", "subject_type", "display_name", "attributes_json", "first_seen", "last_seen",
+    ),
+    "subject_behavior_daily_stats": (
+        "id", "run_id", "epoch_id", "observed_date", "subject_key", "subject_type", "behavior_key",
+        "behavior_family", "count", "first_seen", "last_seen", "hour_histogram_json",
+        "occurrence_starts_json", "occurrence_ends_json", "occurrence_sizes_json", "context_json",
+        "included_in_learning", "exclusion_reason",
+    ),
+}
+
+V4_REQUIRED_COLUMNS: Dict[str, Tuple[str, ...]] = {
+    **{name: columns for name, columns in V3_REQUIRED_COLUMNS.items() if name != "runs"},
+    "router_instances": (
+        "id", "instance_key", "canonical_vendor", "identity_source", "label", "first_seen", "last_seen",
+        "identity_version",
+    ),
+    "router_firmware_profiles": (
+        "id", "profile_key", "canonical_vendor", "normalized_firmware", "identity_version",
+    ),
+    "runs": (
+        "id", "epoch_id", "policy_profile_id", "router_instance_id", "format_id", "file_hash",
+        "source_path", "ingested_at", "export_timestamp", "observation_start", "observation_end",
+        "observed_dates_json", "capabilities_json", "body_digest", "novel_event_count",
+        "repeated_event_count", "parsed_event_count", "malformed_line_count", "export_noise_line_count",
+        "risk_score", "status", "is_partial",
+    ),
+    "device_registrations": (
+        "id", "mac", "registration_source", "source_key", "epoch_id", "registered_name",
+        "registered_status", "registered_connection_type", "first_seen", "last_seen",
+        "registration_sequence", "registered_at", "last_confirmed_at",
+    ),
+    "device_observations": (
+        "id", "run_id", "mac", "evidence_kind", "seen_at", "evidence_digest", "attributes_json",
+    ),
+    "router_metadata_observations": (
+        "run_id", "router_instance_id", "observed_at", "export_timestamp", "model", "hardware",
+        "firmware_raw", "firmware_normalized", "firmware_profile_id", "router_owned_interfaces_json",
+        "metadata_json",
+    ),
+    "router_snapshot_metrics": (
+        "run_id", "router_instance_id", "epoch_id", "export_timestamp", "raw_total_clients",
+        "raw_wifi_clients", "total_clients", "wifi_clients", "derived_wired_clients", "eligible",
+        "exclusion_reason",
+    ),
+    "router_boot_sessions": (
+        "id", "router_instance_id", "session_key", "trusted_local_anchor", "adapter_boot_id",
+        "startup_signature", "identity_version", "created_at",
+    ),
+    "run_router_boot_sessions": ("run_id", "boot_session_id"),
+    "router_event_occurrences": (
+        "id", "router_instance_id", "occurrence_digest", "identity_version", "boot_session_id",
+        "local_timestamp", "clock_trust", "component", "process_id", "vendor_event_code",
+        "syslog_severity", "normalized_message", "canonical_event_key", "canonical_event_family",
+        "actor_scope", "actor_identity", "structured_evidence_json",
+    ),
+    "run_event_occurrences": (
+        "run_id", "occurrence_id", "is_novel", "is_repeated", "source_sequence", "source_count",
+    ),
+}
+
+REQUIRED_INDEX_COLUMNS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
+    "idx_baseline_epochs_active": ("baseline_epochs", ("is_active",)),
+    "idx_seed_devices_epoch_mac": ("baseline_seed_devices", ("epoch_id", "mac")),
+    "idx_policy_profiles_active": ("policy_profiles", ("is_active",)),
+    "idx_runs_epoch_time": ("runs", ("epoch_id", "ingested_at")),
+    "idx_network_incidents_run": ("network_incidents", ("run_id",)),
+    "idx_device_daily_epoch_mac_date": ("device_daily_stats", ("epoch_id", "mac", "observed_date")),
+    "idx_device_event_daily_epoch_mac_key_date": (
+        "device_event_daily_stats", ("epoch_id", "mac", "event_key", "observed_date"),
+    ),
+    "idx_behavior_subjects_type_key": ("behavior_subjects", ("subject_type", "subject_key")),
+    "idx_subject_behavior_epoch_subject_date": (
+        "subject_behavior_daily_stats",
+        ("epoch_id", "subject_key", "subject_type", "behavior_key", "observed_date"),
+    ),
+}
+
+V4_INDEX_COLUMNS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
+    **REQUIRED_INDEX_COLUMNS,
+    "idx_runs_router_export": ("runs", ("router_instance_id", "export_timestamp", "id")),
+    "idx_device_registrations_mac_sequence": (
+        "device_registrations", ("mac", "registration_sequence"),
+    ),
+    "idx_device_observations_mac_seen": ("device_observations", ("mac", "seen_at", "run_id")),
+    "idx_router_snapshot_history": (
+        "router_snapshot_metrics", ("router_instance_id", "epoch_id", "export_timestamp", "run_id"),
+    ),
+    "idx_router_boot_sessions_match": (
+        "router_boot_sessions", ("router_instance_id", "trusted_local_anchor", "startup_signature"),
+    ),
+    "idx_router_event_occurrences_history": (
+        "router_event_occurrences", ("router_instance_id", "canonical_event_key", "local_timestamp"),
+    ),
+}
+
+V3_REQUIRED_FOREIGN_KEYS: Dict[str, Set[Tuple[str, str, str]]] = {
+    "baseline_seed_devices": {("epoch_id", "baseline_epochs", "id")},
+    "baseline_seed_clusters": {("epoch_id", "baseline_epochs", "id")},
+    "runs": {("epoch_id", "baseline_epochs", "id"), ("policy_profile_id", "policy_profiles", "id")},
+    "network_incidents": {("run_id", "runs", "id")},
+    "device_daily_stats": {("run_id", "runs", "id"), ("epoch_id", "baseline_epochs", "id")},
+    "device_event_daily_stats": {("run_id", "runs", "id"), ("epoch_id", "baseline_epochs", "id")},
+    "subject_behavior_daily_stats": {("run_id", "runs", "id"), ("epoch_id", "baseline_epochs", "id")},
+}
+
+V4_REQUIRED_FOREIGN_KEYS: Dict[str, Set[Tuple[str, str, str]]] = {
+    **{name: keys for name, keys in V3_REQUIRED_FOREIGN_KEYS.items() if name != "runs"},
+    "runs": {
+        ("epoch_id", "baseline_epochs", "id"), ("policy_profile_id", "policy_profiles", "id"),
+        ("router_instance_id", "router_instances", "id"),
+    },
+    "device_registrations": {("epoch_id", "baseline_epochs", "id")},
+    "device_observations": {("run_id", "runs", "id"), ("mac", "devices", "mac")},
+    "router_metadata_observations": {
+        ("run_id", "runs", "id"), ("router_instance_id", "router_instances", "id"),
+        ("firmware_profile_id", "router_firmware_profiles", "id"),
+    },
+    "router_snapshot_metrics": {
+        ("run_id", "runs", "id"), ("router_instance_id", "router_instances", "id"),
+        ("epoch_id", "baseline_epochs", "id"),
+    },
+    "router_boot_sessions": {("router_instance_id", "router_instances", "id")},
+    "run_router_boot_sessions": {
+        ("run_id", "runs", "id"), ("boot_session_id", "router_boot_sessions", "id"),
+    },
+    "router_event_occurrences": {
+        ("router_instance_id", "router_instances", "id"),
+        ("boot_session_id", "router_boot_sessions", "id"),
+    },
+    "run_event_occurrences": {
+        ("run_id", "runs", "id"), ("occurrence_id", "router_event_occurrences", "id"),
+    },
+}
+
+V3_REQUIRED_UNIQUE_KEYS: Dict[str, Set[Tuple[str, ...]]] = {
+    "metadata": {("key",)},
+    "baseline_epochs": {("id",)},
+    "baseline_seed_devices": {("id",), ("epoch_id", "mac")},
+    "baseline_seed_clusters": {("id",), ("epoch_id", "cluster_name")},
+    "policy_profiles": {("id",)},
+    "runs": {("id",), ("file_hash",)},
+    "network_incidents": {("id",), ("run_id", "incident_id")},
+    "devices": {("mac",)},
+    "device_daily_stats": {("id",), ("run_id", "observed_date", "mac")},
+    "device_event_daily_stats": {
+        ("id",), ("run_id", "observed_date", "mac", "event_key"),
+    },
+    "behavior_subjects": {("subject_key", "subject_type")},
+    "subject_behavior_daily_stats": {
+        ("id",),
+        ("run_id", "observed_date", "subject_key", "subject_type", "behavior_key"),
+    },
+}
+
+V4_REQUIRED_UNIQUE_KEYS: Dict[str, Set[Tuple[str, ...]]] = {
+    **{name: keys for name, keys in V3_REQUIRED_UNIQUE_KEYS.items() if name != "runs"},
+    "router_instances": {("id",), ("instance_key",)},
+    "router_firmware_profiles": {("id",), ("profile_key",)},
+    "runs": {("id",), ("router_instance_id", "file_hash")},
+    "device_registrations": {
+        ("id",), ("registration_sequence",), ("mac", "registration_source", "source_key"),
+    },
+    "device_observations": {
+        ("id",), ("run_id", "mac", "evidence_kind", "seen_at", "evidence_digest"),
+    },
+    "router_metadata_observations": {("run_id",)},
+    "router_snapshot_metrics": {("run_id",)},
+    "router_boot_sessions": {("id",), ("session_key",)},
+    "run_router_boot_sessions": {("run_id", "boot_session_id")},
+    "router_event_occurrences": {
+        ("id",), ("router_instance_id", "occurrence_digest"),
+    },
+    "run_event_occurrences": {("run_id", "occurrence_id")},
+}
+
+V3_REQUIRED_PRIMARY_KEYS: Dict[str, Tuple[str, ...]] = {
+    "metadata": ("key",),
+    "baseline_epochs": ("id",),
+    "baseline_seed_devices": ("id",),
+    "baseline_seed_clusters": ("id",),
+    "policy_profiles": ("id",),
+    "runs": ("id",),
+    "network_incidents": ("id",),
+    "devices": ("mac",),
+    "device_daily_stats": ("id",),
+    "device_event_daily_stats": ("id",),
+    "behavior_subjects": ("subject_key", "subject_type"),
+    "subject_behavior_daily_stats": ("id",),
+}
+
+V4_REQUIRED_PRIMARY_KEYS: Dict[str, Tuple[str, ...]] = {
+    **V3_REQUIRED_PRIMARY_KEYS,
+    "router_instances": ("id",),
+    "router_firmware_profiles": ("id",),
+    "device_registrations": ("id",),
+    "device_observations": ("id",),
+    "router_metadata_observations": ("run_id",),
+    "router_snapshot_metrics": ("run_id",),
+    "router_boot_sessions": ("id",),
+    "run_router_boot_sessions": ("run_id", "boot_session_id"),
+    "router_event_occurrences": ("id",),
+    "run_event_occurrences": ("run_id", "occurrence_id"),
+}
+
+V3_REQUIRED_NOT_NULL: Dict[str, Set[str]] = {
+    "metadata": {"value"},
+    "baseline_epochs": {"created_at", "is_active"},
+    "baseline_seed_devices": {"epoch_id", "mac"},
+    "baseline_seed_clusters": {"epoch_id", "cluster_name"},
+    "policy_profiles": {
+        "created_at", "name", "schema_version", "is_active", "policy_json",
+    },
+    "runs": {
+        "epoch_id", "file_hash", "ingested_at", "parsed_event_count",
+        "malformed_line_count", "export_noise_line_count", "is_partial",
+    },
+    "network_incidents": {
+        "run_id", "incident_id", "incident_type", "confidence", "start", "restored_at",
+        "recovery_end", "disconnect_count", "connect_count", "affected_macs_json",
+        "event_counts_json", "explained_event_count", "active_known_devices",
+        "affected_device_fraction",
+    },
+    "devices": set(),
+    "device_daily_stats": {
+        "run_id", "epoch_id", "observed_date", "mac", "dhcp_count", "total_events",
+        "included_in_learning",
+    },
+    "device_event_daily_stats": {
+        "run_id", "epoch_id", "observed_date", "mac", "event_key", "event_family", "count",
+        "included_in_learning",
+    },
+    "behavior_subjects": {"subject_key", "subject_type"},
+    "subject_behavior_daily_stats": {
+        "run_id", "epoch_id", "observed_date", "subject_key", "subject_type", "behavior_key",
+        "behavior_family", "count", "included_in_learning",
+    },
+}
+
+V4_REQUIRED_NOT_NULL: Dict[str, Set[str]] = {
+    **{name: columns for name, columns in V3_REQUIRED_NOT_NULL.items() if name != "runs"},
+    "router_instances": {
+        "instance_key", "canonical_vendor", "identity_source", "identity_version",
+    },
+    "router_firmware_profiles": {
+        "profile_key", "canonical_vendor", "normalized_firmware", "identity_version",
+    },
+    "runs": {
+        "epoch_id", "router_instance_id", "format_id", "file_hash", "ingested_at",
+        "capabilities_json", "novel_event_count", "repeated_event_count", "parsed_event_count",
+        "malformed_line_count", "export_noise_line_count", "is_partial",
+    },
+    "device_registrations": {
+        "mac", "registration_source", "source_key", "registration_sequence", "registered_at",
+        "last_confirmed_at",
+    },
+    "device_observations": {
+        "run_id", "mac", "evidence_kind", "seen_at", "evidence_digest", "attributes_json",
+    },
+    "router_metadata_observations": {
+        "router_instance_id", "router_owned_interfaces_json", "metadata_json",
+    },
+    "router_snapshot_metrics": {"router_instance_id", "epoch_id", "eligible"},
+    "router_boot_sessions": {
+        "router_instance_id", "session_key", "startup_signature", "identity_version", "created_at",
+    },
+    "run_router_boot_sessions": {"run_id", "boot_session_id"},
+    "router_event_occurrences": {
+        "router_instance_id", "occurrence_digest", "identity_version", "clock_trust",
+        "normalized_message", "canonical_event_key", "canonical_event_family", "actor_scope",
+        "structured_evidence_json",
+    },
+    "run_event_occurrences": {
+        "run_id", "occurrence_id", "is_novel", "is_repeated", "source_count",
+    },
+}
+
+V3_INTEGER_COLUMNS: Dict[str, Set[str]] = {
+    "metadata": set(),
+    "baseline_epochs": {"id", "is_active"},
+    "baseline_seed_devices": {"id", "epoch_id"},
+    "baseline_seed_clusters": {
+        "id", "epoch_id", "cluster_size", "min_cluster_size", "cluster_time_window_seconds",
+    },
+    "policy_profiles": {"id", "schema_version", "is_active"},
+    "runs": {
+        "id", "epoch_id", "policy_profile_id", "parsed_event_count", "malformed_line_count",
+        "export_noise_line_count", "risk_score", "is_partial",
+    },
+    "network_incidents": {
+        "id", "run_id", "disconnect_count", "connect_count", "explained_event_count",
+        "active_known_devices",
+    },
+    "devices": set(),
+    "device_daily_stats": {
+        "id", "run_id", "epoch_id", "dhcp_count", "total_events", "included_in_learning",
+    },
+    "device_event_daily_stats": {"id", "run_id", "epoch_id", "count", "included_in_learning"},
+    "behavior_subjects": set(),
+    "subject_behavior_daily_stats": {
+        "id", "run_id", "epoch_id", "count", "included_in_learning",
+    },
+}
+
+V3_REAL_COLUMNS: Dict[str, Set[str]] = {
+    "baseline_seed_devices": {
+        "dhcp_min", "dhcp_max", "dhcp_seed_weight", "total_events_min", "total_events_max",
+        "total_events_seed_weight", "soft_max",
+    },
+    "network_incidents": {"affected_device_fraction"},
+}
+
+V4_INTEGER_COLUMNS: Dict[str, Set[str]] = {
+    **{name: columns for name, columns in V3_INTEGER_COLUMNS.items() if name != "runs"},
+    "router_instances": {"id"},
+    "router_firmware_profiles": {"id"},
+    "runs": {
+        "id", "epoch_id", "policy_profile_id", "router_instance_id", "novel_event_count",
+        "repeated_event_count", "parsed_event_count", "malformed_line_count",
+        "export_noise_line_count", "risk_score", "is_partial",
+    },
+    "device_registrations": {"id", "epoch_id", "registration_sequence"},
+    "device_observations": {"id", "run_id"},
+    "router_metadata_observations": {"run_id", "router_instance_id", "firmware_profile_id"},
+    "router_snapshot_metrics": {
+        "run_id", "router_instance_id", "epoch_id", "total_clients", "wifi_clients",
+        "derived_wired_clients", "eligible",
+    },
+    "router_boot_sessions": {"id", "router_instance_id"},
+    "run_router_boot_sessions": {"run_id", "boot_session_id"},
+    "router_event_occurrences": {"id", "router_instance_id", "boot_session_id"},
+    "run_event_occurrences": {
+        "run_id", "occurrence_id", "is_novel", "is_repeated", "source_sequence", "source_count",
+    },
+}
+
+
+def _expected_declared_types(
+    columns_by_table: Dict[str, Tuple[str, ...]],
+    integer_columns: Dict[str, Set[str]],
+    real_columns: Dict[str, Set[str]],
+) -> Dict[str, Dict[str, str]]:
+    return {
+        table: {
+            column: (
+                "INTEGER"
+                if column in integer_columns.get(table, set())
+                else "REAL"
+                if column in real_columns.get(table, set())
+                else "TEXT"
+            )
+            for column in columns
+        }
+        for table, columns in columns_by_table.items()
+    }
+
+
+V3_REQUIRED_TYPES = _expected_declared_types(
+    V3_REQUIRED_COLUMNS, V3_INTEGER_COLUMNS, V3_REAL_COLUMNS
+)
+V4_REQUIRED_TYPES = _expected_declared_types(
+    V4_REQUIRED_COLUMNS, V4_INTEGER_COLUMNS, V3_REAL_COLUMNS
+)
+
+V3_REQUIRED_DEFAULTS: Dict[str, Dict[str, str]] = {
+    table: {} for table in V3_REQUIRED_COLUMNS
+}
+V3_REQUIRED_DEFAULTS.update({
+    "baseline_epochs": {"is_active": "0"},
+    "policy_profiles": {"is_active": "0"},
+    "runs": {
+        "parsed_event_count": "0", "malformed_line_count": "0",
+        "export_noise_line_count": "0", "is_partial": "0",
+    },
+    "network_incidents": {
+        "disconnect_count": "0", "connect_count": "0", "explained_event_count": "0",
+        "active_known_devices": "0", "affected_device_fraction": "0",
+    },
+    "device_daily_stats": {"dhcp_count": "0", "total_events": "0", "included_in_learning": "1"},
+    "device_event_daily_stats": {"count": "0", "included_in_learning": "1"},
+    "subject_behavior_daily_stats": {"count": "0", "included_in_learning": "1"},
+})
+
+V4_REQUIRED_DEFAULTS: Dict[str, Dict[str, str]] = {
+    table: dict(V3_REQUIRED_DEFAULTS.get(table, {})) for table in V4_REQUIRED_COLUMNS
+}
+V4_REQUIRED_DEFAULTS.update({
+    "runs": {
+        "novel_event_count": "0", "repeated_event_count": "0", "parsed_event_count": "0",
+        "malformed_line_count": "0", "export_noise_line_count": "0", "is_partial": "0",
+    },
+    "device_observations": {"attributes_json": "'{}'"},
+    "router_metadata_observations": {
+        "router_owned_interfaces_json": "'[]'", "metadata_json": "'{}'",
+    },
+    "router_snapshot_metrics": {"eligible": "0"},
+    "router_event_occurrences": {"structured_evidence_json": "'{}'"},
+    "run_event_occurrences": {"source_count": "1"},
+})
+
+V4_REQUIRED_CHECKS: Dict[str, Set[str]] = {
+    table: set() for table in V4_REQUIRED_COLUMNS
+}
+V4_REQUIRED_CHECKS.update({
+    "router_boot_sessions": {
+        "check(trusted_local_anchorisnotnulloradapter_boot_idisnotnull)",
+    },
+    "run_event_occurrences": {
+        "check(is_novelin(0,1))",
+        "check(is_repeatedin(0,1))",
+        "check(is_novel+is_repeated=1)",
+    },
+})
+
+V4_INDEX_DESCENDING: Dict[str, Tuple[int, ...]] = {
+    index: tuple(0 for _ in columns)
+    for index, (_, columns) in V4_INDEX_COLUMNS.items()
+}
+V4_INDEX_DESCENDING.update({
+    "idx_device_registrations_mac_sequence": (0, 1),
+    "idx_router_snapshot_history": (0, 0, 1, 1),
+})
+
+
 class StateStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path.expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
-        self.ensure_schema()
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        if self.conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            self.conn.close()
+            raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
+        try:
+            self.ensure_schema()
+        except Exception:
+            self.conn.close()
+            raise
 
     def close(self) -> None:
         self.conn.close()
 
     def ensure_schema(self) -> None:
-        self.conn.executescript(
+        user_objects = list(self.conn.execute(
             """
-            PRAGMA journal_mode = WAL;
+            SELECT type, name
+            FROM sqlite_master
+            WHERE name NOT LIKE 'sqlite_%'
+            ORDER BY type, name
+            """
+        ))
+        if not user_objects:
+            self._create_v4_schema()
+            self._validate_schema(SCHEMA_VERSION)
+            self.conn.execute("PRAGMA journal_mode = WAL")
+            return
+
+        table_names = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if "metadata" not in table_names:
+            self._raise_schema_error("the metadata table is missing")
+        try:
+            version_rows = self.conn.execute(
+                "SELECT value FROM metadata WHERE key = 'schema_version'"
+            ).fetchall()
+        except sqlite3.DatabaseError as exc:
+            self._raise_schema_error(f"the metadata table is unreadable ({exc})")
+        if len(version_rows) != 1:
+            self._raise_schema_error("metadata.schema_version is missing")
+        raw_version = version_rows[0][0]
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError):
+            self._raise_schema_error("metadata.schema_version is not an integer")
+        if str(version) != str(raw_version):
+            self._raise_schema_error("metadata.schema_version is not canonical")
+        if version == SCHEMA_VERSION:
+            self._validate_schema(SCHEMA_VERSION)
+        elif version == MIGRATABLE_SCHEMA_VERSION:
+            self._validate_schema(MIGRATABLE_SCHEMA_VERSION)
+            self._migrate_v3_to_v4()
+        else:
+            self._raise_schema_error(
+                f"schema version {version} is unsupported; only version 3 can migrate to version 4"
+            )
+        self.conn.execute("PRAGMA journal_mode = WAL")
+
+    @staticmethod
+    def _schema_recovery_message(detail: str) -> str:
+        return (
+            f"Unsupported or malformed router-log-analyzer database: {detail}. "
+            "No schema migration was attempted; restore a backup or choose a new --db path."
+        )
+
+    def _raise_schema_error(self, detail: str) -> None:
+        raise RuntimeError(self._schema_recovery_message(detail))
+
+    def _validate_schema(self, version: int) -> None:
+        columns_by_table = V4_REQUIRED_COLUMNS if version == SCHEMA_VERSION else V3_REQUIRED_COLUMNS
+        indexes = V4_INDEX_COLUMNS if version == SCHEMA_VERSION else REQUIRED_INDEX_COLUMNS
+        foreign_keys = (
+            V4_REQUIRED_FOREIGN_KEYS if version == SCHEMA_VERSION else V3_REQUIRED_FOREIGN_KEYS
+        )
+        unique_keys = (
+            V4_REQUIRED_UNIQUE_KEYS if version == SCHEMA_VERSION else V3_REQUIRED_UNIQUE_KEYS
+        )
+        primary_keys = (
+            V4_REQUIRED_PRIMARY_KEYS if version == SCHEMA_VERSION else V3_REQUIRED_PRIMARY_KEYS
+        )
+        not_null_columns = (
+            V4_REQUIRED_NOT_NULL if version == SCHEMA_VERSION else V3_REQUIRED_NOT_NULL
+        )
+        declared_types = V4_REQUIRED_TYPES if version == SCHEMA_VERSION else V3_REQUIRED_TYPES
+        defaults = V4_REQUIRED_DEFAULTS if version == SCHEMA_VERSION else V3_REQUIRED_DEFAULTS
+        checks = (
+            V4_REQUIRED_CHECKS
+            if version == SCHEMA_VERSION
+            else {table: set() for table in V3_REQUIRED_COLUMNS}
+        )
+        objects = {
+            (row[0], row[1])
+            for row in self.conn.execute(
+                "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            )
+        }
+        required_table_names = set(columns_by_table)
+        attached_triggers = list(self.conn.execute(
+            """
+            SELECT name, tbl_name
+            FROM sqlite_master
+            WHERE type = 'trigger'
+            ORDER BY name
+            """
+        ))
+        for trigger in attached_triggers:
+            if trigger["tbl_name"] in required_table_names:
+                self._raise_schema_error(
+                    f"trigger {trigger['name']!r} is attached to required table "
+                    f"{trigger['tbl_name']!r}"
+                )
+        for table, expected_columns in columns_by_table.items():
+            if ("table", table) not in objects:
+                self._raise_schema_error(f"required table {table!r} is missing or has the wrong object type")
+            actual_columns = tuple(
+                row[1] for row in self.conn.execute(f'PRAGMA table_info("{table}")')
+            )
+            if actual_columns != expected_columns:
+                self._raise_schema_error(f"required table {table!r} has unexpected columns")
+            actual_not_null = {
+                row[1]
+                for row in self.conn.execute(f'PRAGMA table_info("{table}")')
+                if row[3]
+            }
+            if actual_not_null != not_null_columns[table]:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected NOT NULL constraints"
+                )
+            actual_types = {
+                row[1]: str(row[2]).upper()
+                for row in self.conn.execute(f'PRAGMA table_xinfo("{table}")')
+            }
+            if actual_types != declared_types[table]:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected declared types"
+                )
+            actual_defaults = {
+                row[1]: str(row[4])
+                for row in self.conn.execute(f'PRAGMA table_xinfo("{table}")')
+                if row[4] is not None
+            }
+            if actual_defaults != defaults[table]:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected default values"
+                )
+            table_sql_row = self.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()
+            canonical_table_sql = re.sub(r"\s+", "", (table_sql_row[0] or "").casefold())
+            expected_checks = checks[table]
+            if canonical_table_sql.count("check(") != len(expected_checks) or any(
+                check not in canonical_table_sql for check in expected_checks
+            ):
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected CHECK constraints"
+                )
+
+        for index, (table, expected_columns) in indexes.items():
+            row = self.conn.execute(
+                "SELECT type, tbl_name FROM sqlite_master WHERE name = ?",
+                (index,),
+            ).fetchone()
+            if row is None or row[0] != "index" or row[1] != table:
+                self._raise_schema_error(f"required index {index!r} is missing or malformed")
+            actual_columns = tuple(
+                item[2] for item in self.conn.execute(f'PRAGMA index_info("{index}")')
+            )
+            if actual_columns != expected_columns:
+                self._raise_schema_error(f"required index {index!r} has unexpected columns")
+            index_list_row = next(
+                (
+                    item
+                    for item in self.conn.execute(f'PRAGMA index_list("{table}")')
+                    if item[1] == index
+                ),
+                None,
+            )
+            if index_list_row is None or index_list_row[4] != 0:
+                self._raise_schema_error(f"required index {index!r} is unexpectedly partial")
+            index_xinfo = [
+                item
+                for item in self.conn.execute(f'PRAGMA index_xinfo("{index}")')
+                if item[5]
+            ]
+            actual_directions = tuple(item[3] for item in index_xinfo)
+            expected_directions = (
+                V4_INDEX_DESCENDING[index]
+                if version == SCHEMA_VERSION
+                else tuple(0 for _ in expected_columns)
+            )
+            if actual_directions != expected_directions or any(
+                str(item[4]).upper() != "BINARY" for item in index_xinfo
+            ):
+                self._raise_schema_error(
+                    f"required index {index!r} has unexpected direction or collation"
+                )
+
+        for table, expected in foreign_keys.items():
+            actual = {
+                (row[3], row[2], row[4], row[5], row[6], row[7])
+                for row in self.conn.execute(f'PRAGMA foreign_key_list("{table}")')
+            }
+            expected_detailed = {
+                (*foreign_key, "NO ACTION", "NO ACTION", "NONE")
+                for foreign_key in expected
+            }
+            if actual != expected_detailed:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected foreign-key declarations"
+                )
+
+        for table, expected in unique_keys.items():
+            primary_key = tuple(
+                row[1]
+                for row in sorted(
+                    (
+                        row
+                        for row in self.conn.execute(f'PRAGMA table_info("{table}")')
+                        if row[5]
+                    ),
+                    key=lambda row: row[5],
+                )
+            )
+            if primary_key != primary_keys[table]:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected primary-key columns"
+                )
+            actual: Set[Tuple[str, ...]] = set()
+            for index_row in self.conn.execute(f'PRAGMA index_list("{table}")'):
+                if not index_row[2]:
+                    continue
+                index_xinfo = [
+                    row
+                    for row in self.conn.execute(f'PRAGMA index_xinfo("{index_row[1]}")')
+                    if row[5]
+                ]
+                columns = tuple(row[2] for row in index_xinfo)
+                if (
+                    index_row[4]
+                    or any(row[3] != 0 for row in index_xinfo)
+                    or any(str(row[4]).upper() != "BINARY" for row in index_xinfo)
+                    or any(column is None for column in columns)
+                ):
+                    self._raise_schema_error(
+                        f"required table {table!r} has a malformed unique key"
+                    )
+                if index_row[3] != "pk" and columns:
+                    actual.add(columns)
+            expected_secondary = expected - {primary_keys[table]}
+            if actual != expected_secondary:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected unique keys"
+                )
+
+        violations = list(self.conn.execute("PRAGMA foreign_key_check"))
+        if violations:
+            self._raise_schema_error("foreign-key violations were detected")
+        if version == SCHEMA_VERSION:
+            self._validate_v4_data_relationships()
+            for table in (
+                "network_incidents", "device_daily_stats", "device_event_daily_stats",
+                "subject_behavior_daily_stats", "device_observations",
+                "router_metadata_observations", "router_snapshot_metrics",
+                "run_router_boot_sessions", "run_event_occurrences",
+            ):
+                sql_row = self.conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    (table,),
+                ).fetchone()
+                sql = (sql_row[0] or "").casefold()
+                if "runs_v4" in sql or "runs_temp" in sql or "runs_old" in sql:
+                    self._raise_schema_error(f"required table {table!r} references a temporary runs table")
+
+    def _validate_v4_data_relationships(self) -> None:
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM runs AS run
+            LEFT JOIN router_metadata_observations AS metadata ON metadata.run_id = run.id
+            WHERE metadata.run_id IS NULL
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_metadata_observations does not contain exactly one row for every run"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM router_metadata_observations AS metadata
+            JOIN runs AS run ON run.id = metadata.run_id
+            WHERE metadata.router_instance_id != run.router_instance_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_metadata_observations has a row that does not match its run identity"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM router_metadata_observations AS metadata
+            JOIN router_instances AS router ON router.id = metadata.router_instance_id
+            JOIN router_firmware_profiles AS firmware ON firmware.id = metadata.firmware_profile_id
+            WHERE firmware.canonical_vendor != router.canonical_vendor
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_metadata_observations has a firmware profile from another vendor"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM runs AS run
+            LEFT JOIN router_snapshot_metrics AS snapshot ON snapshot.run_id = run.id
+            WHERE snapshot.run_id IS NULL
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_snapshot_metrics does not contain exactly one row for every run"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM router_snapshot_metrics AS snapshot
+            JOIN runs AS run ON run.id = snapshot.run_id
+            WHERE snapshot.router_instance_id != run.router_instance_id
+               OR snapshot.epoch_id != run.epoch_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_snapshot_metrics has a row that does not match its run identity or epoch"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM run_router_boot_sessions AS link
+            JOIN runs AS run ON run.id = link.run_id
+            JOIN router_boot_sessions AS session ON session.id = link.boot_session_id
+            WHERE run.router_instance_id != session.router_instance_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "run_router_boot_sessions links a run to another router instance"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM router_event_occurrences AS occurrence
+            JOIN router_boot_sessions AS session ON session.id = occurrence.boot_session_id
+            WHERE occurrence.router_instance_id != session.router_instance_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_event_occurrences references another router instance's boot session"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM run_event_occurrences AS link
+            JOIN runs AS run ON run.id = link.run_id
+            JOIN router_event_occurrences AS occurrence ON occurrence.id = link.occurrence_id
+            WHERE run.router_instance_id != occurrence.router_instance_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "run_event_occurrences links a run to another router instance"
+            )
+        for row in self.conn.execute("SELECT id, capabilities_json FROM runs"):
+            try:
+                capabilities = json.loads(row["capabilities_json"])
+            except (TypeError, json.JSONDecodeError):
+                self._raise_schema_error(f"run {row['id']} has invalid capabilities_json")
+            if not isinstance(capabilities, dict):
+                self._raise_schema_error(f"run {row['id']} capabilities_json is not an object")
+
+    def _migrate_v3_to_v4(self) -> None:
+        legacy_snapshot = {
+            "counts": {
+                table: self.conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                for table in V3_REQUIRED_COLUMNS
+            },
+            "ids": {
+                table: tuple(
+                    row[0]
+                    for row in self.conn.execute(f'SELECT id FROM "{table}" ORDER BY id')
+                )
+                for table, columns in V3_REQUIRED_COLUMNS.items()
+                if "id" in columns
+            },
+        }
+        self._migration_legacy_snapshot = legacy_snapshot
+        if self.conn.in_transaction:
+            self.conn.commit()
+        prior_foreign_keys = int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        if prior_foreign_keys != 1:
+            raise RuntimeError("SQLite foreign-key enforcement was not enabled before migration")
+        migration_committed = False
+        try:
+            self.conn.execute("PRAGMA foreign_keys = OFF")
+            if self.conn.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+                raise RuntimeError("Could not disable SQLite foreign keys for the v3 table rebuild")
+            self.conn.execute("BEGIN IMMEDIATE")
+            self._create_v4_identity_tables_for_migration()
+            legacy_router_id, legacy_profile_id = self._insert_legacy_router_identity()
+            self._rebuild_runs_for_v4(legacy_router_id)
+            self._create_v4_run_owned_tables_for_migration()
+            self._backfill_v3_provenance(legacy_router_id, legacy_profile_id)
+            self._rekey_legacy_system_behavior()
+            self._refresh_migrated_caches(legacy_router_id)
+            self._validate_migrated_v4_before_version_update()
+            updated = self.conn.execute(
+                "UPDATE metadata SET value = ? WHERE key = 'schema_version' AND value = '3'",
+                (str(SCHEMA_VERSION),),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("The schema version changed during migration")
+            self.conn.commit()
+            migration_committed = True
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            raise
+        finally:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            if self.conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                raise RuntimeError("SQLite foreign-key enforcement could not be restored after migration")
+            if hasattr(self, "_migration_legacy_snapshot"):
+                del self._migration_legacy_snapshot
+        if not migration_committed:
+            raise RuntimeError("Schema migration did not commit")
+        self._validate_schema(SCHEMA_VERSION)
+
+    def _create_v4_identity_tables_for_migration(self) -> None:
+        self._execute_migration_ddl(
+            """
+            CREATE TABLE router_instances (
+              id INTEGER PRIMARY KEY,
+              instance_key TEXT NOT NULL UNIQUE,
+              canonical_vendor TEXT NOT NULL,
+              identity_source TEXT NOT NULL,
+              label TEXT,
+              first_seen TEXT,
+              last_seen TEXT,
+              identity_version TEXT NOT NULL
+            );
+            CREATE TABLE router_firmware_profiles (
+              id INTEGER PRIMARY KEY,
+              profile_key TEXT NOT NULL UNIQUE,
+              canonical_vendor TEXT NOT NULL,
+              normalized_firmware TEXT NOT NULL,
+              identity_version TEXT NOT NULL
+            );
+            CREATE TABLE device_registrations (
+              id INTEGER PRIMARY KEY,
+              mac TEXT NOT NULL,
+              registration_source TEXT NOT NULL,
+              source_key TEXT NOT NULL,
+              epoch_id INTEGER,
+              registered_name TEXT,
+              registered_status TEXT,
+              registered_connection_type TEXT,
+              first_seen TEXT,
+              last_seen TEXT,
+              registration_sequence INTEGER NOT NULL UNIQUE,
+              registered_at TEXT NOT NULL,
+              last_confirmed_at TEXT NOT NULL,
+              UNIQUE(mac, registration_source, source_key),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+            );
+            CREATE INDEX idx_device_registrations_mac_sequence
+              ON device_registrations(mac, registration_sequence DESC);
+            """
+        )
+
+    def _insert_legacy_router_identity(self) -> Tuple[int, int]:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO router_instances(
+              instance_key, canonical_vendor, identity_source, label,
+              first_seen, last_seen, identity_version
+            )
+            SELECT ?, 'netgear', 'legacy_default', 'Legacy NETGEAR Router',
+                   MIN(COALESCE(observation_start, ingested_at)),
+                   MAX(COALESCE(observation_end, ingested_at)), 'v1'
+            FROM runs
+            """,
+            (LEGACY_NETGEAR_INSTANCE_KEY,),
+        )
+        legacy_router_id = int(cursor.lastrowid)
+        cursor = self.conn.execute(
+            """
+            INSERT INTO router_firmware_profiles(
+              profile_key, canonical_vendor, normalized_firmware, identity_version
+            ) VALUES(?, 'netgear', 'unknown-legacy-firmware', 'v1')
+            """,
+            (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+        )
+        return legacy_router_id, int(cursor.lastrowid)
+
+    def _rebuild_runs_for_v4(self, legacy_router_id: int) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE runs_v4 (
+              id INTEGER PRIMARY KEY,
+              epoch_id INTEGER NOT NULL,
+              policy_profile_id INTEGER,
+              router_instance_id INTEGER NOT NULL,
+              format_id TEXT NOT NULL,
+              file_hash TEXT NOT NULL,
+              source_path TEXT,
+              ingested_at TEXT NOT NULL,
+              export_timestamp TEXT,
+              observation_start TEXT,
+              observation_end TEXT,
+              observed_dates_json TEXT,
+              capabilities_json TEXT NOT NULL,
+              body_digest TEXT,
+              novel_event_count INTEGER NOT NULL DEFAULT 0,
+              repeated_event_count INTEGER NOT NULL DEFAULT 0,
+              parsed_event_count INTEGER NOT NULL DEFAULT 0,
+              malformed_line_count INTEGER NOT NULL DEFAULT 0,
+              export_noise_line_count INTEGER NOT NULL DEFAULT 0,
+              risk_score INTEGER,
+              status TEXT,
+              is_partial INTEGER NOT NULL DEFAULT 0,
+              UNIQUE(router_instance_id, file_hash),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id),
+              FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)
+            )
+            """
+        )
+        capabilities_json = json_dumps(NetgearLogAdapter.capabilities.to_json())
+        self.conn.execute(
+            """
+            INSERT INTO runs_v4(
+              id, epoch_id, policy_profile_id, router_instance_id, format_id, file_hash,
+              source_path, ingested_at, export_timestamp, observation_start, observation_end,
+              observed_dates_json, capabilities_json, body_digest, novel_event_count,
+              repeated_event_count, parsed_event_count, malformed_line_count,
+              export_noise_line_count, risk_score, status, is_partial
+            )
+            SELECT id, epoch_id, policy_profile_id, ?, 'netgear', file_hash,
+                   source_path, ingested_at, NULL, observation_start, observation_end,
+                   observed_dates_json, ?, NULL, 0, 0, parsed_event_count,
+                   malformed_line_count, export_noise_line_count, risk_score, status, is_partial
+            FROM runs
+            ORDER BY id
+            """,
+            (legacy_router_id, capabilities_json),
+        )
+        self.conn.execute("DROP TABLE runs")
+        self.conn.execute("ALTER TABLE runs_v4 RENAME TO runs")
+        self.conn.execute("CREATE INDEX idx_runs_epoch_time ON runs(epoch_id, ingested_at)")
+        self.conn.execute(
+            "CREATE INDEX idx_runs_router_export ON runs(router_instance_id, export_timestamp, id)"
+        )
+
+    def _create_v4_run_owned_tables_for_migration(self) -> None:
+        self._execute_migration_ddl(
+            """
+            CREATE TABLE device_observations (
+              id INTEGER PRIMARY KEY,
+              run_id INTEGER NOT NULL,
+              mac TEXT NOT NULL,
+              evidence_kind TEXT NOT NULL,
+              seen_at TEXT NOT NULL,
+              evidence_digest TEXT NOT NULL,
+              attributes_json TEXT NOT NULL DEFAULT '{}',
+              UNIQUE(run_id, mac, evidence_kind, seen_at, evidence_digest),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(mac) REFERENCES devices(mac)
+            );
+            CREATE INDEX idx_device_observations_mac_seen
+              ON device_observations(mac, seen_at, run_id);
+            CREATE TABLE router_metadata_observations (
+              run_id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              observed_at TEXT,
+              export_timestamp TEXT,
+              model TEXT,
+              hardware TEXT,
+              firmware_raw TEXT,
+              firmware_normalized TEXT,
+              firmware_profile_id INTEGER,
+              router_owned_interfaces_json TEXT NOT NULL DEFAULT '[]',
+              metadata_json TEXT NOT NULL DEFAULT '{}',
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(firmware_profile_id) REFERENCES router_firmware_profiles(id)
+            );
+            CREATE TABLE router_snapshot_metrics (
+              run_id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              epoch_id INTEGER NOT NULL,
+              export_timestamp TEXT,
+              raw_total_clients TEXT,
+              raw_wifi_clients TEXT,
+              total_clients INTEGER,
+              wifi_clients INTEGER,
+              derived_wired_clients INTEGER,
+              eligible INTEGER NOT NULL DEFAULT 0,
+              exclusion_reason TEXT,
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+            );
+            CREATE INDEX idx_router_snapshot_history
+              ON router_snapshot_metrics(
+                router_instance_id, epoch_id, export_timestamp DESC, run_id DESC
+              );
+            CREATE TABLE router_boot_sessions (
+              id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              session_key TEXT NOT NULL UNIQUE,
+              trusted_local_anchor TEXT,
+              adapter_boot_id TEXT,
+              startup_signature TEXT NOT NULL,
+              identity_version TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)
+            );
+            CREATE INDEX idx_router_boot_sessions_match
+              ON router_boot_sessions(
+                router_instance_id, trusted_local_anchor, startup_signature
+              );
+            CREATE TABLE run_router_boot_sessions (
+              run_id INTEGER NOT NULL,
+              boot_session_id INTEGER NOT NULL,
+              PRIMARY KEY(run_id, boot_session_id),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
+            );
+            CREATE TABLE router_event_occurrences (
+              id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              occurrence_digest TEXT NOT NULL,
+              identity_version TEXT NOT NULL,
+              boot_session_id INTEGER,
+              local_timestamp TEXT,
+              clock_trust TEXT NOT NULL,
+              component TEXT,
+              process_id TEXT,
+              vendor_event_code TEXT,
+              syslog_severity TEXT,
+              normalized_message TEXT NOT NULL,
+              canonical_event_key TEXT NOT NULL,
+              canonical_event_family TEXT NOT NULL,
+              actor_scope TEXT NOT NULL,
+              actor_identity TEXT,
+              structured_evidence_json TEXT NOT NULL DEFAULT '{}',
+              UNIQUE(router_instance_id, occurrence_digest),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
+            );
+            CREATE INDEX idx_router_event_occurrences_history
+              ON router_event_occurrences(
+                router_instance_id, canonical_event_key, local_timestamp
+              );
+            CREATE TABLE run_event_occurrences (
+              run_id INTEGER NOT NULL,
+              occurrence_id INTEGER NOT NULL,
+              is_novel INTEGER NOT NULL,
+              is_repeated INTEGER NOT NULL,
+              source_sequence INTEGER,
+              source_count INTEGER NOT NULL DEFAULT 1,
+              PRIMARY KEY(run_id, occurrence_id),
+              CHECK(is_novel IN (0, 1)),
+              CHECK(is_repeated IN (0, 1)),
+              CHECK(is_novel + is_repeated = 1),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(occurrence_id) REFERENCES router_event_occurrences(id)
+            );
+            """
+        )
+
+    def _execute_migration_ddl(self, script: str) -> None:
+        if not self.conn.in_transaction:
+            raise RuntimeError("Migration DDL requires an active transaction")
+        for statement in script.split(";"):
+            statement = statement.strip()
+            if statement:
+                self.conn.execute(statement)
+
+    def _backfill_v3_provenance(self, legacy_router_id: int, legacy_profile_id: int) -> None:
+        sequence = 0
+        represented_macs: Set[str] = set()
+        for row in self.conn.execute(
+            """
+            SELECT seed.*, epoch.created_at AS epoch_created_at
+            FROM baseline_seed_devices AS seed
+            JOIN baseline_epochs AS epoch ON epoch.id = seed.epoch_id
+            ORDER BY seed.epoch_id, seed.id
+            """
+        ):
+            if not is_real_mac(row["mac"]):
+                continue
+            sequence += 1
+            represented_macs.add(row["mac"])
+            registered_at = row["epoch_created_at"]
+            self.conn.execute(
+                """
+                INSERT INTO device_registrations(
+                  mac, registration_source, source_key, epoch_id, registered_name,
+                  registered_status, registered_connection_type, first_seen, last_seen,
+                  registration_sequence, registered_at, last_confirmed_at
+                ) VALUES(?, 'legacy_baseline_registration', ?, ?, ?, 'allowed', NULL,
+                         ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["mac"], f"legacy-baseline-epoch:{row['epoch_id']}", row["epoch_id"],
+                    row["name"], registered_at, registered_at, sequence,
+                    registered_at, registered_at,
+                ),
+            )
+
+        for row in self.conn.execute(
+            "SELECT * FROM devices WHERE source = 'config_import' ORDER BY mac"
+        ):
+            if not is_real_mac(row["mac"]):
+                continue
+            sequence += 1
+            represented_macs.add(row["mac"])
+            registered_at = row["first_seen"] or row["last_seen"] or "1970-01-01T00:00:00Z"
+            self.conn.execute(
+                """
+                INSERT INTO device_registrations(
+                  mac, registration_source, source_key, epoch_id, registered_name,
+                  registered_status, registered_connection_type, first_seen, last_seen,
+                  registration_sequence, registered_at, last_confirmed_at
+                ) VALUES(?, 'legacy_config_registration', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["mac"], f"legacy-config-without-source-bytes:v1:{row['mac']}",
+                    row["name"], row["status"], row["connection_type"], row["first_seen"],
+                    row["last_seen"], sequence, registered_at, row["last_seen"] or registered_at,
+                ),
+            )
+
+        observed_macs: Set[str] = set()
+        legacy_daily_rows: List[Tuple[str, sqlite3.Row]] = []
+        for table, mac_column in (
+            ("device_daily_stats", "mac"),
+            ("device_event_daily_stats", "mac"),
+            ("subject_behavior_daily_stats", "subject_key"),
+        ):
+            predicate = " WHERE subject_type = 'device'" if table == "subject_behavior_daily_stats" else ""
+            for row in self.conn.execute(
+                f"""
+                SELECT id, run_id, {mac_column} AS mac, first_seen, last_seen
+                FROM {table}{predicate}
+                ORDER BY id
+                """
+            ):
+                legacy_daily_rows.append((table, row))
+        for table, row in legacy_daily_rows:
+            if not is_real_mac(row["mac"]):
+                continue
+            observed_macs.add(row["mac"])
+            evidence_prefix = {
+                "device_daily_stats": "legacy_device_daily",
+                "device_event_daily_stats": "legacy_device_event_daily",
+                "subject_behavior_daily_stats": "legacy_subject_behavior_daily",
+            }[table]
+            extrema = [(f"{evidence_prefix}_first_seen", row["first_seen"])]
+            if row["last_seen"] != row["first_seen"]:
+                extrema.append((f"{evidence_prefix}_last_seen", row["last_seen"]))
+            for evidence_kind, seen_at in extrema:
+                if seen_at is None:
+                    continue
+                evidence_digest = sha256_bytes(
+                    (
+                        f"legacy-device-observation:v1\0{row['id']}\0"
+                        f"{table}\0{evidence_kind}\0{seen_at}"
+                    ).encode("utf-8")
+                )
+                self.conn.execute(
+                    """
+                    INSERT INTO device_observations(
+                      run_id, mac, evidence_kind, seen_at, evidence_digest, attributes_json
+                    ) VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["run_id"], row["mac"], evidence_kind, seen_at, evidence_digest,
+                        json_dumps({"legacy_daily_source": table, "legacy_daily_stat_id": row["id"]}),
+                    ),
+                )
+
+        for row in self.conn.execute("SELECT * FROM devices ORDER BY mac"):
+            if not is_real_mac(row["mac"]):
+                continue
+            existing_registrations = list(self.conn.execute(
+                "SELECT * FROM device_registrations WHERE mac = ?",
+                (row["mac"],),
+            ))
+
+            def unrepresented_catalog_value(
+                catalog_column: str,
+                registration_column: str,
+            ) -> Optional[str]:
+                value = row[catalog_column]
+                if value is None:
+                    return None
+                if any(
+                    registration[registration_column] == value
+                    for registration in existing_registrations
+                ):
+                    return None
+                return value
+
+            catalog_name = unrepresented_catalog_value("name", "registered_name")
+            catalog_status = unrepresented_catalog_value("status", "registered_status")
+            catalog_connection_type = unrepresented_catalog_value(
+                "connection_type", "registered_connection_type"
+            )
+            is_wholly_unrepresented = not existing_registrations and row["mac"] not in observed_macs
+            catalog_first_seen = row["first_seen"] if is_wholly_unrepresented else None
+            catalog_last_seen = row["last_seen"] if is_wholly_unrepresented else None
+            if not is_wholly_unrepresented and not any((
+                catalog_name,
+                catalog_status,
+                catalog_connection_type,
+                catalog_first_seen,
+                catalog_last_seen,
+            )):
+                continue
+            sequence += 1
+            registered_at = row["first_seen"] or row["last_seen"] or "1970-01-01T00:00:00Z"
+            self.conn.execute(
+                """
+                INSERT INTO device_registrations(
+                  mac, registration_source, source_key, epoch_id, registered_name,
+                  registered_status, registered_connection_type, first_seen, last_seen,
+                  registration_sequence, registered_at, last_confirmed_at
+                ) VALUES(?, 'legacy_device_catalog', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["mac"], f"legacy-device-catalog:v1:{row['mac']}", catalog_name,
+                    catalog_status, catalog_connection_type, catalog_first_seen,
+                    catalog_last_seen, sequence, registered_at,
+                    row["last_seen"] or registered_at,
+                ),
+            )
+
+        self.conn.execute(
+            """
+            INSERT INTO router_metadata_observations(
+              run_id, router_instance_id, observed_at, export_timestamp, model, hardware,
+              firmware_raw, firmware_normalized, firmware_profile_id,
+              router_owned_interfaces_json, metadata_json
+            )
+            SELECT id, ?, COALESCE(observation_end, observation_start, ingested_at), NULL,
+                   NULL, NULL, NULL, 'unknown-legacy-firmware', ?, '[]',
+                   '{"migration_source":"schema_v3"}'
+            FROM runs
+            ORDER BY id
+            """,
+            (legacy_router_id, legacy_profile_id),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO router_snapshot_metrics(
+              run_id, router_instance_id, epoch_id, export_timestamp, raw_total_clients,
+              raw_wifi_clients, total_clients, wifi_clients, derived_wired_clients,
+              eligible, exclusion_reason
+            )
+            SELECT id, ?, epoch_id, NULL, NULL, NULL, NULL, NULL, NULL, 0,
+                   'legacy_snapshot_unavailable'
+            FROM runs
+            ORDER BY id
+            """,
+            (legacy_router_id,),
+        )
+
+    def _rekey_legacy_system_behavior(self) -> None:
+        self.conn.execute(
+            """
+            UPDATE subject_behavior_daily_stats
+            SET subject_key = ?, subject_type = 'router'
+            WHERE subject_key = ?
+            """,
+            (LEGACY_NETGEAR_ROUTER_SUBJECT_KEY, SYSTEM_ACTOR),
+        )
+        for row in self.conn.execute(
+            "SELECT subject_type, attributes_json FROM behavior_subjects WHERE subject_key = ?",
+            (SYSTEM_ACTOR,),
+        ).fetchall():
+            try:
+                attributes = json.loads(row["attributes_json"] or "{}")
+            except json.JSONDecodeError:
+                attributes = {"legacy_attributes_json": row["attributes_json"]}
+            if not isinstance(attributes, dict):
+                attributes = {"legacy_attributes": attributes}
+            attributes.update({
+                "firmware_profile_key": LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,
+                "identity_version": "v1",
+                "router_instance_key": LEGACY_NETGEAR_INSTANCE_KEY,
+            })
+            self.conn.execute(
+                """
+                UPDATE behavior_subjects
+                SET subject_key = ?, subject_type = 'router', attributes_json = ?
+                WHERE subject_key = ? AND subject_type = ?
+                """,
+                (
+                    LEGACY_NETGEAR_ROUTER_SUBJECT_KEY, json_dumps(attributes),
+                    SYSTEM_ACTOR, row["subject_type"],
+                ),
+            )
+
+    def _refresh_migrated_caches(self, legacy_router_id: int) -> None:
+        real_macs = [
+            row[0]
+            for row in self.conn.execute("SELECT mac FROM devices ORDER BY mac")
+            if is_real_mac(row[0])
+        ]
+        for mac in real_macs:
+            registrations = list(self.conn.execute(
+                """
+                SELECT * FROM device_registrations
+                WHERE mac = ?
+                ORDER BY registration_sequence DESC
+                """,
+                (mac,),
+            ))
+            observations = list(self.conn.execute(
+                "SELECT seen_at FROM device_observations WHERE mac = ? ORDER BY seen_at",
+                (mac,),
+            ))
+
+            def latest_nonnull(column: str) -> Optional[str]:
+                return next((row[column] for row in registrations if row[column] is not None), None)
+
+            extrema = [
+                value
+                for row in registrations
+                for value in (row["first_seen"], row["last_seen"])
+                if value is not None
+            ]
+            extrema.extend(row["seen_at"] for row in observations)
+            self.conn.execute(
+                """
+                UPDATE devices
+                SET name = ?, status = ?, connection_type = ?, source = ?,
+                    first_seen = ?, last_seen = ?
+                WHERE mac = ?
+                """,
+                (
+                    latest_nonnull("registered_name"), latest_nonnull("registered_status"),
+                    latest_nonnull("registered_connection_type"),
+                    registrations[0]["registration_source"] if registrations else "observed",
+                    min(extrema) if extrema else None, max(extrema) if extrema else None, mac,
+                ),
+            )
+
+        for subject in self.conn.execute(
+            "SELECT subject_key, subject_type FROM behavior_subjects"
+        ).fetchall():
+            extrema = self.conn.execute(
+                """
+                SELECT MIN(seen_at), MAX(seen_at)
+                FROM (
+                  SELECT first_seen AS seen_at
+                  FROM subject_behavior_daily_stats
+                  WHERE subject_key = ? AND subject_type = ?
+                  UNION ALL
+                  SELECT last_seen AS seen_at
+                  FROM subject_behavior_daily_stats
+                  WHERE subject_key = ? AND subject_type = ?
+                )
+                WHERE seen_at IS NOT NULL
+                """,
+                (
+                    subject["subject_key"], subject["subject_type"],
+                    subject["subject_key"], subject["subject_type"],
+                ),
+            ).fetchone()
+            self.conn.execute(
+                """
+                UPDATE behavior_subjects SET first_seen = ?, last_seen = ?
+                WHERE subject_key = ? AND subject_type = ?
+                """,
+                (
+                    extrema[0], extrema[1],
+                    subject["subject_key"], subject["subject_type"],
+                ),
+            )
+        router_extrema = self.conn.execute(
+            """
+            SELECT MIN(seen_at), MAX(seen_at)
+            FROM (
+              SELECT CASE
+                       WHEN observation_start IS NULL AND observation_end IS NULL
+                         THEN ingested_at
+                       ELSE observation_start
+                     END AS seen_at
+              FROM runs
+              WHERE router_instance_id = ?
+              UNION ALL
+              SELECT CASE
+                       WHEN observation_start IS NULL AND observation_end IS NULL
+                         THEN ingested_at
+                       ELSE observation_end
+                     END AS seen_at
+              FROM runs
+              WHERE router_instance_id = ?
+            )
+            WHERE seen_at IS NOT NULL
+            """,
+            (legacy_router_id, legacy_router_id),
+        ).fetchone()
+        self.conn.execute(
+            "UPDATE router_instances SET first_seen = ?, last_seen = ? WHERE id = ?",
+            (router_extrema[0], router_extrema[1], legacy_router_id),
+        )
+
+    def _validate_migrated_v4_before_version_update(self) -> None:
+        self._validate_schema(SCHEMA_VERSION)
+        snapshot = self._migration_legacy_snapshot
+        for table, expected_count in snapshot["counts"].items():
+            actual_count = self.conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            if actual_count != expected_count:
+                raise RuntimeError(f"Migration changed the row count for {table}")
+        for table, expected_ids in snapshot["ids"].items():
+            actual_ids = tuple(
+                row[0] for row in self.conn.execute(f'SELECT id FROM "{table}" ORDER BY id')
+            )
+            if actual_ids != expected_ids:
+                raise RuntimeError(f"Migration changed primary-key IDs for {table}")
+        run_count = snapshot["counts"]["runs"]
+        if self.conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE router_instance_id IS NULL OR format_id IS NULL "
+            "OR capabilities_json IS NULL"
+        ).fetchone()[0]:
+            raise RuntimeError("Migration left a run without required router identity fields")
+        for table in ("router_metadata_observations", "router_snapshot_metrics"):
+            if self.conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] != run_count:
+                raise RuntimeError(f"Migration did not create exactly one {table} row per run")
+        unique_run_indexes = {
+            tuple(row[2] for row in self.conn.execute(f'PRAGMA index_info("{index[1]}")'))
+            for index in self.conn.execute('PRAGMA index_list("runs")')
+            if index[2]
+        }
+        if ("router_instance_id", "file_hash") not in unique_run_indexes:
+            raise RuntimeError("Migrated runs lacks router-scoped file-hash uniqueness")
+        if ("file_hash",) in unique_run_indexes:
+            raise RuntimeError("Migrated runs retained global file-hash uniqueness")
+        expected_observations = 0
+        for table, mac_column, subject_predicate in (
+            ("device_daily_stats", "mac", ""),
+            ("device_event_daily_stats", "mac", ""),
+            ("subject_behavior_daily_stats", "subject_key", " WHERE subject_type = 'device'"),
+        ):
+            for row in self.conn.execute(
+                f"SELECT {mac_column} AS mac, first_seen, last_seen FROM {table}{subject_predicate}"
+            ):
+                if not is_real_mac(row["mac"]):
+                    continue
+                if row["first_seen"] is not None:
+                    expected_observations += 1
+                if row["last_seen"] is not None and row["last_seen"] != row["first_seen"]:
+                    expected_observations += 1
+        actual_observations = self.conn.execute(
+            "SELECT COUNT(*) FROM device_observations"
+        ).fetchone()[0]
+        if actual_observations != expected_observations:
+            raise RuntimeError(
+                "Migration did not preserve every real-MAC daily first/last-seen observation"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM device_registrations
+            WHERE registration_source NOT IN (
+              'legacy_baseline_registration',
+              'legacy_config_registration',
+              'legacy_device_catalog'
+            )
+            """
+        ).fetchone()[0]:
+            raise RuntimeError("Migration created an unsupported registration source")
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM device_registrations
+            WHERE registration_source = 'legacy_baseline_registration'
+              AND (epoch_id IS NULL OR source_key != 'legacy-baseline-epoch:' || epoch_id)
+            """
+        ).fetchone()[0]:
+            raise RuntimeError("Migration created an invalid legacy baseline source key")
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM device_registrations
+            WHERE registration_source = 'legacy_config_registration'
+              AND source_key != 'legacy-config-without-source-bytes:v1:' || mac
+            """
+        ).fetchone()[0]:
+            raise RuntimeError("Migration invented or malformed legacy config provenance")
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM device_registrations
+            WHERE registration_source = 'legacy_device_catalog'
+              AND source_key != 'legacy-device-catalog:v1:' || mac
+            """
+        ).fetchone()[0]:
+            raise RuntimeError("Migration created an invalid legacy device-catalog source key")
+        for row in self.conn.execute("SELECT mac, source FROM devices"):
+            if not is_real_mac(row["mac"]):
+                continue
+            registration_count = self.conn.execute(
+                "SELECT COUNT(*) FROM device_registrations WHERE mac = ?",
+                (row["mac"],),
+            ).fetchone()[0]
+            observation_count = self.conn.execute(
+                "SELECT COUNT(*) FROM device_observations WHERE mac = ?",
+                (row["mac"],),
+            ).fetchone()[0]
+            if not registration_count and not observation_count:
+                raise RuntimeError(
+                    "Migration left a real-MAC device cache row without explicit provenance"
+                )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM behavior_subjects
+            WHERE subject_key = ?
+            """,
+            (SYSTEM_ACTOR,),
+        ).fetchone()[0] or self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM subject_behavior_daily_stats
+            WHERE subject_key = ?
+            """,
+            (SYSTEM_ACTOR,),
+        ).fetchone()[0]:
+            raise RuntimeError("Migration left legacy system behavior outside router-scoped identity")
+
+    def _create_v4_schema(self) -> None:
+        try:
+            self.conn.executescript(
+                """
+            BEGIN IMMEDIATE;
 
             CREATE TABLE IF NOT EXISTS metadata (
               key TEXT PRIMARY KEY,
@@ -739,27 +2358,57 @@ class StateStore:
             CREATE INDEX IF NOT EXISTS idx_policy_profiles_active
               ON policy_profiles(is_active);
 
+            CREATE TABLE IF NOT EXISTS router_instances (
+              id INTEGER PRIMARY KEY,
+              instance_key TEXT NOT NULL UNIQUE,
+              canonical_vendor TEXT NOT NULL,
+              identity_source TEXT NOT NULL,
+              label TEXT,
+              first_seen TEXT,
+              last_seen TEXT,
+              identity_version TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS router_firmware_profiles (
+              id INTEGER PRIMARY KEY,
+              profile_key TEXT NOT NULL UNIQUE,
+              canonical_vendor TEXT NOT NULL,
+              normalized_firmware TEXT NOT NULL,
+              identity_version TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS runs (
               id INTEGER PRIMARY KEY,
               epoch_id INTEGER NOT NULL,
               policy_profile_id INTEGER,
-              file_hash TEXT NOT NULL UNIQUE,
+              router_instance_id INTEGER NOT NULL,
+              format_id TEXT NOT NULL,
+              file_hash TEXT NOT NULL,
               source_path TEXT,
               ingested_at TEXT NOT NULL,
+              export_timestamp TEXT,
               observation_start TEXT,
               observation_end TEXT,
               observed_dates_json TEXT,
+              capabilities_json TEXT NOT NULL,
+              body_digest TEXT,
+              novel_event_count INTEGER NOT NULL DEFAULT 0,
+              repeated_event_count INTEGER NOT NULL DEFAULT 0,
               parsed_event_count INTEGER NOT NULL DEFAULT 0,
               malformed_line_count INTEGER NOT NULL DEFAULT 0,
               export_noise_line_count INTEGER NOT NULL DEFAULT 0,
               risk_score INTEGER,
               status TEXT,
               is_partial INTEGER NOT NULL DEFAULT 0,
+              UNIQUE(router_instance_id, file_hash),
               FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id),
-              FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id)
+              FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)
             );
             CREATE INDEX IF NOT EXISTS idx_runs_epoch_time
               ON runs(epoch_id, ingested_at);
+            CREATE INDEX IF NOT EXISTS idx_runs_router_export
+              ON runs(router_instance_id, export_timestamp, id);
 
             CREATE TABLE IF NOT EXISTS network_incidents (
               id INTEGER PRIMARY KEY,
@@ -792,6 +2441,77 @@ class StateStore:
               first_seen TEXT,
               last_seen TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS device_registrations (
+              id INTEGER PRIMARY KEY,
+              mac TEXT NOT NULL,
+              registration_source TEXT NOT NULL,
+              source_key TEXT NOT NULL,
+              epoch_id INTEGER,
+              registered_name TEXT,
+              registered_status TEXT,
+              registered_connection_type TEXT,
+              first_seen TEXT,
+              last_seen TEXT,
+              registration_sequence INTEGER NOT NULL UNIQUE,
+              registered_at TEXT NOT NULL,
+              last_confirmed_at TEXT NOT NULL,
+              UNIQUE(mac, registration_source, source_key),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_device_registrations_mac_sequence
+              ON device_registrations(mac, registration_sequence DESC);
+
+            CREATE TABLE IF NOT EXISTS device_observations (
+              id INTEGER PRIMARY KEY,
+              run_id INTEGER NOT NULL,
+              mac TEXT NOT NULL,
+              evidence_kind TEXT NOT NULL,
+              seen_at TEXT NOT NULL,
+              evidence_digest TEXT NOT NULL,
+              attributes_json TEXT NOT NULL DEFAULT '{}',
+              UNIQUE(run_id, mac, evidence_kind, seen_at, evidence_digest),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(mac) REFERENCES devices(mac)
+            );
+            CREATE INDEX IF NOT EXISTS idx_device_observations_mac_seen
+              ON device_observations(mac, seen_at, run_id);
+
+            CREATE TABLE IF NOT EXISTS router_metadata_observations (
+              run_id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              observed_at TEXT,
+              export_timestamp TEXT,
+              model TEXT,
+              hardware TEXT,
+              firmware_raw TEXT,
+              firmware_normalized TEXT,
+              firmware_profile_id INTEGER,
+              router_owned_interfaces_json TEXT NOT NULL DEFAULT '[]',
+              metadata_json TEXT NOT NULL DEFAULT '{}',
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(firmware_profile_id) REFERENCES router_firmware_profiles(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS router_snapshot_metrics (
+              run_id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              epoch_id INTEGER NOT NULL,
+              export_timestamp TEXT,
+              raw_total_clients TEXT,
+              raw_wifi_clients TEXT,
+              total_clients INTEGER,
+              wifi_clients INTEGER,
+              derived_wired_clients INTEGER,
+              eligible INTEGER NOT NULL DEFAULT 0,
+              exclusion_reason TEXT,
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_router_snapshot_history
+              ON router_snapshot_metrics(router_instance_id, epoch_id, export_timestamp DESC, run_id DESC);
 
             CREATE TABLE IF NOT EXISTS device_daily_stats (
               id INTEGER PRIMARY KEY,
@@ -872,10 +2592,82 @@ class StateStore:
             );
             CREATE INDEX IF NOT EXISTS idx_subject_behavior_epoch_subject_date
               ON subject_behavior_daily_stats(epoch_id, subject_key, subject_type, behavior_key, observed_date);
+
+            CREATE TABLE IF NOT EXISTS router_boot_sessions (
+              id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              session_key TEXT NOT NULL UNIQUE,
+              trusted_local_anchor TEXT,
+              adapter_boot_id TEXT,
+              startup_signature TEXT NOT NULL,
+              identity_version TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_router_boot_sessions_match
+              ON router_boot_sessions(router_instance_id, trusted_local_anchor, startup_signature);
+
+            CREATE TABLE IF NOT EXISTS run_router_boot_sessions (
+              run_id INTEGER NOT NULL,
+              boot_session_id INTEGER NOT NULL,
+              PRIMARY KEY(run_id, boot_session_id),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS router_event_occurrences (
+              id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              occurrence_digest TEXT NOT NULL,
+              identity_version TEXT NOT NULL,
+              boot_session_id INTEGER,
+              local_timestamp TEXT,
+              clock_trust TEXT NOT NULL,
+              component TEXT,
+              process_id TEXT,
+              vendor_event_code TEXT,
+              syslog_severity TEXT,
+              normalized_message TEXT NOT NULL,
+              canonical_event_key TEXT NOT NULL,
+              canonical_event_family TEXT NOT NULL,
+              actor_scope TEXT NOT NULL,
+              actor_identity TEXT,
+              structured_evidence_json TEXT NOT NULL DEFAULT '{}',
+              UNIQUE(router_instance_id, occurrence_digest),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_router_event_occurrences_history
+              ON router_event_occurrences(router_instance_id, canonical_event_key, local_timestamp);
+
+            CREATE TABLE IF NOT EXISTS run_event_occurrences (
+              run_id INTEGER NOT NULL,
+              occurrence_id INTEGER NOT NULL,
+              is_novel INTEGER NOT NULL,
+              is_repeated INTEGER NOT NULL,
+              source_sequence INTEGER,
+              source_count INTEGER NOT NULL DEFAULT 1,
+              PRIMARY KEY(run_id, occurrence_id),
+              CHECK(is_novel IN (0, 1)),
+              CHECK(is_repeated IN (0, 1)),
+              CHECK(is_novel + is_repeated = 1),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(occurrence_id) REFERENCES router_event_occurrences(id)
+            );
+
             """
-        )
-        self.set_metadata("schema_version", str(SCHEMA_VERSION))
-        self.conn.commit()
+            )
+            self._validate_schema(SCHEMA_VERSION)
+            self.conn.execute(
+                "INSERT INTO metadata(key, value) VALUES('schema_version', ?)",
+                (str(SCHEMA_VERSION),),
+            )
+            self.conn.commit()
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            raise
 
     def get_metadata(self, key: str) -> Optional[str]:
         row = self.conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
@@ -1001,12 +2793,14 @@ class StateStore:
                     config.get("soft_max"),
                 ),
             )
-            self.upsert_device(
+            self.register_device(
                 mac=mac,
-                name=config.get("name"),
-                status="allowed",
-                connection_type=None,
-                source="baseline_import",
+                registration_source="baseline_import",
+                source_key=str(epoch_id),
+                epoch_id=epoch_id,
+                registered_name=config.get("name"),
+                registered_status="allowed",
+                registered_connection_type=None,
             )
         self.conn.commit()
         return epoch_id
@@ -1055,18 +2849,147 @@ class StateStore:
 
     def import_config(self, source_path: Path, router_config: Dict[str, Any]) -> int:
         count = 0
+        source_digest = sha256_bytes(source_path.read_bytes())
         for device in router_config["devices"].values():
             status = "blocked" if device.mac in router_config["blocked_macs"] else "allowed"
-            self.upsert_device(
+            self.register_device(
                 mac=device.mac,
-                name=device.name,
-                status=status,
-                connection_type=device.connection_type,
-                source="config_import",
+                registration_source="config_import",
+                source_key=source_digest,
+                epoch_id=None,
+                registered_name=device.name,
+                registered_status=status,
+                registered_connection_type=device.connection_type,
             )
             count += 1
         self.conn.commit()
         return count
+
+    def register_device(
+        self,
+        mac: str,
+        registration_source: str,
+        source_key: str,
+        epoch_id: Optional[int],
+        registered_name: Optional[str],
+        registered_status: Optional[str],
+        registered_connection_type: Optional[str],
+        first_seen: Optional[str] = None,
+        last_seen: Optional[str] = None,
+    ) -> int:
+        now = utcnow_iso()
+        existing = self.conn.execute(
+            """
+            SELECT * FROM device_registrations
+            WHERE mac = ? AND registration_source = ? AND source_key = ?
+            """,
+            (mac, registration_source, source_key),
+        ).fetchone()
+        if existing is not None:
+            self.conn.execute(
+                """
+                UPDATE device_registrations
+                SET registered_name = COALESCE(?, registered_name),
+                    registered_status = COALESCE(?, registered_status),
+                    registered_connection_type = COALESCE(?, registered_connection_type),
+                    first_seen = CASE
+                      WHEN ? IS NULL THEN first_seen
+                      WHEN first_seen IS NULL OR ? < first_seen THEN ?
+                      ELSE first_seen
+                    END,
+                    last_seen = CASE
+                      WHEN ? IS NULL THEN last_seen
+                      WHEN last_seen IS NULL OR ? > last_seen THEN ?
+                      ELSE last_seen
+                    END,
+                    last_confirmed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    registered_name, registered_status, registered_connection_type,
+                    first_seen, first_seen, first_seen, last_seen, last_seen, last_seen,
+                    now, existing["id"],
+                ),
+            )
+            registration_id = int(existing["id"])
+        else:
+            sequence = int(self.conn.execute(
+                "SELECT COALESCE(MAX(registration_sequence), 0) + 1 FROM device_registrations"
+            ).fetchone()[0])
+            cursor = self.conn.execute(
+                """
+                INSERT INTO device_registrations(
+                  mac, registration_source, source_key, epoch_id, registered_name,
+                  registered_status, registered_connection_type, first_seen, last_seen,
+                  registration_sequence, registered_at, last_confirmed_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mac, registration_source, source_key, epoch_id, registered_name,
+                    registered_status, registered_connection_type,
+                    first_seen or now, last_seen or now, sequence, now, now,
+                ),
+            )
+            registration_id = int(cursor.lastrowid)
+        self._refresh_device_from_provenance(mac)
+        return registration_id
+
+    def _refresh_device_from_provenance(self, mac: str) -> None:
+        existing = self.conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+        registrations = list(self.conn.execute(
+            """
+            SELECT * FROM device_registrations
+            WHERE mac = ?
+            ORDER BY registration_sequence DESC
+            """,
+            (mac,),
+        ))
+        observations = list(self.conn.execute(
+            "SELECT seen_at FROM device_observations WHERE mac = ? ORDER BY seen_at",
+            (mac,),
+        ))
+
+        def latest_nonnull(column: str) -> Optional[str]:
+            return next((row[column] for row in registrations if row[column] is not None), None)
+
+        extrema = [
+            value
+            for row in registrations
+            for value in (row["first_seen"], row["last_seen"])
+            if value is not None
+        ]
+        extrema.extend(row["seen_at"] for row in observations)
+        if existing is not None:
+            extrema.extend(
+                value for value in (existing["first_seen"], existing["last_seen"]) if value is not None
+            )
+        first_seen = min(extrema) if extrema else None
+        last_seen = max(extrema) if extrema else None
+        name = latest_nonnull("registered_name")
+        status = latest_nonnull("registered_status")
+        connection_type = latest_nonnull("registered_connection_type")
+        source = registrations[0]["registration_source"] if registrations else None
+        if existing is None:
+            self.conn.execute(
+                """
+                INSERT INTO devices(
+                  mac, name, status, connection_type, source, first_seen, last_seen
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (mac, name, status, connection_type, source, first_seen, last_seen),
+            )
+        else:
+            self.conn.execute(
+                """
+                UPDATE devices
+                SET name = COALESCE(?, name), status = COALESCE(?, status),
+                    connection_type = COALESCE(?, connection_type),
+                    source = COALESCE(?, source), first_seen = COALESCE(?, first_seen),
+                    last_seen = COALESCE(?, last_seen)
+                WHERE mac = ?
+                """,
+                (name, status, connection_type, source, first_seen, last_seen, mac),
+            )
 
     def upsert_device(
         self,
@@ -1119,14 +3042,53 @@ class StateStore:
             }
         return devices
 
-    def get_run_by_hash(self, file_hash: str) -> Optional[sqlite3.Row]:
-        return self.conn.execute("SELECT * FROM runs WHERE file_hash = ?", (file_hash,)).fetchone()
+    def get_or_create_legacy_netgear_router_instance(self) -> int:
+        row = self.conn.execute(
+            "SELECT id FROM router_instances WHERE instance_key = ?",
+            (LEGACY_NETGEAR_INSTANCE_KEY,),
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cursor = self.conn.execute(
+            """
+            INSERT INTO router_instances(
+              instance_key, canonical_vendor, identity_source, label,
+              first_seen, last_seen, identity_version
+            ) VALUES(?, 'netgear', 'legacy_default', 'Legacy NETGEAR Router',
+                     NULL, NULL, 'v1')
+            """,
+            (LEGACY_NETGEAR_INSTANCE_KEY,),
+        )
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO router_firmware_profiles(
+              profile_key, canonical_vendor, normalized_firmware, identity_version
+            ) VALUES(?, 'netgear', 'unknown-legacy-firmware', 'v1')
+            """,
+            (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+        )
+        return int(cursor.lastrowid)
+
+    def get_run_by_hash(
+        self,
+        router_instance_id: int,
+        file_hash: str,
+    ) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM runs WHERE router_instance_id = ? AND file_hash = ?",
+            (router_instance_id, file_hash),
+        ).fetchone()
 
     def delete_run(self, run_id: int) -> bool:
         existing = self.conn.execute("SELECT id FROM runs WHERE id = ?", (run_id,)).fetchone()
         if existing is None:
             return False
         for table in (
+            "run_event_occurrences",
+            "run_router_boot_sessions",
+            "router_snapshot_metrics",
+            "router_metadata_observations",
+            "device_observations",
             "network_incidents",
             "device_daily_stats",
             "device_event_daily_stats",
@@ -1149,26 +3111,51 @@ class StateStore:
         risk_score: int,
         status: str,
         is_partial: bool,
+        router_instance_id: Optional[int] = None,
+        format_id: str = FORMAT_NETGEAR,
+        export_timestamp: Optional[str] = None,
+        capabilities: Optional[RouterCapabilities] = None,
+        body_digest: Optional[str] = None,
+        novel_event_count: int = 0,
+        repeated_event_count: int = 0,
     ) -> int:
+        resolved_router_id = (
+            router_instance_id
+            if router_instance_id is not None
+            else self.get_or_create_legacy_netgear_router_instance()
+        )
+        capabilities_json = json_dumps(
+            (capabilities or NetgearLogAdapter.capabilities).to_json()
+        )
+        ingested_at = utcnow_iso()
         cursor = self.conn.execute(
             """
             INSERT INTO runs(
-              epoch_id, policy_profile_id, file_hash, source_path, ingested_at,
-              observation_start, observation_end, observed_dates_json,
+              epoch_id, policy_profile_id, router_instance_id, format_id, file_hash,
+              source_path, ingested_at, export_timestamp, observation_start,
+              observation_end, observed_dates_json, capabilities_json, body_digest,
+              novel_event_count, repeated_event_count,
               parsed_event_count, malformed_line_count, export_noise_line_count,
               risk_score, status, is_partial
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 epoch_id,
                 policy_profile_id,
+                resolved_router_id,
+                format_id,
                 file_hash,
                 str(source_path.resolve()),
-                utcnow_iso(),
+                ingested_at,
+                export_timestamp,
                 observation_start,
                 observation_end,
                 json.dumps(observed_dates),
+                capabilities_json,
+                body_digest,
+                novel_event_count,
+                repeated_event_count,
                 parse_stats.parsed_events,
                 parse_stats.malformed_lines,
                 parse_stats.export_noise_lines,
@@ -1177,7 +3164,72 @@ class StateStore:
                 1 if is_partial else 0,
             ),
         )
-        return int(cursor.lastrowid)
+        run_id = int(cursor.lastrowid)
+        firmware_profile_id: Optional[int] = None
+        firmware_normalized: Optional[str] = None
+        if format_id == FORMAT_NETGEAR:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO router_firmware_profiles(
+                  profile_key, canonical_vendor, normalized_firmware, identity_version
+                ) VALUES(?, 'netgear', 'unknown-legacy-firmware', 'v1')
+                """,
+                (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+            )
+            firmware_profile_row = self.conn.execute(
+                "SELECT id FROM router_firmware_profiles WHERE profile_key = ?",
+                (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+            ).fetchone()
+            firmware_profile_id = int(firmware_profile_row["id"])
+            firmware_normalized = "unknown-legacy-firmware"
+        self.conn.execute(
+            """
+            INSERT INTO router_metadata_observations(
+              run_id, router_instance_id, observed_at, export_timestamp, model, hardware,
+              firmware_raw, firmware_normalized, firmware_profile_id,
+              router_owned_interfaces_json, metadata_json
+            ) VALUES(?, ?, ?, ?, NULL, NULL, NULL, ?, ?, '[]', '{}')
+            """,
+            (
+                run_id, resolved_router_id,
+                observation_end or observation_start or ingested_at,
+                export_timestamp, firmware_normalized, firmware_profile_id,
+            ),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO router_snapshot_metrics(
+              run_id, router_instance_id, epoch_id, export_timestamp, raw_total_clients,
+              raw_wifi_clients, total_clients, wifi_clients, derived_wired_clients,
+              eligible, exclusion_reason
+            ) VALUES(?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, ?)
+            """,
+            (
+                run_id, resolved_router_id, epoch_id, export_timestamp,
+                "snapshot_counts_unavailable" if format_id == FORMAT_NETGEAR else "not_persisted",
+            ),
+        )
+        router_first_seen = export_timestamp or observation_start or ingested_at
+        router_last_seen = export_timestamp or observation_end or observation_start or ingested_at
+        self.conn.execute(
+            """
+            UPDATE router_instances
+            SET first_seen = CASE
+                  WHEN first_seen IS NULL OR ? < first_seen THEN ?
+                  ELSE first_seen
+                END,
+                last_seen = CASE
+                  WHEN last_seen IS NULL OR ? > last_seen THEN ?
+                  ELSE last_seen
+                END
+            WHERE id = ?
+            """,
+            (
+                router_first_seen, router_first_seen,
+                router_last_seen, router_last_seen, resolved_router_id,
+            ),
+        )
+        return run_id
 
     def insert_device_daily_stat(
         self,
@@ -1468,6 +3520,7 @@ class StateStore:
                 "SELECT DISTINCT mac FROM device_daily_stats WHERE epoch_id = ?",
                 (epoch_id,),
             )
+            if row["mac"] != SYSTEM_ACTOR
         }
         macs.update(
             row["mac"]
@@ -1475,6 +3528,7 @@ class StateStore:
                 "SELECT mac FROM baseline_seed_devices WHERE epoch_id = ?",
                 (epoch_id,),
             )
+            if row["mac"] != SYSTEM_ACTOR
         )
         return sorted(macs)
 
@@ -6015,8 +8069,17 @@ def persist_analysis(
     devices_snapshot: Dict[str, Dict[str, Any]],
     is_partial: bool,
     incidents: Optional[Sequence[NetworkIncident]] = None,
+    router_instance_id: Optional[int] = None,
+    format_id: str = FORMAT_NETGEAR,
+    capabilities: Optional[RouterCapabilities] = None,
+    export_timestamp: Optional[str] = None,
 ) -> Tuple[bool, Optional[int]]:
-    existing_run = store.get_run_by_hash(run_hash)
+    resolved_router_id = (
+        router_instance_id
+        if router_instance_id is not None
+        else store.get_or_create_legacy_netgear_router_instance()
+    )
+    existing_run = store.get_run_by_hash(resolved_router_id, run_hash)
     if existing_run is not None:
         return True, existing_run["id"]
 
@@ -6033,6 +8096,8 @@ def persist_analysis(
         devices_snapshot,
         is_partial,
     )
+    savepoint = "persist_analysis_run_insert"
+    store.conn.execute(f"SAVEPOINT {savepoint}")
     try:
         run_id = store.insert_run(
             epoch_id=epoch_id,
@@ -6046,10 +8111,35 @@ def persist_analysis(
             risk_score=score,
             status=status,
             is_partial=is_partial,
+            router_instance_id=resolved_router_id,
+            format_id=format_id,
+            export_timestamp=export_timestamp,
+            capabilities=capabilities,
         )
-    except sqlite3.IntegrityError:
-        existing_run = store.get_run_by_hash(run_hash)
-        return True, existing_run["id"] if existing_run is not None else None
+    except Exception as exc:
+        store.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        store.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        if isinstance(exc, sqlite3.IntegrityError):
+            existing_run = store.get_run_by_hash(resolved_router_id, run_hash)
+            if existing_run is not None:
+                existing_run_id = int(existing_run["id"])
+                required_children = store.conn.execute(
+                    """
+                    SELECT
+                      EXISTS(
+                        SELECT 1 FROM router_metadata_observations WHERE run_id = ?
+                      ),
+                      EXISTS(
+                        SELECT 1 FROM router_snapshot_metrics WHERE run_id = ?
+                      )
+                    """,
+                    (existing_run_id, existing_run_id),
+                ).fetchone()
+                if tuple(required_children) == (1, 1):
+                    return True, existing_run_id
+        raise
+    else:
+        store.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
     for (observed_date, mac), stat in aggregate["device_day_stats"].items():
         store.upsert_device(
@@ -6362,10 +8452,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         assert logfile_path is not None
         assert raw_bytes is not None
         assert parsed is not None
+        router_instance_id = store.get_or_create_legacy_netgear_router_instance()
         run_hash = sha256_bytes(raw_bytes)
         events, parse_stats = parsed.events, parsed.parse_stats
         reprocessed_run_id: Optional[int] = None
-        existing_run = store.get_run_by_hash(run_hash)
+        existing_run = store.get_run_by_hash(router_instance_id, run_hash)
         if args.reprocess and existing_run is not None:
             reprocessed_run_id = int(existing_run["id"])
             if not store.delete_run(reprocessed_run_id):
@@ -6406,6 +8497,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             devices_snapshot=devices_snapshot,
             is_partial=is_partial,
             incidents=incidents,
+            router_instance_id=router_instance_id,
+            format_id=parsed.format_id,
+            capabilities=parsed.capabilities,
+            export_timestamp=(
+                parsed.export_timestamp.isoformat()
+                if parsed.export_timestamp is not None
+                else None
+            ),
         )
 
         report = build_report_data(

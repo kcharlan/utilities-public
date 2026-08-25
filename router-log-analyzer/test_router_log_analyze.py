@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import re
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -187,6 +188,1201 @@ def incident_devices(count: int) -> tuple[dict[str, object], dict[str, dict[str,
     return baseline, snapshot, macs
 
 
+def build_v3_database(db_path: Path, *, populate: bool = True) -> dict[str, object]:
+    connection = sqlite3.connect(db_path)
+    connection.executescript(
+        """
+        CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE baseline_epochs (
+          id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, source_path TEXT, source_hash TEXT,
+          label TEXT, is_active INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_baseline_epochs_active ON baseline_epochs(is_active);
+        CREATE TABLE baseline_seed_devices (
+          id INTEGER PRIMARY KEY, epoch_id INTEGER NOT NULL, mac TEXT NOT NULL, name TEXT,
+          dhcp_min REAL, dhcp_max REAL, dhcp_seed_weight REAL, total_events_min REAL,
+          total_events_max REAL, total_events_seed_weight REAL, active_hours_json TEXT,
+          expected_windows_json TEXT, expected_events_json TEXT, pattern TEXT, soft_max REAL,
+          UNIQUE(epoch_id, mac), FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+        );
+        CREATE INDEX idx_seed_devices_epoch_mac ON baseline_seed_devices(epoch_id, mac);
+        CREATE TABLE baseline_seed_clusters (
+          id INTEGER PRIMARY KEY, epoch_id INTEGER NOT NULL, cluster_name TEXT NOT NULL,
+          mac_prefixes_json TEXT, cluster_size INTEGER, min_cluster_size INTEGER,
+          cluster_time_window_seconds INTEGER, expected_windows_json TEXT,
+          UNIQUE(epoch_id, cluster_name), FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+        );
+        CREATE TABLE policy_profiles (
+          id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, name TEXT NOT NULL,
+          schema_version INTEGER NOT NULL, source_path TEXT, source_hash TEXT,
+          is_active INTEGER NOT NULL DEFAULT 0, policy_json TEXT NOT NULL
+        );
+        CREATE INDEX idx_policy_profiles_active ON policy_profiles(is_active);
+        CREATE TABLE runs (
+          id INTEGER PRIMARY KEY, epoch_id INTEGER NOT NULL, policy_profile_id INTEGER,
+          file_hash TEXT NOT NULL UNIQUE, source_path TEXT, ingested_at TEXT NOT NULL,
+          observation_start TEXT, observation_end TEXT, observed_dates_json TEXT,
+          parsed_event_count INTEGER NOT NULL DEFAULT 0,
+          malformed_line_count INTEGER NOT NULL DEFAULT 0,
+          export_noise_line_count INTEGER NOT NULL DEFAULT 0, risk_score INTEGER,
+          status TEXT, is_partial INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id),
+          FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id)
+        );
+        CREATE INDEX idx_runs_epoch_time ON runs(epoch_id, ingested_at);
+        CREATE TABLE network_incidents (
+          id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL, incident_id TEXT NOT NULL,
+          incident_type TEXT NOT NULL, confidence TEXT NOT NULL, start TEXT NOT NULL,
+          restored_at TEXT NOT NULL, recovery_end TEXT NOT NULL,
+          disconnect_count INTEGER NOT NULL DEFAULT 0, connect_count INTEGER NOT NULL DEFAULT 0,
+          affected_macs_json TEXT NOT NULL, event_counts_json TEXT NOT NULL,
+          explained_event_count INTEGER NOT NULL DEFAULT 0,
+          active_known_devices INTEGER NOT NULL DEFAULT 0,
+          affected_device_fraction REAL NOT NULL DEFAULT 0, UNIQUE(run_id, incident_id),
+          FOREIGN KEY(run_id) REFERENCES runs(id)
+        );
+        CREATE INDEX idx_network_incidents_run ON network_incidents(run_id);
+        CREATE TABLE devices (
+          mac TEXT PRIMARY KEY, name TEXT, status TEXT, connection_type TEXT, source TEXT,
+          first_seen TEXT, last_seen TEXT
+        );
+        CREATE TABLE device_daily_stats (
+          id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL, epoch_id INTEGER NOT NULL,
+          observed_date TEXT NOT NULL, mac TEXT NOT NULL, dhcp_count INTEGER NOT NULL DEFAULT 0,
+          total_events INTEGER NOT NULL DEFAULT 0, first_seen TEXT, last_seen TEXT,
+          event_types_json TEXT, active_hours_json TEXT,
+          included_in_learning INTEGER NOT NULL DEFAULT 1, exclusion_reason TEXT,
+          UNIQUE(run_id, observed_date, mac), FOREIGN KEY(run_id) REFERENCES runs(id),
+          FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+        );
+        CREATE INDEX idx_device_daily_epoch_mac_date
+          ON device_daily_stats(epoch_id, mac, observed_date);
+        CREATE TABLE device_event_daily_stats (
+          id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL, epoch_id INTEGER NOT NULL,
+          observed_date TEXT NOT NULL, mac TEXT NOT NULL, event_key TEXT NOT NULL,
+          event_family TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, first_seen TEXT,
+          last_seen TEXT, hour_histogram_json TEXT,
+          included_in_learning INTEGER NOT NULL DEFAULT 1, exclusion_reason TEXT,
+          UNIQUE(run_id, observed_date, mac, event_key), FOREIGN KEY(run_id) REFERENCES runs(id),
+          FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+        );
+        CREATE INDEX idx_device_event_daily_epoch_mac_key_date
+          ON device_event_daily_stats(epoch_id, mac, event_key, observed_date);
+        CREATE TABLE behavior_subjects (
+          subject_key TEXT NOT NULL, subject_type TEXT NOT NULL, display_name TEXT,
+          attributes_json TEXT, first_seen TEXT, last_seen TEXT,
+          PRIMARY KEY(subject_key, subject_type)
+        );
+        CREATE INDEX idx_behavior_subjects_type_key
+          ON behavior_subjects(subject_type, subject_key);
+        CREATE TABLE subject_behavior_daily_stats (
+          id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL, epoch_id INTEGER NOT NULL,
+          observed_date TEXT NOT NULL, subject_key TEXT NOT NULL, subject_type TEXT NOT NULL,
+          behavior_key TEXT NOT NULL, behavior_family TEXT NOT NULL,
+          count INTEGER NOT NULL DEFAULT 0, first_seen TEXT, last_seen TEXT,
+          hour_histogram_json TEXT, occurrence_starts_json TEXT, occurrence_ends_json TEXT,
+          occurrence_sizes_json TEXT, context_json TEXT,
+          included_in_learning INTEGER NOT NULL DEFAULT 1, exclusion_reason TEXT,
+          UNIQUE(run_id, observed_date, subject_key, subject_type, behavior_key),
+          FOREIGN KEY(run_id) REFERENCES runs(id),
+          FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+        );
+        CREATE INDEX idx_subject_behavior_epoch_subject_date
+          ON subject_behavior_daily_stats(
+            epoch_id, subject_key, subject_type, behavior_key, observed_date
+          );
+        INSERT INTO metadata(key, value) VALUES('schema_version', '3');
+        """
+    )
+    if populate:
+        connection.executescript(
+            """
+            INSERT INTO baseline_epochs(
+              id, created_at, source_path, source_hash, label, is_active
+            ) VALUES(11, '2037-01-01T00:00:00Z', '/synthetic/baseline.json',
+                     'synthetic-baseline-hash', 'synthetic', 1);
+            INSERT INTO baseline_seed_devices(
+              id, epoch_id, mac, name, dhcp_min, dhcp_max, dhcp_seed_weight,
+              total_events_min, total_events_max, total_events_seed_weight,
+              active_hours_json, expected_windows_json, expected_events_json, pattern, soft_max
+            ) VALUES(12, 11, '02:00:00:00:00:01', 'SYNTHETIC BASELINE DEVICE',
+                     1, 3, 4, 2, 8, 4, '[8]', '[]', '[]', NULL, NULL);
+            INSERT INTO baseline_seed_clusters(
+              id, epoch_id, cluster_name, mac_prefixes_json, cluster_size,
+              min_cluster_size, cluster_time_window_seconds, expected_windows_json
+            ) VALUES(13, 11, 'SYNTHETIC CLUSTER', '["02:00:00"]', 2, 1, 300, '[]');
+            INSERT INTO policy_profiles(
+              id, created_at, name, schema_version, source_path, source_hash,
+              is_active, policy_json
+            ) VALUES(14, '2037-01-02T00:00:00Z', 'synthetic-policy', 1,
+                     '/synthetic/policy.json', 'synthetic-policy-hash', 1, '{"schema_version":1}');
+            INSERT INTO runs(
+              id, epoch_id, policy_profile_id, file_hash, source_path, ingested_at,
+              observation_start, observation_end, observed_dates_json,
+              parsed_event_count, malformed_line_count, export_noise_line_count,
+              risk_score, status, is_partial
+            ) VALUES(15, 11, 14, 'synthetic-run-hash', '/synthetic/router.log',
+                     '2037-02-01T13:00:00Z', '2037-02-01T12:00:00',
+                     '2037-02-01T12:30:00', '["2037-02-01"]', 4, 1, 2, 10, 'Clean', 1);
+            INSERT INTO network_incidents(
+              id, run_id, incident_id, incident_type, confidence, start, restored_at,
+              recovery_end, disconnect_count, connect_count, affected_macs_json,
+              event_counts_json, explained_event_count, active_known_devices,
+              affected_device_fraction
+            ) VALUES(16, 15, 'synthetic-incident', 'internet_connection_reset', 'confirmed',
+                     '2037-02-01T12:00:00', '2037-02-01T12:01:00',
+                     '2037-02-01T12:02:00', 1, 1, '[]', '{}', 2, 1, 1.0);
+            INSERT INTO devices VALUES(
+              '02:00:00:00:00:01', 'SYNTHETIC BASELINE DEVICE', 'allowed', NULL,
+              'baseline_import', '2037-01-01T00:00:00', '2037-02-01T12:00:00'
+            );
+            INSERT INTO devices VALUES(
+              '02:00:00:00:00:02', 'SYNTHETIC CONFIG ONLY', 'blocked', 'wifi',
+              'config_import', '2037-01-10T00:00:00', '2037-01-10T00:00:00'
+            );
+            INSERT INTO devices VALUES(
+              '02:00:00:00:00:03', 'SYNTHETIC CATALOG ONLY', NULL, NULL,
+              'observed', '2037-01-11T00:00:00', '2037-01-11T00:00:00'
+            );
+            INSERT INTO devices VALUES(
+              '02:00:00:00:00:04', 'SYNTHETIC OBSERVED DEVICE', 'allowed', 'wired',
+              'observed', '2037-02-01T12:01:00', '2037-02-01T12:29:00'
+            );
+            INSERT INTO devices VALUES(
+              '__SYSTEM__', 'Router/System', 'allowed', NULL, 'system',
+              '2037-02-01T12:00:00', '2037-02-01T12:30:00'
+            );
+            INSERT INTO device_daily_stats(
+              id, run_id, epoch_id, observed_date, mac, dhcp_count, total_events,
+              first_seen, last_seen, event_types_json, active_hours_json,
+              included_in_learning, exclusion_reason
+            ) VALUES(17, 15, 11, '2037-02-01', '02:00:00:00:00:04', 1, 2,
+                     '2037-02-01T12:01:00', '2037-02-01T12:29:00',
+                     '{"DHCP_IP":1}', '[12]', 1, NULL);
+            INSERT INTO device_daily_stats(
+              id, run_id, epoch_id, observed_date, mac, dhcp_count, total_events,
+              first_seen, last_seen, event_types_json, active_hours_json,
+              included_in_learning, exclusion_reason
+            ) VALUES(18, 15, 11, '2037-02-01', '__SYSTEM__', 0, 2,
+                     '2037-02-01T12:00:00', '2037-02-01T12:30:00',
+                     '{"INTERNET_CONNECTED":1}', '[12]', 1, NULL);
+            INSERT INTO device_event_daily_stats(
+              id, run_id, epoch_id, observed_date, mac, event_key, event_family,
+              count, first_seen, last_seen, hour_histogram_json,
+              included_in_learning, exclusion_reason
+            ) VALUES(19, 15, 11, '2037-02-01', '02:00:00:00:00:04',
+                     'DHCP_IP', 'DHCP', 1, '2037-02-01T12:01:00',
+                     '2037-02-01T12:01:00', '{"12":1}', 1, NULL);
+            INSERT INTO device_event_daily_stats(
+              id, run_id, epoch_id, observed_date, mac, event_key, event_family,
+              count, first_seen, last_seen, hour_histogram_json,
+              included_in_learning, exclusion_reason
+            ) VALUES(20, 15, 11, '2037-02-01', '__SYSTEM__',
+                     'INTERNET_CONNECTED', 'OTHER', 1, '2037-02-01T12:30:00',
+                     '2037-02-01T12:30:00', '{"12":1}', 1, NULL);
+            INSERT INTO behavior_subjects VALUES(
+              '__SYSTEM__', 'device', 'Router/System', '{}',
+              '2037-02-01T12:00:00', '2037-02-01T12:30:00'
+            );
+            INSERT INTO behavior_subjects VALUES(
+              '02:00:00:00:00:04', 'device', 'SYNTHETIC OBSERVED DEVICE', '{}',
+              '2037-02-01T12:01:00', '2037-02-01T12:29:00'
+            );
+            INSERT INTO subject_behavior_daily_stats(
+              id, run_id, epoch_id, observed_date, subject_key, subject_type,
+              behavior_key, behavior_family, count, first_seen, last_seen,
+              hour_histogram_json, occurrence_starts_json, occurrence_ends_json,
+              occurrence_sizes_json, context_json, included_in_learning, exclusion_reason
+            ) VALUES(21, 15, 11, '2037-02-01', '__SYSTEM__', 'device',
+                     'internet_cycle', 'OTHER', 1, '2037-02-01T12:00:00',
+                     '2037-02-01T12:30:00', '{"12":1}', '[]', '[]', '[]', '[]', 1, NULL);
+            INSERT INTO subject_behavior_daily_stats(
+              id, run_id, epoch_id, observed_date, subject_key, subject_type,
+              behavior_key, behavior_family, count, first_seen, last_seen,
+              hour_histogram_json, occurrence_starts_json, occurrence_ends_json,
+              occurrence_sizes_json, context_json, included_in_learning, exclusion_reason
+            ) VALUES(22, 15, 11, '2037-02-01', '02:00:00:00:00:04', 'device',
+                     'dhcp', 'DHCP', 1, '2037-02-01T12:01:00',
+                     '2037-02-01T12:01:00', '{"12":1}', '[]', '[]', '[]', '[]', 1, NULL);
+            """
+        )
+    connection.commit()
+    legacy_tables = tuple(analyzer.V3_REQUIRED_COLUMNS)
+    snapshot = {
+        "counts": {
+            table: connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            for table in legacy_tables
+        },
+        "ids": {
+            table: [row[0] for row in connection.execute(f'SELECT id FROM "{table}" ORDER BY id')]
+            for table in legacy_tables
+            if "id" in analyzer.V3_REQUIRED_COLUMNS[table]
+        },
+    }
+    connection.close()
+    return snapshot
+
+
+def test_empty_database_is_created_directly_as_schema_v4_with_foreign_keys_enabled(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "network.db"
+
+    store = analyzer.StateStore(db_path)
+    try:
+        assert store.get_metadata("schema_version") == "4"
+        assert store.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        table_names = {
+            row[0]
+            for row in store.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert {
+            "router_instances",
+            "router_firmware_profiles",
+            "device_registrations",
+            "device_observations",
+            "router_metadata_observations",
+            "router_snapshot_metrics",
+            "router_boot_sessions",
+            "run_router_boot_sessions",
+            "router_event_occurrences",
+            "run_event_occurrences",
+        } <= table_names
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        store.close()
+
+
+def test_reopening_valid_schema_v4_is_a_noop(tmp_path: Path) -> None:
+    db_path = tmp_path / "network.db"
+    first = analyzer.StateStore(db_path)
+    try:
+        first.conn.execute(
+            "INSERT INTO baseline_epochs(id, created_at, label, is_active) VALUES(41, ?, ?, 1)",
+            ("2037-01-01T00:00:00Z", "synthetic",),
+        )
+        first.conn.commit()
+    finally:
+        first.close()
+
+    second = analyzer.StateStore(db_path)
+    try:
+        assert second.get_metadata("schema_version") == "4"
+        assert second.conn.execute(
+            "SELECT id FROM baseline_epochs"
+        ).fetchall()[0][0] == 41
+        assert second.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    finally:
+        second.close()
+
+
+def test_valid_populated_v3_migrates_atomically_and_preserves_legacy_rows(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "network.db"
+    before = build_v3_database(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute("CREATE TABLE synthetic_user_notes(note TEXT NOT NULL)")
+    connection.execute("INSERT INTO synthetic_user_notes VALUES('synthetic retained note')")
+    connection.commit()
+    connection.close()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        assert store.get_metadata("schema_version") == "4"
+        for table, expected_count in before["counts"].items():
+            assert store.conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0] == expected_count
+        for table, expected_ids in before["ids"].items():
+            assert [
+                row[0] for row in store.conn.execute(f'SELECT id FROM "{table}" ORDER BY id')
+            ] == expected_ids
+
+        legacy_instance_key = analyzer.sha256_bytes(
+            b"router-instance:v1\0netgear\0legacy-default"
+        )
+        legacy_profile_key = analyzer.sha256_bytes(
+            b"firmware-profile:v1\0netgear\0unknown-legacy-firmware"
+        )
+        legacy_subject_key = analyzer.sha256_bytes(
+            (
+                "router-subject:v1\0" + legacy_instance_key + "\0" + legacy_profile_key
+            ).encode("utf-8")
+        )
+        router = store.conn.execute(
+            "SELECT * FROM router_instances WHERE instance_key = ?", (legacy_instance_key,)
+        ).fetchone()
+        assert router is not None
+        assert dict(router)["canonical_vendor"] == "netgear"
+        firmware = store.conn.execute(
+            "SELECT * FROM router_firmware_profiles WHERE profile_key = ?", (legacy_profile_key,)
+        ).fetchone()
+        assert firmware is not None
+        assert firmware["normalized_firmware"] == "unknown-legacy-firmware"
+
+        migrated_run = store.conn.execute("SELECT * FROM runs WHERE id = 15").fetchone()
+        assert migrated_run is not None
+        assert migrated_run["router_instance_id"] == router["id"]
+        assert migrated_run["format_id"] == "netgear"
+        assert json.loads(migrated_run["capabilities_json"])["coverage_mode"] == "continuous_log"
+        assert migrated_run["novel_event_count"] == 0
+        assert migrated_run["repeated_event_count"] == 0
+
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM behavior_subjects WHERE subject_key = ? AND subject_type = 'router'",
+            (legacy_subject_key,),
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM subject_behavior_daily_stats "
+            "WHERE id = 21 AND subject_key = ? AND subject_type = 'router'",
+            (legacy_subject_key,),
+        ).fetchone()[0] == 1
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert store.conn.execute("SELECT note FROM synthetic_user_notes").fetchone()[0] == (
+            "synthetic retained note"
+        )
+    finally:
+        store.close()
+
+    reopened = analyzer.StateStore(db_path)
+    try:
+        assert reopened.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+        assert reopened.conn.execute("SELECT COUNT(*) FROM router_instances").fetchone()[0] == 1
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_detail"),
+    [
+        ("below", "schema version 2 is unsupported"),
+        ("above", "schema version 5 is unsupported"),
+        ("missing_version", "schema_version is missing"),
+        ("malformed", "required index 'idx_runs_epoch_time' is missing"),
+    ],
+)
+def test_unsupported_or_malformed_databases_fail_closed_without_mutation(
+    tmp_path: Path,
+    mutation: str,
+    expected_detail: str,
+) -> None:
+    db_path = tmp_path / f"{mutation}.db"
+    build_v3_database(db_path, populate=False)
+    connection = sqlite3.connect(db_path)
+    if mutation == "below":
+        connection.execute("UPDATE metadata SET value = '2' WHERE key = 'schema_version'")
+    elif mutation == "above":
+        connection.execute("UPDATE metadata SET value = '5' WHERE key = 'schema_version'")
+    elif mutation == "missing_version":
+        connection.execute("DELETE FROM metadata WHERE key = 'schema_version'")
+    else:
+        connection.execute("DROP INDEX idx_runs_epoch_time")
+    connection.commit()
+    before_objects = connection.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
+    ).fetchall()
+    before_journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+    connection.close()
+
+    with pytest.raises(RuntimeError, match=re.escape(expected_detail)):
+        analyzer.StateStore(db_path)
+
+    verification = sqlite3.connect(db_path)
+    try:
+        assert verification.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
+        ).fetchall() == before_objects
+        assert verification.execute("PRAGMA journal_mode").fetchone()[0] == before_journal_mode
+    finally:
+        verification.close()
+    assert not Path(f"{db_path}-wal").exists()
+    assert not Path(f"{db_path}-shm").exists()
+
+
+def test_v4_missing_required_device_observation_uniqueness_fails_closed(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "malformed-v4.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.executescript(
+        """
+        ALTER TABLE device_observations RENAME TO malformed_device_observations;
+        DROP INDEX idx_device_observations_mac_seen;
+        CREATE TABLE device_observations (
+          id INTEGER PRIMARY KEY,
+          run_id INTEGER NOT NULL,
+          mac TEXT NOT NULL,
+          evidence_kind TEXT NOT NULL,
+          seen_at TEXT NOT NULL,
+          evidence_digest TEXT NOT NULL,
+          attributes_json TEXT NOT NULL DEFAULT '{}',
+          FOREIGN KEY(run_id) REFERENCES runs(id),
+          FOREIGN KEY(mac) REFERENCES devices(mac)
+        );
+        CREATE INDEX idx_device_observations_mac_seen
+          ON device_observations(mac, seen_at, run_id);
+        DROP TABLE malformed_device_observations;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeError, match="device_observations.*unique"):
+        analyzer.StateStore(db_path)
+
+
+def test_v3_missing_required_runs_not_null_constraint_fails_closed(tmp_path: Path) -> None:
+    db_path = tmp_path / "malformed-v3.db"
+    build_v3_database(db_path, populate=False)
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("PRAGMA legacy_alter_table = ON")
+    connection.executescript(
+        """
+        ALTER TABLE runs RENAME TO malformed_runs;
+        DROP INDEX idx_runs_epoch_time;
+        CREATE TABLE runs (
+          id INTEGER PRIMARY KEY,
+          epoch_id INTEGER NOT NULL,
+          policy_profile_id INTEGER,
+          file_hash TEXT UNIQUE,
+          source_path TEXT,
+          ingested_at TEXT NOT NULL,
+          observation_start TEXT,
+          observation_end TEXT,
+          observed_dates_json TEXT,
+          parsed_event_count INTEGER NOT NULL DEFAULT 0,
+          malformed_line_count INTEGER NOT NULL DEFAULT 0,
+          export_noise_line_count INTEGER NOT NULL DEFAULT 0,
+          risk_score INTEGER,
+          status TEXT,
+          is_partial INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id),
+          FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id)
+        );
+        CREATE INDEX idx_runs_epoch_time ON runs(epoch_id, ingested_at);
+        DROP TABLE malformed_runs;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeError, match="runs.*NOT NULL"):
+        analyzer.StateStore(db_path)
+
+
+def test_v3_primary_key_cannot_be_replaced_by_an_ordinary_unique_key(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "malformed-primary-key-v3.db"
+    build_v3_database(db_path, populate=False)
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("PRAGMA legacy_alter_table = ON")
+    connection.executescript(
+        """
+        ALTER TABLE baseline_epochs RENAME TO malformed_baseline_epochs;
+        DROP INDEX idx_baseline_epochs_active;
+        CREATE TABLE baseline_epochs (
+          id INTEGER UNIQUE,
+          created_at TEXT NOT NULL,
+          source_path TEXT,
+          source_hash TEXT,
+          label TEXT,
+          is_active INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_baseline_epochs_active ON baseline_epochs(is_active);
+        DROP TABLE malformed_baseline_epochs;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeError, match="baseline_epochs.*primary-key"):
+        analyzer.StateStore(db_path)
+
+
+def test_v3_trigger_on_required_table_is_rejected_before_it_can_mutate_data(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "triggered-v3.db"
+    build_v3_database(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.executescript(
+        """
+        CREATE TRIGGER mutate_devices_during_migration
+        AFTER UPDATE ON devices
+        BEGIN
+          UPDATE devices SET name = 'TRIGGER MUTATED VALUE' WHERE mac = NEW.mac;
+        END;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeError, match="trigger.*required table"):
+        analyzer.StateStore(db_path)
+
+    verification = sqlite3.connect(db_path)
+    try:
+        assert verification.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()[0] == "3"
+        assert verification.execute(
+            "SELECT name FROM devices WHERE mac = '02:00:00:00:00:04'"
+        ).fetchone()[0] == "SYNTHETIC OBSERVED DEVICE"
+    finally:
+        verification.close()
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    ["type", "default", "check", "fk_action", "unique_collation"],
+)
+def test_v3_runs_requires_exact_declared_structure(
+    tmp_path: Path,
+    malformation: str,
+) -> None:
+    db_path = tmp_path / f"malformed-runs-{malformation}.db"
+    build_v3_database(db_path, populate=False)
+    file_hash_type = "BLOB" if malformation == "type" else "TEXT"
+    parsed_default = "7" if malformation == "default" else "0"
+    check_clause = ", CHECK(parsed_event_count >= 0)" if malformation == "check" else ""
+    epoch_fk_action = " ON DELETE CASCADE" if malformation == "fk_action" else ""
+    file_hash_collation = " COLLATE NOCASE" if malformation == "unique_collation" else ""
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("PRAGMA legacy_alter_table = ON")
+    connection.executescript(
+        f"""
+        ALTER TABLE runs RENAME TO malformed_runs;
+        DROP INDEX idx_runs_epoch_time;
+        CREATE TABLE runs (
+          id INTEGER PRIMARY KEY,
+          epoch_id INTEGER NOT NULL,
+          policy_profile_id INTEGER,
+          file_hash {file_hash_type}{file_hash_collation} NOT NULL UNIQUE,
+          source_path TEXT,
+          ingested_at TEXT NOT NULL,
+          observation_start TEXT,
+          observation_end TEXT,
+          observed_dates_json TEXT,
+          parsed_event_count INTEGER NOT NULL DEFAULT {parsed_default},
+          malformed_line_count INTEGER NOT NULL DEFAULT 0,
+          export_noise_line_count INTEGER NOT NULL DEFAULT 0,
+          risk_score INTEGER,
+          status TEXT,
+          is_partial INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id){epoch_fk_action},
+          FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id)
+          {check_clause}
+        );
+        CREATE INDEX idx_runs_epoch_time ON runs(epoch_id, ingested_at);
+        DROP TABLE malformed_runs;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        RuntimeError,
+        match="runs.*(type|default|CHECK|foreign-key|unique)",
+    ):
+        analyzer.StateStore(db_path)
+
+
+def test_v3_migration_validation_failure_rolls_back_to_usable_v3(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "network.db"
+    build_v3_database(db_path)
+
+    def reject_migration(_store: analyzer.StateStore) -> None:
+        raise RuntimeError("injected post-rebuild validation failure")
+
+    monkeypatch.setattr(
+        analyzer.StateStore,
+        "_validate_migrated_v4_before_version_update",
+        reject_migration,
+    )
+    with pytest.raises(RuntimeError, match="injected post-rebuild validation failure"):
+        analyzer.StateStore(db_path)
+
+    connection = sqlite3.connect(db_path)
+    try:
+        assert connection.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()[0] == "3"
+        assert [
+            row[1] for row in connection.execute("PRAGMA table_info('runs')")
+        ] == list(analyzer.V3_REQUIRED_COLUMNS["runs"])
+        assert connection.execute("SELECT id, file_hash FROM runs").fetchall() == [
+            (15, "synthetic-run-hash")
+        ]
+        assert connection.execute(
+            "SELECT COUNT(*) FROM network_incidents WHERE run_id = 15"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'router_instances'"
+        ).fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_v3_migration_backfills_registration_and_observation_provenance(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "network.db"
+    build_v3_database(db_path)
+
+    store = analyzer.StateStore(db_path)
+    try:
+        registrations = {
+            row["mac"]: dict(row)
+            for row in store.conn.execute(
+                "SELECT * FROM device_registrations ORDER BY registration_sequence"
+            )
+        }
+        assert registrations["02:00:00:00:00:01"]["registration_source"] == (
+            "legacy_baseline_registration"
+        )
+        assert registrations["02:00:00:00:00:01"]["epoch_id"] == 11
+        config_registration = registrations["02:00:00:00:00:02"]
+        assert config_registration["registration_source"] == "legacy_config_registration"
+        assert config_registration["source_key"] == (
+            "legacy-config-without-source-bytes:v1:02:00:00:00:00:02"
+        )
+        assert "hash" not in config_registration["source_key"]
+        assert config_registration["registered_status"] == "blocked"
+        assert registrations["02:00:00:00:00:03"]["registration_source"] == (
+            "legacy_device_catalog"
+        )
+        observed_catalog_registration = registrations["02:00:00:00:00:04"]
+        assert observed_catalog_registration["registration_source"] == "legacy_device_catalog"
+        assert observed_catalog_registration["registered_name"] == "SYNTHETIC OBSERVED DEVICE"
+        assert observed_catalog_registration["registered_status"] == "allowed"
+        assert observed_catalog_registration["registered_connection_type"] == "wired"
+        assert observed_catalog_registration["first_seen"] is None
+        assert observed_catalog_registration["last_seen"] is None
+
+        observations = [
+            dict(row)
+            for row in store.conn.execute(
+                """
+                SELECT * FROM device_observations
+                WHERE evidence_kind LIKE 'legacy_device_daily_%'
+                ORDER BY seen_at
+                """
+            )
+        ]
+        assert [row["seen_at"] for row in observations] == [
+            "2037-02-01T12:01:00",
+            "2037-02-01T12:29:00",
+        ]
+        assert [row["evidence_kind"] for row in observations] == [
+            "legacy_device_daily_first_seen",
+            "legacy_device_daily_last_seen",
+        ]
+        assert {row["run_id"] for row in observations} == {15}
+        assert {row["mac"] for row in observations} == {"02:00:00:00:00:04"}
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_daily_stats WHERE mac = '__SYSTEM__'"
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_observations WHERE mac = '__SYSTEM__'"
+        ).fetchone()[0] == 0
+        observed_device = store.conn.execute(
+            "SELECT first_seen, last_seen FROM devices WHERE mac = '02:00:00:00:00:04'"
+        ).fetchone()
+        assert tuple(observed_device) == (
+            "2037-02-01T12:01:00",
+            "2037-02-01T12:29:00",
+        )
+    finally:
+        store.close()
+
+
+def test_v3_migration_derives_caches_without_assigning_catalog_fields_to_baseline(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "network.db"
+    build_v3_database(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute("UPDATE baseline_seed_devices SET name = NULL WHERE id = 12")
+    connection.execute(
+        """
+        UPDATE devices
+        SET name = 'SYNTHETIC RETAINED CATALOG NAME', connection_type = 'wifi',
+            first_seen = '2030-01-01T00:00:00', last_seen = '2040-01-01T00:00:00'
+        WHERE mac = '02:00:00:00:00:01'
+        """
+    )
+    connection.execute(
+        """
+        UPDATE devices
+        SET first_seen = '2030-01-01T00:00:00', last_seen = '2040-01-01T00:00:00'
+        WHERE mac = '02:00:00:00:00:04'
+        """
+    )
+    connection.execute(
+        """
+        UPDATE behavior_subjects
+        SET first_seen = '2030-01-01T00:00:00', last_seen = '2040-01-01T00:00:00'
+        WHERE subject_key = '__SYSTEM__'
+        """
+    )
+    connection.execute(
+        """
+        UPDATE behavior_subjects
+        SET first_seen = '2030-01-01T00:00:00', last_seen = '2040-01-01T00:00:00'
+        WHERE subject_key = '02:00:00:00:00:04'
+        """
+    )
+    connection.execute(
+        """
+        UPDATE subject_behavior_daily_stats
+        SET first_seen = NULL, last_seen = NULL
+        WHERE subject_key = '02:00:00:00:00:04'
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        baseline_registration = store.conn.execute(
+            """
+            SELECT * FROM device_registrations
+            WHERE mac = '02:00:00:00:00:01'
+              AND registration_source = 'legacy_baseline_registration'
+            """
+        ).fetchone()
+        assert baseline_registration["registered_name"] is None
+        assert baseline_registration["registered_connection_type"] is None
+        catalog_registration = store.conn.execute(
+            """
+            SELECT * FROM device_registrations
+            WHERE mac = '02:00:00:00:00:01'
+              AND registration_source = 'legacy_device_catalog'
+            """
+        ).fetchone()
+        assert catalog_registration["registered_name"] == "SYNTHETIC RETAINED CATALOG NAME"
+        assert catalog_registration["registered_connection_type"] == "wifi"
+        assert catalog_registration["first_seen"] is None
+        assert catalog_registration["last_seen"] is None
+        migrated_baseline_device = store.conn.execute(
+            """
+            SELECT name, status, connection_type, first_seen, last_seen
+            FROM devices WHERE mac = '02:00:00:00:00:01'
+            """
+        ).fetchone()
+        assert tuple(migrated_baseline_device) == (
+            "SYNTHETIC RETAINED CATALOG NAME",
+            "allowed",
+            "wifi",
+            "2037-01-01T00:00:00Z",
+            "2037-01-01T00:00:00Z",
+        )
+        migrated_observed_extrema = store.conn.execute(
+            """
+            SELECT first_seen, last_seen FROM devices
+            WHERE mac = '02:00:00:00:00:04'
+            """
+        ).fetchone()
+        assert tuple(migrated_observed_extrema) == (
+            "2037-02-01T12:01:00",
+            "2037-02-01T12:29:00",
+        )
+        router_subject = store.conn.execute(
+            """
+            SELECT first_seen, last_seen FROM behavior_subjects
+            WHERE subject_type = 'router'
+            """
+        ).fetchone()
+        assert tuple(router_subject) == (
+            "2037-02-01T12:00:00",
+            "2037-02-01T12:30:00",
+        )
+        device_subject = store.conn.execute(
+            """
+            SELECT first_seen, last_seen FROM behavior_subjects
+            WHERE subject_key = '02:00:00:00:00:04' AND subject_type = 'device'
+            """
+        ).fetchone()
+        assert tuple(device_subject) == (None, None)
+    finally:
+        store.close()
+
+
+def test_v3_migration_router_extrema_use_ingestion_only_without_observation_endpoints(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "network.db"
+    build_v3_database(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        UPDATE runs
+        SET observation_start = NULL,
+            observation_end = '2037-02-01T12:30:00',
+            ingested_at = '2037-02-01T13:00:00Z'
+        WHERE id = 15
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        extrema = store.conn.execute(
+            """
+            SELECT first_seen, last_seen FROM router_instances
+            WHERE instance_key = ?
+            """,
+            (analyzer.LEGACY_NETGEAR_INSTANCE_KEY,),
+        ).fetchone()
+        assert tuple(extrema) == (
+            "2037-02-01T12:30:00",
+            "2037-02-01T12:30:00",
+        )
+    finally:
+        store.close()
+
+
+def test_v3_migration_registers_an_attribute_free_real_mac_catalog_row(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "network.db"
+    build_v3_database(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        UPDATE devices
+        SET name = NULL, status = NULL, connection_type = NULL,
+            first_seen = NULL, last_seen = NULL
+        WHERE mac = '02:00:00:00:00:03'
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        registration = store.conn.execute(
+            """
+            SELECT * FROM device_registrations
+            WHERE mac = '02:00:00:00:00:03'
+            """
+        ).fetchone()
+        assert registration is not None
+        assert registration["registration_source"] == "legacy_device_catalog"
+        assert registration["source_key"] == (
+            "legacy-device-catalog:v1:02:00:00:00:00:03"
+        )
+        assert registration["registered_name"] is None
+        assert registration["registered_status"] is None
+        assert registration["registered_connection_type"] is None
+        assert registration["first_seen"] is None
+        assert registration["last_seen"] is None
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        store.close()
+
+
+def test_migrated_system_daily_rows_remain_auditable_but_not_device_history(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "network.db"
+    build_v3_database(db_path)
+    store = analyzer.StateStore(db_path)
+    try:
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_daily_stats WHERE mac = '__SYSTEM__'"
+        ).fetchone()[0] == 1
+        assert analyzer.SYSTEM_ACTOR not in store.fetch_epoch_macs(11)
+    finally:
+        store.close()
+
+
+def test_v4_run_owned_foreign_keys_and_unique_keys_reference_final_runs(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        run_owned_tables = (
+            "network_incidents",
+            "device_daily_stats",
+            "device_event_daily_stats",
+            "subject_behavior_daily_stats",
+            "device_observations",
+            "router_metadata_observations",
+            "router_snapshot_metrics",
+            "run_router_boot_sessions",
+            "run_event_occurrences",
+        )
+        for table in run_owned_tables:
+            run_targets = {
+                (row[3], row[2], row[4])
+                for row in store.conn.execute(f'PRAGMA foreign_key_list("{table}")')
+                if row[3] == "run_id"
+            }
+            assert run_targets == {("run_id", "runs", "id")}
+            sql = store.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+            ).fetchone()[0]
+            assert "runs_v4" not in sql
+            assert "runs_temp" not in sql
+
+        assert [
+            (row[1], row[5])
+            for row in store.conn.execute("PRAGMA table_info('router_metadata_observations')")
+            if row[5]
+        ] == [("run_id", 1)]
+        assert [
+            (row[1], row[5])
+            for row in store.conn.execute("PRAGMA table_info('router_snapshot_metrics')")
+            if row[5]
+        ] == [("run_id", 1)]
+        assert [
+            (row[1], row[5])
+            for row in store.conn.execute("PRAGMA table_info('run_router_boot_sessions')")
+            if row[5]
+        ] == [("run_id", 1), ("boot_session_id", 2)]
+        assert [
+            (row[1], row[5])
+            for row in store.conn.execute("PRAGMA table_info('run_event_occurrences')")
+            if row[5]
+        ] == [("run_id", 1), ("occurrence_id", 2)]
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        store.close()
+
+
+def test_v4_rejects_run_owned_rows_with_mismatched_router_identity(tmp_path: Path) -> None:
+    db_path = tmp_path / "mismatched-router.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        epoch_id = seed_epoch(store)
+        run_id = store.insert_run(
+            epoch_id=epoch_id,
+            policy_profile_id=None,
+            file_hash="synthetic-run",
+            source_path=Path("/synthetic/router.log"),
+            parse_stats=analyzer.ParseStats(),
+            observation_start=None,
+            observation_end=None,
+            observed_dates=[],
+            risk_score=0,
+            status="Clean",
+            is_partial=False,
+        )
+        second_router_id = store.conn.execute(
+            """
+            INSERT INTO router_instances(
+              instance_key, canonical_vendor, identity_source, label, identity_version
+            ) VALUES('synthetic-mismatch', 'netgear', 'test', 'Synthetic mismatch', 'v1')
+            """
+        ).lastrowid
+        store.conn.execute(
+            "UPDATE router_metadata_observations SET router_instance_id = ? WHERE run_id = ?",
+            (second_router_id, run_id),
+        )
+        store.conn.commit()
+    finally:
+        store.close()
+
+    with pytest.raises(RuntimeError, match="router_metadata_observations.*run identity"):
+        analyzer.StateStore(db_path)
+
+
+def test_migrated_runs_allow_same_file_hash_for_different_router_instances(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "network.db"
+    build_v3_database(db_path)
+    store = analyzer.StateStore(db_path)
+    try:
+        legacy_router_id = store.conn.execute(
+            "SELECT router_instance_id FROM runs WHERE id = 15"
+        ).fetchone()[0]
+        second_router_id = store.conn.execute(
+            """
+            INSERT INTO router_instances(
+              instance_key, canonical_vendor, identity_source, label, identity_version
+            ) VALUES('synthetic-second-instance', 'netgear', 'test', 'Synthetic Router', 'v1')
+            """
+        ).lastrowid
+        second_run_id = store.insert_run(
+            epoch_id=11,
+            policy_profile_id=14,
+            router_instance_id=second_router_id,
+            format_id="netgear",
+            file_hash="synthetic-run-hash",
+            source_path=Path("/synthetic/router-copy.log"),
+            parse_stats=analyzer.ParseStats(),
+            observation_start=None,
+            observation_end=None,
+            observed_dates=[],
+            risk_score=0,
+            status="Clean",
+            is_partial=False,
+        )
+        assert second_run_id != 15
+        with pytest.raises(sqlite3.IntegrityError):
+            store.insert_run(
+                epoch_id=11,
+                policy_profile_id=14,
+                router_instance_id=legacy_router_id,
+                format_id="netgear",
+                file_hash="synthetic-run-hash",
+                source_path=Path("/synthetic/router-duplicate.log"),
+                parse_stats=analyzer.ParseStats(),
+                observation_start=None,
+                observation_end=None,
+                observed_dates=[],
+                risk_score=0,
+                status="Clean",
+                is_partial=False,
+            )
+    finally:
+        store.close()
+
+
+def test_run_hash_lookup_requires_router_scope(tmp_path: Path) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        with pytest.raises(TypeError):
+            store.get_run_by_hash("synthetic-hash")
+    finally:
+        store.close()
+
+
+def test_netgear_insert_run_refreshes_router_cache_by_chronological_extrema(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        for file_hash, start, end in (
+            ("synthetic-later", "2037-04-02T12:00:00", "2037-04-02T13:00:00"),
+            ("synthetic-earlier", "2037-04-01T12:00:00", "2037-04-01T13:00:00"),
+        ):
+            store.insert_run(
+                epoch_id=epoch_id,
+                policy_profile_id=None,
+                router_instance_id=router_id,
+                format_id="netgear",
+                file_hash=file_hash,
+                source_path=Path(f"/synthetic/{file_hash}.log"),
+                parse_stats=analyzer.ParseStats(),
+                observation_start=start,
+                observation_end=end,
+                observed_dates=[start[:10]],
+                risk_score=0,
+                status="Clean",
+                is_partial=False,
+            )
+        router = store.conn.execute(
+            "SELECT first_seen, last_seen FROM router_instances WHERE id = ?", (router_id,)
+        ).fetchone()
+        assert tuple(router) == ("2037-04-01T12:00:00", "2037-04-02T13:00:00")
+    finally:
+        store.close()
+
+
+def test_registration_resolution_is_fieldwise_idempotent_and_epoch_scoped(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    config_v1_path = tmp_path / "synthetic-config-v1.md"
+    config_v2_path = tmp_path / "synthetic-config-v2.md"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    config_v1_path.write_text("SYNTHETIC CONFIG VERSION ONE\n", encoding="utf-8")
+    config_v2_path.write_text("SYNTHETIC CONFIG VERSION TWO\n", encoding="utf-8")
+    baseline_path.write_text("{\"devices\":{}}\n", encoding="utf-8")
+    mac = "02:00:00:00:00:21"
+    config_v1 = {
+        "devices": {
+            mac: analyzer.RouterConfigDevice(
+                name="SYNTHETIC CONFIG NAME",
+                mac=mac,
+                connection_type="wifi",
+            )
+        },
+        "blocked_macs": {mac},
+    }
+    config_v2 = {
+        "devices": {
+            mac: analyzer.RouterConfigDevice(
+                name="SYNTHETIC UPDATED NAME",
+                mac=mac,
+                connection_type=None,
+            )
+        },
+        "blocked_macs": {mac},
+    }
+    baseline = {"devices": {mac: {"name": "SYNTHETIC BASELINE NAME"}}}
+    try:
+        assert store.import_config(config_v1_path, config_v1) == 1
+        first_registration = store.conn.execute(
+            "SELECT * FROM device_registrations WHERE mac = ?", (mac,)
+        ).fetchone()
+        assert first_registration is not None
+        assert first_registration["source_key"] == analyzer.sha256_bytes(
+            config_v1_path.read_bytes()
+        )
+
+        assert store.import_config(config_v1_path, config_v1) == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_registrations WHERE mac = ?", (mac,)
+        ).fetchone()[0] == 1
+        confirmed = store.conn.execute(
+            "SELECT * FROM device_registrations WHERE mac = ?", (mac,)
+        ).fetchone()
+        assert confirmed["id"] == first_registration["id"]
+        assert confirmed["registration_sequence"] == first_registration["registration_sequence"]
+
+        store.import_config(config_v2_path, config_v2)
+        snapshot = store.load_devices_snapshot()[mac]
+        assert snapshot["name"] == "SYNTHETIC UPDATED NAME"
+        assert snapshot["status"] == "blocked"
+        assert snapshot["connection_type"] == "wifi"
+
+        first_epoch = store.import_baseline(baseline_path, baseline, seed_weight=4.0)
+        snapshot = store.load_devices_snapshot()[mac]
+        assert snapshot["name"] == "SYNTHETIC BASELINE NAME"
+        assert snapshot["status"] == "allowed"
+        assert snapshot["connection_type"] == "wifi"
+
+        second_epoch = store.import_baseline(baseline_path, baseline, seed_weight=4.0)
+        assert second_epoch != first_epoch
+        baseline_registrations = list(store.conn.execute(
+            """
+            SELECT epoch_id, source_key
+            FROM device_registrations
+            WHERE mac = ? AND registration_source = 'baseline_import'
+            ORDER BY registration_sequence
+            """,
+            (mac,),
+        ))
+        assert [row["epoch_id"] for row in baseline_registrations] == [
+            first_epoch,
+            second_epoch,
+        ]
+        assert len({row["source_key"] for row in baseline_registrations}) == 2
+        assert store.load_devices_snapshot()[mac]["status"] == "allowed"
+    finally:
+        store.close()
+
+
 def test_weekday_drift_is_suppressed_without_enough_history(tmp_path: Path) -> None:
     store = analyzer.StateStore(tmp_path / "network.db")
     try:
@@ -256,7 +1452,10 @@ def test_main_reprocess_atomically_replaces_matching_run(
 
     store = analyzer.StateStore(db_path)
     try:
-        existing = store.get_run_by_hash(analyzer.sha256_bytes(log_path.read_bytes()))
+        existing = store.get_run_by_hash(
+            store.get_or_create_legacy_netgear_router_instance(),
+            analyzer.sha256_bytes(log_path.read_bytes()),
+        )
         assert existing is not None
         existing_run_id = int(existing["id"])
         store.conn.execute(
@@ -291,7 +1490,10 @@ def test_main_reprocess_atomically_replaces_matching_run(
 
     store = analyzer.StateStore(db_path)
     try:
-        replacement = store.get_run_by_hash(analyzer.sha256_bytes(log_path.read_bytes()))
+        replacement = store.get_run_by_hash(
+            store.get_or_create_legacy_netgear_router_instance(),
+            analyzer.sha256_bytes(log_path.read_bytes()),
+        )
         assert replacement is not None
         assert replacement["risk_score"] == replacement_report["risk_score"]
         assert replacement["status"] == replacement_report["status"]
@@ -369,7 +1571,10 @@ def test_main_reprocess_rolls_back_when_analysis_fails(
 
     store = analyzer.StateStore(db_path)
     try:
-        existing = store.get_run_by_hash(analyzer.sha256_bytes(log_path.read_bytes()))
+        existing = store.get_run_by_hash(
+            store.get_or_create_legacy_netgear_router_instance(),
+            analyzer.sha256_bytes(log_path.read_bytes()),
+        )
         assert existing is not None
         existing_run_id = int(existing["id"])
     finally:
@@ -384,7 +1589,10 @@ def test_main_reprocess_rolls_back_when_analysis_fails(
 
     store = analyzer.StateStore(db_path)
     try:
-        restored = store.get_run_by_hash(analyzer.sha256_bytes(log_path.read_bytes()))
+        restored = store.get_run_by_hash(
+            store.get_or_create_legacy_netgear_router_instance(),
+            analyzer.sha256_bytes(log_path.read_bytes()),
+        )
         assert restored is not None
         assert int(restored["id"]) == existing_run_id
         assert store.conn.execute(
@@ -1178,7 +2386,10 @@ def test_valid_persistent_log_allows_combined_baseline_import_after_parse_valida
     store = analyzer.StateStore(db_path)
     try:
         assert store.get_active_epoch() is not None
-        assert store.get_run_by_hash(analyzer.sha256_bytes(log_path.read_bytes())) is not None
+        assert store.get_run_by_hash(
+            store.get_or_create_legacy_netgear_router_instance(),
+            analyzer.sha256_bytes(log_path.read_bytes()),
+        ) is not None
     finally:
         store.close()
 
@@ -1245,7 +2456,10 @@ def test_valid_persistent_log_applies_combined_management_and_stores_analysis(
 
     store = analyzer.StateStore(db_path)
     try:
-        assert store.get_run_by_hash(analyzer.sha256_bytes(log_path.read_bytes())) is not None
+        assert store.get_run_by_hash(
+            store.get_or_create_legacy_netgear_router_instance(),
+            analyzer.sha256_bytes(log_path.read_bytes()),
+        ) is not None
         if management_option == "--import-policy":
             policy, policy_row = store.load_effective_policy()
             assert policy_row is not None
@@ -4117,6 +5331,132 @@ def test_network_incident_persistence_scoring_and_reporting(tmp_path: Path) -> N
         ).fetchone()[0]
         assert incident_count == 1
         assert store.get_metadata("schema_version") == str(analyzer.SCHEMA_VERSION)
+    finally:
+        store.close()
+
+
+def test_persist_analysis_does_not_misclassify_invalid_epoch_as_duplicate(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    aggregate = {
+        "observation_range": {"start": None, "end": None},
+        "observed_dates": [],
+        "device_day_stats": {},
+        "event_day_stats": {},
+        "mac_to_name": {},
+    }
+    findings = {"critical": [], "anomalies": [], "observations": [], "all": []}
+    try:
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+            analyzer.persist_analysis(
+                store=store,
+                run_hash="synthetic-invalid-epoch-run",
+                logfile_path=tmp_path / "synthetic-router.log",
+                parse_stats=analyzer.ParseStats(),
+                aggregate=aggregate,
+                findings=findings,
+                score=0,
+                status="Clean",
+                epoch_id=999_999,
+                policy_profile_id=None,
+                devices_snapshot={},
+                is_partial=False,
+                router_instance_id=router_id,
+            )
+        assert store.get_run_by_hash(router_id, "synthetic-invalid-epoch-run") is None
+    finally:
+        store.close()
+
+
+def test_persist_analysis_rolls_back_run_when_required_child_insert_fails(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    aggregate = {
+        "observation_range": {"start": None, "end": None},
+        "observed_dates": [],
+        "device_day_stats": {},
+        "event_day_stats": {},
+        "mac_to_name": {},
+    }
+    findings = {"critical": [], "anomalies": [], "observations": [], "all": []}
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        store.conn.execute(
+            """
+            CREATE TRIGGER synthetic_reject_metadata
+            BEFORE INSERT ON router_metadata_observations
+            BEGIN
+              SELECT RAISE(ABORT, 'synthetic required-child failure');
+            END
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="required-child failure"):
+            analyzer.persist_analysis(
+                store=store,
+                run_hash="synthetic-child-failure-run",
+                logfile_path=tmp_path / "synthetic-router.log",
+                parse_stats=analyzer.ParseStats(),
+                aggregate=aggregate,
+                findings=findings,
+                score=0,
+                status="Clean",
+                epoch_id=epoch_id,
+                policy_profile_id=None,
+                devices_snapshot={},
+                is_partial=False,
+                router_instance_id=router_id,
+            )
+        assert store.get_run_by_hash(router_id, "synthetic-child-failure-run") is None
+    finally:
+        store.close()
+
+
+def test_persist_analysis_releases_savepoint_after_non_integrity_insert_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    aggregate = {
+        "observation_range": {"start": None, "end": None},
+        "observed_dates": [],
+        "device_day_stats": {},
+        "event_day_stats": {},
+        "mac_to_name": {},
+    }
+    findings = {"critical": [], "anomalies": [], "observations": [], "all": []}
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        store.commit()
+        original_insert_run = store.insert_run
+
+        def fail_after_required_child_inserts(**kwargs: object) -> int:
+            original_insert_run(**kwargs)
+            raise sqlite3.OperationalError("synthetic post-insert failure")
+
+        monkeypatch.setattr(store, "insert_run", fail_after_required_child_inserts)
+        with pytest.raises(sqlite3.OperationalError, match="post-insert failure"):
+            analyzer.persist_analysis(
+                store=store,
+                run_hash="synthetic-operational-failure-run",
+                logfile_path=tmp_path / "synthetic-router.log",
+                parse_stats=analyzer.ParseStats(),
+                aggregate=aggregate,
+                findings=findings,
+                score=0,
+                status="Clean",
+                epoch_id=epoch_id,
+                policy_profile_id=None,
+                devices_snapshot={},
+                is_partial=False,
+                router_instance_id=router_id,
+            )
+        assert store.get_run_by_hash(router_id, "synthetic-operational-failure-run") is None
+        assert store.conn.in_transaction is False
     finally:
         store.close()
 
