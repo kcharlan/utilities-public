@@ -1848,51 +1848,135 @@ def seed_synthetic_netgear_regression_history(store: analyzer.StateStore, tmp_pa
 
 def legacy_netgear_report_projection(report: dict[str, object]) -> dict[str, object]:
     """Freeze v3 fields while permitting later report schemas to add fields."""
+    metadata_keys = {
+        "unknown_device": (),
+        "blocked_device_activity": (),
+        "new_event_type": ("day", "event_key", "event_family", "history_count", "observed_timestamps"),
+        "rare_event_activity": (
+            "day", "event_key", "event_family", "history_count", "observed_device_days",
+            "learned_presence_rate", "observed_timestamps",
+        ),
+        "event_behavior_anomaly": (
+            "day", "event_key", "event_family", "reasons", "history_count", "dominant_weekdays",
+            "current_weekday", "learned_presence_rate", "learned_mean", "typical_hour",
+            "current_hour", "current_streak", "observed_timestamps",
+        ),
+        "network_reset": (
+            "incident_id", "incident_type", "confidence", "day", "start", "restored_at",
+            "recovery_end", "disconnect_count", "connect_count", "affected_macs", "event_counts",
+            "explained_event_count", "active_known_devices", "affected_device_fraction",
+        ),
+    }
+
+    def finding_projection(finding: dict[str, object]) -> dict[str, object]:
+        kind = str(finding["kind"])
+        metadata = finding["metadata"]
+        assert isinstance(metadata, dict)
+        return {
+            "kind": kind,
+            "severity": finding["severity"],
+            "message": finding["message"],
+            "mac": finding["mac"],
+            "event_count": finding["event_count"],
+            "metadata": {key: metadata[key] for key in metadata_keys[kind]},
+            "device_label": finding["device_label"],
+            "rendered_message": finding["rendered_message"],
+        }
+
+    inputs = report["inputs"]
+    state = report["state"]
+    parse_stats = report["parse_stats"]
+    adjustments = report["analysis_adjustments"]
+    incidents = report["network_incidents"]
+    observation_range = report["observation_range"]
+    events_per_hour = report["events_per_hour"]
+    breakdown = report["risk_breakdown"]
     findings = report["findings"]
-    assert isinstance(findings, dict)
+    assert all(isinstance(value, dict) for value in (inputs, state, parse_stats, adjustments, observation_range, events_per_hour, breakdown, findings))
+    assert isinstance(incidents, list)
     return {
-        "inputs": report["inputs"],
+        "inputs": {
+            "logfile": inputs["logfile"],
+            "baseline": inputs["baseline"],
+            "config": inputs["config"],
+            "db": inputs["db"],
+        },
         "state": {
-            **report["state"],
             "epoch_id": "<database-generated-id>",
             "policy_profile_id": (
                 "<database-generated-id>"
-                if report["state"]["policy_profile_id"] is not None
+                if state["policy_profile_id"] is not None
                 else None
             ),
+            "deduplicated": state["deduplicated"],
+            "reprocessed_run_id": state["reprocessed_run_id"],
         },
-        "parse_stats": report["parse_stats"],
-        "analysis_adjustments": report["analysis_adjustments"],
-        "network_incidents": report["network_incidents"],
-        "observation_range": report["observation_range"],
-        "events_per_hour": report["events_per_hour"],
+        "parse_stats": {
+            "total_lines": parse_stats["total_lines"],
+            "parsed_events": parse_stats["parsed_events"],
+            "malformed_lines": parse_stats["malformed_lines"],
+            "duplicate_events": parse_stats["duplicate_events"],
+            "spam_filtered": parse_stats["spam_filtered"],
+            "ignored_lines": parse_stats["ignored_lines"],
+            "export_noise_lines": parse_stats["export_noise_lines"],
+            "malformed_samples": parse_stats["malformed_samples"],
+        },
+        "analysis_adjustments": {
+            "raw_event_count": adjustments["raw_event_count"],
+            "incident_explained_event_count": adjustments["incident_explained_event_count"],
+            "analyzed_event_count": adjustments["analyzed_event_count"],
+        },
+        "network_incidents": [
+            {
+                "incident_id": incident["incident_id"],
+                "incident_type": incident["incident_type"],
+                "confidence": incident["confidence"],
+                "start": incident["start"],
+                "restored_at": incident["restored_at"],
+                "recovery_end": incident["recovery_end"],
+                "disconnect_count": incident["disconnect_count"],
+                "connect_count": incident["connect_count"],
+                "affected_macs": incident["affected_macs"],
+                "event_counts": incident["event_counts"],
+                "explained_event_count": incident["explained_event_count"],
+                "active_known_devices": incident["active_known_devices"],
+                "affected_device_fraction": incident["affected_device_fraction"],
+            }
+            for incident in incidents
+        ],
+        "observation_range": {
+            "start": observation_range["start"],
+            "end": observation_range["end"],
+        },
+        "events_per_hour": {
+            hour: events_per_hour[hour]
+            for hour in ("4", "8", "9", "18")
+        },
         "risk_score": report["risk_score"],
         "status": report["status"],
-        "risk_breakdown": report["risk_breakdown"],
-        "findings": {
-            group: [
-                {
-                    key: finding[key]
-                    for key in (
-                        "kind", "severity", "message", "mac", "event_count", "metadata",
-                        "device_label", "rendered_message",
-                    )
-                }
-                for finding in entries
-            ]
-            for group, entries in findings.items()
+        "risk_breakdown": {
+            kind: breakdown[kind]
+            for kind in (
+                "unknown_device", "blocked_device_activity", "new_event_type", "rare_event_activity",
+                "event_behavior_anomaly", "network_reset",
+            )
         },
-        "priority_findings": [
+        "findings": {
+            group: [finding_projection(finding) for finding in findings[group]]
+            for group in ("critical", "anomalies", "observations", "all")
+        },
+        "priority_findings": [finding_projection(finding) for finding in report["priority_findings"]],
+        "device_summary": [
             {
-                key: finding[key]
-                for key in (
-                    "kind", "severity", "message", "mac", "event_count", "metadata",
-                    "device_label", "rendered_message",
-                )
+                "mac": device["mac"],
+                "name": device["name"],
+                "dhcp_count": device["dhcp_count"],
+                "total_events": device["total_events"],
+                "incident_explained_events": device["incident_explained_events"],
+                "event_types": device["event_types"],
             }
-            for finding in report["priority_findings"]
+            for device in report["device_summary"]
         ],
-        "device_summary": report["device_summary"],
     }
 
 
@@ -1917,6 +2001,12 @@ def text_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
             continue
         label, value = line.split(" : ", 1)
         summary_rows[label.strip()] = value.strip().replace(str(db_path), "<temporary-db>")
+    malformed_heading = summary.splitlines().index("Malformed Samples:")
+    summary_rows["Malformed Samples"] = tuple(
+        line.strip()[2:]
+        for line in summary.splitlines()[malformed_heading + 1:]
+        if line.strip().startswith("- ")
+    )
     index, grouped = finding_index.split(" Findings by Device/Group ", 1)
     index_rows = [
         tuple(re.split(r" {2,}", line.strip()))
@@ -1964,6 +2054,12 @@ def markdown_renderer_contract(rendered: str, db_path: Path) -> dict[str, object
         if match:
             label, value = match.groups()
             summary_rows[label] = value.replace(f"`{db_path}`", "<temporary-db>")
+    malformed_heading = summary.splitlines().index("### Malformed Samples")
+    summary_rows["Malformed Samples"] = tuple(
+        line[2:]
+        for line in summary.splitlines()[malformed_heading + 1:]
+        if line.startswith("- ")
+    )
     index = markdown_section(rendered, "## Finding Index", "## Findings by Device/Group")
     index_rows = [
         tuple(cell.strip() for cell in line.strip("|").split("|"))
@@ -2134,6 +2230,22 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
         expected_findings["critical"] + expected_findings["anomalies"][:2]
     )
     assert legacy_netgear_report_projection(report) == expected_legacy_projection
+    report_with_additive_v4_fields = copy.deepcopy(report)
+    report_with_additive_v4_fields["format"] = {"id": "netgear"}
+    report_with_additive_v4_fields["inputs"]["router_label"] = "SYNTHETIC ROUTER"
+    report_with_additive_v4_fields["state"]["router_instance_id"] = "opaque-v4-id"
+    report_with_additive_v4_fields["parse_stats"]["adapter_warning_count"] = 0
+    report_with_additive_v4_fields["analysis_adjustments"]["eligible_event_count"] = 8
+    report_with_additive_v4_fields["network_incidents"][0]["router_instance_id"] = "opaque-v4-id"
+    report_with_additive_v4_fields["observation_range"]["clock_trust"] = "trusted"
+    report_with_additive_v4_fields["events_per_hour"]["router"] = 1
+    report_with_additive_v4_fields["risk_breakdown"]["router_new_event_type"] = 10
+    report_with_additive_v4_fields["findings"]["router"] = []
+    report_with_additive_v4_fields["findings"]["all"][0]["metadata"]["adapter_context"] = "v4"
+    report_with_additive_v4_fields["findings"]["all"][0]["occurrence_id"] = "opaque-v4-id"
+    report_with_additive_v4_fields["priority_findings"][0]["metadata"]["adapter_context"] = "v4"
+    report_with_additive_v4_fields["device_summary"][0]["router_instance_id"] = "opaque-v4-id"
+    assert legacy_netgear_report_projection(report_with_additive_v4_fields) == expected_legacy_projection
 
     text_report = analyzer.render_text_report(report)
     text_risk_start = text_report.index(" Risk Breakdown ")
@@ -2240,6 +2352,7 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
             "Events Analyzed": "8", "Malformed Lines": "1", "Duplicate Events": "1",
             "Spam-Filtered DHCP": "1", "Export Noise": "1",
             "Observation Range": "2037-07-13T08:00:00 to 2037-07-15T18:02:00",
+            "Malformed Samples": ("[synthetic malformed event without a timestamp]",),
         },
         "finding_index": expected_index,
         "findings": expected_groups,
@@ -2251,6 +2364,7 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
             "Events Analyzed": "8", "Malformed Lines": "1", "Duplicate Events Removed": "1",
             "Spam-Filtered DHCP Entries": "1", "Export Noise Lines Ignored": "1",
             "Observation Range": "2037-07-13T08:00:00 to 2037-07-15T18:02:00",
+            "Malformed Samples": ("`[synthetic malformed event without a timestamp]`",),
         },
         "finding_index": expected_index,
         "findings": expected_groups,
