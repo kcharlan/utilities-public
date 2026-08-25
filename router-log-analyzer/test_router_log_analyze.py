@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 from collections.abc import Callable
 from datetime import datetime
@@ -450,6 +451,39 @@ def rewrite_sqlite_schema_object(
         connection.close()
 
 
+def strand_wal_commit(db_path: Path, statement: str) -> None:
+    child = """
+import os
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+assert connection.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+connection.execute("PRAGMA wal_autocheckpoint = 0")
+connection.execute(sys.argv[2])
+connection.commit()
+os._exit(0)
+"""
+    subprocess.run(
+        [sys.executable, "-c", child, str(db_path), statement],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert Path(f"{db_path}-wal").is_file()
+    assert Path(f"{db_path}-shm").is_file()
+
+
+def database_artifact_state(db_path: Path) -> dict[str, tuple[bytes, int, int]]:
+    state = {}
+    for suffix in ("", "-wal", "-shm"):
+        artifact = Path(f"{db_path}{suffix}")
+        if artifact.exists():
+            stat = artifact.stat()
+            state[suffix] = (artifact.read_bytes(), stat.st_size, stat.st_mtime_ns)
+    return state
+
+
 def test_empty_database_is_created_directly_as_schema_v4_with_foreign_keys_enabled(
     tmp_path: Path,
 ) -> None:
@@ -480,6 +514,35 @@ def test_empty_database_is_created_directly_as_schema_v4_with_foreign_keys_enabl
         assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         store.close()
+
+
+def test_existing_zero_length_database_is_created_directly_as_schema_v4(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "empty.db"
+    db_path.touch()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        assert store.get_metadata("schema_version") == "4"
+    finally:
+        store.close()
+
+
+def test_explicit_in_memory_database_uses_direct_v4_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    store = analyzer.StateStore(Path(":memory:"))
+    try:
+        assert store.get_metadata("schema_version") == "4"
+        assert store.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    finally:
+        store.close()
+
+    assert not (tmp_path / ":memory:").exists()
 
 
 def test_reopening_valid_schema_v4_is_a_noop(tmp_path: Path) -> None:
@@ -629,6 +692,90 @@ def test_unsupported_or_malformed_databases_fail_closed_without_mutation(
     assert not Path(f"{db_path}-shm").exists()
 
 
+def test_unsupported_stranded_wal_database_is_rejected_without_touching_any_artifact(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "unsupported-wal.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    strand_wal_commit(
+        db_path,
+        "UPDATE metadata SET value = '5' WHERE key = 'schema_version'",
+    )
+    before = database_artifact_state(db_path)
+    assert set(before) == {"", "-wal", "-shm"}
+    assert before[""][0][18:20] == b"\x02\x02"
+
+    with pytest.raises(RuntimeError, match="schema version 5 is unsupported"):
+        analyzer.StateStore(db_path)
+
+    assert database_artifact_state(db_path) == before
+    assert db_path.read_bytes()[18:20] == b"\x02\x02"
+
+
+def test_unsupported_non_wal_database_preflight_preserves_exact_file_state(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "unsupported-delete-journal.db"
+    build_v3_database(db_path, populate=False)
+    connection = sqlite3.connect(db_path)
+    connection.execute("UPDATE metadata SET value = '5' WHERE key = 'schema_version'")
+    connection.commit()
+    connection.close()
+    before = database_artifact_state(db_path)
+    assert set(before) == {""}
+    assert before[""][0][18:20] == b"\x01\x01"
+
+    with pytest.raises(RuntimeError, match="schema version 5 is unsupported"):
+        analyzer.StateStore(db_path)
+
+    assert database_artifact_state(db_path) == before
+
+
+def test_valid_v4_with_stranded_wal_is_accepted(tmp_path: Path) -> None:
+    db_path = tmp_path / "valid-v4-wal.db"
+    store = analyzer.StateStore(db_path)
+    store.conn.execute("CREATE TABLE synthetic_wal_notes(note TEXT NOT NULL)")
+    store.commit()
+    store.close()
+    strand_wal_commit(
+        db_path,
+        "INSERT INTO synthetic_wal_notes VALUES('synthetic stranded WAL note')",
+    )
+
+    reopened = analyzer.StateStore(db_path)
+    try:
+        assert reopened.get_metadata("schema_version") == "4"
+        assert reopened.conn.execute(
+            "SELECT note FROM synthetic_wal_notes"
+        ).fetchone()[0] == "synthetic stranded WAL note"
+    finally:
+        reopened.close()
+
+
+def test_valid_v3_with_stranded_wal_is_preflighted_then_migrated(tmp_path: Path) -> None:
+    db_path = tmp_path / "valid-v3-wal.db"
+    build_v3_database(db_path, populate=False)
+    connection = sqlite3.connect(db_path)
+    connection.execute("CREATE TABLE synthetic_wal_notes(note TEXT NOT NULL)")
+    connection.commit()
+    connection.close()
+    strand_wal_commit(
+        db_path,
+        "INSERT INTO synthetic_wal_notes VALUES('synthetic pre-migration WAL note')",
+    )
+
+    migrated = analyzer.StateStore(db_path)
+    try:
+        assert migrated.get_metadata("schema_version") == "4"
+        assert migrated.conn.execute(
+            "SELECT note FROM synthetic_wal_notes"
+        ).fetchone()[0] == "synthetic pre-migration WAL note"
+        assert migrated.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        migrated.close()
+
+
 def test_v4_missing_required_device_observation_uniqueness_fails_closed(
     tmp_path: Path,
 ) -> None:
@@ -714,6 +861,66 @@ def test_v4_boot_anchor_check_cannot_be_removed(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "anchor_operand",
+    [
+        '"truſted_local_anchor"',
+        '"trυsted_local_anchor"',
+        '"trusted_locаl_anchor"',
+        "'trusted_local_anchor'",
+        '"trusted_local_anchor_missing"',
+    ],
+)
+def test_v4_boot_anchor_check_rejects_unicode_confusables_and_string_substitutions(
+    tmp_path: Path,
+    anchor_operand: str,
+) -> None:
+    db_path = tmp_path / "confusable-anchor-check.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    rewrite_sqlite_schema_object(
+        db_path,
+        "router_boot_sessions",
+        lambda sql: sql.replace(
+            "trusted_local_anchor IS NOT NULL",
+            f"{anchor_operand} IS NOT NULL",
+            1,
+        ),
+    )
+    before = database_artifact_state(db_path)
+
+    with pytest.raises(RuntimeError, match="router_boot_sessions"):
+        unexpected_store = analyzer.StateStore(db_path)
+        try:
+            router_id = unexpected_store.get_or_create_legacy_netgear_router_instance()
+            unexpected_store.conn.execute(
+                """
+                INSERT INTO router_boot_sessions(
+                  router_instance_id, session_key, trusted_local_anchor,
+                  adapter_boot_id, startup_signature, identity_version, created_at
+                ) VALUES(
+                  ?, 'synthetic-anchorless-session', NULL, NULL,
+                  'synthetic-startup-signature', 'router-boot-session:v1', ?
+                )
+                """,
+                (router_id, "2037-01-01T00:00:00Z"),
+            )
+        finally:
+            unexpected_store.close()
+
+    assert database_artifact_state(db_path) == before
+    read_only = sqlite3.connect(
+        f"file:{db_path}?mode=ro&immutable=1",
+        uri=True,
+    )
+    try:
+        assert read_only.execute(
+            "SELECT COUNT(*) FROM router_boot_sessions"
+        ).fetchone()[0] == 0
+    finally:
+        read_only.close()
+
+
+@pytest.mark.parametrize(
     "foreign_key_suffix",
     [
         " DEFERRABLE",
@@ -761,7 +968,7 @@ def test_v4_constraint_sql_accepts_safe_formatting_and_identifier_quoting(
     def reformat_constraints(sql: str) -> str:
         return sql.replace(
             "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL)",
-            'check ( "trusted_local_anchor" is not null OR [adapter_boot_id] is not null )',
+            'CHECK ( "TRUSTED_LOCAL_ANCHOR" is not null OR [ADAPTER_BOOT_ID] is not null )',
             1,
         ).replace(
             "FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)",

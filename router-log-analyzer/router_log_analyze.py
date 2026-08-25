@@ -18,6 +18,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import tempfile
 import textwrap
 import unicodedata
 from collections import Counter, defaultdict
@@ -674,9 +675,43 @@ def validate_policy(policy: Dict[str, Any]) -> Dict[str, Any]:
     return policy
 
 
-def _tokenize_sqlite_ddl(sql: str) -> Tuple[str, ...]:
+SqlDdlToken = Tuple[str, str, str]
+
+
+def _ascii_sql_lower(value: str) -> str:
+    """Apply SQLite's ASCII-only case-insensitive identifier normalization."""
+    return value.translate(
+        str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+    )
+
+
+def _sql_ddl_token(kind: str, value: str, quote: str = "") -> SqlDdlToken:
+    return (kind, value, quote)
+
+
+def _sql_ddl_token_is_symbol(token: SqlDdlToken, symbol: str) -> bool:
+    return token[0] == "symbol" and token[1] == symbol
+
+
+def _sql_ddl_token_is_word(token: SqlDdlToken, word: str) -> bool:
+    return token[0] == "word" and token[1] == word
+
+
+def _canonical_sql_ddl_tokens(
+    tokens: Sequence[SqlDdlToken],
+) -> Tuple[Tuple[str, str], ...]:
+    canonical: List[Tuple[str, str]] = []
+    for kind, value, _quote in tokens:
+        if kind in {"word", "quoted_identifier"}:
+            canonical.append(("name", value))
+        else:
+            canonical.append((kind, value))
+    return tuple(canonical)
+
+
+def _tokenize_sqlite_ddl(sql: str) -> Tuple[SqlDdlToken, ...]:
     """Tokenize SQLite DDL while discarding comments and normalizing identifiers."""
-    tokens: List[str] = []
+    tokens: List[SqlDdlToken] = []
     index = 0
     length = len(sql)
     while index < length:
@@ -709,7 +744,7 @@ def _tokenize_sqlite_ddl(sql: str) -> Tuple[str, ...]:
                 index += 1
             else:
                 raise ValueError("unterminated SQL string literal")
-            tokens.append("\x00string\x00" + "".join(literal))
+            tokens.append(_sql_ddl_token("string", "".join(literal), "'"))
             continue
         if character in {'"', "`", "["}:
             closing = "]" if character == "[" else character
@@ -727,7 +762,13 @@ def _tokenize_sqlite_ddl(sql: str) -> Tuple[str, ...]:
                 index += 1
             else:
                 raise ValueError("unterminated quoted SQL identifier")
-            tokens.append("".join(identifier).casefold())
+            tokens.append(
+                _sql_ddl_token(
+                    "quoted_identifier",
+                    _ascii_sql_lower("".join(identifier)),
+                    character,
+                )
+            )
             continue
         if character.isalnum() or character in {"_", "$"}:
             token_end = index + 1
@@ -735,42 +776,58 @@ def _tokenize_sqlite_ddl(sql: str) -> Tuple[str, ...]:
                 sql[token_end].isalnum() or sql[token_end] in {"_", "$"}
             ):
                 token_end += 1
-            tokens.append(sql[index:token_end].casefold())
+            tokens.append(
+                _sql_ddl_token(
+                    "word",
+                    _ascii_sql_lower(sql[index:token_end]),
+                )
+            )
             index = token_end
             continue
         three_character_operator = sql[index:index + 3]
         if three_character_operator in {"->>"}:
-            tokens.append(three_character_operator)
+            tokens.append(_sql_ddl_token("symbol", three_character_operator))
             index += 3
             continue
         two_character_operator = sql[index:index + 2]
         if two_character_operator in {"!=", "<=", ">=", "==", "<>", "||", "->"}:
-            tokens.append(two_character_operator)
+            tokens.append(_sql_ddl_token("symbol", two_character_operator))
             index += 2
             continue
-        tokens.append(character)
+        tokens.append(_sql_ddl_token("symbol", character))
         index += 1
     return tuple(tokens)
 
 
 def _sqlite_table_definition_clauses(
     sql: str,
-) -> Tuple[Tuple[Tuple[str, ...], ...], Tuple[str, ...]]:
+) -> Tuple[Tuple[Tuple[SqlDdlToken, ...], ...], Tuple[SqlDdlToken, ...]]:
     tokens = _tokenize_sqlite_ddl(sql)
-    try:
-        opening_parenthesis = tokens.index("(")
-    except ValueError as exc:
-        raise ValueError("CREATE TABLE has no definition list") from exc
-    clauses: List[Tuple[str, ...]] = []
-    clause: List[str] = []
+    if any(
+        kind in {"word", "quoted_identifier"} and not value.isascii()
+        for kind, value, _quote in tokens
+    ):
+        raise ValueError("CREATE TABLE contains a non-ASCII identifier")
+    opening_parenthesis = next(
+        (
+            token_index
+            for token_index, token in enumerate(tokens)
+            if _sql_ddl_token_is_symbol(token, "(")
+        ),
+        None,
+    )
+    if opening_parenthesis is None:
+        raise ValueError("CREATE TABLE has no definition list")
+    clauses: List[Tuple[SqlDdlToken, ...]] = []
+    clause: List[SqlDdlToken] = []
     depth = 0
     closing_parenthesis: Optional[int] = None
     for token_index in range(opening_parenthesis + 1, len(tokens)):
         token = tokens[token_index]
-        if token == "(":
+        if _sql_ddl_token_is_symbol(token, "("):
             depth += 1
             clause.append(token)
-        elif token == ")":
+        elif _sql_ddl_token_is_symbol(token, ")"):
             if depth == 0:
                 if clause:
                     clauses.append(tuple(clause))
@@ -778,7 +835,7 @@ def _sqlite_table_definition_clauses(
                 break
             depth -= 1
             clause.append(token)
-        elif token == "," and depth == 0:
+        elif _sql_ddl_token_is_symbol(token, ",") and depth == 0:
             if not clause:
                 raise ValueError("CREATE TABLE has an empty definition clause")
             clauses.append(tuple(clause))
@@ -788,12 +845,12 @@ def _sqlite_table_definition_clauses(
     if closing_parenthesis is None or depth != 0:
         raise ValueError("CREATE TABLE has unbalanced definition parentheses")
     tail = tokens[closing_parenthesis + 1:]
-    if tail == (";",):
+    if len(tail) == 1 and _sql_ddl_token_is_symbol(tail[0], ";"):
         tail = ()
     return tuple(clauses), tail
 
 
-def _expected_check_clauses(expressions: Set[str]) -> Set[Tuple[str, ...]]:
+def _expected_check_clauses(expressions: Set[str]) -> Set[Tuple[SqlDdlToken, ...]]:
     return {
         _tokenize_sqlite_ddl(f"CHECK({expression})")
         for expression in expressions
@@ -802,7 +859,7 @@ def _expected_check_clauses(expressions: Set[str]) -> Set[Tuple[str, ...]]:
 
 def _expected_foreign_key_clauses(
     foreign_keys: Set[Tuple[str, str, str]],
-) -> Set[Tuple[str, ...]]:
+) -> Set[Tuple[SqlDdlToken, ...]]:
     return {
         _tokenize_sqlite_ddl(
             f'FOREIGN KEY("{source_column}") '
@@ -1275,24 +1332,107 @@ V4_INDEX_DESCENDING.update({
 
 class StateStore:
     def __init__(self, db_path: Path):
-        self.db_path = db_path.expanduser()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        if self.conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-            self.conn.close()
-            raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
+        is_memory = str(db_path) == ":memory:"
+        self.db_path = Path(":memory:") if is_memory else db_path.expanduser()
+        if not is_memory:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.db_path.exists() and not self.db_path.is_file():
+                self._raise_schema_error("the database path is not an ordinary file")
+            if self.db_path.exists() and self.db_path.stat().st_size > 0:
+                self._preflight_existing_database()
+        self.conn = self._open_connection(":memory:" if is_memory else str(self.db_path))
         try:
             self.ensure_schema()
         except Exception:
             self.conn.close()
             raise
 
+    @staticmethod
+    def _open_connection(database: str) -> sqlite3.Connection:
+        connection = sqlite3.connect(database)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            connection.close()
+            raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
+        return connection
+
+    def _database_artifact_signature(self) -> Dict[str, Tuple[int, int, int, int]]:
+        signature: Dict[str, Tuple[int, int, int, int]] = {}
+        for suffix in ("", "-wal", "-shm"):
+            artifact = Path(f"{self.db_path}{suffix}")
+            if not artifact.exists():
+                continue
+            if not artifact.is_file():
+                self._raise_schema_error(
+                    "a database or journal artifact is not an ordinary file"
+                )
+            stat = artifact.stat()
+            signature[suffix] = (
+                stat.st_dev,
+                stat.st_ino,
+                stat.st_size,
+                stat.st_mtime_ns,
+            )
+        return signature
+
+    def _preflight_existing_database(self) -> None:
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="router-log-analyzer-schema-preflight-"
+            ) as temporary_directory:
+                snapshot_path: Optional[Path] = None
+                for attempt in range(3):
+                    before = self._database_artifact_signature()
+                    attempt_directory = Path(temporary_directory) / str(attempt)
+                    attempt_directory.mkdir()
+                    candidate_path = attempt_directory / "database.db"
+                    try:
+                        for suffix in ("", "-wal", "-shm"):
+                            if suffix not in before:
+                                continue
+                            shutil.copy2(
+                                Path(f"{self.db_path}{suffix}"),
+                                Path(f"{candidate_path}{suffix}"),
+                            )
+                    except FileNotFoundError:
+                        continue
+                    if self._database_artifact_signature() == before:
+                        snapshot_path = candidate_path
+                        break
+                if snapshot_path is None:
+                    self._raise_schema_error(
+                        "the database changed during read-only preflight; close other writers and retry"
+                    )
+
+                snapshot_connection = self._open_connection(str(snapshot_path))
+                snapshot_store = object.__new__(StateStore)
+                snapshot_store.db_path = snapshot_path
+                snapshot_store.conn = snapshot_connection
+                try:
+                    snapshot_store._classify_and_validate_schema()
+                finally:
+                    snapshot_connection.close()
+        except RuntimeError:
+            raise
+        except (OSError, sqlite3.DatabaseError) as exc:
+            self._raise_schema_error(
+                f"the database could not be read safely during preflight ({type(exc).__name__})"
+            )
+
     def close(self) -> None:
         self.conn.close()
 
     def ensure_schema(self) -> None:
+        version = self._classify_and_validate_schema()
+        if version is None:
+            self._create_v4_schema()
+            self._validate_schema(SCHEMA_VERSION)
+        elif version == MIGRATABLE_SCHEMA_VERSION:
+            self._migrate_v3_to_v4()
+        self.conn.execute("PRAGMA journal_mode = WAL")
+
+    def _classify_and_validate_schema(self) -> Optional[int]:
         user_objects = list(self.conn.execute(
             """
             SELECT type, name
@@ -1302,10 +1442,7 @@ class StateStore:
             """
         ))
         if not user_objects:
-            self._create_v4_schema()
-            self._validate_schema(SCHEMA_VERSION)
-            self.conn.execute("PRAGMA journal_mode = WAL")
-            return
+            return None
 
         table_names = {
             row[0]
@@ -1334,12 +1471,11 @@ class StateStore:
             self._validate_schema(SCHEMA_VERSION)
         elif version == MIGRATABLE_SCHEMA_VERSION:
             self._validate_schema(MIGRATABLE_SCHEMA_VERSION)
-            self._migrate_v3_to_v4()
         else:
             self._raise_schema_error(
                 f"schema version {version} is unsupported; only version 3 can migrate to version 4"
             )
-        self.conn.execute("PRAGMA journal_mode = WAL")
+        return version
 
     @staticmethod
     def _schema_recovery_message(detail: str) -> str:
@@ -1445,20 +1581,34 @@ class StateStore:
                     f"required table {table!r} has unexpected table options"
                 )
             actual_check_clauses = [
-                clause for clause in definition_clauses if "check" in clause
+                clause
+                for clause in definition_clauses
+                if any(_sql_ddl_token_is_word(token, "check") for token in clause)
             ]
             expected_check_clauses = _expected_check_clauses(checks[table])
-            if sorted(actual_check_clauses) != sorted(expected_check_clauses):
+            if sorted(
+                _canonical_sql_ddl_tokens(clause) for clause in actual_check_clauses
+            ) != sorted(
+                _canonical_sql_ddl_tokens(clause) for clause in expected_check_clauses
+            ):
                 self._raise_schema_error(
                     f"required table {table!r} has unexpected CHECK constraints"
                 )
             actual_foreign_key_clauses = [
-                clause for clause in definition_clauses if "references" in clause
+                clause
+                for clause in definition_clauses
+                if any(_sql_ddl_token_is_word(token, "references") for token in clause)
             ]
             expected_foreign_key_clauses = _expected_foreign_key_clauses(
                 foreign_keys.get(table, set())
             )
-            if sorted(actual_foreign_key_clauses) != sorted(expected_foreign_key_clauses):
+            if sorted(
+                _canonical_sql_ddl_tokens(clause)
+                for clause in actual_foreign_key_clauses
+            ) != sorted(
+                _canonical_sql_ddl_tokens(clause)
+                for clause in expected_foreign_key_clauses
+            ):
                 self._raise_schema_error(
                     f"required table {table!r} has unexpected foreign-key SQL"
                 )
@@ -1515,7 +1665,9 @@ class StateStore:
                 self._raise_schema_error(
                     f"required index {index!r} has malformed SQL ({exc})"
                 )
-            if actual_index_tokens != _tokenize_sqlite_ddl(expected_index_sql):
+            if _canonical_sql_ddl_tokens(
+                actual_index_tokens
+            ) != _canonical_sql_ddl_tokens(_tokenize_sqlite_ddl(expected_index_sql)):
                 self._raise_schema_error(f"required index {index!r} has unexpected SQL")
 
         for table, expected in foreign_keys.items():
@@ -1590,7 +1742,7 @@ class StateStore:
                     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
                     (table,),
                 ).fetchone()
-                sql = (sql_row[0] or "").casefold()
+                sql = _ascii_sql_lower(sql_row[0] or "")
                 if "runs_v4" in sql or "runs_temp" in sql or "runs_old" in sql:
                     self._raise_schema_error(f"required table {table!r} references a temporary runs table")
 
