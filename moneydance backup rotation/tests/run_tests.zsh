@@ -27,6 +27,7 @@ typeset -a MONEYDANCE_TEST_ENV_VARS=(
   MONEYDANCE_CMP_BIN
   MONEYDANCE_OD_BIN
   MONEYDANCE_GREP_BIN
+  MONEYDANCE_ACL_BIN
 )
 
 # Tests must never inherit operational settings or command overrides from the
@@ -790,6 +791,112 @@ if cmp -s "${unsafe_ancestor_config}" "${repair_config}"; then pass "unsafe ance
 [[ ! -e "${unique_candidate_marker}" ]] && pass "unsafe ancestor rejection precedes mount" || fail "unsafe ancestor rejection precedes mount"
 assert_not_contains "unsafe ancestor failure redacts private path" "${PTY_STDERR}" "${unsafe_ancestor}"
 chmod 700 "${unsafe_ancestor}"
+
+acl_probe="${test_root}/repair-acl-support-probe"
+mkdir "${acl_probe}"
+if /bin/chmod +a 'everyone allow list' "${acl_probe}" 2>/dev/null; then
+  pass "test filesystem supports native ACL repair coverage"
+  /bin/chmod -N "${acl_probe}"
+
+  acl_mktemp="${test_root}/repair-acl-mktemp-spy"
+  acl_mktemp_marker="${test_root}/repair-acl-mktemp-called"
+  acl_mv="${test_root}/repair-acl-mv-spy"
+  acl_mv_marker="${test_root}/repair-acl-mv-called"
+  cat > "${acl_mktemp}" <<EOF
+#!/bin/zsh
+print -r -- invoked > "${acl_mktemp_marker}"
+exec /usr/bin/mktemp "\$@"
+EOF
+  cat > "${acl_mv}" <<EOF
+#!/bin/zsh
+print -r -- invoked > "${acl_mv_marker}"
+exit 97
+EOF
+  chmod 755 "${acl_mktemp}" "${acl_mv}"
+
+  for acl_grant_kind in direct ancestor config; do
+    reset_repair_config
+    acl_fixture_root="${test_root}/SYNTHETIC-PRIVATE-ACL-${acl_grant_kind}"
+    acl_fixture_dir="${acl_fixture_root}/safe-direct"
+    acl_fixture_config="${acl_fixture_dir}/repair-config"
+    mkdir -p "${acl_fixture_dir}"
+    cp -p "${repair_config}" "${acl_fixture_config}"
+    chmod 700 "${acl_fixture_root}" "${acl_fixture_dir}"
+    case "${acl_grant_kind}" in
+      direct) /bin/chmod +a 'everyone allow list' "${acl_fixture_dir}" ;;
+      ancestor) /bin/chmod +a 'everyone allow list' "${acl_fixture_root}" ;;
+      config) /bin/chmod +a 'everyone allow read' "${acl_fixture_config}" ;;
+    esac
+    acl_fixture_mode="$(stat -f '%Lp' "${acl_fixture_config}")"
+    rm -f -- "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
+    : > "${candidate_logger_marker}"
+    PTY_INPUT=$'yes\n'
+    run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${acl_mktemp}" MONEYDANCE_MV_BIN="${acl_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${acl_fixture_config}" --repair-config
+    assert_status "repair rejects granting ACL on ${acl_grant_kind}" 2 "${PTY_STATUS}"
+    if cmp -s "${acl_fixture_config}" "${repair_config}"; then pass "${acl_grant_kind} ACL rejection preserves exact bytes"; else fail "${acl_grant_kind} ACL rejection preserves exact bytes"; fi
+    [[ "$(stat -f '%Lp' "${acl_fixture_config}")" == "${acl_fixture_mode}" ]] && pass "${acl_grant_kind} ACL rejection preserves mode" || fail "${acl_grant_kind} ACL rejection preserves mode"
+    [[ ! -e "${acl_mktemp_marker}" ]] && pass "${acl_grant_kind} ACL rejection precedes temp creation" || fail "${acl_grant_kind} ACL rejection precedes temp creation"
+    [[ ! -e "${unique_candidate_marker}" ]] && pass "${acl_grant_kind} ACL rejection precedes mount" || fail "${acl_grant_kind} ACL rejection precedes mount"
+    [[ ! -e "${acl_mv_marker}" ]] && pass "${acl_grant_kind} ACL rejection precedes MV_BIN" || fail "${acl_grant_kind} ACL rejection precedes MV_BIN"
+    acl_persistent="${PTY_STDERR}$(<"${candidate_logger_marker}")"
+    [[ ! -f "${candidate_log}" ]] || acl_persistent+="$(<"${candidate_log}")"
+    for private_token in "${acl_fixture_config}" "${acl_fixture_root}" synthetic-configured-private-host; do
+      assert_not_contains "${acl_grant_kind} ACL persistent sinks redact ${private_token}" "${acl_persistent}" "${private_token}"
+    done
+    /bin/chmod -N "${acl_fixture_config}" "${acl_fixture_dir}" "${acl_fixture_root}"
+  done
+
+  # The first ls line contains the filename. A filename containing "allow"
+  # must not be parsed as an ACL entry, while a deny-only ACE remains safe.
+  reset_repair_config
+  acl_deny_dir="${test_root}/SYNTHETIC-PRIVATE-allow-FIRST-LINE"
+  acl_deny_config="${acl_deny_dir}/repair-allow-config"
+  mkdir "${acl_deny_dir}"
+  cp -p "${repair_config}" "${acl_deny_config}"
+  chmod 700 "${acl_deny_dir}"
+  /bin/chmod +a 'everyone deny delete' "${acl_deny_dir}"
+  /bin/chmod +a 'everyone deny delete' "${acl_deny_config}"
+  PTY_INPUT=$'n\n'
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${acl_deny_config}" --repair-config
+  assert_status "repair permits deny-only ACLs and allow text in filename" 0 "${PTY_STATUS}"
+  if cmp -s "${acl_deny_config}" "${repair_original}"; then pass "deny-only ACL repair cancellation preserves bytes"; else fail "deny-only ACL repair cancellation preserves bytes"; fi
+  /bin/chmod -N "${acl_deny_config}" "${acl_deny_dir}"
+
+  for acl_inspection_kind in failure malformed; do
+    reset_repair_config
+    acl_inspector="${test_root}/repair-acl-inspector-${acl_inspection_kind}"
+    cat > "${acl_inspector}" <<EOF
+#!/bin/zsh
+if [[ "${acl_inspection_kind}" == failure ]]; then
+  print -r -- 'SYNTHETIC ACL diagnostic ${repair_config} synthetic-configured-private-host' >&2
+  exit 89
+fi
+print -r -- 'drwx------ 2 synthetic synthetic 64 Jan 1 00:00 SYNTHETIC-allow-FIRST-LINE'
+print -r -- ' 7: group:everyone deny delete'
+exit 0
+EOF
+    chmod 755 "${acl_inspector}"
+    rm -f -- "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
+    : > "${candidate_log}"
+    : > "${candidate_logger_marker}"
+    PTY_INPUT=$'yes\n'
+    run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_ACL_BIN="${acl_inspector}" MONEYDANCE_MKTEMP_BIN="${acl_mktemp}" MONEYDANCE_MV_BIN="${acl_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+    if [[ "${acl_inspection_kind}" == failure ]]; then acl_expected_status=1; else acl_expected_status=2; fi
+    assert_status "ACL inspection ${acl_inspection_kind} fails closed" "${acl_expected_status}" "${PTY_STATUS}"
+    if cmp -s "${repair_config}" "${repair_original}"; then pass "ACL inspection ${acl_inspection_kind} preserves exact bytes"; else fail "ACL inspection ${acl_inspection_kind} preserves exact bytes"; fi
+    [[ "$(stat -f '%Lp' "${repair_config}")" == 640 ]] && pass "ACL inspection ${acl_inspection_kind} preserves mode" || fail "ACL inspection ${acl_inspection_kind} preserves mode"
+    [[ ! -e "${acl_mktemp_marker}" ]] && pass "ACL inspection ${acl_inspection_kind} precedes temp creation" || fail "ACL inspection ${acl_inspection_kind} precedes temp creation"
+    [[ ! -e "${unique_candidate_marker}" ]] && pass "ACL inspection ${acl_inspection_kind} precedes mount" || fail "ACL inspection ${acl_inspection_kind} precedes mount"
+    [[ ! -e "${acl_mv_marker}" ]] && pass "ACL inspection ${acl_inspection_kind} precedes MV_BIN" || fail "ACL inspection ${acl_inspection_kind} precedes MV_BIN"
+    acl_inspection_persistent="${PTY_STDERR}$(<"${candidate_log}")$(<"${candidate_logger_marker}")"
+    for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host 'SYNTHETIC ACL diagnostic'; do
+      assert_not_contains "ACL inspection ${acl_inspection_kind} persistent sinks redact ${private_token}" "${acl_inspection_persistent}" "${private_token}"
+    done
+  done
+else
+  pass "SKIP: test filesystem does not support native ACL repair coverage"
+fi
+rmdir "${acl_probe}"
 
 # A changed direct-directory identity must be detected again before mktemp can
 # open a snapshot path.
@@ -1598,7 +1705,7 @@ for private_token in \
 done
 
 # Retention mode has no dependency on repair-only commands.
-normal_without_repair_tools="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_MV_BIN="${test_root}/missing-mv" MONEYDANCE_CHMOD_BIN="${test_root}/missing-chmod" MONEYDANCE_CMP_BIN="${test_root}/missing-cmp" MONEYDANCE_OD_BIN="${test_root}/missing-od" MONEYDANCE_GREP_BIN="${test_root}/missing-grep" "${SCRIPT}" --config "${candidate_config}" --dry-run 2>&1)"
+normal_without_repair_tools="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_MV_BIN="${test_root}/missing-mv" MONEYDANCE_CHMOD_BIN="${test_root}/missing-chmod" MONEYDANCE_CMP_BIN="${test_root}/missing-cmp" MONEYDANCE_OD_BIN="${test_root}/missing-od" MONEYDANCE_GREP_BIN="${test_root}/missing-grep" MONEYDANCE_ACL_BIN="${test_root}/missing-acl" "${SCRIPT}" --config "${candidate_config}" --dry-run 2>&1)"
 assert_status "normal mode ignores repair-only command absence" 0 "$?"
 PTY_INPUT=""
 

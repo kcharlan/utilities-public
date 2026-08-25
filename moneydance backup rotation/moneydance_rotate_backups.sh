@@ -48,6 +48,7 @@ CHMOD_BIN="${MONEYDANCE_CHMOD_BIN:-/bin/chmod}"
 CMP_BIN="${MONEYDANCE_CMP_BIN:-/usr/bin/cmp}"
 OD_BIN="${MONEYDANCE_OD_BIN:-/usr/bin/od}"
 GREP_BIN="${MONEYDANCE_GREP_BIN:-/usr/bin/grep}"
+ACL_BIN="${MONEYDANCE_ACL_BIN:-/bin/ls}"
 
 show_help() {
   cat <<'EOF'
@@ -414,11 +415,47 @@ cleanup_repair_artifacts() {
   fi
 }
 
+inspect_path_acl() {
+  local path="$1"
+  local acl_output acl_line acl_line_trimmed acl_entry_index
+  integer acl_index expected_acl_index
+  typeset -a acl_lines=()
+
+  if ! acl_output="$("${ACL_BIN}" -lde -- "${path}" 2>/dev/null)"; then
+    return 2
+  fi
+  acl_lines=("${(@f)acl_output}")
+  (( ${#acl_lines[@]} >= 1 )) || return 1
+  # The first ls line contains the pathname and is deliberately never parsed
+  # as an ACE. Subsequent lines must be indexed macOS ACL entries.
+  if [[ -d "${path}" && ! -L "${path}" ]]; then
+    [[ "${acl_lines[1]}" == d* ]] || return 1
+  elif [[ -f "${path}" && ! -L "${path}" ]]; then
+    [[ "${acl_lines[1]}" == -* ]] || return 1
+  else
+    return 1
+  fi
+  for (( acl_index = 2; acl_index <= ${#acl_lines[@]}; acl_index += 1 )); do
+    acl_line="${acl_lines[${acl_index}]}"
+    acl_line_trimmed="${acl_line##[[:space:]]#}"
+    acl_entry_index="${acl_line_trimmed%%:*}"
+    expected_acl_index=$(( acl_index - 2 ))
+    [[ "${acl_entry_index}" == "${expected_acl_index}" ]] || return 1
+    if [[ ! "${acl_line}" =~ '^[[:space:]]*[0-9]+:[[:space:]]+[^[:space:]]+([[:space:]]+[A-Za-z_]+)*[[:space:]]+(allow|deny)[[:space:]]+[A-Za-z_,]+$' ]]; then
+      return 1
+    fi
+    [[ "${acl_line}" != *[[:space:]]allow[[:space:]]* ]] || return 1
+    [[ "${acl_line}" == *[[:space:]]deny[[:space:]]* ]] || return 1
+  done
+  return 0
+}
+
 inspect_safe_config_directory() {
   local requested_dir="${config_path:h}"
   local lexical_dir="${requested_dir:a}"
   local resolved_dir="${requested_dir:A}"
   local current_dir metadata device inode owner mode direct_device direct_inode direct_owner direct_mode
+  integer acl_status
 
   [[ "${lexical_dir}" == "${resolved_dir}" ]] || return 1
   current_dir="${lexical_dir}"
@@ -433,6 +470,12 @@ inspect_safe_config_directory() {
     fi
     if [[ "${owner}" != "${EUID}" && "${owner}" != 0 ]] || (( (8#${mode} & 8#22) != 0 )); then
       return 1
+    fi
+    if inspect_path_acl "${current_dir}"; then
+      :
+    else
+      acl_status=$?
+      return "${acl_status}"
     fi
     if [[ "${current_dir}" == "${lexical_dir}" ]]; then
       direct_device="${device}"
@@ -453,7 +496,11 @@ inspect_safe_config_directory() {
 }
 
 capture_safe_config_directory() {
-  inspect_safe_config_directory || return 1
+  if inspect_safe_config_directory; then
+    :
+  else
+    return $?
+  fi
   config_dir_path="${inspected_config_dir_path}"
   config_dir_device="${inspected_config_dir_device}"
   config_dir_inode="${inspected_config_dir_inode}"
@@ -491,16 +538,30 @@ read_config_metadata() {
 }
 
 validate_repair_preconditions() {
+  integer acl_status directory_status
   (( ! cli_dry_run )) || config_error "--repair-config cannot be combined with --dry-run."
   [[ -t 0 && -t 1 ]] || config_error "--repair-config requires an interactive terminal on stdin and stdout."
   (( ! ${+MONEYDANCE_NAS_SERVER} )) || config_error "--repair-config cannot be used while MONEYDANCE_NAS_SERVER is set."
   [[ -e "${config_path}" && ! -L "${config_path}" && -f "${config_path}" && -r "${config_path}" && -w "${config_path}" ]] || config_error "The repair configuration must be a readable and writable regular file."
-  for required_bin in "${MOUNT_BIN}" "${STAT_BIN}" "${DATE_BIN}" "${MKTEMP_BIN}" "${MV_BIN}" "${CHMOD_BIN}" "${CMP_BIN}" "${OD_BIN}" "${GREP_BIN}"; do
+  for required_bin in "${MOUNT_BIN}" "${STAT_BIN}" "${DATE_BIN}" "${MKTEMP_BIN}" "${MV_BIN}" "${CHMOD_BIN}" "${CMP_BIN}" "${OD_BIN}" "${GREP_BIN}" "${ACL_BIN}"; do
     command -v "${required_bin}" >/dev/null 2>&1 || exit_with_error "A required config-repair command is unavailable; no configuration or backup files were changed."
   done
-  capture_safe_config_directory || config_error "The repair configuration directory is not private and stable."
+  if capture_safe_config_directory; then
+    :
+  else
+    directory_status=$?
+    (( directory_status != 2 )) || exit_with_error "The repair configuration directory could not be inspected safely. No configuration or backup files were changed."
+    config_error "The repair configuration directory is not private and stable."
+  fi
   read_config_metadata "${config_path}" || config_error "The repair configuration metadata could not be validated."
   [[ "${config_owner}" == "${EUID}" ]] || config_error "The repair configuration must be owned by the invoking user."
+  if inspect_path_acl "${config_path}"; then
+    :
+  else
+    acl_status=$?
+    (( acl_status != 2 )) || exit_with_error "The repair configuration ACL could not be inspected safely. No configuration or backup files were changed."
+    config_error "The repair configuration ACL is not private."
+  fi
 }
 
 create_owned_config_temp() {
@@ -626,6 +687,7 @@ validated_repair_temp() {
   if [[ -n "${expected_mode}" && "${mode}" != "${expected_mode}" ]]; then
     return 1
   fi
+  inspect_path_acl "${path}" || return 1
   return 0
 }
 
@@ -640,6 +702,7 @@ snapshot_repair_config() {
   fi
   validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
   revalidate_config_directory || return 1
+  inspect_path_acl "${config_path}" || return 1
   if ! /bin/cp -- "${config_path}" "${repair_snapshot_tmp}" 2>/dev/null; then
     return 1
   fi
@@ -672,6 +735,7 @@ metadata_matches_snapshot() {
   local current
   revalidate_config_directory || return 1
   read_config_metadata "${config_path}" || return 1
+  inspect_path_acl "${config_path}" || return 1
   current="${config_device}|${config_inode}|${config_owner}|${config_group}|${config_mode}|${config_size}"
   [[ "${current}" == "${expected}" && ! -L "${config_path}" && -f "${config_path}" ]] || return 1
   validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
