@@ -150,13 +150,15 @@ direct parent must be a real, non-symlink directory owned by the current user
 or root and not writable by group or world. The live config must retain its
 expected owner (the current user) and recorded mode throughout repair.
 
-The config, every inspected ancestor directory, and every repair snapshot or
-candidate temporary file may have no ACL or only deny-only ACL entries. Any
-granting ACL, or an ACL that is malformed or cannot be inspected safely, causes
-repair to fail closed. Temporary files must also remain current-user-owned,
-regular, non-symlink, single-link files at their expected modes. These
-repair-only restrictions can reject a custom `--config` path in an unsafe
-directory tree even when normal read-only configuration loading can use it.
+The live config and every generated snapshot or candidate file must be
+ACL-free: both allow and deny entries are rejected. Ancestor directories may
+have no ACL or a strictly well-formed deny-only ACL. A granting or malformed
+ACL, or an ACL inspection failure on the config, ancestor chain, or temporary
+files, causes repair to fail closed. Temporary files must also remain regular,
+non-symlink, single-link files owned by the current user and at their expected
+modes. These repair-only restrictions can reject a custom `--config` path in
+an unsafe directory tree even when normal read-only configuration loading can
+use it.
 Before parsing a repair snapshot, the script also rejects NUL and other
 disallowed control bytes. Tab, LF, and CR remain permitted as appropriate
 config formatting and are preserved; the normal config grammar still applies.
@@ -165,8 +167,9 @@ The terminal displays the private config path, current and proposed hosts,
 required shares, and validated backup directory, then asks once for explicit
 confirmation. Only `y` or `yes`, case-insensitively, approves the change. On
 approval, the script atomically replaces only the active `NAS_SERVER` value
-while preserving the rest of the config and its permissions. Cancellation
-leaves the config unchanged.
+while preserving every other config byte and its numeric file mode. Atomic
+replacement does not reconstruct ACLs, which is why the live config must be
+ACL-free. Cancellation leaves the config unchanged.
 
 Treat repair as requiring exclusive local control of the config path. The lock
 coordinates cooperating repair invocations, and detected content, metadata,
