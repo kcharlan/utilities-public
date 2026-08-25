@@ -142,12 +142,39 @@ invoking user, exactly one active `NAS_SERVER` assignment, and no set
 mount inventory and proceeds only when there is exactly one fully validated
 replacement candidate.
 
+Because repair creates and renames files beside the config, it applies stricter
+path checks than normal execution. The config's lexical parent must equal its
+canonical physical parent. The config target must be a real, regular,
+non-symlink file, and every directory from the filesystem root through its
+direct parent must be a real, non-symlink directory owned by the current user
+or root and not writable by group or world. The live config must retain its
+expected owner (the current user) and recorded mode throughout repair.
+
+The config, every inspected ancestor directory, and every repair snapshot or
+candidate temporary file may have no ACL or only deny-only ACL entries. Any
+granting ACL, or an ACL that is malformed or cannot be inspected safely, causes
+repair to fail closed. Temporary files must also remain current-user-owned,
+regular, non-symlink, single-link files at their expected modes. These
+repair-only restrictions can reject a custom `--config` path in an unsafe
+directory tree even when normal read-only configuration loading can use it.
+Before parsing a repair snapshot, the script also rejects NUL and other
+disallowed control bytes. Tab, LF, and CR remain permitted as appropriate
+config formatting and are preserved; the normal config grammar still applies.
+
 The terminal displays the private config path, current and proposed hosts,
 required shares, and validated backup directory, then asks once for explicit
 confirmation. Only `y` or `yes`, case-insensitively, approves the change. On
 approval, the script atomically replaces only the active `NAS_SERVER` value
 while preserving the rest of the config and its permissions. Cancellation
 leaves the config unchanged.
+
+Treat repair as requiring exclusive local control of the config path. The lock
+coordinates cooperating repair invocations, and detected content, metadata,
+path, or ACL changes fail closed. However, an uncooperative process running as
+the same user—or privileged root—can still race the final pathname validation
+and open, or validation and rename, because macOS pathname operations do not
+provide compare-and-swap semantics. The terminal reports this residual risk;
+the checks do not claim to eliminate it.
 
 Repair mode never enumerates retention candidates or deletes backups. Whether
 no repair is needed, the user cancels, or an update succeeds, it exits without
