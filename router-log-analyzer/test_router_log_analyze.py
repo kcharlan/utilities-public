@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -1770,3 +1771,386 @@ def test_network_incident_persistence_scoring_and_reporting(tmp_path: Path) -> N
         assert store.get_metadata("schema_version") == str(analyzer.SCHEMA_VERSION)
     finally:
         store.close()
+
+
+def synthetic_netgear_regression_log() -> str:
+    """Multi-day, documentation-only NETGEAR sample for v3 compatibility tests."""
+    known = "02:00:00:00:10:01"
+    recovery_macs = [f"02:00:00:00:10:{suffix:02X}" for suffix in range(1, 6)]
+    return "\n".join(
+        [
+            "Subject: SYNTHETIC NETGEAR EXPORT — NO REAL NETWORK DATA",
+            "unstructured synthetic footer text",
+            "[synthetic malformed event without a timestamp]",
+            f"[DHCP IP: (192.0.2.101)] to MAC address {known}, Monday, July 13, 2037 08:00:00",
+            "[email sent to synthetic-alerts@example.invalid], Monday, July 13, 2037 08:01:00",
+            f"[DHCP IP: (192.0.2.101)] to MAC address {known}, Tuesday, July 14, 2037 04:18:30",
+            "[internet disconnected], Tuesday, July 14, 2037 04:17:02",
+            *[
+                f"[WLAN access allowed] from MAC address {mac}, Tuesday, July 14, 2037 04:18:{12 + index:02d}"
+                for index, mac in enumerate(recovery_macs)
+            ],
+            "[internet connected], Tuesday, July 14, 2037 04:19:08",
+            "[log cleared], Tuesday, July 14, 2037 08:00:00",
+            f"[WLAN access rejected] from MAC address 02:00:00:00:10:31, Wednesday, July 15, 2037 09:00:00",
+            f"[admin login] from MAC address 02:00:00:00:10:30, Wednesday, July 15, 2037 09:01:00",
+            "[log cleared], Wednesday, July 15, 2037 18:00:00",
+            "[admin login], Wednesday, July 15, 2037 18:01:00",
+            f"[DHCP IP: (192.0.2.101)] to MAC address {known}, Wednesday, July 15, 2037 18:02:00",
+            f"[DHCP IP: (192.0.2.101)] to MAC address {known}, Wednesday, July 15, 2037 18:02:00",
+            f"[DHCP IP: (192.0.2.101)] to MAC address {known}, Wednesday, July 15, 2037 18:02:01",
+        ]
+    )
+
+
+def seed_synthetic_netgear_regression_history(store: analyzer.StateStore, tmp_path: Path) -> int:
+    known = "02:00:00:00:10:01"
+    recovery_macs = [f"02:00:00:00:10:{suffix:02X}" for suffix in range(1, 6)]
+    baseline = {
+        "devices": {
+            mac: {"name": f"SYNTHETIC RECOVERY DEVICE {index}"}
+            for index, mac in enumerate(recovery_macs, 1)
+        }
+    }
+    baseline["devices"][known] = {"name": "SYNTHETIC KNOWN DEVICE"}
+    epoch_id = store.import_baseline(
+        tmp_path / "synthetic-baseline.json",
+        baseline,
+        float(analyzer.DEFAULT_POLICY["learning"]["seed_weight_frequent"]),
+    )
+    store.upsert_device(
+        mac="02:00:00:00:10:31",
+        name="SYNTHETIC BLOCKED DEVICE",
+        status="blocked",
+        connection_type="wireless",
+        source="synthetic_test",
+    )
+    store.commit()
+    for index, history_date in enumerate(["2037-06-15", "2037-06-22", "2037-06-29", "2037-07-06"], 1):
+        insert_history_day(
+            store, epoch_id, f"synthetic-known-{index}", history_date, known,
+            "WLAN_ACCESS_ALLOWED", "WLAN_ALLOWED", [f"{history_date}T08:00:00"],
+        )
+        insert_history_day(
+            store, epoch_id, f"synthetic-system-log-{index}", history_date,
+            analyzer.SYSTEM_ACTOR, "LOG_CLEARED", "OTHER", [f"{history_date}T08:00:00"],
+        )
+        insert_history_day(
+            store, epoch_id, f"synthetic-system-dhcp-{index}", history_date,
+            analyzer.SYSTEM_ACTOR, "DHCP_IP", "DHCP", [f"{history_date}T08:02:00"],
+        )
+    insert_history_day(
+        store, epoch_id, "synthetic-system-email", "2037-07-06", analyzer.SYSTEM_ACTOR,
+        "EMAIL_SENT", "OTHER", ["2037-07-06T08:03:00"],
+    )
+    return epoch_id
+
+
+def legacy_netgear_report_projection(report: dict[str, object]) -> dict[str, object]:
+    """Freeze v3 fields while permitting later report schemas to add fields."""
+    findings = report["findings"]
+    assert isinstance(findings, dict)
+    return {
+        "inputs": report["inputs"],
+        "state": {
+            **report["state"],
+            "epoch_id": "<database-generated-id>",
+            "policy_profile_id": (
+                "<database-generated-id>"
+                if report["state"]["policy_profile_id"] is not None
+                else None
+            ),
+        },
+        "parse_stats": report["parse_stats"],
+        "analysis_adjustments": report["analysis_adjustments"],
+        "network_incidents": report["network_incidents"],
+        "observation_range": report["observation_range"],
+        "events_per_hour": report["events_per_hour"],
+        "risk_score": report["risk_score"],
+        "status": report["status"],
+        "risk_breakdown": report["risk_breakdown"],
+        "findings": {
+            group: ([
+                {
+                    key: finding[key]
+                    for key in (
+                        "kind", "severity", "mac", "event_count", "device_label", "metadata", "rendered_message"
+                    )
+                }
+                for finding in entries
+            ] if group != "all" else [
+                (finding["kind"], finding["severity"], finding["mac"], finding["event_count"])
+                for finding in entries
+            ])
+            for group, entries in findings.items()
+        },
+        "priority_findings": [
+            (finding["kind"], finding["severity"], finding["mac"], finding["event_count"])
+            for finding in report["priority_findings"]
+        ],
+        "device_summary": report["device_summary"],
+    }
+
+
+def markdown_section(rendered: str, heading: str, next_heading: str | None = None) -> str:
+    start = rendered.index(heading)
+    end = rendered.index(next_heading, start) if next_heading else len(rendered)
+    return rendered[start:end]
+
+
+def html_section(rendered: str, heading: str) -> str:
+    heading_index = rendered.index(f"<h2>{heading}</h2>")
+    start = rendered.rfind("<section", 0, heading_index)
+    section = rendered[start:rendered.index("</section>", heading_index) + len("</section>")]
+    return re.sub(r">\s+<", "><", section)
+
+
+def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_text = synthetic_netgear_regression_log()
+    events, stats = analyzer.parse_log_text(log_text, source="synthetic-netgear.log")
+    assert [
+        (event.timestamp.isoformat(), event.mac, event.event_key, event.event_family, event.ip)
+        for event in events
+    ] == [
+        ("2037-07-13T08:00:00", "02:00:00:00:10:01", "DHCP_IP", "DHCP", "192.0.2.101"),
+        ("2037-07-13T08:01:00", analyzer.SYSTEM_ACTOR, "EMAIL_SENT", "OTHER", None),
+        ("2037-07-14T04:17:02", analyzer.SYSTEM_ACTOR, "INTERNET_DISCONNECTED", "OTHER", None),
+        ("2037-07-14T04:18:12", "02:00:00:00:10:01", "WLAN_ACCESS_ALLOWED", "WLAN_ALLOWED", None),
+        ("2037-07-14T04:18:13", "02:00:00:00:10:02", "WLAN_ACCESS_ALLOWED", "WLAN_ALLOWED", None),
+        ("2037-07-14T04:18:14", "02:00:00:00:10:03", "WLAN_ACCESS_ALLOWED", "WLAN_ALLOWED", None),
+        ("2037-07-14T04:18:15", "02:00:00:00:10:04", "WLAN_ACCESS_ALLOWED", "WLAN_ALLOWED", None),
+        ("2037-07-14T04:18:16", "02:00:00:00:10:05", "WLAN_ACCESS_ALLOWED", "WLAN_ALLOWED", None),
+        ("2037-07-14T04:18:30", "02:00:00:00:10:01", "DHCP_IP", "DHCP", "192.0.2.101"),
+        ("2037-07-14T04:19:08", analyzer.SYSTEM_ACTOR, "INTERNET_CONNECTED", "OTHER", None),
+        ("2037-07-14T08:00:00", analyzer.SYSTEM_ACTOR, "LOG_CLEARED", "OTHER", None),
+        ("2037-07-15T09:00:00", "02:00:00:00:10:31", "WLAN_ACCESS_REJECTED", "WLAN_REJECTED", None),
+        ("2037-07-15T09:01:00", "02:00:00:00:10:30", "ADMIN_LOGIN", "OTHER", None),
+        ("2037-07-15T18:00:00", analyzer.SYSTEM_ACTOR, "LOG_CLEARED", "OTHER", None),
+        ("2037-07-15T18:01:00", analyzer.SYSTEM_ACTOR, "ADMIN_LOGIN", "OTHER", None),
+        ("2037-07-15T18:02:00", "02:00:00:00:10:01", "DHCP_IP", "DHCP", "192.0.2.101"),
+    ]
+    assert analyzer.asdict(stats) == {
+        "total_lines": 21, "parsed_events": 16, "malformed_lines": 1,
+        "duplicate_events": 1, "spam_filtered": 1, "ignored_lines": 1,
+        "export_noise_lines": 1,
+        "malformed_samples": ["[synthetic malformed event without a timestamp]"],
+    }
+    db_path = tmp_path / "network.db"
+    log_path = tmp_path / "synthetic-netgear.log"
+    log_path.write_text(log_text, encoding="utf-8")
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_synthetic_netgear_regression_history(store, tmp_path)
+    finally:
+        store.close()
+    assert analyzer.main([str(log_path), "--db", str(db_path), "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert {
+        "inputs", "state", "parse_stats", "analysis_adjustments", "network_incidents",
+        "observation_range", "events_per_hour", "risk_score", "status", "risk_breakdown",
+        "findings", "priority_findings", "device_summary",
+    } <= set(report)
+    assert {"critical", "anomalies", "observations", "all"} <= set(report["findings"])
+    assert legacy_netgear_report_projection(report) == {
+        "inputs": {"logfile": str(log_path), "baseline": None, "config": None, "db": str(db_path)},
+        "state": {"epoch_id": "<database-generated-id>", "policy_profile_id": None, "deduplicated": False, "reprocessed_run_id": None},
+        "parse_stats": analyzer.asdict(stats),
+        "analysis_adjustments": {"raw_event_count": 16, "incident_explained_event_count": 8, "analyzed_event_count": 8},
+        "network_incidents": [{
+            "incident_id": "network-reset-20370714T041702-1", "incident_type": "internet_connection_reset",
+            "confidence": "confirmed", "start": "2037-07-14T04:17:02", "restored_at": "2037-07-14T04:19:08",
+            "recovery_end": "2037-07-14T04:24:08", "disconnect_count": 1, "connect_count": 1,
+            "affected_macs": [f"02:00:00:00:10:{suffix:02X}" for suffix in range(1, 6)],
+            "event_counts": {"DHCP_IP": 1, "INTERNET_CONNECTED": 1, "INTERNET_DISCONNECTED": 1, "WLAN_ACCESS_ALLOWED": 5},
+            "explained_event_count": 8, "active_known_devices": 5, "affected_device_fraction": 1.0,
+        }],
+        "observation_range": {"start": "2037-07-13T08:00:00", "end": "2037-07-15T18:02:00"},
+        "events_per_hour": {"4": 8, "8": 3, "9": 2, "18": 3},
+        "risk_score": 100,
+        "status": "Suspicious",
+        "risk_breakdown": {"unknown_device": 100, "blocked_device_activity": 50, "new_event_type": 10, "rare_event_activity": 10, "event_behavior_anomaly": 20, "network_reset": 2},
+        "findings": {
+            "critical": [
+                {"kind": "unknown_device", "severity": "critical", "mac": "02:00:00:00:10:30", "event_count": 1, "device_label": "02:00:00:00:10:30 (02:00:00:00:10:30)", "metadata": {}, "rendered_message": "Unknown device 02:00:00:00:10:30 (02:00:00:00:10:30) generated 1 event(s)."},
+                {"kind": "unknown_device", "severity": "critical", "mac": "02:00:00:00:10:31", "event_count": 1, "device_label": "SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31)", "metadata": {}, "rendered_message": "Unknown device SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31) generated 1 event(s)."},
+                {"kind": "blocked_device_activity", "severity": "critical", "mac": "02:00:00:00:10:31", "event_count": 1, "device_label": "SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31)", "metadata": {}, "rendered_message": "Blocked device SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31) generated 1 event(s)."},
+            ],
+            "anomalies": [
+                {"kind": "new_event_type", "severity": "medium", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-15", "event_key": "ADMIN_LOGIN", "event_family": "OTHER", "history_count": 9, "observed_timestamps": ["2037-07-15T18:01:00"]}, "rendered_message": "Admin Login was first observed for Router/System (__SYSTEM__) on 2037-07-15."},
+                {"kind": "rare_event_activity", "severity": "medium", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-13", "event_key": "EMAIL_SENT", "event_family": "OTHER", "history_count": 1, "observed_device_days": 9, "learned_presence_rate": 0.11, "observed_timestamps": ["2037-07-13T08:01:00"]}, "rendered_message": "Email Sent remains rare for Router/System (__SYSTEM__) and was observed on 2037-07-13."},
+                {"kind": "event_behavior_anomaly", "severity": "medium", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-14", "event_key": "LOG_CLEARED", "event_family": "OTHER", "reasons": ["weekday drift"], "history_count": 4, "dominant_weekdays": [0], "current_weekday": 1, "learned_presence_rate": 0.44, "learned_mean": 1.0, "typical_hour": 8.0, "current_hour": 8.0, "current_streak": 1, "observed_timestamps": ["2037-07-14T08:00:00"]}, "rendered_message": "Log Cleared behavior for Router/System (__SYSTEM__) on 2037-07-14 changed: weekday drift."},
+                {"kind": "event_behavior_anomaly", "severity": "medium", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-15", "event_key": "LOG_CLEARED", "event_family": "OTHER", "reasons": ["weekday drift", "time shift 10 hours"], "history_count": 4, "dominant_weekdays": [0], "current_weekday": 2, "learned_presence_rate": 0.44, "learned_mean": 1.0, "typical_hour": 8.0, "current_hour": 18.0, "current_streak": 1, "observed_timestamps": ["2037-07-15T18:00:00"]}, "rendered_message": "Log Cleared behavior for Router/System (__SYSTEM__) on 2037-07-15 changed: weekday drift, time shift 10 hours."},
+            ],
+            "observations": [
+                {"kind": "network_reset", "severity": "low", "mac": None, "event_count": 8, "device_label": None, "metadata": {"incident_id": "network-reset-20370714T041702-1", "incident_type": "internet_connection_reset", "confidence": "confirmed", "day": "2037-07-14", "start": "2037-07-14T04:17:02", "restored_at": "2037-07-14T04:19:08", "recovery_end": "2037-07-14T04:24:08", "disconnect_count": 1, "connect_count": 1, "affected_macs": [f"02:00:00:00:10:{suffix:02X}" for suffix in range(1, 6)], "event_counts": {"DHCP_IP": 1, "INTERNET_CONNECTED": 1, "INTERNET_DISCONNECTED": 1, "WLAN_ACCESS_ALLOWED": 5}, "explained_event_count": 8, "active_known_devices": 5, "affected_device_fraction": 1.0}, "rendered_message": "Confirmed internet connection reset from 2037-07-14T04:17:02 through 2037-07-14T04:19:08 affected 5 known device(s) and explained 8 recovery event(s)."},
+            ],
+            "all": [
+                ("unknown_device", "critical", "02:00:00:00:10:30", 1),
+                ("unknown_device", "critical", "02:00:00:00:10:31", 1),
+                ("blocked_device_activity", "critical", "02:00:00:00:10:31", 1),
+                ("new_event_type", "medium", analyzer.SYSTEM_ACTOR, 1),
+                ("rare_event_activity", "medium", analyzer.SYSTEM_ACTOR, 1),
+                ("event_behavior_anomaly", "medium", analyzer.SYSTEM_ACTOR, 1),
+                ("event_behavior_anomaly", "medium", analyzer.SYSTEM_ACTOR, 1),
+                ("network_reset", "low", None, 8),
+            ],
+        },
+        "priority_findings": [
+            ("unknown_device", "critical", "02:00:00:00:10:30", 1),
+            ("unknown_device", "critical", "02:00:00:00:10:31", 1),
+            ("blocked_device_activity", "critical", "02:00:00:00:10:31", 1),
+            ("new_event_type", "medium", analyzer.SYSTEM_ACTOR, 1),
+            ("rare_event_activity", "medium", analyzer.SYSTEM_ACTOR, 1),
+        ],
+        "device_summary": [
+            {"mac": "02:00:00:00:10:30", "name": "02:00:00:00:10:30", "dhcp_count": 0, "total_events": 1, "incident_explained_events": 0, "event_types": ["ADMIN_LOGIN"]},
+            {"mac": analyzer.SYSTEM_ACTOR, "name": "Router/System", "dhcp_count": 0, "total_events": 6, "incident_explained_events": 2, "event_types": ["ADMIN_LOGIN", "EMAIL_SENT", "INTERNET_CONNECTED", "INTERNET_DISCONNECTED", "LOG_CLEARED"]},
+            {"mac": "02:00:00:00:10:31", "name": "SYNTHETIC BLOCKED DEVICE", "dhcp_count": 0, "total_events": 1, "incident_explained_events": 0, "event_types": ["WLAN_ACCESS_REJECTED"]},
+            {"mac": "02:00:00:00:10:01", "name": "SYNTHETIC KNOWN DEVICE", "dhcp_count": 3, "total_events": 4, "incident_explained_events": 2, "event_types": ["DHCP_IP", "WLAN_ACCESS_ALLOWED"]},
+            *[{"mac": f"02:00:00:00:10:{suffix:02X}", "name": f"SYNTHETIC RECOVERY DEVICE {suffix}", "dhcp_count": 0, "total_events": 1, "incident_explained_events": 1, "event_types": ["WLAN_ACCESS_ALLOWED"]} for suffix in range(2, 6)],
+        ],
+    }
+
+    text_report = analyzer.render_text_report(report)
+    text_risk_start = text_report.index(" Risk Breakdown ")
+    text_risk_end = text_report.index(" Device Summary ", text_risk_start)
+    assert [
+        line.rstrip()
+        for line in text_report[text_risk_start:text_risk_end].splitlines()[2:]
+        if line.strip() and set(line.strip()) != {"-"}
+    ] == [
+        "blocked_device_activity: 50",
+        "event_behavior_anomaly: 20",
+        "network_reset: 2",
+        "new_event_type: 10",
+        "rare_event_activity: 10",
+        "unknown_device: 100",
+    ]
+
+    markdown_report = analyzer.render_markdown_report(report)
+    assert markdown_section(markdown_report, "## Risk Breakdown", "## Device Summary") == """## Risk Breakdown
+
+- `blocked_device_activity`: 50
+- `event_behavior_anomaly`: 20
+- `network_reset`: 2
+- `new_event_type`: 10
+- `rare_event_activity`: 10
+- `unknown_device`: 100
+
+"""
+    assert markdown_section(markdown_report, "## Device Summary") == """## Device Summary
+
+| Name | MAC | DHCP | Events | Reset-Explained | Types |
+| --- | --- | ---: | ---: | ---: | --- |
+| 02:00:00:00:10:30 | `02:00:00:00:10:30` | 0 | 1 | 0 | Admin Login |
+| Router/System | `__SYSTEM__` | 0 | 6 | 2 | Admin Login, Email Sent, Internet Connected, Internet Disconnected, Log Cleared |
+| SYNTHETIC BLOCKED DEVICE | `02:00:00:00:10:31` | 0 | 1 | 0 | WLAN Access Rejected |
+| SYNTHETIC KNOWN DEVICE | `02:00:00:00:10:01` | 3 | 4 | 2 | DHCP IP, WLAN Access Allowed |
+| SYNTHETIC RECOVERY DEVICE 2 | `02:00:00:00:10:02` | 0 | 1 | 1 | WLAN Access Allowed |
+| SYNTHETIC RECOVERY DEVICE 3 | `02:00:00:00:10:03` | 0 | 1 | 1 | WLAN Access Allowed |
+| SYNTHETIC RECOVERY DEVICE 4 | `02:00:00:00:10:04` | 0 | 1 | 1 | WLAN Access Allowed |
+| SYNTHETIC RECOVERY DEVICE 5 | `02:00:00:00:10:05` | 0 | 1 | 1 | WLAN Access Allowed |
+"""
+
+    html_report = analyzer.render_html_report(report)
+    assert html_section(html_report, "Risk Breakdown") == (
+        "<section><h2>Risk Breakdown</h2><ul>"
+        "<li><code>blocked_device_activity</code>: 50</li>"
+        "<li><code>event_behavior_anomaly</code>: 20</li>"
+        "<li><code>network_reset</code>: 2</li>"
+        "<li><code>new_event_type</code>: 10</li>"
+        "<li><code>rare_event_activity</code>: 10</li>"
+        "<li><code>unknown_device</code>: 100</li>"
+        "</ul></section>"
+    )
+    assert html_section(html_report, "Device Summary") == (
+        "<section><h2>Device Summary</h2><table><thead>"
+        "<tr><th>Name</th><th>MAC</th><th>DHCP</th><th>Events</th><th>Reset-Explained</th><th>Types</th></tr>"
+        "</thead><tbody>"
+        "<tr><td>02:00:00:00:10:30</td><td><code>02:00:00:00:10:30</code></td><td>0</td><td>1</td><td>0</td><td>Admin Login</td></tr>"
+        "<tr><td>Router/System</td><td><code>__SYSTEM__</code></td><td>0</td><td>6</td><td>2</td><td>Admin Login, Email Sent, Internet Connected, Internet Disconnected, Log Cleared</td></tr>"
+        "<tr><td>SYNTHETIC BLOCKED DEVICE</td><td><code>02:00:00:00:10:31</code></td><td>0</td><td>1</td><td>0</td><td>WLAN Access Rejected</td></tr>"
+        "<tr><td>SYNTHETIC KNOWN DEVICE</td><td><code>02:00:00:00:10:01</code></td><td>3</td><td>4</td><td>2</td><td>DHCP IP, WLAN Access Allowed</td></tr>"
+        "<tr><td>SYNTHETIC RECOVERY DEVICE 2</td><td><code>02:00:00:00:10:02</code></td><td>0</td><td>1</td><td>1</td><td>WLAN Access Allowed</td></tr>"
+        "<tr><td>SYNTHETIC RECOVERY DEVICE 3</td><td><code>02:00:00:00:10:03</code></td><td>0</td><td>1</td><td>1</td><td>WLAN Access Allowed</td></tr>"
+        "<tr><td>SYNTHETIC RECOVERY DEVICE 4</td><td><code>02:00:00:00:10:04</code></td><td>0</td><td>1</td><td>1</td><td>WLAN Access Allowed</td></tr>"
+        "<tr><td>SYNTHETIC RECOVERY DEVICE 5</td><td><code>02:00:00:00:10:05</code></td><td>0</td><td>1</td><td>1</td><td>WLAN Access Allowed</td></tr>"
+        "</tbody></table></section>"
+    )
+
+
+def test_netgear_unknown_and_blocked_defaults_are_critical_before_policy_overrides() -> None:
+    unknown_mac = "02:00:00:00:10:30"
+    blocked_mac = "02:00:00:00:10:31"
+    events_by_mac = {
+        mac: [make_event("2037-07-15T09:00:00", mac, "WLAN_ACCESS_REJECTED")]
+        for mac in (unknown_mac, blocked_mac)
+    }
+    aggregate = {"events_by_mac": events_by_mac, "cluster_profiles": {}}
+    snapshot = {blocked_mac: {"name": "SYNTHETIC BLOCKED DEVICE", "status": "blocked"}}
+
+    unknown_findings = analyzer.detect_unknown_devices(aggregate, {"devices": {}}, snapshot, analyzer.DEFAULT_POLICY)
+    blocked_findings = analyzer.detect_blocked_devices(aggregate, snapshot, analyzer.DEFAULT_POLICY)
+
+    assert [(finding.kind, finding.mac, finding.severity) for finding in unknown_findings] == [
+        ("unknown_device", unknown_mac, "critical"),
+        ("unknown_device", blocked_mac, "critical"),
+    ]
+    assert [(finding.kind, finding.mac, finding.severity) for finding in blocked_findings] == [
+        ("blocked_device_activity", blocked_mac, "critical"),
+    ]
+
+
+def test_byte_identical_netgear_log_rebuilds_report_without_duplicate_learning_rows(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "network.db"
+    log_path = tmp_path / "synthetic-netgear.log"
+    log_path.write_text(synthetic_netgear_regression_log(), encoding="utf-8")
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_synthetic_netgear_regression_history(store, tmp_path)
+    finally:
+        store.close()
+
+    assert analyzer.main([str(log_path), "--db", str(db_path), "--json"]) == 0
+    first_report = json.loads(capsys.readouterr().out)
+    store = analyzer.StateStore(db_path)
+    try:
+        before_counts = {
+            table: store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("runs", "device_daily_stats", "device_event_daily_stats", "subject_behavior_daily_stats", "network_incidents")
+        }
+        policy_id = store.import_policy(
+            tmp_path / "synthetic-current-policy.json",
+            {
+                "schema_version": 1,
+                "device_overrides": {
+                    "02:00:00:00:10:30": {"finding_overrides": {"unknown_device": {"suppress": True}}},
+                    "02:00:00:00:10:31": {"finding_overrides": {"unknown_device": {"suppress": True}}},
+                },
+            },
+        )
+    finally:
+        store.close()
+
+    assert analyzer.main([str(log_path), "--db", str(db_path), "--json"]) == 0
+    second_report = json.loads(capsys.readouterr().out)
+    assert first_report["state"]["deduplicated"] is False
+    assert second_report["state"]["deduplicated"] is True
+    assert second_report["state"]["policy_profile_id"] == policy_id
+    assert all(finding["kind"] != "unknown_device" for finding in second_report["findings"]["all"])
+    assert any(finding["kind"] == "blocked_device_activity" for finding in second_report["findings"]["all"])
+    store = analyzer.StateStore(db_path)
+    try:
+        after_counts = {
+            table: store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in before_counts
+        }
+    finally:
+        store.close()
+    assert after_counts == before_counts
