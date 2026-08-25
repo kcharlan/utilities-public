@@ -2,6 +2,7 @@
 # repository and replace every SYNTHETIC_* value for your own environment.
 NAS_SERVER=SYNTHETIC-NAS-HOST
 NAS_SHARE_NAME=SYNTHETIC_SHARE
+REQUIRED_NAS_SHARES=SYNTHETIC_SHARE,SYNTHETIC_COMPANION
 BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUP_DIRECTORY
 
 # Only files ending in this exact suffix can be considered for deletion. Set
