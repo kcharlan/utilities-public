@@ -266,6 +266,7 @@ EOF
 }
 
 test_root="$(mktemp -d -t moneydance-rotation-tests.XXXXXX)"
+test_root="${test_root:A}"
 trap 'rm -rf -- "${test_root}"' EXIT
 
 run_with_pty 5 both /bin/zsh -c 'exit 37'
@@ -438,7 +439,7 @@ example_output="$(
 example_status=$?
 assert_status "tracked synthetic example is valid configuration" 0 "${example_status}"
 assert_not_contains "example run does not print synthetic host" "${example_output}" "SYNTHETIC-NAS-HOST"
-assert_contains "tracked synthetic example remains non-destructive" "$(<"${PROJECT_DIR}/config.example")" "DRY_RUN=1"
+assert_contains "tracked synthetic example remains non-destructive" "$(/bin/cat -- "${PROJECT_DIR}/config.example")" "DRY_RUN=1"
 
 required_shares_mount_marker="${test_root}/required-shares-mount-called"
 required_shares_mount="${test_root}/required-shares-mount"
@@ -753,6 +754,82 @@ for repair_bad_kind in missing directory symlink unreadable unwritable; do
   assert_status "repair rejects ${repair_bad_kind} config" 2 "${PTY_STATUS}"
 done
 
+# Repair creates and atomically renames private files beside the config. Every
+# directory used to resolve that path must therefore be owned and non-writable
+# by other users.
+for unsafe_dir_kind in group world; do
+  unsafe_config_dir="${test_root}/SYNTHETIC-PRIVATE-UNSAFE-${unsafe_dir_kind}"
+  unsafe_config="${unsafe_config_dir}/repair-config"
+  mkdir "${unsafe_config_dir}"
+  cp -p "${repair_config}" "${unsafe_config}"
+  if [[ "${unsafe_dir_kind}" == group ]]; then chmod 770 "${unsafe_config_dir}"; else chmod 707 "${unsafe_config_dir}"; fi
+  rm -f -- "${unique_candidate_marker}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${unsafe_config}" --repair-config
+  assert_status "repair rejects ${unsafe_dir_kind}-writable config directory" 2 "${PTY_STATUS}"
+  if cmp -s "${unsafe_config}" "${repair_config}"; then pass "${unsafe_dir_kind}-writable directory rejection preserves config"; else fail "${unsafe_dir_kind}-writable directory rejection preserves config"; fi
+  [[ ! -e "${unique_candidate_marker}" ]] && pass "${unsafe_dir_kind}-writable directory rejection precedes mount" || fail "${unsafe_dir_kind}-writable directory rejection precedes mount"
+  assert_not_contains "${unsafe_dir_kind}-writable directory failure redacts private path" "${PTY_STDERR}" "${unsafe_config_dir}"
+  chmod 700 "${unsafe_config_dir}"
+done
+
+unsafe_ancestor="${test_root}/SYNTHETIC-PRIVATE-UNSAFE-ANCESTOR"
+unsafe_nested_dir="${unsafe_ancestor}/safe-direct-child"
+unsafe_ancestor_config="${unsafe_nested_dir}/repair-config"
+mkdir -p "${unsafe_nested_dir}"
+cp -p "${repair_config}" "${unsafe_ancestor_config}"
+chmod 770 "${unsafe_ancestor}"
+chmod 700 "${unsafe_nested_dir}"
+rm -f -- "${unique_candidate_marker}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${unsafe_ancestor_config}" --repair-config
+assert_status "repair rejects unsafe config ancestor" 2 "${PTY_STATUS}"
+if cmp -s "${unsafe_ancestor_config}" "${repair_config}"; then pass "unsafe ancestor rejection preserves config"; else fail "unsafe ancestor rejection preserves config"; fi
+[[ ! -e "${unique_candidate_marker}" ]] && pass "unsafe ancestor rejection precedes mount" || fail "unsafe ancestor rejection precedes mount"
+assert_not_contains "unsafe ancestor failure redacts private path" "${PTY_STDERR}" "${unsafe_ancestor}"
+chmod 700 "${unsafe_ancestor}"
+
+# A changed direct-directory identity must be detected again before mktemp can
+# open a snapshot path.
+reset_repair_config
+dir_identity_stat="${test_root}/repair-directory-identity-stat"
+dir_identity_count="${test_root}/repair-directory-identity-count"
+dir_identity_mktemp="${test_root}/repair-directory-identity-mktemp"
+dir_identity_mktemp_marker="${test_root}/repair-directory-identity-mktemp-called"
+cat > "${dir_identity_stat}" <<EOF
+#!/bin/zsh
+target="\${@: -1}"
+if [[ "\${target}" == "${candidate_config_dir}" ]]; then
+  count=0; [[ ! -f "${dir_identity_count}" ]] || count="\$(<"${dir_identity_count}")"; (( count += 1 )); print -r -- "\${count}" > "${dir_identity_count}"
+  metadata="\$(/usr/bin/stat -f '%d|%i|%u|%Lp' -- "\${target}")" || exit 1
+  if (( count > 1 )); then
+    IFS='|' read -r device inode owner mode <<< "\${metadata}"
+    print -r -- "\${device}|\$(( inode + 1 ))|\${owner}|\${mode}"
+  else
+    print -r -- "\${metadata}"
+  fi
+  exit 0
+fi
+exec /usr/bin/stat "\$@"
+EOF
+cat > "${dir_identity_mktemp}" <<EOF
+#!/bin/zsh
+print -r -- invoked > "${dir_identity_mktemp_marker}"
+exec /usr/bin/mktemp "\$@"
+EOF
+chmod 755 "${dir_identity_stat}" "${dir_identity_mktemp}"
+: > "${candidate_logger_marker}"
+PTY_INPUT=$'n\n'
+run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${dir_identity_stat}" MONEYDANCE_MKTEMP_BIN="${dir_identity_mktemp}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "changed config directory identity aborts before snapshot open" 1 "${PTY_STATUS}"
+[[ ! -e "${dir_identity_mktemp_marker}" ]] && pass "changed directory identity does not invoke snapshot mktemp" || fail "changed directory identity does not invoke snapshot mktemp"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "changed directory identity preserves config"; else fail "changed directory identity preserves config"; fi
+dir_identity_persistent="${PTY_STDERR}$(<"${candidate_logger_marker}")"
+[[ ! -f "${candidate_log}" ]] || dir_identity_persistent+="$(<"${candidate_log}")"
+for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host; do
+  assert_not_contains "changed directory identity persistent sinks redact ${private_token}" "${dir_identity_persistent}" "${private_token}"
+done
+
 for repair_override in '__UNSET__' ''; do
   reset_repair_config
     PTY_INPUT=$'yes\n'
@@ -852,6 +929,25 @@ PTY_INPUT=$'yes\n'
 run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "repair rejects NUL-containing config" 2 "${PTY_STATUS}"
 if cmp -s "${repair_config}" "${repair_original}"; then pass "binary rejection preserves bytes"; else fail "binary rejection preserves bytes"; fi
+
+for control_name in SOH DEL; do
+  reset_repair_config
+  if [[ "${control_name}" == SOH ]]; then control_byte=$'\001'; else control_byte=$'\177'; fi
+  printf '# SYNTHETIC ignored comment contains control %s private-token\n' "${control_byte}" >> "${repair_config}"
+  cp -p "${repair_config}" "${repair_original}"
+  rm -f -- "${unique_candidate_marker}"
+  : > "${candidate_log}"
+  : > "${candidate_logger_marker}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "repair rejects ${control_name} control byte" 2 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "${control_name} rejection preserves exact bytes"; else fail "${control_name} rejection preserves exact bytes"; fi
+  [[ ! -e "${unique_candidate_marker}" ]] && pass "${control_name} rejection precedes mount" || fail "${control_name} rejection precedes mount"
+  control_persistent="${PTY_STDERR}$(<"${candidate_log}")$(<"${candidate_logger_marker}")"
+  for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host private-token; do
+    assert_not_contains "${control_name} persistent sinks redact ${private_token}" "${control_persistent}" "${private_token}"
+  done
+done
 
 reset_repair_config
 configured_valid_mount="${test_root}/configured-valid-mount"
@@ -1017,12 +1113,12 @@ EOF
 cat > "${wrong_temp_stat}" <<EOF
 #!/bin/zsh
 target="\${@: -1}"
-metadata="\$(/usr/bin/stat -f '%d|%i|%u|%g|%Lp|%z|%l' -- "\${target}")" || exit 1
 if [[ "\${target}" == *.snapshot.* ]]; then
+  metadata="\$(/usr/bin/stat -f '%d|%i|%u|%g|%Lp|%z|%l' -- "\${target}")" || exit 1
   IFS='|' read -r device inode owner group mode size links <<< "\${metadata}"
   print -r -- "\${device}|\${inode}|$(( EUID + 1 ))|\${group}|\${mode}|\${size}|\${links}"
 else
-  print -r -- "\${metadata}"
+  exec /usr/bin/stat "\$@"
 fi
 EOF
 chmod 755 "${wrong_temp_mktemp}" "${wrong_temp_stat}"
@@ -1063,8 +1159,8 @@ for metadata_kind in owner group device; do
   cat > "${metadata_stat}" <<EOF
 #!/bin/zsh
 target="\${@: -1}"
-metadata="\$(/usr/bin/stat -f '%d|%i|%u|%g|%Lp|%z|%l' -- "\${target}")" || exit 1
 if [[ "\${target}" == "${repair_config}" ]]; then
+  metadata="\$(/usr/bin/stat -f '%d|%i|%u|%g|%Lp|%z|%l' -- "\${target}")" || exit 1
   count=0; [[ ! -f "${metadata_count}" ]] || count="\$(<"${metadata_count}")"; (( count += 1 )); print -r -- "\${count}" > "${metadata_count}"
   if (( count >= 3 )); then
     IFS='|' read -r device inode owner group mode size links <<< "\${metadata}"
@@ -1075,8 +1171,10 @@ if [[ "\${target}" == "${repair_config}" ]]; then
     esac
     metadata="\${device}|\${inode}|\${owner}|\${group}|\${mode}|\${size}|\${links}"
   fi
+  print -r -- "\${metadata}"
+else
+  exec /usr/bin/stat "\$@"
 fi
-print -r -- "\${metadata}"
 EOF
   chmod 755 "${metadata_stat}"
   PTY_INPUT=$'yes\n'
@@ -1255,7 +1353,7 @@ chmod 755 "${post_mv_logger}"
 PTY_INPUT=$'yes\n'
 run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_LOGGER_BIN="${post_mv_logger}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "post-activation logger failure cannot change successful repair status" 0 "${PTY_STATUS}"
-assert_contains "post-activation logger failure still leaves repaired config" "$(<"${repair_config}")" "NAS_SERVER  =  synthetic-candidate-private-one"
+assert_contains "post-activation logger failure still leaves repaired config" "$(/bin/cat -- "${repair_config}")" "NAS_SERVER  =  synthetic-candidate-private-one"
 assert_not_contains "post-activation logger diagnostic is suppressed" "${PTY_TRANSCRIPT}" "failing logger diagnostic"
 
 # Shell-owned private-path opens must suppress diagnostics before attempting
@@ -1350,6 +1448,40 @@ assert_status "permission-ordering repair succeeds" 0 "${PTY_STATUS}"
 permission_order_text="$(<"${permission_order_record}")"
 assert_contains "original mode is applied only after candidate contains bytes" "${permission_order_text}" "640|nonempty|"
 assert_not_contains "original mode is never applied to an empty candidate" "${permission_order_text}" "640|empty|"
+
+# Revalidate the captured directory immediately before activation. The chmod
+# spy changes only the directory metadata after candidate generation; MV must
+# remain untouched and the live config must remain byte-identical.
+reset_repair_config
+final_dir_chmod="${test_root}/repair-final-directory-chmod"
+final_dir_mv="${test_root}/repair-final-directory-mv"
+final_dir_mv_marker="${test_root}/repair-final-directory-mv-called"
+cat > "${final_dir_chmod}" <<EOF
+#!/bin/zsh
+/bin/chmod "\$@" || exit 1
+if [[ "\$1" == 640 && "\${@: -1}" == *.candidate.* ]]; then
+  /bin/chmod 750 "${candidate_config_dir}" || exit 1
+fi
+EOF
+cat > "${final_dir_mv}" <<EOF
+#!/bin/zsh
+print -r -- invoked > "${final_dir_mv_marker}"
+exit 97
+EOF
+chmod 755 "${final_dir_chmod}" "${final_dir_mv}"
+: > "${candidate_log}"
+: > "${candidate_logger_marker}"
+PTY_INPUT=$'yes\n'
+run_with_pty 10 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${final_dir_chmod}" MONEYDANCE_MV_BIN="${final_dir_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "final config directory identity change aborts activation" 1 "${PTY_STATUS}"
+[[ ! -e "${final_dir_mv_marker}" ]] && pass "final directory identity change aborts before MV_BIN" || fail "final directory identity change aborts before MV_BIN"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "final directory identity change preserves exact config bytes"; else fail "final directory identity change preserves exact config bytes"; fi
+final_dir_persistent="${PTY_STDERR}$(<"${candidate_log}")$(<"${candidate_logger_marker}")"
+for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host synthetic-candidate-private-one; do
+  assert_not_contains "final directory identity persistent sinks redact ${private_token}" "${final_dir_persistent}" "${private_token}"
+done
+chmod 755 "${candidate_config_dir}"
+find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) -exec rm -rf -- {} +
 
 # A hostile inherited umask cannot make the cooperating lock or owner marker
 # group/world accessible.

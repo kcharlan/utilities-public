@@ -139,6 +139,10 @@ load_config() {
   integer line_number=0
 
   [[ -f "${config_path}" && -r "${config_path}" ]] || config_error "Configuration file is not readable."
+  if [[ -n "${repair_snapshot_tmp:-}" && "${config_path}" == "${repair_snapshot_tmp}" ]]; then
+    validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || config_error "Configuration snapshot changed unexpectedly."
+    revalidate_config_directory || config_error "Configuration directory changed unexpectedly."
+  fi
   exec {config_stderr_fd}>&2
   exec 2>/dev/null
   if exec {config_fd}<"${config_path}"; then
@@ -358,6 +362,16 @@ config_owner=""
 config_group=""
 config_mode=""
 config_size=""
+config_dir_path=""
+config_dir_device=""
+config_dir_inode=""
+config_dir_owner=""
+config_dir_mode=""
+inspected_config_dir_path=""
+inspected_config_dir_device=""
+inspected_config_dir_inode=""
+inspected_config_dir_owner=""
+inspected_config_dir_mode=""
 
 cleanup_repair_artifacts() {
   local cleanup_path
@@ -398,6 +412,67 @@ cleanup_repair_artifacts() {
   fi
 }
 
+inspect_safe_config_directory() {
+  local requested_dir="${config_path:h}"
+  local lexical_dir="${requested_dir:a}"
+  local resolved_dir="${requested_dir:A}"
+  local current_dir metadata device inode owner mode direct_device direct_inode direct_owner direct_mode
+
+  [[ "${lexical_dir}" == "${resolved_dir}" ]] || return 1
+  current_dir="${lexical_dir}"
+  while true; do
+    [[ -d "${current_dir}" && ! -L "${current_dir}" ]] || return 1
+    if ! metadata="$("${STAT_BIN}" -f '%d|%i|%u|%Lp' -- "${current_dir}" 2>/dev/null)"; then
+      return 1
+    fi
+    IFS='|' read -r device inode owner mode <<< "${metadata}"
+    if [[ -z "${device}" || -z "${inode}" || -z "${owner}" || "${mode}" != <-> ]]; then
+      return 1
+    fi
+    if [[ "${owner}" != "${EUID}" && "${owner}" != 0 ]] || (( (8#${mode} & 8#22) != 0 )); then
+      return 1
+    fi
+    if [[ "${current_dir}" == "${lexical_dir}" ]]; then
+      direct_device="${device}"
+      direct_inode="${inode}"
+      direct_owner="${owner}"
+      direct_mode="${mode}"
+    fi
+    [[ "${current_dir}" == / ]] && break
+    current_dir="${current_dir:h}"
+  done
+
+  inspected_config_dir_path="${lexical_dir}"
+  inspected_config_dir_device="${direct_device}"
+  inspected_config_dir_inode="${direct_inode}"
+  inspected_config_dir_owner="${direct_owner}"
+  inspected_config_dir_mode="${direct_mode}"
+  return 0
+}
+
+capture_safe_config_directory() {
+  inspect_safe_config_directory || return 1
+  config_dir_path="${inspected_config_dir_path}"
+  config_dir_device="${inspected_config_dir_device}"
+  config_dir_inode="${inspected_config_dir_inode}"
+  config_dir_owner="${inspected_config_dir_owner}"
+  config_dir_mode="${inspected_config_dir_mode}"
+  config_path="${config_dir_path}/${config_path:t}"
+  return 0
+}
+
+revalidate_config_directory() {
+  inspect_safe_config_directory || return 1
+  if [[ "${inspected_config_dir_path}" != "${config_dir_path}" ||
+        "${inspected_config_dir_device}" != "${config_dir_device}" ||
+        "${inspected_config_dir_inode}" != "${config_dir_inode}" ||
+        "${inspected_config_dir_owner}" != "${config_dir_owner}" ||
+        "${inspected_config_dir_mode}" != "${config_dir_mode}" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 repair_failure() {
   log_message "ERROR" "$1"
   exit 1
@@ -421,6 +496,7 @@ validate_repair_preconditions() {
   for required_bin in "${MOUNT_BIN}" "${STAT_BIN}" "${DATE_BIN}" "${MKTEMP_BIN}" "${MV_BIN}" "${CHMOD_BIN}" "${CMP_BIN}"; do
     command -v "${required_bin}" >/dev/null 2>&1 || exit_with_error "A required config-repair command is unavailable; no configuration or backup files were changed."
   done
+  capture_safe_config_directory || config_error "The repair configuration directory is not private and stable."
   read_config_metadata "${config_path}" || config_error "The repair configuration metadata could not be validated."
   [[ "${config_owner}" == "${EUID}" ]] || config_error "The repair configuration must be owned by the invoking user."
 }
@@ -428,17 +504,19 @@ validate_repair_preconditions() {
 create_owned_config_temp() {
   local live_config="$1"
   local role="$2"
-  local config_dir="${live_config:h:A}"
+  local config_dir="${config_dir_path}"
   local config_base="${live_config:t}"
   local prefix="${config_dir}/.${config_base}.${role}."
   local returned returned_absolute existing
   typeset -A existed_before=()
+  revalidate_config_directory || return 1
   typeset -a prefix_entries=("${prefix}"*(N))
 
   for existing in "${prefix_entries[@]}"; do
     existed_before[${existing:a}]=1
   done
   umask 077
+  revalidate_config_directory || return 1
   if ! returned="$("${MKTEMP_BIN}" "${prefix}XXXXXX" 2>/dev/null)"; then
     return 1
   fi
@@ -474,13 +552,14 @@ create_owned_config_temp() {
 }
 
 acquire_repair_lock() {
-  local config_dir="${config_path:h:A}"
+  local config_dir="${config_dir_path}"
   local config_base="${config_path:t}"
   local candidate_lock="${config_dir}/.${config_base}.repair.lock"
   local lock_metadata lock_device lock_inode lock_owner lock_group lock_mode lock_size lock_links
   local marker_path marker_metadata marker_device marker_inode marker_owner marker_group marker_mode marker_size marker_links
   local current_lock_device current_lock_inode current_lock_owner current_lock_group current_lock_mode current_lock_size current_lock_links
   umask 077
+  revalidate_config_directory || return 1
   if ! /bin/mkdir -- "${candidate_lock}" 2>/dev/null; then
     return 1
   fi
@@ -497,6 +576,7 @@ acquire_repair_lock() {
   repair_lock_pid="$$"
   repair_lock_owned=1
   marker_path="${repair_lock_dir}/owner"
+  revalidate_config_directory || return 1
   if ! write_lock_owner_marker "${marker_path}" "$$" 2>/dev/null; then
     return 1
   fi
@@ -526,6 +606,7 @@ validated_repair_temp() {
   local role="$2"
   local expected_mode="${3:-}"
   local metadata device inode owner group mode size links expected_device expected_inode expected_owner
+  revalidate_config_directory || return 1
   metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${path}" 2>/dev/null)" || return 1
   IFS='|' read -r device inode owner group mode size links <<< "${metadata}"
   if [[ "${role}" == snapshot ]]; then
@@ -550,10 +631,12 @@ snapshot_repair_config() {
   local before_metadata after_metadata
   before_metadata="${config_device}|${config_inode}|${config_owner}|${config_group}|${config_mode}|${config_size}"
   create_owned_config_temp "${config_path}" snapshot || return 1
+  revalidate_config_directory || return 1
   if ! "${CHMOD_BIN}" 600 "${repair_snapshot_tmp}" 2>/dev/null; then
     return 1
   fi
   validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
+  revalidate_config_directory || return 1
   if ! /bin/cp -- "${config_path}" "${repair_snapshot_tmp}" 2>/dev/null; then
     return 1
   fi
@@ -561,21 +644,28 @@ snapshot_repair_config() {
   read_config_metadata "${config_path}" || return 1
   after_metadata="${config_device}|${config_inode}|${config_owner}|${config_group}|${config_mode}|${config_size}"
   [[ "${after_metadata}" == "${before_metadata}" ]] || return 1
+  revalidate_config_directory || return 1
   "${CMP_BIN}" -s -- "${config_path}" "${repair_snapshot_tmp}" 2>/dev/null || return 1
-  # zsh strings cannot safely represent NUL bytes; reject them before parsing.
+  # zsh strings cannot safely represent NUL and other control bytes. Tabs and
+  # line endings remain valid config formatting and are preserved byte-for-byte.
+  revalidate_config_directory || return 1
+  validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
   if /usr/bin/od -An -v -tu1 "${repair_snapshot_tmp}" 2>/dev/null |
-      /usr/bin/grep -Eq '(^|[[:space:]])0([[:space:]]|$)' 2>/dev/null; then
+      /usr/bin/grep -Eq '(^|[[:space:]])(0|[1-8]|1[124-9]|2[0-9]|3[01]|127)([[:space:]]|$)' 2>/dev/null; then
     return 2
   fi
+  return 0
 }
 
 metadata_matches_snapshot() {
   local expected="$1"
   local current
+  revalidate_config_directory || return 1
   read_config_metadata "${config_path}" || return 1
   current="${config_device}|${config_inode}|${config_owner}|${config_group}|${config_mode}|${config_size}"
   [[ "${current}" == "${expected}" && ! -L "${config_path}" && -f "${config_path}" ]] || return 1
   validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
+  revalidate_config_directory || return 1
   "${CMP_BIN}" -s -- "${config_path}" "${repair_snapshot_tmp}" 2>/dev/null
 }
 
@@ -583,7 +673,20 @@ write_repair_candidate() {
   local replacement_host="$1"
   local raw_line body parsed_line key raw_value value_without_leading value_trimmed
   local prefix leading trailing line_ending
-  integer had_newline leading_count trailing_count replacements=0
+  integer had_newline leading_count trailing_count replacements=0 snapshot_fd snapshot_stderr_fd open_failed=0
+
+  validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
+  revalidate_config_directory || return 1
+  exec {snapshot_stderr_fd}>&2
+  exec 2>/dev/null
+  if exec {snapshot_fd}<"${repair_snapshot_tmp}"; then
+    :
+  else
+    open_failed=1
+  fi
+  exec 2>&${snapshot_stderr_fd}
+  exec {snapshot_stderr_fd}>&-
+  (( ! open_failed )) || return 1
 
   while true; do
     if IFS= read -r raw_line; then
@@ -621,14 +724,36 @@ write_repair_candidate() {
     print -rn -- "${raw_line}" || return 1
     (( ! had_newline )) || print -rn -- $'\n' || return 1
     (( had_newline )) || break
-  done < "${repair_snapshot_tmp}"
-  (( replacements == 1 ))
+  done <&${snapshot_fd}
+  exec {snapshot_fd}<&-
+  (( replacements == 1 )) || return 1
+  return 0
 }
 
 write_repair_candidate_to_path() {
   local replacement_host="$1"
   local output_path="$2"
-  write_repair_candidate "${replacement_host}" > "${output_path}"
+  integer output_fd output_stderr_fd open_failed=0 write_status
+  validated_repair_temp "${output_path}" candidate 600 || return 1
+  revalidate_config_directory || return 1
+  exec {output_stderr_fd}>&2
+  exec 2>/dev/null
+  if exec {output_fd}>"${output_path}"; then
+    :
+  else
+    open_failed=1
+  fi
+  exec 2>&${output_stderr_fd}
+  exec {output_stderr_fd}>&-
+  (( ! open_failed )) || return 1
+  if write_repair_candidate "${replacement_host}" >&${output_fd}; then
+    write_status=0
+  else
+    write_status=$?
+  fi
+  exec {output_fd}>&-
+  (( write_status == 0 )) || return "${write_status}"
+  return 0
 }
 
 run_repair_config() {
@@ -649,6 +774,8 @@ run_repair_config() {
     repair_failure "Unable to create a private configuration snapshot. No configuration or backup files were changed."
   fi
 
+  validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || repair_failure "The private configuration snapshot changed unexpectedly. No configuration or backup files were changed."
+  revalidate_config_directory || repair_failure "The configuration directory changed during repair. No configuration or backup files were changed."
   load_config "${repair_snapshot_tmp}"
   (( nas_server_assignment_count == 1 )) || config_error "The repair configuration must contain exactly one active NAS_SERVER assignment."
   apply_environment_overrides
@@ -710,6 +837,7 @@ run_repair_config() {
   if ! write_repair_candidate "${replacement_host}" 2>/dev/null | "${CMP_BIN}" -s -- "${repair_candidate_tmp}" - 2>/dev/null; then
     repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
   fi
+  revalidate_config_directory || repair_failure "The configuration directory changed during repair. No configuration or backup files were changed."
   if ! "${CHMOD_BIN}" "${config_mode}" "${repair_candidate_tmp}" 2>/dev/null; then
     repair_failure "Unable to preserve configuration permissions. No configuration or backup files were changed."
   fi
@@ -718,6 +846,8 @@ run_repair_config() {
     repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
   fi
   metadata_matches_snapshot "${expected_metadata}" || repair_failure "The configuration changed during repair; the update was aborted. No backup files were changed."
+  validated_repair_temp "${repair_candidate_tmp}" candidate "${config_mode}" || repair_failure "The private repair candidate changed unexpectedly. No configuration or backup files were changed."
+  revalidate_config_directory || repair_failure "The configuration directory changed during repair; the update was aborted. No backup files were changed."
   if ! "${MV_BIN}" -- "${repair_candidate_tmp}" "${config_path}" 2>/dev/null; then
     repair_failure "Unable to activate the repaired configuration. No configuration or backup files were changed."
   fi
