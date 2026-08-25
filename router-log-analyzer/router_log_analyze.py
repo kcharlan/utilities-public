@@ -202,6 +202,7 @@ class Event:
     boot_context_id: Optional[str] = None
     boot_session_id: Optional[str] = None
     occurrence_digest: Optional[str] = None
+    trusted_overlap_identity: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -293,6 +294,7 @@ class ParsedRouterLog:
     order_stats: Dict[str, Any] = field(default_factory=dict)
     clock_segments: List[ClockSegment] = field(default_factory=list)
     boot_candidates: List[BootSessionCandidate] = field(default_factory=list)
+    trusted_overlap_identities: Tuple[str, ...] = ()
     warnings: List[str] = field(default_factory=list)
 
 
@@ -2060,11 +2062,16 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                 hardware = " ".join(version_match.group("hardware").split())
                 firmware = " ".join(version_match.group("firmware").split())
             elif interface_match:
-                interfaces[interface_match.group("kind").lower()] = {
+                raw_interface_mac = interface_match.group("mac").strip()
+                interface_mac = self._normalize_exact_interface_mac(raw_interface_mac)
+                interface_fields: Dict[str, Optional[str]] = {
                     "ip": interface_match.group("ip").strip(),
                     "mask": interface_match.group("mask").strip(),
-                    "mac": normalize_mac(interface_match.group("mac")),
+                    "mac": interface_mac,
                 }
+                if interface_mac is None:
+                    interface_fields["raw_mac"] = raw_interface_mac
+                interfaces[interface_match.group("kind").lower()] = interface_fields
             elif continuation_match:
                 wan_gateway = continuation_match.group("gateway").strip()
                 wan_dns = continuation_match.group("dns").split()
@@ -2094,6 +2101,9 @@ class TpLinkArcherAdapter(RouterLogAdapter):
         identity_warnings: List[str] = []
         if lan_mac is None:
             identity_warnings.append("missing_or_invalid_lan_mac")
+        wan_mac = interfaces.get("wan", {}).get("mac")
+        if interfaces.get("wan") is not None and not is_identity_grade_mac(wan_mac):
+            identity_warnings.append("missing_or_invalid_wan_mac")
         snapshot_metrics = self._parse_snapshot_metrics(raw_total, raw_wifi)
         warnings = self._header_warnings(
             model,
@@ -2150,6 +2160,11 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             order_stats={"source_order": "newest_first", "emission_order_reconstructed": True},
             clock_segments=clock_segments,
             boot_candidates=boot_candidates,
+            trusted_overlap_identities=tuple(
+                event.trusted_overlap_identity
+                for event in events
+                if event.trusted_overlap_identity is not None
+            ),
             warnings=warnings,
         )
 
@@ -2160,7 +2175,7 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             for dhcp_action in ("discover", "offer", "request", "ack", "release"):
                 if re.search(rf"\b{dhcp_action}\b", lowered):
                     return f"WAN_DHCP_{dhcp_action.upper()}", "WAN_DHCP", dhcp_action
-        if re.search(r"\binternet\s+(?:is\s+)?connected\b", lowered):
+        if re.search(r"\binternet\s+(?:is\s+)?(?:connected|up)\b", lowered):
             return "INTERNET_CONNECTED", "WAN", "connected"
         if re.search(r"\binternet\s+(?:is\s+)?(?:disconnected|down)\b", lowered):
             return "INTERNET_DISCONNECTED", "WAN", "disconnected"
@@ -2169,44 +2184,81 @@ class TpLinkArcherAdapter(RouterLogAdapter):
         normalized_component = re.sub(r"[^a-z0-9]+", "_", component).strip("_").upper() or "COMPONENT"
         return f"{normalized_component}_{code}_{action.upper()}", "ROUTER_SYSTEM", action
 
+    @staticmethod
+    def _normalize_exact_interface_mac(value: str) -> Optional[str]:
+        if re.fullmatch(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", value) is None:
+            return None
+        return value.upper()
+
     def _privacy_reduce_message(self, message: str) -> Tuple[str, Dict[str, Any]]:
         evidence: Dict[str, Any] = {}
+        message_holder = [message]
+        exact_mac_pattern = re.compile(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
 
-        def collect(pattern: re.Pattern[str], key: str, placeholder: str, value: str) -> str:
+        def collect(
+            pattern: re.Pattern[str],
+            key: str,
+            placeholder: str,
+            normalize: Callable[[str], Optional[str]],
+        ) -> None:
             found: List[str] = []
 
             def replace_match(match: re.Match[str]) -> str:
-                token = match.group(0)
-                if value == "mac":
-                    normalized = normalize_mac(token)
-                    if normalized is None:
-                        return token
-                    token = normalized
-                if token not in found:
-                    found.append(token)
+                normalized = normalize(match.group(0))
+                if normalized is None:
+                    return match.group(0)
+                if normalized not in found:
+                    found.append(normalized)
                 return placeholder
 
-            reduced = pattern.sub(replace_match, message_holder[0])
-            message_holder[0] = reduced
+            message_holder[0] = pattern.sub(replace_match, message_holder[0])
             if found:
                 evidence[key] = found
-            return reduced
 
-        message_holder = [message]
-        collect(MAC_PATTERN, "mac_addresses", "<mac>", "mac")
-        collect(re.compile(r"(?<![\w:])(?:\d{1,3}\.){3}\d{1,3}(?![\w:])"), "ipv4_addresses", "<ipv4>", "ipv4")
-        collect(re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])"), "ipv6_addresses", "<ipv6>", "ipv6")
+        ipv6_like_pattern = re.compile(
+            r"(?<![0-9A-Za-z])(?:"
+            r"\[(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:\d{1,3}\.){3}\d{1,3}|[0-9A-Fa-f]{0,4})\]"
+            r"|(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:\d{1,3}\.){3}\d{1,3}|[0-9A-Fa-f]{0,4})"
+            r")(?![0-9A-Za-z])"
+        )
+
+        def normalize_ipv6_like(token: str) -> Optional[str]:
+            unwrapped = token[1:-1] if token.startswith("[") and token.endswith("]") else token
+            if exact_mac_pattern.fullmatch(unwrapped):
+                return None
+            return unwrapped
+
+        collect(ipv6_like_pattern, "ipv6_addresses", "<ipv6>", normalize_ipv6_like)
+        collect(
+            re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:])"),
+            "mac_addresses",
+            "<mac>",
+            lambda token: token.upper(),
+        )
+        collect(
+            re.compile(r"(?<![A-Za-z0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9.])"),
+            "ipv4_addresses",
+            "<ipv4>",
+            lambda token: token,
+        )
 
         actor_names: List[str] = []
 
         def replace_actor(match: re.Match[str]) -> str:
             name = match.group("name")
+            if len(name) >= 2 and name[0] == name[-1] and name[0] in {'"', "'"}:
+                name = name[1:-1]
             if name not in actor_names:
                 actor_names.append(name)
             return f"{match.group('label')} <actor>"
 
         message_holder[0] = re.sub(
-            r"(?i)\b(?P<label>actor|client|device|host(?:name)?|user)\s*(?:=|:)?\s+(?P<name>[A-Za-z0-9][A-Za-z0-9._-]{0,127})",
+            r"(?i)\b(?P<label>actor|client|device|host(?:name)?|user)\s*(?:=|:)?\s*"
+            r"(?P<name>"
+            r"\"[^\"\r\n]{1,128}\"|'[^'\r\n]{1,128}'|"
+            r"[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}|"
+            r"[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*){0,7}?"
+            r")(?=\s+(?:at|from|via|with|on|using)\b|[,;]|$)",
             replace_actor,
             message_holder[0],
         )
@@ -2401,12 +2453,29 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             epoch_number = epoch_by_index[index]
             if trust_by_index[index] != previous_trust or epoch_number != previous_epoch:
                 segment_number += 1
-            classified.append(replace(
+            classified_event = replace(
                 event,
                 clock_trust=trust_by_index[index],
                 clock_segment_id=f"tp-link-clock-{segment_number}",
                 boot_context_id=f"tp-link-boot-{epoch_number}" if epoch_number is not None else None,
-            ))
+            )
+            if classified_event.clock_trust == "trusted":
+                classified_event = replace(
+                    classified_event,
+                    trusted_overlap_identity=self._versioned_digest("trusted-overlap-v1", (
+                        "tp-link",
+                        lan_mac,
+                        classified_event.timestamp.isoformat(sep=" "),
+                        classified_event.component,
+                        classified_event.process_id,
+                        classified_event.vendor_event_code,
+                        classified_event.syslog_severity,
+                        classified_event.normalized_message,
+                        classified_event.actor_scope,
+                        classified_event.stable_client_identity,
+                    )),
+                )
+            classified.append(classified_event)
             previous_trust = trust_by_index[index]
             previous_epoch = epoch_number
 
@@ -2429,21 +2498,26 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             boot_events = classified[boot_index:end]
             trusted_events = [event for event in boot_events if event.clock_trust == "trusted"]
             overlap_ids = tuple(
-                self._versioned_digest("trusted-overlap-v1", (
-                    "tp-link", lan_mac, event.timestamp.isoformat(sep=" "), event.component,
-                    event.process_id, event.vendor_event_code, event.syslog_severity,
-                    event.normalized_message, event.actor_scope, event.stable_client_identity,
-                ))
+                event.trusted_overlap_identity
                 for event in trusted_events
+                if event.trusted_overlap_identity is not None
             )
             startup_fields: List[Optional[str]] = ["tp-link", lan_mac]
             for event in boot_events:
-                if event.event_key == "ROUTER_BOOT" or event.structured_evidence.get("action") in {"start", "initialize"}:
-                    startup_fields.extend((
-                        event.component,
-                        event.vendor_event_code,
-                        str(event.structured_evidence.get("action", "other")),
-                    ))
+                is_startup_marker = (
+                    event.event_key == "ROUTER_BOOT"
+                    or (
+                        event.component in {"system", "service", "init"}
+                        and event.structured_evidence.get("action") in {"start", "initialize"}
+                    )
+                )
+                if not is_startup_marker:
+                    break
+                startup_fields.extend((
+                    event.component,
+                    event.vendor_event_code,
+                    str(event.structured_evidence.get("action", "other")),
+                ))
             boot_candidates.append(BootSessionCandidate(
                 session_id=boot_context_id,
                 start_sequence=classified[boot_index].source_sequence,
@@ -5912,7 +5986,11 @@ def router_instance_override_key(canonical_vendor: str, value: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def emit_nonpersistent_report(args: argparse.Namespace, parsed: ParsedRouterLog) -> None:
+def emit_nonpersistent_report(
+    args: argparse.Namespace,
+    parsed: ParsedRouterLog,
+    reason: str = "no_stable_router_identity",
+) -> None:
     """Report parsed current evidence without opening state for an identity-less adapter."""
     if args.report or args.report_dir:
         raise SystemExit("Non-persistent reports do not support --report or --report-dir.")
@@ -5922,13 +6000,13 @@ def emit_nonpersistent_report(args: argparse.Namespace, parsed: ParsedRouterLog)
         "router_label": router_label,
         "parse_stats": asdict(parsed.parse_stats),
         "event_count": len(parsed.events),
-        "persistence": {"available": False, "reason": "no_stable_router_identity"},
+        "persistence": {"available": False, "reason": reason},
         "warnings": parsed.warnings,
     }
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
-        print(f"Parsed router log for {router_label} without persistent state: no_stable_router_identity")
+        print(f"Parsed router log for {router_label} without persistent state: {reason}")
 
 
 def is_in_windows(timestamp: datetime, windows: Sequence[Dict[str, Any]]) -> bool:
@@ -5967,6 +6045,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "Provide --router-instance or run the non-persistent report separately."
                 )
             emit_nonpersistent_report(args, parsed)
+            return 0
+        if parsed.format_id == FORMAT_TP_LINK_ARCHER:
+            if stateful_log_requested:
+                raise SystemExit(
+                    "TP-Link persistence is not implemented yet; stateful operations require the router-scoped "
+                    "schema and occurrence provenance added in later tasks."
+                )
+            emit_nonpersistent_report(args, parsed, "tp_link_persistence_not_implemented")
             return 0
 
     store = StateStore(db_path)
