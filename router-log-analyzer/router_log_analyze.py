@@ -22,6 +22,7 @@ import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -1656,6 +1657,31 @@ def _netgear_extract_ip(line: str) -> Optional[str]:
     return ip_match.group(0) if ip_match else None
 
 
+def parse_timestamp_from_line(line: str) -> Optional[datetime]:
+    """Compatibility wrapper for the legacy NETGEAR timestamp parser."""
+    return _netgear_parse_timestamp_from_line(line)
+
+
+def is_export_noise_line(line: str) -> bool:
+    """Compatibility wrapper for the legacy NETGEAR export-noise detector."""
+    return _netgear_is_export_noise_line(line)
+
+
+def normalize_event_key(raw_label: str) -> str:
+    """Compatibility wrapper for legacy NETGEAR event-key normalization."""
+    return _netgear_normalize_event_key(raw_label)
+
+
+def classify_event_family(event_key: str, line: str) -> str:
+    """Compatibility wrapper for legacy NETGEAR event-family classification."""
+    return _netgear_classify_event_family(event_key, line)
+
+
+def extract_ip(line: str) -> Optional[str]:
+    """Compatibility wrapper for the legacy NETGEAR IPv4 extractor."""
+    return _netgear_extract_ip(line)
+
+
 def _reconstruct_netgear_wrapped_log_lines(
     text: str,
     parse_timestamp: Callable[[str], Optional[datetime]] = _netgear_parse_timestamp_from_line,
@@ -1897,7 +1923,9 @@ def select_router_adapter(text: str, requested_format: str = AUTO_FORMAT) -> Rou
         if top_score < FORMAT_DETECTION_THRESHOLD:
             raise _adapter_selection_error("Could not confidently identify a supported router log format.", scored)
         contenders = [item for item in scored if item[1] >= FORMAT_DETECTION_THRESHOLD]
-        if len(contenders) > 1 and (contenders[0][1] - contenders[1][1]) < FORMAT_AMBIGUITY_MARGIN:
+        if len(contenders) > 1 and (
+            Decimal(str(contenders[0][1])) - Decimal(str(contenders[1][1]))
+        ) < Decimal(str(FORMAT_AMBIGUITY_MARGIN)):
             raise _adapter_selection_error("Router log format is ambiguous.", contenders)
         return top_adapter
     format_id = CLI_FORMAT_TO_ID.get(requested_format)

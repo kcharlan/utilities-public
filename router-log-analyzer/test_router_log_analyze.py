@@ -613,6 +613,21 @@ def test_parse_log_text_preserves_legacy_nonstructural_input_behavior(
     assert {name: getattr(stats, name) for name in expected} == expected
 
 
+def test_legacy_netgear_helper_names_remain_public_for_normal_malformed_and_noise_inputs() -> None:
+    valid_line = "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26"
+
+    assert analyzer.parse_timestamp_from_line(valid_line) == datetime(2037, 3, 21, 8, 7, 26)
+    assert analyzer.parse_timestamp_from_line("[malformed synthetic event]") is None
+    assert analyzer.is_export_noise_line("Sent: Saturday, March 21, 2037 08:07:26") is True
+    assert analyzer.is_export_noise_line(valid_line) is False
+    assert analyzer.normalize_event_key(" DHCP IP: (192.0.2.25) ") == "DHCP_IP"
+    assert analyzer.normalize_event_key("   ") == "OTHER"
+    assert analyzer.classify_event_family("WLAN_ACCESS_REJECTED", "synthetic") == "WLAN_REJECTED"
+    assert analyzer.classify_event_family("OTHER", "blocked synthetic event") == "WLAN_REJECTED"
+    assert analyzer.extract_ip(valid_line) == "192.0.2.25"
+    assert analyzer.extract_ip("[malformed synthetic event]") is None
+
+
 def test_auto_format_rejects_low_confidence_without_echoing_input() -> None:
     raw_input = "SYNTHETIC-UNRECOGNIZED-CONTENT-DO-NOT-ECHO"
 
@@ -652,6 +667,48 @@ def test_auto_format_rejects_ambiguous_high_confidence_adapters(monkeypatch: pyt
 
     assert "netgear=0.90" in str(exc_info.value)
     assert "tp-link-archer=0.82" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("netgear_score", "tp_link_score", "is_ambiguous"),
+    [
+        (0.9499, 0.80, True),
+        (0.95, 0.80, False),
+        (0.9501, 0.80, False),
+    ],
+    ids=("just-below-margin", "exact-margin", "just-above-margin"),
+)
+def test_auto_format_ambiguity_uses_the_decimal_margin_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    netgear_score: float,
+    tp_link_score: float,
+    is_ambiguous: bool,
+) -> None:
+    class SyntheticAdapter(analyzer.RouterLogAdapter):
+        def __init__(self, format_id: str, cli_format: str, confidence: float) -> None:
+            self.format_id = format_id
+            self.cli_format = cli_format
+            self.confidence = confidence
+
+        def detect(self, text: str) -> float:
+            return self.confidence
+
+        def parse(self, text: str, source: str) -> analyzer.ParsedRouterLog:
+            raise AssertionError("selection test should not parse")
+
+    netgear = SyntheticAdapter(analyzer.FORMAT_NETGEAR, "netgear", netgear_score)
+    tp_link = SyntheticAdapter(analyzer.FORMAT_TP_LINK_ARCHER, "tp-link-archer", tp_link_score)
+    monkeypatch.setattr(
+        analyzer,
+        "ROUTER_LOG_ADAPTERS",
+        {analyzer.FORMAT_NETGEAR: netgear, analyzer.FORMAT_TP_LINK_ARCHER: tp_link},
+    )
+
+    if is_ambiguous:
+        with pytest.raises(SystemExit, match="ambiguous"):
+            analyzer.select_router_adapter("synthetic content", "auto")
+    else:
+        assert analyzer.select_router_adapter("synthetic content", "auto") is netgear
 
 
 def test_explicit_format_bypasses_detection_ambiguity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -935,6 +992,94 @@ def test_valid_persistent_log_allows_combined_baseline_import_after_parse_valida
     store = analyzer.StateStore(db_path)
     try:
         assert store.get_active_epoch() is not None
+        assert store.get_run_by_hash(analyzer.sha256_bytes(log_path.read_bytes())) is not None
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "management_option",
+    ["--import-policy", "--export-policy", "--export-baseline", "--import-config"],
+)
+def test_valid_persistent_log_applies_combined_management_and_stores_analysis(
+    tmp_path: Path,
+    management_option: str,
+) -> None:
+    log_path = tmp_path / "synthetic-netgear.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    management_path = tmp_path / "synthetic-management.json"
+    config_path = tmp_path / "synthetic-router-security-config.md"
+    db_path = tmp_path / "network.db"
+    log_path.write_text(
+        "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26",
+        encoding="utf-8",
+    )
+    baseline_path.write_text(
+        json.dumps({"devices": {"02:00:00:00:00:08": {"name": "SYNTHETIC DEVICE"}}}),
+        encoding="utf-8",
+    )
+    management_path.write_text(
+        json.dumps({"schema_version": 1, "scoring": {"low": 3}}),
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        "\n".join(
+            [
+                "| Device Name | MAC Address | Status | IP Address | Connection Type |",
+                "|---|---|---|---|---|",
+                "| SYNTHETIC CONFIG DEVICE | 02:00:00:00:00:09 | Allowed | 192.0.2.26 | Wi-Fi |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    store = analyzer.StateStore(db_path)
+    try:
+        policy, _ = store.load_effective_policy()
+        store.import_baseline(
+            baseline_path,
+            analyzer.normalize_baseline_document(json.loads(baseline_path.read_text(encoding="utf-8"))),
+            float(policy["learning"]["seed_weight_frequent"]),
+        )
+    finally:
+        store.close()
+
+    option_path = {
+        "--import-policy": management_path,
+        "--export-policy": management_path,
+        "--export-baseline": management_path,
+        "--import-config": config_path,
+    }[management_option]
+    if management_option in {"--export-policy", "--export-baseline"}:
+        option_path.unlink()
+
+    assert analyzer.main([
+        str(log_path), "--format", "netgear", management_option, str(option_path), "--db", str(db_path),
+    ]) == 0
+
+    store = analyzer.StateStore(db_path)
+    try:
+        assert store.get_run_by_hash(analyzer.sha256_bytes(log_path.read_bytes())) is not None
+        if management_option == "--import-policy":
+            policy, policy_row = store.load_effective_policy()
+            assert policy_row is not None
+            assert policy["scoring"]["low"] == 3
+        elif management_option == "--export-policy":
+            assert json.loads(option_path.read_text(encoding="utf-8"))["scoring"]["low"] == 2
+        elif management_option == "--export-baseline":
+            assert json.loads(option_path.read_text(encoding="utf-8"))["devices"] == {
+                "02:00:00:00:00:08": {"name": "SYNTHETIC DEVICE"}
+            }
+        else:
+            config_device = store.conn.execute(
+                "SELECT name, status, source FROM devices WHERE mac = ?",
+                ("02:00:00:00:00:09",),
+            ).fetchone()
+            assert dict(config_device) == {
+                "name": "SYNTHETIC CONFIG DEVICE",
+                "status": "allowed",
+                "source": "config_import",
+            }
     finally:
         store.close()
 
