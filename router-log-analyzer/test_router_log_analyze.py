@@ -1870,22 +1870,26 @@ def legacy_netgear_report_projection(report: dict[str, object]) -> dict[str, obj
         "status": report["status"],
         "risk_breakdown": report["risk_breakdown"],
         "findings": {
-            group: ([
+            group: [
                 {
                     key: finding[key]
                     for key in (
-                        "kind", "severity", "mac", "event_count", "device_label", "metadata", "rendered_message"
+                        "kind", "severity", "message", "mac", "event_count", "metadata",
+                        "device_label", "rendered_message",
                     )
                 }
                 for finding in entries
-            ] if group != "all" else [
-                (finding["kind"], finding["severity"], finding["mac"], finding["event_count"])
-                for finding in entries
-            ])
+            ]
             for group, entries in findings.items()
         },
         "priority_findings": [
-            (finding["kind"], finding["severity"], finding["mac"], finding["event_count"])
+            {
+                key: finding[key]
+                for key in (
+                    "kind", "severity", "message", "mac", "event_count", "metadata",
+                    "device_label", "rendered_message",
+                )
+            }
             for finding in report["priority_findings"]
         ],
         "device_summary": report["device_summary"],
@@ -1903,6 +1907,128 @@ def html_section(rendered: str, heading: str) -> str:
     start = rendered.rfind("<section", 0, heading_index)
     section = rendered[start:rendered.index("</section>", heading_index) + len("</section>")]
     return re.sub(r">\s+<", "><", section)
+
+
+def text_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
+    summary, finding_index = rendered.split(" Finding Index ", 1)
+    summary_rows = {}
+    for line in summary.splitlines():
+        if " : " not in line:
+            continue
+        label, value = line.split(" : ", 1)
+        summary_rows[label.strip()] = value.strip().replace(str(db_path), "<temporary-db>")
+    index, grouped = finding_index.split(" Findings by Device/Group ", 1)
+    index_rows = [
+        tuple(re.split(r" {2,}", line.strip()))
+        for line in index.splitlines()
+        if line.strip() and not line.lstrip().startswith("Sev") and set(line.strip()) != {"-"}
+    ]
+    grouped = grouped.split(" Risk Breakdown ", 1)[0]
+    lines = grouped.splitlines()
+    groups = []
+    index = 0
+    while index < len(lines):
+        if not lines[index].strip() or lines[index].startswith(" ") or set(lines[index].strip()) == {"-"}:
+            index += 1
+            continue
+        label = lines[index].strip()
+        identifier = lines[index + 1].strip()
+        index += 3
+        entries = []
+        while index < len(lines) and (not lines[index].strip() or lines[index].startswith("  ")):
+            if not lines[index].strip():
+                index += 1
+                continue
+            match = re.fullmatch(r"  ([A-Z]+) \| (.+)", lines[index])
+            if match is None:
+                break
+            severity, kind = match.groups()
+            index += 1
+            details = []
+            while index < len(lines) and lines[index].startswith("    "):
+                detail = lines[index].strip()
+                if ": " in detail:
+                    detail_label, detail_value = detail.split(": ", 1)
+                    details.append((detail_label.strip(), detail_value))
+                index += 1
+            entries.append((severity, kind, tuple(details)))
+        groups.append((label, identifier, tuple(entries)))
+    return {"summary": summary_rows, "finding_index": index_rows, "findings": groups}
+
+
+def markdown_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
+    summary = markdown_section(rendered, "# Network Analysis Report", "## Finding Index")
+    summary_rows = {}
+    for line in summary.splitlines():
+        match = re.fullmatch(r"- (.+): (.+)", line)
+        if match:
+            label, value = match.groups()
+            summary_rows[label] = value.replace(f"`{db_path}`", "<temporary-db>")
+    index = markdown_section(rendered, "## Finding Index", "## Findings by Device/Group")
+    index_rows = [
+        tuple(cell.strip() for cell in line.strip("|").split("|"))
+        for line in index.splitlines()
+        if line.startswith("|") and not line.startswith("| ---")
+    ][1:]
+    grouped = markdown_section(rendered, "## Findings by Device/Group", "## Risk Breakdown")
+    lines = grouped.splitlines()[2:]
+    groups = []
+    index = 0
+    while index < len(lines):
+        if not lines[index]:
+            index += 1
+            continue
+        assert lines[index].startswith("### ")
+        label = lines[index][4:]
+        identifier = lines[index + 2].strip("`")
+        index += 4
+        entries = []
+        while index < len(lines) and not lines[index].startswith("### "):
+            if not lines[index]:
+                index += 1
+                continue
+            assert lines[index].startswith("#### ")
+            severity, kind = lines[index][5:].split(" | `", 1)
+            index += 2
+            details = []
+            while index < len(lines) and lines[index].startswith("- **"):
+                label_value = lines[index][4:]
+                detail_label, detail_value = label_value.split(":** ", 1)
+                details.append((detail_label, detail_value))
+                index += 1
+            entries.append((severity, kind.rstrip("`"), tuple(details)))
+        groups.append((label, identifier, tuple(entries)))
+    return {"summary": summary_rows, "finding_index": index_rows, "findings": groups}
+
+
+def html_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
+    summary_rows = dict(re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", rendered))
+    summary_rows["Database"] = summary_rows["Database"].replace(
+        f"<code>{db_path}</code>", "<temporary-db>"
+    )
+    input_summary = html_section(rendered, "Input Summary")
+    summary_rows.update(dict(re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", input_summary)))
+    index = html_section(rendered, "Finding Index")
+    index_rows = [
+        tuple(re.findall(r"<td>(.*?)</td>", row))
+        for row in re.findall(r"<tr>(.*?)</tr>", index)
+    ][1:]
+    grouped = html_section(rendered, "Findings by Device/Group")
+    groups = []
+    subject_pattern = re.compile(
+        r'<article class="subject"><h3>(.*?)</h3><p><code>(.*?)</code></p>(.*?)</article>(?=<article class="subject">|</section>)'
+    )
+    for label, identifier, body in subject_pattern.findall(grouped):
+        entries = []
+        for severity, kind, detail_html in re.findall(
+            r'<article class="finding"><h4>([A-Z]+) \| (.*?)</h4><ul>(.*?)</ul></article>', body
+        ):
+            details = tuple(
+                re.findall(r"<li><strong>(.*?):</strong> (.*?)</li>", detail_html)
+            )
+            entries.append((severity, kind, details))
+        groups.append((label, identifier, tuple(entries)))
+    return {"summary": summary_rows, "finding_index": index_rows, "findings": groups}
 
 
 def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
@@ -1954,7 +2080,7 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
         "findings", "priority_findings", "device_summary",
     } <= set(report)
     assert {"critical", "anomalies", "observations", "all"} <= set(report["findings"])
-    assert legacy_netgear_report_projection(report) == {
+    expected_legacy_projection = {
         "inputs": {"logfile": str(log_path), "baseline": None, "config": None, "db": str(db_path)},
         "state": {"epoch_id": "<database-generated-id>", "policy_profile_id": None, "deduplicated": False, "reprocessed_run_id": None},
         "parse_stats": analyzer.asdict(stats),
@@ -1974,37 +2100,22 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
         "risk_breakdown": {"unknown_device": 100, "blocked_device_activity": 50, "new_event_type": 10, "rare_event_activity": 10, "event_behavior_anomaly": 20, "network_reset": 2},
         "findings": {
             "critical": [
-                {"kind": "unknown_device", "severity": "critical", "mac": "02:00:00:00:10:30", "event_count": 1, "device_label": "02:00:00:00:10:30 (02:00:00:00:10:30)", "metadata": {}, "rendered_message": "Unknown device 02:00:00:00:10:30 (02:00:00:00:10:30) generated 1 event(s)."},
-                {"kind": "unknown_device", "severity": "critical", "mac": "02:00:00:00:10:31", "event_count": 1, "device_label": "SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31)", "metadata": {}, "rendered_message": "Unknown device SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31) generated 1 event(s)."},
-                {"kind": "blocked_device_activity", "severity": "critical", "mac": "02:00:00:00:10:31", "event_count": 1, "device_label": "SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31)", "metadata": {}, "rendered_message": "Blocked device SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31) generated 1 event(s)."},
+                {"kind": "unknown_device", "severity": "critical", "message": "Observed unknown device 02:00:00:00:10:30 with 1 event(s).", "mac": "02:00:00:00:10:30", "event_count": 1, "device_label": "02:00:00:00:10:30 (02:00:00:00:10:30)", "metadata": {}, "rendered_message": "Unknown device 02:00:00:00:10:30 (02:00:00:00:10:30) generated 1 event(s)."},
+                {"kind": "unknown_device", "severity": "critical", "message": "Observed unknown device 02:00:00:00:10:31 with 1 event(s).", "mac": "02:00:00:00:10:31", "event_count": 1, "device_label": "SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31)", "metadata": {}, "rendered_message": "Unknown device SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31) generated 1 event(s)."},
+                {"kind": "blocked_device_activity", "severity": "critical", "message": "Blocked device 02:00:00:00:10:31 generated 1 event(s).", "mac": "02:00:00:00:10:31", "event_count": 1, "device_label": "SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31)", "metadata": {}, "rendered_message": "Blocked device SYNTHETIC BLOCKED DEVICE (02:00:00:00:10:31) generated 1 event(s)."},
             ],
             "anomalies": [
-                {"kind": "new_event_type", "severity": "medium", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-15", "event_key": "ADMIN_LOGIN", "event_family": "OTHER", "history_count": 9, "observed_timestamps": ["2037-07-15T18:01:00"]}, "rendered_message": "Admin Login was first observed for Router/System (__SYSTEM__) on 2037-07-15."},
-                {"kind": "rare_event_activity", "severity": "medium", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-13", "event_key": "EMAIL_SENT", "event_family": "OTHER", "history_count": 1, "observed_device_days": 9, "learned_presence_rate": 0.11, "observed_timestamps": ["2037-07-13T08:01:00"]}, "rendered_message": "Email Sent remains rare for Router/System (__SYSTEM__) and was observed on 2037-07-13."},
-                {"kind": "event_behavior_anomaly", "severity": "medium", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-14", "event_key": "LOG_CLEARED", "event_family": "OTHER", "reasons": ["weekday drift"], "history_count": 4, "dominant_weekdays": [0], "current_weekday": 1, "learned_presence_rate": 0.44, "learned_mean": 1.0, "typical_hour": 8.0, "current_hour": 8.0, "current_streak": 1, "observed_timestamps": ["2037-07-14T08:00:00"]}, "rendered_message": "Log Cleared behavior for Router/System (__SYSTEM__) on 2037-07-14 changed: weekday drift."},
-                {"kind": "event_behavior_anomaly", "severity": "medium", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-15", "event_key": "LOG_CLEARED", "event_family": "OTHER", "reasons": ["weekday drift", "time shift 10 hours"], "history_count": 4, "dominant_weekdays": [0], "current_weekday": 2, "learned_presence_rate": 0.44, "learned_mean": 1.0, "typical_hour": 8.0, "current_hour": 18.0, "current_streak": 1, "observed_timestamps": ["2037-07-15T18:00:00"]}, "rendered_message": "Log Cleared behavior for Router/System (__SYSTEM__) on 2037-07-15 changed: weekday drift, time shift 10 hours."},
+                {"kind": "new_event_type", "severity": "medium", "message": "First observed ADMIN_LOGIN event for __SYSTEM__ on 2037-07-15.", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-15", "event_key": "ADMIN_LOGIN", "event_family": "OTHER", "history_count": 9, "observed_timestamps": ["2037-07-15T18:01:00"]}, "rendered_message": "Admin Login was first observed for Router/System (__SYSTEM__) on 2037-07-15."},
+                {"kind": "rare_event_activity", "severity": "medium", "message": "Rare EMAIL_SENT activity observed for __SYSTEM__ on 2037-07-13.", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-13", "event_key": "EMAIL_SENT", "event_family": "OTHER", "history_count": 1, "observed_device_days": 9, "learned_presence_rate": 0.11, "observed_timestamps": ["2037-07-13T08:01:00"]}, "rendered_message": "Email Sent remains rare for Router/System (__SYSTEM__) and was observed on 2037-07-13."},
+                {"kind": "event_behavior_anomaly", "severity": "medium", "message": "LOG_CLEARED behavior changed for __SYSTEM__ on 2037-07-14.", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-14", "event_key": "LOG_CLEARED", "event_family": "OTHER", "reasons": ["weekday drift"], "history_count": 4, "dominant_weekdays": [0], "current_weekday": 1, "learned_presence_rate": 0.44, "learned_mean": 1.0, "typical_hour": 8.0, "current_hour": 8.0, "current_streak": 1, "observed_timestamps": ["2037-07-14T08:00:00"]}, "rendered_message": "Log Cleared behavior for Router/System (__SYSTEM__) on 2037-07-14 changed: weekday drift."},
+                {"kind": "event_behavior_anomaly", "severity": "medium", "message": "LOG_CLEARED behavior changed for __SYSTEM__ on 2037-07-15.", "mac": analyzer.SYSTEM_ACTOR, "event_count": 1, "device_label": "Router/System (__SYSTEM__)", "metadata": {"day": "2037-07-15", "event_key": "LOG_CLEARED", "event_family": "OTHER", "reasons": ["weekday drift", "time shift 10 hours"], "history_count": 4, "dominant_weekdays": [0], "current_weekday": 2, "learned_presence_rate": 0.44, "learned_mean": 1.0, "typical_hour": 8.0, "current_hour": 18.0, "current_streak": 1, "observed_timestamps": ["2037-07-15T18:00:00"]}, "rendered_message": "Log Cleared behavior for Router/System (__SYSTEM__) on 2037-07-15 changed: weekday drift, time shift 10 hours."},
             ],
             "observations": [
-                {"kind": "network_reset", "severity": "low", "mac": None, "event_count": 8, "device_label": None, "metadata": {"incident_id": "network-reset-20370714T041702-1", "incident_type": "internet_connection_reset", "confidence": "confirmed", "day": "2037-07-14", "start": "2037-07-14T04:17:02", "restored_at": "2037-07-14T04:19:08", "recovery_end": "2037-07-14T04:24:08", "disconnect_count": 1, "connect_count": 1, "affected_macs": [f"02:00:00:00:10:{suffix:02X}" for suffix in range(1, 6)], "event_counts": {"DHCP_IP": 1, "INTERNET_CONNECTED": 1, "INTERNET_DISCONNECTED": 1, "WLAN_ACCESS_ALLOWED": 5}, "explained_event_count": 8, "active_known_devices": 5, "affected_device_fraction": 1.0}, "rendered_message": "Confirmed internet connection reset from 2037-07-14T04:17:02 through 2037-07-14T04:19:08 affected 5 known device(s) and explained 8 recovery event(s)."},
+                {"kind": "network_reset", "severity": "low", "message": "Confirmed internet connection reset affected 5 known device(s).", "mac": None, "event_count": 8, "device_label": None, "metadata": {"incident_id": "network-reset-20370714T041702-1", "incident_type": "internet_connection_reset", "confidence": "confirmed", "day": "2037-07-14", "start": "2037-07-14T04:17:02", "restored_at": "2037-07-14T04:19:08", "recovery_end": "2037-07-14T04:24:08", "disconnect_count": 1, "connect_count": 1, "affected_macs": [f"02:00:00:00:10:{suffix:02X}" for suffix in range(1, 6)], "event_counts": {"DHCP_IP": 1, "INTERNET_CONNECTED": 1, "INTERNET_DISCONNECTED": 1, "WLAN_ACCESS_ALLOWED": 5}, "explained_event_count": 8, "active_known_devices": 5, "affected_device_fraction": 1.0}, "rendered_message": "Confirmed internet connection reset from 2037-07-14T04:17:02 through 2037-07-14T04:19:08 affected 5 known device(s) and explained 8 recovery event(s)."},
             ],
-            "all": [
-                ("unknown_device", "critical", "02:00:00:00:10:30", 1),
-                ("unknown_device", "critical", "02:00:00:00:10:31", 1),
-                ("blocked_device_activity", "critical", "02:00:00:00:10:31", 1),
-                ("new_event_type", "medium", analyzer.SYSTEM_ACTOR, 1),
-                ("rare_event_activity", "medium", analyzer.SYSTEM_ACTOR, 1),
-                ("event_behavior_anomaly", "medium", analyzer.SYSTEM_ACTOR, 1),
-                ("event_behavior_anomaly", "medium", analyzer.SYSTEM_ACTOR, 1),
-                ("network_reset", "low", None, 8),
-            ],
+            "all": [],
         },
-        "priority_findings": [
-            ("unknown_device", "critical", "02:00:00:00:10:30", 1),
-            ("unknown_device", "critical", "02:00:00:00:10:31", 1),
-            ("blocked_device_activity", "critical", "02:00:00:00:10:31", 1),
-            ("new_event_type", "medium", analyzer.SYSTEM_ACTOR, 1),
-            ("rare_event_activity", "medium", analyzer.SYSTEM_ACTOR, 1),
-        ],
+        "priority_findings": [],
         "device_summary": [
             {"mac": "02:00:00:00:10:30", "name": "02:00:00:00:10:30", "dhcp_count": 0, "total_events": 1, "incident_explained_events": 0, "event_types": ["ADMIN_LOGIN"]},
             {"mac": analyzer.SYSTEM_ACTOR, "name": "Router/System", "dhcp_count": 0, "total_events": 6, "incident_explained_events": 2, "event_types": ["ADMIN_LOGIN", "EMAIL_SENT", "INTERNET_CONNECTED", "INTERNET_DISCONNECTED", "LOG_CLEARED"]},
@@ -2013,6 +2124,16 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
             *[{"mac": f"02:00:00:00:10:{suffix:02X}", "name": f"SYNTHETIC RECOVERY DEVICE {suffix}", "dhcp_count": 0, "total_events": 1, "incident_explained_events": 1, "event_types": ["WLAN_ACCESS_ALLOWED"]} for suffix in range(2, 6)],
         ],
     }
+    expected_findings = expected_legacy_projection["findings"]
+    expected_findings["all"] = (
+        expected_findings["critical"]
+        + expected_findings["anomalies"]
+        + expected_findings["observations"]
+    )
+    expected_legacy_projection["priority_findings"] = (
+        expected_findings["critical"] + expected_findings["anomalies"][:2]
+    )
+    assert legacy_netgear_report_projection(report) == expected_legacy_projection
 
     text_report = analyzer.render_text_report(report)
     text_risk_start = text_report.index(" Risk Breakdown ")
@@ -2081,6 +2202,70 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
         "</tbody></table></section>"
     )
 
+    expected_index = [
+        ("CRITICAL", "02:00:00:00:10:30", "Unknown device activity", "n/a"),
+        ("CRITICAL", "SYNTHETIC BLOCKED DEVICE", "Unknown device activity", "n/a"),
+        ("CRITICAL", "SYNTHETIC BLOCKED DEVICE", "Blocked device activity", "n/a"),
+        ("MEDIUM", "Router/System", "First observed Admin Login", "2037-07-15"),
+        ("MEDIUM", "Router/System", "Rare Email Sent", "2037-07-13"),
+        ("MEDIUM", "Router/System", "Log Cleared behavior changed", "2037-07-14"),
+        ("MEDIUM", "Router/System", "Log Cleared behavior changed", "2037-07-15"),
+        ("LOW", "Network recovery", "Confirmed internet connection reset", "2037-07-14"),
+    ]
+    expected_groups = [
+        ("02:00:00:00:10:30", "02:00:00:00:10:30", (
+            ("CRITICAL", "unknown_device", (("Issue", "Unknown device activity"), ("Events", "1 event(s)"))),
+        )),
+        ("SYNTHETIC BLOCKED DEVICE", "02:00:00:00:10:31", (
+            ("CRITICAL", "unknown_device", (("Issue", "Unknown device activity"), ("Events", "1 event(s)"))),
+            ("CRITICAL", "blocked_device_activity", (("Issue", "Blocked device activity"), ("Events", "1 event(s)"))),
+        )),
+        ("Router/System", analyzer.SYSTEM_ACTOR, (
+            ("MEDIUM", "new_event_type", (("Issue", "First observed Admin Login"), ("Date", "2037-07-15"), ("Seen", "6:01:00 PM"), ("Basis", "no prior occurrences in 9 learned day(s)"))),
+            ("MEDIUM", "rare_event_activity", (("Issue", "Rare Email Sent"), ("Date", "2037-07-13"), ("Seen", "8:01:00 AM"), ("Basis", "1 prior occurrence day(s) across 9 learned day(s), 11% presence"))),
+            ("MEDIUM", "event_behavior_anomaly", (("Issue", "Log Cleared behavior changed"), ("Date", "2037-07-14"), ("Change", "weekday drift"), ("Seen", "8:00:00 AM"), ("Weekday", "Tuesday"), ("Pattern", "Monday from 4 prior day(s)"))),
+            ("MEDIUM", "event_behavior_anomaly", (("Issue", "Log Cleared behavior changed"), ("Date", "2037-07-15"), ("Change", "weekday drift, time shift 10 hours"), ("Seen", "6:00:00 PM"), ("Basis", "typical time around 8:00 AM from 4 prior day(s)"), ("Weekday", "Wednesday"), ("Pattern", "Monday from 4 prior day(s)"))),
+        )),
+        ("Network recovery", "network-reset-20370714T041702-1", (
+            ("LOW", "network_reset", (("Issue", "Confirmed internet connection reset"), ("Date", "2037-07-14"), ("Confidence", "Confirmed"), ("Window", "2037-07-14T04:17:02 to 2037-07-14T04:24:08"), ("Affected", "5 known device(s)"), ("Explained", "8 event(s)"), ("Evidence", "DHCP IP 1, Internet Connected 1, Internet Disconnected 1, WLAN Access Allowed 5"))),
+        )),
+    ]
+    text_contract = text_renderer_contract(text_report, db_path)
+    markdown_contract = markdown_renderer_contract(markdown_report, db_path)
+    html_contract = html_renderer_contract(html_report, db_path)
+    assert text_contract == {
+        "summary": {
+            "Risk Score": "100 / 100", "Status": "Suspicious", "Database": "<temporary-db>",
+            "Run Persistence": "Stored", "Parsed Events": "16", "Incident-Explained": "8",
+            "Events Analyzed": "8", "Malformed Lines": "1", "Duplicate Events": "1",
+            "Spam-Filtered DHCP": "1", "Export Noise": "1",
+            "Observation Range": "2037-07-13T08:00:00 to 2037-07-15T18:02:00",
+        },
+        "finding_index": expected_index,
+        "findings": expected_groups,
+    }
+    assert markdown_contract == {
+        "summary": {
+            "Risk Score": "**100 / 100**", "Status": "**Suspicious**", "Database": "<temporary-db>",
+            "Run Persistence": "Stored", "Parsed Events": "16", "Incident-Explained Events": "8",
+            "Events Analyzed": "8", "Malformed Lines": "1", "Duplicate Events Removed": "1",
+            "Spam-Filtered DHCP Entries": "1", "Export Noise Lines Ignored": "1",
+            "Observation Range": "2037-07-13T08:00:00 to 2037-07-15T18:02:00",
+        },
+        "finding_index": expected_index,
+        "findings": expected_groups,
+    }
+    assert html_contract == {
+        "summary": {
+            "Risk Score": "100 / 100", "Status": "Suspicious", "Database": "<temporary-db>",
+            "Run Persistence": "Stored", "Observation Range": "2037-07-13T08:00:00 to 2037-07-15T18:02:00",
+            "Parsed Events": "16", "Incident-Explained Events": "8", "Events Analyzed": "8",
+            "Malformed Lines": "1", "Duplicate Events Removed": "1", "Spam-Filtered DHCP": "1", "Export Noise": "1",
+        },
+        "finding_index": expected_index,
+        "findings": expected_groups,
+    }
+
 
 def test_netgear_unknown_and_blocked_defaults_are_critical_before_policy_overrides() -> None:
     unknown_mac = "02:00:00:00:10:30"
@@ -2121,10 +2306,18 @@ def test_byte_identical_netgear_log_rebuilds_report_without_duplicate_learning_r
     first_report = json.loads(capsys.readouterr().out)
     store = analyzer.StateStore(db_path)
     try:
-        before_counts = {
-            table: store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("runs", "device_daily_stats", "device_event_daily_stats", "subject_behavior_daily_stats", "network_incidents")
-        }
+        epoch = store.get_active_epoch()
+        assert epoch is not None
+        insert_history_day(
+            store,
+            int(epoch["id"]),
+            "synthetic-current-history",
+            "2037-07-12",
+            analyzer.SYSTEM_ACTOR,
+            "EMAIL_SENT",
+            "OTHER",
+            ["2037-07-12T08:03:00"],
+        )
         policy_id = store.import_policy(
             tmp_path / "synthetic-current-policy.json",
             {
@@ -2135,6 +2328,10 @@ def test_byte_identical_netgear_log_rebuilds_report_without_duplicate_learning_r
                 },
             },
         )
+        before_counts = {
+            table: store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("runs", "device_daily_stats", "device_event_daily_stats", "subject_behavior_daily_stats", "network_incidents")
+        }
     finally:
         store.close()
 
@@ -2145,6 +2342,20 @@ def test_byte_identical_netgear_log_rebuilds_report_without_duplicate_learning_r
     assert second_report["state"]["policy_profile_id"] == policy_id
     assert all(finding["kind"] != "unknown_device" for finding in second_report["findings"]["all"])
     assert any(finding["kind"] == "blocked_device_activity" for finding in second_report["findings"]["all"])
+    rare_email = next(
+        finding
+        for finding in second_report["findings"]["all"]
+        if finding["kind"] == "rare_event_activity" and finding["metadata"]["event_key"] == "EMAIL_SENT"
+    )
+    assert rare_email["metadata"] == {
+        "day": "2037-07-13",
+        "event_key": "EMAIL_SENT",
+        "event_family": "OTHER",
+        "history_count": 2,
+        "observed_device_days": 10,
+        "learned_presence_rate": 0.2,
+        "observed_timestamps": ["2037-07-13T08:01:00"],
+    }
     store = analyzer.StateStore(db_path)
     try:
         after_counts = {
