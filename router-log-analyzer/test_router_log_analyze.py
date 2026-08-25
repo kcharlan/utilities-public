@@ -747,6 +747,66 @@ def test_reopening_valid_schema_v4_is_a_noop(tmp_path: Path) -> None:
         second.close()
 
 
+def test_v4_validation_runs_sqlite_integrity_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "network.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    statements: list[str] = []
+    original_open = analyzer.StateStore._open_connection
+
+    def traced_open(database: str) -> sqlite3.Connection:
+        connection = original_open(database)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(
+        analyzer.StateStore,
+        "_open_connection",
+        staticmethod(traced_open),
+    )
+
+    reopened = analyzer.StateStore(db_path)
+    reopened.close()
+
+    assert any(statement.casefold() == "pragma integrity_check" for statement in statements)
+
+
+def test_v4_reverse_relationship_indexes_are_present_and_selected(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    queries = {
+        "idx_run_event_occurrences_occurrence": (
+            "SELECT * FROM run_event_occurrences WHERE occurrence_id = ?",
+            1,
+        ),
+        "idx_run_router_boot_sessions_boot_session": (
+            "SELECT * FROM run_router_boot_sessions WHERE boot_session_id = ?",
+            1,
+        ),
+        "idx_router_event_occurrences_boot_session": (
+            "SELECT * FROM router_event_occurrences WHERE boot_session_id = ?",
+            1,
+        ),
+    }
+    try:
+        for index_name, (sql, parameter) in queries.items():
+            assert store.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (index_name,),
+            ).fetchone() is not None
+            plan = " ".join(
+                row[3]
+                for row in store.conn.execute(f"EXPLAIN QUERY PLAN {sql}", (parameter,))
+            )
+            assert index_name in plan
+    finally:
+        store.close()
+
+
 def test_valid_populated_v3_migrates_atomically_and_preserves_legacy_rows(
     tmp_path: Path,
 ) -> None:
@@ -1505,6 +1565,95 @@ def test_v3_migration_validation_failure_rolls_back_to_usable_v3(
         connection.close()
 
 
+def test_schema_creation_keyboard_interrupt_closes_connection_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "interrupted-create.db"
+    opened_connections: list[sqlite3.Connection] = []
+    original_open = analyzer.StateStore._open_connection
+    original_validate = analyzer.StateStore._validate_schema
+
+    def capture_open(database: str) -> sqlite3.Connection:
+        connection = original_open(database)
+        opened_connections.append(connection)
+        return connection
+
+    def interrupt_validation(_store: analyzer.StateStore, _version: int) -> None:
+        raise KeyboardInterrupt("synthetic schema creation interruption")
+
+    monkeypatch.setattr(
+        analyzer.StateStore,
+        "_open_connection",
+        staticmethod(capture_open),
+    )
+    monkeypatch.setattr(analyzer.StateStore, "_validate_schema", interrupt_validation)
+
+    with pytest.raises(KeyboardInterrupt, match="synthetic schema creation interruption"):
+        analyzer.StateStore(db_path)
+
+    assert opened_connections
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        opened_connections[-1].execute("SELECT 1")
+
+    monkeypatch.setattr(analyzer.StateStore, "_validate_schema", original_validate)
+    recovered = analyzer.StateStore(db_path)
+    try:
+        assert recovered.get_metadata("schema_version") == "4"
+    finally:
+        recovered.close()
+
+
+def test_schema_migration_keyboard_interrupt_closes_connection_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "interrupted-migration.db"
+    build_v3_database(db_path)
+    opened_connections: list[sqlite3.Connection] = []
+    original_open = analyzer.StateStore._open_connection
+    original_hook = analyzer.StateStore._validate_migrated_v4_before_version_update
+
+    def capture_open(database: str) -> sqlite3.Connection:
+        connection = original_open(database)
+        opened_connections.append(connection)
+        return connection
+
+    def interrupt_migration(_store: analyzer.StateStore) -> None:
+        raise KeyboardInterrupt("synthetic schema migration interruption")
+
+    monkeypatch.setattr(
+        analyzer.StateStore,
+        "_open_connection",
+        staticmethod(capture_open),
+    )
+    monkeypatch.setattr(
+        analyzer.StateStore,
+        "_validate_migrated_v4_before_version_update",
+        interrupt_migration,
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="synthetic schema migration interruption"):
+        analyzer.StateStore(db_path)
+
+    assert opened_connections
+    for connection in opened_connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connection.execute("SELECT 1")
+
+    monkeypatch.setattr(
+        analyzer.StateStore,
+        "_validate_migrated_v4_before_version_update",
+        original_hook,
+    )
+    recovered = analyzer.StateStore(db_path)
+    try:
+        assert recovered.get_metadata("schema_version") == "4"
+        assert recovered.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        recovered.close()
+
+
 def test_v3_migration_backfills_registration_and_observation_provenance(
     tmp_path: Path,
 ) -> None:
@@ -1851,6 +2000,44 @@ def test_v3_migration_handles_attribute_free_daily_device_nullable_extrema(
         store.close()
 
 
+def test_v3_migration_materializes_seed_registration_missing_from_device_cache(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "missing-seed-cache.db"
+    build_v3_database(db_path)
+    mac = "02:00:00:00:00:31"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        INSERT INTO baseline_seed_devices(
+          id, epoch_id, mac, name, dhcp_min, dhcp_max, dhcp_seed_weight,
+          total_events_min, total_events_max, total_events_seed_weight,
+          active_hours_json, expected_windows_json, expected_events_json,
+          pattern, soft_max
+        ) VALUES(
+          31, 11, ?, 'SYNTHETIC SEED WITHOUT CACHE', 0, 1, 4,
+          0, 2, 4, '[]', '[]', '{}', NULL, NULL
+        )
+        """,
+        (mac,),
+    )
+    connection.commit()
+    connection.close()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        snapshot = store.load_devices_snapshot()
+        assert snapshot[mac]["name"] == "SYNTHETIC SEED WITHOUT CACHE"
+        assert snapshot[mac]["status"] == "allowed"
+        assert store.conn.execute(
+            "SELECT source FROM devices WHERE mac = ?",
+            (mac,),
+        ).fetchone()[0] == "legacy_baseline_registration"
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        store.close()
+
+
 def test_migrated_system_daily_rows_remain_auditable_but_not_device_history(
     tmp_path: Path,
 ) -> None:
@@ -2086,7 +2273,11 @@ def test_registration_resolution_is_fieldwise_idempotent_and_epoch_scoped(
     }
     baseline = {"devices": {mac: {"name": "SYNTHETIC BASELINE NAME"}}}
     try:
-        assert store.import_config(config_v1_path, config_v1) == 1
+        assert store.import_config(
+            config_v1_path,
+            config_v1,
+            source_digest=analyzer.sha256_bytes(config_v1_path.read_bytes()),
+        ) == 1
         first_registration = store.conn.execute(
             "SELECT * FROM device_registrations WHERE mac = ?", (mac,)
         ).fetchone()
@@ -2095,7 +2286,11 @@ def test_registration_resolution_is_fieldwise_idempotent_and_epoch_scoped(
             config_v1_path.read_bytes()
         )
 
-        assert store.import_config(config_v1_path, config_v1) == 1
+        assert store.import_config(
+            config_v1_path,
+            config_v1,
+            source_digest=analyzer.sha256_bytes(config_v1_path.read_bytes()),
+        ) == 1
         assert store.conn.execute(
             "SELECT COUNT(*) FROM device_registrations WHERE mac = ?", (mac,)
         ).fetchone()[0] == 1
@@ -2105,7 +2300,11 @@ def test_registration_resolution_is_fieldwise_idempotent_and_epoch_scoped(
         assert confirmed["id"] == first_registration["id"]
         assert confirmed["registration_sequence"] == first_registration["registration_sequence"]
 
-        store.import_config(config_v2_path, config_v2)
+        store.import_config(
+            config_v2_path,
+            config_v2,
+            source_digest=analyzer.sha256_bytes(config_v2_path.read_bytes()),
+        )
         snapshot = store.load_devices_snapshot()[mac]
         assert snapshot["name"] == "SYNTHETIC UPDATED NAME"
         assert snapshot["status"] == "blocked"
@@ -2134,6 +2333,54 @@ def test_registration_resolution_is_fieldwise_idempotent_and_epoch_scoped(
         ]
         assert len({row["source_key"] for row in baseline_registrations}) == 2
         assert store.load_devices_snapshot()[mac]["status"] == "allowed"
+    finally:
+        store.close()
+
+
+def test_config_snapshot_parses_and_digests_the_same_single_byte_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "synthetic-router-security-config.md"
+    first_payload = b"""\
+| Device Name | MAC Address | Status | Connection Type |
+| --- | --- | --- | --- |
+| SYNTHETIC SNAPSHOT A | 02:00:00:00:00:41 | Allowed | WiFi |
+"""
+    later_payload = b"""\
+| Device Name | MAC Address | Status | Connection Type |
+| --- | --- | --- | --- |
+| SYNTHETIC SNAPSHOT B | 02:00:00:00:00:41 | Blocked | Wired |
+"""
+    config_path.write_bytes(first_payload)
+    original_read_bytes = Path.read_bytes
+    reads = 0
+
+    def changing_read_bytes(path: Path) -> bytes:
+        nonlocal reads
+        if path == config_path:
+            reads += 1
+            return first_payload if reads == 1 else later_payload
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", changing_read_bytes)
+
+    router_config, source_digest = analyzer.load_router_security_config_snapshot(config_path)
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        assert store.import_config(
+            config_path,
+            router_config,
+            source_digest=source_digest,
+        ) == 1
+        registration = store.conn.execute(
+            "SELECT * FROM device_registrations WHERE mac = '02:00:00:00:00:41'"
+        ).fetchone()
+        assert registration["source_key"] == analyzer.sha256_bytes(first_payload)
+        assert registration["registered_name"] == "SYNTHETIC SNAPSHOT A"
+        assert registration["registered_status"] == "allowed"
+        assert registration["registered_connection_type"] == "WiFi"
+        assert reads == 1
     finally:
         store.close()
 

@@ -1084,6 +1084,15 @@ V4_INDEX_COLUMNS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
     "idx_router_event_occurrences_history": (
         "router_event_occurrences", ("router_instance_id", "canonical_event_key", "local_timestamp"),
     ),
+    "idx_run_event_occurrences_occurrence": (
+        "run_event_occurrences", ("occurrence_id",),
+    ),
+    "idx_run_router_boot_sessions_boot_session": (
+        "run_router_boot_sessions", ("boot_session_id",),
+    ),
+    "idx_router_event_occurrences_boot_session": (
+        "router_event_occurrences", ("boot_session_id",),
+    ),
 }
 
 V3_REQUIRED_FOREIGN_KEYS: Dict[str, Set[Tuple[str, str, str]]] = {
@@ -1434,10 +1443,12 @@ class StateStore:
                 self._raise_schema_error(
                     "the database artifacts changed during read-only preflight; retry when idle"
                 )
+        # The runtime directory is owned by one trusted local user and analyzer process;
+        # preflight rejects unsafe artifact types but does not defend against path replacement.
         self.conn = self._open_connection(":memory:" if is_memory else str(self.db_path))
         try:
             self.ensure_schema()
-        except Exception:
+        except BaseException:
             self.conn.close()
             raise
 
@@ -1595,6 +1606,9 @@ class StateStore:
         raise RuntimeError(self._schema_recovery_message(detail))
 
     def _validate_schema(self, version: int) -> None:
+        integrity_results = [row[0] for row in self.conn.execute("PRAGMA integrity_check")]
+        if integrity_results != ["ok"]:
+            self._raise_schema_error("SQLite integrity_check reported corruption")
         columns_by_table = V4_REQUIRED_COLUMNS if version == SCHEMA_VERSION else V3_REQUIRED_COLUMNS
         indexes = V4_INDEX_COLUMNS if version == SCHEMA_VERSION else REQUIRED_INDEX_COLUMNS
         foreign_keys = (
@@ -1965,6 +1979,9 @@ class StateStore:
                 for table, columns in V3_REQUIRED_COLUMNS.items()
                 if "id" in columns
             },
+            "device_macs": tuple(
+                row[0] for row in self.conn.execute("SELECT mac FROM devices ORDER BY mac")
+            ),
         }
         self._migration_legacy_snapshot = legacy_snapshot
         if self.conn.in_transaction:
@@ -1994,7 +2011,7 @@ class StateStore:
                 raise RuntimeError("The schema version changed during migration")
             self.conn.commit()
             migration_committed = True
-        except Exception:
+        except BaseException:
             if self.conn.in_transaction:
                 self.conn.rollback()
             raise
@@ -2212,6 +2229,8 @@ class StateStore:
               FOREIGN KEY(run_id) REFERENCES runs(id),
               FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
             );
+            CREATE INDEX idx_run_router_boot_sessions_boot_session
+              ON run_router_boot_sessions(boot_session_id);
             CREATE TABLE router_event_occurrences (
               id INTEGER PRIMARY KEY,
               router_instance_id INTEGER NOT NULL,
@@ -2238,6 +2257,8 @@ class StateStore:
               ON router_event_occurrences(
                 router_instance_id, canonical_event_key, local_timestamp
               );
+            CREATE INDEX idx_router_event_occurrences_boot_session
+              ON router_event_occurrences(boot_session_id);
             CREATE TABLE run_event_occurrences (
               run_id INTEGER NOT NULL,
               occurrence_id INTEGER NOT NULL,
@@ -2252,6 +2273,8 @@ class StateStore:
               FOREIGN KEY(run_id) REFERENCES runs(id),
               FOREIGN KEY(occurrence_id) REFERENCES router_event_occurrences(id)
             );
+            CREATE INDEX idx_run_event_occurrences_occurrence
+              ON run_event_occurrences(occurrence_id);
             """
         )
 
@@ -2492,10 +2515,23 @@ class StateStore:
     def _refresh_migrated_caches(self, legacy_router_id: int) -> None:
         real_macs = [
             row[0]
-            for row in self.conn.execute("SELECT mac FROM devices ORDER BY mac")
+            for row in self.conn.execute(
+                """
+                SELECT mac FROM devices
+                UNION
+                SELECT mac FROM device_registrations
+                UNION
+                SELECT mac FROM device_observations
+                ORDER BY mac
+                """
+            )
             if is_real_mac(row[0])
         ]
         for mac in real_macs:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO devices(mac) VALUES(?)",
+                (mac,),
+            )
             registrations = list(self.conn.execute(
                 """
                 SELECT * FROM device_registrations
@@ -2599,6 +2635,8 @@ class StateStore:
         self._validate_schema(SCHEMA_VERSION)
         snapshot = self._migration_legacy_snapshot
         for table, expected_count in snapshot["counts"].items():
+            if table == "devices":
+                continue
             actual_count = self.conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
             if actual_count != expected_count:
                 raise RuntimeError(f"Migration changed the row count for {table}")
@@ -2608,6 +2646,18 @@ class StateStore:
             )
             if actual_ids != expected_ids:
                 raise RuntimeError(f"Migration changed primary-key IDs for {table}")
+        expected_device_macs = set(snapshot["device_macs"])
+        expected_device_macs.update(
+            row[0] for row in self.conn.execute("SELECT mac FROM device_registrations")
+        )
+        expected_device_macs.update(
+            row[0] for row in self.conn.execute("SELECT mac FROM device_observations")
+        )
+        actual_device_macs = {
+            row[0] for row in self.conn.execute("SELECT mac FROM devices")
+        }
+        if actual_device_macs != expected_device_macs:
+            raise RuntimeError("Migration did not materialize the exact device provenance cache")
         run_count = snapshot["counts"]["runs"]
         if self.conn.execute(
             "SELECT COUNT(*) FROM runs WHERE router_instance_id IS NULL OR format_id IS NULL "
@@ -3046,6 +3096,8 @@ class StateStore:
               FOREIGN KEY(run_id) REFERENCES runs(id),
               FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
             );
+            CREATE INDEX IF NOT EXISTS idx_run_router_boot_sessions_boot_session
+              ON run_router_boot_sessions(boot_session_id);
 
             CREATE TABLE IF NOT EXISTS router_event_occurrences (
               id INTEGER PRIMARY KEY,
@@ -3071,6 +3123,8 @@ class StateStore:
             );
             CREATE INDEX IF NOT EXISTS idx_router_event_occurrences_history
               ON router_event_occurrences(router_instance_id, canonical_event_key, local_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_router_event_occurrences_boot_session
+              ON router_event_occurrences(boot_session_id);
 
             CREATE TABLE IF NOT EXISTS run_event_occurrences (
               run_id INTEGER NOT NULL,
@@ -3086,6 +3140,8 @@ class StateStore:
               FOREIGN KEY(run_id) REFERENCES runs(id),
               FOREIGN KEY(occurrence_id) REFERENCES router_event_occurrences(id)
             );
+            CREATE INDEX IF NOT EXISTS idx_run_event_occurrences_occurrence
+              ON run_event_occurrences(occurrence_id);
 
             """
             )
@@ -3095,7 +3151,7 @@ class StateStore:
                 (str(SCHEMA_VERSION),),
             )
             self.conn.commit()
-        except Exception:
+        except BaseException:
             if self.conn.in_transaction:
                 self.conn.rollback()
             raise
@@ -3278,9 +3334,14 @@ class StateStore:
             }
         return {"devices": devices}
 
-    def import_config(self, source_path: Path, router_config: Dict[str, Any]) -> int:
+    def import_config(
+        self,
+        source_path: Path,
+        router_config: Dict[str, Any],
+        *,
+        source_digest: str,
+    ) -> int:
         count = 0
-        source_digest = sha256_bytes(source_path.read_bytes())
         for device in router_config["devices"].values():
             status = "blocked" if device.mac in router_config["blocked_macs"] else "allowed"
             self.register_device(
@@ -4012,21 +4073,34 @@ def parse_markdown_table_row(line: str) -> Optional[List[str]]:
     return cells
 
 
-def load_router_security_config(path: Optional[Path]) -> Dict[str, Any]:
+def empty_router_security_config() -> Dict[str, Any]:
+    return {
+        "devices": {},
+        "allowed_macs": set(),
+        "blocked_macs": set(),
+    }
+
+
+def load_router_security_config_snapshot(
+    path: Optional[Path],
+) -> Tuple[Dict[str, Any], Optional[str]]:
     if path is None:
-        return {
-            "devices": {},
-            "allowed_macs": set(),
-            "blocked_macs": set(),
-        }
+        return empty_router_security_config(), None
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        payload = path.read_bytes()
     except FileNotFoundError:
-        return {
-            "devices": {},
-            "allowed_macs": set(),
-            "blocked_macs": set(),
-        }
+        return empty_router_security_config(), None
+    config = parse_router_security_config_text(payload.decode("utf-8"))
+    return config, sha256_bytes(payload)
+
+
+def load_router_security_config(path: Optional[Path]) -> Dict[str, Any]:
+    config, _source_digest = load_router_security_config_snapshot(path)
+    return config
+
+
+def parse_router_security_config_text(text: str) -> Dict[str, Any]:
+    lines = text.splitlines()
 
     current_section = "allowed_connected"
     header_map: Dict[str, int] = {}
@@ -8761,8 +8835,15 @@ def handle_management_commands(args: argparse.Namespace, store: StateStore) -> b
         handled = True
 
     if args.import_config:
-        router_config = load_router_security_config(Path(args.import_config).expanduser())
-        imported = store.import_config(Path(args.import_config).expanduser(), router_config)
+        config_path = Path(args.import_config).expanduser()
+        router_config, source_digest = load_router_security_config_snapshot(config_path)
+        if source_digest is None:
+            raise SystemExit(f"Router security config not found: {config_path}")
+        imported = store.import_config(
+            config_path,
+            router_config,
+            source_digest=source_digest,
+        )
         print(f"Imported {imported} config device rows from {args.import_config}")
         handled = True
 
@@ -8895,8 +8976,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         config_path = infer_config_path(args)
         if config_path and config_path.exists():
-            router_config = load_router_security_config(config_path)
-            store.import_config(config_path, router_config)
+            router_config, source_digest = load_router_security_config_snapshot(config_path)
+            if source_digest is None:
+                raise SystemExit(f"Router security config not found: {config_path}")
+            store.import_config(
+                config_path,
+                router_config,
+                source_digest=source_digest,
+            )
 
         epoch = store.get_active_epoch()
         policy, policy_row = store.load_effective_policy()
