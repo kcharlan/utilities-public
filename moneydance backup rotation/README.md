@@ -12,7 +12,10 @@ The tracked [`config.example`](config.example) contains conspicuously synthetic
 values and defaults to dry-run mode. Missing or invalid required settings stop
 the script before it inspects mounts or files. Operational logs report counts
 and outcomes without printing the configured host, share, directory, or backup
-file names.
+file names. Detailed host, share, directory, and private-config values are
+shown only on an interactive terminal; non-terminal stdout and stderr, the
+configured log file, syslog, and captured child-command diagnostics remain
+redacted.
 
 ## Overview
 
@@ -20,12 +23,14 @@ file names.
 already-mounted SMB NAS share on macOS. Retention is expressed in distinct
 local calendar days derived from file modification times, not file counts, so
 every eligible export from a retained day is preserved. The mount point is
-resolved from the macOS mount table.
+resolved from the macOS mount table. Cleanup is allowed only when every exact
+share listed in `REQUIRED_NAS_SHARES` is mounted from the configured host.
 
 ## Requirements
 
 - macOS with Zsh and the standard BSD command-line tools used by the script.
-- The configured SMB share must already be mounted.
+- Every configured required SMB share must already be mounted from the same
+  host. The script does not scan the network or mount shares.
 - Read and search access to the backup directory; deletion also requires write
   access when dry-run mode is disabled.
 
@@ -40,8 +45,10 @@ resolved from the macOS mount table.
    chmod 600 "$config_root/moneydance-backup-rotation/config"
    ```
 
-2. Edit the private copy. Set `BACKUP_FILENAME_SUFFIX` to the exact extension
-   used by your backup exports. Do not edit `config.example` with real values.
+2. Edit the private copy. Set the NAS host, primary share, required-share list,
+   backup directory name, and exact backup filename suffix. Include the primary
+   `NAS_SHARE_NAME` exactly once in `REQUIRED_NAS_SHARES`. Do not edit
+   `config.example` with real values.
 
 3. Review behavior without deletion:
 
@@ -75,7 +82,8 @@ variables.
 | Key | Purpose |
 | --- | --- |
 | `NAS_SERVER` | Required NAS host name or IP address. No default is provided. |
-| `NAS_SHARE_NAME` | Required mounted share name. No default is provided. |
+| `NAS_SHARE_NAME` | Required primary mounted share containing `BACKUP_DIRECTORY_NAME`. No default is provided. |
+| `REQUIRED_NAS_SHARES` | Required comma-delimited list of exact SMB share names. Surrounding whitespace is ignored; empty or duplicate entries are invalid, and `NAS_SHARE_NAME` must appear exactly once. Every listed share must be mounted from the same host. |
 | `BACKUP_DIRECTORY_NAME` | Required child directory containing backups. It must be one directory name, not a path. |
 | `BACKUP_FILENAME_SUFFIX` | Required exact filename extension eligible for retention and deletion. It must begin with `.`. No operational default is provided. |
 | `MAX_DAYS_TO_KEEP` | Positive number of newest distinct calendar days to retain (default `4`). |
@@ -84,7 +92,8 @@ variables.
 | `USE_SYSLOG` | `1` mirrors redacted status messages to macOS syslog (default `0`). |
 
 The required location settings can instead be passed explicitly as
-`MONEYDANCE_NAS_SERVER`, `MONEYDANCE_NAS_SHARE_NAME`, and
+`MONEYDANCE_NAS_SERVER`, `MONEYDANCE_NAS_SHARE_NAME`,
+`MONEYDANCE_REQUIRED_NAS_SHARES`, and
 `MONEYDANCE_BACKUP_DIRECTORY_NAME`; the required suffix uses
 `MONEYDANCE_BACKUP_FILENAME_SUFFIX`. Optional settings use the same prefix, for
 example `MONEYDANCE_MAX_DAYS_TO_KEEP` and `MONEYDANCE_DRY_RUN`. Environment
@@ -94,20 +103,72 @@ variables with nonempty values override values loaded from the config file;
 ## Command-line options
 
 ```text
---config PATH  Use a specific private config file.
---dry-run      Inspect retention candidates without deleting files.
--h, --help     Print usage and exit without inspecting mounts or files.
+--config PATH    Use a specific private config file.
+--dry-run        Inspect retention candidates without deleting files.
+--repair-config  Interactively replace NAS_SERVER with one validated host.
+-h, --help       Print usage and exit without inspecting mounts or files.
 ```
 
 Unknown options and a missing `--config` argument fail before any mount lookup.
+`--repair-config` cannot be combined with `--dry-run`.
+
+## Mount mismatch diagnostics and config repair
+
+Normal execution is diagnostic-only when the configured host does not satisfy
+the full mount contract. The script considers only hosts already present in the
+SMB mount table. A replacement candidate must provide every exact required
+share from one host, have exactly one mount for each required host/share pair,
+and expose the configured backup directory beneath the exact primary
+`NAS_SHARE_NAME`. Similar, partial, differently cased, split-host, duplicate,
+inaccessible, or symlinked matches do not qualify.
+
+When exactly one candidate qualifies, normal mode skips cleanup and emits a
+redacted instruction to run the script manually with `--repair-config`.
+Interactive normal execution may also show the configured host, candidate,
+validated shares, and backup directory directly on the terminal. No candidate
+or multiple candidates also fail closed: cleanup is skipped and no host is
+selected. Normal mode and `--dry-run` never rewrite the config.
+
+Run repair mode explicitly with the private config you intend to change:
+
+```bash
+./moneydance_rotate_backups.sh --config /synthetic/private/config --repair-config
+```
+
+Repair mode requires both stdin and stdout to be attached to a terminal. It
+also requires a readable, writable, regular, non-symlink config owned by the
+invoking user, exactly one active `NAS_SERVER` assignment, and no set
+`MONEYDANCE_NAS_SERVER` environment override. It independently rebuilds the
+mount inventory and proceeds only when there is exactly one fully validated
+replacement candidate.
+
+The terminal displays the private config path, current and proposed hosts,
+required shares, and validated backup directory, then asks once for explicit
+confirmation. Only `y` or `yes`, case-insensitively, approves the change. On
+approval, the script atomically replaces only the active `NAS_SERVER` value
+while preserving the rest of the config and its permissions. Cancellation
+leaves the config unchanged.
+
+Repair mode never enumerates retention candidates or deletes backups. Whether
+no repair is needed, the user cancels, or an update succeeds, it exits without
+cleanup. After a successful update, run the script again normally (preferably
+first with `--dry-run`) to validate the repaired configuration and review
+retention behavior.
+
+Usage, config, and repair-precondition errors exit `2`. Repair discovery,
+locking, snapshot, validation, or activation failures exit `1`. A valid config
+that needs no repair, an explicit cancellation, and a successful update exit
+`0`; a normal-mode mount mismatch also exits `0` after safely skipping cleanup.
 
 ## Retention behavior
 
 1. Validate every setting before querying the mount table.
-2. Locate the exact configured SMB host/share in the macOS mount table, whether
-   macOS displays it as `//host/share` or `//username@host/share`.
-3. Verify that the configured child backup directory exists, is accessible,
-   and is not a symbolic link.
+2. Require every exact name in `REQUIRED_NAS_SHARES` to be mounted from the
+   configured host, whether macOS displays a source as `//host/share` or
+   `//username@host/share`. Duplicate exact host/share mounts are ambiguous and
+   fail closed.
+3. Resolve the primary `NAS_SHARE_NAME` mount and verify that its configured
+   child backup directory exists, is accessible, and is not a symbolic link.
 4. Scan regular files without crossing a nested filesystem. Only files whose
    names end in the exact configured `BACKUP_FILENAME_SUFFIX` are eligible;
    every other file is ignored and can never be deleted by this utility.
@@ -142,5 +203,12 @@ it never queries a real share or depends on the repository location:
 ## Notes
 
 - Running frequently is safe because retention is based on distinct days.
+- Address-change discovery is limited to already-mounted SMB shares. The script
+  never scans for NAS devices, resolves them through an external discovery
+  service, mounts shares, or changes credentials.
+- Deploy a compatible reviewed script before adding `REQUIRED_NAS_SHARES` to a
+  private runtime config. Keep operational host, share, directory, username,
+  filename, and path values out of this public repository; never copy a private
+  config into Git.
 - On recent macOS versions, the invoking shell may need Full Disk Access for the
   private backup directory.
