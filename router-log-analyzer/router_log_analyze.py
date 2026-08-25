@@ -3707,6 +3707,61 @@ class StateStore:
                 durable[durable_key] = len(values)
         return durable
 
+    @staticmethod
+    def _resolved_trusted_overlap_identity(
+        router_instance_key: str,
+        event: Event,
+    ) -> Optional[str]:
+        if event.clock_trust != "trusted":
+            return None
+        return TpLinkArcherAdapter._versioned_digest(
+            "trusted-overlap-v1",
+            (
+                router_instance_key,
+                event.timestamp.isoformat(sep=" "),
+                event.component,
+                event.process_id,
+                event.vendor_event_code,
+                event.syslog_severity,
+                event.normalized_message,
+                event.actor_scope,
+                event.stable_client_identity,
+            ),
+        )
+
+    def _scope_trusted_overlap_to_resolved_router(
+        self,
+        parsed: ParsedRouterLog,
+        router_instance_key: str,
+    ) -> None:
+        parsed.events = [
+            replace(
+                event,
+                trusted_overlap_identity=self._resolved_trusted_overlap_identity(
+                    router_instance_key,
+                    event,
+                ),
+            )
+            for event in parsed.events
+        ]
+        parsed.boot_candidates = [
+            replace(
+                candidate,
+                trusted_overlap_identities=tuple(
+                    event.trusted_overlap_identity
+                    for event in parsed.events
+                    if event.boot_context_id == candidate.session_id
+                    and event.trusted_overlap_identity is not None
+                ),
+            )
+            for candidate in parsed.boot_candidates
+        ]
+        parsed.trusted_overlap_identities = tuple(
+            event.trusted_overlap_identity
+            for event in parsed.events
+            if event.trusted_overlap_identity is not None
+        )
+
     def _find_boot_session_by_overlap(
         self,
         router_instance_id: int,
@@ -3816,6 +3871,48 @@ class StateStore:
         ).fetchone()
         if router_row is None:
             raise RuntimeError("Router instance disappeared before provenance persistence")
+        self._scope_trusted_overlap_to_resolved_router(parsed, router_row["instance_key"])
+        current_clients = {
+            event.stable_client_identity
+            for event in parsed.events
+            if event.actor_scope == "device"
+            and is_identity_grade_mac(event.stable_client_identity)
+            and event.stable_client_identity not in parsed.identity.router_owned_interfaces
+        }
+        historical_other_interfaces: Set[str] = set()
+        for row in self.conn.execute(
+            """
+            SELECT router_owned_interfaces_json
+            FROM router_metadata_observations
+            WHERE router_instance_id != ?
+            """,
+            (router_instance_id,),
+        ):
+            historical_other_interfaces.update(json.loads(row[0]))
+        historical_other_clients = {
+            row[0]
+            for row in self.conn.execute(
+                """
+                SELECT DISTINCT observation.mac
+                FROM device_observations AS observation
+                JOIN runs AS run ON run.id = observation.run_id
+                WHERE run.router_instance_id != ?
+                """,
+                (router_instance_id,),
+            )
+        }
+        if (
+            current_clients.intersection(historical_other_interfaces)
+            or parsed.identity.router_owned_interfaces.intersection(historical_other_clients)
+        ):
+            warning = "router_interface_client_conflict"
+            if warning not in parsed.identity.warnings:
+                parsed.identity = replace(
+                    parsed.identity,
+                    warnings=(*parsed.identity.warnings, warning),
+                )
+            if warning not in parsed.warnings:
+                parsed.warnings.append(warning)
         prior_model = self.conn.execute(
             """
             SELECT model FROM router_metadata_observations
@@ -9492,6 +9589,33 @@ def default_router_label(parsed: ParsedRouterLog, instance_key: str) -> str:
     return f"{vendor} {model} {instance_key[:8]}"
 
 
+def collapse_snapshot_events_for_report(events: Sequence[Event]) -> List[Event]:
+    """Apply the occurrence tuple's within-run collapse without touching persistence."""
+    collapsed: List[Event] = []
+    seen: Set[Tuple[Any, ...]] = set()
+    for event in events:
+        key = (
+            event.timestamp,
+            event.boot_context_id,
+            event.component,
+            event.process_id,
+            event.vendor_event_code,
+            event.syslog_severity,
+            event.normalized_message,
+            event.actor_scope,
+            event.stable_client_identity,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        collapsed.append(replace(
+            event,
+            occurrence_novel=False,
+            occurrence_repeated=True,
+        ))
+    return collapsed
+
+
 def emit_nonpersistent_report(
     args: argparse.Namespace,
     parsed: ParsedRouterLog,
@@ -9640,10 +9764,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             events = parsed.events
         elif parsed.capabilities.snapshot_buffer_semantic_dedup and existing_run is not None:
-            events = [
-                replace(event, occurrence_novel=False, occurrence_repeated=True)
-                for event in events
-            ]
+            events = collapse_snapshot_events_for_report(events)
         aggregate = aggregate_events(events, seed_baseline, devices_snapshot)
         incidents = detect_network_incidents(events, seed_baseline, devices_snapshot, policy)
         if parsed.capabilities.snapshot_buffer_semantic_dedup:

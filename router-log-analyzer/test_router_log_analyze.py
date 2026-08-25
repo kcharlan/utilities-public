@@ -5689,6 +5689,170 @@ def test_repeated_tp_link_security_occurrence_does_not_rescore_changed_header(
         store.close()
 
 
+def test_identical_tp_link_reopen_keeps_first_run_semantic_tuple_collapse(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_path = tmp_path / "synthetic-identical-reopen.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    db_path = tmp_path / "network.db"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    log_path.write_text(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 firewall[778]: <4> 9001 rule rejected",
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+        ]),
+        encoding="utf-8",
+    )
+    first_args = [
+        str(log_path), str(baseline_path), "--format", "tp-link-archer", "--json",
+        "--db", str(db_path),
+    ]
+    repeat_args = [
+        str(log_path), "--format", "tp-link-archer", "--json", "--db", str(db_path),
+    ]
+
+    assert analyzer.main(first_args) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert analyzer.main(repeat_args) == 0
+    repeated = json.loads(capsys.readouterr().out)
+
+    first_system = next(item for item in first["device_summary"] if item["mac"] == analyzer.SYSTEM_ACTOR)
+    repeated_system = next(
+        item for item in repeated["device_summary"] if item["mac"] == analyzer.SYSTEM_ACTOR
+    )
+    assert first_system["total_events"] == 2
+    assert repeated_system["total_events"] == 2
+
+
+def test_cross_router_interface_client_conflict_warns_without_suppressing_client(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        owner = analyzer.parse_router_log(
+            tp_link_synthetic_snapshot([
+                "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+            ]),
+            "synthetic-owner.log",
+            "tp-link-archer",
+        )
+        owner_id = store.resolve_router_instance(owner, "synthetic-owner")
+        owner_run = store.insert_run(
+            epoch_id, None, "synthetic-owner-hash", tmp_path / "synthetic-owner.log",
+            owner.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=owner_id, format_id=owner.format_id,
+            export_timestamp=owner.export_timestamp.isoformat(), capabilities=owner.capabilities,
+        )
+        store.persist_router_provenance(owner_run, owner_id, owner)
+        store.commit()
+
+        client_identity = "02:00:00:00:00:02"
+        observer_text = tp_link_synthetic_snapshot([
+            "2042-06-16 11:59:58 clientmon[420]: <5> 7001 client observed",
+        ], export_time="2042-06-16 12:00:00").replace(
+            "MAC = 02:00:00:00:00:01",
+            "MAC = 02:00:00:00:00:11",
+            1,
+        ).replace(
+            "MAC = 02:00:00:00:00:02",
+            "MAC = 02:00:00:00:00:12",
+            1,
+        )
+        observer = analyzer.parse_router_log(
+            observer_text,
+            "synthetic-observer.log",
+            "tp-link-archer",
+        )
+        observer.events = [replace(
+            observer.events[0],
+            mac=client_identity,
+            actor_scope="device",
+            stable_client_identity=client_identity,
+        )]
+        observer_id = store.resolve_router_instance(observer, "synthetic-observer")
+        observer_run = store.insert_run(
+            epoch_id, None, "synthetic-observer-hash", tmp_path / "synthetic-observer.log",
+            observer.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=observer_id, format_id=observer.format_id,
+            export_timestamp=observer.export_timestamp.isoformat(), capabilities=observer.capabilities,
+        )
+        store.persist_router_provenance(observer_run, observer_id, observer)
+
+        assert "router_interface_client_conflict" in observer.identity.warnings
+        stored_identity_warnings = json.loads(store.conn.execute(
+            "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+            (observer_run,),
+        ).fetchone()[0])["identity_warnings"]
+        assert stored_identity_warnings == ["router_interface_client_conflict"]
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_observations WHERE run_id = ? AND mac = ?",
+            (observer_run, client_identity),
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_trusted_overlap_identity_is_resolved_router_instance_scoped(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        resolved_overlap_ids = []
+        router_keys = []
+        resolved_events = []
+        for index, override in enumerate(("synthetic-one", "synthetic-two"), start=1):
+            parsed = analyzer.parse_router_log(
+                tp_link_synthetic_snapshot([
+                    "2042-06-15 11:50:00 system[101]: <5> 1000 System startup",
+                ]),
+                f"synthetic-overlap-{index}.log",
+                "tp-link-archer",
+            )
+            router_id = store.resolve_router_instance(parsed, override)
+            router_key = store.conn.execute(
+                "SELECT instance_key FROM router_instances WHERE id = ?", (router_id,)
+            ).fetchone()[0]
+            run_id = store.insert_run(
+                epoch_id, None, f"synthetic-overlap-hash-{index}",
+                tmp_path / f"synthetic-overlap-{index}.log", parsed.parse_stats,
+                None, None, [], 0, "Clean", False,
+                router_instance_id=router_id, format_id=parsed.format_id,
+                export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+            )
+            store.persist_router_provenance(run_id, router_id, parsed)
+            router_keys.append(router_key)
+            resolved_overlap_ids.append(parsed.events[0].trusted_overlap_identity)
+            resolved_events.append(parsed.events[0])
+            store.commit()
+
+        assert resolved_overlap_ids[0] != resolved_overlap_ids[1]
+        for router_key, overlap_id, event in zip(
+            router_keys,
+            resolved_overlap_ids,
+            resolved_events,
+        ):
+            assert overlap_id == analyzer.TpLinkArcherAdapter._versioned_digest(
+                "trusted-overlap-v1",
+                (
+                    router_key,
+                    event.timestamp.isoformat(sep=" "),
+                    event.component,
+                    event.process_id,
+                    event.vendor_event_code,
+                    event.syslog_severity,
+                    event.normalized_message,
+                    event.actor_scope,
+                    event.stable_client_identity,
+                ),
+            )
+    finally:
+        store.close()
+
+
 def test_parse_log_text_normalizes_internet_transition_events() -> None:
     events, stats = analyzer.parse_log_text(
         "\n".join(
