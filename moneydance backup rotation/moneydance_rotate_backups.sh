@@ -27,6 +27,9 @@ typeset -A mount_points_by_key=()
 typeset -A mount_counts_by_key=()
 typeset -a mount_hosts=()
 typeset -A seen_mount_hosts=()
+typeset -a replacement_hosts=()
+typeset -A replacement_backup_dirs=()
+typeset -A replacement_resolved_backup_dirs=()
 validated_backup_dir=""
 resolved_validated_backup_dir=""
 
@@ -93,6 +96,11 @@ log_message() {
   if [[ "${USE_SYSLOG}" -eq 1 && -x "${LOGGER_BIN}" ]]; then
     "${LOGGER_BIN}" -t "${SCRIPT_NAME}" "${message}"
   fi
+}
+
+terminal_detail() {
+  [[ -t 1 ]] || return 0
+  printf '%s\n' "$*"
 }
 
 exit_with_error() {
@@ -272,6 +280,23 @@ validate_backup_directory_for_host() {
   return 0
 }
 
+discover_replacement_candidates() {
+  local host
+
+  replacement_hosts=()
+  replacement_backup_dirs=()
+  replacement_resolved_backup_dirs=()
+  for host in "${mount_hosts[@]}"; do
+    [[ "${host}" != "${NAS_SERVER}" ]] || continue
+    host_has_required_shares "${host}" || continue
+    validate_backup_directory_for_host "${host}" || continue
+
+    replacement_hosts+=("${host}")
+    replacement_backup_dirs[${host}]="${validated_backup_dir}"
+    replacement_resolved_backup_dirs[${host}]="${resolved_validated_backup_dir}"
+  done
+}
+
 config_path="${DEFAULT_CONFIG_PATH}"
 config_explicit=0
 cli_dry_run=0
@@ -337,7 +362,25 @@ parse_mount_inventory "${mount_output}"
 unset mount_output
 
 if ! host_has_required_shares "${NAS_SERVER}" || ! validate_backup_directory_for_host "${NAS_SERVER}"; then
-  log_message "WARN" "The configured share is not mounted; skipping cleanup."
+  discover_replacement_candidates
+  if (( ${#replacement_hosts[@]} == 1 )); then
+    replacement_host="${replacement_hosts[1]}"
+    log_message "WARN" "The configured NAS does not provide all required mounts. Cleanup was skipped. Run interactively with --repair-config to inspect a validated replacement candidate."
+    terminal_detail "Configured NAS: ${NAS_SERVER}"
+    terminal_detail "Validated replacement candidate: ${replacement_host}"
+    terminal_detail "Required shares: ${(j:, :)required_nas_shares}"
+    terminal_detail "Validated backup directory: ${replacement_backup_dirs[${replacement_host}]}"
+    terminal_detail "No configuration or backup files were changed."
+    terminal_detail "Re-run with --repair-config to review and approve updating NAS_SERVER."
+  elif (( ${#replacement_hosts[@]} == 0 )); then
+    log_message "WARN" "The configured NAS does not provide all required mounts, and no validated replacement candidate was found. Cleanup was skipped."
+  else
+    log_message "WARN" "The configured NAS does not provide all required mounts, and multiple validated replacement candidates were found. Cleanup was skipped; no repair recommendation was made."
+    terminal_detail "Configured NAS: ${NAS_SERVER}"
+    terminal_detail "Validated candidates: ${(j:, :)replacement_hosts}"
+    terminal_detail "No unique replacement candidate was selected."
+    terminal_detail "No configuration or backup files were changed."
+  fi
   exit 0
 fi
 

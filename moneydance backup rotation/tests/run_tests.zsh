@@ -113,6 +113,35 @@ assert_not_contains() {
   fi
 }
 
+PTY_STATUS=0
+PTY_TRANSCRIPT=""
+run_with_pty() {
+  local timeout_seconds="$1"
+  shift
+  local transcript_file="${test_root}/pty-transcript-${RANDOM}-${RANDOM}"
+  local child_pid start_seconds
+
+  PTY_STATUS=124
+  PTY_TRANSCRIPT=""
+  start_seconds=${SECONDS}
+  /usr/bin/script -q /dev/null "$@" > "${transcript_file}" 2>&1 &
+  child_pid=$!
+  while /bin/kill -0 "${child_pid}" 2>/dev/null; do
+    if (( SECONDS - start_seconds >= timeout_seconds )); then
+      /bin/kill -TERM "${child_pid}" 2>/dev/null || true
+      wait "${child_pid}" 2>/dev/null
+      PTY_TRANSCRIPT="$(<"${transcript_file}")"
+      return 124
+    fi
+    /bin/sleep 0.05
+  done
+
+  wait "${child_pid}"
+  PTY_STATUS=$?
+  PTY_TRANSCRIPT="$(<"${transcript_file}")"
+  return 0
+}
+
 make_mount_mock() {
   local target="$1"
   local mount_point="$2"
@@ -469,6 +498,203 @@ MAX_DAYS_TO_KEEP=2
 DRY_RUN=0
 USE_SYSLOG=0
 EOF
+
+candidate_config="${test_root}/candidate-config"
+candidate_log="${test_root}/candidate-diagnostic.log"
+cat > "${candidate_config}" <<EOF
+NAS_SERVER=synthetic-configured-private-host
+NAS_SHARE_NAME=SYNTHETIC-PRIVATE-PRIMARY
+REQUIRED_NAS_SHARES= SYNTHETIC-PRIVATE-COMPANION , SYNTHETIC-PRIVATE-PRIMARY
+BACKUP_DIRECTORY_NAME=SYNTHETIC-PRIVATE-BACKUPS
+BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
+MAX_DAYS_TO_KEEP=1
+DRY_RUN=0
+LOG_FILE=${candidate_log}
+USE_SYSLOG=1
+EOF
+candidate_config_before="$(<"${candidate_config}")"
+
+candidate_one_primary="${test_root}/synthetic-private-candidate-one-primary"
+candidate_one_companion="${test_root}/synthetic-private-candidate-one-companion"
+candidate_one_backup_dir="${candidate_one_primary}/SYNTHETIC-PRIVATE-BACKUPS"
+candidate_two_primary="${test_root}/synthetic-private-candidate-two-primary"
+candidate_two_companion="${test_root}/synthetic-private-candidate-two-companion"
+candidate_two_backup_dir="${candidate_two_primary}/SYNTHETIC-PRIVATE-BACKUPS"
+invalid_candidate_primary="${test_root}/synthetic-private-invalid-primary"
+partial_candidate_primary="${test_root}/synthetic-private-partial-primary"
+split_candidate_companion="${test_root}/synthetic-private-split-companion"
+mkdir -p \
+  "${candidate_one_backup_dir}" \
+  "${candidate_one_companion}" \
+  "${candidate_two_backup_dir}" \
+  "${candidate_two_companion}" \
+  "${invalid_candidate_primary}" \
+  "${partial_candidate_primary}/SYNTHETIC-PRIVATE-BACKUPS" \
+  "${split_candidate_companion}"
+candidate_one_backup_file="${candidate_one_backup_dir}/SYNTHETIC-PRIVATE-OLD.SYNTHETIC-BACKUP"
+candidate_two_backup_file="${candidate_two_backup_dir}/SYNTHETIC-PRIVATE-OLD.SYNTHETIC-BACKUP"
+partial_backup_file="${partial_candidate_primary}/SYNTHETIC-PRIVATE-BACKUPS/SYNTHETIC-PRIVATE-OLD.SYNTHETIC-BACKUP"
+touch -t 203701010101 "${candidate_one_backup_file}" "${candidate_two_backup_file}" "${partial_backup_file}"
+
+candidate_rm_marker="${test_root}/candidate-rm-called"
+candidate_rm="${test_root}/candidate-rm"
+cat > "${candidate_rm}" <<EOF
+#!/bin/zsh
+print -r -- "\$*" >> "${candidate_rm_marker}"
+exec /bin/rm "\$@"
+EOF
+chmod 755 "${candidate_rm}"
+
+candidate_logger_marker="${test_root}/candidate-logger-recording"
+candidate_logger="${test_root}/candidate-logger"
+cat > "${candidate_logger}" <<EOF
+#!/bin/zsh
+print -r -- "\$*" >> "${candidate_logger_marker}"
+EOF
+chmod 755 "${candidate_logger}"
+
+unique_candidate_marker="${test_root}/unique-candidate-mount-called"
+unique_candidate_mount="${test_root}/unique-candidate-mount"
+make_mount_inventory_mock \
+  "${unique_candidate_mount}" \
+  "${unique_candidate_marker}" \
+  "//synthetic-configured-private-host/SYNTHETIC-PRIVATE-PRIMARY on ${invalid_candidate_primary} (smbfs)" \
+  "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-COMPANION on ${candidate_one_companion} (smbfs)" \
+  "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_one_primary} (smbfs)"
+# A real child diagnostic containing private values must be suppressed by the script.
+printf 'print -r -- %q >&2\n' "child diagnostic ${candidate_one_primary} synthetic-candidate-private-one" >> "${unique_candidate_mount}"
+
+unique_candidate_stdout="${test_root}/unique-candidate.stdout"
+unique_candidate_stderr="${test_root}/unique-candidate.stderr"
+HOME="${test_root}/empty-home" \
+  MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" \
+  MONEYDANCE_RM_BIN="${candidate_rm}" \
+  MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
+  "${SCRIPT}" --config "${candidate_config}" > "${unique_candidate_stdout}" 2> "${unique_candidate_stderr}"
+unique_candidate_status=$?
+unique_candidate_stdout_text="$(<"${unique_candidate_stdout}")"
+unique_candidate_stderr_text="$(<"${unique_candidate_stderr}")"
+candidate_log_text="$(<"${candidate_log}")"
+candidate_logger_text="$(<"${candidate_logger_marker}")"
+assert_status "one fully valid replacement candidate is recognized safely" 0 "${unique_candidate_status}"
+assert_contains "unique replacement outcome offers explicit repair inspection" "${unique_candidate_stdout_text}" "--repair-config"
+assert_file_exists "unique replacement discovery preserves candidate backups" "${candidate_one_backup_file}"
+if [[ ! -e "${candidate_rm_marker}" ]]; then
+  pass "unique replacement discovery never invokes removal"
+else
+  fail "unique replacement discovery never invokes removal"
+fi
+if [[ "$(<"${candidate_config}")" == "${candidate_config_before}" ]]; then
+  pass "unique replacement discovery does not mutate configuration"
+else
+  fail "unique replacement discovery does not mutate configuration"
+fi
+
+typeset -a candidate_private_tokens=(
+  synthetic-configured-private-host
+  synthetic-candidate-private-one
+  SYNTHETIC-PRIVATE-COMPANION
+  SYNTHETIC-PRIVATE-PRIMARY
+  SYNTHETIC-PRIVATE-BACKUPS
+  "${candidate_one_primary}"
+  "${candidate_one_companion}"
+  "${candidate_one_backup_dir}"
+)
+for private_token in "${candidate_private_tokens[@]}"; do
+  assert_not_contains "noninteractive stdout redacts ${private_token}" "${unique_candidate_stdout_text}" "${private_token}"
+  assert_not_contains "noninteractive stderr redacts ${private_token}" "${unique_candidate_stderr_text}" "${private_token}"
+  assert_not_contains "configured log redacts ${private_token}" "${candidate_log_text}" "${private_token}"
+  assert_not_contains "logger diagnostic redacts ${private_token}" "${candidate_logger_text}" "${private_token}"
+done
+
+run_with_pty 10 \
+  /usr/bin/env \
+  HOME="${test_root}/empty-home" \
+  MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" \
+  MONEYDANCE_RM_BIN="${candidate_rm}" \
+  MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
+  "${SCRIPT}" --config "${candidate_config}"
+pty_helper_status=$?
+assert_status "PTY helper completes before its timeout" 0 "${pty_helper_status}"
+assert_status "PTY helper returns the child status separately" 0 "${PTY_STATUS}"
+assert_contains "terminal detail shows configured host" "${PTY_TRANSCRIPT}" "synthetic-configured-private-host"
+assert_contains "terminal detail shows unique candidate" "${PTY_TRANSCRIPT}" "synthetic-candidate-private-one"
+assert_contains "terminal detail preserves normalized required-share order" "${PTY_TRANSCRIPT}" "SYNTHETIC-PRIVATE-COMPANION, SYNTHETIC-PRIVATE-PRIMARY"
+assert_contains "terminal detail shows validated backup directory" "${PTY_TRANSCRIPT}" "${candidate_one_backup_dir}"
+assert_contains "terminal detail states that no files changed" "${PTY_TRANSCRIPT}" "No configuration or backup files were changed"
+assert_contains "terminal detail instructs explicit repair mode" "${PTY_TRANSCRIPT}" "--repair-config"
+
+partial_candidate_mount="${test_root}/partial-candidate-mount"
+make_mount_inventory_mock \
+  "${partial_candidate_mount}" \
+  "${test_root}/partial-candidate-mount-called" \
+  "//synthetic-partial-private-host/SYNTHETIC-PRIVATE-PRIMARY on ${partial_candidate_primary} (smbfs)"
+partial_candidate_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${partial_candidate_mount}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${candidate_config}" 2>&1)"
+partial_candidate_status=$?
+assert_status "partial replacement host is a safe no-op" 0 "${partial_candidate_status}"
+assert_not_contains "partial replacement host produces no repair recommendation" "${partial_candidate_output}" "--repair-config"
+assert_file_exists "partial replacement host preserves backups" "${partial_backup_file}"
+
+split_candidate_mount="${test_root}/split-candidate-mount"
+make_mount_inventory_mock \
+  "${split_candidate_mount}" \
+  "${test_root}/split-candidate-mount-called" \
+  "//synthetic-split-private-a/SYNTHETIC-PRIVATE-PRIMARY on ${partial_candidate_primary} (smbfs)" \
+  "//synthetic-split-private-b/SYNTHETIC-PRIVATE-COMPANION on ${split_candidate_companion} (smbfs)"
+split_candidate_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${split_candidate_mount}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${candidate_config}" 2>&1)"
+split_candidate_status=$?
+assert_status "shares split across replacement hosts are a safe no-op" 0 "${split_candidate_status}"
+assert_not_contains "split replacement shares produce no repair recommendation" "${split_candidate_output}" "--repair-config"
+assert_file_exists "split replacement shares preserve backups" "${partial_backup_file}"
+
+invalid_directory_mount="${test_root}/invalid-directory-candidate-mount"
+make_mount_inventory_mock \
+  "${invalid_directory_mount}" \
+  "${test_root}/invalid-directory-candidate-mount-called" \
+  "//synthetic-invalid-private-host/SYNTHETIC-PRIVATE-COMPANION on ${split_candidate_companion} (smbfs)" \
+  "//synthetic-invalid-private-host/SYNTHETIC-PRIVATE-PRIMARY on ${invalid_candidate_primary} (smbfs)"
+invalid_directory_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${invalid_directory_mount}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${candidate_config}" 2>&1)"
+invalid_directory_status=$?
+assert_status "replacement with invalid backup directory is a safe no-op" 0 "${invalid_directory_status}"
+assert_not_contains "invalid replacement directory produces no repair recommendation" "${invalid_directory_output}" "--repair-config"
+assert_file_exists "invalid replacement directory preserves unrelated backups" "${candidate_one_backup_file}"
+
+multiple_candidate_mount="${test_root}/multiple-candidate-mount"
+make_mount_inventory_mock \
+  "${multiple_candidate_mount}" \
+  "${test_root}/multiple-candidate-mount-called" \
+  "//synthetic-candidate-private-two/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_two_primary} (smbfs)" \
+  "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-COMPANION on ${candidate_one_companion} (smbfs)" \
+  "//synthetic-candidate-private-two/SYNTHETIC-PRIVATE-COMPANION on ${candidate_two_companion} (smbfs)" \
+  "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_one_primary} (smbfs)"
+multiple_candidate_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${multiple_candidate_mount}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${candidate_config}" 2>&1)"
+multiple_candidate_status=$?
+assert_status "multiple fully valid replacement hosts are a safe no-op" 0 "${multiple_candidate_status}"
+assert_not_contains "multiple candidates produce no repair recommendation" "${multiple_candidate_output}" "--repair-config"
+assert_file_exists "multiple candidate outcome preserves first candidate backup" "${candidate_one_backup_file}"
+assert_file_exists "multiple candidate outcome preserves second candidate backup" "${candidate_two_backup_file}"
+if [[ ! -e "${candidate_rm_marker}" ]]; then
+  pass "every replacement-discovery outcome avoids removal"
+else
+  fail "every replacement-discovery outcome avoids removal"
+fi
+if [[ "$(<"${candidate_config}")" == "${candidate_config_before}" ]]; then
+  pass "every replacement-discovery outcome leaves configuration unchanged"
+else
+  fail "every replacement-discovery outcome leaves configuration unchanged"
+fi
+
+run_with_pty 10 \
+  /usr/bin/env \
+  HOME="${test_root}/empty-home" \
+  MONEYDANCE_MOUNT_BIN="${multiple_candidate_mount}" \
+  MONEYDANCE_RM_BIN="${candidate_rm}" \
+  MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
+  "${SCRIPT}" --config "${candidate_config}"
+assert_status "multiple-candidate PTY helper completes before timeout" 0 "$?"
+assert_status "multiple-candidate PTY invocation exits safely" 0 "${PTY_STATUS}"
+assert_contains "multiple candidates retain mount-table first-seen order" "${PTY_TRANSCRIPT}" "synthetic-candidate-private-two, synthetic-candidate-private-one"
+assert_not_contains "multiple-candidate terminal gives no unique repair instruction" "${PTY_TRANSCRIPT}" "--repair-config"
 
 complete_inventory_marker="${test_root}/complete-inventory-called"
 complete_inventory_mount="${test_root}/complete-inventory-mount"
