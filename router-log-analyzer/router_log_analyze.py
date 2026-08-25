@@ -198,6 +198,7 @@ class Event:
     source_sequence: Optional[int] = None
     raw_timestamp: Optional[str] = None
     clock_trust: Optional[str] = None
+    clock_reason: Optional[str] = None
     clock_segment_id: Optional[str] = None
     boot_context_id: Optional[str] = None
     boot_session_id: Optional[str] = None
@@ -1967,6 +1968,21 @@ class TpLinkArcherAdapter(RouterLogAdapter):
         "discover", "offer", "request", "ack", "release", "connected", "disconnected",
         "start", "stop", "restart", "initialize", "ready", "timeout", "failure", "success",
     )
+    _failure_pattern = re.compile(
+        r"\b(?:fail(?:ed|ure|ures|ing)?|not|unable|denied|deny|error|unsuccessful|refused|rejected)\b",
+        re.IGNORECASE,
+    )
+    _dhcp_transition_codes = {
+        "1101": "discover",
+        "1102": "offer",
+        "1103": "request",
+        "1104": "ack",
+        "1105": "release",
+    }
+    _startup_fragment_patterns = {
+        ("service", "2001"): re.compile(r"^starting\s+network\s+services\b", re.IGNORECASE),
+        ("service", "2003"): re.compile(r"^initialize\s+alternate\s+network\s+core\b", re.IGNORECASE),
+    }
 
     def detect(self, text: str) -> float:
         lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines() if line.strip()]
@@ -2000,6 +2016,14 @@ class TpLinkArcherAdapter(RouterLogAdapter):
         raw_wifi: Optional[str] = None
         stats = ParseStats()
         events: List[Event] = []
+        observed_headers: Dict[str, Any] = {}
+
+        def record_header(header_name: str, value: Any) -> None:
+            if header_name in observed_headers and observed_headers[header_name] != value:
+                raise SystemExit(
+                    f"Conflicting TP-Link {header_name} headers; refusing a mixed router snapshot."
+                )
+            observed_headers[header_name] = value
 
         for source_sequence, raw_line in enumerate(
             text.replace("\r\n", "\n").replace("\r", "\n").splitlines(), start=1,
@@ -2052,32 +2076,52 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             continuation_match = self._wan_continuation_pattern.fullmatch(line)
             counts_match = self._counts_pattern.fullmatch(line)
             if banner_match:
-                model = " ".join(banner_match.group("model").split())
+                parsed_model = " ".join(banner_match.group("model").split())
+                record_header("model", parsed_model)
+                model = parsed_model
             elif time_match:
+                raw_export_timestamp = time_match.group("value")
+                record_header("export-time", raw_export_timestamp)
                 try:
-                    export_timestamp = datetime.strptime(time_match.group("value"), "%Y-%m-%d %H:%M:%S")
+                    export_timestamp = datetime.strptime(raw_export_timestamp, "%Y-%m-%d %H:%M:%S")
                 except ValueError:
                     export_timestamp = None
             elif version_match:
-                hardware = " ".join(version_match.group("hardware").split())
-                firmware = " ".join(version_match.group("firmware").split())
+                parsed_hardware = " ".join(version_match.group("hardware").split())
+                parsed_firmware = " ".join(version_match.group("firmware").split())
+                record_header("version", (parsed_hardware, parsed_firmware))
+                hardware = parsed_hardware
+                firmware = parsed_firmware
             elif interface_match:
+                interface_kind = interface_match.group("kind").lower()
                 raw_interface_mac = interface_match.group("mac").strip()
+                interface_ip = interface_match.group("ip").strip()
+                interface_mask = interface_match.group("mask").strip()
+                record_header(
+                    f"{interface_kind}-interface",
+                    (interface_ip, interface_mask, raw_interface_mac),
+                )
                 interface_mac = self._normalize_exact_interface_mac(raw_interface_mac)
                 interface_fields: Dict[str, Optional[str]] = {
-                    "ip": interface_match.group("ip").strip(),
-                    "mask": interface_match.group("mask").strip(),
+                    "ip": interface_ip,
+                    "mask": interface_mask,
                     "mac": interface_mac,
                 }
                 if interface_mac is None:
                     interface_fields["raw_mac"] = raw_interface_mac
-                interfaces[interface_match.group("kind").lower()] = interface_fields
+                interfaces[interface_kind] = interface_fields
             elif continuation_match:
-                wan_gateway = continuation_match.group("gateway").strip()
-                wan_dns = continuation_match.group("dns").split()
+                parsed_gateway = continuation_match.group("gateway").strip()
+                parsed_dns = continuation_match.group("dns").split()
+                record_header("wan-continuation", (parsed_gateway, tuple(parsed_dns)))
+                wan_gateway = parsed_gateway
+                wan_dns = parsed_dns
             elif counts_match:
-                raw_total = counts_match.group("total").strip()
-                raw_wifi = counts_match.group("wifi").strip()
+                parsed_total = counts_match.group("total").strip()
+                parsed_wifi = counts_match.group("wifi").strip()
+                record_header("client-counts", (parsed_total, parsed_wifi))
+                raw_total = parsed_total
+                raw_wifi = parsed_wifi
             elif line.startswith("#"):
                 stats.ignored_lines += 1
                 continue
@@ -2170,25 +2214,48 @@ class TpLinkArcherAdapter(RouterLogAdapter):
 
     def _normalize_event(self, component: str, code: str, message: str) -> Tuple[str, str, str]:
         lowered = message.casefold()
-        action = next((candidate for candidate in self._approved_actions if re.search(rf"\b{candidate}\w*\b", lowered)), "other")
-        if component == "dhcpc":
-            for dhcp_action in ("discover", "offer", "request", "ack", "release"):
-                if re.search(rf"\b{dhcp_action}\b", lowered):
-                    return f"WAN_DHCP_{dhcp_action.upper()}", "WAN_DHCP", dhcp_action
-        if re.search(r"\binternet\s+(?:is\s+)?(?:connected|up)\b", lowered):
-            return "INTERNET_CONNECTED", "WAN", "connected"
-        if re.search(r"\binternet\s+(?:is\s+)?(?:disconnected|down)\b", lowered):
-            return "INTERNET_DISCONNECTED", "WAN", "disconnected"
-        if component == "system" and re.search(r"\b(?:system|router)\s+(?:startup|boot(?:ing)?)\b", lowered):
-            return "ROUTER_BOOT", "ROUTER_SYSTEM", "start"
         normalized_component = re.sub(r"[^a-z0-9]+", "_", component).strip("_").upper() or "COMPONENT"
+        if self._failure_pattern.search(lowered):
+            return f"{normalized_component}_{code}_FAILURE", "ROUTER_SYSTEM", "failure"
+        action = next((candidate for candidate in self._approved_actions if re.search(rf"\b{candidate}\w*\b", lowered)), "other")
+        dhcp_action = self._dhcp_transition_codes.get(code) if component == "dhcpc" else None
+        if dhcp_action is not None and re.search(rf"\bdhcp\s+{dhcp_action}\b", lowered):
+            return f"WAN_DHCP_{dhcp_action.upper()}", "WAN_DHCP", dhcp_action
+        if component == "inet" and code == "3002" and re.search(
+            r"\binternet\s+(?:is\s+)?(?:connected|up)\b", lowered,
+        ):
+            return "INTERNET_CONNECTED", "WAN", "connected"
+        if component == "inet" and code == "3001" and re.search(
+            r"\binternet\s+(?:is\s+)?(?:disconnected|down)\b", lowered,
+        ):
+            return "INTERNET_DISCONNECTED", "WAN", "disconnected"
+        if component == "system" and code == "1000" and re.fullmatch(
+            r"(?:system\s+startup|router\s+boot(?:ing)?)", lowered.strip(),
+        ):
+            return "ROUTER_BOOT", "ROUTER_SYSTEM", "start"
         return f"{normalized_component}_{code}_{action.upper()}", "ROUTER_SYSTEM", action
+
+    def _is_startup_marker(self, event: Event) -> bool:
+        if event.structured_evidence.get("action") == "failure":
+            return False
+        if event.event_key == "ROUTER_BOOT":
+            return True
+        pattern = self._startup_fragment_patterns.get((event.component or "", event.vendor_event_code or ""))
+        return pattern is not None and pattern.search(event.raw_label) is not None
 
     @staticmethod
     def _normalize_exact_interface_mac(value: str) -> Optional[str]:
-        if re.fullmatch(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", value) is None:
+        compact: Optional[str] = None
+        if re.fullmatch(
+            r"(?:(?:[0-9A-Fa-f]{2}:){5}|(?:[0-9A-Fa-f]{2}-){5})[0-9A-Fa-f]{2}",
+            value,
+        ):
+            compact = value.replace(":", "").replace("-", "")
+        elif re.fullmatch(r"[0-9A-Fa-f]{4}(?:\.[0-9A-Fa-f]{4}){2}", value):
+            compact = value.replace(".", "")
+        if compact is None:
             return None
-        return value.upper()
+        return ":".join(compact[index:index + 2] for index in range(0, 12, 2)).upper()
 
     def _privacy_reduce_message(self, message: str) -> Tuple[str, Dict[str, Any]]:
         evidence: Dict[str, Any] = {}
@@ -2215,21 +2282,19 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             if found:
                 evidence[key] = found
 
-        mac_addresses: List[str] = []
-
-        def is_complete_mac_token(source: str, start: int, end: int) -> bool:
-            if start > 0 and source[start - 1] in "0123456789abcdefABCDEF":
+        def is_complete_mac_token(source: str, start: int, end: int, separator: str) -> bool:
+            if start > 0 and source[start - 1].isalnum():
                 return False
-            if start > 0 and source[start - 1] == ":":
+            if start > 0 and source[start - 1] == separator:
                 preceding = source[:start - 1]
                 label_match = re.search(r"([A-Za-z0-9_-]+)\s*$", preceding)
                 if label_match is None or re.fullmatch(r"[0-9A-Fa-f]+", label_match.group(1)):
                     return False
-            if end < len(source) and source[end] in "0123456789abcdefABCDEF":
+            if end < len(source) and source[end].isalnum():
                 return False
-            if end < len(source) and source[end] == ":":
+            if end < len(source) and source[end] == separator:
                 remainder = source[end + 1:]
-                if remainder.startswith(":"):
+                if remainder.startswith(separator):
                     return False
                 next_segment = re.match(r"[0-9A-Fa-f]+", remainder)
                 if next_segment is not None:
@@ -2238,13 +2303,23 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                         return False
             return True
 
+        mac_candidates: List[Tuple[int, int, str]] = []
+        for mac_candidate_pattern, separator in (
+            (re.compile(r"(?=((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}))"), ":"),
+            (re.compile(r"(?=((?:[0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}))"), "-"),
+            (re.compile(r"(?=([0-9A-Fa-f]{4}(?:\.[0-9A-Fa-f]{4}){2}))"), "."),
+        ):
+            for match in mac_candidate_pattern.finditer(message_holder[0]):
+                start, end = match.span(1)
+                if not is_complete_mac_token(message_holder[0], start, end, separator):
+                    continue
+                mac = self._normalize_exact_interface_mac(match.group(1))
+                if mac is not None:
+                    mac_candidates.append((start, end, mac))
+
+        mac_addresses: List[str] = []
         mac_replacements: List[Tuple[int, int, str]] = []
-        mac_candidate_pattern = re.compile(r"(?=((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}))")
-        for match in mac_candidate_pattern.finditer(message_holder[0]):
-            start, end = match.span(1)
-            mac = match.group(1).upper()
-            if not is_complete_mac_token(message_holder[0], start, end):
-                continue
+        for start, end, mac in sorted(mac_candidates):
             if mac not in mac_addresses:
                 mac_addresses.append(mac)
             mac_replacements.append((start, end, "<mac>"))
@@ -2318,15 +2393,41 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                 raw_wifi_clients=raw_wifi,
                 exclusion_reason="missing_snapshot_counts",
             )
-        total = int(raw_total) if re.fullmatch(r"[+-]?\d+", raw_total) else None
-        wifi = int(raw_wifi) if re.fullmatch(r"[+-]?\d+", raw_wifi) else None
-        if total is None or wifi is None or total < 0 or wifi < 0:
+        def parse_count(raw_value: str) -> Tuple[Optional[int], str]:
+            if re.fullmatch(r"[+-]?\d+", raw_value) is None:
+                return None, "invalid"
+            digits = raw_value.lstrip("+-")
+            if raw_value.startswith("-"):
+                if len(digits) > 9:
+                    return None, "invalid"
+                try:
+                    return int(raw_value), "invalid"
+                except ValueError:
+                    return None, "invalid"
+            if len(digits) > 9:
+                return None, "out_of_range"
+            try:
+                return int(raw_value), "valid"
+            except ValueError:
+                return None, "out_of_range"
+
+        total, total_status = parse_count(raw_total)
+        wifi, wifi_status = parse_count(raw_wifi)
+        if "invalid" in {total_status, wifi_status}:
             return RouterSnapshotMetrics(
                 raw_total_clients=raw_total,
                 raw_wifi_clients=raw_wifi,
                 total_clients=total,
                 wifi_clients=wifi,
                 exclusion_reason="invalid_snapshot_counts",
+            )
+        if "out_of_range" in {total_status, wifi_status}:
+            return RouterSnapshotMetrics(
+                raw_total_clients=raw_total,
+                raw_wifi_clients=raw_wifi,
+                total_clients=total,
+                wifi_clients=wifi,
+                exclusion_reason="snapshot_count_out_of_range",
             )
         if wifi > total:
             return RouterSnapshotMetrics(
@@ -2404,8 +2505,7 @@ class TpLinkArcherAdapter(RouterLogAdapter):
         startup_marker_indices = [
             index
             for index, event in enumerate(events)
-            if event.component in {"system", "service", "init"}
-            and event.structured_evidence.get("action") in {"start", "initialize"}
+            if self._is_startup_marker(event)
         ]
         candidate_starts = list(explicit_boot_indices)
         if startup_marker_indices and (
@@ -2422,7 +2522,11 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             for position, start in enumerate(epoch_starts)
         ]
         trust_by_index = ["trusted"] * len(events)
+        reason_by_index: List[Optional[str]] = [None] * len(events)
         epoch_by_index: List[Optional[int]] = [None] * len(events)
+        clock_warnings: List[str] = []
+        if export_timestamp is None:
+            clock_warnings.append("clock_untrusted_missing_export_timestamp")
 
         for start, end in epoch_ranges:
             boot_at_start = start in candidate_starts
@@ -2430,6 +2534,12 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                 context_number = context_number_by_start[start]
                 for index in range(start, end):
                     epoch_by_index[index] = context_number
+
+            if export_timestamp is None:
+                for index in range(start, end):
+                    trust_by_index[index] = "clock_untrusted"
+                    reason_by_index[index] = "missing_export_timestamp"
+                continue
 
             correction_index: Optional[int] = None
             for index in range(start + 1, end):
@@ -2461,14 +2571,36 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                 early_trust = "pre_synchronization" if firmware_startup_cluster else "clock_untrusted"
                 for index in range(start, correction_index):
                     trust_by_index[index] = early_trust
+                    reason_by_index[index] = (
+                        "firmware_date_pre_synchronization"
+                        if early_trust == "pre_synchronization"
+                        else "large_clock_correction"
+                    )
                 for index in range(correction_index, end):
                     trust_by_index[index] = "trusted"
+                    reason_by_index[index] = None
             elif firmware_startup_cluster and far_from_export:
                 for index in range(start, end):
                     trust_by_index[index] = "pre_synchronization"
+                    reason_by_index[index] = "firmware_date_pre_synchronization"
             elif backward_boot_boundary:
                 for index in range(start, end):
                     trust_by_index[index] = "clock_untrusted"
+                    reason_by_index[index] = "boot_boundary_backward_correction"
+
+            has_near_export_anchor = any(
+                timedelta(minutes=-5) <= export_timestamp - events[index].timestamp <= timedelta(hours=48)
+                for index in range(start, end)
+            )
+            for index in range(start, end):
+                if trust_by_index[index] != "trusted":
+                    continue
+                if events[index].timestamp > export_timestamp + timedelta(minutes=5):
+                    trust_by_index[index] = "clock_ambiguous"
+                    reason_by_index[index] = "after_export_tolerance"
+                elif not has_near_export_anchor:
+                    trust_by_index[index] = "clock_untrusted"
+                    reason_by_index[index] = "no_near_export_anchor"
 
             high_water: Optional[datetime] = None
             ambiguous_until: Optional[datetime] = None
@@ -2482,10 +2614,12 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                         high_water = timestamp
                     else:
                         trust_by_index[index] = "clock_ambiguous"
+                        reason_by_index[index] = "backward_clock_correction"
                     continue
                 if high_water is not None and high_water - timestamp > timedelta(minutes=5):
                     ambiguous_until = high_water
                     trust_by_index[index] = "clock_ambiguous"
+                    reason_by_index[index] = "backward_clock_correction"
                     continue
                 high_water = timestamp if high_water is None else max(high_water, timestamp)
 
@@ -2500,6 +2634,7 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             classified_event = replace(
                 event,
                 clock_trust=trust_by_index[index],
+                clock_reason=reason_by_index[index],
                 clock_segment_id=f"tp-link-clock-{segment_number}",
                 boot_context_id=f"tp-link-boot-{epoch_number}" if epoch_number is not None else None,
             )
@@ -2533,7 +2668,20 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                     end_sequence=event.source_sequence,
                 ))
             else:
-                segments[-1] = replace(segments[-1], end_sequence=event.source_sequence)
+                sequences = [
+                    sequence
+                    for sequence in (
+                        segments[-1].start_sequence,
+                        segments[-1].end_sequence,
+                        event.source_sequence,
+                    )
+                    if sequence is not None
+                ]
+                segments[-1] = replace(
+                    segments[-1],
+                    start_sequence=min(sequences, default=None),
+                    end_sequence=max(sequences, default=None),
+                )
 
         boot_candidates: List[BootSessionCandidate] = []
         for candidate_number, boot_index in enumerate(candidate_starts, start=1):
@@ -2548,14 +2696,7 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             )
             startup_fields: List[Optional[str]] = ["tp-link", lan_mac]
             for event in boot_events:
-                is_startup_marker = (
-                    event.event_key == "ROUTER_BOOT"
-                    or (
-                        event.component in {"system", "service", "init"}
-                        and event.structured_evidence.get("action") in {"start", "initialize"}
-                    )
-                )
-                if not is_startup_marker:
+                if not self._is_startup_marker(event):
                     break
                 startup_fields.extend((
                     event.component,
@@ -2570,7 +2711,7 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                 startup_signature=self._versioned_digest("startup-signature-v1", startup_fields),
                 warnings=() if trusted_events else ("no_trusted_boot_anchor",),
             ))
-        return classified, segments, boot_candidates, []
+        return classified, segments, boot_candidates, clock_warnings
 
 
 ROUTER_LOG_ADAPTERS: Dict[str, RouterLogAdapter] = {
