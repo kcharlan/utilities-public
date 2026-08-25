@@ -115,30 +115,71 @@ assert_not_contains() {
 
 PTY_STATUS=0
 PTY_TRANSCRIPT=""
+PTY_NONTTY_STDOUT=""
 run_with_pty() {
   local timeout_seconds="$1"
-  shift
+  local tty_mode="$2"
+  shift 2
   local transcript_file="${test_root}/pty-transcript-${RANDOM}-${RANDOM}"
-  local child_pid start_seconds
+  local stdout_file="${test_root}/pty-stdout-${RANDOM}-${RANDOM}"
+  local child_pid deadline
+  integer timed_out=0
+  typeset -a pty_command=()
 
   PTY_STATUS=124
   PTY_TRANSCRIPT=""
-  start_seconds=${SECONDS}
-  /usr/bin/script -q /dev/null "$@" > "${transcript_file}" 2>&1 &
+  PTY_NONTTY_STDOUT=""
+  case "${tty_mode}" in
+    both)
+      pty_command=("$@")
+      ;;
+    stdin-only)
+      pty_command=(/bin/zsh -c 'non_tty_stdout="$1"; shift; "$@" > "${non_tty_stdout}"' pty-stdin-only "${stdout_file}" "$@")
+      ;;
+    stdout-only)
+      pty_command=(/bin/zsh -c '"$@" < /dev/null' pty-stdout-only "$@")
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+
+  /usr/bin/script -q /dev/null "${pty_command[@]}" < /dev/null > "${transcript_file}" 2>&1 &
   child_pid=$!
+  deadline=$(( SECONDS + timeout_seconds ))
   while /bin/kill -0 "${child_pid}" 2>/dev/null; do
-    if (( SECONDS - start_seconds >= timeout_seconds )); then
-      /bin/kill -TERM "${child_pid}" 2>/dev/null || true
-      wait "${child_pid}" 2>/dev/null
-      PTY_TRANSCRIPT="$(<"${transcript_file}")"
-      return 124
-    fi
-    /bin/sleep 0.05
+    (( SECONDS < deadline )) || break
+    /bin/sleep 0.02
   done
 
+  if /bin/kill -0 "${child_pid}" 2>/dev/null; then
+    timed_out=1
+    /bin/kill -TERM "${child_pid}" 2>/dev/null || true
+    deadline=$(( SECONDS + 1 ))
+    while /bin/kill -0 "${child_pid}" 2>/dev/null && (( SECONDS < deadline )); do
+      /bin/sleep 0.02
+    done
+  fi
+  if /bin/kill -0 "${child_pid}" 2>/dev/null; then
+    /bin/kill -KILL "${child_pid}" 2>/dev/null || true
+    deadline=$(( SECONDS + 1 ))
+    while /bin/kill -0 "${child_pid}" 2>/dev/null && (( SECONDS < deadline )); do
+      /bin/sleep 0.02
+    done
+  fi
+  if /bin/kill -0 "${child_pid}" 2>/dev/null; then
+    PTY_TRANSCRIPT="$(<"${transcript_file}")"
+    [[ ! -f "${stdout_file}" ]] || PTY_NONTTY_STDOUT="$(<"${stdout_file}")"
+    return 125
+  fi
   wait "${child_pid}"
   PTY_STATUS=$?
   PTY_TRANSCRIPT="$(<"${transcript_file}")"
+  [[ ! -f "${stdout_file}" ]] || PTY_NONTTY_STDOUT="$(<"${stdout_file}")"
+  if (( timed_out )); then
+    PTY_STATUS=124
+    return 124
+  fi
   return 0
 }
 
@@ -187,6 +228,30 @@ EOF
 
 test_root="$(mktemp -d -t moneydance-rotation-tests.XXXXXX)"
 trap 'rm -rf -- "${test_root}"' EXIT
+
+run_with_pty 5 both /bin/zsh -c 'exit 37'
+pty_nonzero_helper_status=$?
+assert_status "PTY helper itself succeeds for a completed nonzero child" 0 "${pty_nonzero_helper_status}"
+assert_status "PTY helper preserves a distinctive child status" 37 "${PTY_STATUS}"
+
+run_with_pty 5 both /bin/zsh -c '[[ -t 0 && -t 1 ]]'
+assert_status "PTY helper provides TTY stdin and stdout together" 0 "${PTY_STATUS}"
+run_with_pty 5 stdin-only /bin/zsh -c '[[ -t 0 && ! -t 1 ]]'
+assert_status "PTY helper can provide only TTY stdin" 0 "${PTY_STATUS}"
+run_with_pty 5 stdout-only /bin/zsh -c '[[ ! -t 0 && -t 1 ]]'
+assert_status "PTY helper can provide only TTY stdout" 0 "${PTY_STATUS}"
+
+pty_timeout_start=${SECONDS}
+run_with_pty 1 both /bin/zsh -c 'trap "" TERM; while :; do /bin/sleep 10; done'
+pty_timeout_helper_status=$?
+pty_timeout_elapsed=$(( SECONDS - pty_timeout_start ))
+assert_status "PTY helper reports a hard timeout" 124 "${pty_timeout_helper_status}"
+assert_status "PTY helper reports timeout separately from child status" 124 "${PTY_STATUS}"
+if (( pty_timeout_elapsed <= 4 )); then
+  pass "PTY helper bounds TERM grace, KILL, and reap"
+else
+  fail "PTY helper bounds TERM grace, KILL, and reap (elapsed ${pty_timeout_elapsed}s)"
+fi
 
 typeset -A cleared_environment_variables=()
 for variable_name in "${MONEYDANCE_TEST_ENV_VARS[@]}"; do
@@ -499,8 +564,10 @@ DRY_RUN=0
 USE_SYSLOG=0
 EOF
 
-candidate_config="${test_root}/candidate-config"
-candidate_log="${test_root}/candidate-diagnostic.log"
+candidate_config_dir="${test_root}/SYNTHETIC-PRIVATE-CONFIG-PATH"
+candidate_config="${candidate_config_dir}/candidate-config"
+candidate_log="${test_root}/SYNTHETIC-PRIVATE-LOG-PATH/candidate-diagnostic.log"
+mkdir -p "${candidate_config_dir}"
 cat > "${candidate_config}" <<EOF
 NAS_SERVER=synthetic-configured-private-host
 NAS_SHARE_NAME=SYNTHETIC-PRIVATE-PRIMARY
@@ -553,6 +620,15 @@ print -r -- "\$*" >> "${candidate_logger_marker}"
 EOF
 chmod 755 "${candidate_logger}"
 
+candidate_scan_marker="${test_root}/candidate-retention-scan-called"
+candidate_scan_spy="${test_root}/candidate-retention-scan-spy"
+cat > "${candidate_scan_spy}" <<EOF
+#!/bin/zsh
+print -r -- "\$*" >> "${candidate_scan_marker}"
+exit 97
+EOF
+chmod 755 "${candidate_scan_spy}"
+
 unique_candidate_marker="${test_root}/unique-candidate-mount-called"
 unique_candidate_mount="${test_root}/unique-candidate-mount"
 make_mount_inventory_mock \
@@ -569,6 +645,8 @@ unique_candidate_stderr="${test_root}/unique-candidate.stderr"
 HOME="${test_root}/empty-home" \
   MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" \
   MONEYDANCE_RM_BIN="${candidate_rm}" \
+  MONEYDANCE_FIND_BIN="${candidate_scan_spy}" \
+  MONEYDANCE_STAT_BIN="${candidate_scan_spy}" \
   MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
   "${SCRIPT}" --config "${candidate_config}" > "${unique_candidate_stdout}" 2> "${unique_candidate_stderr}"
 unique_candidate_status=$?
@@ -584,6 +662,11 @@ if [[ ! -e "${candidate_rm_marker}" ]]; then
 else
   fail "unique replacement discovery never invokes removal"
 fi
+if [[ ! -e "${candidate_scan_marker}" ]]; then
+  pass "unique replacement discovery never scans retention files"
+else
+  fail "unique replacement discovery never scans retention files"
+fi
 if [[ "$(<"${candidate_config}")" == "${candidate_config_before}" ]]; then
   pass "unique replacement discovery does not mutate configuration"
 else
@@ -596,6 +679,10 @@ typeset -a candidate_private_tokens=(
   SYNTHETIC-PRIVATE-COMPANION
   SYNTHETIC-PRIVATE-PRIMARY
   SYNTHETIC-PRIVATE-BACKUPS
+  SYNTHETIC-PRIVATE-CONFIG-PATH
+  SYNTHETIC-PRIVATE-LOG-PATH
+  "${candidate_config}"
+  "${candidate_log}"
   "${candidate_one_primary}"
   "${candidate_one_companion}"
   "${candidate_one_backup_dir}"
@@ -607,11 +694,85 @@ for private_token in "${candidate_private_tokens[@]}"; do
   assert_not_contains "logger diagnostic redacts ${private_token}" "${candidate_logger_text}" "${private_token}"
 done
 
-run_with_pty 10 \
+config_open_race_path="${candidate_config_dir}/SYNTHETIC-PRIVATE-CONFIG-RACE"
+cp "${candidate_config}" "${config_open_race_path}"
+config_open_zdotdir="${test_root}/config-open-zdotdir"
+mkdir -p "${config_open_zdotdir}"
+cat > "${config_open_zdotdir}/.zshenv" <<'EOF'
+TRAPDEBUG() {
+  case "${ZSH_DEBUG_CMD}" in
+    ('[[ -f "${config_path}" && -r "${config_path}" ]]'*)
+      SYNTHETIC_TEST_CONFIG_CHECKED=1
+      ;;
+    ('exec {config_stderr_fd}>&2'*|'while IFS= read -r raw_line'*)
+      if [[ "${SYNTHETIC_TEST_CONFIG_CHECKED:-0}" -eq 1 ]]; then
+        /bin/mv -- "${SYNTHETIC_TEST_CONFIG_RACE_PATH}" "${SYNTHETIC_TEST_CONFIG_RACE_PATH}.moved" 2>/dev/null
+        unfunction TRAPDEBUG
+      fi
+      ;;
+  esac
+}
+EOF
+config_open_mount_marker="${test_root}/config-open-mount-called"
+config_open_mount="${test_root}/config-open-mount"
+make_mount_inventory_mock "${config_open_mount}" "${config_open_mount_marker}"
+config_open_stdout="${test_root}/config-open.stdout"
+config_open_stderr="${test_root}/config-open.stderr"
+/usr/bin/env \
+  ZDOTDIR="${config_open_zdotdir}" \
+  SYNTHETIC_TEST_CONFIG_RACE_PATH="${config_open_race_path}" \
+  HOME="${test_root}/empty-home" \
+  MONEYDANCE_MOUNT_BIN="${config_open_mount}" \
+  "${SCRIPT}" --config "${config_open_race_path}" > "${config_open_stdout}" 2> "${config_open_stderr}"
+config_open_status=$?
+config_open_stdout_text="$(<"${config_open_stdout}")"
+config_open_stderr_text="$(<"${config_open_stderr}")"
+assert_status "configuration descriptor-open failure uses configuration exit status" 2 "${config_open_status}"
+assert_contains "configuration descriptor-open failure is generic" "${config_open_stderr_text}" "Configuration file could not be opened safely"
+assert_not_contains "configuration descriptor-open stdout redacts private path" "${config_open_stdout_text}" "${config_open_race_path}"
+assert_not_contains "configuration descriptor-open stderr redacts private path" "${config_open_stderr_text}" "${config_open_race_path}"
+if [[ ! -e "${config_open_mount_marker}" ]]; then
+  pass "configuration descriptor-open failure occurs before mount lookup"
+else
+  fail "configuration descriptor-open failure occurs before mount lookup"
+fi
+
+dirname_failure="${test_root}/dirname-failure"
+cat > "${dirname_failure}" <<'EOF'
+#!/bin/zsh
+print -r -- "dirname child diagnostic $*" >&2
+exit 91
+EOF
+chmod 755 "${dirname_failure}"
+dirname_failure_stdout="${test_root}/dirname-failure.stdout"
+dirname_failure_stderr="${test_root}/dirname-failure.stderr"
+: > "${candidate_logger_marker}"
+HOME="${test_root}/empty-home" \
+  MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" \
+  MONEYDANCE_DIRNAME_BIN="${dirname_failure}" \
+  MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
+  "${SCRIPT}" --config "${candidate_config}" > "${dirname_failure_stdout}" 2> "${dirname_failure_stderr}"
+dirname_failure_status=$?
+dirname_failure_stdout_text="$(<"${dirname_failure_stdout}")"
+dirname_failure_stderr_text="$(<"${dirname_failure_stderr}")"
+dirname_failure_logger_text="$(<"${candidate_logger_marker}")"
+assert_status "logging dirname failure is an operational error" 1 "${dirname_failure_status}"
+assert_contains "logging dirname failure is replaced with generic text" "${dirname_failure_stderr_text}" "Unable to initialize private logging"
+for private_token in "${candidate_private_tokens[@]}"; do
+  assert_not_contains "dirname-failure stdout redacts ${private_token}" "${dirname_failure_stdout_text}" "${private_token}"
+  assert_not_contains "dirname-failure stderr redacts ${private_token}" "${dirname_failure_stderr_text}" "${private_token}"
+  assert_not_contains "dirname-failure logger redacts ${private_token}" "${dirname_failure_logger_text}" "${private_token}"
+done
+
+: > "${candidate_log}"
+: > "${candidate_logger_marker}"
+run_with_pty 10 both \
   /usr/bin/env \
   HOME="${test_root}/empty-home" \
   MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" \
   MONEYDANCE_RM_BIN="${candidate_rm}" \
+  MONEYDANCE_FIND_BIN="${candidate_scan_spy}" \
+  MONEYDANCE_STAT_BIN="${candidate_scan_spy}" \
   MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
   "${SCRIPT}" --config "${candidate_config}"
 pty_helper_status=$?
@@ -623,17 +784,55 @@ assert_contains "terminal detail preserves normalized required-share order" "${P
 assert_contains "terminal detail shows validated backup directory" "${PTY_TRANSCRIPT}" "${candidate_one_backup_dir}"
 assert_contains "terminal detail states that no files changed" "${PTY_TRANSCRIPT}" "No configuration or backup files were changed"
 assert_contains "terminal detail instructs explicit repair mode" "${PTY_TRANSCRIPT}" "--repair-config"
+candidate_pty_log_text="$(<"${candidate_log}")"
+candidate_pty_logger_text="$(<"${candidate_logger_marker}")"
+for private_token in "${candidate_private_tokens[@]}"; do
+  assert_not_contains "post-PTY configured log redacts ${private_token}" "${candidate_pty_log_text}" "${private_token}"
+  assert_not_contains "post-PTY logger diagnostic redacts ${private_token}" "${candidate_pty_logger_text}" "${private_token}"
+done
+
+run_with_pty 10 stdin-only \
+  /usr/bin/env \
+  HOME="${test_root}/empty-home" \
+  MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" \
+  MONEYDANCE_RM_BIN="${candidate_rm}" \
+  MONEYDANCE_FIND_BIN="${candidate_scan_spy}" \
+  MONEYDANCE_STAT_BIN="${candidate_scan_spy}" \
+  MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
+  "${SCRIPT}" --config "${candidate_config}"
+assert_status "stdin-only PTY invocation completes" 0 "$?"
+assert_status "stdin-only PTY child exits safely" 0 "${PTY_STATUS}"
+assert_not_contains "TTY stdin cannot expose details through non-TTY stdout" "${PTY_NONTTY_STDOUT}" "synthetic-configured-private-host"
+assert_not_contains "TTY stderr cannot expose details when stdout is non-TTY" "${PTY_TRANSCRIPT}" "synthetic-candidate-private-one"
+
+run_with_pty 10 stdout-only \
+  /usr/bin/env \
+  HOME="${test_root}/empty-home" \
+  MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" \
+  MONEYDANCE_RM_BIN="${candidate_rm}" \
+  MONEYDANCE_FIND_BIN="${candidate_scan_spy}" \
+  MONEYDANCE_STAT_BIN="${candidate_scan_spy}" \
+  MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
+  "${SCRIPT}" --config "${candidate_config}"
+assert_status "stdout-only PTY invocation completes" 0 "$?"
+assert_status "stdout-only PTY child exits safely" 0 "${PTY_STATUS}"
+assert_contains "TTY stdout permits details when stdin is non-TTY" "${PTY_TRANSCRIPT}" "synthetic-candidate-private-one"
 
 partial_candidate_mount="${test_root}/partial-candidate-mount"
 make_mount_inventory_mock \
   "${partial_candidate_mount}" \
   "${test_root}/partial-candidate-mount-called" \
   "//synthetic-partial-private-host/SYNTHETIC-PRIVATE-PRIMARY on ${partial_candidate_primary} (smbfs)"
-partial_candidate_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${partial_candidate_mount}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${candidate_config}" 2>&1)"
+partial_candidate_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${partial_candidate_mount}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_FIND_BIN="${candidate_scan_spy}" MONEYDANCE_STAT_BIN="${candidate_scan_spy}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${candidate_config}" 2>&1)"
 partial_candidate_status=$?
 assert_status "partial replacement host is a safe no-op" 0 "${partial_candidate_status}"
 assert_not_contains "partial replacement host produces no repair recommendation" "${partial_candidate_output}" "--repair-config"
 assert_file_exists "partial replacement host preserves backups" "${partial_backup_file}"
+if [[ ! -e "${candidate_scan_marker}" ]]; then
+  pass "zero-candidate mismatch never scans retention files"
+else
+  fail "zero-candidate mismatch never scans retention files"
+fi
 
 split_candidate_mount="${test_root}/split-candidate-mount"
 make_mount_inventory_mock \
@@ -667,12 +866,17 @@ make_mount_inventory_mock \
   "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-COMPANION on ${candidate_one_companion} (smbfs)" \
   "//synthetic-candidate-private-two/SYNTHETIC-PRIVATE-COMPANION on ${candidate_two_companion} (smbfs)" \
   "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_one_primary} (smbfs)"
-multiple_candidate_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${multiple_candidate_mount}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${candidate_config}" 2>&1)"
+multiple_candidate_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${multiple_candidate_mount}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_FIND_BIN="${candidate_scan_spy}" MONEYDANCE_STAT_BIN="${candidate_scan_spy}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${candidate_config}" 2>&1)"
 multiple_candidate_status=$?
 assert_status "multiple fully valid replacement hosts are a safe no-op" 0 "${multiple_candidate_status}"
 assert_not_contains "multiple candidates produce no repair recommendation" "${multiple_candidate_output}" "--repair-config"
 assert_file_exists "multiple candidate outcome preserves first candidate backup" "${candidate_one_backup_file}"
 assert_file_exists "multiple candidate outcome preserves second candidate backup" "${candidate_two_backup_file}"
+if [[ ! -e "${candidate_scan_marker}" ]]; then
+  pass "multiple-candidate mismatch never scans retention files"
+else
+  fail "multiple-candidate mismatch never scans retention files"
+fi
 if [[ ! -e "${candidate_rm_marker}" ]]; then
   pass "every replacement-discovery outcome avoids removal"
 else
@@ -684,11 +888,13 @@ else
   fail "every replacement-discovery outcome leaves configuration unchanged"
 fi
 
-run_with_pty 10 \
+run_with_pty 10 both \
   /usr/bin/env \
   HOME="${test_root}/empty-home" \
   MONEYDANCE_MOUNT_BIN="${multiple_candidate_mount}" \
   MONEYDANCE_RM_BIN="${candidate_rm}" \
+  MONEYDANCE_FIND_BIN="${candidate_scan_spy}" \
+  MONEYDANCE_STAT_BIN="${candidate_scan_spy}" \
   MONEYDANCE_LOGGER_BIN="${candidate_logger}" \
   "${SCRIPT}" --config "${candidate_config}"
 assert_status "multiple-candidate PTY helper completes before timeout" 0 "$?"

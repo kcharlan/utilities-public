@@ -80,7 +80,12 @@ log_message() {
 
   if [[ -n "${LOG_FILE}" ]]; then
     local log_dir
-    log_dir="$("${DIRNAME_BIN}" "${LOG_FILE}")"
+    if { log_dir="$("${DIRNAME_BIN}" "${LOG_FILE}")"; } 2>/dev/null; then
+      :
+    else
+      printf '%s\n' "${SCRIPT_NAME}: ERROR: Unable to initialize private logging." >&2
+      exit 1
+    fi
     if [[ ! -d "${log_dir}" ]]; then
       if ! "${MKDIR_BIN}" -p "${log_dir}" 2>/dev/null; then
         printf '%s\n' "${SCRIPT_NAME}: ERROR: Unable to initialize private logging." >&2
@@ -123,9 +128,22 @@ trim_config_value() {
 load_config() {
   local config_path="$1"
   local raw_line line key value
+  integer config_fd
+  integer config_stderr_fd
+  integer config_open_failed=0
   integer line_number=0
 
   [[ -f "${config_path}" && -r "${config_path}" ]] || config_error "Configuration file is not readable."
+  exec {config_stderr_fd}>&2
+  exec 2>/dev/null
+  if exec {config_fd}<"${config_path}"; then
+    :
+  else
+    config_open_failed=1
+  fi
+  exec 2>&${config_stderr_fd}
+  exec {config_stderr_fd}>&-
+  (( ! config_open_failed )) || config_error "Configuration file could not be opened safely."
 
   while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
     (( line_number += 1 ))
@@ -150,7 +168,8 @@ load_config() {
       USE_SYSLOG) USE_SYSLOG="${value}" ;;
       *) config_error "Unknown configuration key on line ${line_number}." ;;
     esac
-  done < "${config_path}"
+  done <&${config_fd}
+  exec {config_fd}<&-
 }
 
 validate_required_nas_shares() {
