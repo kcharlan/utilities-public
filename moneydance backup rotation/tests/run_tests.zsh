@@ -631,6 +631,30 @@ ignored_lines_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${i
 assert_status "malformed and non-SMB mount lines are ignored safely" 0 "$?"
 assert_file_exists "ignored mount-like lines cannot authorize deletion" "${inventory_old_file}"
 
+late_smbfs_marker="${test_root}/late-smbfs-called"
+late_smbfs_mount="${test_root}/late-smbfs-mount"
+make_mount_inventory_mock \
+  "${late_smbfs_mount}" \
+  "${late_smbfs_marker}" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (apfs, local, smbfs)" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (apfs, local, smbfs)"
+reset_inventory_candidate
+late_smbfs_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${late_smbfs_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "later smbfs option under a non-SMB type is ignored safely" 0 "$?"
+assert_file_exists "later smbfs option cannot authorize deletion" "${inventory_old_file}"
+
+spaced_smbfs_type_marker="${test_root}/spaced-smbfs-type-called"
+spaced_smbfs_type_mount="${test_root}/spaced-smbfs-type-mount"
+make_mount_inventory_mock \
+  "${spaced_smbfs_type_mount}" \
+  "${spaced_smbfs_type_marker}" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} ( smbfs, nodev )" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} ( smbfs, nodev )"
+reset_inventory_candidate
+spaced_smbfs_type_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${spaced_smbfs_type_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "first SMB type tolerates ordinary surrounding spaces" 0 "$?"
+assert_file_missing "spaced first SMB type permits deletion" "${inventory_old_file}"
+
 empty_user_marker="${test_root}/empty-user-called"
 empty_user_mount="${test_root}/empty-user-mount"
 make_mount_inventory_mock \

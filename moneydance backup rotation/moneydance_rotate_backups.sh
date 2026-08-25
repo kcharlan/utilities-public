@@ -187,9 +187,8 @@ validate_config() {
 
 parse_mount_inventory() {
   local mount_output="$1"
-  local line mount_source mount_details mount_point mount_options option
+  local line mount_source mount_details mount_point mount_options mount_type
   local source_authority_and_share source_authority source_host source_share key
-  typeset -a parsed_mount_options=()
 
   mount_points_by_key=()
   mount_counts_by_key=()
@@ -208,16 +207,8 @@ parse_mount_inventory() {
     mount_options="${mount_options%\)}"
     [[ -n "${mount_point}" && "${mount_options}" != "${mount_details}" ]] || continue
 
-    parsed_mount_options=("${(@s:,:)mount_options}")
-    integer is_smbfs=0
-    for option in "${parsed_mount_options[@]}"; do
-      option="$(trim_config_value "${option}")"
-      if [[ "${option}" == "smbfs" ]]; then
-        is_smbfs=1
-        break
-      fi
-    done
-    (( is_smbfs )) || continue
+    mount_type="$(trim_config_value "${mount_options%%,*}")"
+    [[ "${mount_type}" == "smbfs" ]] || continue
 
     source_authority_and_share="${mount_source#//}"
     source_authority="${source_authority_and_share%%/*}"
