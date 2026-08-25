@@ -272,6 +272,8 @@ class BootSessionCandidate:
     session_id: str
     start_sequence: Optional[int] = None
     trusted_anchor: Optional[datetime] = None
+    trusted_overlap_identities: Tuple[str, ...] = ()
+    startup_signature: Optional[str] = None
     warnings: Tuple[str, ...] = ()
 
 
@@ -1919,16 +1921,538 @@ class NetgearLogAdapter(RouterLogAdapter):
 
 
 class TpLinkArcherAdapter(RouterLogAdapter):
-    """Registry placeholder; Task 3 introduces the observed TP-Link parser."""
+    """Parser for the evidenced TP-Link Archer point-snapshot system log."""
 
     format_id = FORMAT_TP_LINK_ARCHER
     cli_format = "tp-link-archer"
+    capabilities = RouterCapabilities(
+        stable_client_identity=False,
+        client_dhcp_equivalence=False,
+        client_access_decision_equivalence=False,
+        comparable_device_event_coverage=False,
+        router_system_events=True,
+        wan_transitions=True,
+        snapshot_counts=True,
+        potentially_trustworthy_router_local_time=True,
+        supported_event_keys={
+            "WAN_DHCP_DISCOVER", "WAN_DHCP_OFFER", "WAN_DHCP_REQUEST", "WAN_DHCP_ACK",
+            "WAN_DHCP_RELEASE", "INTERNET_CONNECTED", "INTERNET_DISCONNECTED", "ROUTER_BOOT",
+        },
+        supported_event_families={"WAN_DHCP", "WAN", "ROUTER_SYSTEM"},
+        coverage_mode="point_snapshot",
+        snapshot_buffer_semantic_dedup=True,
+    )
+    _body_pattern = re.compile(
+        r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) "
+        r"(?P<component>[A-Za-z][A-Za-z0-9_-]{0,31})"
+        r"(?:\[(?P<pid>\d{1,10})\])?:\s+"
+        r"<(?P<severity>[0-7])>\s+(?P<code>\d{1,10})"
+        r"(?:\s+(?P<message>.*))?$"
+    )
+    _banner_pattern = re.compile(r"^#\s+(?P<model>[A-Za-z0-9][A-Za-z0-9._ -]{0,95})\s+System Log\s*$")
+    _time_pattern = re.compile(r"^#\s+Time\s*=\s*(?P<value>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*$")
+    _version_pattern = re.compile(r"^#\s+H-Ver\s*=\s*(?P<hardware>[^;]+?)\s*;\s*S-Ver\s*=\s*(?P<firmware>.+?)\s*$")
+    _interface_pattern = re.compile(
+        r"^#\s+(?P<kind>LAN|WAN)\s+I\s*=\s*(?P<ip>[^;]+?)\s*;\s*"
+        r"M\s*=\s*(?P<mask>[^;]+?)\s*;\s*MAC\s*=\s*(?P<mac>\S+)\s*$"
+    )
+    _wan_continuation_pattern = re.compile(r"^#\s+G\s*=\s*(?P<gateway>[^;]+?)\s*;\s*DNS\s*=\s*(?P<dns>.+?)\s*$")
+    _counts_pattern = re.compile(
+        r"^#\s+Clients connected:\s*(?P<total>[^;]*?)\s*;\s*WI-FI\s*:\s*(?P<wifi>.*?)\s*$",
+        re.IGNORECASE,
+    )
+    _approved_actions = (
+        "discover", "offer", "request", "ack", "release", "connected", "disconnected",
+        "start", "stop", "restart", "initialize", "ready", "timeout", "failure", "success",
+    )
 
     def detect(self, text: str) -> float:
-        return 0.0
+        lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines() if line.strip()]
+        score = 0.0
+        if any(self._banner_pattern.fullmatch(line) for line in lines):
+            score += 0.35
+        if any(self._time_pattern.fullmatch(line) for line in lines):
+            score += 0.20
+        if any(self._version_pattern.fullmatch(line) for line in lines):
+            score += 0.10
+        if any(self._interface_pattern.fullmatch(line) for line in lines):
+            score += 0.10
+        if any(self._counts_pattern.fullmatch(line) for line in lines):
+            score += 0.05
+        if any(self._body_pattern.fullmatch(line) for line in lines):
+            score += 0.25
+        return min(score, 0.99)
 
     def parse(self, text: str, source: str) -> ParsedRouterLog:
-        raise SystemExit("The selected TP-Link Archer format does not contain plausible supported structure.")
+        if self.detect(text) < FORMAT_DETECTION_THRESHOLD:
+            raise SystemExit("The selected TP-Link Archer format does not contain plausible supported structure.")
+
+        model: Optional[str] = None
+        hardware: Optional[str] = None
+        firmware: Optional[str] = None
+        export_timestamp: Optional[datetime] = None
+        interfaces: Dict[str, Dict[str, Optional[str]]] = {}
+        wan_gateway: Optional[str] = None
+        wan_dns: List[str] = []
+        raw_total: Optional[str] = None
+        raw_wifi: Optional[str] = None
+        stats = ParseStats()
+        events: List[Event] = []
+
+        for source_sequence, raw_line in enumerate(
+            text.replace("\r\n", "\n").replace("\r", "\n").splitlines(), start=1,
+        ):
+            line = raw_line.strip()
+            if not line:
+                continue
+            stats.total_lines += 1
+            body_match = self._body_pattern.fullmatch(line)
+            if body_match is not None:
+                try:
+                    timestamp = datetime.strptime(body_match.group("timestamp"), "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    stats.malformed_lines += 1
+                    if len(stats.malformed_samples) < 5:
+                        stats.malformed_samples.append(f"line {source_sequence}: malformed TP-Link record")
+                    continue
+                message = body_match.group("message") or ""
+                component = body_match.group("component").lower()
+                code = body_match.group("code")
+                event_key, event_family, action = self._normalize_event(component, code, message)
+                normalized_message, structured_evidence = self._privacy_reduce_message(message)
+                structured_evidence["action"] = action
+                events.append(Event(
+                    timestamp=timestamp,
+                    mac=SYSTEM_ACTOR,
+                    event_family=event_family,
+                    event_key=event_key,
+                    ip=None,
+                    raw_label=message,
+                    raw_line=line,
+                    source=source,
+                    actor_scope="router",
+                    stable_client_identity=None,
+                    component=component,
+                    process_id=body_match.group("pid"),
+                    syslog_severity=body_match.group("severity"),
+                    vendor_event_code=code,
+                    normalized_message=normalized_message,
+                    structured_evidence=structured_evidence,
+                    source_sequence=source_sequence,
+                    raw_timestamp=body_match.group("timestamp"),
+                ))
+                continue
+
+            banner_match = self._banner_pattern.fullmatch(line)
+            time_match = self._time_pattern.fullmatch(line)
+            version_match = self._version_pattern.fullmatch(line)
+            interface_match = self._interface_pattern.fullmatch(line)
+            continuation_match = self._wan_continuation_pattern.fullmatch(line)
+            counts_match = self._counts_pattern.fullmatch(line)
+            if banner_match:
+                model = " ".join(banner_match.group("model").split())
+            elif time_match:
+                try:
+                    export_timestamp = datetime.strptime(time_match.group("value"), "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    export_timestamp = None
+            elif version_match:
+                hardware = " ".join(version_match.group("hardware").split())
+                firmware = " ".join(version_match.group("firmware").split())
+            elif interface_match:
+                interfaces[interface_match.group("kind").lower()] = {
+                    "ip": interface_match.group("ip").strip(),
+                    "mask": interface_match.group("mask").strip(),
+                    "mac": normalize_mac(interface_match.group("mac")),
+                }
+            elif continuation_match:
+                wan_gateway = continuation_match.group("gateway").strip()
+                wan_dns = continuation_match.group("dns").split()
+            elif counts_match:
+                raw_total = counts_match.group("total").strip()
+                raw_wifi = counts_match.group("wifi").strip()
+            elif line.startswith("#"):
+                stats.ignored_lines += 1
+                continue
+            elif re.match(r"^\d{4}-\d{2}-\d{2}", line):
+                stats.malformed_lines += 1
+                if len(stats.malformed_samples) < 5:
+                    stats.malformed_samples.append(f"line {source_sequence}: malformed TP-Link record")
+                continue
+            else:
+                stats.ignored_lines += 1
+                continue
+            stats.ignored_lines += 1
+
+        events.reverse()
+        stats.parsed_events = len(events)
+        parsed_lan_mac = interfaces.get("lan", {}).get("mac")
+        lan_mac = parsed_lan_mac if is_identity_grade_mac(parsed_lan_mac) else None
+        owned_interfaces = frozenset(
+            mac for mac in (parsed_lan_mac, interfaces.get("wan", {}).get("mac")) if is_identity_grade_mac(mac)
+        )
+        identity_warnings: List[str] = []
+        if lan_mac is None:
+            identity_warnings.append("missing_or_invalid_lan_mac")
+        snapshot_metrics = self._parse_snapshot_metrics(raw_total, raw_wifi)
+        warnings = self._header_warnings(
+            model,
+            export_timestamp,
+            hardware,
+            firmware,
+            interfaces,
+            wan_gateway,
+            wan_dns,
+            raw_total,
+            raw_wifi,
+        )
+        events, clock_segments, boot_candidates, clock_warnings = self._classify_clock_and_boot(
+            events, export_timestamp, firmware, lan_mac,
+        )
+        warnings.extend(clock_warnings)
+        trusted_records = sum(event.clock_trust == "trusted" for event in events)
+        coverage_stats: Dict[str, Any] = {
+            "body_records": len(events),
+            "trusted_records": trusted_records,
+            "untrusted_records": len(events) - trusted_records,
+            "timing_eligible_records": trusted_records,
+            "run_span_start": min(
+                (event.timestamp.isoformat() for event in events if event.clock_trust == "trusted"), default=None,
+            ),
+            "run_span_end": max(
+                (event.timestamp.isoformat() for event in events if event.clock_trust == "trusted"), default=None,
+            ),
+            "lan": interfaces.get("lan"),
+            "wan": {
+                **(interfaces.get("wan") or {}),
+                "gateway": wan_gateway,
+                "dns": wan_dns,
+            },
+        }
+        return ParsedRouterLog(
+            format_id=self.format_id,
+            capabilities=self.capabilities,
+            identity=RouterIdentityCandidate(
+                canonical_vendor="tp-link",
+                lan_mac=lan_mac,
+                router_owned_interfaces=owned_interfaces,
+                warnings=tuple(identity_warnings),
+                persistence_safe_without_override=is_identity_grade_mac(lan_mac),
+            ),
+            events=events,
+            parse_stats=stats,
+            model=model,
+            hardware=hardware,
+            firmware=firmware,
+            export_timestamp=export_timestamp,
+            snapshot_metrics=snapshot_metrics,
+            coverage_stats=coverage_stats,
+            order_stats={"source_order": "newest_first", "emission_order_reconstructed": True},
+            clock_segments=clock_segments,
+            boot_candidates=boot_candidates,
+            warnings=warnings,
+        )
+
+    def _normalize_event(self, component: str, code: str, message: str) -> Tuple[str, str, str]:
+        lowered = message.casefold()
+        action = next((candidate for candidate in self._approved_actions if re.search(rf"\b{candidate}\w*\b", lowered)), "other")
+        if component == "dhcpc":
+            for dhcp_action in ("discover", "offer", "request", "ack", "release"):
+                if re.search(rf"\b{dhcp_action}\b", lowered):
+                    return f"WAN_DHCP_{dhcp_action.upper()}", "WAN_DHCP", dhcp_action
+        if re.search(r"\binternet\s+(?:is\s+)?connected\b", lowered):
+            return "INTERNET_CONNECTED", "WAN", "connected"
+        if re.search(r"\binternet\s+(?:is\s+)?(?:disconnected|down)\b", lowered):
+            return "INTERNET_DISCONNECTED", "WAN", "disconnected"
+        if component == "system" and re.search(r"\b(?:system|router)\s+(?:startup|boot(?:ing)?)\b", lowered):
+            return "ROUTER_BOOT", "ROUTER_SYSTEM", "start"
+        normalized_component = re.sub(r"[^a-z0-9]+", "_", component).strip("_").upper() or "COMPONENT"
+        return f"{normalized_component}_{code}_{action.upper()}", "ROUTER_SYSTEM", action
+
+    def _privacy_reduce_message(self, message: str) -> Tuple[str, Dict[str, Any]]:
+        evidence: Dict[str, Any] = {}
+
+        def collect(pattern: re.Pattern[str], key: str, placeholder: str, value: str) -> str:
+            found: List[str] = []
+
+            def replace_match(match: re.Match[str]) -> str:
+                token = match.group(0)
+                if value == "mac":
+                    normalized = normalize_mac(token)
+                    if normalized is None:
+                        return token
+                    token = normalized
+                if token not in found:
+                    found.append(token)
+                return placeholder
+
+            reduced = pattern.sub(replace_match, message_holder[0])
+            message_holder[0] = reduced
+            if found:
+                evidence[key] = found
+            return reduced
+
+        message_holder = [message]
+        collect(MAC_PATTERN, "mac_addresses", "<mac>", "mac")
+        collect(re.compile(r"(?<![\w:])(?:\d{1,3}\.){3}\d{1,3}(?![\w:])"), "ipv4_addresses", "<ipv4>", "ipv4")
+        collect(re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])"), "ipv6_addresses", "<ipv6>", "ipv6")
+
+        actor_names: List[str] = []
+
+        def replace_actor(match: re.Match[str]) -> str:
+            name = match.group("name")
+            if name not in actor_names:
+                actor_names.append(name)
+            return f"{match.group('label')} <actor>"
+
+        message_holder[0] = re.sub(
+            r"(?i)\b(?P<label>actor|client|device|host(?:name)?|user)\s*(?:=|:)?\s+(?P<name>[A-Za-z0-9][A-Za-z0-9._-]{0,127})",
+            replace_actor,
+            message_holder[0],
+        )
+        if actor_names:
+            evidence["actor_names"] = actor_names
+        normalized = " ".join(message_holder[0].split())
+        return f"normalized-message-v1\0{normalized}", evidence
+
+    def _parse_snapshot_metrics(self, raw_total: Optional[str], raw_wifi: Optional[str]) -> RouterSnapshotMetrics:
+        if raw_total is None or raw_wifi is None:
+            return RouterSnapshotMetrics(
+                raw_total_clients=raw_total,
+                raw_wifi_clients=raw_wifi,
+                exclusion_reason="missing_snapshot_counts",
+            )
+        total = int(raw_total) if re.fullmatch(r"[+-]?\d+", raw_total) else None
+        wifi = int(raw_wifi) if re.fullmatch(r"[+-]?\d+", raw_wifi) else None
+        if total is None or wifi is None or total < 0 or wifi < 0:
+            return RouterSnapshotMetrics(
+                raw_total_clients=raw_total,
+                raw_wifi_clients=raw_wifi,
+                total_clients=total,
+                wifi_clients=wifi,
+                exclusion_reason="invalid_snapshot_counts",
+            )
+        if wifi > total:
+            return RouterSnapshotMetrics(
+                raw_total_clients=raw_total,
+                raw_wifi_clients=raw_wifi,
+                total_clients=total,
+                wifi_clients=wifi,
+                exclusion_reason="inconsistent_snapshot_counts",
+            )
+        return RouterSnapshotMetrics(
+            raw_total_clients=raw_total,
+            raw_wifi_clients=raw_wifi,
+            total_clients=total,
+            wifi_clients=wifi,
+            derived_wired_clients=total - wifi,
+            eligible=True,
+        )
+
+    def _header_warnings(
+        self,
+        model: Optional[str],
+        export_timestamp: Optional[datetime],
+        hardware: Optional[str],
+        firmware: Optional[str],
+        interfaces: Dict[str, Dict[str, Optional[str]]],
+        wan_gateway: Optional[str],
+        wan_dns: Sequence[str],
+        raw_total: Optional[str],
+        raw_wifi: Optional[str],
+    ) -> List[str]:
+        warnings: List[str] = []
+        for missing, value in (
+            ("missing_model_header", model),
+            ("missing_export_time_header", export_timestamp),
+            ("missing_hardware_header", hardware),
+            ("missing_firmware_header", firmware),
+            ("missing_lan_header", interfaces.get("lan")),
+            ("missing_wan_header", interfaces.get("wan")),
+            ("missing_client_counts_header", raw_total if raw_wifi is not None else None),
+        ):
+            if value is None:
+                warnings.append(missing)
+        if interfaces.get("wan") is not None and (wan_gateway is None or not wan_dns):
+            warnings.append("missing_wan_gateway_dns_header")
+        return warnings
+
+    @staticmethod
+    def _versioned_digest(version: str, fields: Sequence[Optional[str]]) -> str:
+        encoded = "\0".join([version, *(field if field is not None else "<null>" for field in fields)])
+        return f"{version}:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
+
+    @staticmethod
+    def _firmware_build_date(firmware: Optional[str]) -> Optional[date]:
+        if firmware is None:
+            return None
+        match = re.search(r"\bBuild\s+(\d{8})\b", firmware, re.IGNORECASE)
+        if match is None:
+            return None
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%d").date()
+        except ValueError:
+            return None
+
+    def _classify_clock_and_boot(
+        self,
+        events: List[Event],
+        export_timestamp: Optional[datetime],
+        firmware: Optional[str],
+        lan_mac: Optional[str],
+    ) -> Tuple[List[Event], List[ClockSegment], List[BootSessionCandidate], List[str]]:
+        if not events:
+            return events, [], [], []
+        firmware_date = self._firmware_build_date(firmware)
+        explicit_boot_indices = [index for index, event in enumerate(events) if event.event_key == "ROUTER_BOOT"]
+        startup_marker_indices = [
+            index
+            for index, event in enumerate(events)
+            if event.component in {"system", "service", "init"}
+            and event.structured_evidence.get("action") in {"start", "initialize"}
+        ]
+        candidate_starts = list(explicit_boot_indices)
+        if startup_marker_indices and (
+            not explicit_boot_indices or startup_marker_indices[0] < explicit_boot_indices[0]
+        ):
+            candidate_starts.insert(0, startup_marker_indices[0])
+        candidate_starts = sorted(set(candidate_starts))
+        context_number_by_start = {
+            start: context_number for context_number, start in enumerate(candidate_starts, start=1)
+        }
+        epoch_starts = sorted(set([0, *candidate_starts]))
+        epoch_ranges = [
+            (start, epoch_starts[position + 1] if position + 1 < len(epoch_starts) else len(events))
+            for position, start in enumerate(epoch_starts)
+        ]
+        trust_by_index = ["trusted"] * len(events)
+        epoch_by_index: List[Optional[int]] = [None] * len(events)
+
+        for start, end in epoch_ranges:
+            boot_at_start = start in candidate_starts
+            if boot_at_start:
+                context_number = context_number_by_start[start]
+                for index in range(start, end):
+                    epoch_by_index[index] = context_number
+
+            correction_index: Optional[int] = None
+            for index in range(start + 1, end):
+                delta = events[index].timestamp - events[index - 1].timestamp
+                near_export = (
+                    export_timestamp is not None
+                    and timedelta(minutes=-5) <= export_timestamp - events[index].timestamp <= timedelta(hours=48)
+                )
+                if delta >= timedelta(hours=24) and near_export:
+                    correction_index = index
+                    break
+
+            backward_boot_boundary = (
+                boot_at_start
+                and start > 0
+                and events[start - 1].timestamp - events[start].timestamp > timedelta(minutes=5)
+            )
+            firmware_startup_cluster = (
+                boot_at_start
+                and firmware_date is not None
+                and all(event.timestamp.date() == firmware_date for event in events[start:(correction_index or end)])
+            )
+            far_from_export = (
+                export_timestamp is not None
+                and export_timestamp - events[start].timestamp > timedelta(hours=48)
+            )
+
+            if correction_index is not None:
+                early_trust = "pre_synchronization" if firmware_startup_cluster else "clock_untrusted"
+                for index in range(start, correction_index):
+                    trust_by_index[index] = early_trust
+                for index in range(correction_index, end):
+                    trust_by_index[index] = "trusted"
+            elif firmware_startup_cluster and far_from_export:
+                for index in range(start, end):
+                    trust_by_index[index] = "pre_synchronization"
+            elif backward_boot_boundary:
+                for index in range(start, end):
+                    trust_by_index[index] = "clock_untrusted"
+
+            high_water: Optional[datetime] = None
+            ambiguous_until: Optional[datetime] = None
+            for index in range(start, end):
+                if trust_by_index[index] != "trusted":
+                    continue
+                timestamp = events[index].timestamp
+                if ambiguous_until is not None:
+                    if timestamp >= ambiguous_until:
+                        ambiguous_until = None
+                        high_water = timestamp
+                    else:
+                        trust_by_index[index] = "clock_ambiguous"
+                    continue
+                if high_water is not None and high_water - timestamp > timedelta(minutes=5):
+                    ambiguous_until = high_water
+                    trust_by_index[index] = "clock_ambiguous"
+                    continue
+                high_water = timestamp if high_water is None else max(high_water, timestamp)
+
+        classified: List[Event] = []
+        segment_number = 0
+        previous_trust: Optional[str] = None
+        previous_epoch: Optional[int] = None
+        for index, event in enumerate(events):
+            epoch_number = epoch_by_index[index]
+            if trust_by_index[index] != previous_trust or epoch_number != previous_epoch:
+                segment_number += 1
+            classified.append(replace(
+                event,
+                clock_trust=trust_by_index[index],
+                clock_segment_id=f"tp-link-clock-{segment_number}",
+                boot_context_id=f"tp-link-boot-{epoch_number}" if epoch_number is not None else None,
+            ))
+            previous_trust = trust_by_index[index]
+            previous_epoch = epoch_number
+
+        segments: List[ClockSegment] = []
+        for event in classified:
+            if not segments or segments[-1].segment_id != event.clock_segment_id:
+                segments.append(ClockSegment(
+                    segment_id=event.clock_segment_id or "tp-link-clock",
+                    clock_trust=event.clock_trust or "clock_untrusted",
+                    start_sequence=event.source_sequence,
+                    end_sequence=event.source_sequence,
+                ))
+            else:
+                segments[-1] = replace(segments[-1], end_sequence=event.source_sequence)
+
+        boot_candidates: List[BootSessionCandidate] = []
+        for candidate_number, boot_index in enumerate(candidate_starts, start=1):
+            end = candidate_starts[candidate_number] if candidate_number < len(candidate_starts) else len(classified)
+            boot_context_id = f"tp-link-boot-{epoch_by_index[boot_index]}"
+            boot_events = classified[boot_index:end]
+            trusted_events = [event for event in boot_events if event.clock_trust == "trusted"]
+            overlap_ids = tuple(
+                self._versioned_digest("trusted-overlap-v1", (
+                    "tp-link", lan_mac, event.timestamp.isoformat(sep=" "), event.component,
+                    event.process_id, event.vendor_event_code, event.syslog_severity,
+                    event.normalized_message, event.actor_scope, event.stable_client_identity,
+                ))
+                for event in trusted_events
+            )
+            startup_fields: List[Optional[str]] = ["tp-link", lan_mac]
+            for event in boot_events:
+                if event.event_key == "ROUTER_BOOT" or event.structured_evidence.get("action") in {"start", "initialize"}:
+                    startup_fields.extend((
+                        event.component,
+                        event.vendor_event_code,
+                        str(event.structured_evidence.get("action", "other")),
+                    ))
+            boot_candidates.append(BootSessionCandidate(
+                session_id=boot_context_id,
+                start_sequence=classified[boot_index].source_sequence,
+                trusted_anchor=trusted_events[0].timestamp if trusted_events else None,
+                trusted_overlap_identities=overlap_ids,
+                startup_signature=self._versioned_digest("startup-signature-v1", startup_fields),
+                warnings=() if trusted_events else ("no_trusted_boot_anchor",),
+            ))
+        return classified, segments, boot_candidates, []
 
 
 ROUTER_LOG_ADAPTERS: Dict[str, RouterLogAdapter] = {

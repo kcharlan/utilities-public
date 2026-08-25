@@ -1355,6 +1355,555 @@ def test_netgear_adapter_and_legacy_wrapper_preserve_every_extended_event_field(
     }
 
 
+TP_LINK_SYNTHETIC_FIXTURE = Path(__file__).parent / "tests" / "fixtures" / "tp_link_archer_synthetic.log"
+
+
+def test_tp_link_archer_detects_and_parses_synthetic_snapshot_in_memory() -> None:
+    text = TP_LINK_SYNTHETIC_FIXTURE.read_text(encoding="utf-8")
+
+    adapter = analyzer.select_router_adapter(text, "auto")
+    parsed = analyzer.parse_router_log(text, "synthetic-tp-link.log", "auto")
+
+    assert adapter.format_id == analyzer.FORMAT_TP_LINK_ARCHER
+    assert adapter.detect(text) >= analyzer.FORMAT_DETECTION_THRESHOLD
+    assert parsed.format_id == analyzer.FORMAT_TP_LINK_ARCHER
+    assert parsed.model == "SYNTHETIC-ARCHER-X9000"
+    assert parsed.export_timestamp == datetime(2042, 6, 15, 12, 0, 0)
+    assert parsed.export_timestamp.tzinfo is None
+    assert parsed.hardware == "SYNTHETIC-HW-9000"
+    assert parsed.firmware == "9.99.9 Build 20420101 rel.99999n"
+    assert parsed.identity.canonical_vendor == "tp-link"
+    assert parsed.identity.lan_mac == "02:00:00:00:00:01"
+    assert parsed.identity.persistence_safe_without_override is True
+    assert parsed.identity.router_owned_interfaces == frozenset({
+        "02:00:00:00:00:01", "02:00:00:00:00:02",
+    })
+    assert parsed.snapshot_metrics == analyzer.RouterSnapshotMetrics(
+        raw_total_clients="7",
+        raw_wifi_clients="5",
+        total_clients=7,
+        wifi_clients=5,
+        derived_wired_clients=2,
+        eligible=True,
+        exclusion_reason=None,
+    )
+    assert parsed.capabilities == analyzer.RouterCapabilities(
+        stable_client_identity=False,
+        client_dhcp_equivalence=False,
+        client_access_decision_equivalence=False,
+        comparable_device_event_coverage=False,
+        router_system_events=True,
+        wan_transitions=True,
+        snapshot_counts=True,
+        potentially_trustworthy_router_local_time=True,
+        supported_event_keys=frozenset({
+            "WAN_DHCP_DISCOVER", "WAN_DHCP_OFFER", "WAN_DHCP_REQUEST", "WAN_DHCP_ACK",
+            "WAN_DHCP_RELEASE", "INTERNET_CONNECTED", "INTERNET_DISCONNECTED",
+            "ROUTER_BOOT",
+        }),
+        supported_event_families=frozenset({"WAN_DHCP", "WAN", "ROUTER_SYSTEM"}),
+        coverage_mode="point_snapshot",
+        snapshot_buffer_semantic_dedup=True,
+    )
+    assert [event.event_key for event in parsed.events] == [
+        "ROUTER_BOOT",
+        "SERVICE_2001_START",
+        "WAN_DHCP_DISCOVER",
+        "WAN_DHCP_OFFER",
+        "WAN_DHCP_REQUEST",
+        "WAN_DHCP_ACK",
+        "INTERNET_CONNECTED",
+    ]
+    assert [event.timestamp for event in parsed.events] == sorted(event.timestamp for event in parsed.events)
+    assert [event.source_sequence for event in parsed.events] == [14, 13, 12, 11, 10, 9, 8]
+    assert [event.clock_trust for event in parsed.events] == [
+        "pre_synchronization", "pre_synchronization", "trusted", "trusted", "trusted", "trusted", "trusted",
+    ]
+    assert all(event.timestamp.tzinfo is None for event in parsed.events)
+    assert all(event.actor_scope == "router" for event in parsed.events)
+    assert all(event.stable_client_identity is None for event in parsed.events)
+    assert all(event.mac == analyzer.SYSTEM_ACTOR for event in parsed.events)
+    assert all(event.event_key != "DHCP_IP" for event in parsed.events)
+    assert parsed.events[0].boot_context_id == parsed.events[-1].boot_context_id
+    assert parsed.boot_candidates[0].trusted_anchor == datetime(2042, 6, 15, 11, 59, 54)
+    assert parsed.warnings == []
+    assert parsed.parse_stats.total_lines == 14
+    assert parsed.parse_stats.parsed_events == 7
+    assert parsed.parse_stats.malformed_lines == 0
+    assert parsed.parse_stats.ignored_lines == 7
+    assert parsed.coverage_stats["body_records"] == 7
+    assert parsed.coverage_stats["trusted_records"] == 5
+    assert parsed.coverage_stats["untrusted_records"] == 2
+    assert parsed.coverage_stats["lan"] == {
+        "ip": "192.0.2.1", "mask": "255.255.255.0", "mac": "02:00:00:00:00:01",
+    }
+    assert parsed.coverage_stats["wan"] == {
+        "ip": "198.51.100.2",
+        "mask": "255.255.255.0",
+        "mac": "02:00:00:00:00:02",
+        "gateway": "198.51.100.1",
+        "dns": ["203.0.113.53", "203.0.113.54"],
+    }
+    assert parsed.order_stats == {"source_order": "newest_first", "emission_order_reconstructed": True}
+
+    wan_ack = next(event for event in parsed.events if event.event_key == "WAN_DHCP_ACK")
+    assert wan_ack.structured_evidence["mac_addresses"] == ["02:00:00:00:00:02"]
+    assert wan_ack.structured_evidence["ipv4_addresses"] == ["198.51.100.1", "198.51.100.2"]
+    assert "198.51.100.1" not in wan_ack.normalized_message
+    assert "02:00:00:00:00:02" not in wan_ack.normalized_message
+    assert wan_ack.raw_line.endswith("MAC 02:00:00:00:00:02")
+
+    startup_service = next(event for event in parsed.events if event.component == "service")
+    assert startup_service.structured_evidence["actor_names"] == ["SYNTHETIC-NODE-ALPHA"]
+    assert "SYNTHETIC-NODE-ALPHA" not in startup_service.normalized_message
+
+
+def tp_link_synthetic_snapshot(
+    newest_first_records: list[str],
+    *,
+    export_time: str = "2042-06-15 12:00:00",
+    firmware: str = "9.99.9 Build 20420101 rel.99999n",
+    counts_line: str | None = "# Clients connected: 7 ; WI-FI : 5",
+) -> str:
+    headers = [
+        "# SYNTHETIC-ARCHER-X9000 System Log",
+        f"# Time = {export_time}",
+        f"# H-Ver = SYNTHETIC-HW-9000 ; S-Ver = {firmware}",
+        "# LAN I = 192.0.2.1 ; M = 255.255.255.0 ; MAC = 02:00:00:00:00:01",
+        "# WAN I = 198.51.100.2 ; M = 255.255.255.0 ; MAC = 02:00:00:00:00:02",
+        "# G = 198.51.100.1 ; DNS = 203.0.113.53 203.0.113.54",
+    ]
+    if counts_line is not None:
+        headers.append(counts_line)
+    return "\n".join([*headers, *newest_first_records])
+
+
+@pytest.mark.parametrize(
+    ("counts_line", "raw_total", "raw_wifi", "total", "wifi", "reason"),
+    [
+        (None, None, None, None, None, "missing_snapshot_counts"),
+        ("# Clients connected: many ; WI-FI : 2", "many", "2", None, 2, "invalid_snapshot_counts"),
+        ("# Clients connected: -1 ; WI-FI : 0", "-1", "0", -1, 0, "invalid_snapshot_counts"),
+        ("# Clients connected: 3 ; WI-FI : 4", "3", "4", 3, 4, "inconsistent_snapshot_counts"),
+    ],
+    ids=("missing", "noninteger", "negative", "wifi-exceeds-total"),
+)
+def test_tp_link_snapshot_counts_are_one_correlated_diagnostic_set(
+    counts_line: str | None,
+    raw_total: str | None,
+    raw_wifi: str | None,
+    total: int | None,
+    wifi: int | None,
+    reason: str,
+) -> None:
+    text = tp_link_synthetic_snapshot(
+        ["2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected"],
+        counts_line=counts_line,
+    )
+
+    metrics = analyzer.parse_router_log(text, "synthetic-counts.log", "tp-link-archer").snapshot_metrics
+
+    assert metrics is not None
+    assert metrics.raw_total_clients == raw_total
+    assert metrics.raw_wifi_clients == raw_wifi
+    assert metrics.total_clients == total
+    assert metrics.wifi_clients == wifi
+    assert metrics.derived_wired_clients is None
+    assert metrics.eligible is False
+    assert metrics.exclusion_reason == reason
+
+
+def test_tp_link_body_parser_is_anchored_and_bounds_unknown_behavior_keys() -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:59 vpn[77]: <4> 9901 Peer token-B closed",
+        "2042-06-15 11:59:58 user@example.com: <4> 9901 PDF email noise",
+        "2042-06-15 11:59:57 vpn[76]: <4> 9901 Peer token-A opened",
+        "2042-06-15 11:59:56 invalid component[4]: <4> 9902 whitespace component",
+        "2042-06-15 11:59:55 vpn: <4> not-numeric malformed code",
+    ])
+
+    parsed = analyzer.parse_router_log(text, "synthetic-anchoring.log", "tp-link-archer")
+
+    assert [event.event_key for event in parsed.events] == ["VPN_9901_OTHER", "VPN_9901_OTHER"]
+    assert parsed.parse_stats.parsed_events == 2
+    assert parsed.parse_stats.malformed_lines == 3
+    assert {event.component for event in parsed.events} == {"vpn"}
+    assert {event.process_id for event in parsed.events} == {"76", "77"}
+
+
+def test_tp_link_malformed_samples_do_not_create_a_persistence_side_channel() -> None:
+    malformed = (
+        "2042-06-15 11:59:58 user@example.com: <4> 9901 "
+        "client SYNTHETIC-PRIVATE-NAME at 192.0.2.88"
+    )
+    text = tp_link_synthetic_snapshot([
+        malformed,
+        "2042-06-15 11:59:57 vpn[76]: <4> 9901 Synthetic valid record",
+    ])
+
+    parsed = analyzer.parse_router_log(text, "synthetic-malformed-privacy.log", "tp-link-archer")
+    serialized_stats = json.dumps(analyzer.asdict(parsed.parse_stats), sort_keys=True)
+
+    assert parsed.parse_stats.malformed_lines == 1
+    assert parsed.parse_stats.malformed_samples == ["line 8: malformed TP-Link record"]
+    assert malformed not in serialized_stats
+    assert "SYNTHETIC-PRIVATE-NAME" not in serialized_stats
+    assert "192.0.2.88" not in serialized_stats
+
+
+def test_tp_link_privacy_reduction_precedes_identity_digest_boundaries() -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:59 system[55]: <4> 9902 Contact client SYNTHETIC-CLIENT-OMEGA at 2001:db8::1234, 192.0.2.88, 02:00:00:00:00:02",
+        "2042-06-15 11:59:58 system[54]: <5> 1000 System startup",
+    ])
+
+    parsed = analyzer.parse_router_log(text, "synthetic-privacy.log", "tp-link-archer")
+    event = parsed.events[-1]
+    candidate_persistent_fields = {
+        "component": event.component,
+        "process_id": event.process_id,
+        "syslog_severity": event.syslog_severity,
+        "vendor_event_code": event.vendor_event_code,
+        "normalized_message": event.normalized_message,
+        "event_key": event.event_key,
+        "event_family": event.event_family,
+        "actor_scope": event.actor_scope,
+        "stable_client_identity": event.stable_client_identity,
+        "structured_evidence": event.structured_evidence,
+    }
+    serialized = json.dumps(candidate_persistent_fields, sort_keys=True)
+
+    assert event.normalized_message == (
+        "normalized-message-v1\0Contact client <actor> at <ipv6>, <ipv4>, <mac>"
+    )
+    assert event.structured_evidence == {
+        "action": "other",
+        "actor_names": ["SYNTHETIC-CLIENT-OMEGA"],
+        "ipv4_addresses": ["192.0.2.88"],
+        "ipv6_addresses": ["2001:db8::1234"],
+        "mac_addresses": ["02:00:00:00:00:02"],
+    }
+    assert event.raw_line.endswith("192.0.2.88, 02:00:00:00:00:02")
+    assert event.raw_line not in serialized
+    assert "Contact client SYNTHETIC-CLIENT-OMEGA" not in serialized
+    assert parsed.boot_candidates[0].trusted_overlap_identities
+    assert all(token.startswith("trusted-overlap-v1:") for token in parsed.boot_candidates[0].trusted_overlap_identities)
+    assert parsed.boot_candidates[0].startup_signature.startswith("startup-signature-v1:")
+
+
+def test_tp_link_privacy_reduction_replaces_address_like_tokens_even_when_invalid() -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:58 system[55]: <4> 9902 Saw 999.999.999.999 and 2001:db8:::1234",
+    ])
+
+    event = analyzer.parse_router_log(text, "synthetic-address-like.log", "tp-link-archer").events[0]
+
+    assert event.normalized_message == "normalized-message-v1\0Saw <ipv4> and <ipv6>"
+    assert event.structured_evidence["ipv4_addresses"] == ["999.999.999.999"]
+    assert event.structured_evidence["ipv6_addresses"] == ["2001:db8:::1234"]
+
+
+@pytest.mark.parametrize(
+    "lan_mac",
+    ["00:00:00:00:00:00", "FF:FF:FF:FF:FF:FF", "01:00:5E:00:00:01", "not-a-mac"],
+    ids=("all-zero", "broadcast", "multicast", "malformed"),
+)
+def test_tp_link_router_identity_candidate_requires_identity_grade_lan_mac(lan_mac: str) -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:58 dhcpc[310]: <5> 1104 DHCP ACK for MAC 02:00:00:00:00:02",
+    ]).replace("MAC = 02:00:00:00:00:01", f"MAC = {lan_mac}")
+
+    parsed = analyzer.parse_router_log(text, "synthetic-invalid-lan.log", "tp-link-archer")
+
+    assert parsed.identity.lan_mac is None
+    assert parsed.identity.persistence_safe_without_override is False
+    assert parsed.identity.warnings == ("missing_or_invalid_lan_mac",)
+    assert parsed.identity.router_owned_interfaces == frozenset({"02:00:00:00:00:02"})
+    assert parsed.events[0].mac == analyzer.SYSTEM_ACTOR
+    assert parsed.events[0].stable_client_identity is None
+    assert parsed.events[0].actor_scope == "router"
+
+
+def test_tp_link_maps_wan_release_and_disconnect_with_boot_context() -> None:
+    emission_order = [
+        "2042-06-15 11:50:00 system[101]: <5> 1000 System startup",
+        "2042-06-15 11:50:01 dhcpc[310]: <5> 1105 DHCP RELEASE 198.51.100.2 from 02:00:00:00:00:02",
+        "2042-06-15 11:50:02 inet[410]: <3> 3001 Internet disconnected",
+    ]
+
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(list(reversed(emission_order))),
+        "synthetic-release-disconnect.log",
+        "tp-link-archer",
+    )
+
+    assert [event.event_key for event in parsed.events] == [
+        "ROUTER_BOOT", "WAN_DHCP_RELEASE", "INTERNET_DISCONNECTED",
+    ]
+    assert all(event.boot_context_id == "tp-link-boot-1" for event in parsed.events)
+    assert all(event.actor_scope == "router" for event in parsed.events)
+    assert all(event.stable_client_identity is None for event in parsed.events)
+
+
+def test_tp_link_missing_optional_headers_warn_without_discarding_body() -> None:
+    text = "\n".join([
+        "# SYNTHETIC-ARCHER-X9000 System Log",
+        "# Time = 2042-06-15 12:00:00",
+        "# LAN I = 192.0.2.1 ; M = 255.255.255.0 ; MAC = 02:00:00:00:00:01",
+        "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+    ])
+
+    parsed = analyzer.parse_router_log(text, "synthetic-incomplete-header.log", "tp-link-archer")
+
+    assert [event.event_key for event in parsed.events] == ["INTERNET_CONNECTED"]
+    assert parsed.warnings == [
+        "missing_hardware_header",
+        "missing_firmware_header",
+        "missing_wan_header",
+        "missing_client_counts_header",
+    ]
+    assert parsed.snapshot_metrics.exclusion_reason == "missing_snapshot_counts"
+
+
+def test_tp_link_invalid_export_time_warns_without_crashing_body_parse() -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+    ]).replace("# Time = 2042-06-15 12:00:00", "# Time = 2042-99-99 99:99:99")
+
+    parsed = analyzer.parse_router_log(text, "synthetic-invalid-export-time.log", "tp-link-archer")
+
+    assert parsed.export_timestamp is None
+    assert "missing_export_time_header" in parsed.warnings
+    assert [event.event_key for event in parsed.events] == ["INTERNET_CONNECTED"]
+
+
+def test_tp_link_missing_wan_gateway_dns_continuation_warns() -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+    ]).replace("# G = 198.51.100.1 ; DNS = 203.0.113.53 203.0.113.54\n", "")
+
+    parsed = analyzer.parse_router_log(text, "synthetic-missing-wan-continuation.log", "tp-link-archer")
+
+    assert "missing_wan_gateway_dns_header" in parsed.warnings
+    assert parsed.coverage_stats["wan"]["gateway"] is None
+    assert parsed.coverage_stats["wan"]["dns"] == []
+
+
+def test_tp_link_already_correct_boot_time_is_trusted_and_anchored() -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:58 service[201]: <6> 2002 Network services ready",
+        "2042-06-15 11:59:57 system[101]: <5> 1000 System startup",
+    ])
+
+    parsed = analyzer.parse_router_log(text, "synthetic-correct-boot.log", "tp-link-archer")
+
+    assert [event.clock_trust for event in parsed.events] == ["trusted", "trusted"]
+    assert len(parsed.boot_candidates) == 1
+    assert parsed.boot_candidates[0].trusted_anchor == datetime(2042, 6, 15, 11, 59, 57)
+    assert parsed.coverage_stats["run_span_start"] == "2042-06-15T11:59:57"
+    assert parsed.coverage_stats["run_span_end"] == "2042-06-15T11:59:58"
+
+
+def test_tp_link_two_boot_epochs_keep_both_synchronized_segments_trusted() -> None:
+    emission_order = [
+        "2042-01-01 00:00:01 system[101]: <5> 1000 System startup",
+        "2042-01-01 00:00:02 service[201]: <6> 2001 Starting network services",
+        "2042-06-13 13:00:00 dhcpc[301]: <6> 1101 DHCP DISCOVER",
+        "2042-06-13 13:10:00 service[201]: <6> 2002 Network services ready",
+        "2042-01-01 00:00:01 system[102]: <5> 1000 System startup",
+        "2042-01-01 00:00:02 service[202]: <6> 2001 Starting network services",
+        "2042-06-15 11:00:00 dhcpc[302]: <6> 1101 DHCP DISCOVER",
+        "2042-06-15 11:01:00 inet[402]: <5> 3002 Internet connected",
+    ]
+    text = tp_link_synthetic_snapshot(list(reversed(emission_order)))
+
+    parsed = analyzer.parse_router_log(text, "synthetic-two-boots.log", "tp-link-archer")
+
+    assert [event.clock_trust for event in parsed.events] == [
+        "pre_synchronization", "pre_synchronization", "trusted", "trusted",
+        "pre_synchronization", "pre_synchronization", "trusted", "trusted",
+    ]
+    assert len(parsed.boot_candidates) == 2
+    assert [candidate.trusted_anchor for candidate in parsed.boot_candidates] == [
+        datetime(2042, 6, 13, 13, 0, 0),
+        datetime(2042, 6, 15, 11, 0, 0),
+    ]
+    assert parsed.boot_candidates[0].session_id != parsed.boot_candidates[1].session_id
+    assert parsed.boot_candidates[0].startup_signature == parsed.boot_candidates[1].startup_signature
+    assert parsed.coverage_stats["trusted_records"] == 4
+
+
+def test_tp_link_genuine_later_reboot_with_correct_time_gets_distinct_context() -> None:
+    emission_order = [
+        "2042-06-14 10:00:00 system[101]: <5> 1000 System startup",
+        "2042-06-14 10:00:05 service[201]: <6> 2002 Network services ready",
+        "2042-06-15 11:00:00 system[102]: <5> 1000 System startup",
+        "2042-06-15 11:00:05 service[202]: <6> 2002 Network services ready",
+    ]
+
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(list(reversed(emission_order))),
+        "synthetic-real-reboot.log",
+        "tp-link-archer",
+    )
+
+    assert [event.clock_trust for event in parsed.events] == ["trusted"] * 4
+    assert len(parsed.boot_candidates) == 2
+    assert [event.boot_context_id for event in parsed.events] == [
+        "tp-link-boot-1", "tp-link-boot-1", "tp-link-boot-2", "tp-link-boot-2",
+    ]
+    assert [candidate.trusted_anchor for candidate in parsed.boot_candidates] == [
+        datetime(2042, 6, 14, 10, 0, 0),
+        datetime(2042, 6, 15, 11, 0, 0),
+    ]
+
+
+def test_tp_link_truncated_firmware_date_startup_is_untrusted_and_anchorless() -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-01-01 00:00:02 service[201]: <6> 2001 Starting network services",
+        "2042-01-01 00:00:01 system[101]: <5> 1000 System startup",
+    ])
+
+    parsed = analyzer.parse_router_log(text, "synthetic-truncated-presync.log", "tp-link-archer")
+
+    assert [event.clock_trust for event in parsed.events] == ["pre_synchronization", "pre_synchronization"]
+    assert parsed.boot_candidates[0].trusted_anchor is None
+    assert parsed.boot_candidates[0].warnings == ("no_trusted_boot_anchor",)
+    assert parsed.coverage_stats["timing_eligible_records"] == 0
+    assert parsed.coverage_stats["run_span_start"] is None
+    assert parsed.coverage_stats["run_span_end"] is None
+
+
+def test_tp_link_truncated_startup_fragment_without_boot_line_still_has_run_local_context() -> None:
+    text = tp_link_synthetic_snapshot([
+        "2042-01-01 00:00:03 service[201]: <6> 2002 Network services ready",
+        "2042-01-01 00:00:02 service[201]: <6> 2001 Starting network services",
+    ])
+
+    parsed = analyzer.parse_router_log(text, "synthetic-truncated-startup-fragment.log", "tp-link-archer")
+
+    assert [event.clock_trust for event in parsed.events] == ["pre_synchronization", "pre_synchronization"]
+    assert [event.boot_context_id for event in parsed.events] == ["tp-link-boot-1", "tp-link-boot-1"]
+    assert len(parsed.boot_candidates) == 1
+    assert parsed.boot_candidates[0].trusted_anchor is None
+    assert parsed.boot_candidates[0].warnings == ("no_trusted_boot_anchor",)
+
+
+def test_tp_link_nonboot_local_time_rollback_withholds_only_ambiguous_interval() -> None:
+    emission_order = [
+        "2042-06-15 11:00:00 service[201]: <6> 2002 Network services ready",
+        "2042-06-15 11:10:00 inet[401]: <5> 3002 Internet connected",
+        "2042-06-15 10:30:00 service[201]: <6> 9901 Health sample A",
+        "2042-06-15 10:31:00 service[201]: <6> 9901 Health sample B",
+        "2042-06-15 11:11:00 service[201]: <6> 9901 Health sample C",
+    ]
+
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(list(reversed(emission_order))),
+        "synthetic-clock-rollback.log",
+        "tp-link-archer",
+    )
+
+    assert [event.clock_trust for event in parsed.events] == [
+        "trusted", "trusted", "clock_ambiguous", "clock_ambiguous", "trusted",
+    ]
+    assert parsed.coverage_stats["trusted_records"] == 3
+    assert parsed.coverage_stats["run_span_start"] == "2042-06-15T11:00:00"
+    assert parsed.coverage_stats["run_span_end"] == "2042-06-15T11:11:00"
+
+
+def test_tp_link_boot_boundary_backward_jump_starts_untrusted_epoch() -> None:
+    emission_order = [
+        "2042-06-15 11:00:00 system[101]: <5> 1000 System startup",
+        "2042-06-15 11:10:00 service[201]: <6> 2002 Network services ready",
+        "2042-06-15 10:00:00 system[102]: <5> 1000 System startup",
+        "2042-06-15 10:00:05 service[202]: <6> 2001 Starting network services",
+    ]
+
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(list(reversed(emission_order))),
+        "synthetic-boot-rollback.log",
+        "tp-link-archer",
+    )
+
+    assert [event.clock_trust for event in parsed.events] == [
+        "trusted", "trusted", "clock_untrusted", "clock_untrusted",
+    ]
+    assert len(parsed.boot_candidates) == 2
+    assert parsed.boot_candidates[0].trusted_anchor == datetime(2042, 6, 15, 11, 0, 0)
+    assert parsed.boot_candidates[1].trusted_anchor is None
+    assert all(event.clock_trust != "clock_ambiguous" for event in parsed.events[2:])
+
+
+def test_tp_link_multiple_clock_corrections_create_independent_segments() -> None:
+    emission_order = [
+        "2042-01-01 00:00:01 system[101]: <5> 1000 System startup",
+        "2042-01-01 00:00:02 service[201]: <6> 2001 Starting network services",
+        "2042-06-15 10:00:00 service[201]: <6> 2002 Network services ready",
+        "2042-06-15 09:30:00 service[201]: <6> 9901 Health sample rollback",
+        "2042-06-15 10:01:00 inet[401]: <5> 3002 Internet connected",
+    ]
+
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(list(reversed(emission_order))),
+        "synthetic-multiple-corrections.log",
+        "tp-link-archer",
+    )
+
+    assert [event.clock_trust for event in parsed.events] == [
+        "pre_synchronization", "pre_synchronization", "trusted", "clock_ambiguous", "trusted",
+    ]
+    assert [segment.clock_trust for segment in parsed.clock_segments] == [
+        "pre_synchronization", "trusted", "clock_ambiguous", "trusted",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("export_time", "corrected_time"),
+    [
+        ("2042-01-04 00:00:00", "2042-01-02 00:00:00"),
+        ("2042-06-15 12:00:00", "2042-06-15 12:05:00"),
+    ],
+    ids=("exactly-48-hours-before-export", "exactly-5-minutes-after-export"),
+)
+def test_tp_link_clock_correction_accepts_inclusive_boundary_thresholds(
+    export_time: str,
+    corrected_time: str,
+) -> None:
+    emission_order = [
+        "2042-01-01 00:00:00 system[101]: <5> 1000 System startup",
+        f"{corrected_time} service[201]: <6> 2002 Network services ready",
+    ]
+
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(
+            list(reversed(emission_order)),
+            export_time=export_time,
+            firmware="9.99.9 Build 20420101 rel.99999n",
+        ),
+        "synthetic-clock-boundary.log",
+        "tp-link-archer",
+    )
+
+    assert [event.clock_trust for event in parsed.events] == ["pre_synchronization", "trusted"]
+
+
+def test_tp_link_five_minute_local_rollback_remains_trusted() -> None:
+    emission_order = [
+        "2042-06-15 11:00:00 service[201]: <6> 2002 Network services ready",
+        "2042-06-15 11:10:00 inet[401]: <5> 3002 Internet connected",
+        "2042-06-15 11:05:00 service[201]: <6> 9901 Health sample boundary",
+    ]
+
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(list(reversed(emission_order))),
+        "synthetic-five-minute-rollback.log",
+        "tp-link-archer",
+    )
+
+    assert [event.clock_trust for event in parsed.events] == ["trusted", "trusted", "trusted"]
+
+
 def test_router_instance_override_is_vendor_scoped_and_opaque() -> None:
     netgear_key = analyzer.router_instance_override_key("netgear", "  synthetic-router  ")
     tp_link_key = analyzer.router_instance_override_key("tp-link", "synthetic-router")
