@@ -1676,6 +1676,75 @@ def test_tp_link_privacy_reduction_handles_labeled_mac_punctuation_without_hex_o
         assert leaked_fragment not in event.normalized_message
 
 
+@pytest.mark.parametrize(
+    ("decorated", "expected"),
+    [
+        ("<02:00:00:00:00:03>", "<<mac>>"),
+        ("{02:00:00:00:00:03}", "{<mac>}"),
+        ("/02:00:00:00:00:03/", "/<mac>/"),
+        ("(02:00:00:00:00:03)", "(<mac>)"),
+        ("[02:00:00:00:00:03]", "[<mac>]"),
+        ("MAC:02:00:00:00:00:03", "MAC:<mac>"),
+    ],
+    ids=("angle", "brace", "slash", "parenthesis", "bracket", "label-colon"),
+)
+def test_tp_link_privacy_reduction_classifies_complete_mac_inside_delimiters(
+    decorated: str,
+    expected: str,
+) -> None:
+    text = tp_link_synthetic_snapshot([
+        f"2042-06-15 11:59:58 system[55]: <4> 9902 Peer {decorated} connected",
+    ])
+
+    event = analyzer.parse_router_log(text, "synthetic-delimited-mac.log", "tp-link-archer").events[0]
+
+    assert event.normalized_message == f"normalized-message-v1\0Peer {expected} connected"
+    assert event.structured_evidence["mac_addresses"] == ["02:00:00:00:00:03"]
+    assert "02:00:00:00:00:03" not in event.normalized_message
+
+
+def test_tp_link_privacy_reduction_preserves_trailing_mac_punctuation_and_prose() -> None:
+    message = (
+        "colon 02:00:00:00:00:03: connected; semicolon 02:00:00:00:00:04; ready; "
+        "comma 02:00:00:00:00:05, accepted"
+    )
+    text = tp_link_synthetic_snapshot([
+        f"2042-06-15 11:59:58 system[55]: <4> 9902 {message}",
+    ])
+
+    event = analyzer.parse_router_log(text, "synthetic-trailing-mac.log", "tp-link-archer").events[0]
+
+    assert event.normalized_message == (
+        "normalized-message-v1\0colon <mac>: connected; semicolon <mac>; ready; "
+        "comma <mac>, accepted"
+    )
+    assert event.structured_evidence["mac_addresses"] == [
+        "02:00:00:00:00:03", "02:00:00:00:00:04", "02:00:00:00:00:05",
+    ]
+
+
+def test_tp_link_privacy_reduction_does_not_truncate_longer_colon_tokens_as_macs() -> None:
+    message = (
+        "pseudo 02:00:00:00:00:03:04; full 2001:0db8:0000:0000:0000:0000:0000:0008; "
+        "compressed 2001:db8::9"
+    )
+    text = tp_link_synthetic_snapshot([
+        f"2042-06-15 11:59:58 system[55]: <4> 9902 {message}",
+    ])
+
+    event = analyzer.parse_router_log(text, "synthetic-long-colon-token.log", "tp-link-archer").events[0]
+
+    assert event.normalized_message == (
+        "normalized-message-v1\0pseudo <ipv6>; full <ipv6>; compressed <ipv6>"
+    )
+    assert "mac_addresses" not in event.structured_evidence
+    assert event.structured_evidence["ipv6_addresses"] == [
+        "02:00:00:00:00:03:04",
+        "2001:0db8:0000:0000:0000:0000:0000:0008",
+        "2001:db8::9",
+    ]
+
+
 def test_tp_link_privacy_reduction_handles_actor_labels_before_following_text() -> None:
     message = (
         "user alice@example.com connected; device:SYNTHETIC-NODE-ALPHA accepted; "

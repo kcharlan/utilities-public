@@ -2215,6 +2215,45 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             if found:
                 evidence[key] = found
 
+        mac_addresses: List[str] = []
+
+        def is_complete_mac_token(source: str, start: int, end: int) -> bool:
+            if start > 0 and source[start - 1] in "0123456789abcdefABCDEF":
+                return False
+            if start > 0 and source[start - 1] == ":":
+                preceding = source[:start - 1]
+                label_match = re.search(r"([A-Za-z0-9_-]+)\s*$", preceding)
+                if label_match is None or re.fullmatch(r"[0-9A-Fa-f]+", label_match.group(1)):
+                    return False
+            if end < len(source) and source[end] in "0123456789abcdefABCDEF":
+                return False
+            if end < len(source) and source[end] == ":":
+                remainder = source[end + 1:]
+                if remainder.startswith(":"):
+                    return False
+                next_segment = re.match(r"[0-9A-Fa-f]+", remainder)
+                if next_segment is not None:
+                    following_index = next_segment.end()
+                    if following_index == len(remainder) or not remainder[following_index].isalnum():
+                        return False
+            return True
+
+        mac_replacements: List[Tuple[int, int, str]] = []
+        mac_candidate_pattern = re.compile(r"(?=((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}))")
+        for match in mac_candidate_pattern.finditer(message_holder[0]):
+            start, end = match.span(1)
+            mac = match.group(1).upper()
+            if not is_complete_mac_token(message_holder[0], start, end):
+                continue
+            if mac not in mac_addresses:
+                mac_addresses.append(mac)
+            mac_replacements.append((start, end, "<mac>"))
+
+        for start, end, placeholder in reversed(mac_replacements):
+            message_holder[0] = message_holder[0][:start] + placeholder + message_holder[0][end:]
+        if mac_addresses:
+            evidence["mac_addresses"] = mac_addresses
+
         ipv6_like_pattern = re.compile(
             r"(?<![0-9A-Za-z])(?:"
             r"\[(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:\d{1,3}\.){3}\d{1,3}|[0-9A-Fa-f]{0,4})\]"
@@ -2231,23 +2270,6 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             return unwrapped
 
         collect(ipv6_like_pattern, "ipv6_addresses", "<ipv6>", normalize_ipv6_like)
-        mac_addresses: List[str] = []
-
-        def replace_mac(match: re.Match[str]) -> str:
-            mac = match.group("mac").upper()
-            if mac not in mac_addresses:
-                mac_addresses.append(mac)
-            return f"{match.group('prefix')}<mac>"
-
-        message_holder[0] = re.sub(
-            r"(?P<prefix>(?i:\b[A-Za-z][A-Za-z0-9_-]{0,31}\s*[:=]\s*)|^|[\s(\[,;])"
-            r"(?P<mac>(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})"
-            r"(?=$|[\s)\],;.!?])",
-            replace_mac,
-            message_holder[0],
-        )
-        if mac_addresses:
-            evidence["mac_addresses"] = mac_addresses
         collect(
             re.compile(r"(?<![A-Za-z0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9.])"),
             "ipv4_addresses",
