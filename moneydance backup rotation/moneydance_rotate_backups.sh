@@ -13,12 +13,16 @@ DEFAULT_CONFIG_PATH="${XDG_CONFIG_HOME:-${HOME}/.config}/moneydance-backup-rotat
 # Safe defaults. NAS details and the backup directory are deliberately absent.
 NAS_SERVER=""
 NAS_SHARE_NAME=""
+REQUIRED_NAS_SHARES=""
 BACKUP_DIRECTORY_NAME=""
 BACKUP_FILENAME_SUFFIX=""
 MAX_DAYS_TO_KEEP=4
 DRY_RUN=1
 LOG_FILE=""
 USE_SYSLOG=0
+
+typeset -a required_nas_shares=()
+integer nas_server_assignment_count=0
 
 MOUNT_BIN="${MONEYDANCE_MOUNT_BIN:-/sbin/mount}"
 STAT_BIN="${MONEYDANCE_STAT_BIN:-/usr/bin/stat}"
@@ -45,10 +49,13 @@ Default config:
   $XDG_CONFIG_HOME/moneydance-backup-rotation/config
   or $HOME/.config/moneydance-backup-rotation/config
 
+REQUIRED_NAS_SHARES must be a comma-delimited list of exact SMB share names
+and must contain NAS_SHARE_NAME exactly once.
+
 NAS settings may instead be supplied with MONEYDANCE_NAS_SERVER,
-MONEYDANCE_NAS_SHARE_NAME, MONEYDANCE_BACKUP_DIRECTORY_NAME, and
-MONEYDANCE_BACKUP_FILENAME_SUFFIX. No legacy configuration is discovered or
-migrated automatically.
+MONEYDANCE_NAS_SHARE_NAME, MONEYDANCE_REQUIRED_NAS_SHARES,
+MONEYDANCE_BACKUP_DIRECTORY_NAME, and MONEYDANCE_BACKUP_FILENAME_SUFFIX. No
+legacy configuration is discovered or migrated automatically.
 EOF
 }
 
@@ -115,8 +122,12 @@ load_config() {
     value="$(trim_config_value "${line#*=}")"
 
     case "${key}" in
-      NAS_SERVER) NAS_SERVER="${value}" ;;
+      NAS_SERVER)
+        NAS_SERVER="${value}"
+        (( nas_server_assignment_count += 1 ))
+        ;;
       NAS_SHARE_NAME) NAS_SHARE_NAME="${value}" ;;
+      REQUIRED_NAS_SHARES) REQUIRED_NAS_SHARES="${value}" ;;
       BACKUP_DIRECTORY_NAME) BACKUP_DIRECTORY_NAME="${value}" ;;
       BACKUP_FILENAME_SUFFIX) BACKUP_FILENAME_SUFFIX="${value}" ;;
       MAX_DAYS_TO_KEEP) MAX_DAYS_TO_KEEP="${value}" ;;
@@ -128,13 +139,36 @@ load_config() {
   done < "${config_path}"
 }
 
+validate_required_nas_shares() {
+  local raw_share share
+  typeset -a configured_required_shares=("${(@s:,:)REQUIRED_NAS_SHARES}")
+  typeset -A seen_required_nas_shares=()
+  integer primary_share_count=0
+
+  required_nas_shares=()
+  for raw_share in "${configured_required_shares[@]}"; do
+    share="$(trim_config_value "${raw_share}")"
+    [[ -n "${share}" ]] || config_error "REQUIRED_NAS_SHARES contains an empty item."
+    [[ "${share}" != *[^A-Za-z0-9._\ -]* ]] || config_error "REQUIRED_NAS_SHARES contains unsupported characters."
+    [[ -z "${seen_required_nas_shares[${share}]:-}" ]] || config_error "REQUIRED_NAS_SHARES contains a duplicate item."
+
+    seen_required_nas_shares[${share}]=1
+    required_nas_shares+=("${share}")
+    [[ "${share}" != "${NAS_SHARE_NAME}" ]] || (( primary_share_count += 1 ))
+  done
+
+  (( primary_share_count == 1 )) || config_error "REQUIRED_NAS_SHARES must contain NAS_SHARE_NAME exactly once."
+  REQUIRED_NAS_SHARES="${(j:,:)required_nas_shares}"
+}
+
 validate_config() {
-  if [[ -z "${NAS_SERVER}" || -z "${NAS_SHARE_NAME}" || -z "${BACKUP_DIRECTORY_NAME}" || -z "${BACKUP_FILENAME_SUFFIX}" ]]; then
-    config_error "Configuration is required. Set the NAS host, share, backup directory, and eligible backup filename suffix in a local config file or MONEYDANCE_* environment variables. No cleanup was attempted."
+  if [[ -z "${NAS_SERVER}" || -z "${NAS_SHARE_NAME}" || -z "${REQUIRED_NAS_SHARES}" || -z "${BACKUP_DIRECTORY_NAME}" || -z "${BACKUP_FILENAME_SUFFIX}" ]]; then
+    config_error "Configuration is required. Set the NAS host, primary share, required share list, backup directory, and eligible backup filename suffix in a local config file or MONEYDANCE_* environment variables. No cleanup was attempted."
   fi
 
   [[ "${NAS_SERVER}" != *[^A-Za-z0-9._-]* ]] || config_error "NAS_SERVER contains unsupported characters."
   [[ "${NAS_SHARE_NAME}" != *[^A-Za-z0-9._\ -]* ]] || config_error "NAS_SHARE_NAME contains unsupported characters."
+  validate_required_nas_shares
   [[ "${BACKUP_DIRECTORY_NAME}" != *[^A-Za-z0-9._\ -]* ]] || config_error "BACKUP_DIRECTORY_NAME must be one relative directory name."
   [[ "${BACKUP_DIRECTORY_NAME}" != "." && "${BACKUP_DIRECTORY_NAME}" != ".." ]] || config_error "BACKUP_DIRECTORY_NAME must name a child directory."
   [[ "${BACKUP_FILENAME_SUFFIX}" == .* && "${BACKUP_FILENAME_SUFFIX}" != "." ]] || config_error "BACKUP_FILENAME_SUFFIX must be a nonempty filename extension beginning with a period."
@@ -180,6 +214,7 @@ fi
 # Explicit environment variables override local config values.
 [[ -n "${MONEYDANCE_NAS_SERVER:-}" ]] && NAS_SERVER="${MONEYDANCE_NAS_SERVER}"
 [[ -n "${MONEYDANCE_NAS_SHARE_NAME:-}" ]] && NAS_SHARE_NAME="${MONEYDANCE_NAS_SHARE_NAME}"
+[[ -n "${MONEYDANCE_REQUIRED_NAS_SHARES:-}" ]] && REQUIRED_NAS_SHARES="${MONEYDANCE_REQUIRED_NAS_SHARES}"
 [[ -n "${MONEYDANCE_BACKUP_DIRECTORY_NAME:-}" ]] && BACKUP_DIRECTORY_NAME="${MONEYDANCE_BACKUP_DIRECTORY_NAME}"
 [[ -n "${MONEYDANCE_BACKUP_FILENAME_SUFFIX:-}" ]] && BACKUP_FILENAME_SUFFIX="${MONEYDANCE_BACKUP_FILENAME_SUFFIX}"
 [[ -n "${MONEYDANCE_MAX_DAYS_TO_KEEP:-}" ]] && MAX_DAYS_TO_KEEP="${MONEYDANCE_MAX_DAYS_TO_KEEP}"

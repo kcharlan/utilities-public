@@ -6,6 +6,7 @@ set -o pipefail
 typeset -a MONEYDANCE_TEST_ENV_VARS=(
   MONEYDANCE_NAS_SERVER
   MONEYDANCE_NAS_SHARE_NAME
+  MONEYDANCE_REQUIRED_NAS_SHARES
   MONEYDANCE_BACKUP_DIRECTORY_NAME
   MONEYDANCE_BACKUP_FILENAME_SUFFIX
   MONEYDANCE_MAX_DAYS_TO_KEEP
@@ -131,6 +132,7 @@ make_config() {
   cat > "${target}" <<EOF
 NAS_SERVER=synthetic-nas
 NAS_SHARE_NAME=SYNTHETIC_SHARE
+REQUIRED_NAS_SHARES=SYNTHETIC_SHARE,SYNTHETIC_COMPANION
 BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
 BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
 MAX_DAYS_TO_KEEP=2
@@ -212,6 +214,7 @@ injection_marker="${test_root}/injection-ran"
 cat > "${malicious_config}" <<EOF
 NAS_SERVER=synthetic-nas
 NAS_SHARE_NAME=\$(touch "${injection_marker}")
+REQUIRED_NAS_SHARES=\$(touch "${injection_marker}"),SYNTHETIC_COMPANION
 BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
 BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
 MAX_DAYS_TO_KEEP=2
@@ -231,6 +234,7 @@ make_mount_mock "${invalid_mount}" "${test_root}/unused" "${invalid_mount_marker
 cat > "${invalid_config}" <<'EOF'
  NAS_SERVER = synthetic-nas
  NAS_SHARE_NAME = SYNTHETIC_SHARE
+ REQUIRED_NAS_SHARES = SYNTHETIC_SHARE, SYNTHETIC_COMPANION
  BACKUP_DIRECTORY_NAME = SYNTHETIC_BACKUPS
  BACKUP_FILENAME_SUFFIX = .SYNTHETIC-BACKUP
  MAX_DAYS_TO_KEEP = 0
@@ -256,6 +260,7 @@ make_mount_mock "${missing_suffix_mount}" "${test_root}/unused" "${missing_suffi
 cat > "${missing_suffix_config}" <<'EOF'
 NAS_SERVER=synthetic-nas
 NAS_SHARE_NAME=SYNTHETIC_SHARE
+REQUIRED_NAS_SHARES=SYNTHETIC_SHARE,SYNTHETIC_COMPANION
 BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
 MAX_DAYS_TO_KEEP=2
 EOF
@@ -275,6 +280,95 @@ example_output="$(
 example_status=$?
 assert_status "tracked synthetic example is valid configuration" 0 "${example_status}"
 assert_not_contains "example run does not print synthetic host" "${example_output}" "SYNTHETIC-NAS-HOST"
+assert_contains "tracked synthetic example remains non-destructive" "$(<"${PROJECT_DIR}/config.example")" "DRY_RUN=1"
+
+required_shares_mount_marker="${test_root}/required-shares-mount-called"
+required_shares_mount="${test_root}/required-shares-mount"
+make_mount_mock "${required_shares_mount}" "${test_root}/unused" "${required_shares_mount_marker}"
+
+missing_required_shares_config="${test_root}/missing-required-shares.conf"
+cat > "${missing_required_shares_config}" <<'EOF'
+NAS_SERVER=synthetic-nas
+NAS_SHARE_NAME=SYNTHETIC_PRIMARY
+BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
+BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
+EOF
+missing_required_shares_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${required_shares_mount}" "${SCRIPT}" --config "${missing_required_shares_config}" 2>&1)"
+missing_required_shares_status=$?
+assert_status "file configuration requires REQUIRED_NAS_SHARES" 2 "${missing_required_shares_status}"
+if [[ ! -e "${required_shares_mount_marker}" ]]; then
+  pass "missing REQUIRED_NAS_SHARES fails before mount lookup"
+else
+  fail "missing REQUIRED_NAS_SHARES fails before mount lookup"
+fi
+
+typeset -a invalid_required_share_lists=(
+  'SYNTHETIC_PRIMARY,,SYNTHETIC_COMPANION'
+  'SYNTHETIC_PRIMARY,SYNTHETIC_PRIMARY'
+  'SYNTHETIC_PRIMARY,SYNTHETIC/COMPANION'
+  'SYNTHETIC_COMPANION,SYNTHETIC_TERTIARY'
+)
+typeset -a invalid_required_share_names=(
+  'empty item'
+  'duplicate item'
+  'unsupported characters'
+  'missing primary share'
+)
+invalid_required_shares_config="${test_root}/invalid-required-shares.conf"
+cat > "${invalid_required_shares_config}" <<'EOF'
+NAS_SERVER=synthetic-nas
+NAS_SHARE_NAME=SYNTHETIC_PRIMARY
+BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
+BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
+EOF
+integer required_share_case_index
+for (( required_share_case_index = 1; required_share_case_index <= ${#invalid_required_share_lists[@]}; required_share_case_index += 1 )); do
+  /bin/rm -f -- "${required_shares_mount_marker}"
+  invalid_required_shares_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${required_shares_mount}" MONEYDANCE_REQUIRED_NAS_SHARES="${invalid_required_share_lists[${required_share_case_index}]}" "${SCRIPT}" --config "${invalid_required_shares_config}" 2>&1)"
+  invalid_required_shares_status=$?
+  assert_status "REQUIRED_NAS_SHARES rejects ${invalid_required_share_names[${required_share_case_index}]}" 2 "${invalid_required_shares_status}"
+  if [[ ! -e "${required_shares_mount_marker}" ]]; then
+    pass "${invalid_required_share_names[${required_share_case_index}]} fails before mount lookup"
+  else
+    fail "${invalid_required_share_names[${required_share_case_index}]} fails before mount lookup"
+  fi
+done
+
+normalized_required_shares_config="${test_root}/normalized-required-shares.conf"
+cat > "${normalized_required_shares_config}" <<'EOF'
+NAS_SERVER=synthetic-nas
+NAS_SHARE_NAME=SYNTHETIC_PRIMARY
+REQUIRED_NAS_SHARES= SYNTHETIC_COMPANION , SYNTHETIC_PRIMARY
+BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
+BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
+EOF
+/bin/rm -f -- "${required_shares_mount_marker}"
+normalized_required_shares_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${required_shares_mount}" "${SCRIPT}" --config "${normalized_required_shares_config}" --dry-run 2>&1)"
+normalized_required_shares_status=$?
+assert_status "REQUIRED_NAS_SHARES normalizes whitespace around valid items" 0 "${normalized_required_shares_status}"
+if [[ -e "${required_shares_mount_marker}" ]]; then
+  pass "normalized REQUIRED_NAS_SHARES reaches mount lookup"
+else
+  fail "normalized REQUIRED_NAS_SHARES reaches mount lookup"
+fi
+
+required_shares_override_config="${test_root}/required-shares-override.conf"
+cat > "${required_shares_override_config}" <<'EOF'
+NAS_SERVER=synthetic-nas
+NAS_SHARE_NAME=SYNTHETIC_PRIMARY
+REQUIRED_NAS_SHARES=SYNTHETIC_FILE_ONLY
+BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
+BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
+EOF
+/bin/rm -f -- "${required_shares_mount_marker}"
+required_shares_override_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${required_shares_mount}" MONEYDANCE_REQUIRED_NAS_SHARES='SYNTHETIC_PRIMARY,SYNTHETIC_COMPANION' "${SCRIPT}" --config "${required_shares_override_config}" --dry-run 2>&1)"
+required_shares_override_status=$?
+assert_status "MONEYDANCE_REQUIRED_NAS_SHARES overrides the file value" 0 "${required_shares_override_status}"
+if [[ -e "${required_shares_mount_marker}" ]]; then
+  pass "valid REQUIRED_NAS_SHARES override reaches mount lookup"
+else
+  fail "valid REQUIRED_NAS_SHARES override reaches mount lookup"
+fi
 
 bad_log_config="${test_root}/bad-log.conf"
 bad_log_marker="${test_root}/bad-log-mount-called"
@@ -283,6 +377,7 @@ make_mount_mock "${bad_log_mount}" "${test_root}/unused" "${bad_log_marker}"
 cat > "${bad_log_config}" <<'EOF'
 NAS_SERVER=synthetic-nas
 NAS_SHARE_NAME=SYNTHETIC_SHARE
+REQUIRED_NAS_SHARES=SYNTHETIC_SHARE,SYNTHETIC_COMPANION
 BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
 BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
 LOG_FILE=relative.log
@@ -341,6 +436,7 @@ linked_config="${test_root}/linked-config"
 cat > "${linked_config}" <<'EOF'
 NAS_SERVER=synthetic-nas
 NAS_SHARE_NAME=SYNTHETIC_SHARE
+REQUIRED_NAS_SHARES=SYNTHETIC_SHARE,SYNTHETIC_COMPANION
 BACKUP_DIRECTORY_NAME=SYNTHETIC_LINK
 BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
 MAX_DAYS_TO_KEEP=1
@@ -375,6 +471,7 @@ spaced_share_config="${test_root}/spaced-share-config"
 cat > "${spaced_share_config}" <<'EOF'
 NAS_SERVER=synthetic-nas
 NAS_SHARE_NAME=SYNTHETIC SHARE
+REQUIRED_NAS_SHARES=SYNTHETIC SHARE,SYNTHETIC_COMPANION
 BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
 BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
 MAX_DAYS_TO_KEEP=2
@@ -455,6 +552,7 @@ env_output="$(
   MONEYDANCE_MOUNT_BIN="${mount_mock}" \
   MONEYDANCE_NAS_SERVER="synthetic-nas" \
   MONEYDANCE_NAS_SHARE_NAME="SYNTHETIC_SHARE" \
+  MONEYDANCE_REQUIRED_NAS_SHARES="SYNTHETIC_SHARE,SYNTHETIC_COMPANION" \
   MONEYDANCE_BACKUP_DIRECTORY_NAME="SYNTHETIC_BACKUPS" \
   MONEYDANCE_BACKUP_FILENAME_SUFFIX=".SYNTHETIC-BACKUP" \
   MONEYDANCE_MAX_DAYS_TO_KEEP=2 \
@@ -464,6 +562,26 @@ env_status=$?
 assert_status "environment-only configuration succeeds" 0 "${env_status}"
 assert_file_exists "environment-only invocation defaults to dry run" "${old_file}"
 assert_contains "safe default reports dry run" "${env_output}" "Dry run enabled"
+
+missing_env_required_shares_marker="${test_root}/missing-env-required-shares-mount-called"
+missing_env_required_shares_mount="${test_root}/missing-env-required-shares-mount"
+make_mount_mock "${missing_env_required_shares_mount}" "${mount_point}" "${missing_env_required_shares_marker}"
+missing_env_required_shares_output="$(
+  HOME="${test_root}/empty-home" \
+  MONEYDANCE_MOUNT_BIN="${missing_env_required_shares_mount}" \
+  MONEYDANCE_NAS_SERVER="synthetic-nas" \
+  MONEYDANCE_NAS_SHARE_NAME="SYNTHETIC_SHARE" \
+  MONEYDANCE_BACKUP_DIRECTORY_NAME="SYNTHETIC_BACKUPS" \
+  MONEYDANCE_BACKUP_FILENAME_SUFFIX=".SYNTHETIC-BACKUP" \
+  "${SCRIPT}" 2>&1
+)"
+missing_env_required_shares_status=$?
+assert_status "environment-only configuration requires REQUIRED_NAS_SHARES" 2 "${missing_env_required_shares_status}"
+if [[ ! -e "${missing_env_required_shares_marker}" ]]; then
+  pass "environment-only missing REQUIRED_NAS_SHARES fails before mount lookup"
+else
+  fail "environment-only missing REQUIRED_NAS_SHARES fails before mount lookup"
+fi
 
 find_fail="${test_root}/find-fail"
 cat > "${find_fail}" <<'EOF'
