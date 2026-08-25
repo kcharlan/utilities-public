@@ -23,6 +23,12 @@ USE_SYSLOG=0
 
 typeset -a required_nas_shares=()
 integer nas_server_assignment_count=0
+typeset -A mount_points_by_key=()
+typeset -A mount_counts_by_key=()
+typeset -a mount_hosts=()
+typeset -A seen_mount_hosts=()
+validated_backup_dir=""
+resolved_validated_backup_dir=""
 
 MOUNT_BIN="${MONEYDANCE_MOUNT_BIN:-/sbin/mount}"
 STAT_BIN="${MONEYDANCE_STAT_BIN:-/usr/bin/stat}"
@@ -179,6 +185,97 @@ validate_config() {
   [[ -z "${LOG_FILE}" || "${LOG_FILE}" == /* ]] || config_error "LOG_FILE must be empty or an absolute path."
 }
 
+parse_mount_inventory() {
+  local mount_output="$1"
+  local line mount_source mount_details mount_point mount_options option
+  local source_authority_and_share source_authority source_host source_share key
+  typeset -a parsed_mount_options=()
+
+  mount_points_by_key=()
+  mount_counts_by_key=()
+  mount_hosts=()
+  seen_mount_hosts=()
+
+  while IFS= read -r line; do
+    [[ "${line}" == //*" on "*" ("*")" ]] || continue
+
+    mount_source="${line%% on *}"
+    mount_details="${line#* on }"
+    [[ "${mount_source}" == //*/* && "${mount_details}" == *" ("*")" ]] || continue
+
+    mount_point="${mount_details% \(*}"
+    mount_options="${mount_details##* \(}"
+    mount_options="${mount_options%\)}"
+    [[ -n "${mount_point}" && "${mount_options}" != "${mount_details}" ]] || continue
+
+    parsed_mount_options=("${(@s:,:)mount_options}")
+    integer is_smbfs=0
+    for option in "${parsed_mount_options[@]}"; do
+      option="$(trim_config_value "${option}")"
+      if [[ "${option}" == "smbfs" ]]; then
+        is_smbfs=1
+        break
+      fi
+    done
+    (( is_smbfs )) || continue
+
+    source_authority_and_share="${mount_source#//}"
+    source_authority="${source_authority_and_share%%/*}"
+    source_share="${source_authority_and_share#*/}"
+    source_host="${source_authority##*@}"
+    [[ -n "${source_authority}" && -n "${source_host}" && -n "${source_share}" ]] || continue
+    [[ "${source_share}" != */* && "${source_host}" != *\|* && "${source_share}" != *\|* ]] || continue
+
+    # Decode only the literal escape emitted by macOS mount for spaces.
+    source_share="${source_share//\\040/ }"
+    mount_point="${mount_point//\\040/ }"
+    key="${source_host}|${source_share}"
+
+    if [[ -z "${seen_mount_hosts[${source_host}]:-}" ]]; then
+      seen_mount_hosts[${source_host}]=1
+      mount_hosts+=("${source_host}")
+    fi
+    mount_points_by_key[${key}]="${mount_points_by_key[${key}]:-}${mount_point}"$'\n'
+    mount_counts_by_key[${key}]=$(( ${mount_counts_by_key[${key}]:-0} + 1 ))
+  done <<< "${mount_output}"
+}
+
+host_has_required_shares() {
+  local host="$1"
+  local share key
+
+  for share in "${required_nas_shares[@]}"; do
+    key="${host}|${share}"
+    (( ${mount_counts_by_key[${key}]:-0} == 1 )) || return 1
+  done
+  return 0
+}
+
+validate_backup_directory_for_host() {
+  local host="$1"
+  local key="${host}|${NAS_SHARE_NAME}"
+  local mount_point backup_dir resolved_mount_point resolved_backup_dir
+
+  validated_backup_dir=""
+  resolved_validated_backup_dir=""
+  (( ${mount_counts_by_key[${key}]:-0} == 1 )) || return 1
+
+  mount_point="${mount_points_by_key[${key}]:-}"
+  mount_point="${mount_point%$'\n'}"
+  [[ -n "${mount_point}" && -d "${mount_point}" ]] || return 1
+
+  backup_dir="${mount_point%/}/${BACKUP_DIRECTORY_NAME}"
+  [[ -d "${backup_dir}" && ! -L "${backup_dir}" && -r "${backup_dir}" && -x "${backup_dir}" ]] || return 1
+
+  resolved_mount_point="${mount_point:A}"
+  resolved_backup_dir="${backup_dir:A}"
+  [[ "${resolved_backup_dir}" == "${resolved_mount_point%/}/"* ]] || return 1
+
+  validated_backup_dir="${backup_dir}"
+  resolved_validated_backup_dir="${resolved_backup_dir}"
+  return 0
+}
+
 config_path="${DEFAULT_CONFIG_PATH}"
 config_explicit=0
 cli_dry_run=0
@@ -240,58 +337,16 @@ mount_output=""
 if ! mount_output="$("${MOUNT_BIN}" 2>/dev/null)"; then
   exit_with_error "Unable to read the mount table; no cleanup was attempted."
 fi
-
-mount_line=""
-mount_point=""
-while IFS= read -r line; do
-  [[ "${line}" == *" on "* ]] || continue
-  mount_source="${line%% on *}"
-  [[ "${mount_source}" == //*/* ]] || continue
-
-  source_authority_and_share="${mount_source#//}"
-  source_authority="${source_authority_and_share%%/*}"
-  source_share="${source_authority_and_share#*/}"
-  source_host="${source_authority##*@}"
-
-  # macOS mount output represents spaces as the literal sequence \040. Decode
-  # only that supported sequence with shell substitution before exact matching;
-  # never interpret arbitrary backslash escapes from command output.
-  source_share="${source_share//\\040/ }"
-
-  if [[ "${source_host}" == "${NAS_SERVER}" && "${source_share}" == "${NAS_SHARE_NAME}" ]]; then
-    mount_line="${line}"
-    mount_details="${line#* on }"
-    mount_point="${mount_details% \(*}"
-    mount_point="${mount_point//\\040/ }"
-    break
-  fi
-done <<< "${mount_output}"
+parse_mount_inventory "${mount_output}"
 unset mount_output
 
-if [[ -z "${mount_line}" ]]; then
+if ! host_has_required_shares "${NAS_SERVER}" || ! validate_backup_directory_for_host "${NAS_SERVER}"; then
   log_message "WARN" "The configured share is not mounted; skipping cleanup."
   exit 0
 fi
 
-if [[ -z "${mount_point}" || ! -d "${mount_point}" ]]; then
-  log_message "WARN" "The mount table did not yield an accessible mount point; skipping cleanup."
-  exit 0
-fi
-
-backup_dir="${mount_point%/}/${BACKUP_DIRECTORY_NAME}"
-if [[ ! -d "${backup_dir}" ]]; then
-  log_message "WARN" "The configured backup directory was not found; skipping cleanup."
-  exit 0
-fi
-if [[ -L "${backup_dir}" ]]; then
-  log_message "WARN" "The configured backup directory is a symbolic link; skipping cleanup."
-  exit 0
-fi
-resolved_backup_dir="${backup_dir:A}"
-if [[ ! -r "${backup_dir}" || ! -x "${backup_dir}" ]]; then
-  log_message "WARN" "The configured backup directory is not accessible; skipping cleanup."
-  exit 0
-fi
+backup_dir="${validated_backup_dir}"
+resolved_backup_dir="${resolved_validated_backup_dir}"
 
 log_message "INFO" "Inspecting the configured backup directory."
 

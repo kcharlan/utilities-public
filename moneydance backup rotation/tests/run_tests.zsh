@@ -118,11 +118,26 @@ make_mount_mock() {
   local mount_point="$2"
   local marker="$3"
   local mount_source="${4:-//synthetic-nas/SYNTHETIC_SHARE}"
+  make_mount_inventory_mock \
+    "${target}" \
+    "${marker}" \
+    "${mount_source} on ${mount_point} (smbfs)" \
+    "//synthetic-nas/SYNTHETIC_COMPANION on ${test_root:-/tmp}/synthetic-companion (smbfs)"
+}
+
+make_mount_inventory_mock() {
+  local target="$1"
+  local marker="$2"
+  shift 2
+
   cat > "${target}" <<EOF
 #!/bin/zsh
-print -r -- invoked > "${marker}"
-print -r -- '${mount_source} on ${mount_point} (smbfs)'
+print -r -- invoked >> "${marker}"
 EOF
+  local mount_line
+  for mount_line in "$@"; do
+    printf 'print -r -- %q\n' "${mount_line}" >> "${target}"
+  done
   chmod 755 "${target}"
 }
 
@@ -426,6 +441,207 @@ touch -t 203601010101 "${nonmatching_file}"
 mount_marker="${test_root}/mount-called"
 mount_mock="${test_root}/mount-mock"
 make_mount_mock "${mount_mock}" "${mount_point}" "${mount_marker}" "//synthetic-user@synthetic-nas/SYNTHETIC_SHARE"
+
+inventory_mount_point="${test_root}/inventory primary"
+inventory_backup_dir="${inventory_mount_point}/SYNTHETIC_BACKUPS"
+inventory_companion_mount_point="${test_root}/inventory companion"
+mkdir -p "${inventory_backup_dir}" "${inventory_companion_mount_point}"
+inventory_old_file="${inventory_backup_dir}/SYNTHETIC-OLD.SYNTHETIC-BACKUP"
+inventory_middle_file="${inventory_backup_dir}/SYNTHETIC-MIDDLE.SYNTHETIC-BACKUP"
+inventory_new_file="${inventory_backup_dir}/SYNTHETIC-NEW.SYNTHETIC-BACKUP"
+touch -t 203701020101 "${inventory_middle_file}"
+touch -t 203701030101 "${inventory_new_file}"
+escaped_inventory_mount_point="${inventory_mount_point// /\\040}"
+escaped_inventory_companion_mount_point="${inventory_companion_mount_point// /\\040}"
+
+reset_inventory_candidate() {
+  touch -t 203701010101 "${inventory_old_file}"
+}
+
+inventory_config="${test_root}/inventory-config"
+cat > "${inventory_config}" <<'EOF'
+NAS_SERVER=synthetic-nas
+NAS_SHARE_NAME=SYNTHETIC_SHARE
+REQUIRED_NAS_SHARES=SYNTHETIC_SHARE,SYNTHETIC_COMPANION
+BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
+BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
+MAX_DAYS_TO_KEEP=2
+DRY_RUN=0
+USE_SYSLOG=0
+EOF
+
+complete_inventory_marker="${test_root}/complete-inventory-called"
+complete_inventory_mount="${test_root}/complete-inventory-mount"
+make_mount_inventory_mock \
+  "${complete_inventory_mount}" \
+  "${complete_inventory_marker}" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+complete_inventory_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${complete_inventory_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+complete_inventory_status=$?
+assert_status "all required shares on the configured host allow retention analysis" 0 "${complete_inventory_status}"
+assert_file_missing "complete configured-host mount set permits deletion" "${inventory_old_file}"
+
+missing_companion_marker="${test_root}/missing-companion-called"
+missing_companion_mount="${test_root}/missing-companion-mount"
+make_mount_inventory_mock \
+  "${missing_companion_mount}" \
+  "${missing_companion_marker}" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)"
+reset_inventory_candidate
+missing_companion_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${missing_companion_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "missing companion share is a safe no-op" 0 "$?"
+assert_file_exists "missing companion share preserves purge candidates" "${inventory_old_file}"
+
+missing_primary_marker="${test_root}/missing-primary-called"
+missing_primary_mount="${test_root}/missing-primary-mount"
+make_mount_inventory_mock \
+  "${missing_primary_mount}" \
+  "${missing_primary_marker}" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+missing_primary_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${missing_primary_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "missing primary share is a safe no-op" 0 "$?"
+assert_file_exists "missing primary share preserves purge candidates" "${inventory_old_file}"
+
+split_hosts_marker="${test_root}/split-hosts-called"
+split_hosts_mount="${test_root}/split-hosts-mount"
+make_mount_inventory_mock \
+  "${split_hosts_mount}" \
+  "${split_hosts_marker}" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-other/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+split_hosts_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${split_hosts_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "required shares split across hosts are a safe no-op" 0 "$?"
+assert_file_exists "split-host required shares preserve purge candidates" "${inventory_old_file}"
+
+near_match_marker="${test_root}/near-match-called"
+near_match_mount="${test_root}/near-match-mount"
+make_mount_inventory_mock \
+  "${near_match_mount}" \
+  "${near_match_marker}" \
+  "//synthetic-nas-extra/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//Synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_SHARE_EXTRA on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-nas/synthetic_share on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_COMPAN on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+near_match_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${near_match_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "similar and differently cased host and share names are a safe no-op" 0 "$?"
+assert_file_exists "near-match host and share names preserve purge candidates" "${inventory_old_file}"
+
+spaced_inventory_config="${test_root}/spaced-inventory-config"
+cat > "${spaced_inventory_config}" <<'EOF'
+NAS_SERVER=synthetic-nas
+NAS_SHARE_NAME=SYNTHETIC PRIMARY
+REQUIRED_NAS_SHARES=SYNTHETIC PRIMARY,SYNTHETIC COMPANION
+BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
+BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
+MAX_DAYS_TO_KEEP=2
+DRY_RUN=0
+USE_SYSLOG=0
+EOF
+qualified_inventory_marker="${test_root}/qualified-inventory-called"
+qualified_inventory_mount="${test_root}/qualified-inventory-mount"
+make_mount_inventory_mock \
+  "${qualified_inventory_mount}" \
+  "${qualified_inventory_marker}" \
+  "//synthetic-user@synthetic-nas/SYNTHETIC\\040PRIMARY on ${escaped_inventory_mount_point} (smbfs, nodev)" \
+  "//synthetic-user@synthetic-nas/SYNTHETIC\\040COMPANION on ${escaped_inventory_companion_mount_point} (smbfs, nodev)"
+reset_inventory_candidate
+qualified_inventory_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${qualified_inventory_mount}" "${SCRIPT}" --config "${spaced_inventory_config}" 2>&1)"
+assert_status "qualified sources and literal escaped spaces work for both required shares" 0 "$?"
+assert_file_missing "qualified escaped complete mount set permits deletion" "${inventory_old_file}"
+
+other_host_primary="${test_root}/other-host-primary"
+other_host_companion="${test_root}/other-host-companion"
+mkdir -p "${other_host_primary}" "${other_host_companion}"
+coexisting_hosts_marker="${test_root}/coexisting-hosts-called"
+coexisting_hosts_mount="${test_root}/coexisting-hosts-mount"
+make_mount_inventory_mock \
+  "${coexisting_hosts_mount}" \
+  "${coexisting_hosts_marker}" \
+  "//synthetic-other/SYNTHETIC_SHARE on ${other_host_primary} (smbfs)" \
+  "//synthetic-other/SYNTHETIC_COMPANION on ${other_host_companion} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+coexisting_hosts_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${coexisting_hosts_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "configured host wins when another complete host coexists" 0 "$?"
+assert_file_missing "configured complete host binds retention to its primary share" "${inventory_old_file}"
+
+companion_backup_mount_point="${test_root}/companion-backup-mount"
+companion_backup_dir="${companion_backup_mount_point}/SYNTHETIC_BACKUPS"
+primary_without_backup="${test_root}/primary-without-backup"
+mkdir -p "${companion_backup_dir}" "${primary_without_backup}"
+companion_backup_candidate="${companion_backup_dir}/SYNTHETIC-OLD.SYNTHETIC-BACKUP"
+touch -t 203701010101 "${companion_backup_candidate}"
+touch -t 203701020101 "${companion_backup_dir}/SYNTHETIC-MIDDLE.SYNTHETIC-BACKUP"
+touch -t 203701030101 "${companion_backup_dir}/SYNTHETIC-NEW.SYNTHETIC-BACKUP"
+primary_binding_marker="${test_root}/primary-binding-called"
+primary_binding_mount="${test_root}/primary-binding-mount"
+make_mount_inventory_mock \
+  "${primary_binding_mount}" \
+  "${primary_binding_marker}" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${companion_backup_mount_point} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${primary_without_backup} (smbfs)"
+primary_binding_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${primary_binding_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "backup directory is validated only under the primary share" 0 "$?"
+assert_file_exists "companion-share backup directory is never purged" "${companion_backup_candidate}"
+
+duplicate_primary_marker="${test_root}/duplicate-primary-called"
+duplicate_primary_mount="${test_root}/duplicate-primary-mount"
+make_mount_inventory_mock \
+  "${duplicate_primary_mount}" \
+  "${duplicate_primary_marker}" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${test_root}/inaccessible-duplicate (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+duplicate_primary_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${duplicate_primary_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "duplicate primary mounts are a safe no-op" 0 "$?"
+assert_file_exists "accessible plus inaccessible primary duplicates preserve candidates" "${inventory_old_file}"
+
+duplicate_companion_marker="${test_root}/duplicate-companion-called"
+duplicate_companion_mount="${test_root}/duplicate-companion-mount"
+make_mount_inventory_mock \
+  "${duplicate_companion_mount}" \
+  "${duplicate_companion_marker}" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${test_root}/inaccessible-companion-duplicate (smbfs)"
+reset_inventory_candidate
+duplicate_companion_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${duplicate_companion_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "duplicate companion mounts are a safe no-op" 0 "$?"
+assert_file_exists "companion duplicates preserve purge candidates" "${inventory_old_file}"
+
+ignored_lines_marker="${test_root}/ignored-lines-called"
+ignored_lines_mount="${test_root}/ignored-lines-mount"
+make_mount_inventory_mock \
+  "${ignored_lines_mount}" \
+  "${ignored_lines_marker}" \
+  "//synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (apfs, local)" \
+  "//synthetic-nas/SYNTHETIC_SHARE ${escaped_inventory_mount_point} (smbfs)" \
+  "malformed //synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point}" \
+  "//synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+ignored_lines_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${ignored_lines_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "malformed and non-SMB mount lines are ignored safely" 0 "$?"
+assert_file_exists "ignored mount-like lines cannot authorize deletion" "${inventory_old_file}"
+
+reset_inventory_candidate
+/bin/rm -f -- "${complete_inventory_marker}"
+single_read_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${complete_inventory_mount}" "${SCRIPT}" --config "${inventory_config}" --dry-run 2>&1)"
+single_read_status=$?
+assert_status "single mount-table read run succeeds" 0 "${single_read_status}"
+mount_invocation_count="$(wc -l < "${complete_inventory_marker}" | tr -d '[:space:]')"
+if [[ "${mount_invocation_count}" -eq 1 ]]; then
+  pass "mount command is invoked exactly once per run"
+else
+  fail "mount command is invoked exactly once per run (got ${mount_invocation_count})"
+fi
 
 linked_backup_target="${test_root}/misconfigured-outside"
 mkdir -p "${linked_backup_target}"
