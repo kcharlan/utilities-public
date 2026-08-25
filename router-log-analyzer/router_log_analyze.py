@@ -1421,7 +1421,25 @@ V4_INDEX_DESCENDING.update({
     "idx_device_registrations_mac_sequence": (0, 1),
     "idx_router_snapshot_history": (0, 0, 1, 1),
 })
+V4_PRE_RELEASE_MAINTENANCE_INDEXES: Tuple[str, ...] = (
+    "idx_run_event_occurrences_occurrence",
+    "idx_run_router_boot_sessions_boot_session",
+    "idx_router_event_occurrences_boot_session",
+)
+V4_PRE_RELEASE_MAINTENANCE_INDEX_SET = frozenset(
+    V4_PRE_RELEASE_MAINTENANCE_INDEXES
+)
 SQLITE_DATABASE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
+
+
+def _canonical_v4_index_sql(index_name: str) -> str:
+    table, columns = V4_INDEX_COLUMNS[index_name]
+    directions = V4_INDEX_DESCENDING[index_name]
+    columns_sql = ", ".join(
+        f'"{column}"' + (" DESC" if descending else "")
+        for column, descending in zip(columns, directions)
+    )
+    return f'CREATE INDEX "{index_name}" ON "{table}"({columns_sql})'
 
 
 class StateStore:
@@ -1586,7 +1604,14 @@ class StateStore:
         if str(version) != str(raw_version):
             self._raise_schema_error("metadata.schema_version is not canonical")
         if version == SCHEMA_VERSION:
-            self._validate_schema(SCHEMA_VERSION)
+            if self._has_pre_release_reverse_index_shape():
+                self._validate_schema(
+                    SCHEMA_VERSION,
+                    ignored_indexes=V4_PRE_RELEASE_MAINTENANCE_INDEX_SET,
+                )
+                self._repair_pre_release_reverse_indexes()
+            else:
+                self._validate_schema(SCHEMA_VERSION)
         elif version == MIGRATABLE_SCHEMA_VERSION:
             self._validate_schema(MIGRATABLE_SCHEMA_VERSION)
         else:
@@ -1605,7 +1630,42 @@ class StateStore:
     def _raise_schema_error(self, detail: str) -> None:
         raise RuntimeError(self._schema_recovery_message(detail))
 
-    def _validate_schema(self, version: int) -> None:
+    def _has_pre_release_reverse_index_shape(self) -> bool:
+        existing_objects = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE name IN (?, ?, ?)",
+                V4_PRE_RELEASE_MAINTENANCE_INDEXES,
+            )
+        }
+        return not existing_objects
+
+    def _repair_pre_release_reverse_indexes(self) -> None:
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            for index_name in V4_PRE_RELEASE_MAINTENANCE_INDEXES:
+                self.conn.execute(_canonical_v4_index_sql(index_name))
+            self._validate_v4_maintenance_before_commit()
+            self.conn.commit()
+        except BaseException:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            raise
+
+    def _validate_v4_maintenance_before_commit(self) -> None:
+        self._validate_schema(SCHEMA_VERSION)
+
+    def _validate_schema(
+        self,
+        version: int,
+        *,
+        ignored_indexes: FrozenSet[str] = frozenset(),
+    ) -> None:
+        if ignored_indexes and (
+            version != SCHEMA_VERSION
+            or ignored_indexes != V4_PRE_RELEASE_MAINTENANCE_INDEX_SET
+        ):
+            raise RuntimeError("Invalid internal schema-validation index exemption")
         integrity_results = [row[0] for row in self.conn.execute("PRAGMA integrity_check")]
         if integrity_results != ["ok"]:
             self._raise_schema_error("SQLite integrity_check reported corruption")
@@ -1731,6 +1791,8 @@ class StateStore:
                 )
 
         for index, (table, expected_columns) in indexes.items():
+            if index in ignored_indexes:
+                continue
             row = self.conn.execute(
                 "SELECT type, tbl_name, sql FROM sqlite_master WHERE name = ?",
                 (index,),
@@ -1769,13 +1831,16 @@ class StateStore:
                 self._raise_schema_error(
                     f"required index {index!r} has unexpected direction or collation"
                 )
-            expected_index_columns_sql = ", ".join(
-                f'"{column}"' + (" DESC" if descending else "")
-                for column, descending in zip(expected_columns, expected_directions)
-            )
-            expected_index_sql = (
-                f'CREATE INDEX "{index}" ON "{table}"({expected_index_columns_sql})'
-            )
+            if version == SCHEMA_VERSION:
+                expected_index_sql = _canonical_v4_index_sql(index)
+            else:
+                expected_index_columns_sql = ", ".join(
+                    f'"{column}"' + (" DESC" if descending else "")
+                    for column, descending in zip(expected_columns, expected_directions)
+                )
+                expected_index_sql = (
+                    f'CREATE INDEX "{index}" ON "{table}"({expected_index_columns_sql})'
+                )
             try:
                 actual_index_tokens = _tokenize_sqlite_ddl(row[2] or "")
             except ValueError as exc:

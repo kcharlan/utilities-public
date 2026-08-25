@@ -549,6 +549,108 @@ os._exit(0)
     assert journal_path.read_bytes()[:8] == bytes.fromhex("d9d505f920a163d7")
 
 
+PRE_REVERSE_INDEX_V4_MISSING_INDEXES = (
+    "idx_run_event_occurrences_occurrence",
+    "idx_run_router_boot_sessions_boot_session",
+    "idx_router_event_occurrences_boot_session",
+)
+
+
+def build_pre_reverse_index_v4_database(db_path: Path) -> dict[str, object]:
+    """Build the exact runtime v4 shape emitted before reverse indexes were added."""
+    store = analyzer.StateStore(db_path)
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        run_id = store.insert_run(
+            epoch_id=epoch_id,
+            policy_profile_id=None,
+            router_instance_id=router_id,
+            format_id="netgear",
+            file_hash="synthetic-pre-reverse-index-run",
+            source_path=Path("/synthetic/pre-reverse-index.log"),
+            parse_stats=analyzer.ParseStats(parsed_events=1),
+            observation_start="2037-06-01T12:00:00",
+            observation_end="2037-06-01T12:01:00",
+            observed_dates=["2037-06-01"],
+            risk_score=0,
+            status="Clean",
+            is_partial=False,
+        )
+        store.conn.execute(
+            """
+            INSERT INTO router_boot_sessions(
+              id, router_instance_id, session_key, trusted_local_anchor,
+              adapter_boot_id, startup_signature, identity_version, created_at
+            ) VALUES(
+              71, ?, 'synthetic-pre-index-session', '2037-06-01T12:00:00',
+              NULL, 'synthetic-startup-signature', 'router-boot-session:v1',
+              '2037-06-01T12:00:00Z'
+            )
+            """,
+            (router_id,),
+        )
+        store.conn.execute(
+            "INSERT INTO run_router_boot_sessions(run_id, boot_session_id) VALUES(?, 71)",
+            (run_id,),
+        )
+        store.conn.execute(
+            """
+            INSERT INTO router_event_occurrences(
+              id, router_instance_id, occurrence_digest, identity_version,
+              boot_session_id, local_timestamp, clock_trust, component,
+              process_id, vendor_event_code, syslog_severity, normalized_message,
+              canonical_event_key, canonical_event_family, actor_scope,
+              actor_identity, structured_evidence_json
+            ) VALUES(
+              81, ?, 'synthetic-pre-index-occurrence', 'router-event-occurrence:v1',
+              71, '2037-06-01T12:00:30', 'trusted_local', 'synthetic-component',
+              NULL, NULL, NULL, 'synthetic normalized message',
+              'SYNTHETIC_EVENT', 'synthetic', 'router', NULL, '{}'
+            )
+            """,
+            (router_id,),
+        )
+        store.conn.execute(
+            """
+            INSERT INTO run_event_occurrences(
+              run_id, occurrence_id, is_novel, is_repeated, source_sequence, source_count
+            ) VALUES(?, 81, 1, 0, 1, 1)
+            """,
+            (run_id,),
+        )
+        store.conn.commit()
+        expected = {
+            "run_id": run_id,
+            "epoch_id": epoch_id,
+            "router_id": router_id,
+            "counts": {
+                table: store.conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                for table in analyzer.V4_REQUIRED_COLUMNS
+            },
+            "ids": {
+                table: [
+                    row[0]
+                    for row in store.conn.execute(f'SELECT id FROM "{table}" ORDER BY id')
+                ]
+                for table, columns in analyzer.V4_REQUIRED_COLUMNS.items()
+                if "id" in columns
+            },
+            "boot_session_ids": [row[0] for row in store.conn.execute(
+                "SELECT id FROM router_boot_sessions ORDER BY id"
+            )],
+            "occurrence_ids": [row[0] for row in store.conn.execute(
+                "SELECT id FROM router_event_occurrences ORDER BY id"
+            )],
+        }
+        for index_name in PRE_REVERSE_INDEX_V4_MISSING_INDEXES:
+            store.conn.execute(f'DROP INDEX "{index_name}"')
+        store.conn.commit()
+        return expected
+    finally:
+        store.close()
+
+
 def test_empty_database_is_created_directly_as_schema_v4_with_foreign_keys_enabled(
     tmp_path: Path,
 ) -> None:
@@ -805,6 +907,137 @@ def test_v4_reverse_relationship_indexes_are_present_and_selected(
             assert index_name in plan
     finally:
         store.close()
+
+
+def test_pre_reverse_index_v4_is_repaired_transactionally_and_second_open_is_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "pre-reverse-index-v4.db"
+    expected = build_pre_reverse_index_v4_database(db_path)
+
+    repaired = analyzer.StateStore(db_path)
+    try:
+        assert repaired.get_metadata("schema_version") == "4"
+        assert repaired.conn.execute("SELECT id FROM runs").fetchone()[0] == expected["run_id"]
+        for table, expected_count in expected["counts"].items():
+            assert repaired.conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0] == expected_count
+        for table, expected_ids in expected["ids"].items():
+            assert [
+                row[0]
+                for row in repaired.conn.execute(f'SELECT id FROM "{table}" ORDER BY id')
+            ] == expected_ids
+        assert [row[0] for row in repaired.conn.execute(
+            "SELECT id FROM router_boot_sessions ORDER BY id"
+        )] == expected["boot_session_ids"]
+        assert [row[0] for row in repaired.conn.execute(
+            "SELECT id FROM router_event_occurrences ORDER BY id"
+        )] == expected["occurrence_ids"]
+        assert repaired.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        for index_name in PRE_REVERSE_INDEX_V4_MISSING_INDEXES:
+            assert repaired.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (index_name,),
+            ).fetchone() is not None
+    finally:
+        repaired.close()
+
+    statements: list[str] = []
+    original_open = analyzer.StateStore._open_connection
+
+    def traced_open(database: str) -> sqlite3.Connection:
+        connection = original_open(database)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(
+        analyzer.StateStore,
+        "_open_connection",
+        staticmethod(traced_open),
+    )
+    reopened = analyzer.StateStore(db_path)
+    reopened.close()
+    assert not any(
+        statement.lstrip().casefold().startswith("create index")
+        and any(index_name in statement for index_name in PRE_REVERSE_INDEX_V4_MISSING_INDEXES)
+        for statement in statements
+    )
+
+
+def test_pre_reverse_index_v4_repair_rolls_back_when_post_validation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "pre-reverse-index-rollback.db"
+    build_pre_reverse_index_v4_database(db_path)
+
+    def reject_real_database(store: analyzer.StateStore) -> None:
+        store._validate_schema(analyzer.SCHEMA_VERSION)
+        if store.db_path == db_path:
+            raise RuntimeError("synthetic reverse-index post-validation failure")
+
+    monkeypatch.setattr(
+        analyzer.StateStore,
+        "_validate_v4_maintenance_before_commit",
+        reject_real_database,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic reverse-index post-validation failure"):
+        analyzer.StateStore(db_path)
+
+    verification = sqlite3.connect(db_path)
+    try:
+        assert verification.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()[0] == "4"
+        assert {
+            row[0]
+            for row in verification.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }.isdisjoint(PRE_REVERSE_INDEX_V4_MISSING_INDEXES)
+        assert verification.execute("SELECT id FROM router_boot_sessions").fetchall() == [(71,)]
+        assert verification.execute("SELECT id FROM router_event_occurrences").fetchall() == [(81,)]
+    finally:
+        verification.close()
+
+
+def test_pre_reverse_index_compatibility_rejects_any_additional_missing_index(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "pre-reverse-index-malformed.db"
+    build_pre_reverse_index_v4_database(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute("DROP INDEX idx_runs_epoch_time")
+    connection.commit()
+    connection.close()
+    before = database_artifact_state(db_path)
+
+    with pytest.raises(RuntimeError, match="idx_runs_epoch_time"):
+        analyzer.StateStore(db_path)
+
+    assert database_artifact_state(db_path) == before
+
+
+def test_partial_reverse_index_loss_is_not_treated_as_pre_release_compatibility(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "partial-reverse-index-loss.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    connection = sqlite3.connect(db_path)
+    connection.execute("DROP INDEX idx_run_event_occurrences_occurrence")
+    connection.commit()
+    connection.close()
+    before = database_artifact_state(db_path)
+
+    with pytest.raises(RuntimeError, match="idx_run_event_occurrences_occurrence"):
+        analyzer.StateStore(db_path)
+
+    assert database_artifact_state(db_path) == before
 
 
 def test_valid_populated_v3_migrates_atomically_and_preserves_legacy_rows(
