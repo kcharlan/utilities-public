@@ -847,7 +847,8 @@ EOF
   done
 
   # The first ls line contains the filename. A filename containing "allow"
-  # must not be parsed as an ACL entry, while a deny-only ACE remains safe.
+  # must not be parsed as an ACL entry, while a deny-only directory ACE remains
+  # safe for the ancestor chain.
   reset_repair_config
   acl_deny_dir="${test_root}/SYNTHETIC-PRIVATE-allow-FIRST-LINE"
   acl_deny_config="${acl_deny_dir}/repair-allow-config"
@@ -855,12 +856,35 @@ EOF
   cp -p "${repair_config}" "${acl_deny_config}"
   chmod 700 "${acl_deny_dir}"
   /bin/chmod +a 'everyone deny delete' "${acl_deny_dir}"
-  /bin/chmod +a 'everyone deny delete' "${acl_deny_config}"
   PTY_INPUT=$'n\n'
   run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${acl_deny_config}" --repair-config
-  assert_status "repair permits deny-only ACLs and allow text in filename" 0 "${PTY_STATUS}"
-  if cmp -s "${acl_deny_config}" "${repair_original}"; then pass "deny-only ACL repair cancellation preserves bytes"; else fail "deny-only ACL repair cancellation preserves bytes"; fi
-  /bin/chmod -N "${acl_deny_config}" "${acl_deny_dir}"
+  assert_status "repair permits deny-only directory ACLs and allow text in filename" 0 "${PTY_STATUS}"
+  if cmp -s "${acl_deny_config}" "${repair_original}"; then pass "deny-only directory ACL repair cancellation preserves bytes"; else fail "deny-only directory ACL repair cancellation preserves bytes"; fi
+  /bin/chmod -N "${acl_deny_dir}"
+
+  # Config files follow a simpler policy than directories: any ACL entry would
+  # be lost by atomic replacement, so even a deny-only ACL is rejected.
+  reset_repair_config
+  /bin/chmod +a 'everyone deny delete' "${repair_config}"
+  acl_config_before="$(/bin/ls -lde -- "${repair_config}")"
+  acl_config_mode="$(stat -f '%Lp' "${repair_config}")"
+  rm -f -- "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
+  : > "${candidate_log}"
+  : > "${candidate_logger_marker}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${acl_mktemp}" MONEYDANCE_MV_BIN="${acl_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "repair rejects deny-only ACL on live config" 2 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "deny-only config ACL rejection preserves exact bytes"; else fail "deny-only config ACL rejection preserves exact bytes"; fi
+  [[ "$(stat -f '%Lp' "${repair_config}")" == "${acl_config_mode}" ]] && pass "deny-only config ACL rejection preserves mode" || fail "deny-only config ACL rejection preserves mode"
+  [[ "$(/bin/ls -lde -- "${repair_config}")" == "${acl_config_before}" ]] && pass "deny-only config ACL rejection preserves ACL" || fail "deny-only config ACL rejection preserves ACL"
+  [[ ! -e "${acl_mktemp_marker}" ]] && pass "deny-only config ACL rejection precedes temp creation" || fail "deny-only config ACL rejection precedes temp creation"
+  [[ ! -e "${unique_candidate_marker}" ]] && pass "deny-only config ACL rejection precedes mount" || fail "deny-only config ACL rejection precedes mount"
+  [[ ! -e "${acl_mv_marker}" ]] && pass "deny-only config ACL rejection precedes MV_BIN" || fail "deny-only config ACL rejection precedes MV_BIN"
+  acl_config_persistent="${PTY_STDERR}$(<"${candidate_log}")$(<"${candidate_logger_marker}")"
+  for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host; do
+    assert_not_contains "deny-only config ACL persistent sinks redact ${private_token}" "${acl_config_persistent}" "${private_token}"
+  done
+  /bin/chmod -N "${repair_config}"
 
   for acl_inspection_kind in failure malformed; do
     reset_repair_config

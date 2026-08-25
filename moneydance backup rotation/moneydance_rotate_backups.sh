@@ -417,6 +417,7 @@ cleanup_repair_artifacts() {
 
 inspect_path_acl() {
   local path="$1"
+  local acl_policy="${2:-deny-only}"
   local acl_output acl_line acl_line_trimmed acl_entry_index acl_header_prefix
   local acl_header_pattern='^[d-][r-][w-][xSs-][r-][w-][xSs-][r-][w-][xTt-][@+]?[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+'
   integer acl_index expected_acl_index
@@ -442,6 +443,11 @@ inspect_path_acl() {
   else
     return 1
   fi
+  if [[ "${acl_policy}" == no-acl ]]; then
+    (( ${#acl_lines[@]} == 1 )) || return 1
+    return 0
+  fi
+  [[ "${acl_policy}" == deny-only ]] || return 1
   for (( acl_index = 2; acl_index <= ${#acl_lines[@]}; acl_index += 1 )); do
     acl_line="${acl_lines[${acl_index}]}"
     acl_line_trimmed="${acl_line##[[:space:]]#}"
@@ -562,7 +568,7 @@ validate_repair_preconditions() {
   fi
   read_config_metadata "${config_path}" || config_error "The repair configuration metadata could not be validated."
   [[ "${config_owner}" == "${EUID}" ]] || config_error "The repair configuration must be owned by the invoking user."
-  if inspect_path_acl "${config_path}"; then
+  if inspect_path_acl "${config_path}" no-acl; then
     :
   else
     acl_status=$?
@@ -694,7 +700,7 @@ validated_repair_temp() {
   if [[ -n "${expected_mode}" && "${mode}" != "${expected_mode}" ]]; then
     return 1
   fi
-  inspect_path_acl "${path}" || return 1
+  inspect_path_acl "${path}" no-acl || return 1
   return 0
 }
 
@@ -709,7 +715,7 @@ snapshot_repair_config() {
   fi
   validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
   revalidate_config_directory || return 1
-  inspect_path_acl "${config_path}" || return 1
+  inspect_path_acl "${config_path}" no-acl || return 1
   if ! /bin/cp -- "${config_path}" "${repair_snapshot_tmp}" 2>/dev/null; then
     return 1
   fi
@@ -742,7 +748,7 @@ metadata_matches_snapshot() {
   local current
   revalidate_config_directory || return 1
   read_config_metadata "${config_path}" || return 1
-  inspect_path_acl "${config_path}" || return 1
+  inspect_path_acl "${config_path}" no-acl || return 1
   current="${config_device}|${config_inode}|${config_owner}|${config_group}|${config_mode}|${config_size}"
   [[ "${current}" == "${expected}" && ! -L "${config_path}" && -f "${config_path}" ]] || return 1
   validated_repair_temp "${repair_snapshot_tmp}" snapshot 600 || return 1
