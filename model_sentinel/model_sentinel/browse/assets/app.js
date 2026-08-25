@@ -383,9 +383,110 @@
     return provider ? {provider, model: pin.slice(provider.id.length + 1)} : {provider: null, model: pin};
   }
 
+  function rectangleIntersection(first, second) {
+    const intersection = {
+      left: Math.max(first.left, second.left),
+      top: Math.max(first.top, second.top),
+      right: Math.min(first.right, second.right),
+      bottom: Math.min(first.bottom, second.bottom)
+    };
+    return intersection.right > intersection.left && intersection.bottom > intersection.top
+      ? intersection
+      : null;
+  }
+
+  function typeaheadPlacement(anchor, viewport, margin = 8) {
+    const below = Math.max(0, viewport.height - anchor.bottom - margin);
+    const above = Math.max(0, anchor.top - margin);
+    const placeAbove = below < 160 && above > below;
+    const available = placeAbove ? above : below;
+    const widthLimit = Math.max(0, viewport.width - 2 * margin);
+    const width = Math.min(Math.max(anchor.width, 352), widthLimit);
+    const maxLeft = Math.max(0, viewport.width - margin - width);
+    const minLeft = Math.min(margin, maxLeft);
+    const left = Math.max(minLeft, Math.min(anchor.left, maxLeft));
+    const maxHeight = Math.max(0, Math.min(available, 320));
+    return placeAbove
+      ? {left, width, maxHeight, bottom: viewport.height - anchor.top}
+      : {left, width, maxHeight, top: anchor.bottom};
+  }
+
+  function Portal({children}) {
+    const host = useMemo(() => {
+      const element = document.createElement("div");
+      element.dataset.modelSentinelPortal = "typeahead";
+      return element;
+    }, []);
+    useEffect(() => {
+      document.body.appendChild(host);
+      return () => {
+        render(null, host);
+        host.remove();
+      };
+    }, [host]);
+    useEffect(() => {
+      render(children, host);
+    }, [children, host]);
+    return null;
+  }
+
+  function TypeaheadOverlay({anchorRef, open, children}) {
+    const [placement, setPlacement] = useState(null);
+    useEffect(() => {
+      if (!open) {
+        setPlacement(null);
+        return;
+      }
+      let frame = null;
+      const measure = () => {
+        frame = null;
+        const anchor = anchorRef.current;
+        if (!anchor || !anchor.isConnected) {
+          setPlacement(null);
+          return;
+        }
+        const bounds = anchor.getBoundingClientRect();
+        if (bounds.width <= 0 || bounds.height <= 0 || ![bounds.left, bounds.top, bounds.right, bounds.bottom].every(Number.isFinite)) {
+          setPlacement(null);
+          return;
+        }
+        const viewportBounds = {left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight};
+        const clippingAncestor = anchor.closest(".model-controls");
+        const visibleBounds = clippingAncestor
+          ? rectangleIntersection(viewportBounds, clippingAncestor.getBoundingClientRect())
+          : viewportBounds;
+        if (!visibleBounds || !rectangleIntersection(bounds, visibleBounds)) {
+          setPlacement(null);
+          return;
+        }
+        setPlacement(typeaheadPlacement(bounds, viewportBounds));
+      };
+      const schedule = () => {
+        if (frame !== null) return;
+        frame = window.requestAnimationFrame(measure);
+      };
+      const observer = new ResizeObserver(schedule);
+      const anchor = anchorRef.current;
+      if (anchor) observer.observe(anchor);
+      window.addEventListener("resize", schedule);
+      window.addEventListener("scroll", schedule, true);
+      schedule();
+      return () => {
+        if (frame !== null) window.cancelAnimationFrame(frame);
+        observer.disconnect();
+        window.removeEventListener("resize", schedule);
+        window.removeEventListener("scroll", schedule, true);
+      };
+    }, [anchorRef, open]);
+    if (!open) return null;
+    return html`<${Portal}>${placement ? html`<div class="typeahead" style=${placement}>${children}</div>` : null}</${Portal}>`;
+  }
+
   function Pins({meta, pins, providers, write, inputRef, toast}) {
     const [query, setQuery] = useState("");
     const [debouncedQuery, setDebouncedQuery] = useState("");
+    const listboxId = "pin-results";
+    const open = Boolean(query.trim());
     useEffect(() => {
       const timer = setTimeout(() => setDebouncedQuery(query), 150);
       return () => clearTimeout(timer);
@@ -408,11 +509,11 @@
         const parts = pinParts(pin, meta.providers);
         return html`<li key=${pin}><i style=${`--pin-color: var(--series-${index + 1})`}></i><span><strong>${parts.model}</strong><small>${parts.provider ? parts.provider.label : pin}</small></span><button type="button" aria-label=${`Remove ${parts.model}`} onClick=${() => write({pins: pins.filter(value => value !== pin)})}>×</button></li>`;
       })}</ol>
-      <div class="pin-search"><label for="pin-query">Add model</label><input id="pin-query" ref=${inputRef} type="search" autocomplete="off" value=${query} placeholder="Search model id or name" onInput=${event => setQuery(event.currentTarget.value)} onKeyDown=${event => {
+      <div class="pin-search"><label for="pin-query">Add model</label><input id="pin-query" ref=${inputRef} type="search" autocomplete="off" value=${query} placeholder="Search model id or name" aria-expanded=${open} aria-controls=${open ? listboxId : undefined} onInput=${event => setQuery(event.currentTarget.value)} onKeyDown=${event => {
         if (event.key === "Escape") setQuery("");
-        else if (event.key === "ArrowDown") { const first = event.currentTarget.nextElementSibling && event.currentTarget.nextElementSibling.querySelector("button"); if (first) { event.preventDefault(); first.focus(); } }
+        else if (event.key === "ArrowDown") { const first = document.getElementById(listboxId)?.querySelector("button"); if (first) { event.preventDefault(); first.focus(); } }
       }} />
-        ${query.trim() && html`<div class="typeahead" role="listbox" aria-label="Model search results">${results.loading ? html`<p>Searching local history…</p>` : results.error ? html`<p>${results.error.message}</p>` : results.data && results.data.length ? results.data.map(item => html`<button type="button" role="option" aria-selected="false" key=${`${item.provider_id}/${item.model_id}`} onClick=${() => add(item)}><strong>${item.display_name || item.model_id}</strong><span>${item.provider_id} / ${item.model_id}</span></button>`) : html`<p>No matching models</p>`}</div>`}
+        <${TypeaheadOverlay} anchorRef=${inputRef} open=${open}><div id=${listboxId} role="listbox" aria-label="Model search results">${results.loading ? html`<p>Searching local history…</p>` : results.error ? html`<p>${results.error.message}</p>` : results.data && results.data.length ? results.data.map(item => html`<button type="button" role="option" aria-selected="false" key=${`${item.provider_id}/${item.model_id}`} onClick=${() => add(item)}><strong>${item.display_name || item.model_id}</strong><span>${item.provider_id} / ${item.model_id}</span></button>`) : html`<p>No matching models</p>`}</div></${TypeaheadOverlay}>
       </div>
     </section>`;
   }
@@ -489,7 +590,123 @@
     }
   }
 
-  function TimelinePanel({aspect, axis, items, pins, plots, write}) {
+  function timelineTooltipCursorInside(cursor, over) {
+    return Number.isFinite(cursor.left) && Number.isFinite(cursor.top)
+      && cursor.left >= 0 && cursor.left <= over.clientWidth
+      && cursor.top >= 0 && cursor.top <= over.clientHeight;
+  }
+
+  function timelineTooltipVerticalLayout(overHeight, headerHeight, footerHeight, itemCount, inset = 8) {
+    const availableHeight = Math.max(0, overHeight - inset * 2 - headerHeight - footerHeight - 2);
+    const rowHeight = itemCount > 0
+      ? Math.max(0, Math.min(24, (availableHeight - 1) / itemCount))
+      : 0;
+    return {availableHeight, rowHeight};
+  }
+
+  function timelineTooltipValue(value) {
+    return typeof value === "number" && Number.isFinite(value) ? String(value) : "—";
+  }
+
+  function timelineTooltipPlugin({aspect, axis, items, pins, providers}) {
+    let over = null, tooltip = null, header = null, rows = null, footer = null;
+    let active = false;
+    let lastIndex = null;
+    const pointerEnter = () => { active = true; };
+    const pointerLeave = () => {
+      active = false;
+      tooltip.hidden = true;
+    };
+    const positionTooltip = u => {
+      const inset = 8, gap = 10;
+      tooltip.style.left = "0px";
+      tooltip.style.top = "0px";
+      tooltip.style.maxHeight = `${Math.max(0, over.clientHeight - inset * 2)}px`;
+      tooltip.hidden = false;
+      const vertical = timelineTooltipVerticalLayout(
+        over.clientHeight,
+        header.offsetHeight,
+        footer.offsetHeight,
+        items.length,
+        inset
+      );
+      rows.style.maxHeight = `${vertical.availableHeight}px`;
+      tooltip.style.setProperty("--timeline-tooltip-row-height", `${vertical.rowHeight}px`);
+      const tooltipWidth = tooltip.offsetWidth;
+      const tooltipHeight = tooltip.offsetHeight;
+      const cursorLeft = u.cursor.left;
+      const cursorTop = u.cursor.top;
+      const preferredLeft = cursorLeft + gap + tooltipWidth <= over.clientWidth
+        ? cursorLeft + gap
+        : cursorLeft - gap - tooltipWidth;
+      const left = Math.max(inset, Math.min(preferredLeft, Math.max(inset, over.clientWidth - inset - tooltipWidth)));
+      const top = Math.max(inset, Math.min(cursorTop + gap, Math.max(inset, over.clientHeight - inset - tooltipHeight)));
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    };
+    return {hooks: {
+      ready: [u => {
+        over = u.root.querySelector(".u-over");
+        if (!over) return;
+        tooltip = document.createElement("div");
+        tooltip.className = "timeline-tooltip";
+        tooltip.setAttribute("role", "tooltip");
+        tooltip.hidden = true;
+        header = document.createElement("div");
+        header.className = "timeline-tooltip-header";
+        rows = document.createElement("div");
+        rows.className = "timeline-tooltip-rows";
+        footer = document.createElement("div");
+        footer.className = "timeline-tooltip-footer";
+        tooltip.append(header, rows, footer);
+        over.appendChild(tooltip);
+        over.addEventListener("pointerenter", pointerEnter);
+        over.addEventListener("pointerleave", pointerLeave);
+      }],
+      setCursor: [u => {
+        if (!over || !tooltip) return;
+        const index = u.cursor.idx;
+        if (!active || !Number.isInteger(index) || index < 0 || index >= axis.length || !timelineTooltipCursorInside(u.cursor, over)) {
+          tooltip.hidden = true;
+          return;
+        }
+        if (index !== lastIndex) {
+          header.textContent = new Date(axis[index].completed_at).toLocaleString();
+          rows.replaceChildren();
+          for (const item of items) {
+            const value = item.values[index];
+            const row = document.createElement("div");
+            row.className = "timeline-tooltip-row";
+            const model = document.createElement("div");
+            model.className = "timeline-tooltip-model";
+            const swatch = document.createElement("i");
+            swatch.className = "timeline-tooltip-swatch";
+            swatch.style.background = cssSeries(pins.indexOf(item.model));
+            const name = document.createElement("span");
+            name.textContent = pinParts(item.model, providers).model;
+            const valueElement = document.createElement("span");
+            valueElement.className = "timeline-tooltip-value";
+            valueElement.textContent = timelineTooltipValue(value);
+            model.append(swatch, name);
+            row.append(model, valueElement);
+            rows.appendChild(row);
+          }
+          footer.textContent = aspect.unit ? `${aspect.unit} · — = no observation` : "— = no observation";
+          lastIndex = index;
+        }
+        positionTooltip(u);
+      }],
+      destroy: [() => {
+        if (!over) return;
+        over.removeEventListener("pointerenter", pointerEnter);
+        over.removeEventListener("pointerleave", pointerLeave);
+        if (tooltip) tooltip.remove();
+        over = tooltip = header = rows = footer = null;
+      }]
+    }};
+  }
+
+  function TimelinePanel({aspect, axis, items, pins, providers, plots, write}) {
     const host = useRef(null);
     useEffect(() => {
       if (!host.current || !axis.length) return;
@@ -511,6 +728,7 @@
         ],
         cursor: {drag: {x: true, y: false, setScale: true}, sync: {key: "ms-browse"}},
         legend: {show: false},
+        plugins: [timelineTooltipPlugin({aspect, axis, items, pins, providers})],
         series: [{label: "Observed at"}, ...items.map(item => {
           const index = pins.indexOf(item.model);
           return {label: item.model, stroke: cssSeries(index), width: 2, spanGaps: false, paths: uPlot.paths.stepped({align: 1})};
@@ -659,7 +877,7 @@
       const state = aspect.kind === "boolean" || aspect.kind === "list" || aspect.kind === "scalar";
       return html`<section class="timeline-panel instrument" key=${`${aspect.id}:${themeKey}`}><header class="panel-heading"><div><p>${aspect.category}</p><h2>${aspect.label}${aspect.qualifier ? html`<small>${aspect.qualifier}</small>` : null}${ambiguous.has(aspect.id) ? html`<small class="panel-provider">${providerLabels[aspect.provider_id]}</small>` : null}</h2></div><span>${aspect.unit || aspect.kind}</span></header>
         <div class="panel-legend">${items.map(item => { const index = pins.indexOf(item.model); return html`<button type="button" key=${item.model} onMouseEnter=${() => focusPlotSeries(plots, item.model, true)} onMouseLeave=${() => focusPlotSeries(plots, item.model, false)} onFocus=${() => focusPlotSeries(plots, item.model, true)} onBlur=${() => focusPlotSeries(plots, item.model, false)}><i style=${`background: var(--series-${index + 1})`}></i>${pinParts(item.model, meta.providers).model}</button>`; })}</div>
-        ${state ? html`<${StateStrip} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} providers=${meta.providers} />` : html`<${TimelinePanel} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} plots=${plots} write=${write} />`}
+        ${state ? html`<${StateStrip} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} providers=${meta.providers} />` : html`<${TimelinePanel} aspect=${aspect} axis=${data.axis} items=${items} pins=${pins} providers=${meta.providers} plots=${plots} write=${write} />`}
       </section>`;
     })}</div>`;
   }

@@ -5,6 +5,7 @@ from html.parser import HTMLParser
 from importlib import resources
 from pathlib import PurePosixPath
 import re
+import subprocess
 from urllib.parse import urlsplit
 
 import pytest
@@ -747,6 +748,228 @@ def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
     assert "aspect.squelched" in source
 
 
+def test_model_typeahead_portal_escapes_sidebar_and_cleans_up() -> None:
+    source = _read_asset("app.js")
+    portal = source[
+        source.index("function Portal(") : source.index("function TypeaheadOverlay(")
+    ]
+    host_match = re.search(
+        r"const (\w+) = useMemo\(\(\) => \{(?P<factory>.*?)\}, \[\]\);",
+        portal,
+        re.DOTALL,
+    )
+
+    assert host_match is not None
+    factory = host_match.group("factory")
+    element_match = re.search(r'const (\w+) = document\.createElement\("div"\)', factory)
+    assert element_match is not None
+    element = re.escape(element_match.group(1))
+    assert re.search(rf'{element}\.dataset\.modelSentinelPortal = "typeahead"', factory)
+    assert re.search(rf"return {element};", factory)
+    host = re.escape(host_match.group(1))
+    assert portal.count('document.createElement("div")') == 1
+    assert len(re.findall(r"useEffect\(\(\) => \{", portal)) == 2
+    assert re.search(rf"document\.body\.appendChild\({host}\)", portal)
+    assert re.search(rf"render\(children, {host}\)", portal)
+    assert re.search(rf"render\(null, {host}\).*?{host}\.remove\(\)", portal, re.DOTALL)
+    assert portal.count("render(null,") == 1
+    assert portal.index("render(null,") < portal.index("render(children,")
+
+
+def test_model_typeahead_placement_tracks_viewport_and_anchor() -> None:
+    source = _read_asset("app.js")
+    placement = source[
+        source.index("function typeaheadPlacement(") : source.index("function Portal(")
+    ]
+
+    assert "margin = 8" in placement
+    below_match = re.search(
+        r"const (\w+) = Math\.max\(0, viewport\.height - anchor\.bottom - margin\);",
+        placement,
+    )
+    above_match = re.search(
+        r"const (\w+) = Math\.max\(0, anchor\.top - margin\);", placement
+    )
+    assert below_match is not None and above_match is not None
+    below, above = map(re.escape, (below_match.group(1), above_match.group(1)))
+    flip_match = re.search(
+        rf"const (\w+) = {below} < 160 && {above} > {below};", placement
+    )
+    assert flip_match is not None
+    flip = re.escape(flip_match.group(1))
+    available_match = re.search(
+        rf"const (\w+) = {flip} \? {above} : {below};", placement
+    )
+    assert available_match is not None
+    available = re.escape(available_match.group(1))
+    width_limit_match = re.search(
+        r"const (\w+) = Math\.max\(0, viewport\.width - 2 \* margin\);",
+        placement,
+    )
+    assert width_limit_match is not None
+    width_limit = re.escape(width_limit_match.group(1))
+    width_match = re.search(
+        rf"const (\w+) = Math\.min\(Math\.max\(anchor\.width, 352\), {width_limit}\);",
+        placement,
+    )
+    assert width_match is not None
+    width = re.escape(width_match.group(1))
+    assert re.search(rf"viewport\.width - margin - {width}", placement)
+    assert re.search(rf"Math\.max\(0, Math\.min\({available}, 320\)\)", placement)
+    assert re.search(r"\? \{[^}]*bottom: viewport\.height - anchor\.top[^}]*\}", placement)
+    assert re.search(r": \{[^}]*top: anchor\.bottom[^}]*\}", placement)
+    assert not re.search(r"\? \{[^}]*\btop\s*:", placement)
+    assert not re.search(r": \{[^}]*\bbottom\s*:", placement)
+
+
+def test_model_typeahead_hides_anchors_outside_viewport_or_sidebar_clip() -> None:
+    source = _read_asset("app.js")
+    intersection = source[
+        source.index("function rectangleIntersection(") : source.index(
+            "function typeaheadPlacement("
+        )
+    ]
+    overlay = source[
+        source.index("function TypeaheadOverlay(") : source.index("function Pins(")
+    ]
+
+    result_match = re.search(r"const (\w+) = \{", intersection)
+    assert result_match is not None
+    result = re.escape(result_match.group(1))
+    assert "left: Math.max(first.left, second.left)" in intersection
+    assert "top: Math.max(first.top, second.top)" in intersection
+    assert "right: Math.min(first.right, second.right)" in intersection
+    assert "bottom: Math.min(first.bottom, second.bottom)" in intersection
+    assert re.search(
+        rf"{result}\.right > {result}\.left && {result}\.bottom > {result}\.top",
+        intersection,
+    )
+    assert re.search(rf"\? {result}\s*: null", intersection)
+    assert "left: 0" in overlay
+    assert "top: 0" in overlay
+    assert "right: window.innerWidth" in overlay
+    assert "bottom: window.innerHeight" in overlay
+    clip_match = re.search(r'const (\w+) = \w+\.closest\("\.model-controls"\);', overlay)
+    assert clip_match is not None
+    clip = re.escape(clip_match.group(1))
+    visible_match = re.search(
+        rf"const (\w+) = {clip}\s*\? rectangleIntersection\(\w+, {clip}\.getBoundingClientRect\(\)\)\s*: \w+;",
+        overlay,
+    )
+    assert visible_match is not None
+    visible = re.escape(visible_match.group(1))
+    assert re.search(
+        rf"if \(!{visible} \|\| !rectangleIntersection\(\w+, {visible}\)\) \{{\s*setPlacement\(null\);\s*return;",
+        overlay,
+    )
+
+    scroll_match = re.search(
+        r'window\.addEventListener\("scroll", (\w+), true\)', overlay
+    )
+    assert scroll_match is not None
+    schedule = re.escape(scroll_match.group(1))
+    assert re.search(
+        rf"const {schedule} = \(\) => \{{.*?window\.requestAnimationFrame\(\w+\)",
+        overlay,
+        re.DOTALL,
+    )
+    assert "}, [anchorRef, open]);" in overlay
+
+
+def test_model_typeahead_preserves_listbox_keyboard_contract() -> None:
+    source = _read_asset("app.js")
+    overlay = source[
+        source.index("function TypeaheadOverlay(") : source.index("function Pins(")
+    ]
+    pins = source[source.index("function Pins(") : source.index("function ambiguousAspectIds(")]
+
+    assert "getBoundingClientRect()" in overlay
+    assert "typeaheadPlacement(" in overlay
+    resize_match = re.search(r'window\.addEventListener\("resize", (\w+)\)', overlay)
+    scroll_match = re.search(r'window\.addEventListener\("scroll", (\w+), true\)', overlay)
+    assert resize_match is not None and scroll_match is not None
+    assert re.search(
+        rf'window\.removeEventListener\("resize", {re.escape(resize_match.group(1))}\)',
+        overlay,
+    )
+    assert re.search(
+        rf'window\.removeEventListener\("scroll", {re.escape(scroll_match.group(1))}, true\)',
+        overlay,
+    )
+    observer_match = re.search(r"const (\w+) = new ResizeObserver\(", overlay)
+    assert observer_match is not None
+    observer = re.escape(observer_match.group(1))
+    assert re.search(rf"{observer}\.observe\(", overlay)
+    frame_match = re.search(r"let (\w+) = null;", overlay)
+    assert frame_match is not None
+    frame = re.escape(frame_match.group(1))
+    assert re.search(
+        rf"if \({frame} !== null\) return;\s*{frame} = window\.requestAnimationFrame",
+        overlay,
+    )
+    assert re.search(rf"window\.cancelAnimationFrame\({frame}\)", overlay)
+    assert re.search(rf"{observer}\.disconnect\(\)", overlay)
+    assert re.search(
+        r"if \(!\w+ \|\| !\w+\.isConnected\) \{\s*setPlacement\(null\);\s*return;",
+        overlay,
+    )
+    assert "placement ?" in overlay
+    assert "style=${placement}" in overlay
+
+    listbox_match = re.search(r'const (\w+) = "pin-results";', pins)
+    query_match = re.search(r'const \[(\w+), (\w+)\] = useState\(""\);', pins)
+    assert listbox_match is not None and query_match is not None
+    query, clear_query = map(re.escape, query_match.groups())
+    open_match = re.search(rf"const (\w+) = Boolean\({query}\.trim\(\)\);", pins)
+    assert open_match is not None
+    listbox_id = re.escape(listbox_match.group(1))
+    open_state = re.escape(open_match.group(1))
+    assert re.search(rf"aria-expanded=\$\{{{open_state}\}}", pins)
+    assert re.search(
+        rf"aria-controls=\$\{{{open_state} \? {listbox_id} : undefined\}}", pins
+    )
+    option_match = re.search(
+        rf'const (\w+) = document\.getElementById\({listbox_id}\)\?\.querySelector\("button"\)',
+        pins,
+    )
+    assert option_match is not None
+    option = re.escape(option_match.group(1))
+    assert "event.preventDefault()" in pins
+    assert re.search(rf"{option}\.focus\(\)", pins)
+    assert "nextElementSibling" not in pins
+    assert 'role="listbox"' in pins
+    assert 'role="option"' in pins
+    assert 'event.key === "Escape"' in pins
+    assert len(re.findall(rf'{clear_query}\(""\)', pins)) >= 2
+    assert re.search(rf"open=\$\{{{open_state}\}}", pins)
+
+
+def test_model_typeahead_css_is_fixed_bounded_overlay() -> None:
+    styles = _read_asset("app.css")
+
+    def declarations(selector: str) -> str:
+        match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", styles)
+        assert match is not None, selector
+        return match.group(1)
+
+    typeahead = declarations(".typeahead")
+    assert "position: fixed" in typeahead
+    assert "overflow-y: auto" in typeahead
+    assert "z-index: 90" in typeahead
+    assert all(
+        property_name not in typeahead
+        for property_name in ("top:", "right:", "bottom:", "left:", "width:", "max-height:")
+    )
+    assert "z-index: 100" in declarations(".drawer-layer")
+    assert "z-index: 110" in declarations(".spark-layer")
+    assert "z-index: 120" in declarations(".toast-region")
+
+    controls = declarations(".model-controls")
+    assert "position: sticky" in controls
+    assert "max-height: calc(100vh - 11rem)" in controls
+    assert "overflow-y: auto" in controls
+
+
 def test_models_aspect_limit_is_enforced_for_hash_and_picker() -> None:
     source = _read_asset("app.js")
 
@@ -782,6 +1005,240 @@ def test_models_numeric_panels_use_stepped_synced_uplot_contract() -> None:
     assert "key=${`${aspect.id}:${themeKey}`}" in source
     assert 'stroke: cssToken("--ink-muted")' in source
     assert 'stroke: cssToken("--border")' in source
+
+
+def test_numeric_timeline_tooltip_preserves_exact_all_model_values() -> None:
+    source = _read_asset("app.js")
+
+    assert "function timelineTooltipValue(value)" in source
+    helper = source[
+        source.index("function timelineTooltipValue(value)") : source.index(
+            "function timelineTooltipPlugin("
+        )
+    ]
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    panel = source[
+        source.index("function TimelinePanel(") : source.index("function listToneAt(")
+    ]
+
+    assert re.search(
+        r'typeof value === "number"\s*&&\s*Number\.isFinite\(value\)\s*\?\s*String\(value\)\s*:\s*"—"',
+        helper,
+    )
+    assert "toFixed" not in helper
+    assert "toPrecision" not in helper
+    assert "toLocaleString" not in helper
+    assert "u.cursor.idx" in plugin
+    assert "axis[index].completed_at" in plugin
+    assert "item.values[index]" in plugin
+    assert "for (const item of items)" in plugin
+    assert "pinParts(item.model, providers).model" in plugin
+    assert "cssSeries(pins.indexOf(item.model))" in plugin
+    assert "timelineTooltipValue(value)" in plugin
+    assert "textContent" in plugin
+    assert "innerHTML" not in plugin
+    assert "filter(" not in plugin
+    assert "plugins: [timelineTooltipPlugin({aspect, axis, items, pins, providers})]" in panel
+    assert "function TimelinePanel({aspect, axis, items, pins, providers, plots, write})" in source
+    assert "providers=${meta.providers}" in source[
+        source.index("function PanelStack(") : source.index("function Models(")
+    ]
+
+
+def test_numeric_timeline_tooltip_guards_pre_ready_cursor_and_cleans_up() -> None:
+    source = _read_asset("app.js")
+
+    assert "function timelineTooltipPlugin(" in source
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    cursor = plugin[plugin.index("setCursor:") : plugin.index("destroy:")]
+    destroy = plugin[plugin.index("destroy:") :]
+
+    assert re.search(r"setCursor:\s*\[\s*u\s*=>\s*\{\s*if \(!over \|\| !tooltip\) return;", cursor)
+    assert 'u.root.querySelector(".u-over")' in plugin
+    assert 'document.createElement("div")' in plugin
+    assert 'tooltip.setAttribute("role", "tooltip")' in plugin
+    assert "over.appendChild(tooltip)" in plugin
+    assert 'addEventListener("pointerenter"' in plugin
+    assert 'addEventListener("pointerleave"' in plugin
+    assert 'removeEventListener("pointerenter"' in destroy
+    assert 'removeEventListener("pointerleave"' in destroy
+    assert "tooltip.remove()" in destroy
+    assert "if (!over) return" in destroy
+
+
+def test_numeric_timeline_tooltip_is_pointer_gated_and_edge_bounded() -> None:
+    source = _read_asset("app.js")
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+
+    assert "let active = false" in plugin
+    assert re.search(r"pointerEnter\s*=\s*\(\)\s*=>\s*\{\s*active = true;", plugin)
+    assert re.search(
+        r"pointerLeave\s*=\s*\(\)\s*=>\s*\{\s*active = false;\s*tooltip\.hidden = true;",
+        plugin,
+    )
+    assert re.search(r"if \(!active \|\| !Number\.isInteger\(index\)", plugin)
+    assert "u.cursor.left" in plugin
+    assert "u.cursor.top" in plugin
+    assert "tooltip.offsetWidth" in plugin
+    assert "tooltip.offsetHeight" in plugin
+    assert "over.clientWidth" in plugin
+    assert "over.clientHeight" in plugin
+    assert "tooltip.style.maxHeight" in plugin
+    assert "rows.style.maxHeight" in plugin
+    assert re.search(
+        r"timelineTooltipVerticalLayout\(\s*over\.clientHeight,\s*header\.offsetHeight,\s*footer\.offsetHeight,",
+        plugin,
+    )
+    assert re.search(r"cursorLeft\s*\+\s*gap\s*\+\s*tooltipWidth\s*<=\s*over\.clientWidth", plugin)
+    assert "Math.max(inset, Math.min(" in plugin
+    assert "tooltip.style.left" in plugin
+    assert "tooltip.style.top" in plugin
+
+
+def test_numeric_timeline_tooltip_runtime_cursor_gate_rejects_synced_rail_position() -> None:
+    source = _read_asset("app.js")
+    helper = re.search(
+        r"  function timelineTooltipCursorInside\([^)]*\) \{.*?^  \}",
+        source,
+        re.DOTALL | re.MULTILINE,
+    )
+
+    assert helper is not None
+    probe = subprocess.run(
+        [
+            "node",
+            "-e",
+            f"""
+{helper.group(0)}
+const over = {{clientWidth: 801, clientHeight: 193}};
+if (timelineTooltipCursorInside({{left: 400, top: -10}}, over)) process.exit(1);
+if (timelineTooltipCursorInside({{left: Number.NaN, top: 50}}, over)) process.exit(2);
+if (timelineTooltipCursorInside({{left: 802, top: 50}}, over)) process.exit(3);
+if (!timelineTooltipCursorInside({{left: 400, top: 96}}, over)) process.exit(4);
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert probe.returncode == 0, probe.stderr
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    assert "!timelineTooltipCursorInside(u.cursor, over)" in plugin
+
+
+def test_numeric_timeline_tooltip_caches_content_but_always_repositions() -> None:
+    source = _read_asset("app.js")
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    cursor = plugin[plugin.index("setCursor:") : plugin.index("destroy:")]
+
+    assert "let lastIndex = null" in plugin
+    assert "if (index !== lastIndex)" in cursor
+    assert "lastIndex = index" in cursor
+    assert "rows.replaceChildren()" in cursor
+    assert "const positionTooltip = u =>" in plugin
+    assert "positionTooltip(u)" in cursor
+    assert cursor.index("lastIndex = index") < cursor.index("positionTooltip(u)")
+
+
+def test_numeric_timeline_tooltip_css_keeps_eight_value_rows_visible() -> None:
+    styles = _read_asset("app.css")
+
+    def declarations(selector: str) -> str:
+        match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", styles)
+        assert match is not None, selector
+        return match.group(1)
+
+    tooltip = declarations(".plot-host .timeline-tooltip")
+    rows = declarations(".plot-host .timeline-tooltip-rows")
+    row = declarations(".plot-host .timeline-tooltip-row")
+    model = declarations(".plot-host .timeline-tooltip-model")
+    value = declarations(".plot-host .timeline-tooltip-value")
+    header = declarations(".plot-host .timeline-tooltip-header")
+    footer = declarations(".plot-host .timeline-tooltip-footer")
+
+    assert "position: absolute" in tooltip
+    assert "pointer-events: none" in tooltip
+    assert "max-width: calc(100% - 1rem)" in tooltip
+    assert "background: var(--panel-raised)" in tooltip
+    assert "border: 1px solid var(--border-strong)" in tooltip
+    assert "box-shadow:" in tooltip and "var(--shadow)" in tooltip
+    assert 'font-family: ui-monospace, "SFMono-Regular", Consolas, monospace' in tooltip
+    assert "display: none" in declarations(".plot-host .timeline-tooltip[hidden]")
+    assert "min-height: 0" in rows
+    assert "overflow-y: hidden" in rows
+    assert "grid-template-columns: minmax(0, 1fr) auto" in row
+    assert "height: var(--timeline-tooltip-row-height)" in row
+    assert "box-sizing: border-box" in row
+    assert "min-width: 0" in model
+    assert "text-overflow: ellipsis" in model
+    assert "white-space: nowrap" in model
+    assert "flex-shrink: 0" in value
+    assert "text-align: right" in value
+    assert "white-space: nowrap" in value
+    assert "border-block-end:" in header
+    assert "border-block-start:" in footer
+
+
+def test_numeric_timeline_tooltip_runtime_layout_keeps_eight_rows_visible() -> None:
+    source = _read_asset("app.js")
+    helper = re.search(
+        r"  function timelineTooltipVerticalLayout\([^)]*\) \{.*?^  \}",
+        source,
+        re.DOTALL | re.MULTILINE,
+    )
+
+    assert helper is not None
+    probe = subprocess.run(
+        [
+            "node",
+            "-e",
+            f"""
+{helper.group(0)}
+const layout = timelineTooltipVerticalLayout(193, 27, 27, 8);
+const viewport = {{top: 0, bottom: layout.availableHeight}};
+const rowRects = Array.from({{length: 8}}, (_, index) => ({{
+  top: index * layout.rowHeight,
+  bottom: (index + 1) * layout.rowHeight,
+}}));
+if (layout.rowHeight < 14) process.exit(1);
+if (!rowRects.every(rect => rect.top >= viewport.top && rect.bottom <= viewport.bottom)) process.exit(2);
+if (rowRects[7].bottom > viewport.bottom) process.exit(3);
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert probe.returncode == 0, probe.stderr
+    plugin = source[
+        source.index("function timelineTooltipPlugin(") : source.index(
+            "function TimelinePanel("
+        )
+    ]
+    assert "timelineTooltipVerticalLayout(" in plugin
+    assert 'tooltip.style.setProperty("--timeline-tooltip-row-height"' in plugin
 
 
 def test_models_legend_reset_and_local_date_zoom_regressions() -> None:
