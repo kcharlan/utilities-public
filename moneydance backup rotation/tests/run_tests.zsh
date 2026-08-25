@@ -940,7 +940,7 @@ print -r -- invoked > "${acl_parser_mv_marker}"
 exit 97
 EOF
 chmod 755 "${acl_parser_mktemp}" "${acl_parser_mv}"
-for acl_parser_kind in header_dir header_file extra_dir extra_file; do
+for acl_parser_kind in header_dir header_file extra_dir extra_file plus_no_ace_dir plus_no_ace_file ace_no_plus_dir ace_no_plus_file; do
   reset_repair_config
   acl_parser_inspector="${test_root}/repair-acl-parser-${acl_parser_kind}"
   cat > "${acl_parser_inspector}" <<EOF
@@ -954,6 +954,14 @@ case "${acl_parser_kind}" in
     ;;
   extra_file)
     if [[ -f "\${target}" ]]; then /bin/ls -lde -- "\${target}" || exit 1; print -r -- ' 0: SYNTHETIC deny delete'; exit 0; fi
+    ;;
+  plus_no_ace_dir) [[ -d "\${target}" ]] && { print -r -- 'drwx------+ 2 synthetic staff 64 Jan 1 00:00 SYNTHETIC-DIRECTORY'; exit 0; } ;;
+  plus_no_ace_file) [[ -f "\${target}" ]] && { print -r -- '-rw-------+ 1 synthetic staff 64 Jan 1 00:00 SYNTHETIC-FILE'; exit 0; } ;;
+  ace_no_plus_dir)
+    if [[ -d "\${target}" ]]; then print -r -- 'drwx------ 2 synthetic staff 64 Jan 1 00:00 SYNTHETIC-DIRECTORY'; print -r -- ' 0: group:everyone deny delete'; exit 0; fi
+    ;;
+  ace_no_plus_file)
+    if [[ -f "\${target}" ]]; then print -r -- '-rw------- 1 synthetic staff 64 Jan 1 00:00 SYNTHETIC-FILE'; print -r -- ' 0: group:everyone deny delete'; exit 0; fi
     ;;
 esac
 exec /bin/ls -lde -- "\${target}"

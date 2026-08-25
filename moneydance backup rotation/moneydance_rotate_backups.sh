@@ -418,9 +418,9 @@ cleanup_repair_artifacts() {
 inspect_path_acl() {
   local path="$1"
   local acl_policy="${2:-deny-only}"
-  local acl_output acl_line acl_line_trimmed acl_entry_index acl_header_prefix
+  local acl_output acl_line acl_line_trimmed acl_entry_index acl_header_prefix acl_mode_field acl_marker=""
   local acl_header_pattern='^[d-][r-][w-][xSs-][r-][w-][xSs-][r-][w-][xTt-][@+]?[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+'
-  integer acl_index expected_acl_index
+  integer acl_index expected_acl_index acl_entry_count
   typeset -a acl_lines=()
 
   if ! acl_output="$("${ACL_BIN}" -lde -- "${path}" 2>/dev/null)"; then
@@ -443,11 +443,28 @@ inspect_path_acl() {
   else
     return 1
   fi
+  acl_mode_field="${acl_header_prefix%%[[:space:]]*}"
+  if (( ${#acl_mode_field} == 11 )); then
+    acl_marker="${acl_mode_field[11]}"
+  elif (( ${#acl_mode_field} != 10 )); then
+    return 1
+  fi
+  acl_entry_count=$(( ${#acl_lines[@]} - 1 ))
   if [[ "${acl_policy}" == no-acl ]]; then
-    (( ${#acl_lines[@]} == 1 )) || return 1
+    [[ "${acl_marker}" != + ]] || return 1
+    (( acl_entry_count == 0 )) || return 1
     return 0
   fi
   [[ "${acl_policy}" == deny-only ]] || return 1
+  # BSD ls uses '+' for ACLs unless '@' takes the marker position for extended
+  # attributes; '@' can therefore coexist with zero or more printed ACEs.
+  if [[ "${acl_marker}" == + ]]; then
+    (( acl_entry_count >= 1 )) || return 1
+  elif [[ -z "${acl_marker}" ]]; then
+    (( acl_entry_count == 0 )) || return 1
+  elif [[ "${acl_marker}" != @ ]]; then
+    return 1
+  fi
   for (( acl_index = 2; acl_index <= ${#acl_lines[@]}; acl_index += 1 )); do
     acl_line="${acl_lines[${acl_index}]}"
     acl_line_trimmed="${acl_line##[[:space:]]#}"
