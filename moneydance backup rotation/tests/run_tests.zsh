@@ -631,6 +631,42 @@ ignored_lines_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${i
 assert_status "malformed and non-SMB mount lines are ignored safely" 0 "$?"
 assert_file_exists "ignored mount-like lines cannot authorize deletion" "${inventory_old_file}"
 
+empty_user_marker="${test_root}/empty-user-called"
+empty_user_mount="${test_root}/empty-user-mount"
+make_mount_inventory_mock \
+  "${empty_user_mount}" \
+  "${empty_user_marker}" \
+  "//@synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//@synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+empty_user_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${empty_user_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "empty-user SMB authorities are ignored safely" 0 "$?"
+assert_file_exists "empty-user SMB authorities cannot authorize deletion" "${inventory_old_file}"
+
+multiple_at_marker="${test_root}/multiple-at-called"
+multiple_at_mount="${test_root}/multiple-at-mount"
+make_mount_inventory_mock \
+  "${multiple_at_mount}" \
+  "${multiple_at_marker}" \
+  "//synthetic-user@@synthetic-nas/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-user@@synthetic-nas/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+multiple_at_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${multiple_at_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "multiple-at SMB authorities are ignored safely" 0 "$?"
+assert_file_exists "multiple-at SMB authorities cannot authorize deletion" "${inventory_old_file}"
+
+empty_host_marker="${test_root}/empty-host-called"
+empty_host_mount="${test_root}/empty-host-mount"
+make_mount_inventory_mock \
+  "${empty_host_mount}" \
+  "${empty_host_marker}" \
+  "//synthetic-user@/SYNTHETIC_SHARE on ${escaped_inventory_mount_point} (smbfs)" \
+  "//synthetic-user@/SYNTHETIC_COMPANION on ${escaped_inventory_companion_mount_point} (smbfs)"
+reset_inventory_candidate
+empty_host_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${empty_host_mount}" "${SCRIPT}" --config "${inventory_config}" 2>&1)"
+assert_status "empty-host SMB authorities are ignored safely" 0 "$?"
+assert_file_exists "empty-host SMB authorities cannot authorize deletion" "${inventory_old_file}"
+
 reset_inventory_candidate
 /bin/rm -f -- "${complete_inventory_marker}"
 single_read_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${complete_inventory_mount}" "${SCRIPT}" --config "${inventory_config}" --dry-run 2>&1)"

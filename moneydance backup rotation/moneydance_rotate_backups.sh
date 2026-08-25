@@ -222,7 +222,12 @@ parse_mount_inventory() {
     source_authority_and_share="${mount_source#//}"
     source_authority="${source_authority_and_share%%/*}"
     source_share="${source_authority_and_share#*/}"
-    source_host="${source_authority##*@}"
+    if [[ "${source_authority}" == *@* ]]; then
+      [[ "${source_authority}" != @* && "${source_authority}" != *@ && "${source_authority}" != *@*@* ]] || continue
+      source_host="${source_authority#*@}"
+    else
+      source_host="${source_authority}"
+    fi
     [[ -n "${source_authority}" && -n "${source_host}" && -n "${source_share}" ]] || continue
     [[ "${source_share}" != */* && "${source_host}" != *\|* && "${source_share}" != *\|* ]] || continue
 
