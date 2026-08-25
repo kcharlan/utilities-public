@@ -531,6 +531,386 @@ def test_parse_log_text_scrapes_unknown_event_labels_without_whitelist() -> None
     assert events[0].ip == "192.0.2.25"
 
 
+def test_netgear_adapter_detects_and_normalizes_the_legacy_format() -> None:
+    text = "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26"
+
+    adapter = analyzer.select_router_adapter(text, "auto")
+    parsed = analyzer.parse_router_log(text, source="synthetic-netgear.log", requested_format="auto")
+
+    assert adapter.format_id == "netgear"
+    assert adapter.detect(text) >= 0.80
+    assert parsed.format_id == "netgear"
+    assert parsed.capabilities.stable_client_identity is True
+    assert parsed.capabilities.client_dhcp_equivalence is True
+    assert parsed.capabilities.client_access_decision_equivalence is True
+    assert parsed.capabilities.comparable_device_event_coverage is True
+    assert parsed.capabilities.router_system_events is True
+    assert parsed.capabilities.wan_transitions is True
+    assert parsed.capabilities.snapshot_counts is False
+    assert parsed.capabilities.snapshot_buffer_semantic_dedup is False
+    assert parsed.capabilities.coverage_mode == "continuous_log"
+    assert parsed.events == analyzer.parse_log_text(text, source="synthetic-netgear.log")[0]
+
+
+def test_explicit_netgear_format_is_accepted_before_state_store_construction(tmp_path: Path) -> None:
+    log_path = tmp_path / "synthetic-netgear.log"
+    db_path = tmp_path / "not-created-before-baseline-validation.db"
+    log_path.write_text(
+        "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="No active baseline epoch"):
+        analyzer.main([str(log_path), "--format", "netgear", "--db", str(db_path)])
+
+    assert db_path.exists()
+
+
+def test_explicit_format_structural_failure_does_not_create_database(tmp_path: Path) -> None:
+    log_path = tmp_path / "synthetic-not-netgear.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic unrelated export without router records", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="plausible NETGEAR log structure"):
+        analyzer.main([str(log_path), "--format", "netgear", "--db", str(db_path)])
+
+    assert not db_path.exists()
+
+
+def test_auto_format_rejects_low_confidence_without_echoing_input() -> None:
+    raw_input = "SYNTHETIC-UNRECOGNIZED-CONTENT-DO-NOT-ECHO"
+
+    with pytest.raises(SystemExit) as exc_info:
+        analyzer.select_router_adapter(raw_input, "auto")
+
+    message = str(exc_info.value)
+    assert "Could not confidently identify" in message
+    assert "netgear=0.00" in message
+    assert "tp-link-archer=0.00" in message
+    assert raw_input not in message
+
+
+def test_auto_format_rejects_ambiguous_high_confidence_adapters(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SyntheticAdapter(analyzer.RouterLogAdapter):
+        def __init__(self, format_id: str, cli_format: str, confidence: float) -> None:
+            self.format_id = format_id
+            self.cli_format = cli_format
+            self.confidence = confidence
+
+        def detect(self, text: str) -> float:
+            return self.confidence
+
+        def parse(self, text: str, source: str) -> analyzer.ParsedRouterLog:
+            raise AssertionError("selection test should not parse")
+
+    netgear = SyntheticAdapter(analyzer.FORMAT_NETGEAR, "netgear", 0.90)
+    tp_link = SyntheticAdapter(analyzer.FORMAT_TP_LINK_ARCHER, "tp-link-archer", 0.82)
+    monkeypatch.setattr(
+        analyzer,
+        "ROUTER_LOG_ADAPTERS",
+        {analyzer.FORMAT_NETGEAR: netgear, analyzer.FORMAT_TP_LINK_ARCHER: tp_link},
+    )
+
+    with pytest.raises(SystemExit, match="ambiguous") as exc_info:
+        analyzer.select_router_adapter("synthetic content", "auto")
+
+    assert "netgear=0.90" in str(exc_info.value)
+    assert "tp-link-archer=0.82" in str(exc_info.value)
+
+
+def test_explicit_format_bypasses_detection_ambiguity(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SyntheticAdapter(analyzer.RouterLogAdapter):
+        def __init__(self, format_id: str, cli_format: str) -> None:
+            self.format_id = format_id
+            self.cli_format = cli_format
+
+        def detect(self, text: str) -> float:
+            return 0.90
+
+        def parse(self, text: str, source: str) -> analyzer.ParsedRouterLog:
+            raise AssertionError("selection test should not parse")
+
+    netgear = SyntheticAdapter(analyzer.FORMAT_NETGEAR, "netgear")
+    tp_link = SyntheticAdapter(analyzer.FORMAT_TP_LINK_ARCHER, "tp-link-archer")
+    monkeypatch.setattr(
+        analyzer,
+        "ROUTER_LOG_ADAPTERS",
+        {analyzer.FORMAT_NETGEAR: netgear, analyzer.FORMAT_TP_LINK_ARCHER: tp_link},
+    )
+
+    assert analyzer.select_router_adapter("synthetic content", "netgear") is netgear
+    assert analyzer.select_router_adapter("synthetic content", "tp-link-archer") is tp_link
+
+
+def test_ip_attribution_preserves_extended_event_metadata() -> None:
+    dhcp_event = analyzer.Event(
+        timestamp=datetime(2037, 3, 21, 8, 7, 26),
+        mac="02:00:00:00:00:08",
+        event_family="DHCP",
+        event_key="DHCP_IP",
+        ip="192.0.2.25",
+        raw_label="DHCP IP",
+        raw_line="synthetic DHCP",
+        source="synthetic.log",
+    )
+    event = analyzer.Event(
+        timestamp=datetime(2037, 3, 21, 8, 8, 26),
+        mac=analyzer.SYSTEM_ACTOR,
+        event_family="OTHER",
+        event_key="ADMIN_LOGIN",
+        ip="192.0.2.25",
+        raw_label="admin login",
+        raw_line="synthetic login",
+        source="synthetic.log",
+        incident_id="synthetic-incident",
+        incident_role="recovery",
+        actor_scope="router",
+        stable_client_identity="synthetic-client-id",
+        component="synthetic-component",
+        process_id="42",
+        syslog_severity="notice",
+        vendor_event_code="9001",
+        normalized_message="synthetic normalized message",
+        structured_evidence={"synthetic": "evidence"},
+        source_sequence=7,
+        raw_timestamp="2037-03-21T08:08:26",
+        clock_trust="trusted",
+        clock_segment_id="clock-1",
+        boot_context_id="boot-context-1",
+        boot_session_id="boot-session-1",
+        occurrence_digest="synthetic-occurrence",
+    )
+
+    attributed = analyzer.attribute_ip_only_events([dhcp_event, event])[1]
+
+    assert attributed.mac == dhcp_event.mac
+    for field_name in (
+        "incident_id", "incident_role", "actor_scope", "stable_client_identity", "component",
+        "process_id", "syslog_severity", "vendor_event_code", "normalized_message",
+        "structured_evidence", "source_sequence", "raw_timestamp", "clock_trust",
+        "clock_segment_id", "boot_context_id", "boot_session_id", "occurrence_digest",
+    ):
+        assert getattr(attributed, field_name) == getattr(event, field_name)
+
+    incident = analyzer.NetworkIncident(
+        incident_id="annotated-synthetic-incident",
+        incident_type="internet_connection_reset",
+        confidence="confirmed",
+        start="2037-03-21T08:08:26",
+        restored_at="2037-03-21T08:08:26",
+        recovery_end="2037-03-21T08:08:26",
+        disconnect_count=1,
+        connect_count=1,
+        affected_macs=[attributed.mac],
+        event_counts={"ADMIN_LOGIN": 1},
+        explained_event_count=1,
+        active_known_devices=1,
+        affected_device_fraction=1.0,
+    )
+    analyzer.annotate_incident_events(incident, [attributed], [])
+    retained = [
+        candidate
+        for candidate in sorted([attributed], key=lambda candidate: candidate.timestamp)
+        if candidate.incident_id is not None
+    ][0]
+    assert retained.incident_id == "synthetic-incident"
+    assert retained.component == "synthetic-component"
+    assert retained.structured_evidence == {"synthetic": "evidence"}
+    assert retained.occurrence_digest == "synthetic-occurrence"
+
+
+MANAGEMENT_OPTIONS = [
+    "--import-policy", "--export-policy", "--import-baseline", "--export-baseline", "--import-config",
+]
+
+
+def install_identityless_test_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    class IdentitylessAdapter(analyzer.RouterLogAdapter):
+        format_id = analyzer.FORMAT_TP_LINK_ARCHER
+        cli_format = "tp-link-archer"
+
+        def detect(self, text: str) -> float:
+            return 0.99
+
+        def parse(self, text: str, source: str) -> analyzer.ParsedRouterLog:
+            return analyzer.ParsedRouterLog(
+                format_id=self.format_id,
+                capabilities=analyzer.RouterCapabilities(coverage_mode="point_snapshot"),
+                identity=analyzer.RouterIdentityCandidate(
+                    canonical_vendor="tp-link",
+                    persistence_safe_without_override=False,
+                ),
+                events=[],
+                parse_stats=analyzer.ParseStats(),
+            )
+
+    monkeypatch.setattr(
+        analyzer,
+        "ROUTER_LOG_ADAPTERS",
+        {
+            analyzer.FORMAT_NETGEAR: analyzer.NetgearLogAdapter(),
+            analyzer.FORMAT_TP_LINK_ARCHER: IdentitylessAdapter(),
+        },
+    )
+
+
+@pytest.mark.parametrize("management_option", MANAGEMENT_OPTIONS)
+def test_identityless_log_rejects_every_combined_management_mutation_before_store_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    management_option: str,
+) -> None:
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="no stable router identity"):
+        analyzer.main([
+            str(log_path), "--format", "tp-link-archer", management_option,
+            str(tmp_path / "synthetic-management.json"), "--db", str(db_path),
+        ])
+
+    assert not db_path.exists()
+
+
+@pytest.mark.parametrize("management_option", MANAGEMENT_OPTIONS)
+def test_ambiguous_log_rejects_every_combined_management_mutation_before_store_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    management_option: str,
+) -> None:
+    class AmbiguousAdapter(analyzer.RouterLogAdapter):
+        def __init__(self, format_id: str, cli_format: str) -> None:
+            self.format_id = format_id
+            self.cli_format = cli_format
+
+        def detect(self, text: str) -> float:
+            return 0.90
+
+        def parse(self, text: str, source: str) -> analyzer.ParsedRouterLog:
+            raise AssertionError("ambiguous selection must stop before parsing")
+
+    log_path = tmp_path / "synthetic-ambiguous.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic ambiguous content", encoding="utf-8")
+    monkeypatch.setattr(
+        analyzer,
+        "ROUTER_LOG_ADAPTERS",
+        {
+            analyzer.FORMAT_NETGEAR: AmbiguousAdapter(analyzer.FORMAT_NETGEAR, "netgear"),
+            analyzer.FORMAT_TP_LINK_ARCHER: AmbiguousAdapter(analyzer.FORMAT_TP_LINK_ARCHER, "tp-link-archer"),
+        },
+    )
+
+    with pytest.raises(SystemExit, match="ambiguous"):
+        analyzer.main([
+            str(log_path), management_option, str(tmp_path / "synthetic-management.json"), "--db", str(db_path),
+        ])
+
+    assert not db_path.exists()
+
+
+@pytest.mark.parametrize("management_option", MANAGEMENT_OPTIONS)
+def test_explicit_format_mismatch_rejects_every_combined_management_mutation_before_store_creation(
+    tmp_path: Path,
+    management_option: str,
+) -> None:
+    log_path = tmp_path / "synthetic-mismatch.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic export without NETGEAR structure", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="plausible NETGEAR log structure"):
+        analyzer.main([
+            str(log_path), "--format", "netgear", management_option,
+            str(tmp_path / "synthetic-management.json"), "--db", str(db_path),
+        ])
+
+    assert not db_path.exists()
+
+
+def test_identityless_log_emits_nonpersistent_report_without_creating_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+
+    assert analyzer.main([str(log_path), "--format", "tp-link-archer", "--db", str(db_path), "--json"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["persistence"] == {"available": False, "reason": "no_stable_router_identity"}
+    assert not db_path.exists()
+
+
+def test_valid_persistent_log_allows_combined_baseline_import_after_parse_validation(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "synthetic-netgear.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    db_path = tmp_path / "network.db"
+    log_path.write_text(
+        "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26",
+        encoding="utf-8",
+    )
+    baseline_path.write_text(
+        json.dumps({"devices": {"02:00:00:00:00:08": {"name": "SYNTHETIC DEVICE"}}}),
+        encoding="utf-8",
+    )
+
+    assert analyzer.main([
+        str(log_path), "--format", "netgear", "--import-baseline", str(baseline_path),
+        "--db", str(db_path), "--json",
+    ]) == 0
+
+    store = analyzer.StateStore(db_path)
+    try:
+        assert store.get_active_epoch() is not None
+    finally:
+        store.close()
+
+
+def test_router_instance_validation_occurs_before_state_store_creation(tmp_path: Path) -> None:
+    log_path = tmp_path / "synthetic-netgear.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text(
+        "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="router-instance"):
+        analyzer.main([str(log_path), "--router-instance", "\x00", "--db", str(db_path)])
+
+    assert not db_path.exists()
+
+
+def test_netgear_adapter_preserves_source_and_clock_provenance_on_normalized_events() -> None:
+    text = "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26"
+
+    parsed = analyzer.parse_router_log(text, "synthetic-netgear.log", "netgear")
+    event = parsed.events[0]
+
+    assert event.actor_scope == "device"
+    assert event.stable_client_identity == "02:00:00:00:00:08"
+    assert event.source_sequence == 1
+    assert event.raw_timestamp == "Saturday, March 21, 2037 08:07:26"
+    assert event.clock_trust == "trusted"
+    assert event.clock_segment_id == "netgear-local-time"
+
+
+def test_router_instance_override_is_vendor_scoped_and_opaque() -> None:
+    netgear_key = analyzer.router_instance_override_key("netgear", "  synthetic-router  ")
+    tp_link_key = analyzer.router_instance_override_key("tp-link", "synthetic-router")
+
+    assert netgear_key == analyzer.router_instance_override_key("netgear", "synthetic-router")
+    assert netgear_key != tp_link_key
+    assert "synthetic-router" not in netgear_key
+    assert re.fullmatch(r"[0-9a-f]{64}", netgear_key)
+
+
 def test_parse_log_text_normalizes_internet_transition_events() -> None:
     events, stats = analyzer.parse_log_text(
         "\n".join(

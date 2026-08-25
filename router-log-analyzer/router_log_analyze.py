@@ -19,14 +19,23 @@ import sqlite3
 import sys
 import textwrap
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, DefaultDict, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, DefaultDict, Dict, List, Optional, Sequence, Set, Tuple
 
 
 DB_FILENAME = "network.db"
 SCHEMA_VERSION = 3
+FORMAT_NETGEAR = "netgear"
+FORMAT_TP_LINK_ARCHER = "tp_link_archer"
+CLI_FORMAT_TO_ID = {
+    "netgear": FORMAT_NETGEAR,
+    "tp-link-archer": FORMAT_TP_LINK_ARCHER,
+}
+AUTO_FORMAT = "auto"
+FORMAT_DETECTION_THRESHOLD = 0.80
+FORMAT_AMBIGUITY_MARGIN = 0.15
 TIMESTAMP_FORMAT = "%A, %B %d, %Y %H:%M:%S"
 SYSTEM_ACTOR = "__SYSTEM__"
 SYSTEM_NAME = "Router/System"
@@ -176,6 +185,96 @@ class Event:
     source: str
     incident_id: Optional[str] = None
     incident_role: Optional[str] = None
+    actor_scope: Optional[str] = None
+    stable_client_identity: Optional[str] = None
+    component: Optional[str] = None
+    process_id: Optional[str] = None
+    syslog_severity: Optional[str] = None
+    vendor_event_code: Optional[str] = None
+    normalized_message: Optional[str] = None
+    structured_evidence: Dict[str, Any] = field(default_factory=dict)
+    source_sequence: Optional[int] = None
+    raw_timestamp: Optional[str] = None
+    clock_trust: Optional[str] = None
+    clock_segment_id: Optional[str] = None
+    boot_context_id: Optional[str] = None
+    boot_session_id: Optional[str] = None
+    occurrence_digest: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RouterCapabilities:
+    stable_client_identity: bool = False
+    client_dhcp_equivalence: bool = False
+    client_access_decision_equivalence: bool = False
+    comparable_device_event_coverage: bool = False
+    router_system_events: bool = False
+    wan_transitions: bool = False
+    snapshot_counts: bool = False
+    potentially_trustworthy_router_local_time: bool = False
+    supported_event_keys: Set[str] = field(default_factory=set)
+    supported_event_families: Set[str] = field(default_factory=set)
+    coverage_mode: str = "continuous_log"
+    snapshot_buffer_semantic_dedup: bool = False
+
+    def to_json(self) -> Dict[str, Any]:
+        payload = asdict(self)
+        payload["supported_event_keys"] = sorted(self.supported_event_keys)
+        payload["supported_event_families"] = sorted(self.supported_event_families)
+        return payload
+
+
+@dataclass(frozen=True)
+class RouterIdentityCandidate:
+    canonical_vendor: str
+    lan_mac: Optional[str] = None
+    router_owned_interfaces: Set[str] = field(default_factory=set)
+    warnings: Tuple[str, ...] = ()
+    persistence_safe_without_override: bool = False
+
+
+@dataclass(frozen=True)
+class RouterSnapshotMetrics:
+    raw_total_clients: Optional[int] = None
+    raw_wifi_clients: Optional[int] = None
+    derived_wired_clients: Optional[int] = None
+    eligible: bool = False
+    exclusion_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ClockSegment:
+    segment_id: str
+    clock_trust: str
+    start_sequence: Optional[int] = None
+    end_sequence: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class BootSessionCandidate:
+    session_id: str
+    start_sequence: Optional[int] = None
+    trusted_anchor: Optional[datetime] = None
+    warnings: Tuple[str, ...] = ()
+
+
+@dataclass
+class ParsedRouterLog:
+    format_id: str
+    capabilities: RouterCapabilities
+    identity: RouterIdentityCandidate
+    events: List[Event]
+    parse_stats: "ParseStats"
+    model: Optional[str] = None
+    hardware: Optional[str] = None
+    firmware: Optional[str] = None
+    export_timestamp: Optional[datetime] = None
+    snapshot_metrics: Optional[RouterSnapshotMetrics] = None
+    coverage_stats: Dict[str, Any] = field(default_factory=dict)
+    order_stats: Dict[str, Any] = field(default_factory=dict)
+    clock_segments: List[ClockSegment] = field(default_factory=list)
+    boot_candidates: List[BootSessionCandidate] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -338,7 +437,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             """
         ),
     )
-    parser.add_argument("logfile", nargs="?", help="NETGEAR log export in PDF or plain-text format.")
+    parser.add_argument("logfile", nargs="?", help="Router log export in PDF or plain-text format.")
     parser.add_argument(
         "baseline",
         nargs="?",
@@ -346,6 +445,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--config", help="Router access-control markdown export.")
     parser.add_argument("--db", help="Path to the SQLite state database.")
+    parser.add_argument(
+        "--format",
+        choices=[AUTO_FORMAT, *CLI_FORMAT_TO_ID],
+        default=AUTO_FORMAT,
+        help="Router log format (default: auto).",
+    )
+    parser.add_argument("--router-label", help="Presentation-only label for the analyzed router.")
+    parser.add_argument(
+        "--router-instance",
+        help="Stable router-instance override; its raw value is never persisted or displayed.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit report as JSON.")
     parser.add_argument(
         "--report",
@@ -1493,7 +1603,7 @@ def load_log_content(path: Path) -> Tuple[bytes, str]:
     return raw_bytes, raw_bytes.decode("utf-8", errors="replace")
 
 
-def parse_timestamp_from_line(line: str) -> Optional[datetime]:
+def _netgear_parse_timestamp_from_line(line: str) -> Optional[datetime]:
     match = TIMESTAMP_PATTERN.search(line)
     if not match:
         return None
@@ -1503,11 +1613,11 @@ def parse_timestamp_from_line(line: str) -> Optional[datetime]:
         return None
 
 
-def is_export_noise_line(line: str) -> bool:
+def _netgear_is_export_noise_line(line: str) -> bool:
     return any(pattern.search(line) for pattern in EXPORT_NOISE_PATTERNS)
 
 
-def normalize_event_key(raw_label: str) -> str:
+def _netgear_normalize_event_key(raw_label: str) -> str:
     label = raw_label.strip()
     lowered = label.lower()
     if lowered.startswith("dhcp ip"):
@@ -1525,7 +1635,7 @@ def normalize_event_key(raw_label: str) -> str:
     return cleaned or "OTHER"
 
 
-def classify_event_family(event_key: str, line: str) -> str:
+def _netgear_classify_event_family(event_key: str, line: str) -> str:
     if event_key.startswith("DHCP"):
         return "DHCP"
     if event_key == "WLAN_ACCESS_ALLOWED":
@@ -1537,7 +1647,7 @@ def classify_event_family(event_key: str, line: str) -> str:
     return "OTHER"
 
 
-def extract_ip(line: str) -> Optional[str]:
+def _netgear_extract_ip(line: str) -> Optional[str]:
     dhcp_match = re.search(r"\[DHCP IP:\s*\(([^)]+)\)\]", line, re.IGNORECASE)
     if dhcp_match:
         return dhcp_match.group(1).strip()
@@ -1545,7 +1655,10 @@ def extract_ip(line: str) -> Optional[str]:
     return ip_match.group(0) if ip_match else None
 
 
-def reconstruct_wrapped_log_lines(text: str) -> List[str]:
+def _reconstruct_netgear_wrapped_log_lines(
+    text: str,
+    parse_timestamp: Callable[[str], Optional[datetime]] = _netgear_parse_timestamp_from_line,
+) -> List[str]:
     raw_lines = text.replace("\r\n", "\n").replace("\r", "\n").splitlines()
     logical_lines: List[str] = []
     index = 0
@@ -1554,7 +1667,7 @@ def reconstruct_wrapped_log_lines(text: str) -> List[str]:
         consumed = 1
         while index + consumed < len(raw_lines):
             continuation = raw_lines[index + consumed].strip()
-            if not continuation or parse_timestamp_from_line(merged) is not None:
+            if not continuation or parse_timestamp(merged) is not None:
                 break
             if not (
                 TIME_ONLY_PATTERN.fullmatch(continuation)
@@ -1562,7 +1675,7 @@ def reconstruct_wrapped_log_lines(text: str) -> List[str]:
             ):
                 break
             candidate = f"{merged.rstrip()} {continuation}"
-            if parse_timestamp_from_line(candidate) is None:
+            if parse_timestamp(candidate) is None:
                 break
             merged = candidate
             consumed += 1
@@ -1580,18 +1693,20 @@ def is_access_control_status_line(line: str) -> bool:
     )
 
 
-def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats]:
+def _build_netgear_event_objects(
+    adapter: "NetgearLogAdapter", text: str, source: str,
+) -> Tuple[List[Event], ParseStats]:
     stats = ParseStats()
     candidates: List[Event] = []
-    for raw_line in reconstruct_wrapped_log_lines(text):
+    for source_sequence, raw_line in enumerate(adapter.reconstruct_wrapped_log_lines(text), start=1):
         line = raw_line.strip()
         if not line:
             continue
         stats.total_lines += 1
-        if is_export_noise_line(line):
+        if adapter.is_export_noise_line(line):
             stats.export_noise_lines += 1
             continue
-        timestamp = parse_timestamp_from_line(line)
+        timestamp = adapter.parse_timestamp_from_line(line)
         mac = normalize_mac(line) or SYSTEM_ACTOR
         if timestamp is None:
             if "[" in line or MAC_PATTERN.search(line):
@@ -1604,20 +1719,27 @@ def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats
         if is_access_control_status_line(line):
             stats.ignored_lines += 1
             continue
+        timestamp_match = TIMESTAMP_PATTERN.search(line)
         label_match = re.search(r"\[([^\]]+)\]", line)
         raw_label = label_match.group(1) if label_match else ""
-        event_key = normalize_event_key(raw_label)
-        event_family = classify_event_family(event_key, line)
+        event_key = adapter.normalize_event_key(raw_label)
+        event_family = adapter.classify_event_family(event_key, line)
         candidates.append(
             Event(
                 timestamp=timestamp,
                 mac=mac,
                 event_family=event_family,
                 event_key=event_key,
-                ip=extract_ip(line),
+                ip=adapter.extract_ip(line),
                 raw_label=raw_label,
                 raw_line=line,
                 source=source,
+                actor_scope="device" if is_real_mac(mac) else "router",
+                stable_client_identity=mac if is_real_mac(mac) else None,
+                source_sequence=source_sequence,
+                raw_timestamp=timestamp_match.group("timestamp") if timestamp_match else None,
+                clock_trust="trusted",
+                clock_segment_id="netgear-local-time",
             )
         )
 
@@ -1659,8 +1781,145 @@ def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats
     return deduped, stats
 
 
+class RouterLogAdapter:
+    format_id: str
+    cli_format: str
+
+    def detect(self, text: str) -> float:
+        raise NotImplementedError
+
+    def parse(self, text: str, source: str) -> ParsedRouterLog:
+        raise NotImplementedError
+
+
+class NetgearLogAdapter(RouterLogAdapter):
+    format_id = FORMAT_NETGEAR
+    cli_format = "netgear"
+    capabilities = RouterCapabilities(
+        stable_client_identity=True,
+        client_dhcp_equivalence=True,
+        client_access_decision_equivalence=True,
+        comparable_device_event_coverage=True,
+        router_system_events=True,
+        wan_transitions=True,
+        snapshot_counts=False,
+        potentially_trustworthy_router_local_time=True,
+        supported_event_keys={
+            "DHCP_IP", "WLAN_ACCESS_ALLOWED", "WLAN_ACCESS_REJECTED",
+            "INTERNET_DISCONNECTED", "INTERNET_CONNECTED", "EMAIL_SENT", "LOG_CLEARED",
+        },
+        supported_event_families={"DHCP", "WLAN_ALLOWED", "WLAN_REJECTED", "OTHER"},
+        coverage_mode="continuous_log",
+        snapshot_buffer_semantic_dedup=False,
+    )
+
+    def detect(self, text: str) -> float:
+        logical_text = "\n".join(self.reconstruct_wrapped_log_lines(text))
+        has_timestamp = TIMESTAMP_PATTERN.search(logical_text) is not None
+        has_label = re.search(r"\[[^\]\n]+\]", text) is not None
+        if has_timestamp and has_label:
+            return 0.95
+        if has_timestamp:
+            return 0.85
+        return 0.0
+
+    def reconstruct_wrapped_log_lines(self, text: str) -> List[str]:
+        return _reconstruct_netgear_wrapped_log_lines(text, self.parse_timestamp_from_line)
+
+    def parse_timestamp_from_line(self, line: str) -> Optional[datetime]:
+        return _netgear_parse_timestamp_from_line(line)
+
+    def is_export_noise_line(self, line: str) -> bool:
+        return _netgear_is_export_noise_line(line)
+
+    def normalize_event_key(self, raw_label: str) -> str:
+        return _netgear_normalize_event_key(raw_label)
+
+    def classify_event_family(self, event_key: str, line: str) -> str:
+        return _netgear_classify_event_family(event_key, line)
+
+    def extract_ip(self, line: str) -> Optional[str]:
+        return _netgear_extract_ip(line)
+
+    def build_event_objects(self, text: str, source: str) -> Tuple[List[Event], ParseStats]:
+        return _build_netgear_event_objects(self, text, source)
+
+    def parse(self, text: str, source: str) -> ParsedRouterLog:
+        events, parse_stats = self.build_event_objects(text, source)
+        if self.detect(text) < FORMAT_DETECTION_THRESHOLD:
+            raise SystemExit("The selected NETGEAR format does not contain plausible NETGEAR log structure.")
+        return ParsedRouterLog(
+            format_id=self.format_id,
+            capabilities=self.capabilities,
+            identity=RouterIdentityCandidate(
+                canonical_vendor=FORMAT_NETGEAR,
+                persistence_safe_without_override=True,
+            ),
+            events=events,
+            parse_stats=parse_stats,
+            coverage_stats={"continuous_log": True},
+            clock_segments=[ClockSegment("netgear-local-time", "trusted")],
+        )
+
+
+class TpLinkArcherAdapter(RouterLogAdapter):
+    """Registry placeholder; Task 3 introduces the observed TP-Link parser."""
+
+    format_id = FORMAT_TP_LINK_ARCHER
+    cli_format = "tp-link-archer"
+
+    def detect(self, text: str) -> float:
+        return 0.0
+
+    def parse(self, text: str, source: str) -> ParsedRouterLog:
+        raise SystemExit("The selected TP-Link Archer format does not contain plausible supported structure.")
+
+
+ROUTER_LOG_ADAPTERS: Dict[str, RouterLogAdapter] = {
+    FORMAT_NETGEAR: NetgearLogAdapter(),
+    FORMAT_TP_LINK_ARCHER: TpLinkArcherAdapter(),
+}
+
+
+def _adapter_selection_error(prefix: str, scored: Sequence[Tuple[RouterLogAdapter, float]]) -> SystemExit:
+    candidates = ", ".join(f"{adapter.cli_format}={score:.2f}" for adapter, score in scored)
+    return SystemExit(f"{prefix} Available format confidence: {candidates}.")
+
+
+def select_router_adapter(text: str, requested_format: str = AUTO_FORMAT) -> RouterLogAdapter:
+    if requested_format == AUTO_FORMAT:
+        scored = [(adapter, adapter.detect(text)) for adapter in ROUTER_LOG_ADAPTERS.values()]
+        scored.sort(key=lambda item: item[1], reverse=True)
+        top_adapter, top_score = scored[0]
+        if top_score < FORMAT_DETECTION_THRESHOLD:
+            raise _adapter_selection_error("Could not confidently identify a supported router log format.", scored)
+        contenders = [item for item in scored if item[1] >= FORMAT_DETECTION_THRESHOLD]
+        if len(contenders) > 1 and (contenders[0][1] - contenders[1][1]) < FORMAT_AMBIGUITY_MARGIN:
+            raise _adapter_selection_error("Router log format is ambiguous.", contenders)
+        return top_adapter
+    format_id = CLI_FORMAT_TO_ID.get(requested_format)
+    if format_id is None:
+        raise SystemExit(f"Unsupported --format value: {requested_format}")
+    return ROUTER_LOG_ADAPTERS[format_id]
+
+
+def parse_router_log(text: str, source: str, requested_format: str = AUTO_FORMAT) -> ParsedRouterLog:
+    return select_router_adapter(text, requested_format).parse(text, source)
+
+
+def reconstruct_wrapped_log_lines(text: str) -> List[str]:
+    """Compatibility helper for existing callers of NETGEAR reconstruction."""
+    return ROUTER_LOG_ADAPTERS[FORMAT_NETGEAR].reconstruct_wrapped_log_lines(text)  # type: ignore[attr-defined]
+
+
+def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats]:
+    """Compatibility helper for existing callers of NETGEAR normalization."""
+    return ROUTER_LOG_ADAPTERS[FORMAT_NETGEAR].build_event_objects(text, source)  # type: ignore[attr-defined]
+
+
 def parse_log_text(text: str, source: str) -> Tuple[List[Event], ParseStats]:
-    return build_event_objects(text, source)
+    parsed = parse_router_log(text, source, "netgear")
+    return parsed.events, parsed.parse_stats
 
 
 def find_cluster_profiles(baseline: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -1720,18 +1979,7 @@ def attribute_ip_only_events(events: Sequence[Event]) -> List[Event]:
         if resolved_mac is None:
             attributed.append(event)
             continue
-        attributed.append(
-            Event(
-                timestamp=event.timestamp,
-                mac=resolved_mac,
-                event_family=event.event_family,
-                event_key=event.event_key,
-                ip=event.ip,
-                raw_label=event.raw_label,
-                raw_line=event.raw_line,
-                source=event.source,
-            )
-        )
+        attributed.append(replace(event, mac=resolved_mac))
     return attributed
 
 
@@ -5026,6 +5274,48 @@ def handle_management_commands(args: argparse.Namespace, store: StateStore) -> b
     return handled
 
 
+def has_management_command(args: argparse.Namespace) -> bool:
+    return any(
+        getattr(args, name, None)
+        for name in (
+            "import_policy", "export_policy", "import_baseline", "export_baseline", "import_config",
+        )
+    )
+
+
+def validate_router_instance_override(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized or any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        raise SystemExit("--router-instance must be nonempty and contain no control characters.")
+    return normalized
+
+
+def router_instance_override_key(canonical_vendor: str, value: str) -> str:
+    """Return the opaque, vendor-scoped identity for a validated local override."""
+    normalized_value = validate_router_instance_override(value)
+    assert normalized_value is not None
+    normalized_vendor = " ".join(canonical_vendor.strip().split()).casefold()
+    payload = "router-instance-override:v1\0" + normalized_vendor + "\0" + normalized_value
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def emit_nonpersistent_report(args: argparse.Namespace, parsed: ParsedRouterLog) -> None:
+    """Report parsed current evidence without opening state for an identity-less adapter."""
+    report = {
+        "format_id": parsed.format_id,
+        "parse_stats": asdict(parsed.parse_stats),
+        "event_count": len(parsed.events),
+        "persistence": {"available": False, "reason": "no_stable_router_identity"},
+        "warnings": parsed.warnings,
+    }
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print("Parsed router log without persistent state: no_stable_router_identity")
+
+
 def is_in_windows(timestamp: datetime, windows: Sequence[Dict[str, Any]]) -> bool:
     hour = timestamp.hour + (timestamp.minute / 60.0)
     for window in windows:
@@ -5042,6 +5332,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     explicit_report = bool(args.report)
     runtime_paths = build_runtime_paths()
     db_path = Path(args.db).expanduser() if args.db else runtime_paths.db
+    management_requested = has_management_command(args)
+    parsed: Optional[ParsedRouterLog] = None
+    logfile_path: Optional[Path] = None
+    raw_bytes: Optional[bytes] = None
+
+    if args.logfile is not None:
+        logfile_path = Path(args.logfile).expanduser()
+        raw_bytes, log_text = load_log_content(logfile_path)
+        parsed = parse_router_log(log_text, source=str(logfile_path), requested_format=args.format)
+        router_instance_override = validate_router_instance_override(args.router_instance)
+        if router_instance_override is not None:
+            # The digest is deliberately the only override representation allowed beyond this scope.
+            router_instance_override_key(parsed.identity.canonical_vendor, router_instance_override)
+        if not parsed.identity.persistence_safe_without_override and router_instance_override is None:
+            if management_requested:
+                raise SystemExit(
+                    "Cannot combine management commands with a log that has no stable router identity. "
+                    "Provide --router-instance or run the non-persistent report separately."
+                )
+            emit_nonpersistent_report(args, parsed)
+            return 0
+
     store = StateStore(db_path)
     try:
         handled = handle_management_commands(args, store)
@@ -5077,10 +5389,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         seed_baseline = store.load_seed_baseline(epoch["id"])
         devices_snapshot = store.load_devices_snapshot()
-        logfile_path = Path(args.logfile).expanduser()
-        raw_bytes, log_text = load_log_content(logfile_path)
+        assert logfile_path is not None
+        assert raw_bytes is not None
+        assert parsed is not None
         run_hash = sha256_bytes(raw_bytes)
-        events, parse_stats = parse_log_text(log_text, source=str(logfile_path))
+        events, parse_stats = parsed.events, parsed.parse_stats
         reprocessed_run_id: Optional[int] = None
         existing_run = store.get_run_by_hash(run_hash)
         if args.reprocess and existing_run is not None:
