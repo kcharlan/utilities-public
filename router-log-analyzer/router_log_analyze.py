@@ -2226,15 +2226,28 @@ class TpLinkArcherAdapter(RouterLogAdapter):
             unwrapped = token[1:-1] if token.startswith("[") and token.endswith("]") else token
             if exact_mac_pattern.fullmatch(unwrapped):
                 return None
+            if "::" not in unwrapped and unwrapped.count(":") < 6:
+                return None
             return unwrapped
 
         collect(ipv6_like_pattern, "ipv6_addresses", "<ipv6>", normalize_ipv6_like)
-        collect(
-            re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:])"),
-            "mac_addresses",
-            "<mac>",
-            lambda token: token.upper(),
+        mac_addresses: List[str] = []
+
+        def replace_mac(match: re.Match[str]) -> str:
+            mac = match.group("mac").upper()
+            if mac not in mac_addresses:
+                mac_addresses.append(mac)
+            return f"{match.group('prefix')}<mac>"
+
+        message_holder[0] = re.sub(
+            r"(?P<prefix>(?i:\b[A-Za-z][A-Za-z0-9_-]{0,31}\s*[:=]\s*)|^|[\s(\[,;])"
+            r"(?P<mac>(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})"
+            r"(?=$|[\s)\],;.!?])",
+            replace_mac,
+            message_holder[0],
         )
+        if mac_addresses:
+            evidence["mac_addresses"] = mac_addresses
         collect(
             re.compile(r"(?<![A-Za-z0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9.])"),
             "ipv4_addresses",
@@ -2250,15 +2263,24 @@ class TpLinkArcherAdapter(RouterLogAdapter):
                 name = name[1:-1]
             if name not in actor_names:
                 actor_names.append(name)
-            return f"{match.group('label')} <actor>"
+            return f"{match.group('label')}{match.group('separator')}<actor>"
 
         message_holder[0] = re.sub(
-            r"(?i)\b(?P<label>actor|client|device|host(?:name)?|user)\s*(?:=|:)?\s*"
+            r"(?i)\b(?P<label>actor|client|device|host(?:name)?|user)"
+            r"(?P<separator>\s*(?:=|:)\s*|\s+)"
             r"(?P<name>"
             r"\"[^\"\r\n]{1,128}\"|'[^'\r\n]{1,128}'|"
-            r"[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}|"
+            r"[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}"
+            r")(?=$|[\s,;)\]])",
+            replace_actor,
+            message_holder[0],
+        )
+        message_holder[0] = re.sub(
+            r"(?i)\b(?P<label>actor|client|device|host(?:name)?|user)"
+            r"(?P<separator>\s*(?:=|:)\s*|\s+)"
+            r"(?P<name>"
             r"[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*){0,7}?"
-            r")(?=\s+(?:at|from|via|with|on|using)\b|[,;]|$)",
+            r")(?=\s+(?:at|from|via|with|on|using|connected|disconnected|accepted|rejected|ready|started|stopped)\b|[,;]|$)",
             replace_actor,
             message_holder[0],
         )

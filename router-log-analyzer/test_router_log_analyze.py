@@ -1644,7 +1644,7 @@ def test_tp_link_privacy_reduction_handles_quoted_multitoken_and_email_actor_nam
     event = analyzer.parse_router_log(text, "synthetic-actor-redaction.log", "tp-link-archer").events[0]
 
     assert event.normalized_message == (
-        "normalized-message-v1\0Contact client <actor>, user <actor>; host <actor> at <ipv4>"
+        "normalized-message-v1\0Contact client <actor>, user <actor>; host: <actor> at <ipv4>"
     )
     assert event.structured_evidence["actor_names"] == [
         "SYNTHETIC ALPHA USER", "synthetic.beta@example.test", "SYNTHETIC LAB NODE",
@@ -1652,6 +1652,50 @@ def test_tp_link_privacy_reduction_handles_quoted_multitoken_and_email_actor_nam
     assert event.structured_evidence["ipv4_addresses"] == ["192.0.2.44"]
     for actor_fragment in ("SYNTHETIC ALPHA", "synthetic.beta@", "LAB NODE"):
         assert actor_fragment not in event.normalized_message
+
+
+def test_tp_link_privacy_reduction_handles_labeled_mac_punctuation_without_hex_overmatch() -> None:
+    message = (
+        "MAC:02:00:00:00:00:03 connected; mac-address=02:00:00:00:00:04 ready; "
+        "digest dead:beef:cafe unchanged"
+    )
+    text = tp_link_synthetic_snapshot([
+        f"2042-06-15 11:59:58 system[55]: <4> 9902 {message}",
+    ])
+
+    event = analyzer.parse_router_log(text, "synthetic-labeled-mac.log", "tp-link-archer").events[0]
+
+    assert event.normalized_message == (
+        "normalized-message-v1\0MAC:<mac> connected; mac-address=<mac> ready; "
+        "digest dead:beef:cafe unchanged"
+    )
+    assert event.structured_evidence["mac_addresses"] == [
+        "02:00:00:00:00:03", "02:00:00:00:00:04",
+    ]
+    for leaked_fragment in ("02:00:00:00:00:03", "02:00:00:00:00:04"):
+        assert leaked_fragment not in event.normalized_message
+
+
+def test_tp_link_privacy_reduction_handles_actor_labels_before_following_text() -> None:
+    message = (
+        "user alice@example.com connected; device:SYNTHETIC-NODE-ALPHA accepted; "
+        "host=SYNTHETIC-NODE-BETA ready"
+    )
+    text = tp_link_synthetic_snapshot([
+        f"2042-06-15 11:59:58 system[55]: <4> 9902 {message}",
+    ])
+
+    event = analyzer.parse_router_log(text, "synthetic-following-actor.log", "tp-link-archer").events[0]
+
+    assert event.normalized_message == (
+        "normalized-message-v1\0user <actor> connected; device:<actor> accepted; "
+        "host=<actor> ready"
+    )
+    assert event.structured_evidence["actor_names"] == [
+        "alice@example.com", "SYNTHETIC-NODE-ALPHA", "SYNTHETIC-NODE-BETA",
+    ]
+    for leaked_fragment in ("alice@example.com", "SYNTHETIC-NODE-ALPHA", "SYNTHETIC-NODE-BETA"):
+        assert leaked_fragment not in event.normalized_message
 
 
 @pytest.mark.parametrize(
