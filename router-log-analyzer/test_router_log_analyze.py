@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import sys
 from datetime import datetime
@@ -17,6 +18,16 @@ from tools.testkit import load_launcher
 
 MODULE_PATH = Path(__file__).with_name("router_log_analyze.py")
 analyzer = load_launcher(MODULE_PATH, "router_log_analyze")
+
+
+LEGACY_PARSE_STATS_KEYS = (
+    "total_lines", "parsed_events", "malformed_lines", "duplicate_events", "spam_filtered",
+    "ignored_lines", "export_noise_lines", "malformed_samples",
+)
+
+
+def legacy_parse_stats_projection(stats: dict[str, object]) -> dict[str, object]:
+    return {key: stats[key] for key in LEGACY_PARSE_STATS_KEYS}
 
 
 def seed_epoch(store: analyzer.StateStore) -> int:
@@ -1913,16 +1924,7 @@ def legacy_netgear_report_projection(report: dict[str, object]) -> dict[str, obj
             "deduplicated": state["deduplicated"],
             "reprocessed_run_id": state["reprocessed_run_id"],
         },
-        "parse_stats": {
-            "total_lines": parse_stats["total_lines"],
-            "parsed_events": parse_stats["parsed_events"],
-            "malformed_lines": parse_stats["malformed_lines"],
-            "duplicate_events": parse_stats["duplicate_events"],
-            "spam_filtered": parse_stats["spam_filtered"],
-            "ignored_lines": parse_stats["ignored_lines"],
-            "export_noise_lines": parse_stats["export_noise_lines"],
-            "malformed_samples": parse_stats["malformed_samples"],
-        },
+        "parse_stats": legacy_parse_stats_projection(parse_stats),
         "analysis_adjustments": {
             "raw_event_count": adjustments["raw_event_count"],
             "incident_explained_event_count": adjustments["incident_explained_event_count"],
@@ -1952,7 +1954,7 @@ def legacy_netgear_report_projection(report: dict[str, object]) -> dict[str, obj
         },
         "events_per_hour": {
             hour: events_per_hour[hour]
-            for hour in ("4", "8", "9", "18")
+            for hour in sorted(hour for hour in events_per_hour if hour.isdigit())
         },
         "risk_score": report["risk_score"],
         "status": report["status"],
@@ -1993,6 +1995,35 @@ def html_section(rendered: str, heading: str) -> str:
     start = rendered.rfind("<section", 0, heading_index)
     section = rendered[start:rendered.index("</section>", heading_index) + len("</section>")]
     return re.sub(r">\s+<", "><", section)
+
+
+def quote_sqlite_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def application_table_snapshot(store: analyzer.StateStore) -> dict[str, dict[str, object]]:
+    """Capture every non-internal application table with stable column and row ordering."""
+    table_names = [
+        row["name"]
+        for row in store.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
+    ]
+    snapshot = {}
+    for table_name in table_names:
+        quoted_table = quote_sqlite_identifier(table_name)
+        columns = tuple(
+            row["name"] for row in store.conn.execute(f"PRAGMA table_info({quoted_table})")
+        )
+        quoted_columns = ", ".join(quote_sqlite_identifier(column) for column in columns)
+        rows = store.conn.execute(
+            f"SELECT {quoted_columns} FROM {quoted_table} ORDER BY {quoted_columns}"
+        ).fetchall()
+        snapshot[table_name] = {
+            "columns": columns,
+            "rows": [tuple(row) for row in rows],
+        }
+    return snapshot
 
 
 def text_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
@@ -2048,6 +2079,29 @@ def text_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
     return {"summary": summary_rows, "finding_index": index_rows, "findings": groups}
 
 
+def text_device_summary_contract(rendered: str) -> list[tuple[str, int, int, int, tuple[str, ...], str]]:
+    section = rendered.split(" Device Summary ", 1)[1]
+    lines = section.splitlines()[2:]
+    groups = []
+    index = 0
+    heading_pattern = re.compile(r"(.+?)\s+events\s+(\d+)\s+dhcp\s+(\d+)\s+reset\s+(\d+)$")
+    while index < len(lines):
+        if not lines[index].strip() or set(lines[index].strip()) == {"-"}:
+            index += 1
+            continue
+        match = heading_pattern.fullmatch(lines[index])
+        assert match is not None
+        name, events, dhcp, reset = match.groups()
+        index += 1
+        indented = []
+        while index < len(lines) and lines[index].startswith("  "):
+            indented.append(lines[index].strip())
+            index += 1
+        assert indented
+        groups.append((name.rstrip(), int(events), int(dhcp), int(reset), tuple(indented[:-1]), indented[-1]))
+    return groups
+
+
 def markdown_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
     summary = markdown_section(rendered, "# Network Analysis Report", "## Finding Index")
     summary_rows = {}
@@ -2100,7 +2154,10 @@ def markdown_renderer_contract(rendered: str, db_path: Path) -> dict[str, object
 
 
 def html_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
-    summary_rows = dict(re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", rendered))
+    main_start = rendered.index("<main>")
+    header_start = rendered.index("<section>", main_start)
+    header_section = rendered[header_start:rendered.index("</section>", header_start) + len("</section>")]
+    summary_rows = dict(re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", header_section))
     summary_rows["Database"] = summary_rows["Database"].replace(
         f"<code>{db_path}</code>", "<temporary-db>"
     )
@@ -2132,6 +2189,7 @@ def html_renderer_contract(rendered: str, db_path: Path) -> dict[str, object]:
 def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     log_text = synthetic_netgear_regression_log()
     events, stats = analyzer.parse_log_text(log_text, source="synthetic-netgear.log")
@@ -2181,7 +2239,7 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
     expected_legacy_projection = {
         "inputs": {"logfile": str(log_path), "baseline": None, "config": None, "db": str(db_path)},
         "state": {"epoch_id": "<database-generated-id>", "policy_profile_id": None, "deduplicated": False, "reprocessed_run_id": None},
-        "parse_stats": analyzer.asdict(stats),
+        "parse_stats": legacy_parse_stats_projection(analyzer.asdict(stats)),
         "analysis_adjustments": {"raw_event_count": 16, "incident_explained_event_count": 8, "analyzed_event_count": 8},
         "network_incidents": [{
             "incident_id": "network-reset-20370714T041702-1", "incident_type": "internet_connection_reset",
@@ -2248,6 +2306,13 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
     report_with_additive_v4_fields["priority_findings"][0]["metadata"]["adapter_context"] = "v4"
     report_with_additive_v4_fields["device_summary"][0]["router_instance_id"] = "opaque-v4-id"
     assert legacy_netgear_report_projection(report_with_additive_v4_fields) == expected_legacy_projection
+    report_with_extra_legacy_hour = copy.deepcopy(report_with_additive_v4_fields)
+    report_with_extra_legacy_hour["events_per_hour"]["19"] = 1
+    extra_hour_projection = legacy_netgear_report_projection(report_with_extra_legacy_hour)
+    assert extra_hour_projection["events_per_hour"] == {
+        "4": 8, "8": 3, "9": 2, "18": 3, "19": 1,
+    }
+    assert extra_hour_projection != expected_legacy_projection
     report_with_invalid_epoch = copy.deepcopy(report_with_additive_v4_fields)
     report_with_invalid_epoch["state"]["epoch_id"] = None
     with pytest.raises(AssertionError):
@@ -2257,6 +2322,11 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
     with pytest.raises(KeyError):
         legacy_netgear_report_projection(report_without_epoch)
 
+    monkeypatch.setattr(
+        analyzer.shutil,
+        "get_terminal_size",
+        lambda _fallback: os.terminal_size((110, 24)),
+    )
     text_report = analyzer.render_text_report(report)
     text_risk_start = text_report.index(" Risk Breakdown ")
     text_risk_end = text_report.index(" Device Summary ", text_risk_start)
@@ -2355,6 +2425,13 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
     text_contract = text_renderer_contract(text_report, db_path)
     markdown_contract = markdown_renderer_contract(markdown_report, db_path)
     html_contract = html_renderer_contract(html_report, db_path)
+    assert html_renderer_contract(
+        html_report.replace(
+            "</main>",
+            "<dl><dt>Risk Score</dt><dd>moved-and-duplicated</dd></dl></main>",
+        ),
+        db_path,
+    ) == html_contract
     assert text_contract == {
         "summary": {
             "Risk Score": "100 / 100", "Status": "Suspicious", "Database": "<temporary-db>",
@@ -2389,6 +2466,16 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
         "finding_index": expected_index,
         "findings": expected_groups,
     }
+    assert text_device_summary_contract(text_report) == [
+        ("Router/System", 6, 0, 2, (analyzer.SYSTEM_ACTOR,), "Admin Login, Email Sent, Internet Connected, Internet Disconnected, Log Cleared"),
+        ("SYNTHETIC KNOWN DEVICE", 4, 3, 2, ("02:00:00:00:10:01",), "DHCP IP, WLAN Access Allowed"),
+        ("02:00:00:00:10:30", 1, 0, 0, ("02:00:00:00:10:30",), "Admin Login"),
+        ("SYNTHETIC BLOCKED DEVICE", 1, 0, 0, ("02:00:00:00:10:31",), "WLAN Access Rejected"),
+        ("SYNTHETIC RECOVERY DEVICE 2", 1, 0, 1, ("02:00:00:00:10:02",), "WLAN Access Allowed"),
+        ("SYNTHETIC RECOVERY DEVICE 3", 1, 0, 1, ("02:00:00:00:10:03",), "WLAN Access Allowed"),
+        ("SYNTHETIC RECOVERY DEVICE 4", 1, 0, 1, ("02:00:00:00:10:04",), "WLAN Access Allowed"),
+        ("SYNTHETIC RECOVERY DEVICE 5", 1, 0, 1, ("02:00:00:00:10:05",), "WLAN Access Allowed"),
+    ]
 
 
 def test_netgear_unknown_and_blocked_defaults_are_critical_before_policy_overrides() -> None:
@@ -2452,10 +2539,7 @@ def test_byte_identical_netgear_log_rebuilds_report_without_duplicate_learning_r
                 },
             },
         )
-        before_counts = {
-            table: store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("runs", "device_daily_stats", "device_event_daily_stats", "subject_behavior_daily_stats", "network_incidents")
-        }
+        before_snapshot = application_table_snapshot(store)
     finally:
         store.close()
 
@@ -2482,10 +2566,7 @@ def test_byte_identical_netgear_log_rebuilds_report_without_duplicate_learning_r
     }
     store = analyzer.StateStore(db_path)
     try:
-        after_counts = {
-            table: store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in before_counts
-        }
+        after_snapshot = application_table_snapshot(store)
     finally:
         store.close()
-    assert after_counts == before_counts
+    assert after_snapshot == before_snapshot
