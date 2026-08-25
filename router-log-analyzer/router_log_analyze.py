@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat as stat_module
 import sys
 import tempfile
 import textwrap
@@ -1429,6 +1430,10 @@ class StateStore:
                 )
             if main_artifact is not None and main_artifact[2] > 0:
                 self._preflight_existing_database()
+            if self._database_artifact_signature() != artifacts:
+                self._raise_schema_error(
+                    "the database artifacts changed during read-only preflight; retry when idle"
+                )
         self.conn = self._open_connection(":memory:" if is_memory else str(self.db_path))
         try:
             self.ensure_schema()
@@ -1450,18 +1455,24 @@ class StateStore:
         signature: Dict[str, Tuple[int, int, int, int]] = {}
         for suffix in SQLITE_DATABASE_ARTIFACT_SUFFIXES:
             artifact = Path(f"{self.db_path}{suffix}")
-            if not artifact.exists():
+            try:
+                artifact_stat = artifact.lstat()
+            except FileNotFoundError:
                 continue
-            if not artifact.is_file():
+            except OSError as exc:
+                self._raise_schema_error(
+                    "a database or journal artifact could not be inspected "
+                    f"safely ({type(exc).__name__})"
+                )
+            if not stat_module.S_ISREG(artifact_stat.st_mode):
                 self._raise_schema_error(
                     "a database or journal artifact is not an ordinary file"
                 )
-            stat = artifact.stat()
             signature[suffix] = (
-                stat.st_dev,
-                stat.st_ino,
-                stat.st_size,
-                stat.st_mtime_ns,
+                artifact_stat.st_dev,
+                artifact_stat.st_ino,
+                artifact_stat.st_size,
+                artifact_stat.st_mtime_ns,
             )
         return signature
 
@@ -1483,6 +1494,7 @@ class StateStore:
                             shutil.copy2(
                                 Path(f"{self.db_path}{suffix}"),
                                 Path(f"{candidate_path}{suffix}"),
+                                follow_symlinks=False,
                             )
                     except FileNotFoundError:
                         continue
@@ -1494,9 +1506,15 @@ class StateStore:
                         "the database changed during read-only preflight; close other writers and retry"
                     )
 
-                snapshot_connection = self._open_connection(str(snapshot_path))
                 snapshot_store = object.__new__(StateStore)
                 snapshot_store.db_path = snapshot_path
+                snapshot_artifacts = snapshot_store._database_artifact_signature()
+                snapshot_main = snapshot_artifacts.get("")
+                if snapshot_main is None or snapshot_main[2] == 0:
+                    self._raise_schema_error(
+                        "the database snapshot has no non-empty ordinary main file"
+                    )
+                snapshot_connection = self._open_connection(str(snapshot_path))
                 snapshot_store.conn = snapshot_connection
                 try:
                     snapshot_store._classify_and_validate_schema()

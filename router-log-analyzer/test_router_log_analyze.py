@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import stat as stat_module
 import subprocess
 import sys
 from collections.abc import Callable
@@ -484,6 +485,26 @@ def database_artifact_state(db_path: Path) -> dict[str, tuple[bytes, int, int]]:
     return state
 
 
+def lexical_artifact_state(
+    db_path: Path,
+) -> dict[str, tuple[int, int, int, str | None, bytes | None]]:
+    state = {}
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        artifact = Path(f"{db_path}{suffix}")
+        try:
+            artifact_stat = artifact.lstat()
+        except FileNotFoundError:
+            continue
+        state[suffix] = (
+            artifact_stat.st_mode,
+            artifact_stat.st_size,
+            artifact_stat.st_mtime_ns,
+            os.readlink(artifact) if stat_module.S_ISLNK(artifact_stat.st_mode) else None,
+            artifact.read_bytes() if stat_module.S_ISREG(artifact_stat.st_mode) else None,
+        )
+    return state
+
+
 def strand_hot_journal(db_path: Path, transient_schema_version: int) -> None:
     connection = sqlite3.connect(db_path)
     connection.execute(
@@ -602,6 +623,89 @@ def test_missing_or_zero_main_with_sidecars_fails_closed_without_touching_artifa
         analyzer.StateStore(db_path)
 
     assert database_artifact_state(db_path) == before
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_missing_main_with_dangling_sidecar_symlink_fails_closed_lexically(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    db_path = tmp_path / "dangling-sidecar.db"
+    target = tmp_path / "synthetic-missing-artifact-target"
+    Path(f"{db_path}{suffix}").symlink_to(target)
+    before = lexical_artifact_state(db_path)
+
+    with pytest.raises(RuntimeError) as raised:
+        analyzer.StateStore(db_path)
+
+    assert lexical_artifact_state(db_path) == before
+    assert "synthetic-missing-artifact-target" not in str(raised.value)
+    assert not os.path.lexists(db_path)
+
+
+def test_live_sidecar_symlink_and_external_target_are_unchanged_on_rejection(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "live-sidecar.db"
+    target = tmp_path / "synthetic-external-sidecar-target"
+    target.write_bytes(b"synthetic external SQLite sidecar bytes")
+    sidecar = Path(f"{db_path}-wal")
+    sidecar.symlink_to(target)
+    before_artifacts = lexical_artifact_state(db_path)
+    before_target = (target.read_bytes(), target.stat().st_size, target.stat().st_mtime_ns)
+
+    with pytest.raises(RuntimeError) as raised:
+        analyzer.StateStore(db_path)
+
+    assert lexical_artifact_state(db_path) == before_artifacts
+    assert (target.read_bytes(), target.stat().st_size, target.stat().st_mtime_ns) == before_target
+    assert "synthetic-external-sidecar-target" not in str(raised.value)
+    assert not os.path.lexists(db_path)
+
+
+@pytest.mark.parametrize("target_state", ["dangling", "live"])
+def test_symlink_main_fails_closed_without_following_or_mutating_target(
+    tmp_path: Path,
+    target_state: str,
+) -> None:
+    db_path = tmp_path / "symlink-main.db"
+    target = tmp_path / "synthetic-external-main-target"
+    if target_state == "live":
+        target.touch()
+    db_path.symlink_to(target)
+    before_artifacts = lexical_artifact_state(db_path)
+    before_target = (
+        (target.read_bytes(), target.stat().st_size, target.stat().st_mtime_ns)
+        if target_state == "live"
+        else None
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        analyzer.StateStore(db_path)
+
+    assert lexical_artifact_state(db_path) == before_artifacts
+    if before_target is None:
+        assert not os.path.lexists(target)
+    else:
+        assert (target.read_bytes(), target.stat().st_size, target.stat().st_mtime_ns) == before_target
+    assert "synthetic-external-main-target" not in str(raised.value)
+
+
+@pytest.mark.parametrize("suffix", ["", "-journal"])
+def test_fifo_artifact_fails_closed_without_opening_or_blocking(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    db_path = tmp_path / "fifo-sidecar.db"
+    fifo_path = Path(f"{db_path}{suffix}")
+    os.mkfifo(fifo_path)
+    before = lexical_artifact_state(db_path)
+
+    with pytest.raises(RuntimeError, match="ordinary file"):
+        analyzer.StateStore(db_path)
+
+    assert lexical_artifact_state(db_path) == before
+    assert os.path.lexists(db_path) is (suffix == "")
 
 
 def test_explicit_in_memory_database_uses_direct_v4_creation(
