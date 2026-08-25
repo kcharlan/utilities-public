@@ -1894,6 +1894,8 @@ def legacy_netgear_report_projection(report: dict[str, object]) -> dict[str, obj
     findings = report["findings"]
     assert all(isinstance(value, dict) for value in (inputs, state, parse_stats, adjustments, observation_range, events_per_hour, breakdown, findings))
     assert isinstance(incidents, list)
+    epoch_id = state["epoch_id"]
+    assert isinstance(epoch_id, int) and not isinstance(epoch_id, bool) and epoch_id > 0
     return {
         "inputs": {
             "logfile": inputs["logfile"],
@@ -2246,6 +2248,14 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
     report_with_additive_v4_fields["priority_findings"][0]["metadata"]["adapter_context"] = "v4"
     report_with_additive_v4_fields["device_summary"][0]["router_instance_id"] = "opaque-v4-id"
     assert legacy_netgear_report_projection(report_with_additive_v4_fields) == expected_legacy_projection
+    report_with_invalid_epoch = copy.deepcopy(report_with_additive_v4_fields)
+    report_with_invalid_epoch["state"]["epoch_id"] = None
+    with pytest.raises(AssertionError):
+        legacy_netgear_report_projection(report_with_invalid_epoch)
+    report_without_epoch = copy.deepcopy(report_with_additive_v4_fields)
+    del report_without_epoch["state"]["epoch_id"]
+    with pytest.raises(KeyError):
+        legacy_netgear_report_projection(report_without_epoch)
 
     text_report = analyzer.render_text_report(report)
     text_risk_start = text_report.index(" Risk Breakdown ")
