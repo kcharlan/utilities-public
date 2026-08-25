@@ -155,10 +155,13 @@ cleanup. After a successful update, run the script again normally (preferably
 first with `--dry-run`) to validate the repaired configuration and review
 retention behavior.
 
-Usage, config, and repair-precondition errors exit `2`. Repair discovery,
-locking, snapshot, validation, or activation failures exit `1`. A valid config
-that needs no repair, an explicit cancellation, and a successful update exit
-`0`; a normal-mode mount mismatch also exits `0` after safely skipping cleanup.
+Usage, repair-precondition, and config-validation errors—including missing,
+malformed, or binary config—exit `2`. Operational repair failures—including
+candidate discovery; locking or snapshotting; temporary-file creation, writing,
+or revalidation; live-config revalidation; or atomic activation—exit `1`. A
+valid config that needs no repair, an explicit cancellation, and a successful
+update exit `0`. A normal-mode mount mismatch also exits `0` after safely
+skipping cleanup.
 
 ## Retention behavior
 
