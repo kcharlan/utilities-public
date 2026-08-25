@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import stat as stat_module
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -5239,14 +5241,16 @@ def test_tp_link_startup_signature_changes_with_distinct_core_startup_evidence()
 
 @pytest.mark.parametrize("router_override", [None, "synthetic-router-instance"])
 @pytest.mark.parametrize("use_presync_fixture", [False, True], ids=("trusted", "pre-sync"))
-def test_tp_link_cli_stays_nonpersistent_before_router_schema_support(
+def test_tp_link_cli_persists_against_a_router_instance(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     router_override: str | None,
     use_presync_fixture: bool,
 ) -> None:
     log_path = tmp_path / "synthetic-tp-link.log"
-    db_path = tmp_path / "must-not-exist.db"
+    db_path = tmp_path / "network.db"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
     if use_presync_fixture:
         text = TP_LINK_SYNTHETIC_FIXTURE.read_text(encoding="utf-8")
     else:
@@ -5254,33 +5258,34 @@ def test_tp_link_cli_stays_nonpersistent_before_router_schema_support(
             "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
         ])
     log_path.write_text(text, encoding="utf-8")
-    argv = [str(log_path), "--format", "tp-link-archer", "--json", "--db", str(db_path)]
+    argv = [
+        str(log_path), "--format", "tp-link-archer", "--json", "--db", str(db_path),
+        "--import-baseline", str(baseline_path),
+    ]
     if router_override is not None:
         argv.extend(["--router-instance", router_override])
 
     assert analyzer.main(argv) == 0
-    first_report = json.loads(capsys.readouterr().out)
-    assert analyzer.main(argv) == 0
-    second_report = json.loads(capsys.readouterr().out)
-
-    assert first_report == second_report
-    assert first_report["format_id"] == analyzer.FORMAT_TP_LINK_ARCHER
-    assert first_report["persistence"] == {
-        "available": False,
-        "reason": "tp_link_persistence_not_implemented",
-    }
-    assert not db_path.exists()
-    assert list(tmp_path.iterdir()) == [log_path]
+    capsys.readouterr()
+    assert db_path.exists()
+    store = analyzer.StateStore(db_path)
+    try:
+        run = store.conn.execute("SELECT * FROM runs").fetchone()
+        assert run["format_id"] == analyzer.FORMAT_TP_LINK_ARCHER
+        assert store.conn.execute("SELECT COUNT(*) FROM router_metadata_observations").fetchone()[0] == 1
+        assert store.conn.execute("SELECT COUNT(*) FROM run_event_occurrences").fetchone()[0] > 0
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize("router_override", [None, "synthetic-router-instance"])
-def test_tp_link_cli_rejects_stateful_combination_before_database_creation(
+def test_tp_link_cli_accepts_stateful_combination_after_identity_validation(
     tmp_path: Path,
     router_override: str | None,
 ) -> None:
     log_path = tmp_path / "synthetic-tp-link.log"
     baseline_path = tmp_path / "synthetic-baseline.json"
-    db_path = tmp_path / "must-not-exist.db"
+    db_path = tmp_path / "network.db"
     log_path.write_text(TP_LINK_SYNTHETIC_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
     argv = [
@@ -5292,10 +5297,8 @@ def test_tp_link_cli_rejects_stateful_combination_before_database_creation(
     if router_override is not None:
         argv.extend(["--router-instance", router_override])
 
-    with pytest.raises(SystemExit, match="TP-Link persistence is not implemented"):
-        analyzer.main(argv)
-
-    assert not db_path.exists()
+    assert analyzer.main(argv) == 0
+    assert db_path.exists()
 
 
 def test_router_instance_override_is_vendor_scoped_and_opaque() -> None:
@@ -5315,6 +5318,375 @@ def test_router_instance_override_rejects_all_unicode_control_characters(overrid
 
     assert "router-instance" in str(exc_info.value)
     assert override not in str(exc_info.value)
+
+
+def test_tp_link_router_identity_is_stable_and_model_label_are_not_identity() -> None:
+    expected = hashlib.sha256(
+        b"router-instance:v1\0tp-link\0" + b"02:00:00:00:00:01"
+    ).hexdigest()
+    assert analyzer.tp_link_router_instance_key("02:00:00:00:00:01") == expected
+
+    first = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+        ]),
+        "synthetic-first.log",
+        "tp-link-archer",
+    )
+    second_text = tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+    ]).replace("SYNTHETIC-ARCHER-X9000", "SYNTHETIC-ARCHER-X9001")
+    second = analyzer.parse_router_log(second_text, "synthetic-second.log", "tp-link-archer")
+
+    assert analyzer.router_instance_key_for_parse(first, None) == expected
+    assert analyzer.router_instance_key_for_parse(second, None) == expected
+    assert analyzer.default_router_label(first, expected).startswith("TP-Link SYNTHETIC-ARCHER-X9000 ")
+    assert "02:00:00" not in analyzer.default_router_label(first, expected)
+
+
+def test_router_instance_override_takes_precedence_and_distinct_lan_macs_do_not_merge() -> None:
+    first = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+        ]),
+        "synthetic-first.log",
+        "tp-link-archer",
+    )
+    second = replace(first, identity=replace(first.identity, lan_mac="02:00:00:00:00:03"))
+    override_key = analyzer.router_instance_override_key("tp-link", "synthetic-router")
+
+    assert analyzer.router_instance_key_for_parse(first, None) != analyzer.router_instance_key_for_parse(second, None)
+    assert analyzer.router_instance_key_for_parse(first, "synthetic-router") == override_key
+    assert analyzer.router_instance_key_for_parse(second, "synthetic-router") == override_key
+
+
+def test_tp_link_occurrences_reuse_boot_session_and_classify_overlap(tmp_path: Path) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        first = analyzer.parse_router_log(
+            tp_link_synthetic_snapshot(list(reversed([
+                "2042-06-15 11:50:00 system[101]: <5> 1000 System startup",
+                "2042-06-15 11:50:01 service[201]: <6> 2001 Starting network services",
+                "2042-06-15 11:50:02 inet[410]: <5> 3002 Internet connected",
+            ]))),
+            "synthetic-first.log",
+            "tp-link-archer",
+        )
+        router_id = store.resolve_router_instance(first)
+        first_run = store.insert_run(
+            epoch_id, None, "synthetic-first-hash", tmp_path / "synthetic-first.log",
+            first.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=first.format_id,
+            export_timestamp=first.export_timestamp.isoformat(), capabilities=first.capabilities,
+        )
+        first_result = store.persist_router_provenance(first_run, router_id, first)
+        store.commit()
+
+        second = analyzer.parse_router_log(
+            tp_link_synthetic_snapshot(list(reversed([
+                "2042-06-15 11:50:01 service[201]: <6> 2001 Starting network services",
+                "2042-06-15 11:50:02 inet[410]: <5> 3002 Internet connected",
+                "2042-06-15 11:59:59 firewall[777]: <4> 9001 rule rejected",
+            ])), export_time="2042-06-15 12:01:00"),
+            "synthetic-overlap.log",
+            "tp-link-archer",
+        )
+        second_run = store.insert_run(
+            epoch_id, None, "synthetic-second-hash", tmp_path / "synthetic-overlap.log",
+            second.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=second.format_id,
+            export_timestamp=second.export_timestamp.isoformat(), capabilities=second.capabilities,
+        )
+        second_result = store.persist_router_provenance(second_run, router_id, second)
+
+        assert first_result["novel_count"] == 3
+        assert second_result["repeated_count"] == 2
+        assert second_result["novel_count"] == 1
+        assert len(set(first_result["boot_session_ids"])) == 1
+        assert set(second_result["boot_session_ids"]) == set(first_result["boot_session_ids"])
+        assert all(event.raw_line not in json.dumps(dict(row)) for event in second.events for row in store.conn.execute(
+            "SELECT * FROM router_event_occurrences"
+        ))
+    finally:
+        store.close()
+
+
+def test_tp_link_occurrence_tuple_collapses_exact_lines_but_keeps_pid_distinct(tmp_path: Path) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 firewall[778]: <4> 9001 rule rejected",
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+        ]),
+        "synthetic-pid.log",
+        "tp-link-archer",
+    )
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.resolve_router_instance(parsed)
+        run_id = store.insert_run(
+            epoch_id, None, "synthetic-pid-hash", tmp_path / "synthetic-pid.log",
+            parsed.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=parsed.format_id,
+            export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+        )
+        result = store.persist_router_provenance(run_id, router_id, parsed)
+        assert result["novel_count"] == 2
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM run_event_occurrences WHERE run_id = ?", (run_id,)
+        ).fetchone()[0] == 2
+    finally:
+        store.close()
+
+
+def test_tp_link_persisted_occurrence_evidence_is_privacy_reduced(tmp_path: Path) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 dhcpc[410]: <5> 1104 DHCP ACK from 198.51.100.1 "
+            "for 198.51.100.2 with MAC 02:00:00:00:00:02",
+        ]),
+        "synthetic-private-evidence.log",
+        "tp-link-archer",
+    )
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.resolve_router_instance(parsed)
+        run_id = store.insert_run(
+            epoch_id, None, "synthetic-private-hash", tmp_path / "synthetic-private-evidence.log",
+            parsed.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=parsed.format_id,
+            export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+        )
+        store.persist_router_provenance(run_id, router_id, parsed)
+        durable = " ".join(
+            str(value)
+            for row in store.conn.execute("SELECT * FROM router_event_occurrences")
+            for value in tuple(row)
+        )
+        assert "198.51.100" not in durable
+        assert "02:00:00:00:00:02" not in durable
+        evidence = json.loads(store.conn.execute(
+            "SELECT structured_evidence_json FROM router_event_occurrences"
+        ).fetchone()[0])
+        assert evidence == {
+            "action": "ack",
+            "ipv4_address_count": 2,
+            "mac_address_count": 1,
+        }
+    finally:
+        store.close()
+
+
+def test_tp_link_later_real_boot_creates_a_distinct_persistent_session(tmp_path: Path) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        session_ids = []
+        for index, boot_time in enumerate(("2042-06-15 11:50:00", "2042-06-16 11:50:00"), start=1):
+            parsed = analyzer.parse_router_log(
+                tp_link_synthetic_snapshot([
+                    f"{boot_time} system[10{index}]: <5> 1000 System startup",
+                ], export_time=f"2042-06-{14 + index:02d} 12:00:00"),
+                f"synthetic-boot-{index}.log",
+                "tp-link-archer",
+            )
+            router_id = store.resolve_router_instance(parsed)
+            run_id = store.insert_run(
+                epoch_id, None, f"synthetic-boot-hash-{index}", tmp_path / f"synthetic-boot-{index}.log",
+                parsed.parse_stats, None, None, [], 0, "Clean", False,
+                router_instance_id=router_id, format_id=parsed.format_id,
+                export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+            )
+            result = store.persist_router_provenance(run_id, router_id, parsed)
+            session_ids.append(result["boot_session_ids"])
+            store.commit()
+        assert session_ids[0] and session_ids[1]
+        assert session_ids[0] != session_ids[1]
+        assert store.conn.execute("SELECT COUNT(*) FROM router_boot_sessions").fetchone()[0] == 2
+    finally:
+        store.close()
+
+
+def test_anchorless_boot_context_stays_report_only_and_out_of_cross_run_history(
+    tmp_path: Path,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-01-01 00:00:01 system[101]: <5> 1000 System startup",
+            "2042-01-01 00:00:02 firewall[777]: <4> 9001 rule rejected",
+        ], firmware="9.99.9 Build 20420101 rel.99999n"),
+        "synthetic-anchorless.log",
+        "tp-link-archer",
+    )
+    assert parsed.boot_candidates[0].trusted_anchor is None
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.resolve_router_instance(parsed)
+        run_id = store.insert_run(
+            epoch_id, None, "synthetic-anchorless-hash", tmp_path / "synthetic-anchorless.log",
+            parsed.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=parsed.format_id,
+            export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+        )
+        result = store.persist_router_provenance(run_id, router_id, parsed)
+        assert len(result["events"]) == 2
+        assert all(event.occurrence_novel for event in result["events"])
+        assert result["boot_session_ids"] == []
+        assert result["novel_count"] == 0
+        assert store.conn.execute("SELECT COUNT(*) FROM router_boot_sessions").fetchone()[0] == 0
+        assert store.conn.execute("SELECT COUNT(*) FROM router_event_occurrences").fetchone()[0] == 0
+        assert store.conn.execute("SELECT COUNT(*) FROM device_event_daily_stats").fetchone()[0] == 0
+        assert store.conn.execute("SELECT COUNT(*) FROM subject_behavior_daily_stats").fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_tp_link_model_change_is_observed_without_splitting_identity(tmp_path: Path) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_ids = []
+        for index, model in enumerate(("SYNTHETIC-ARCHER-X9000", "SYNTHETIC-ARCHER-X9001"), start=1):
+            text = tp_link_synthetic_snapshot([
+                f"2042-06-15 11:59:5{index} inet[410]: <5> 3002 Internet connected",
+            ]).replace("SYNTHETIC-ARCHER-X9000", model)
+            parsed = analyzer.parse_router_log(text, f"synthetic-model-{index}.log", "tp-link-archer")
+            router_id = store.resolve_router_instance(parsed, router_label=f"Synthetic Router {index}")
+            router_ids.append(router_id)
+            run_id = store.insert_run(
+                epoch_id, None, f"synthetic-model-hash-{index}", tmp_path / f"synthetic-model-{index}.log",
+                parsed.parse_stats, None, None, [], 0, "Clean", False,
+                router_instance_id=router_id, format_id=parsed.format_id,
+                export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+            )
+            store.persist_router_provenance(run_id, router_id, parsed)
+            if index == 2:
+                assert "router_model_changed" in parsed.warnings
+            store.commit()
+        assert router_ids[0] == router_ids[1]
+        assert store.conn.execute("SELECT COUNT(*) FROM router_instances").fetchone()[0] == 1
+        assert store.conn.execute("SELECT label FROM router_instances").fetchone()[0] == "Synthetic Router 2"
+    finally:
+        store.close()
+
+
+def test_each_run_owns_stable_client_observation_but_router_interfaces_are_excluded(
+    tmp_path: Path,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 clientmon[410]: <5> 7001 client observed",
+        ]),
+        "synthetic-client.log",
+        "tp-link-archer",
+    )
+    client_mac = "02:00:00:00:00:09"
+    router_mac = "02:00:00:00:00:02"
+    parsed.events = [
+        replace(parsed.events[0], mac=client_mac, actor_scope="device", stable_client_identity=client_mac),
+        replace(parsed.events[0], mac=router_mac, actor_scope="device", stable_client_identity=router_mac),
+    ]
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.resolve_router_instance(parsed)
+        for index in (1, 2):
+            run_id = store.insert_run(
+                epoch_id, None, f"synthetic-client-hash-{index}", tmp_path / f"synthetic-client-{index}.log",
+                parsed.parse_stats, None, None, [], 0, "Clean", False,
+                router_instance_id=router_id, format_id=parsed.format_id,
+                export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+            )
+            store.persist_router_provenance(run_id, router_id, parsed)
+            store.commit()
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_observations WHERE mac = ?", (client_mac,)
+        ).fetchone()[0] == 2
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_observations WHERE mac = ?", (router_mac,)
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM devices WHERE mac = ?", (client_mac,)
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_same_tp_link_bytes_are_scoped_to_router_instance_and_deduplicate_within_one(
+    tmp_path: Path,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+        ]),
+        "synthetic-scoped.log",
+        "tp-link-archer",
+    )
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        first_id = store.resolve_router_instance(parsed, "synthetic-instance-one")
+        second_id = store.resolve_router_instance(parsed, "synthetic-instance-two")
+        first_run = store.insert_run(
+            epoch_id, None, "identical-synthetic-bytes", tmp_path / "synthetic-scoped.log",
+            parsed.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=first_id, format_id=parsed.format_id, capabilities=parsed.capabilities,
+        )
+        second_run = store.insert_run(
+            epoch_id, None, "identical-synthetic-bytes", tmp_path / "synthetic-scoped.log",
+            parsed.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=second_id, format_id=parsed.format_id, capabilities=parsed.capabilities,
+        )
+        assert first_run != second_run
+        with pytest.raises(sqlite3.IntegrityError, match="router_instance_id, runs.file_hash"):
+            store.insert_run(
+                epoch_id, None, "identical-synthetic-bytes", tmp_path / "synthetic-scoped.log",
+                parsed.parse_stats, None, None, [], 0, "Clean", False,
+                router_instance_id=first_id, format_id=parsed.format_id, capabilities=parsed.capabilities,
+            )
+    finally:
+        store.close()
+
+
+def test_repeated_tp_link_security_occurrence_does_not_rescore_changed_header(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_path = tmp_path / "synthetic-security.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    db_path = tmp_path / "network.db"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    record = "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected"
+    log_path.write_text(tp_link_synthetic_snapshot([record]), encoding="utf-8")
+    assert analyzer.main([
+        str(log_path), str(baseline_path), "--format", "tp-link-archer", "--json",
+        "--db", str(db_path),
+    ]) == 0
+    first = json.loads(capsys.readouterr().out)
+
+    log_path.write_text(
+        tp_link_synthetic_snapshot([record], export_time="2042-06-15 12:05:00"),
+        encoding="utf-8",
+    )
+    assert analyzer.main([
+        str(log_path), "--format", "tp-link-archer", "--json", "--db", str(db_path),
+    ]) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert first["risk_score"] >= 0
+    assert second["risk_score"] == 0
+    assert second["findings"]["all"] == []
+    store = analyzer.StateStore(db_path)
+    try:
+        assert [tuple(row) for row in store.conn.execute(
+            "SELECT novel_event_count, repeated_event_count FROM runs ORDER BY id"
+        )] == [(1, 0), (0, 1)]
+    finally:
+        store.close()
 
 
 def test_parse_log_text_normalizes_internet_transition_events() -> None:
