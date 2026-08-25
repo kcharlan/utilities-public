@@ -2214,7 +2214,7 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
         ("2037-07-15T18:01:00", analyzer.SYSTEM_ACTOR, "ADMIN_LOGIN", "OTHER", None),
         ("2037-07-15T18:02:00", "02:00:00:00:10:01", "DHCP_IP", "DHCP", "192.0.2.101"),
     ]
-    assert analyzer.asdict(stats) == {
+    assert legacy_parse_stats_projection(analyzer.asdict(stats)) == {
         "total_lines": 21, "parsed_events": 16, "malformed_lines": 1,
         "duplicate_events": 1, "spam_filtered": 1, "ignored_lines": 1,
         "export_noise_lines": 1,
