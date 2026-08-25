@@ -22,6 +22,9 @@ typeset -a MONEYDANCE_TEST_ENV_VARS=(
   MONEYDANCE_DIRNAME_BIN
   MONEYDANCE_MKDIR_BIN
   MONEYDANCE_MKTEMP_BIN
+  MONEYDANCE_MV_BIN
+  MONEYDANCE_CHMOD_BIN
+  MONEYDANCE_CMP_BIN
 )
 
 # Tests must never inherit operational settings or command overrides from the
@@ -116,12 +119,15 @@ assert_not_contains() {
 PTY_STATUS=0
 PTY_TRANSCRIPT=""
 PTY_NONTTY_STDOUT=""
+PTY_INPUT=""
 run_with_pty() {
   local timeout_seconds="$1"
   local tty_mode="$2"
   shift 2
   local transcript_file="${test_root}/pty-transcript-${RANDOM}-${RANDOM}"
   local stdout_file="${test_root}/pty-stdout-${RANDOM}-${RANDOM}"
+  local input_file="${test_root}/pty-input-${RANDOM}-${RANDOM}"
+  local expect_driver="${test_root}/pty-driver.exp"
   local child_pid deadline
   integer timed_out=0
   typeset -a pty_command=()
@@ -129,6 +135,7 @@ run_with_pty() {
   PTY_STATUS=124
   PTY_TRANSCRIPT=""
   PTY_NONTTY_STDOUT=""
+  print -rn -- "${PTY_INPUT}" > "${input_file}"
   case "${tty_mode}" in
     both)
       pty_command=("$@")
@@ -144,7 +151,21 @@ run_with_pty() {
       ;;
   esac
 
-  /usr/bin/script -q /dev/null "${pty_command[@]}" < /dev/null > "${transcript_file}" 2>&1 &
+  if [[ -n "${PTY_INPUT}" ]]; then
+    [[ "${tty_mode}" == both ]] || return 2
+    if [[ ! -f "${expect_driver}" ]]; then
+      print -r -- 'log_user 1
+eval spawn -noecho $argv
+send -- $env(PTY_EXPECT_INPUT)
+expect eof
+set result [wait]
+exit [lindex $result 3]' > "${expect_driver}"
+    fi
+    PTY_EXPECT_INPUT="${PTY_INPUT}" \
+      /usr/bin/expect "${expect_driver}" "${pty_command[@]}" > "${transcript_file}" 2>&1 &
+  else
+    /usr/bin/script -q /dev/null "${pty_command[@]}" < /dev/null > "${transcript_file}" 2>&1 &
+  fi
   child_pid=$!
   deadline=$(( SECONDS + timeout_seconds ))
   while /bin/kill -0 "${child_pid}" 2>/dev/null; do
@@ -639,6 +660,540 @@ make_mount_inventory_mock \
   "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_one_primary} (smbfs)"
 # A real child diagnostic containing private values must be suppressed by the script.
 printf 'print -r -- %q >&2\n' "child diagnostic ${candidate_one_primary} synthetic-candidate-private-one" >> "${unique_candidate_mount}"
+
+# Repair mode is deliberately exercised through the real script. Command
+# doubles only stand in for OS boundaries and record forbidden calls.
+repair_config="${candidate_config_dir}/repair-config"
+repair_original="${test_root}/repair-config.original"
+reset_repair_config() {
+  printf '# SYNTHETIC repair fixture\n  NAS_SERVER  =  synthetic-configured-private-host  \n' > "${repair_config}"
+  cat >> "${repair_config}" <<EOF
+# NAS_SERVER_EXTRA=synthetic-configured-private-host
+NAS_SHARE_NAME=SYNTHETIC-PRIVATE-PRIMARY
+REQUIRED_NAS_SHARES= SYNTHETIC-PRIVATE-COMPANION , SYNTHETIC-PRIVATE-PRIMARY
+BACKUP_DIRECTORY_NAME=SYNTHETIC-PRIVATE-BACKUPS
+BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
+MAX_DAYS_TO_KEEP=1
+DRY_RUN=0
+LOG_FILE=${candidate_log}
+USE_SYSLOG=1
+# NAS_SERVER=synthetic-commented-private-host
+# value containing NAS_SERVER=synthetic-value-private-host
+EOF
+  chmod 640 "${repair_config}"
+  cp -p "${repair_config}" "${repair_original}"
+  rm -f -- "${candidate_rm_marker}" "${candidate_scan_marker}"
+}
+make_expected_repaired_config() {
+  local target="$1"
+  printf '# SYNTHETIC repair fixture\n  NAS_SERVER  =  synthetic-candidate-private-one  \n' > "${target}"
+  tail -n +3 "${repair_original}" >> "${target}"
+}
+
+help_repair_marker="${test_root}/help-repair-mount-called"
+help_repair_mount="${test_root}/help-repair-mount"
+make_mount_mock "${help_repair_mount}" "${test_root}/unused" "${help_repair_marker}"
+help_repair_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${help_repair_mount}" "${SCRIPT}" --help 2>&1)"
+assert_contains "help describes explicit config repair" "${help_repair_output}" "--repair-config"
+if [[ ! -e "${help_repair_marker}" ]]; then pass "help does not inspect mounts for repair"; else fail "help does not inspect mounts for repair"; fi
+
+reset_repair_config
+repair_dry_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config --dry-run 2>&1)"
+repair_dry_status=$?
+assert_status "repair and dry-run conflict is a CLI error" 2 "${repair_dry_status}"
+if [[ ! -e "${unique_candidate_marker}" ]]; then pass "repair dry-run conflict occurs before mount lookup"; else fail "repair dry-run conflict occurs before mount lookup"; fi
+
+PTY_INPUT=""
+run_with_pty 5 stdin-only /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "repair with non-TTY stdout completes" 0 "$?"
+assert_status "repair rejects non-TTY stdout" 2 "${PTY_STATUS}"
+run_with_pty 5 stdout-only /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "repair with EOF on non-TTY stdin does not hang" 0 "$?"
+assert_status "repair rejects non-TTY stdin" 2 "${PTY_STATUS}"
+
+for repair_bad_kind in missing directory symlink unreadable unwritable; do
+  repair_bad_path="${test_root}/repair-bad-${repair_bad_kind}"
+  case "${repair_bad_kind}" in
+    missing) : ;;
+    directory) mkdir "${repair_bad_path}" ;;
+    symlink) ln -s "${repair_config}" "${repair_bad_path}" ;;
+    unreadable) cp "${repair_config}" "${repair_bad_path}"; chmod 200 "${repair_bad_path}" ;;
+    unwritable) cp "${repair_config}" "${repair_bad_path}"; chmod 400 "${repair_bad_path}" ;;
+  esac
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_bad_path}" --repair-config
+  assert_status "repair rejects ${repair_bad_kind} config" 2 "${PTY_STATUS}"
+done
+
+for repair_override in '__UNSET__' ''; do
+  reset_repair_config
+    PTY_INPUT=$'yes\n'
+  if [[ "${repair_override}" == __UNSET__ ]]; then
+    run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_NAS_SERVER=synthetic-override-private-host MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  else
+    run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_NAS_SERVER= MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  fi
+  assert_status "repair refuses set NAS_SERVER environment override (${repair_override:-empty})" 2 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "override refusal preserves exact config bytes (${repair_override:-empty})"; else fail "override refusal preserves exact config bytes (${repair_override:-empty})"; fi
+done
+
+for assignment_count in zero multiple; do
+  reset_repair_config
+  if [[ "${assignment_count}" == zero ]]; then
+    sed -i '' 's/^  NAS_SERVER/# NAS_SERVER/' "${repair_config}"
+  else
+    printf 'NAS_SERVER=synthetic-second-private-host\n' >> "${repair_config}"
+  fi
+  cp -p "${repair_config}" "${repair_original}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "repair refuses ${assignment_count} active NAS_SERVER assignments" 2 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "${assignment_count} assignment refusal preserves bytes"; else fail "${assignment_count} assignment refusal preserves bytes"; fi
+done
+
+reset_repair_config
+for confirmation in '' $'n\n' $'anything\n'; do
+  PTY_INPUT="${confirmation}"
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_FIND_BIN="${candidate_scan_spy}" MONEYDANCE_RM_BIN="${candidate_rm}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "repair cancellation exits successfully (${confirmation:-empty})" 0 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "repair cancellation preserves exact bytes (${confirmation:-empty})"; else fail "repair cancellation preserves exact bytes (${confirmation:-empty})"; fi
+done
+if [[ ! -e "${candidate_scan_marker}" ]]; then pass "repair cancellation never invokes FIND_BIN"; else fail "repair cancellation never invokes FIND_BIN"; fi
+if [[ ! -e "${candidate_rm_marker}" ]]; then pass "repair cancellation never invokes RM_BIN"; else fail "repair cancellation never invokes RM_BIN"; fi
+[[ "$(stat -f '%Lp' "${repair_config}")" == 640 ]] && pass "repair cancellation preserves config mode" || fail "repair cancellation preserves config mode"
+
+for affirmative in $'y\n' $' YES \n'; do
+  reset_repair_config
+  PTY_INPUT="${affirmative}"
+  run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_FIND_BIN="${test_root}/definitely-missing-find" MONEYDANCE_RM_BIN="${test_root}/definitely-missing-rm" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "affirmative repair succeeds (${affirmative})" 0 "${PTY_STATUS}"
+  repair_text="$(<"${repair_config}")"
+  expected_repaired_config="${test_root}/expected-repaired-${RANDOM}"
+  make_expected_repaired_config "${expected_repaired_config}"
+  if cmp -s "${repair_config}" "${expected_repaired_config}"; then pass "repair output matches exact expected bytes"; else fail "repair output matches exact expected bytes"; fi
+  assert_contains "repair changes NAS_SERVER value only" "${repair_text}" "  NAS_SERVER  =  synthetic-candidate-private-one  "
+  assert_contains "repair preserves similarly named key" "${repair_text}" "NAS_SERVER_EXTRA=synthetic-configured-private-host"
+  assert_contains "repair preserves commented assignment" "${repair_text}" "# NAS_SERVER=synthetic-commented-private-host"
+  assert_contains "repair reports success on terminal" "${PTY_TRANSCRIPT}" "updated"
+  assert_contains "repair terminal shows config path" "${PTY_TRANSCRIPT}" "${repair_config}"
+  assert_contains "repair terminal shows old host" "${PTY_TRANSCRIPT}" "synthetic-configured-private-host"
+  assert_contains "repair terminal shows new host" "${PTY_TRANSCRIPT}" "synthetic-candidate-private-one"
+  assert_contains "repair terminal shows required shares" "${PTY_TRANSCRIPT}" "SYNTHETIC-PRIVATE-COMPANION, SYNTHETIC-PRIVATE-PRIMARY"
+  assert_contains "repair terminal shows backup directory" "${PTY_TRANSCRIPT}" "${candidate_one_backup_dir}"
+  prompt_count="$(print -r -- "${PTY_TRANSCRIPT}" | grep -o 'Proceed with this atomic update' | wc -l | tr -d ' ')"
+  [[ "${prompt_count}" == 1 ]] && pass "repair prompt appears exactly once" || fail "repair prompt appears exactly once"
+  repair_mode="$(stat -f '%Lp' "${repair_config}")"
+  [[ "${repair_mode}" == 640 ]] && pass "repair preserves config mode" || fail "repair preserves config mode (got ${repair_mode})"
+done
+
+reset_repair_config
+override_backup_name="SYNTHETIC-PRIVATE-OVERRIDE-BACKUPS"
+override_backup_dir="${candidate_one_primary}/${override_backup_name}"
+mkdir -p "${override_backup_dir}"
+PTY_INPUT=$'yes\n'
+run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_BACKUP_DIRECTORY_NAME="${override_backup_name}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "repair honors non-host environment overrides after snapshot load" 0 "${PTY_STATUS}"
+assert_contains "repair validates the environment-overridden backup directory" "${PTY_TRANSCRIPT}" "${override_backup_dir}"
+
+# Byte-shape cases prove the replacement is span-based, not line regeneration.
+for byte_case in no-final-newline crlf; do
+  reset_repair_config
+  if [[ "${byte_case}" == no-final-newline ]]; then
+    printf '  NAS_SERVER\t =\t synthetic-configured-private-host \t\nNAS_SHARE_NAME=SYNTHETIC-PRIVATE-PRIMARY\nREQUIRED_NAS_SHARES=SYNTHETIC-PRIVATE-COMPANION,SYNTHETIC-PRIVATE-PRIMARY\nBACKUP_DIRECTORY_NAME=SYNTHETIC-PRIVATE-BACKUPS\nBACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP\nMAX_DAYS_TO_KEEP=1\nDRY_RUN=0\nUSE_SYSLOG=0' > "${repair_config}"
+  else
+    printf '  NAS_SERVER = synthetic-configured-private-host  \r\nNAS_SHARE_NAME=SYNTHETIC-PRIVATE-PRIMARY\r\nREQUIRED_NAS_SHARES=SYNTHETIC-PRIVATE-COMPANION,SYNTHETIC-PRIVATE-PRIMARY\r\nBACKUP_DIRECTORY_NAME=SYNTHETIC-PRIVATE-BACKUPS\r\nBACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP\r\nMAX_DAYS_TO_KEEP=1\r\nDRY_RUN=0\r\nUSE_SYSLOG=0\r\n' > "${repair_config}"
+  fi
+  chmod 600 "${repair_config}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "repair preserves ${byte_case} config shape" 0 "${PTY_STATUS}"
+  [[ "$(stat -f '%Lp' "${repair_config}")" == 600 ]] && pass "${byte_case} repair preserves mode" || fail "${byte_case} repair preserves mode"
+  if [[ "${byte_case}" == no-final-newline ]]; then
+    last_hex="$(tail -c 1 "${repair_config}" | od -An -tx1 | tr -d ' ')"
+    [[ "${last_hex}" != 0a ]] && pass "repair preserves missing final newline" || fail "repair preserves missing final newline"
+  else
+    crlf_count="$(od -An -tx1 "${repair_config}" | tr -d ' \n' | grep -o '0d0a' | wc -l | tr -d ' ')"
+    [[ "${crlf_count}" == 8 ]] && pass "repair preserves CRLF line endings" || fail "repair preserves CRLF line endings"
+  fi
+done
+
+reset_repair_config
+printf '\0SYNTHETIC-BINARY' >> "${repair_config}"
+cp -p "${repair_config}" "${repair_original}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "repair rejects NUL-containing config" 2 "${PTY_STATUS}"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "binary rejection preserves bytes"; else fail "binary rejection preserves bytes"; fi
+
+reset_repair_config
+configured_valid_mount="${test_root}/configured-valid-mount"
+make_mount_inventory_mock "${configured_valid_mount}" "${test_root}/configured-valid-called" \
+  "//synthetic-configured-private-host/SYNTHETIC-PRIVATE-COMPANION on ${candidate_one_companion} (smbfs)" \
+  "//synthetic-configured-private-host/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_one_primary} (smbfs)"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${configured_valid_mount}" MONEYDANCE_FIND_BIN="${candidate_scan_spy}" MONEYDANCE_RM_BIN="${candidate_rm}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "valid configured host needs no repair" 0 "${PTY_STATUS}"
+assert_contains "valid configured host reports no repair needed" "${PTY_TRANSCRIPT}" "No repair is needed"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "no-repair path preserves config"; else fail "no-repair path preserves config"; fi
+if [[ ! -e "${candidate_scan_marker}" ]]; then pass "no-repair path never invokes FIND_BIN"; else fail "no-repair path never invokes FIND_BIN"; fi
+if [[ ! -e "${candidate_rm_marker}" ]]; then pass "no-repair path never invokes RM_BIN"; else fail "no-repair path never invokes RM_BIN"; fi
+
+for candidate_case in zero multiple; do
+  reset_repair_config
+  candidate_case_mount="${partial_candidate_mount:-${unique_candidate_mount}}"
+  [[ "${candidate_case}" == multiple ]] && candidate_case_mount="${multiple_candidate_mount:-${unique_candidate_mount}}"
+  # These mocks are defined below; create local equivalents for this early block.
+  candidate_case_mount="${test_root}/repair-${candidate_case}-mount"
+  if [[ "${candidate_case}" == zero ]]; then
+    make_mount_inventory_mock "${candidate_case_mount}" "${test_root}/repair-${candidate_case}-called" \
+      "//synthetic-partial-private-host/SYNTHETIC-PRIVATE-PRIMARY on ${partial_candidate_primary} (smbfs)"
+  else
+    make_mount_inventory_mock "${candidate_case_mount}" "${test_root}/repair-${candidate_case}-called" \
+      "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-COMPANION on ${candidate_one_companion} (smbfs)" \
+      "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_one_primary} (smbfs)" \
+      "//synthetic-candidate-private-two/SYNTHETIC-PRIVATE-COMPANION on ${candidate_two_companion} (smbfs)" \
+      "//synthetic-candidate-private-two/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_two_primary} (smbfs)"
+  fi
+  cp -p "${repair_config}" "${repair_original}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${candidate_case_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "repair refuses ${candidate_case} replacement candidates" 1 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "${candidate_case} candidate refusal preserves config"; else fail "${candidate_case} candidate refusal preserves config"; fi
+done
+
+# Initial ownership is part of repair authorization. A stat boundary double is
+# used because an unprivileged test cannot create a genuinely foreign-owned file.
+reset_repair_config
+wrong_owner_stat="${test_root}/repair-wrong-owner-stat"
+cat > "${wrong_owner_stat}" <<EOF
+#!/bin/zsh
+if [[ "\${@: -1}" == "${repair_config}" ]]; then
+  print -r -- "1|2|$(( EUID + 1 ))|20|640|1|1"
+  exit 0
+fi
+exec /usr/bin/stat "\$@"
+EOF
+chmod 755 "${wrong_owner_stat}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${wrong_owner_stat}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "repair rejects wrong-owner config" 2 "${PTY_STATUS}"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "wrong-owner refusal preserves config"; else fail "wrong-owner refusal preserves config"; fi
+
+# Every hostile mktemp return must be rejected before the path is opened,
+# chmodded, renamed, or selected for cleanup.
+typeset -a hostile_temp_kinds=(config outside preexisting symlink directory multilink malformed)
+for hostile_temp_kind in "${hostile_temp_kinds[@]}"; do
+  reset_repair_config
+  hostile_temp_path="${candidate_config_dir}/.repair-config.snapshot.HOSTILE-${hostile_temp_kind}"
+  case "${hostile_temp_kind}" in
+    config) hostile_temp_path="${repair_config}" ;;
+    outside) hostile_temp_path="${test_root}/SYNTHETIC-HOSTILE-OUTSIDE-${hostile_temp_kind}" ;;
+    preexisting) : > "${hostile_temp_path}" ;;
+    symlink) ln -s "${repair_original}" "${hostile_temp_path}" ;;
+    directory) mkdir "${hostile_temp_path}" ;;
+    multilink)
+      : > "${hostile_temp_path}"
+      ln "${hostile_temp_path}" "${test_root}/SYNTHETIC-HOSTILE-LINK-${hostile_temp_kind}"
+      ;;
+    malformed) hostile_temp_path="${candidate_config_dir}/SYNTHETIC-MALFORMED-TEMP"; : > "${hostile_temp_path}" ;;
+  esac
+  hostile_mktemp="${test_root}/hostile-mktemp-${hostile_temp_kind}"
+  hostile_chmod_marker="${test_root}/hostile-chmod-${hostile_temp_kind}-called"
+  hostile_mv_marker="${test_root}/hostile-mv-${hostile_temp_kind}-called"
+  cat > "${hostile_mktemp}" <<EOF
+#!/bin/zsh
+[[ -e "${hostile_temp_path}" || -L "${hostile_temp_path}" ]] || : > "${hostile_temp_path}"
+print -r -- "${hostile_temp_path}"
+EOF
+  cat > "${test_root}/hostile-chmod-${hostile_temp_kind}" <<EOF
+#!/bin/zsh
+print invoked > "${hostile_chmod_marker}"
+exit 93
+EOF
+  cat > "${test_root}/hostile-mv-${hostile_temp_kind}" <<EOF
+#!/bin/zsh
+print invoked > "${hostile_mv_marker}"
+exit 94
+EOF
+  chmod 755 "${hostile_mktemp}" "${test_root}/hostile-chmod-${hostile_temp_kind}" "${test_root}/hostile-mv-${hostile_temp_kind}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${hostile_mktemp}" MONEYDANCE_CHMOD_BIN="${test_root}/hostile-chmod-${hostile_temp_kind}" MONEYDANCE_MV_BIN="${test_root}/hostile-mv-${hostile_temp_kind}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "repair rejects hostile ${hostile_temp_kind} temp return" 1 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "hostile ${hostile_temp_kind} temp preserves config"; else fail "hostile ${hostile_temp_kind} temp preserves config"; fi
+  if [[ ! -e "${hostile_chmod_marker}" ]]; then pass "hostile ${hostile_temp_kind} temp is never chmodded"; else fail "hostile ${hostile_temp_kind} temp is never chmodded"; fi
+  if [[ ! -e "${hostile_mv_marker}" ]]; then pass "hostile ${hostile_temp_kind} temp is never renamed"; else fail "hostile ${hostile_temp_kind} temp is never renamed"; fi
+  if [[ "${hostile_temp_path}" != "${repair_config}" && ( -e "${hostile_temp_path}" || -L "${hostile_temp_path}" ) ]]; then pass "hostile ${hostile_temp_kind} returned path is not removed"; else [[ "${hostile_temp_path}" == "${repair_config}" ]] && pass "hostile config return remains present" || fail "hostile ${hostile_temp_kind} returned path is not removed"; fi
+  if [[ "${hostile_temp_path}" != "${repair_config}" ]]; then
+    rm -rf -- "${hostile_temp_path}"
+  fi
+  rm -f -- "${test_root}/SYNTHETIC-HOSTILE-LINK-${hostile_temp_kind}"
+done
+
+reset_repair_config
+repair_lock_path="${candidate_config_dir}/.repair-config.repair.lock"
+mkdir "${repair_lock_path}"
+print -r -- 99999 > "${repair_lock_path}/owner"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "second cooperating repair is rejected by same-directory lock" 1 "${PTY_STATUS}"
+if [[ -d "${repair_lock_path}" ]]; then pass "repair does not remove another process lock"; else fail "repair does not remove another process lock"; fi
+rm -rf -- "${repair_lock_path}"
+
+for failure_kind in mktemp chmod cmp mv; do
+  reset_repair_config
+  : > "${candidate_log}"
+  : > "${candidate_logger_marker}"
+  failure_tool="${test_root}/repair-failing-${failure_kind}"
+  cat > "${failure_tool}" <<EOF
+#!/bin/zsh
+print -r -- "SYNTHETIC child diagnostic ${repair_config}" >&2
+exit 92
+EOF
+  chmod 755 "${failure_tool}"
+  typeset -a failure_env=(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}")
+  case "${failure_kind}" in
+    mktemp) failure_env+=(MONEYDANCE_MKTEMP_BIN="${failure_tool}") ;;
+    chmod) failure_env+=(MONEYDANCE_CHMOD_BIN="${failure_tool}") ;;
+    cmp) failure_env+=(MONEYDANCE_CMP_BIN="${failure_tool}") ;;
+    mv) failure_env+=(MONEYDANCE_MV_BIN="${failure_tool}") ;;
+  esac
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both /usr/bin/env "${failure_env[@]}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "injected ${failure_kind} failure aborts repair" 1 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "${failure_kind} failure preserves original bytes"; else fail "${failure_kind} failure preserves original bytes"; fi
+  assert_not_contains "${failure_kind} child diagnostic is redacted" "${PTY_TRANSCRIPT}" "SYNTHETIC child diagnostic"
+  assert_not_contains "${failure_kind} persistent failure log redacts config path" "$(<"${candidate_log}")" "${repair_config}"
+  assert_not_contains "${failure_kind} logger failure record redacts config path" "$(<"${candidate_logger_marker}")" "${repair_config}"
+  leftover_count="$(find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) | wc -l | tr -d ' ')"
+  [[ "${leftover_count}" == 0 ]] && pass "${failure_kind} failure cleans validated owned artifacts" || fail "${failure_kind} failure cleans validated owned artifacts"
+done
+
+reset_repair_config
+rm -f -- "${unique_candidate_marker}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MV_BIN="${test_root}/missing-repair-mv" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "repair requires its repair-only commands" 1 "${PTY_STATUS}"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "missing repair-only command preserves config"; else fail "missing repair-only command preserves config"; fi
+if [[ ! -e "${unique_candidate_marker}" ]]; then pass "missing repair-only command fails before mount lookup"; else fail "missing repair-only command fails before mount lookup"; fi
+
+reset_repair_config
+wrong_temp_record="${test_root}/wrong-owner-temp-record"
+wrong_temp_mktemp="${test_root}/wrong-owner-temp-mktemp"
+wrong_temp_stat="${test_root}/wrong-owner-temp-stat"
+cat > "${wrong_temp_mktemp}" <<EOF
+#!/bin/zsh
+created="\$(/usr/bin/mktemp "\$@")" || exit 1
+print -r -- "\${created}" > "${wrong_temp_record}"
+print -r -- "\${created}"
+EOF
+cat > "${wrong_temp_stat}" <<EOF
+#!/bin/zsh
+target="\${@: -1}"
+metadata="\$(/usr/bin/stat -f '%d|%i|%u|%g|%Lp|%z|%l' -- "\${target}")" || exit 1
+if [[ "\${target}" == *.snapshot.* ]]; then
+  IFS='|' read -r device inode owner group mode size links <<< "\${metadata}"
+  print -r -- "\${device}|\${inode}|$(( EUID + 1 ))|\${group}|\${mode}|\${size}|\${links}"
+else
+  print -r -- "\${metadata}"
+fi
+EOF
+chmod 755 "${wrong_temp_mktemp}" "${wrong_temp_stat}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${wrong_temp_mktemp}" MONEYDANCE_STAT_BIN="${wrong_temp_stat}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "wrong-owner temp is rejected" 1 "${PTY_STATUS}"
+wrong_temp_path="$(<"${wrong_temp_record}")"
+if [[ -f "${wrong_temp_path}" ]]; then pass "wrong-owner returned temp is not removed"; else fail "wrong-owner returned temp is not removed"; fi
+rm -f -- "${wrong_temp_path}"
+
+reset_repair_config
+write_fail_count="${test_root}/write-fail-chmod-count"
+write_fail_chmod="${test_root}/write-fail-chmod"
+cat > "${write_fail_chmod}" <<EOF
+#!/bin/zsh
+count=0
+[[ ! -f "${write_fail_count}" ]] || count="\$(<"${write_fail_count}")"
+(( count += 1 ))
+print -r -- "\${count}" > "${write_fail_count}"
+/bin/chmod "\$@" || exit 1
+if (( count == 2 )); then
+  /bin/chmod +a "$(/usr/bin/id -un) deny write" "\${@: -1}" || exit 1
+fi
+EOF
+chmod 755 "${write_fail_chmod}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${write_fail_chmod}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "candidate write failure aborts repair" 1 "${PTY_STATUS}"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "candidate write failure preserves original bytes"; else fail "candidate write failure preserves original bytes"; fi
+leftover_count="$(find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) | wc -l | tr -d ' ')"
+[[ "${leftover_count}" == 0 ]] && pass "write failure cleans validated owned temps" || fail "write failure cleans validated owned temps ($(find "${candidate_config_dir}" -maxdepth 1 -name '.repair-config.*' -print))"
+
+for metadata_kind in owner group device; do
+  reset_repair_config
+  metadata_stat="${test_root}/repair-${metadata_kind}-mutation-stat"
+  metadata_count="${test_root}/repair-${metadata_kind}-mutation-count"
+  cat > "${metadata_stat}" <<EOF
+#!/bin/zsh
+target="\${@: -1}"
+metadata="\$(/usr/bin/stat -f '%d|%i|%u|%g|%Lp|%z|%l' -- "\${target}")" || exit 1
+if [[ "\${target}" == "${repair_config}" ]]; then
+  count=0; [[ ! -f "${metadata_count}" ]] || count="\$(<"${metadata_count}")"; (( count += 1 )); print -r -- "\${count}" > "${metadata_count}"
+  if (( count >= 3 )); then
+    IFS='|' read -r device inode owner group mode size links <<< "\${metadata}"
+    case "${metadata_kind}" in
+      owner) (( owner += 1 )) ;;
+      group) (( group += 1 )) ;;
+      device) (( device += 1 )) ;;
+    esac
+    metadata="\${device}|\${inode}|\${owner}|\${group}|\${mode}|\${size}|\${links}"
+  fi
+fi
+print -r -- "\${metadata}"
+EOF
+  chmod 755 "${metadata_stat}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${metadata_stat}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "live config ${metadata_kind} metadata mutation aborts activation" 1 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "${metadata_kind} metadata mutation preserves original bytes"; else fail "${metadata_kind} metadata mutation preserves original bytes"; fi
+done
+
+reset_repair_config
+temp_swap_chmod="${test_root}/repair-temp-swap-chmod"
+temp_swap_count="${test_root}/repair-temp-swap-count"
+temp_swap_record="${test_root}/repair-temp-swap-record"
+cat > "${temp_swap_chmod}" <<EOF
+#!/bin/zsh
+count=0; [[ ! -f "${temp_swap_count}" ]] || count="\$(<"${temp_swap_count}")"; (( count += 1 )); print -r -- "\${count}" > "${temp_swap_count}"
+/bin/chmod "\$@" || exit 1
+if (( count == 2 )); then
+  target="\${@: -1}"
+  /bin/cp "\${target}" "\${target}.swap" || exit 1
+  /bin/mv "\${target}.swap" "\${target}" || exit 1
+  print -r -- "\${target}" > "${temp_swap_record}"
+fi
+EOF
+chmod 755 "${temp_swap_chmod}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${temp_swap_chmod}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "candidate inode replacement aborts repair" 1 "${PTY_STATUS}"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "candidate inode replacement preserves original config"; else fail "candidate inode replacement preserves original config"; fi
+swapped_temp_path="$(<"${temp_swap_record}")"
+if [[ -f "${swapped_temp_path}" ]]; then pass "cleanup does not remove unvalidated swapped temp"; else fail "cleanup does not remove unvalidated swapped temp"; fi
+rm -f -- "${swapped_temp_path}"
+
+reset_repair_config
+exposure_marker="${test_root}/repair-snapshot-exposed"
+permissive_mktemp="${test_root}/repair-permissive-mktemp"
+exposure_chmod="${test_root}/repair-exposure-chmod"
+cat > "${permissive_mktemp}" <<'EOF'
+#!/bin/zsh
+created="$(/usr/bin/mktemp "$@")" || exit 1
+/bin/chmod 644 "${created}"
+print -r -- "${created}"
+EOF
+cat > "${exposure_chmod}" <<EOF
+#!/bin/zsh
+[[ ! -s "\${@: -1}" ]] || print exposed > "${exposure_marker}"
+exit 91
+EOF
+chmod 755 "${permissive_mktemp}" "${exposure_chmod}"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${permissive_mktemp}" MONEYDANCE_CHMOD_BIN="${exposure_chmod}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "snapshot permission failure aborts repair" 1 "${PTY_STATUS}"
+if [[ ! -e "${exposure_marker}" ]]; then pass "snapshot bytes are never copied before mode 0600"; else fail "snapshot bytes are never copied before mode 0600"; fi
+
+for candidate_chmod_kind in noop mutate; do
+  reset_repair_config
+  candidate_chmod="${test_root}/repair-candidate-chmod-${candidate_chmod_kind}"
+  candidate_chmod_count="${test_root}/repair-candidate-chmod-${candidate_chmod_kind}-count"
+  cat > "${candidate_chmod}" <<EOF
+#!/bin/zsh
+count=0; [[ ! -f "${candidate_chmod_count}" ]] || count="\$(<"${candidate_chmod_count}")"; (( count += 1 )); print -r -- "\${count}" > "${candidate_chmod_count}"
+if (( count == 1 )); then exec /bin/chmod "\$@"; fi
+if [[ "${candidate_chmod_kind}" == mutate ]]; then /bin/chmod 600 "\${@: -1}"; fi
+exit 0
+EOF
+  chmod 755 "${candidate_chmod}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${candidate_chmod}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "candidate ${candidate_chmod_kind} chmod is rejected" 1 "${PTY_STATUS}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "candidate ${candidate_chmod_kind} chmod preserves original"; else fail "candidate ${candidate_chmod_kind} chmod preserves original"; fi
+done
+
+reset_repair_config
+invalid_host_mount="${test_root}/repair-invalid-host-mount"
+make_mount_inventory_mock "${invalid_host_mount}" "${test_root}/repair-invalid-host-called" \
+  "//synthetic:invalid-host/SYNTHETIC-PRIVATE-COMPANION on ${candidate_one_companion} (smbfs)" \
+  "//synthetic:invalid-host/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_one_primary} (smbfs)"
+PTY_INPUT=$'yes\n'
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${invalid_host_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "repair rejects replacement host outside NAS_SERVER grammar" 1 "${PTY_STATUS}"
+if cmp -s "${repair_config}" "${repair_original}"; then pass "invalid replacement host preserves config"; else fail "invalid replacement host preserves config"; fi
+
+reset_repair_config
+post_mv_logger="${test_root}/repair-post-mv-failing-logger"
+cat > "${post_mv_logger}" <<'EOF'
+#!/bin/zsh
+print -r -- 'SYNTHETIC failing logger diagnostic' >&2
+exit 90
+EOF
+chmod 755 "${post_mv_logger}"
+PTY_INPUT=$'yes\n'
+run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_LOGGER_BIN="${post_mv_logger}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "post-activation logger failure cannot change successful repair status" 0 "${PTY_STATUS}"
+assert_contains "post-activation logger failure still leaves repaired config" "$(<"${repair_config}")" "NAS_SERVER  =  synthetic-candidate-private-one"
+assert_not_contains "post-activation logger diagnostic is suppressed" "${PTY_TRANSCRIPT}" "failing logger diagnostic"
+
+for mutation_kind in content mode replacement; do
+  reset_repair_config
+  mutation_mount="${test_root}/repair-mutation-${mutation_kind}-mount"
+  cat > "${mutation_mount}" <<EOF
+#!/bin/zsh
+case "${mutation_kind}" in
+  content) print -rn -- X >> "${repair_config}" ;;
+  mode) /bin/chmod 600 "${repair_config}" ;;
+  replacement) /bin/cp "${repair_config}" "${repair_config}.replacement"; /bin/mv "${repair_config}.replacement" "${repair_config}" ;;
+esac
+print -r -- "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-COMPANION on ${candidate_one_companion} (smbfs)"
+print -r -- "//synthetic-candidate-private-one/SYNTHETIC-PRIVATE-PRIMARY on ${candidate_one_primary} (smbfs)"
+EOF
+  chmod 755 "${mutation_mount}"
+  PTY_INPUT=$'yes\n'
+  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${mutation_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+  assert_status "live config ${mutation_kind} mutation aborts activation" 1 "${PTY_STATUS}"
+  assert_not_contains "${mutation_kind} mutation never activates replacement host" "$(<"${repair_config}")" "synthetic-candidate-private-one"
+done
+
+# Persistent sinks receive only generic repair messages even on success.
+reset_repair_config
+: > "${candidate_log}"
+: > "${candidate_logger_marker}"
+rm -f -- "${candidate_scan_marker}" "${candidate_rm_marker}"
+PTY_INPUT=$'yes\n'
+run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_FIND_BIN="${candidate_scan_spy}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
+assert_status "privacy-checked repair succeeds" 0 "${PTY_STATUS}"
+if [[ ! -e "${candidate_scan_marker}" ]]; then pass "successful repair never invokes FIND_BIN"; else fail "successful repair never invokes FIND_BIN"; fi
+if [[ ! -e "${candidate_rm_marker}" ]]; then pass "successful repair never invokes RM_BIN"; else fail "successful repair never invokes RM_BIN"; fi
+repair_persistent_text="$(<"${candidate_log}")$(<"${candidate_logger_marker}")"
+for private_token in \
+  synthetic-configured-private-host \
+  synthetic-candidate-private-one \
+  SYNTHETIC-PRIVATE-COMPANION \
+  SYNTHETIC-PRIVATE-PRIMARY \
+  SYNTHETIC-PRIVATE-BACKUPS \
+  SYNTHETIC-PRIVATE-CONFIG-PATH \
+  SYNTHETIC-PRIVATE-LOG-PATH \
+  "${repair_config}" \
+  "${candidate_log}" \
+  "${candidate_one_primary}" \
+  "${candidate_one_companion}" \
+  "${candidate_one_backup_dir}"; do
+  assert_not_contains "repair persistent sinks redact ${private_token}" "${repair_persistent_text}" "${private_token}"
+done
+
+# Retention mode has no dependency on repair-only commands.
+normal_without_repair_tools="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_MV_BIN="${test_root}/missing-mv" MONEYDANCE_CHMOD_BIN="${test_root}/missing-chmod" MONEYDANCE_CMP_BIN="${test_root}/missing-cmp" "${SCRIPT}" --config "${candidate_config}" --dry-run 2>&1)"
+assert_status "normal mode ignores repair-only command absence" 0 "$?"
+PTY_INPUT=""
 
 unique_candidate_stdout="${test_root}/unique-candidate.stdout"
 unique_candidate_stderr="${test_root}/unique-candidate.stderr"
