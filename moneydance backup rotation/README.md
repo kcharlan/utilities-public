@@ -172,12 +172,15 @@ replacement does not reconstruct ACLs, which is why the live config must be
 ACL-free. Cancellation leaves the config unchanged.
 
 Treat repair as requiring exclusive local control of the config path. The lock
-coordinates cooperating repair invocations, and detected content, metadata,
-path, or ACL changes fail closed. However, an uncooperative process running as
-the same user—or privileged root—can still race the final pathname validation
-and open, or validation and rename, because macOS pathname operations do not
-provide compare-and-swap semantics. The terminal reports this residual risk;
-the checks do not claim to eliminate it.
+coordinates cooperating repair invocations. Detected content, metadata, or
+path changes, and any ACL state that violates the rules above, fail closed.
+Permitted deny-only ancestor ACLs are policy-checked rather than byte-for-byte
+compared, so one valid deny-only ACL can change to another without being
+detected as a change. However, an uncooperative process running as the same
+user—or privileged root—can still race the final pathname validation and open,
+or validation and rename, because macOS pathname operations do not provide
+compare-and-swap semantics. The terminal reports this residual risk; the
+checks do not claim to eliminate it.
 
 Repair mode never enumerates retention candidates or deletes backups. Whether
 no repair is needed, the user cancels, or an update succeeds, it exits without
