@@ -130,7 +130,8 @@ run_with_pty() {
   local stderr_file="${test_root}/pty-stderr-${RANDOM}-${RANDOM}"
   local input_file="${test_root}/pty-input-${RANDOM}-${RANDOM}"
   local expect_driver="${test_root}/pty-driver.exp"
-  local child_pid deadline
+  local payload_pid_file="${test_root}/pty-payload-pid-${RANDOM}-${RANDOM}"
+  local child_pid payload_pid="" deadline
   integer timed_out=0
   typeset -a pty_command=()
 
@@ -157,21 +158,19 @@ run_with_pty() {
       ;;
   esac
 
-  if [[ -n "${PTY_INPUT}" ]]; then
-    [[ "${tty_mode}" == both || "${tty_mode}" == both-stderr-file ]] || return 2
-    if [[ ! -f "${expect_driver}" ]]; then
-      print -r -- 'log_user 1
+  if [[ ! -f "${expect_driver}" ]]; then
+    print -r -- 'log_user 1
 eval spawn -noecho $argv
-send -- $env(PTY_EXPECT_INPUT)
+set pid_file [open $env(PTY_EXPECT_PID_FILE) w]
+puts $pid_file [exp_pid]
+close $pid_file
+if {$env(PTY_EXPECT_INPUT) ne ""} { send -- $env(PTY_EXPECT_INPUT) } else { send -- "\004" }
 expect eof
 set result [wait]
 exit [lindex $result 3]' > "${expect_driver}"
-    fi
-    PTY_EXPECT_INPUT="${PTY_INPUT}" \
-      /usr/bin/expect "${expect_driver}" "${pty_command[@]}" > "${transcript_file}" 2>&1 &
-  else
-    /usr/bin/script -q /dev/null "${pty_command[@]}" < /dev/null > "${transcript_file}" 2>&1 &
   fi
+  PTY_EXPECT_INPUT="${PTY_INPUT}" PTY_EXPECT_PID_FILE="${payload_pid_file}" \
+    /usr/bin/expect "${expect_driver}" "${pty_command[@]}" > "${transcript_file}" 2>&1 &
   child_pid=$!
   deadline=$(( SECONDS + timeout_seconds ))
   while /bin/kill -0 "${child_pid}" 2>/dev/null; do
@@ -181,7 +180,19 @@ exit [lindex $result 3]' > "${expect_driver}"
 
   if /bin/kill -0 "${child_pid}" 2>/dev/null; then
     timed_out=1
-    /bin/kill -TERM "${child_pid}" 2>/dev/null || true
+    [[ ! -f "${payload_pid_file}" ]] || payload_pid="$(<"${payload_pid_file}")"
+    if [[ -n "${payload_pid}" ]]; then
+      /bin/kill -TERM "-${payload_pid}" 2>/dev/null || /bin/kill -TERM "${payload_pid}" 2>/dev/null || true
+    else
+      /bin/kill -TERM "${child_pid}" 2>/dev/null || true
+    fi
+    deadline=$(( SECONDS + 1 ))
+    while /bin/kill -0 "${child_pid}" 2>/dev/null && (( SECONDS < deadline )); do
+      /bin/sleep 0.02
+    done
+  fi
+  if (( timed_out )) && [[ -n "${payload_pid}" ]]; then
+    /bin/kill -KILL "-${payload_pid}" 2>/dev/null || /bin/kill -KILL "${payload_pid}" 2>/dev/null || true
     deadline=$(( SECONDS + 1 ))
     while /bin/kill -0 "${child_pid}" 2>/dev/null && (( SECONDS < deadline )); do
       /bin/sleep 0.02
@@ -269,8 +280,10 @@ assert_status "PTY helper can provide only TTY stdin" 0 "${PTY_STATUS}"
 run_with_pty 5 stdout-only /bin/zsh -c '[[ ! -t 0 && -t 1 ]]'
 assert_status "PTY helper can provide only TTY stdout" 0 "${PTY_STATUS}"
 
+pty_timeout_payload_pid_file="${test_root}/pty-timeout-payload-pid"
+pty_timeout_descendant_pid_file="${test_root}/pty-timeout-descendant-pid"
 pty_timeout_start=${SECONDS}
-run_with_pty 1 both /bin/zsh -c 'trap "" TERM; while :; do /bin/sleep 10; done'
+run_with_pty 1 both /bin/zsh -c 'print -r -- "$$" > "$1"; /bin/zsh -c '\''trap "" HUP TERM; while :; do /bin/sleep 10; done'\'' </dev/null >/dev/null 2>&1 & print -r -- "$!" > "$2"; wait' pty-timeout "${pty_timeout_payload_pid_file}" "${pty_timeout_descendant_pid_file}"
 pty_timeout_helper_status=$?
 pty_timeout_elapsed=$(( SECONDS - pty_timeout_start ))
 assert_status "PTY helper reports a hard timeout" 124 "${pty_timeout_helper_status}"
@@ -279,6 +292,14 @@ if (( pty_timeout_elapsed <= 4 )); then
   pass "PTY helper bounds TERM grace, KILL, and reap"
 else
   fail "PTY helper bounds TERM grace, KILL, and reap (elapsed ${pty_timeout_elapsed}s)"
+fi
+pty_timeout_payload_pid="$(<"${pty_timeout_payload_pid_file}")"
+pty_timeout_descendant_pid="$(<"${pty_timeout_descendant_pid_file}")"
+if ! /bin/kill -0 "${pty_timeout_payload_pid}" 2>/dev/null && ! /bin/kill -0 "${pty_timeout_descendant_pid}" 2>/dev/null; then
+  pass "PTY timeout terminates payload and descendants"
+else
+  fail "PTY timeout terminates payload and descendants"
+  /bin/kill -KILL "${pty_timeout_payload_pid}" "${pty_timeout_descendant_pid}" 2>/dev/null || true
 fi
 
 typeset -A cleared_environment_variables=()
@@ -1068,22 +1089,30 @@ reset_repair_config
 temp_swap_chmod="${test_root}/repair-temp-swap-chmod"
 temp_swap_count="${test_root}/repair-temp-swap-count"
 temp_swap_record="${test_root}/repair-temp-swap-record"
+temp_swap_mv_marker="${test_root}/repair-temp-swap-mv-called"
+temp_swap_mv="${test_root}/repair-temp-swap-mv"
 cat > "${temp_swap_chmod}" <<EOF
 #!/bin/zsh
 count=0; [[ ! -f "${temp_swap_count}" ]] || count="\$(<"${temp_swap_count}")"; (( count += 1 )); print -r -- "\${count}" > "${temp_swap_count}"
 /bin/chmod "\$@" || exit 1
 if (( count == 2 )); then
   target="\${@: -1}"
-  /bin/cp "\${target}" "\${target}.swap" || exit 1
+  /bin/cp -p "\${target}" "\${target}.swap" || exit 1
   /bin/mv "\${target}.swap" "\${target}" || exit 1
   print -r -- "\${target}" > "${temp_swap_record}"
 fi
 EOF
-chmod 755 "${temp_swap_chmod}"
+cat > "${temp_swap_mv}" <<EOF
+#!/bin/zsh
+print -r -- invoked > "${temp_swap_mv_marker}"
+exit 97
+EOF
+chmod 755 "${temp_swap_chmod}" "${temp_swap_mv}"
 PTY_INPUT=$'yes\n'
-run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${temp_swap_chmod}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
+run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${temp_swap_chmod}" MONEYDANCE_MV_BIN="${temp_swap_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "candidate inode replacement aborts repair" 1 "${PTY_STATUS}"
 if cmp -s "${repair_config}" "${repair_original}"; then pass "candidate inode replacement preserves original config"; else fail "candidate inode replacement preserves original config"; fi
+if [[ ! -e "${temp_swap_mv_marker}" ]]; then pass "candidate inode replacement aborts before MV_BIN"; else fail "candidate inode replacement aborts before MV_BIN"; fi
 swapped_temp_path="$(<"${temp_swap_record}")"
 if [[ -f "${swapped_temp_path}" ]]; then pass "cleanup does not remove unvalidated swapped temp"; else fail "cleanup does not remove unvalidated swapped temp"; fi
 rm -f -- "${swapped_temp_path}"
@@ -1136,6 +1165,84 @@ PTY_INPUT=$'yes\n'
 run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${invalid_host_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "repair rejects replacement host outside NAS_SERVER grammar" 1 "${PTY_STATUS}"
 if cmp -s "${repair_config}" "${repair_original}"; then pass "invalid replacement host preserves config"; else fail "invalid replacement host preserves config"; fi
+
+# Signals delivered after lock acquisition must clean owned artifacts and stop
+# the repair immediately, without reaching candidate proposal or activation.
+signal_expect_driver="${test_root}/repair-signal-driver.exp"
+cat > "${signal_expect_driver}" <<'EOF'
+log_user 1
+eval spawn -noecho $argv
+set pid_file [open $env(SYNTHETIC_SIGNAL_PAYLOAD_PID_FILE) w]
+puts $pid_file [exp_pid]
+close $pid_file
+expect eof
+set result [wait]
+exit [lindex $result 3]
+EOF
+for signal_name in INT TERM; do
+  if [[ "${signal_name}" == INT ]]; then expected_signal_status=130; else expected_signal_status=143; fi
+  reset_repair_config
+  : > "${candidate_log}"
+  : > "${candidate_logger_marker}"
+  signal_ready="${test_root}/repair-signal-${signal_name}-ready"
+  signal_mount_pid_file="${test_root}/repair-signal-${signal_name}-mount-pid"
+  signal_payload_pid_file="${test_root}/repair-signal-${signal_name}-payload-pid"
+  signal_transcript="${test_root}/repair-signal-${signal_name}-transcript"
+  signal_stderr="${test_root}/repair-signal-${signal_name}-stderr"
+  signal_mount="${test_root}/repair-signal-${signal_name}-mount"
+  cat > "${signal_mount}" <<EOF
+#!/bin/zsh
+print -r -- "\$\$" > "${signal_mount_pid_file}"
+print -r -- ready > "${signal_ready}"
+trap 'exit 130' INT
+trap 'exit 143' TERM
+while :; do /bin/sleep 1; done
+EOF
+  chmod 755 "${signal_mount}"
+  SYNTHETIC_SIGNAL_PAYLOAD_PID_FILE="${signal_payload_pid_file}" /usr/bin/expect "${signal_expect_driver}" \
+    /bin/zsh -c 'stderr_file="$1"; shift; "$@" 2>"${stderr_file}"' signal-stderr "${signal_stderr}" \
+    /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${signal_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config \
+    > "${signal_transcript}" 2>&1 &
+  signal_driver_pid=$!
+  signal_deadline=$(( SECONDS + 5 ))
+  while [[ ! -f "${signal_ready}" || ! -f "${signal_payload_pid_file}" ]]; do
+    (( SECONDS < signal_deadline )) || break
+    /bin/sleep 0.02
+  done
+  signal_payload_pid="$(<"${signal_payload_pid_file}")"
+  signal_mount_pid="$(<"${signal_mount_pid_file}")"
+  /bin/kill -"${signal_name}" "-${signal_payload_pid}" 2>/dev/null || /bin/kill -"${signal_name}" "${signal_payload_pid}" 2>/dev/null || true
+  signal_deadline=$(( SECONDS + 5 ))
+  while /bin/kill -0 "${signal_driver_pid}" 2>/dev/null && (( SECONDS < signal_deadline )); do
+    /bin/sleep 0.02
+  done
+  if /bin/kill -0 "${signal_driver_pid}" 2>/dev/null; then
+    /bin/kill -KILL "-${signal_payload_pid}" 2>/dev/null || /bin/kill -KILL "${signal_payload_pid}" 2>/dev/null || true
+    /bin/kill -KILL "${signal_mount_pid}" 2>/dev/null || true
+    signal_deadline=$(( SECONDS + 1 ))
+    while /bin/kill -0 "${signal_driver_pid}" 2>/dev/null && (( SECONDS < signal_deadline )); do
+      /bin/sleep 0.02
+    done
+  fi
+  if /bin/kill -0 "${signal_driver_pid}" 2>/dev/null; then
+    /bin/kill -KILL "${signal_driver_pid}" 2>/dev/null || true
+  fi
+  wait "${signal_driver_pid}"
+  signal_status=$?
+  assert_status "${signal_name} exits with signal-derived status" "${expected_signal_status}" "${signal_status}"
+  if cmp -s "${repair_config}" "${repair_original}"; then pass "${signal_name} preserves exact config bytes"; else fail "${signal_name} preserves exact config bytes"; fi
+  [[ "$(stat -f '%Lp' "${repair_config}")" == 640 ]] && pass "${signal_name} preserves config mode" || fail "${signal_name} preserves config mode"
+  signal_transcript_text="$(<"${signal_transcript}")"
+  assert_not_contains "${signal_name} cannot reach repair prompt" "${signal_transcript_text}" "Proceed with this atomic update"
+  assert_not_contains "${signal_name} cannot report repair success" "${signal_transcript_text}" "Success: NAS_SERVER"
+  signal_artifact_count="$(find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) | wc -l | tr -d ' ')"
+  [[ "${signal_artifact_count}" == 0 ]] && pass "${signal_name} cleans owned repair artifacts" || fail "${signal_name} cleans owned repair artifacts"
+  if ! /bin/kill -0 "${signal_payload_pid}" 2>/dev/null && ! /bin/kill -0 "${signal_mount_pid}" 2>/dev/null; then pass "${signal_name} leaves no repair child"; else fail "${signal_name} leaves no repair child"; fi
+  signal_persistent_text="$(<"${signal_stderr}")$(<"${candidate_log}")$(<"${candidate_logger_marker}")"
+  for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host synthetic-candidate-private-one "${candidate_one_backup_dir}"; do
+    assert_not_contains "${signal_name} persistent sinks redact ${private_token}" "${signal_persistent_text}" "${private_token}"
+  done
+done
 
 reset_repair_config
 post_mv_logger="${test_root}/repair-post-mv-failing-logger"

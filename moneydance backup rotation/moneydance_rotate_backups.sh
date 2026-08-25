@@ -505,14 +505,14 @@ acquire_repair_lock() {
   fi
   IFS='|' read -r marker_device marker_inode marker_owner marker_group marker_mode marker_size marker_links <<< "${marker_metadata}"
   [[ -f "${marker_path}" && ! -L "${marker_path}" && "${marker_device}" == "${lock_device}" && "${marker_owner}" == "${EUID}" && "${marker_mode}" == 600 && "${marker_links}" == 1 && "${marker_size}" -gt 0 ]] || return 1
+  repair_lock_marker_device="${marker_device}"
+  repair_lock_marker_inode="${marker_inode}"
+  repair_lock_marker_owner="${marker_owner}"
   if ! lock_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${candidate_lock}" 2>/dev/null)"; then
     return 1
   fi
   IFS='|' read -r current_lock_device current_lock_inode current_lock_owner current_lock_group current_lock_mode current_lock_size current_lock_links <<< "${lock_metadata}"
   [[ "${current_lock_device}" == "${lock_device}" && "${current_lock_inode}" == "${lock_inode}" && "${current_lock_owner}" == "${lock_owner}" && "${current_lock_mode}" == 700 ]] || return 1
-  repair_lock_marker_device="${marker_device}"
-  repair_lock_marker_inode="${marker_inode}"
-  repair_lock_marker_owner="${marker_owner}"
 }
 
 write_lock_owner_marker() {
@@ -537,8 +537,13 @@ validated_repair_temp() {
     expected_inode="${repair_candidate_inode}"
     expected_owner="${repair_candidate_owner}"
   fi
-  [[ -f "${path}" && ! -L "${path}" && "${device}" == "${expected_device}" && "${inode}" == "${expected_inode}" && "${owner}" == "${expected_owner}" && "${owner}" == "${EUID}" && "${links}" == 1 ]]
-  [[ -z "${expected_mode}" || "${mode}" == "${expected_mode}" ]]
+  if [[ ! -f "${path}" || -L "${path}" || "${device}" != "${expected_device}" || "${inode}" != "${expected_inode}" || "${owner}" != "${expected_owner}" || "${owner}" != "${EUID}" || "${links}" != 1 ]]; then
+    return 1
+  fi
+  if [[ -n "${expected_mode}" && "${mode}" != "${expected_mode}" ]]; then
+    return 1
+  fi
+  return 0
 }
 
 snapshot_repair_config() {
@@ -628,7 +633,9 @@ write_repair_candidate_to_path() {
 
 run_repair_config() {
   local snapshot_result expected_metadata replacement_host answer
-  trap cleanup_repair_artifacts EXIT INT TERM
+  trap cleanup_repair_artifacts EXIT
+  trap 'repair_signal_exit 130' INT
+  trap 'repair_signal_exit 143' TERM
   acquire_repair_lock || repair_failure "Another config repair is already active, or the private repair lock could not be created. No configuration or backup files were changed."
   expected_metadata="${config_device}|${config_inode}|${config_owner}|${config_group}|${config_mode}|${config_size}"
   if snapshot_repair_config; then
@@ -719,6 +726,13 @@ run_repair_config() {
   terminal_detail "Success: NAS_SERVER was updated to ${replacement_host}."
   terminal_detail "The lock and final comparison reduce cooperating-writer risk, but do not eliminate the final stat-to-rename race with uncooperative writers."
   exit 0
+}
+
+repair_signal_exit() {
+  local signal_status="$1"
+  trap - EXIT INT TERM
+  cleanup_repair_artifacts
+  exit "${signal_status}"
 }
 
 config_path="${DEFAULT_CONFIG_PATH}"
