@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import sys
 import textwrap
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
@@ -1814,13 +1815,15 @@ class NetgearLogAdapter(RouterLogAdapter):
     )
 
     def detect(self, text: str) -> float:
-        logical_text = "\n".join(self.reconstruct_wrapped_log_lines(text))
-        has_timestamp = TIMESTAMP_PATTERN.search(logical_text) is not None
-        has_label = re.search(r"\[[^\]\n]+\]", text) is not None
-        if has_timestamp and has_label:
-            return 0.95
-        if has_timestamp:
-            return 0.85
+        for line in self.reconstruct_wrapped_log_lines(text):
+            if (
+                self.is_export_noise_line(line)
+                or is_access_control_status_line(line)
+                or self.parse_timestamp_from_line(line) is None
+            ):
+                continue
+            if re.search(r"\[[^\]\n]+\]", line) is not None:
+                return 0.95
         return 0.0
 
     def reconstruct_wrapped_log_lines(self, text: str) -> List[str]:
@@ -1918,8 +1921,9 @@ def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats
 
 
 def parse_log_text(text: str, source: str) -> Tuple[List[Event], ParseStats]:
-    parsed = parse_router_log(text, source, "netgear")
-    return parsed.events, parsed.parse_stats
+    # This long-standing helper is intentionally permissive for callers that
+    # need malformed/noise accounting; CLI ingestion uses parse_router_log().
+    return ROUTER_LOG_ADAPTERS[FORMAT_NETGEAR].build_event_objects(text, source)  # type: ignore[attr-defined]
 
 
 def find_cluster_profiles(baseline: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -5283,11 +5287,18 @@ def has_management_command(args: argparse.Namespace) -> bool:
     )
 
 
+def has_stateful_log_request(args: argparse.Namespace) -> bool:
+    if has_management_command(args) or args.baseline or args.config or args.reprocess:
+        return True
+    inferred_config = infer_config_path(args)
+    return inferred_config is not None and inferred_config.exists()
+
+
 def validate_router_instance_override(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
     normalized = value.strip()
-    if not normalized or any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+    if not normalized or any(unicodedata.category(character) == "Cc" for character in normalized):
         raise SystemExit("--router-instance must be nonempty and contain no control characters.")
     return normalized
 
@@ -5332,7 +5343,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     explicit_report = bool(args.report)
     runtime_paths = build_runtime_paths()
     db_path = Path(args.db).expanduser() if args.db else runtime_paths.db
-    management_requested = has_management_command(args)
+    stateful_log_requested = has_stateful_log_request(args) if args.logfile is not None else False
     parsed: Optional[ParsedRouterLog] = None
     logfile_path: Optional[Path] = None
     raw_bytes: Optional[bytes] = None
@@ -5346,9 +5357,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             # The digest is deliberately the only override representation allowed beyond this scope.
             router_instance_override_key(parsed.identity.canonical_vendor, router_instance_override)
         if not parsed.identity.persistence_safe_without_override and router_instance_override is None:
-            if management_requested:
+            if stateful_log_requested:
                 raise SystemExit(
-                    "Cannot combine management commands with a log that has no stable router identity. "
+                    "Cannot combine stateful operations with a log that has no stable router identity. "
                     "Provide --router-instance or run the non-persistent report separately."
                 )
             emit_nonpersistent_report(args, parsed)

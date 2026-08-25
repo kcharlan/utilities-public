@@ -577,6 +577,42 @@ def test_explicit_format_structural_failure_does_not_create_database(tmp_path: P
     assert not db_path.exists()
 
 
+def test_netgear_export_noise_is_not_detected_or_allowed_to_mutate_state(tmp_path: Path) -> None:
+    text = "Sent: Saturday, March 21, 2037 08:07:26"
+    log_path = tmp_path / "synthetic-export-noise.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text(text, encoding="utf-8")
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+
+    assert analyzer.NetgearLogAdapter().detect(text) < analyzer.FORMAT_DETECTION_THRESHOLD
+    with pytest.raises(SystemExit, match="plausible NETGEAR log structure"):
+        analyzer.main([
+            str(log_path), "--format", "netgear", "--import-baseline", str(baseline_path),
+            "--db", str(db_path),
+        ])
+
+    assert not db_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("", {"total_lines": 0, "export_noise_lines": 0, "malformed_lines": 0}),
+        ("Sent: Saturday, March 21, 2037 08:07:26", {"total_lines": 1, "export_noise_lines": 1, "malformed_lines": 0}),
+        ("[synthetic malformed event without a timestamp]", {"total_lines": 1, "export_noise_lines": 0, "malformed_lines": 1}),
+    ],
+)
+def test_parse_log_text_preserves_legacy_nonstructural_input_behavior(
+    text: str,
+    expected: dict[str, int],
+) -> None:
+    events, stats = analyzer.parse_log_text(text, source="synthetic.log")
+
+    assert events == []
+    assert {name: getattr(stats, name) for name in expected} == expected
+
+
 def test_auto_format_rejects_low_confidence_without_echoing_input() -> None:
     raw_input = "SYNTHETIC-UNRECOGNIZED-CONTENT-DO-NOT-ECHO"
 
@@ -662,8 +698,6 @@ def test_ip_attribution_preserves_extended_event_metadata() -> None:
         raw_label="admin login",
         raw_line="synthetic login",
         source="synthetic.log",
-        incident_id="synthetic-incident",
-        incident_role="recovery",
         actor_scope="router",
         stable_client_identity="synthetic-client-id",
         component="synthetic-component",
@@ -708,15 +742,19 @@ def test_ip_attribution_preserves_extended_event_metadata() -> None:
         affected_device_fraction=1.0,
     )
     analyzer.annotate_incident_events(incident, [attributed], [])
+    later = analyzer.replace(attributed, timestamp=datetime(2037, 3, 21, 8, 9, 26), source_sequence=8)
     retained = [
         candidate
-        for candidate in sorted([attributed], key=lambda candidate: candidate.timestamp)
-        if candidate.incident_id is not None
-    ][0]
-    assert retained.incident_id == "synthetic-incident"
-    assert retained.component == "synthetic-component"
-    assert retained.structured_evidence == {"synthetic": "evidence"}
-    assert retained.occurrence_digest == "synthetic-occurrence"
+        for candidate in sorted([later, attributed], key=lambda candidate: candidate.timestamp)
+        if candidate.component == "synthetic-component"
+    ]
+    assert [candidate.source_sequence for candidate in retained] == [7, 8]
+    assert retained[0].incident_id == "annotated-synthetic-incident"
+    assert retained[0].incident_role == "wan_transition"
+    for candidate in retained:
+        assert candidate.component == "synthetic-component"
+        assert candidate.structured_evidence == {"synthetic": "evidence"}
+        assert candidate.occurrence_digest == "synthetic-occurrence"
 
 
 MANAGEMENT_OPTIONS = [
@@ -846,6 +884,34 @@ def test_identityless_log_emits_nonpersistent_report_without_creating_state(
     assert not db_path.exists()
 
 
+@pytest.mark.parametrize("stateful_form", ["positional_baseline", "explicit_config", "inferred_config", "reprocess"])
+def test_identityless_log_rejects_all_other_stateful_forms_before_store_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stateful_form: str,
+) -> None:
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    db_path = tmp_path / "must-not-exist.db"
+    auxiliary_path = tmp_path / "synthetic-auxiliary.json"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+    auxiliary_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    args = [str(log_path), "--format", "tp-link-archer", "--db", str(db_path)]
+    if stateful_form == "positional_baseline":
+        args.insert(1, str(auxiliary_path))
+    elif stateful_form == "explicit_config":
+        args.extend(["--config", str(auxiliary_path)])
+    elif stateful_form == "inferred_config":
+        (tmp_path / "router-security-config.md").write_text("synthetic config", encoding="utf-8")
+    else:
+        args.append("--reprocess")
+
+    with pytest.raises(SystemExit, match="no stable router identity"):
+        analyzer.main(args)
+
+    assert not db_path.exists()
+
+
 def test_valid_persistent_log_allows_combined_baseline_import_after_parse_validation(
     tmp_path: Path,
 ) -> None:
@@ -901,6 +967,39 @@ def test_netgear_adapter_preserves_source_and_clock_provenance_on_normalized_eve
     assert event.clock_segment_id == "netgear-local-time"
 
 
+def test_netgear_adapter_deduplication_preserves_normalized_event_provenance() -> None:
+    line = "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26"
+
+    parsed = analyzer.parse_router_log(f"{line}\n{line}", "synthetic-netgear.log", "netgear")
+
+    assert parsed.parse_stats.duplicate_events == 1
+    assert len(parsed.events) == 1
+    survivor = parsed.events[0]
+    assert survivor.source_sequence == 1
+    assert survivor.actor_scope == "device"
+    assert survivor.stable_client_identity == "02:00:00:00:00:08"
+    assert survivor.raw_timestamp == "Saturday, March 21, 2037 08:07:26"
+    assert survivor.clock_trust == "trusted"
+    assert survivor.clock_segment_id == "netgear-local-time"
+
+
+def test_netgear_adapter_and_legacy_wrapper_preserve_every_extended_event_field() -> None:
+    text = "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26"
+    extended_fields = (
+        "actor_scope", "stable_client_identity", "component", "process_id", "syslog_severity",
+        "vendor_event_code", "normalized_message", "structured_evidence", "source_sequence",
+        "raw_timestamp", "clock_trust", "clock_segment_id", "boot_context_id", "boot_session_id",
+        "occurrence_digest",
+    )
+
+    normalized = analyzer.parse_router_log(text, "synthetic-netgear.log", "netgear").events[0]
+    legacy = analyzer.parse_log_text(text, "synthetic-netgear.log")[0][0]
+
+    assert {name: getattr(normalized, name) for name in extended_fields} == {
+        name: getattr(legacy, name) for name in extended_fields
+    }
+
+
 def test_router_instance_override_is_vendor_scoped_and_opaque() -> None:
     netgear_key = analyzer.router_instance_override_key("netgear", "  synthetic-router  ")
     tp_link_key = analyzer.router_instance_override_key("tp-link", "synthetic-router")
@@ -909,6 +1008,15 @@ def test_router_instance_override_is_vendor_scoped_and_opaque() -> None:
     assert netgear_key != tp_link_key
     assert "synthetic-router" not in netgear_key
     assert re.fullmatch(r"[0-9a-f]{64}", netgear_key)
+
+
+@pytest.mark.parametrize("override", ["synthetic\u0085router", "synthetic\u009frouter"])
+def test_router_instance_override_rejects_all_unicode_control_characters(override: str) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        analyzer.validate_router_instance_override(override)
+
+    assert "router-instance" in str(exc_info.value)
+    assert override not in str(exc_info.value)
 
 
 def test_parse_log_text_normalizes_internet_transition_events() -> None:
