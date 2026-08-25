@@ -136,11 +136,11 @@ Run repair mode explicitly with the private config you intend to change:
 ```
 
 Repair mode requires both stdin and stdout to be attached to a terminal. It
-also requires a readable, writable, regular, non-symlink config owned by the
-invoking user, exactly one active `NAS_SERVER` assignment, and no set
-`MONEYDANCE_NAS_SERVER` environment override. It independently rebuilds the
-mount inventory and proceeds only when there is exactly one fully validated
-replacement candidate.
+also requires a readable, writable, regular, non-symlink, single-link config
+owned by the invoking user. The config must contain exactly one active
+`NAS_SERVER` assignment, and `MONEYDANCE_NAS_SERVER` must not be set. Repair
+independently rebuilds the mount inventory and proceeds only when there is
+exactly one fully validated replacement candidate.
 
 Because repair creates and renames files beside the config, it applies stricter
 path checks than normal execution. The config's lexical parent must equal its
@@ -182,13 +182,14 @@ cleanup. After a successful update, run the script again normally (preferably
 first with `--dry-run`) to validate the repaired configuration and review
 retention behavior.
 
-Usage, repair-precondition, and config-validation errors—including missing,
-malformed, or binary config—exit `2`. Operational repair failures—including
-candidate discovery; locking or snapshotting; temporary-file creation, writing,
-or revalidation; live-config revalidation; or atomic activation—exit `1`. A
-valid config that needs no repair, an explicit cancellation, and a successful
-update exit `0`. A normal-mode mount mismatch also exits `0` after safely
-skipping cleanup.
+Deterministic usage, configuration, and repair-policy rejections—including
+malformed ACL output—exit `2`. Operational failures—including unavailable
+commands; failed ACL or control-byte inspection; filesystem changes or
+revalidation failures after repair starts; candidate discovery; locking,
+snapshotting, or temporary-file writing; or atomic activation—exit `1`. A valid
+config that needs no repair, an explicit cancellation, and a successful update
+exit `0`. A normal-mode mount mismatch also exits `0` after safely skipping
+cleanup.
 
 ## Retention behavior
 
