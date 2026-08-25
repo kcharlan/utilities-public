@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -423,6 +424,32 @@ def build_v3_database(db_path: Path, *, populate: bool = True) -> dict[str, obje
     return snapshot
 
 
+def rewrite_sqlite_schema_object(
+    db_path: Path,
+    object_name: str,
+    rewrite: Callable[[str], str],
+) -> None:
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        original_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = ?",
+            (object_name,),
+        ).fetchone()[0]
+        rewritten_sql = rewrite(original_sql)
+        assert rewritten_sql != original_sql
+        connection.execute("PRAGMA writable_schema = ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql = ? WHERE name = ?",
+            (rewritten_sql, object_name),
+        )
+        schema_version = connection.execute("PRAGMA schema_version").fetchone()[0]
+        connection.execute(f"PRAGMA schema_version = {schema_version + 1}")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_empty_database_is_created_directly_as_schema_v4_with_foreign_keys_enabled(
     tmp_path: Path,
 ) -> None:
@@ -635,6 +662,143 @@ def test_v4_missing_required_device_observation_uniqueness_fails_closed(
 
     with pytest.raises(RuntimeError, match="device_observations.*unique"):
         analyzer.StateStore(db_path)
+
+
+@pytest.mark.parametrize("spoof_kind", ["line_comment", "block_comment", "quoted_string"])
+def test_v4_boot_anchor_check_cannot_be_spoofed_outside_sql_tokens(
+    tmp_path: Path,
+    spoof_kind: str,
+) -> None:
+    db_path = tmp_path / f"spoofed-check-{spoof_kind}.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    anchor_check = "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL),"
+
+    def spoof_check(sql: str) -> str:
+        assert anchor_check in sql
+        if spoof_kind == "line_comment":
+            return sql.replace(anchor_check, f"-- {anchor_check}\n", 1)
+        if spoof_kind == "block_comment":
+            return sql.replace(anchor_check, f"/* {anchor_check} */", 1)
+        without_check = sql.replace(anchor_check, "", 1)
+        return without_check.replace(
+            "FOREIGN KEY(router_instance_id)",
+            f"CONSTRAINT '{anchor_check[:-1].casefold()}' FOREIGN KEY(router_instance_id)",
+            1,
+        )
+
+    rewrite_sqlite_schema_object(db_path, "router_boot_sessions", spoof_check)
+    before = db_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="router_boot_sessions.*CHECK"):
+        analyzer.StateStore(db_path)
+
+    assert db_path.read_bytes() == before
+    assert not Path(f"{db_path}-wal").exists()
+    assert not Path(f"{db_path}-shm").exists()
+
+
+def test_v4_boot_anchor_check_cannot_be_removed(tmp_path: Path) -> None:
+    db_path = tmp_path / "missing-check.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    anchor_check = "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL),"
+    rewrite_sqlite_schema_object(
+        db_path,
+        "router_boot_sessions",
+        lambda sql: sql.replace(anchor_check, "", 1),
+    )
+
+    with pytest.raises(RuntimeError, match="router_boot_sessions.*CHECK"):
+        analyzer.StateStore(db_path)
+
+
+@pytest.mark.parametrize(
+    "foreign_key_suffix",
+    [
+        " DEFERRABLE",
+        " DEFERRABLE INITIALLY DEFERRED",
+        " NOT DEFERRABLE INITIALLY IMMEDIATE",
+        " ON DELETE CASCADE",
+    ],
+)
+def test_v4_foreign_key_sql_rejects_action_or_deferrability_changes(
+    tmp_path: Path,
+    foreign_key_suffix: str,
+) -> None:
+    db_path = tmp_path / "altered-foreign-key.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    original_foreign_key = (
+        "FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)"
+    )
+    rewrite_sqlite_schema_object(
+        db_path,
+        "router_boot_sessions",
+        lambda sql: sql.replace(
+            original_foreign_key,
+            original_foreign_key + foreign_key_suffix,
+            1,
+        ),
+    )
+    before = db_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="router_boot_sessions.*foreign-key"):
+        analyzer.StateStore(db_path)
+
+    assert db_path.read_bytes() == before
+    assert not Path(f"{db_path}-wal").exists()
+    assert not Path(f"{db_path}-shm").exists()
+
+
+def test_v4_constraint_sql_accepts_safe_formatting_and_identifier_quoting(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "formatted-constraints.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+
+    def reformat_constraints(sql: str) -> str:
+        return sql.replace(
+            "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL)",
+            'check ( "trusted_local_anchor" is not null OR [adapter_boot_id] is not null )',
+            1,
+        ).replace(
+            "FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)",
+            'foreign key ( "router_instance_id" ) references [router_instances] ( "id" )',
+            1,
+        )
+
+    rewrite_sqlite_schema_object(db_path, "router_boot_sessions", reformat_constraints)
+
+    reopened = analyzer.StateStore(db_path)
+    try:
+        assert reopened.get_metadata("schema_version") == "4"
+    finally:
+        reopened.close()
+
+
+def test_v4_index_sql_accepts_safe_formatting_and_identifier_quoting(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "formatted-index.db"
+    store = analyzer.StateStore(db_path)
+    store.close()
+    rewrite_sqlite_schema_object(
+        db_path,
+        "idx_router_snapshot_history",
+        lambda _sql: (
+            'create index "idx_router_snapshot_history" '
+            'on [router_snapshot_metrics]('
+            '"router_instance_id", [epoch_id], "export_timestamp" desc, run_id DESC)'
+        ),
+    )
+
+    reopened = analyzer.StateStore(db_path)
+    try:
+        assert reopened.get_metadata("schema_version") == "4"
+    finally:
+        reopened.close()
 
 
 def test_v3_missing_required_runs_not_null_constraint_fails_closed(tmp_path: Path) -> None:
@@ -1091,6 +1255,92 @@ def test_v3_migration_registers_an_attribute_free_real_mac_catalog_row(
         assert registration["registered_connection_type"] is None
         assert registration["first_seen"] is None
         assert registration["last_seen"] is None
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("first_seen", "last_seen", "expected_kind", "expected_seen_at"),
+    [
+        (None, None, None, None),
+        (
+            "2037-02-01T12:05:00",
+            None,
+            "legacy_device_daily_first_seen",
+            "2037-02-01T12:05:00",
+        ),
+        (
+            None,
+            "2037-02-01T12:25:00",
+            "legacy_device_daily_last_seen",
+            "2037-02-01T12:25:00",
+        ),
+    ],
+)
+def test_v3_migration_handles_attribute_free_daily_device_nullable_extrema(
+    tmp_path: Path,
+    first_seen: str | None,
+    last_seen: str | None,
+    expected_kind: str | None,
+    expected_seen_at: str | None,
+) -> None:
+    db_path = tmp_path / "network.db"
+    build_v3_database(db_path)
+    mac = "02:00:00:00:00:05"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        INSERT INTO devices(
+          mac, name, status, connection_type, source, first_seen, last_seen
+        ) VALUES(?, NULL, NULL, NULL, 'observed', NULL, NULL)
+        """,
+        (mac,),
+    )
+    connection.execute(
+        """
+        INSERT INTO device_daily_stats(
+          id, run_id, epoch_id, observed_date, mac, dhcp_count, total_events,
+          first_seen, last_seen, event_types_json, active_hours_json,
+          included_in_learning, exclusion_reason
+        ) VALUES(23, 15, 11, '2037-02-01', ?, 0, 0, ?, ?, '{}', '[]', 1, NULL)
+        """,
+        (mac, first_seen, last_seen),
+    )
+    connection.commit()
+    connection.close()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        registration = store.conn.execute(
+            "SELECT * FROM device_registrations WHERE mac = ?",
+            (mac,),
+        ).fetchone()
+        observations = list(store.conn.execute(
+            """
+            SELECT evidence_kind, seen_at FROM device_observations
+            WHERE mac = ? ORDER BY evidence_kind
+            """,
+            (mac,),
+        ))
+        if expected_kind is None:
+            assert registration is not None
+            assert registration["registration_source"] == "legacy_device_catalog"
+            assert registration["source_key"] == f"legacy-device-catalog:v1:{mac}"
+            assert observations == []
+        else:
+            assert registration is None
+            assert [tuple(row) for row in observations] == [
+                (expected_kind, expected_seen_at)
+            ]
+        device_extrema = store.conn.execute(
+            "SELECT first_seen, last_seen FROM devices WHERE mac = ?",
+            (mac,),
+        ).fetchone()
+        assert tuple(device_extrema) == (expected_seen_at, expected_seen_at)
+        assert store.conn.execute(
+            "SELECT id FROM device_daily_stats WHERE id = 23"
+        ).fetchone()[0] == 23
         assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         store.close()
@@ -5457,6 +5707,263 @@ def test_persist_analysis_releases_savepoint_after_non_integrity_insert_failure(
             )
         assert store.get_run_by_hash(router_id, "synthetic-operational-failure-run") is None
         assert store.conn.in_transaction is False
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    ["metadata_snapshot", "daily", "subject", "incident"],
+)
+def test_persist_analysis_rolls_back_complete_write_set_after_late_child_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+) -> None:
+    db_path = tmp_path / "network.db"
+    store = analyzer.StateStore(db_path)
+    mac = "02:00:00:00:00:31"
+    snapshot = {
+        mac: {
+            "name": "SYNTHETIC ATOMIC DEVICE",
+            "status": "allowed",
+            "connection_type": "wired",
+            "source": "synthetic_test",
+        }
+    }
+    event = make_event("2037-08-01T12:00:00", mac, "DHCP_IP")
+    aggregate = analyzer.aggregate_events([event], {"devices": {}}, snapshot)
+    subject_stats, subjects = analyzer.build_subject_behavior_day_stats(
+        aggregate,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    )
+    aggregate["subject_behavior_day_stats"] = subject_stats
+    aggregate["behavior_subjects"] = subjects
+    findings = {"critical": [], "anomalies": [], "observations": [], "all": []}
+    incident = analyzer.NetworkIncident(
+        incident_id="synthetic-atomic-incident",
+        incident_type="internet_connection_reset",
+        confidence="confirmed",
+        start="2037-08-01T12:00:00",
+        restored_at="2037-08-01T12:00:01",
+        recovery_end="2037-08-01T12:00:02",
+        disconnect_count=1,
+        connect_count=1,
+        affected_macs=[mac],
+        event_counts={"DHCP_IP": 1},
+        explained_event_count=1,
+        active_known_devices=1,
+        affected_device_fraction=1.0,
+    )
+    run_hash = f"synthetic-{failure_stage}-atomic-run"
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        store.commit()
+        method_name = {
+            "metadata_snapshot": "insert_run",
+            "daily": "insert_device_daily_stat",
+            "subject": "insert_subject_behavior_daily_stat",
+            "incident": "insert_network_incident",
+        }[failure_stage]
+        original_method = getattr(store, method_name)
+
+        def fail_after_child_write(*args: object, **kwargs: object) -> None:
+            original_method(*args, **kwargs)
+            raise sqlite3.OperationalError(f"synthetic {failure_stage} child failure")
+
+        monkeypatch.setattr(store, method_name, fail_after_child_write)
+        with pytest.raises(sqlite3.OperationalError, match=f"{failure_stage} child failure"):
+            analyzer.persist_analysis(
+                store=store,
+                run_hash=run_hash,
+                logfile_path=tmp_path / "synthetic-router.log",
+                parse_stats=analyzer.ParseStats(parsed_events=1),
+                aggregate=aggregate,
+                findings=findings,
+                score=0,
+                status="Clean",
+                epoch_id=epoch_id,
+                policy_profile_id=None,
+                devices_snapshot=snapshot,
+                is_partial=False,
+                incidents=[incident],
+                router_instance_id=router_id,
+            )
+        assert store.conn.in_transaction is False
+        assert store.get_run_by_hash(router_id, run_hash) is None
+        for table in (
+            "runs",
+            "router_metadata_observations",
+            "router_snapshot_metrics",
+            "device_daily_stats",
+            "device_event_daily_stats",
+            "subject_behavior_daily_stats",
+            "network_incidents",
+        ):
+            assert store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM devices WHERE mac = ?", (mac,)
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM behavior_subjects WHERE subject_key = ?", (mac,)
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+    retry_store = analyzer.StateStore(db_path)
+    try:
+        deduplicated, retry_run_id = analyzer.persist_analysis(
+            store=retry_store,
+            run_hash=run_hash,
+            logfile_path=tmp_path / "synthetic-router.log",
+            parse_stats=analyzer.ParseStats(parsed_events=1),
+            aggregate=aggregate,
+            findings=findings,
+            score=0,
+            status="Clean",
+            epoch_id=epoch_id,
+            policy_profile_id=None,
+            devices_snapshot=snapshot,
+            is_partial=False,
+            incidents=[incident],
+            router_instance_id=router_id,
+        )
+        assert deduplicated is False
+        assert retry_run_id is not None
+    finally:
+        retry_store.close()
+
+    verification_store = analyzer.StateStore(db_path)
+    try:
+        persisted_run = verification_store.get_run_by_hash(router_id, run_hash)
+        assert persisted_run is not None
+        persisted_run_id = int(persisted_run["id"])
+        assert verification_store.conn.execute(
+            "SELECT COUNT(*) FROM router_metadata_observations WHERE run_id = ?",
+            (persisted_run_id,),
+        ).fetchone()[0] == 1
+        assert verification_store.conn.execute(
+            "SELECT COUNT(*) FROM router_snapshot_metrics WHERE run_id = ?",
+            (persisted_run_id,),
+        ).fetchone()[0] == 1
+        assert verification_store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        verification_store.close()
+
+
+def test_persist_analysis_uses_complete_savepoint_inside_caller_transaction(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    aggregate = {
+        "observation_range": {"start": None, "end": None},
+        "observed_dates": [],
+        "device_day_stats": {},
+        "event_day_stats": {},
+        "mac_to_name": {},
+    }
+    findings = {"critical": [], "anomalies": [], "observations": [], "all": []}
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        store.commit()
+        store.conn.execute("BEGIN IMMEDIATE")
+        store.set_metadata("synthetic_caller_transaction", "pending")
+        deduplicated, run_id = analyzer.persist_analysis(
+            store=store,
+            run_hash="synthetic-caller-transaction-run",
+            logfile_path=tmp_path / "synthetic-router.log",
+            parse_stats=analyzer.ParseStats(),
+            aggregate=aggregate,
+            findings=findings,
+            score=0,
+            status="Clean",
+            epoch_id=epoch_id,
+            policy_profile_id=None,
+            devices_snapshot={},
+            is_partial=False,
+            router_instance_id=router_id,
+        )
+        assert deduplicated is False
+        assert run_id is not None
+        assert store.conn.in_transaction is True
+        store.conn.rollback()
+        assert store.get_run_by_hash(router_id, "synthetic-caller-transaction-run") is None
+        assert store.get_metadata("synthetic_caller_transaction") is None
+    finally:
+        store.close()
+
+
+def test_persist_analysis_scoped_unique_race_remains_a_duplicate_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    aggregate = {
+        "observation_range": {"start": None, "end": None},
+        "observed_dates": [],
+        "device_day_stats": {},
+        "event_day_stats": {},
+        "mac_to_name": {},
+    }
+    findings = {"critical": [], "anomalies": [], "observations": [], "all": []}
+    run_hash = "synthetic-scoped-unique-race"
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        store.commit()
+        deduplicated, original_run_id = analyzer.persist_analysis(
+            store=store,
+            run_hash=run_hash,
+            logfile_path=tmp_path / "synthetic-router.log",
+            parse_stats=analyzer.ParseStats(),
+            aggregate=aggregate,
+            findings=findings,
+            score=0,
+            status="Clean",
+            epoch_id=epoch_id,
+            policy_profile_id=None,
+            devices_snapshot={},
+            is_partial=False,
+            router_instance_id=router_id,
+        )
+        assert deduplicated is False
+        original_lookup = store.get_run_by_hash
+        lookup_count = 0
+
+        def miss_only_preinsert_lookup(
+            scoped_router_id: int,
+            scoped_run_hash: str,
+        ) -> sqlite3.Row | None:
+            nonlocal lookup_count
+            lookup_count += 1
+            if lookup_count == 1:
+                return None
+            return original_lookup(scoped_router_id, scoped_run_hash)
+
+        monkeypatch.setattr(store, "get_run_by_hash", miss_only_preinsert_lookup)
+        duplicate, duplicate_run_id = analyzer.persist_analysis(
+            store=store,
+            run_hash=run_hash,
+            logfile_path=tmp_path / "synthetic-router.log",
+            parse_stats=analyzer.ParseStats(),
+            aggregate=aggregate,
+            findings=findings,
+            score=0,
+            status="Clean",
+            epoch_id=epoch_id,
+            policy_profile_id=None,
+            devices_snapshot={},
+            is_partial=False,
+            router_instance_id=router_id,
+        )
+        assert (duplicate, duplicate_run_id) == (True, original_run_id)
+        assert lookup_count == 2
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE router_instance_id = ? AND file_hash = ?",
+            (router_id, run_hash),
+        ).fetchone()[0] == 1
     finally:
         store.close()
 

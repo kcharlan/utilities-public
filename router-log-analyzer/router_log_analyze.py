@@ -674,6 +674,144 @@ def validate_policy(policy: Dict[str, Any]) -> Dict[str, Any]:
     return policy
 
 
+def _tokenize_sqlite_ddl(sql: str) -> Tuple[str, ...]:
+    """Tokenize SQLite DDL while discarding comments and normalizing identifiers."""
+    tokens: List[str] = []
+    index = 0
+    length = len(sql)
+    while index < length:
+        character = sql[index]
+        if character.isspace():
+            index += 1
+            continue
+        if sql.startswith("--", index):
+            newline = sql.find("\n", index + 2)
+            index = length if newline < 0 else newline + 1
+            continue
+        if sql.startswith("/*", index):
+            comment_end = sql.find("*/", index + 2)
+            if comment_end < 0:
+                raise ValueError("unterminated SQL block comment")
+            index = comment_end + 2
+            continue
+        if character == "'":
+            index += 1
+            literal: List[str] = []
+            while index < length:
+                if sql[index] == "'":
+                    if index + 1 < length and sql[index + 1] == "'":
+                        literal.append("'")
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                literal.append(sql[index])
+                index += 1
+            else:
+                raise ValueError("unterminated SQL string literal")
+            tokens.append("\x00string\x00" + "".join(literal))
+            continue
+        if character in {'"', "`", "["}:
+            closing = "]" if character == "[" else character
+            index += 1
+            identifier: List[str] = []
+            while index < length:
+                if sql[index] == closing:
+                    if closing != "]" and index + 1 < length and sql[index + 1] == closing:
+                        identifier.append(closing)
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                identifier.append(sql[index])
+                index += 1
+            else:
+                raise ValueError("unterminated quoted SQL identifier")
+            tokens.append("".join(identifier).casefold())
+            continue
+        if character.isalnum() or character in {"_", "$"}:
+            token_end = index + 1
+            while token_end < length and (
+                sql[token_end].isalnum() or sql[token_end] in {"_", "$"}
+            ):
+                token_end += 1
+            tokens.append(sql[index:token_end].casefold())
+            index = token_end
+            continue
+        three_character_operator = sql[index:index + 3]
+        if three_character_operator in {"->>"}:
+            tokens.append(three_character_operator)
+            index += 3
+            continue
+        two_character_operator = sql[index:index + 2]
+        if two_character_operator in {"!=", "<=", ">=", "==", "<>", "||", "->"}:
+            tokens.append(two_character_operator)
+            index += 2
+            continue
+        tokens.append(character)
+        index += 1
+    return tuple(tokens)
+
+
+def _sqlite_table_definition_clauses(
+    sql: str,
+) -> Tuple[Tuple[Tuple[str, ...], ...], Tuple[str, ...]]:
+    tokens = _tokenize_sqlite_ddl(sql)
+    try:
+        opening_parenthesis = tokens.index("(")
+    except ValueError as exc:
+        raise ValueError("CREATE TABLE has no definition list") from exc
+    clauses: List[Tuple[str, ...]] = []
+    clause: List[str] = []
+    depth = 0
+    closing_parenthesis: Optional[int] = None
+    for token_index in range(opening_parenthesis + 1, len(tokens)):
+        token = tokens[token_index]
+        if token == "(":
+            depth += 1
+            clause.append(token)
+        elif token == ")":
+            if depth == 0:
+                if clause:
+                    clauses.append(tuple(clause))
+                closing_parenthesis = token_index
+                break
+            depth -= 1
+            clause.append(token)
+        elif token == "," and depth == 0:
+            if not clause:
+                raise ValueError("CREATE TABLE has an empty definition clause")
+            clauses.append(tuple(clause))
+            clause = []
+        else:
+            clause.append(token)
+    if closing_parenthesis is None or depth != 0:
+        raise ValueError("CREATE TABLE has unbalanced definition parentheses")
+    tail = tokens[closing_parenthesis + 1:]
+    if tail == (";",):
+        tail = ()
+    return tuple(clauses), tail
+
+
+def _expected_check_clauses(expressions: Set[str]) -> Set[Tuple[str, ...]]:
+    return {
+        _tokenize_sqlite_ddl(f"CHECK({expression})")
+        for expression in expressions
+    }
+
+
+def _expected_foreign_key_clauses(
+    foreign_keys: Set[Tuple[str, str, str]],
+) -> Set[Tuple[str, ...]]:
+    return {
+        _tokenize_sqlite_ddl(
+            f'FOREIGN KEY("{source_column}") '
+            f'REFERENCES "{destination_table}"("{destination_column}")'
+        )
+        for source_column, destination_table, destination_column in foreign_keys
+    }
+
+
 V3_REQUIRED_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "metadata": ("key", "value"),
     "baseline_epochs": ("id", "created_at", "source_path", "source_hash", "label", "is_active"),
@@ -1116,12 +1254,12 @@ V4_REQUIRED_CHECKS: Dict[str, Set[str]] = {
 }
 V4_REQUIRED_CHECKS.update({
     "router_boot_sessions": {
-        "check(trusted_local_anchorisnotnulloradapter_boot_idisnotnull)",
+        "trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL",
     },
     "run_event_occurrences": {
-        "check(is_novelin(0,1))",
-        "check(is_repeatedin(0,1))",
-        "check(is_novel+is_repeated=1)",
+        "is_novel IN (0, 1)",
+        "is_repeated IN (0, 1)",
+        "is_novel + is_repeated = 1",
     },
 })
 
@@ -1294,18 +1432,40 @@ class StateStore:
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
                 (table,),
             ).fetchone()
-            canonical_table_sql = re.sub(r"\s+", "", (table_sql_row[0] or "").casefold())
-            expected_checks = checks[table]
-            if canonical_table_sql.count("check(") != len(expected_checks) or any(
-                check not in canonical_table_sql for check in expected_checks
-            ):
+            try:
+                definition_clauses, table_options = _sqlite_table_definition_clauses(
+                    table_sql_row[0] or ""
+                )
+            except ValueError as exc:
+                self._raise_schema_error(
+                    f"required table {table!r} has malformed SQL ({exc})"
+                )
+            if table_options:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected table options"
+                )
+            actual_check_clauses = [
+                clause for clause in definition_clauses if "check" in clause
+            ]
+            expected_check_clauses = _expected_check_clauses(checks[table])
+            if sorted(actual_check_clauses) != sorted(expected_check_clauses):
                 self._raise_schema_error(
                     f"required table {table!r} has unexpected CHECK constraints"
+                )
+            actual_foreign_key_clauses = [
+                clause for clause in definition_clauses if "references" in clause
+            ]
+            expected_foreign_key_clauses = _expected_foreign_key_clauses(
+                foreign_keys.get(table, set())
+            )
+            if sorted(actual_foreign_key_clauses) != sorted(expected_foreign_key_clauses):
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected foreign-key SQL"
                 )
 
         for index, (table, expected_columns) in indexes.items():
             row = self.conn.execute(
-                "SELECT type, tbl_name FROM sqlite_master WHERE name = ?",
+                "SELECT type, tbl_name, sql FROM sqlite_master WHERE name = ?",
                 (index,),
             ).fetchone()
             if row is None or row[0] != "index" or row[1] != table:
@@ -1342,6 +1502,21 @@ class StateStore:
                 self._raise_schema_error(
                     f"required index {index!r} has unexpected direction or collation"
                 )
+            expected_index_columns_sql = ", ".join(
+                f'"{column}"' + (" DESC" if descending else "")
+                for column, descending in zip(expected_columns, expected_directions)
+            )
+            expected_index_sql = (
+                f'CREATE INDEX "{index}" ON "{table}"({expected_index_columns_sql})'
+            )
+            try:
+                actual_index_tokens = _tokenize_sqlite_ddl(row[2] or "")
+            except ValueError as exc:
+                self._raise_schema_error(
+                    f"required index {index!r} has malformed SQL ({exc})"
+                )
+            if actual_index_tokens != _tokenize_sqlite_ddl(expected_index_sql):
+                self._raise_schema_error(f"required index {index!r} has unexpected SQL")
 
         for table, expected in foreign_keys.items():
             actual = {
@@ -1906,7 +2081,6 @@ class StateStore:
         for table, row in legacy_daily_rows:
             if not is_real_mac(row["mac"]):
                 continue
-            observed_macs.add(row["mac"])
             evidence_prefix = {
                 "device_daily_stats": "legacy_device_daily",
                 "device_event_daily_stats": "legacy_device_event_daily",
@@ -1935,6 +2109,7 @@ class StateStore:
                         json_dumps({"legacy_daily_source": table, "legacy_daily_stat_id": row["id"]}),
                     ),
                 )
+                observed_macs.add(row["mac"])
 
         for row in self.conn.execute("SELECT * FROM devices ORDER BY mac"):
             if not is_real_mac(row["mac"]):
@@ -8074,52 +8249,140 @@ def persist_analysis(
     capabilities: Optional[RouterCapabilities] = None,
     export_timestamp: Optional[str] = None,
 ) -> Tuple[bool, Optional[int]]:
-    resolved_router_id = (
-        router_instance_id
-        if router_instance_id is not None
-        else store.get_or_create_legacy_netgear_router_instance()
-    )
-    existing_run = store.get_run_by_hash(resolved_router_id, run_hash)
-    if existing_run is not None:
-        return True, existing_run["id"]
+    caller_owns_transaction = store.conn.in_transaction
+    savepoint = "persist_analysis_write_set"
+    if caller_owns_transaction:
+        store.conn.execute(f"SAVEPOINT {savepoint}")
+    else:
+        store.conn.execute("BEGIN IMMEDIATE")
+    scope_active = True
+    insert_integrity_error: Optional[sqlite3.IntegrityError] = None
 
-    (
-        device_day_exclusions,
-        device_day_reasons,
-        event_day_exclusions,
-        event_day_reasons,
-        subject_day_exclusions,
-        subject_day_reasons,
-    ) = build_exclusion_maps(
-        aggregate,
-        findings,
-        devices_snapshot,
-        is_partial,
-    )
-    savepoint = "persist_analysis_run_insert"
-    store.conn.execute(f"SAVEPOINT {savepoint}")
+    def finish_scope() -> None:
+        nonlocal scope_active
+        if caller_owns_transaction:
+            store.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        else:
+            store.conn.commit()
+        scope_active = False
+
+    def rollback_scope() -> None:
+        nonlocal scope_active
+        if not scope_active:
+            return
+        if caller_owns_transaction:
+            store.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            store.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        elif store.conn.in_transaction:
+            store.conn.rollback()
+        scope_active = False
+
     try:
-        run_id = store.insert_run(
-            epoch_id=epoch_id,
-            policy_profile_id=policy_profile_id,
-            file_hash=run_hash,
-            source_path=logfile_path,
-            parse_stats=parse_stats,
-            observation_start=aggregate["observation_range"]["start"],
-            observation_end=aggregate["observation_range"]["end"],
-            observed_dates=aggregate["observed_dates"],
-            risk_score=score,
-            status=status,
-            is_partial=is_partial,
-            router_instance_id=resolved_router_id,
-            format_id=format_id,
-            export_timestamp=export_timestamp,
-            capabilities=capabilities,
+        resolved_router_id = (
+            router_instance_id
+            if router_instance_id is not None
+            else store.get_or_create_legacy_netgear_router_instance()
         )
-    except Exception as exc:
-        store.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-        store.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-        if isinstance(exc, sqlite3.IntegrityError):
+        existing_run = store.get_run_by_hash(resolved_router_id, run_hash)
+        if existing_run is not None:
+            finish_scope()
+            return True, existing_run["id"]
+
+        (
+            device_day_exclusions,
+            device_day_reasons,
+            event_day_exclusions,
+            event_day_reasons,
+            subject_day_exclusions,
+            subject_day_reasons,
+        ) = build_exclusion_maps(
+            aggregate,
+            findings,
+            devices_snapshot,
+            is_partial,
+        )
+        try:
+            run_id = store.insert_run(
+                epoch_id=epoch_id,
+                policy_profile_id=policy_profile_id,
+                file_hash=run_hash,
+                source_path=logfile_path,
+                parse_stats=parse_stats,
+                observation_start=aggregate["observation_range"]["start"],
+                observation_end=aggregate["observation_range"]["end"],
+                observed_dates=aggregate["observed_dates"],
+                risk_score=score,
+                status=status,
+                is_partial=is_partial,
+                router_instance_id=resolved_router_id,
+                format_id=format_id,
+                export_timestamp=export_timestamp,
+                capabilities=capabilities,
+            )
+        except sqlite3.IntegrityError as exc:
+            insert_integrity_error = exc
+            raise
+
+        for (observed_date, mac), stat in aggregate["device_day_stats"].items():
+            store.upsert_device(
+                mac=mac,
+                name=aggregate["mac_to_name"].get(mac),
+                status=devices_snapshot.get(mac, {}).get("status"),
+                connection_type=devices_snapshot.get(mac, {}).get("connection_type"),
+                source=devices_snapshot.get(mac, {}).get("source") or "observed",
+                seen_at=stat.last_seen.isoformat() if stat.last_seen else utcnow_iso(),
+            )
+            store.insert_device_daily_stat(
+                run_id,
+                epoch_id,
+                stat,
+                included=(observed_date, mac) not in device_day_exclusions,
+                exclusion_reason=device_day_reasons.get((observed_date, mac)),
+            )
+
+        for key, stat in aggregate["event_day_stats"].items():
+            store.insert_device_event_daily_stat(
+                run_id,
+                epoch_id,
+                stat,
+                included=key not in event_day_exclusions,
+                exclusion_reason=event_day_reasons.get(key),
+            )
+
+        for (subject_key, subject_type), subject in aggregate.get("behavior_subjects", {}).items():
+            store.upsert_behavior_subject(
+                subject_key=subject_key,
+                subject_type=subject_type,
+                display_name=subject.get("display_name"),
+                attributes=subject.get("attributes"),
+            )
+
+        for key, stat in aggregate.get("subject_behavior_day_stats", {}).items():
+            store.insert_subject_behavior_daily_stat(
+                run_id,
+                epoch_id,
+                stat,
+                included=key not in subject_day_exclusions,
+                exclusion_reason=subject_day_reasons.get(key),
+            )
+        for incident in incidents or []:
+            store.insert_network_incident(run_id, incident)
+
+        store._validate_v4_data_relationships()
+        if store.conn.execute("PRAGMA foreign_key_check").fetchall():
+            raise RuntimeError("Persisted analysis contains a foreign-key violation")
+        finish_scope()
+        return False, run_id
+    except BaseException as exc:
+        rollback_scope()
+        is_scoped_run_duplicate = (
+            insert_integrity_error is exc
+            and getattr(exc, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE"
+            and str(exc) == (
+                "UNIQUE constraint failed: runs.router_instance_id, runs.file_hash"
+            )
+        )
+        if is_scoped_run_duplicate:
             existing_run = store.get_run_by_hash(resolved_router_id, run_hash)
             if existing_run is not None:
                 existing_run_id = int(existing_run["id"])
@@ -8138,55 +8401,6 @@ def persist_analysis(
                 if tuple(required_children) == (1, 1):
                     return True, existing_run_id
         raise
-    else:
-        store.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-
-    for (observed_date, mac), stat in aggregate["device_day_stats"].items():
-        store.upsert_device(
-            mac=mac,
-            name=aggregate["mac_to_name"].get(mac),
-            status=devices_snapshot.get(mac, {}).get("status"),
-            connection_type=devices_snapshot.get(mac, {}).get("connection_type"),
-            source=devices_snapshot.get(mac, {}).get("source") or "observed",
-            seen_at=stat.last_seen.isoformat() if stat.last_seen else utcnow_iso(),
-        )
-        store.insert_device_daily_stat(
-            run_id,
-            epoch_id,
-            stat,
-            included=(observed_date, mac) not in device_day_exclusions,
-            exclusion_reason=device_day_reasons.get((observed_date, mac)),
-        )
-
-    for key, stat in aggregate["event_day_stats"].items():
-        store.insert_device_event_daily_stat(
-            run_id,
-            epoch_id,
-            stat,
-            included=key not in event_day_exclusions,
-            exclusion_reason=event_day_reasons.get(key),
-        )
-
-    for (subject_key, subject_type), subject in aggregate.get("behavior_subjects", {}).items():
-        store.upsert_behavior_subject(
-            subject_key=subject_key,
-            subject_type=subject_type,
-            display_name=subject.get("display_name"),
-            attributes=subject.get("attributes"),
-        )
-
-    for key, stat in aggregate.get("subject_behavior_day_stats", {}).items():
-        store.insert_subject_behavior_daily_stat(
-            run_id,
-            epoch_id,
-            stat,
-            included=key not in subject_day_exclusions,
-            exclusion_reason=subject_day_reasons.get(key),
-        )
-    for incident in incidents or []:
-        store.insert_network_incident(run_id, incident)
-    store.commit()
-    return False, run_id
 
 
 def export_baseline_document(
@@ -8506,6 +8720,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 else None
             ),
         )
+        store.commit()
 
         report = build_report_data(
             args=args,
