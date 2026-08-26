@@ -4095,6 +4095,136 @@ def test_identityless_log_emits_nonpersistent_report_without_creating_state(
     assert not db_path.exists()
 
 
+def test_identityless_log_reports_full_current_evidence_without_opening_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    security = replace(
+        make_event(
+            "2042-06-15T11:59:00", analyzer.SYSTEM_ACTOR,
+            "FIREWALL_4101_FAILURE", "ROUTER_SYSTEM",
+        ),
+        actor_scope="router",
+        component="firewall",
+        process_id="41",
+        vendor_event_code="4101",
+        syslog_severity="4",
+        normalized_message="policy failure",
+        structured_evidence={"action": "failure"},
+        clock_trust="trusted",
+        clock_segment_id="synthetic-clock-1",
+        source_sequence=1,
+    )
+
+    class IdentitylessEvidenceAdapter(analyzer.RouterLogAdapter):
+        format_id = analyzer.FORMAT_TP_LINK_ARCHER
+        cli_format = "tp-link-archer"
+
+        def detect(self, text: str) -> float:
+            return 0.99
+
+        def parse(self, text: str, source: str) -> analyzer.ParsedRouterLog:
+            return analyzer.ParsedRouterLog(
+                format_id=self.format_id,
+                capabilities=analyzer.RouterCapabilities(
+                    router_system_events=True,
+                    snapshot_counts=True,
+                    potentially_trustworthy_router_local_time=True,
+                    supported_event_keys={"FIREWALL_4101_FAILURE"},
+                    supported_event_families={"ROUTER_SYSTEM"},
+                    coverage_mode="point_snapshot",
+                    snapshot_buffer_semantic_dedup=True,
+                ),
+                identity=analyzer.RouterIdentityCandidate(
+                    canonical_vendor="tp-link",
+                    persistence_safe_without_override=False,
+                ),
+                events=[copy.deepcopy(security)],
+                parse_stats=analyzer.ParseStats(parsed_events=1, ignored_lines=2),
+                model="SYNTHETIC-IDENTITYLESS-X9000",
+                hardware="SYNTHETIC-HW-9000",
+                firmware="9.99.9 Build 20420101 rel.99999n",
+                export_timestamp=datetime.fromisoformat("2042-06-15T12:00:00"),
+                snapshot_metrics=analyzer.RouterSnapshotMetrics(
+                    total_clients=4,
+                    wifi_clients=3,
+                    derived_wired_clients=1,
+                    eligible=True,
+                ),
+                coverage_stats={
+                    "body_records": 1,
+                    "trusted_records": 1,
+                    "untrusted_records": 0,
+                    "timing_eligible_records": 1,
+                    "run_span_start": "2042-06-15T11:59:00",
+                    "run_span_end": "2042-06-15T11:59:00",
+                },
+                clock_segments=[
+                    analyzer.ClockSegment("synthetic-clock-1", "trusted", 1, 1)
+                ],
+                boot_candidates=[
+                    analyzer.BootSessionCandidate(
+                        "synthetic-boot-1", warnings=("synthetic_boot_warning",),
+                    )
+                ],
+                warnings=["synthetic_parser_warning"],
+            )
+
+    monkeypatch.setattr(
+        analyzer,
+        "ROUTER_LOG_ADAPTERS",
+        {analyzer.FORMAT_TP_LINK_ARCHER: IdentitylessEvidenceAdapter()},
+    )
+
+    def reject_store(*args: object, **kwargs: object) -> None:
+        raise AssertionError("nonpersistent report must not construct StateStore")
+
+    monkeypatch.setattr(analyzer, "StateStore", reject_store)
+    log_path = tmp_path / "synthetic-identityless-evidence.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic identityless evidence", encoding="utf-8")
+
+    assert analyzer.main([
+        str(log_path), "--format", "tp-link-archer", "--db", str(db_path), "--json",
+    ]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["persistence"] == {
+        "available": False, "reason": "no_stable_router_identity",
+    }
+    assert report["router"]["model"] == "SYNTHETIC-IDENTITYLESS-X9000"
+    assert report["snapshot"]["counts"] == {"total": 4, "wifi": 3, "wired": 1}
+    assert report["occurrences"] == {
+        "body_count": 1,
+        "novel_count": 0,
+        "repeated_count": 0,
+        "report_only_count": 1,
+        "fully_repeated": False,
+    }
+    assert report["router_activity"]["security_finding_count"] == 1
+    assert report["findings"]["all"][0]["kind"] == "router_security_event"
+    assert report["availability"]["checks"]["router_security"]["available"] is True
+    assert report["availability"]["checks"]["duration_based_partial"] == {
+        "available": False, "unavailable_reason": "point_snapshot_not_continuous",
+    }
+    assert report["clock"]["boot_resolution_warnings"] == ["synthetic_boot_warning"]
+    assert report["clock"]["warnings"] == ["synthetic_parser_warning"]
+    assert report["coverage"]["parsed_events"] == 1
+    assert not db_path.exists()
+
+    assert analyzer.main([
+        str(log_path), "--format", "tp-link-archer", "--db", str(db_path),
+    ]) == 0
+    rendered = capsys.readouterr().out
+    for expected in (
+        "SYNTHETIC-IDENTITYLESS-X9000", "Total clients", "synthetic-clock-1",
+        "synthetic_boot_warning", "synthetic_parser_warning", "Coverage records",
+        "HIGH | router_security_event",
+    ):
+        assert expected in rendered
+    assert not db_path.exists()
+
+
 def test_identityless_log_includes_router_label_in_minimal_default_and_json_reports(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4567,6 +4697,9 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
     assert report["availability"]["checks"]["snapshot_counts"] == {
         "available": True, "unavailable_reason": None,
     }
+    assert report["availability"]["checks"]["router_security"] == {
+        "available": True, "unavailable_reason": None,
+    }
     assert report["availability"]["checks"]["duration_based_partial"] == {
         "available": False,
         "unavailable_reason": "point_snapshot_not_continuous",
@@ -4752,6 +4885,34 @@ def test_snapshot_report_ranges_use_the_detector_numeric_profiles() -> None:
         assert profile is not None
         expected[label] = [round(profile["range_min"], 2), round(profile["range_max"], 2)]
     assert sections["snapshot"]["learned_ranges"] == expected
+
+
+def test_snapshot_change_detail_excludes_noncount_router_changes() -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
+        ]),
+        "synthetic-snapshot-change-filter.log",
+        "tp-link-archer",
+    )
+    findings = {
+        "all": [
+            {"kind": "router_client_count_anomaly", "severity": "low"},
+            {"kind": "router_firmware_change", "severity": "low"},
+            {"kind": "router_new_event_type", "severity": "low"},
+            {"kind": "router_state_change", "severity": "low"},
+        ]
+    }
+
+    sections = analyzer.build_router_report_sections(
+        parsed, "SYNTHETIC ROUTER", parsed.events, findings, [], 0,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    )
+
+    assert [item["kind"] for item in sections["snapshot"]["change_findings"]] == [
+        "router_client_count_anomaly"
+    ]
+    assert sections["router_activity"]["change_finding_count"] == 4
 
 
 @pytest.mark.parametrize(

@@ -9731,18 +9731,21 @@ def build_router_report_sections(
     metrics = parsed.snapshot_metrics or RouterSnapshotMetrics(
         exclusion_reason="snapshot_counts_unavailable"
     )
+    finding_entries = findings.get("all", [])
+    security_findings = [
+        item for item in finding_entries if item.get("kind") == "router_security_event"
+    ]
     eligibility_evidence = {
         **parsed.coverage_stats,
         "snapshot_counts_valid": bool(metrics.eligible),
+        "explicit_security_mapping": bool(security_findings) or any(
+            is_explicit_router_security_event(event) for event in events
+        ),
     }
     checks = {
         name: asdict(detector_eligibility(name, parsed.capabilities, events, eligibility_evidence))
         for name in REPORT_CHECKS
     }
-    finding_entries = findings.get("all", [])
-    security_findings = [
-        item for item in finding_entries if item.get("kind") == "router_security_event"
-    ]
     new_device_findings = [
         item for item in finding_entries
         if item.get("kind") in {"new_device", "new_rejected_device"}
@@ -9753,6 +9756,10 @@ def build_router_report_sections(
             "router_firmware_change", "router_new_event_type", "router_state_change",
             "router_client_count_anomaly",
         }
+    ]
+    snapshot_change_findings = [
+        item for item in finding_entries
+        if item.get("kind") == "router_client_count_anomaly"
     ]
     if parsed.capabilities.snapshot_buffer_semantic_dedup:
         novel_count = sum(
@@ -9824,7 +9831,7 @@ def build_router_report_sections(
             "unavailable_reason": metrics.exclusion_reason,
             "history_count": len(snapshot_history),
             "learned_ranges": learned_ranges,
-            "change_findings": router_change_findings,
+            "change_findings": snapshot_change_findings,
         },
         "occurrences": {
             "body_count": len(events),
@@ -9867,7 +9874,7 @@ def build_router_report_sections(
 
 def build_report_data(
     args: argparse.Namespace,
-    db_path: Path,
+    db_path: Optional[Path],
     parse_stats: ParseStats,
     aggregate: Dict[str, Any],
     findings: Dict[str, List[Finding]],
@@ -9891,7 +9898,7 @@ def build_report_data(
             "logfile": str(Path(args.logfile).expanduser().resolve()) if args.logfile else None,
             "baseline": str(Path(args.baseline).expanduser().resolve()) if args.baseline else None,
             "config": str(Path(args.config).expanduser().resolve()) if args.config else None,
-            "db": str(db_path.resolve()),
+            "db": str(db_path.resolve()) if db_path is not None else None,
         },
         "state": {
             "epoch_id": epoch_id,
@@ -9930,6 +9937,9 @@ def render_key_value_lines(items: Sequence[Tuple[str, Any]]) -> List[str]:
 
 
 def run_persistence_text(report: Dict[str, Any]) -> str:
+    persistence = report.get("persistence")
+    if isinstance(persistence, dict) and not persistence.get("available", True):
+        return f"Unavailable ({persistence.get('reason') or 'not persisted'})"
     reprocessed_run_id = report.get("state", {}).get("reprocessed_run_id")
     if reprocessed_run_id is not None:
         return f"Reprocessed (replaced run {reprocessed_run_id})"
@@ -11311,19 +11321,69 @@ def emit_nonpersistent_report(
     """Report parsed current evidence without opening state for an identity-less adapter."""
     if args.report or args.report_dir:
         raise SystemExit("Non-persistent reports do not support --report or --report-dir.")
-    router_label = args.router_label.strip() if args.router_label and args.router_label.strip() else parsed.identity.canonical_vendor
-    report = {
+    vendor_label = "TP-Link" if parsed.identity.canonical_vendor == "tp-link" else "NETGEAR"
+    router_label = (
+        args.router_label.strip()
+        if args.router_label and args.router_label.strip()
+        else f"{vendor_label} {' '.join((parsed.model or 'Router').split())} (non-persistent)"
+    )
+    aggregate = aggregate_events(parsed.events, {"devices": {}}, {})
+    current_detection_events = [
+        replace(event, occurrence_novel=True, occurrence_repeated=False)
+        for event in parsed.events
+    ]
+    current_findings = detect_router_security_events(
+        current_detection_events,
+        parsed.capabilities,
+        copy.deepcopy(DEFAULT_POLICY),
+    )
+    findings: Dict[str, List[Finding]] = {
+        "critical": [], "anomalies": [], "observations": [], "all": current_findings,
+    }
+    for finding in current_findings:
+        if finding.severity == "critical":
+            findings["critical"].append(finding)
+        elif finding.severity == "low":
+            findings["observations"].append(finding)
+        else:
+            findings["anomalies"].append(finding)
+    score, status, breakdown = compute_risk_score(findings, DEFAULT_POLICY)
+    projected_findings = findings_to_dict(findings, aggregate)
+    router_sections = build_router_report_sections(
+        parsed,
+        router_label,
+        parsed.events,
+        projected_findings,
+        [],
+        0,
+        DEFAULT_POLICY,
+    )
+    report = build_report_data(
+        args=args,
+        db_path=None,
+        parse_stats=parsed.parse_stats,
+        aggregate=aggregate,
+        findings=findings,
+        score=score,
+        status=status,
+        breakdown=breakdown,
+        deduplicated=False,
+        epoch_id=None,
+        policy_profile_id=None,
+        analyzed_event_count=len(parsed.events),
+        router_sections=router_sections,
+    )
+    report.update({
         "format_id": parsed.format_id,
         "router_label": router_label,
-        "parse_stats": asdict(parsed.parse_stats),
         "event_count": len(parsed.events),
         "persistence": {"available": False, "reason": reason},
         "warnings": parsed.warnings,
-    }
+    })
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
-        print(f"Parsed router log for {router_label} without persistent state: {reason}")
+        print(render_text_report(report))
 
 
 def is_in_windows(timestamp: datetime, windows: Sequence[Dict[str, Any]]) -> bool:
