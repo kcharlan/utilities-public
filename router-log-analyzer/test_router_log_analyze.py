@@ -2901,6 +2901,75 @@ def test_main_reprocess_excludes_replaced_run_from_knownness_and_preserves_run_i
         store.close()
 
 
+def test_fresh_netgear_provisional_run_uses_parsed_observation_bounds_for_metadata_and_cache(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "network.db"
+    log_path = tmp_path / "synthetic-netgear-bounds.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    log_path.write_text(
+        "\n".join([
+            "[Internet connected], Wednesday, July 15, 2037 12:00:00",
+            "[Internet disconnected], Wednesday, July 15, 2037 11:00:00",
+        ]),
+        encoding="utf-8",
+    )
+
+    assert analyzer.main([
+        str(log_path), str(baseline_path), "--db", str(db_path), "--json",
+    ]) == 0
+    capsys.readouterr()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        run = store.conn.execute("SELECT * FROM runs").fetchone()
+        metadata = store.conn.execute(
+            "SELECT * FROM router_metadata_observations WHERE run_id = ?", (run["id"],)
+        ).fetchone()
+        router = store.conn.execute(
+            "SELECT * FROM router_instances WHERE id = ?", (run["router_instance_id"],)
+        ).fetchone()
+        assert metadata["observed_at"] == "2037-07-15T12:00:00"
+        assert (router["first_seen"], router["last_seen"]) == (
+            "2037-07-15T11:00:00", "2037-07-15T12:00:00",
+        )
+    finally:
+        store.close()
+
+
+def test_fresh_ingest_device_cache_uses_persisted_first_and_last_event_times(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "network.db"
+    log_path = tmp_path / "synthetic-device-bounds.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    mac = "02:00:00:00:00:46"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    log_path.write_text(
+        "\n".join([
+            f"[DHCP IP: (192.0.2.46)] to MAC address {mac}, Wednesday, July 15, 2037 12:00:00",
+            f"[DHCP IP: (192.0.2.46)] to MAC address {mac}, Wednesday, July 15, 2037 11:00:00",
+        ]),
+        encoding="utf-8",
+    )
+
+    assert analyzer.main([
+        str(log_path), str(baseline_path), "--db", str(db_path), "--json",
+    ]) == 0
+    capsys.readouterr()
+    store = analyzer.StateStore(db_path)
+    try:
+        device = store.conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+        assert (device["first_seen"], device["last_seen"]) == (
+            "2037-07-15T11:00:00", "2037-07-15T12:00:00",
+        )
+    finally:
+        store.close()
+
+
 def test_remove_run_owned_evidence_refreshes_only_surviving_provenance(tmp_path: Path) -> None:
     store = analyzer.StateStore(tmp_path / "network.db")
     registered_mac = "02:00:00:00:00:41"
@@ -3037,6 +3106,28 @@ def test_run_owned_removal_preserves_shared_occurrence_and_session_until_orphane
             )
             store.persist_router_provenance(run_id, router_id, parsed)
             run_ids.append(run_id)
+            if index == 1:
+                event = parsed.events[0]
+                device_stat = analyzer.DeviceDayAggregate(
+                    observed_date=event.timestamp.date().isoformat(), mac=client_mac
+                )
+                event_stat = analyzer.EventDayAggregate(
+                    observed_date=event.timestamp.date().isoformat(), mac=client_mac,
+                    event_key=event.event_key, event_family=event.event_family,
+                )
+                device_stat.add_event(event)
+                event_stat.add_event(event)
+                store.upsert_device(client_mac, None, None, None, "observed", event.timestamp.isoformat())
+                store.insert_device_daily_stat(run_id, epoch_id, device_stat, True, None)
+                store.insert_device_event_daily_stat(run_id, epoch_id, event_stat, True, None)
+                subject_stat = analyzer.SubjectBehaviorDayAggregate(
+                    observed_date=event.timestamp.date().isoformat(), subject_key=client_mac,
+                    subject_type="device", behavior_key=event.event_key,
+                    behavior_family=event.event_family,
+                )
+                subject_stat.add_occurrence(event.timestamp, event.timestamp, 1, {"members": []})
+                store.upsert_behavior_subject(client_mac, "device", client_mac, {"source": "device"})
+                store.insert_subject_behavior_daily_stat(run_id, epoch_id, subject_stat, True, None)
         store.commit()
         occurrence_id = store.conn.execute(
             "SELECT occurrence_id FROM run_event_occurrences WHERE run_id = ?", (run_ids[0],)
@@ -3047,6 +3138,7 @@ def test_run_owned_removal_preserves_shared_occurrence_and_session_until_orphane
 
         store.conn.execute("BEGIN IMMEDIATE")
         affected = store.remove_run_owned_evidence(run_ids[0])
+        store.promote_surviving_occurrence_learning(affected)
         store.refresh_derived_state(affected)
         store.prune_orphan_provenance()
         assert store.conn.execute(
@@ -3062,6 +3154,16 @@ def test_run_owned_removal_preserves_shared_occurrence_and_session_until_orphane
             "SELECT COUNT(*) FROM device_observations WHERE mac = ?", (client_mac,)
         ).fetchone()[0] == 1
         assert client_mac in store.load_devices_snapshot()
+        for table, count_column in (
+            ("device_daily_stats", "total_events"),
+            ("device_event_daily_stats", "count"),
+            ("subject_behavior_daily_stats", "count"),
+        ):
+            promoted = store.conn.execute(
+                f"SELECT run_id, {count_column} FROM {table} WHERE run_id = ?", (run_ids[1],)
+            ).fetchone()
+            assert promoted is not None
+            assert promoted[count_column] == 1
 
         store.remove_run_owned_evidence(run_ids[1])
         store.refresh_derived_state(affected)
