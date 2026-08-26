@@ -255,8 +255,8 @@ and Catalog views over a per-thread, read-only SQLite connection. It dispatches
 before runtime directory or rotating-log initialization, serves only vendored
 assets, and keeps shareable view state in the URL hash. Theme preference is
 the sole browser-local state. The API contracts, interaction model, visual
-semantics, failure behavior, and packaging constraints are defined in the
-[Model Sentinel Browse design](./superpowers/specs/2026-08-23-model-sentinel-browse-design.md).
+semantics, failure behavior, and packaging constraints are documented in the
+project README and enforced by the browse test suite.
 
 Format support is intentionally command-specific:
 

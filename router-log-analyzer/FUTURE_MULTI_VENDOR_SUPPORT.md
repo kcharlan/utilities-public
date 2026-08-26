@@ -2,7 +2,7 @@
 
 This document captures a practical shape for evolving `router_log_analyze.py` from a NETGEAR-specific ingestion tool into a router-agnostic analyzer without rewriting the learning and anomaly engine.
 
-**Status:** Historical proposal, partially implemented. The analyzer now has in-file adapters for NETGEAR and the observed TP-Link Archer system-log snapshot format, explicit/automatic format selection, router-instance-scoped persistence, capability-gated analysis, semantic snapshot deduplication, firmware-scoped router behavior, and cross-format reporting. The NETGEAR access-control importer remains NETGEAR-specific. No declarative profile runtime, Linksys adapter, or generic vendor plugin system has been added. The approved [TP-Link Router-Instance Support Design](docs/superpowers/specs/2026-08-25-tp-link-router-instance-support-design.md) supersedes this document wherever the two conflict.
+**Status:** Historical proposal, partially implemented. The analyzer now has in-file adapters for NETGEAR and the observed TP-Link Archer system-log snapshot format, explicit/automatic format selection, router-instance-scoped persistence, capability-gated analysis, semantic snapshot deduplication, firmware-scoped router behavior, and cross-format reporting. The NETGEAR access-control importer remains NETGEAR-specific. No declarative profile runtime, Linksys adapter, or generic vendor plugin system has been added. The README and current implementation are authoritative wherever they differ from this historical proposal.
 
 The real TP-Link snapshot requirement validated the adapter principle while also requiring schema, capability, deduplication, router-instance, and reporting changes that this earlier proposal intentionally deferred.
 
