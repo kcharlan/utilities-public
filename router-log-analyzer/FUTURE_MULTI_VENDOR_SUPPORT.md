@@ -2,13 +2,13 @@
 
 This document captures a practical shape for evolving `router_log_analyze.py` from a NETGEAR-specific ingestion tool into a router-agnostic analyzer without rewriting the learning and anomaly engine.
 
-**Status:** Historical proposal. The current implementation still supports NETGEAR-format exports only, but the approved [TP-Link Router-Instance Support Design](docs/superpowers/specs/2026-08-25-tp-link-router-instance-support-design.md) supersedes this document wherever the two conflict.
+**Status:** Historical proposal, partially implemented. The analyzer now has in-file adapters for NETGEAR and the observed TP-Link Archer system-log snapshot format, explicit/automatic format selection, router-instance-scoped persistence, capability-gated analysis, semantic snapshot deduplication, firmware-scoped router behavior, and cross-format reporting. The NETGEAR access-control importer remains NETGEAR-specific. No declarative profile runtime, Linksys adapter, or generic vendor plugin system has been added. The approved [TP-Link Router-Instance Support Design](docs/superpowers/specs/2026-08-25-tp-link-router-instance-support-design.md) supersedes this document wherever the two conflict.
 
 The real TP-Link snapshot requirement validated the adapter principle while also requiring schema, capability, deduplication, router-instance, and reporting changes that this earlier proposal intentionally deferred.
 
 ## Current State
 
-The analyzer has two distinct layers:
+The analyzer has two distinct logical layers inside the standalone launcher:
 
 1. Ingestion and normalization
    - Reads PDF or text exports
@@ -23,9 +23,11 @@ The analyzer has two distinct layers:
    - Persists learned history in SQLite
    - Renders reports
 
-The second layer is already mostly reusable. The first layer is where most of the current NETGEAR coupling lives.
+The second layer is reusable through explicit capability gates. NETGEAR and TP-Link Archer parsing now sit behind adapters; config import remains NETGEAR-coupled.
 
-## Where The Current NETGEAR Coupling Lives
+## Original NETGEAR Coupling Analysis (Historical)
+
+The following sections preserve the original proposal's pre-implementation assessment and phase wording for context; they do not override the status above.
 
 The current implementation is NETGEAR-shaped in these areas:
 
@@ -114,7 +116,7 @@ Support two kinds of adapters:
 
 This avoids forcing every future format into a purely regex-driven design.
 
-## Phased Implementation Plan
+## Original Phased Implementation Plan (Historical)
 
 ### Phase 1. Isolate NETGEAR Parsing Behind An Adapter
 

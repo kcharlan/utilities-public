@@ -4507,6 +4507,206 @@ def tp_link_synthetic_snapshot(
     return "\n".join([*headers, *newest_first_records])
 
 
+def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverage_facts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "report-contract.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+    log_path = tmp_path / "synthetic-report-contract.log"
+    log_path.write_text(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 firewall[41]: <4> 4101 Policy failure",
+        ]),
+        encoding="utf-8",
+    )
+
+    assert analyzer.main([
+        str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+    ]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["router"] == {
+        "label": report["router"]["label"],
+        "vendor": "tp-link",
+        "model": "SYNTHETIC-ARCHER-X9000",
+        "hardware": "SYNTHETIC-HW-9000",
+        "firmware": "9.99.9 Build 20420101 rel.99999n",
+        "format": "tp-link-archer",
+        "export_time": "2042-06-15T12:00:00",
+    }
+    assert report["router"]["label"].startswith("TP-Link SYNTHETIC-ARCHER-X9000 ")
+    assert "02:00:00" not in report["router"]["label"]
+    assert report["snapshot"] == {
+        "counts": {"total": 7, "wifi": 5, "wired": 2},
+        "eligible": True,
+        "unavailable_reason": None,
+        "history_count": 0,
+        "learned_ranges": {},
+        "change_findings": [],
+    }
+    assert report["occurrences"] == {
+        "body_count": 1,
+        "novel_count": 1,
+        "repeated_count": 0,
+        "report_only_count": 0,
+        "fully_repeated": False,
+    }
+    assert report["router_activity"]["security_finding_count"] == 1
+    assert report["router_activity"]["new_device_finding_count"] == 0
+    assert report["coverage"]["body_records"] == 1
+    assert report["coverage"]["parsed_events"] == 1
+    assert report["coverage"]["malformed_lines"] == 0
+    assert report["coverage"]["export_noise_lines"] == 0
+    assert report["availability"]["checks"]["snapshot_counts"] == {
+        "available": True, "unavailable_reason": None,
+    }
+    assert report["clock"]["segments"]
+
+    rendered = {
+        "text": analyzer.render_text_report(report),
+        "markdown": analyzer.render_markdown_report(report),
+        "html": analyzer.render_html_report(report),
+    }
+    for output in rendered.values():
+        assert report["router"]["label"] in output
+        assert "Total clients" in output
+        assert "Novel occurrences" in output
+        assert "Router security findings" in output
+        assert "HIGH" in output
+        assert "Unavailable checks" in output
+        assert "Snapshot assessment" in output
+        assert "normal" in output
+
+
+def test_tp_link_fully_repeated_snapshot_is_explicit_in_all_renderers(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "repeated-report.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+    record = "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success"
+    first_path = tmp_path / "synthetic-first.log"
+    second_path = tmp_path / "synthetic-second.log"
+    first_path.write_text(tp_link_synthetic_snapshot([record]), encoding="utf-8")
+    second_path.write_text(
+        tp_link_synthetic_snapshot([record], export_time="2042-06-16 12:00:00"),
+        encoding="utf-8",
+    )
+    assert analyzer.main([
+        str(first_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+    ]) == 0
+    capsys.readouterr()
+    assert analyzer.main([
+        str(second_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+    ]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["occurrences"]["fully_repeated"] is True
+    assert report["occurrences"]["novel_count"] == 0
+    assert report["occurrences"]["repeated_count"] == 1
+    for output in (
+        analyzer.render_text_report(report),
+        analyzer.render_markdown_report(report),
+        analyzer.render_html_report(report),
+    ):
+        assert "All body occurrences were already seen" in output
+
+
+def test_tp_link_cli_writes_consistent_markdown_html_and_json_reports(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "report-output.db"
+    report_dir = tmp_path / "reports"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+    log_path = tmp_path / "synthetic-report-output.log"
+    log_path.write_text(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
+        ]),
+        encoding="utf-8",
+    )
+
+    assert analyzer.main([
+        str(log_path), "--db", str(db_path), "--format", "tp-link-archer",
+        "--report", "markdown,html,json", "--report-dir", str(report_dir),
+    ]) == 0
+    output = capsys.readouterr().out
+    report_paths = {
+        "markdown": report_dir / "synthetic-report-output.report.md",
+        "html": report_dir / "synthetic-report-output.report.html",
+        "json": report_dir / "synthetic-report-output.report.json",
+    }
+    assert all(path.is_file() for path in report_paths.values())
+    report = json.loads(report_paths["json"].read_text(encoding="utf-8"))
+    label = report["router"]["label"]
+    assert label in report_paths["markdown"].read_text(encoding="utf-8")
+    assert label in report_paths["html"].read_text(encoding="utf-8")
+    assert all(str(path) in output for path in report_paths.values())
+
+
+def test_cli_version_and_help_describe_supported_router_contracts(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        analyzer.parse_args(["--version"])
+    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.0"
+
+    with pytest.raises(SystemExit):
+        analyzer.parse_args(["--help"])
+    help_text = capsys.readouterr().out
+    assert "NETGEAR" in help_text
+    assert "TP-Link Archer" in help_text
+    assert "--router-label" in help_text
+    assert "--router-instance" in help_text
+    assert "NETGEAR access-control" in help_text
+
+
+def test_exported_baseline_remains_portable_and_excludes_router_provenance(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "portable-baseline.db")
+    mac = "02:00:00:00:30:01"
+    try:
+        epoch_id = seed_epoch(store)
+        insert_history_day(
+            store, epoch_id, "synthetic-portable-history", "2042-06-14", mac,
+            "CLIENT_PRESENT", "CLIENT", ["2042-06-14T11:59:00"],
+        )
+        exported = analyzer.export_baseline_document(
+            store,
+            epoch_id,
+            {"devices": {}},
+            copy.deepcopy(analyzer.DEFAULT_POLICY),
+            {mac: {"name": "SYNTHETIC PORTABLE DEVICE"}},
+        )
+    finally:
+        store.close()
+
+    assert set(exported) == {"devices"}
+    assert exported["devices"][mac]["name"] == "SYNTHETIC PORTABLE DEVICE"
+    assert "event_profiles" in exported["devices"][mac]
+    serialized = json.dumps(exported, sort_keys=True)
+    for forbidden in (
+        "router_instance", "firmware_profile", "occurrence", "boot_session",
+        "snapshot_metrics", "metadata_history",
+    ):
+        assert forbidden not in serialized
+
+
 @pytest.mark.parametrize(
     ("counts_line", "raw_total", "raw_wifi", "total", "wifi", "reason"),
     [
@@ -6136,6 +6336,21 @@ def test_anchorless_boot_context_stays_report_only_and_out_of_cross_run_history(
         assert all(event.occurrence_novel for event in result["events"])
         assert result["boot_session_ids"] == []
         assert result["novel_count"] == 0
+        report_sections = analyzer.build_router_report_sections(
+            parsed,
+            "SYNTHETIC ROUTER",
+            result["events"],
+            {"all": []},
+            [],
+            0,
+        )
+        assert report_sections["occurrences"] == {
+            "body_count": 2,
+            "novel_count": 0,
+            "repeated_count": 0,
+            "report_only_count": 2,
+            "fully_repeated": False,
+        }
         assert store.conn.execute("SELECT COUNT(*) FROM router_boot_sessions").fetchone()[0] == 0
         assert store.conn.execute("SELECT COUNT(*) FROM router_event_occurrences").fetchone()[0] == 0
         assert store.conn.execute("SELECT COUNT(*) FROM device_event_daily_stats").fetchone()[0] == 0
@@ -7308,6 +7523,10 @@ def test_build_priority_findings_surfaces_security_events_first() -> None:
 
     assert priority[0]["kind"] == "new_event_type"
     assert "WLAN Access Rejected" in priority[0]["rendered_message"]
+
+
+def test_new_device_is_security_priority_so_medium_discovery_stays_visible() -> None:
+    assert analyzer.finding_security_priority("new_device", {}) == 2
 
 
 def test_cluster_partial_visibility_detail_lines_do_not_report_zero_minutes() -> None:
