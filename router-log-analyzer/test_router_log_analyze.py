@@ -4829,8 +4829,7 @@ def test_tp_link_operational_report_clean_hierarchy_and_history_state(monkeypatc
     assert "No findings were detected by the checks that were available." in re.sub(r"\s+", " ", rendered)
     assert "Findings\n" not in rendered
     assert rendered.index("Router Snapshot") < rendered.index("Baseline and Change") < rendered.index("Router Activity")
-    assert "First comparable snapshot" in rendered
-    assert "First comparable router behavior" in rendered
+    assert "First comparable client-count snapshot and router-behavior observation." in rendered
     assert "Risk Breakdown" not in rendered
 
 
@@ -4854,25 +4853,35 @@ def test_tp_link_operational_report_promotes_consequential_tail_outcomes() -> No
     activity = report["router_activity"]
     assert isinstance(activity, dict)
     activity["component_counts"] = [
-        {"component": name, "event_count": 9 - index}
-        for index, name in enumerate(("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"))
+        {"component": name, "event_count": count}
+        for name, count in (("alpha", 10), ("bravo", 9), ("charlie", 8), ("delta", 7),
+                            ("echo", 6), ("foxtrot", 1), ("golf", 1), ("hotel", 2))
     ]
+    activity["source_record_count"] = 44
     activity["outcome_counts"] = [
-        {"outcome": "success", "event_count": 30}, {"outcome": "failure", "event_count": 2},
+        {"outcome": "success", "event_count": 32}, {"outcome": "failure", "event_count": 10},
         {"outcome": "disconnected", "event_count": 1}, {"outcome": "timeout", "event_count": 1},
     ]
     activity["event_type_counts"] = [
-        {"component": "alpha", "outcome": "failure", "event_count": 1},
+        {"component": "alpha", "outcome": "failure", "event_count": 10},
+        {"component": "bravo", "outcome": "success", "event_count": 9},
+        {"component": "charlie", "outcome": "success", "event_count": 8},
+        {"component": "delta", "outcome": "success", "event_count": 7},
+        {"component": "echo", "outcome": "success", "event_count": 6},
         {"component": "foxtrot", "outcome": "disconnected", "event_count": 1},
         {"component": "golf", "outcome": "timeout", "event_count": 1},
+        {"component": "hotel", "outcome": "success", "event_count": 2},
     ]
 
     rendered = analyzer.render_text_report(report)
 
     activity_text = rendered.split("Router Activity", 1)[1]
+    assert "Source records: 44" in activity_text
     for component in ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"):
         assert activity_text.count(component) == 1
-    assert "Outcomes: failure 2, disconnected 1, timeout 1, success 30" in activity_text
+    assert "hotel" not in activity_text
+    assert "Remaining: 2 source record(s) across 1 other component(s)." in activity_text
+    assert "Outcomes: failure 10, disconnected 1, timeout 1, success 32" in activity_text
 
 
 def test_tp_link_operational_report_handles_zero_events_and_missing_projection() -> None:
@@ -4911,7 +4920,7 @@ def test_tp_link_history_wording_distinguishes_queried_none_from_unavailable() -
     unavailable["snapshot"]["history_queried"] = False
     unavailable["router_activity"]["behavior_history_queried"] = False
 
-    assert "First comparable snapshot" in analyzer.render_text_report(queried)
+    assert "First comparable client-count snapshot and router-behavior observation." in analyzer.render_text_report(queried)
     assert "Snapshot comparison was not evaluated" in analyzer.render_text_report(unavailable)
     assert "Router behavior comparison was not evaluated" in analyzer.render_text_report(unavailable)
 
@@ -4957,10 +4966,15 @@ def test_tp_link_router_finding_fields_follow_actual_producer_schemas() -> None:
     )[0]
     firmware = analyzer.detect_router_firmware_change("SYNTHETIC-OLD", "SYNTHETIC-NEW", analyzer.DEFAULT_POLICY)
     assert firmware is not None
-    behavior_event = replace(security_event, event_key="SYNTHETIC_NEW_ROUTER_EVENT", structured_evidence={"state": "stopped"}, clock_trust="trusted")
-    behavior = analyzer.detect_router_behavior(
+    behavior_event = replace(security_event, component="service", event_key="SYNTHETIC_NEW_ROUTER_EVENT", structured_evidence={"state": "running"}, clock_trust="trusted")
+    new_event = analyzer.detect_router_behavior(
         [behavior_event], analyzer.RouterCapabilities(router_system_events=True, supported_event_keys={behavior_event.event_key}),
         analyzer.RouterBehaviorHistory(eligible_observation_count=3, event_keys=frozenset()), analyzer.DEFAULT_POLICY,
+    )[0]
+    state_event = replace(behavior_event, event_key="SYNTHETIC_SERVICE_STOP", structured_evidence={"state": "stopped"})
+    state_change = analyzer.detect_router_behavior(
+        [state_event], analyzer.RouterCapabilities(router_system_events=True, supported_event_keys={state_event.event_key}),
+        analyzer.RouterBehaviorHistory(eligible_observation_count=3, event_keys=frozenset({state_event.event_key}), running_components=frozenset({"service"})), analyzer.DEFAULT_POLICY,
     )[0]
     metrics = analyzer.detect_router_snapshot_count_anomaly(
         analyzer.RouterSnapshotMetrics(total_clients=20, wifi_clients=16, derived_wired_clients=4, eligible=True),
@@ -4969,7 +4983,10 @@ def test_tp_link_router_finding_fields_follow_actual_producer_schemas() -> None:
 
     assert ("Outcome", "failure") in analyzer.finding_field_lines(analyzer.asdict(security))
     assert ("Previous", "SYNTHETIC-OLD") in analyzer.finding_field_lines(analyzer.asdict(firmware))
-    assert ("Event", "Synthetic New Router Event") in analyzer.finding_field_lines(analyzer.asdict(behavior))
+    assert new_event.kind == "router_new_event_type"
+    assert ("Event", "Synthetic New Router Event") in analyzer.finding_field_lines(analyzer.asdict(new_event))
+    assert state_change.kind == "router_state_change"
+    assert ("State", "stopped") in analyzer.finding_field_lines(analyzer.asdict(state_change))
     metric_lines = analyzer.finding_field_lines(analyzer.asdict(metrics))
     assert ("Metric", "total") in metric_lines
     assert ("Observed", "20") in metric_lines
@@ -4993,7 +5010,7 @@ def test_tp_link_operational_zero_projection_and_limitation_reasons() -> None:
     assert "source/component detail was unavailable" not in rendered
     assert "Body-event calendar and time analysis was unavailable" not in rendered
     assert "Stable identity and rejected-client evidence were incomplete." not in rendered
-    assert "Internet-reset assessment lacked WAN-transition and client-recovery evidence classes." in rendered
+    assert "Internet-reset assessment lacked WAN-transition and client-recovery evidence." in rendered
 
 
 def test_tp_link_history_query_flags_follow_first_and_exact_duplicate_paths(
@@ -8320,6 +8337,19 @@ def test_new_device_is_security_priority_so_medium_discovery_stays_visible() -> 
     assert analyzer.finding_security_priority("new_device", {}) == 2
 
 
+def test_medium_new_device_is_retained_in_effective_priority_findings() -> None:
+    finding = analyzer.Finding(
+        kind="new_device", severity="medium", mac="02:00:00:00:00:0F",
+        message="Synthetic device first observed.", metadata={"day": "2042-06-15"},
+    )
+    findings = {"critical": [], "anomalies": [finding], "observations": [], "all": [finding]}
+    priority = analyzer.build_priority_findings(
+        analyzer.findings_to_dict(findings, make_aggregate({"02:00:00:00:00:0F": "SYNTHETIC NEW DEVICE"}))
+    )
+
+    assert [(entry["kind"], entry["severity"]) for entry in priority] == [("new_device", "medium")]
+
+
 def test_cluster_partial_visibility_detail_lines_do_not_report_zero_minutes() -> None:
     lines = analyzer.finding_detail_lines(
         {
@@ -10338,6 +10368,8 @@ def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
         finding["kind"] == "router_firmware_change"
         for finding in reports[1]["findings"]["all"]
     )
+    assert "ambiguous_firmware_profile" in reports[1]["clock"]["warnings"]
+    assert reports[1]["router_activity"]["behavior_history_queried"] is False
     store = analyzer.StateStore(db_path)
     try:
         rows = list(store.conn.execute(

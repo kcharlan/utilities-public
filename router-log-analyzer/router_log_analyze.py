@@ -10732,9 +10732,9 @@ def operational_limitation_lines(report: Dict[str, Any], verbose: bool = False) 
         lines.append("Body-event calendar and time analysis was unavailable because no trusted timestamps were present.")
     malformed = coverage.get("malformed_lines", 0)
     if malformed:
-        lines.append(f"Parser skipped {malformed} malformed nonzero record(s).")
+        lines.append(f"Parser skipped {malformed} malformed line(s).")
     if warnings:
-        lines.append(f"Parser reported {len(warnings)} warning(s).")
+        lines.append(f"Parser reported {len(warnings)} unexpected warning(s); use --verbose for details.")
         if verbose:
             lines.append("Parser warning details: " + ", ".join(sorted(warnings)))
     boot_warnings = clock.get("boot_resolution_warnings", [])
@@ -10746,11 +10746,23 @@ def operational_limitation_lines(report: Dict[str, Any], verbose: bool = False) 
     unavailable_reasons = {name: str(item.get("unavailable_reason")) for name, item in checks.items() if not item.get("available")}
     if "no_stable_client_identity" in unavailable_reasons.values():
         lines.append("Stable identity and rejected-client evidence were incomplete.")
-    if unavailable & {"device_dhcp_metrics", "device_event_volume", "device_behavior", "cluster_visibility"}:
-        lines.append("Client DHCP, event-volume, behavior, and cluster evidence were incomplete.")
+    client_areas = {
+        "device_dhcp_metrics": "DHCP",
+        "device_event_volume": "event-volume",
+        "device_behavior": "behavior",
+        "cluster_visibility": "cluster comparison",
+    }
+    affected_client_areas = [label for name, label in client_areas.items() if name in unavailable]
+    if affected_client_areas:
+        lines.append("Client telemetry/comparison was incomplete for " + ", ".join(affected_client_areas) + ".")
     reset_reasons = set(unavailable_reasons.values())
-    if {"no_wan_transition_coverage", "no_client_recovery_equivalence"} & reset_reasons:
-        lines.append("Internet-reset assessment lacked WAN-transition and client-recovery evidence classes.")
+    reset_areas = []
+    if "no_wan_transition_coverage" in reset_reasons:
+        reset_areas.append("WAN-transition")
+    if "no_client_recovery_equivalence" in reset_reasons:
+        reset_areas.append("client-recovery")
+    if reset_areas:
+        lines.append("Internet-reset assessment lacked " + " and ".join(reset_areas) + " evidence.")
     return list(dict.fromkeys(lines))
 
 
@@ -10793,12 +10805,16 @@ def render_operational_text_report(report: Dict[str, Any], width: int, verbose: 
         snapshot_lines.append("Client snapshot counts were unavailable.")
     lines.extend(operational_section("Router Snapshot", snapshot_lines, width))
     baseline_lines: List[str] = []
-    if snapshot.get("history_queried"):
+    snapshot_first = bool(snapshot.get("history_queried") and not snapshot.get("history_count", 0))
+    behavior_first = bool(activity.get("behavior_history_queried") and not activity.get("behavior_history_count", 0))
+    if snapshot_first and behavior_first:
+        baseline_lines.append("First comparable client-count snapshot and router-behavior observation.")
+    elif snapshot.get("history_queried"):
         count = snapshot.get("history_count", 0)
         baseline_lines.append("First comparable snapshot." if not count else f"Compared with {count} prior eligible snapshot(s).")
     else:
         baseline_lines.append("Snapshot comparison was not evaluated.")
-    if activity.get("behavior_history_queried"):
+    if not (snapshot_first and behavior_first) and activity.get("behavior_history_queried"):
         count = activity.get("behavior_history_count", 0)
         baseline_lines.append("First comparable router behavior." if not count else f"Compared with {count} prior router behavior observation(s).")
     else:
@@ -11966,7 +11982,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             and event.clock_trust == "trusted"
             and not is_explicit_router_security_event(event)
         ]
-        adapter_firmware_ambiguous = "ambiguous_firmware_profile" in parsed.warnings
         current_firmware_profile_id: Optional[int] = None
         previous_firmware_profile_id: Optional[int] = None
         previous_profile_events: List[Event] = []
@@ -12041,7 +12056,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     (json_dumps(metadata), reserved_run_id),
                 )
 
-            if firmware_profile_id is not None and not adapter_firmware_ambiguous:
+            if firmware_profile_id is not None and "ambiguous_firmware_profile" not in parsed.warnings:
                 router_history = store.fetch_router_behavior_history(
                     router_instance_id,
                     epoch["id"],
