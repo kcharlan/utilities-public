@@ -9778,6 +9778,8 @@ REPORT_UNAVAILABLE_REASON_LABELS = {
     "ambiguous_firmware_profile": "ambiguous firmware profile",
     "incomparable_event_coverage": "incomparable event coverage",
     "invalid_snapshot_counts": "invalid snapshot counts",
+    "inconsistent_snapshot_counts": "inconsistent snapshot counts",
+    "missing_snapshot_counts": "no client snapshot counts",
     "no_client_access_decisions": "no client access decisions",
     "no_client_dhcp_coverage": "no client DHCP coverage",
     "no_client_recovery_equivalence": "no equivalent client recovery evidence",
@@ -9792,6 +9794,7 @@ REPORT_UNAVAILABLE_REASON_LABELS = {
     "no_trusted_boot_anchor": "no trusted boot anchor",
     "no_wan_transition_coverage": "no WAN transition coverage",
     "point_snapshot_not_continuous": "point snapshot is not a continuous log",
+    "snapshot_count_out_of_range": "snapshot counts were out of range",
     "untrusted_time": "router-local timestamps were not trusted",
 }
 
@@ -9875,6 +9878,7 @@ def build_router_report_sections(
     eligibility_evidence = {
         **parsed.coverage_stats,
         "snapshot_counts_valid": bool(metrics.eligible),
+        "snapshot_exclusion_reason": metrics.exclusion_reason,
         "explicit_security_mapping": bool(security_findings) or any(
             is_explicit_router_security_event(event) for event in events
         ),
@@ -10731,8 +10735,21 @@ def operational_status_summary(report: Dict[str, Any]) -> str:
     if report.get("status") == "Clean" and not entries:
         return "Clean — No findings were detected by the checks that were available."
     if report.get("status") == "Clean":
-        low_count = sum(entry.get("severity") == "low" for entry in entries)
-        return f"Clean — {low_count} low-severity finding(s) remain visible below."
+        severity_counts = Counter(
+            str(entry.get("severity") or "unknown").casefold() for entry in entries
+        )
+        severity_parts = [
+            f"{severity_counts[severity]} {severity}-severity"
+            for severity in sorted(severity_counts, key=lambda severity: (-SEVERITY_ORDER.get(severity, 0), severity))
+        ]
+        if len(severity_parts) == 1:
+            severity_text = severity_parts[0]
+        elif len(severity_parts) == 2:
+            severity_text = " and ".join(severity_parts)
+        else:
+            severity_text = ", ".join(severity_parts[:-1]) + ", and " + severity_parts[-1]
+        noun = "finding remains" if len(entries) == 1 else "findings remain"
+        return f"Clean — {severity_text} {noun} visible below."
     return f"{report.get('status', 'Unknown')} — {len(entries)} finding(s) require review."
 
 
@@ -10858,9 +10875,9 @@ def verbose_router_activity_lines(report: Dict[str, Any], width: int) -> List[st
     router_semantic_total = activity.get("system_event_count")
     lines: List[str] = []
     if isinstance(source_total, int):
-        lines.append(f"Source-record total: {source_total}")
+        lines.append(f"Router-only source-record total: {source_total}")
         if isinstance(router_semantic_total, int):
-            lines.append(f"Router semantic-occurrence total: {router_semantic_total}")
+            lines.append(f"Router-only semantic-occurrence total: {router_semantic_total}")
         if isinstance(router_semantic_total, int) and source_total != router_semantic_total:
             lines.append(
                 "Source records describe snapshot rows; semantic occurrences describe "
@@ -10868,7 +10885,7 @@ def verbose_router_activity_lines(report: Dict[str, Any], width: int) -> List[st
             )
     else:
         if isinstance(router_semantic_total, int):
-            lines.append(f"Router semantic-occurrence total: {router_semantic_total}")
+            lines.append(f"Router-only semantic-occurrence total: {router_semantic_total}")
         lines.append("Source-record/component detail was unavailable in this compatibility report.")
 
     for title, key, label in (
@@ -10887,7 +10904,8 @@ def verbose_router_activity_lines(report: Dict[str, Any], width: int) -> List[st
             ))
         if isinstance(source_total, int):
             lines.append(
-                f"{label} reconciliation: {sum(int(item.get('event_count', 0)) for item in items)} source record(s)"
+                f"Router-only {label.casefold()} reconciliation: "
+                f"{sum(int(item.get('event_count', 0)) for item in items)} source record(s)"
             )
 
     event_types = [item for item in activity.get("event_type_counts", []) if isinstance(item, dict)]
@@ -10906,7 +10924,7 @@ def verbose_router_activity_lines(report: Dict[str, Any], width: int) -> List[st
             lines.extend(textwrap.wrap(row, width=width, subsequent_indent="    ", break_long_words=True, break_on_hyphens=False) or [row])
         if isinstance(source_total, int):
             lines.append(
-                "Event-type reconciliation: "
+                "Router-only event-type reconciliation: "
                 f"{sum(int(item.get('event_count', 0)) for item in event_types)} source record(s)"
             )
     return lines
@@ -10939,7 +10957,7 @@ def verbose_technical_detail_lines(report: Dict[str, Any], width: int) -> List[s
     lines.append("Occurrence evidence:")
     for label, key in (
         ("All semantic occurrences (router and device)", "body_count"),
-        ("Source records", "source_record_count"),
+        ("All router and device source-record occurrences", "source_record_count"),
         ("Novel occurrences", "novel_count"),
         ("Repeated occurrences", "repeated_count"),
         ("Report-only occurrences", "report_only_count"),

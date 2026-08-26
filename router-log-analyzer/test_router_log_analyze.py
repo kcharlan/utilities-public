@@ -4933,10 +4933,10 @@ def test_tp_link_verbose_text_appends_complete_technical_evidence() -> None:
     assert "Technical Details" not in concise
     assert verbose.index("Technical Details") > verbose.index("Router Activity")
     for expected in (
-        "Source-record total: 8", "Router semantic-occurrence total: 6",
-        "Component reconciliation: 8 source record(s)",
-        "Outcome reconciliation: 8 source record(s)",
-        "Event-type reconciliation: 8 source record(s)",
+        "Router-only source-record total: 8", "Router-only semantic-occurrence total: 6",
+        "Router-only component reconciliation: 8 source record(s)",
+        "Router-only outcome reconciliation: 8 source record(s)",
+        "Router-only event-type reconciliation: 8 source record(s)",
         "Firewall", "Service", "Wan", "Firewall Policy Failure", "9001", "failure",
         "Router behavior comparison (router_behavior): unavailable — no router behavior history",
         "Duration-based partial-run detection (duration_based_partial): unavailable — point snapshot is not a",
@@ -4951,6 +4951,7 @@ def test_tp_link_verbose_text_appends_complete_technical_evidence() -> None:
 def test_tp_link_verbose_details_keep_router_and_client_populations_separate() -> None:
     report = operational_tp_link_report()
     report["occurrences"]["body_count"] = 9
+    report["occurrences"]["source_record_count"] = 11
     report["router_activity"]["system_event_count"] = 6
     report["device_summary"] = [
         {"name": "Router/System", "mac": analyzer.SYSTEM_ACTOR, "total_events": 6,
@@ -4963,13 +4964,73 @@ def test_tp_link_verbose_details_keep_router_and_client_populations_separate() -
 
     rendered = analyzer.render_text_report(report, verbose=True)
 
-    assert "Source-record total: 8" in rendered
-    assert "Router semantic-occurrence total: 6" in rendered
+    assert "Router-only source-record total: 8" in rendered
+    assert "Router-only semantic-occurrence total: 6" in rendered
     assert "All semantic occurrences (router and device): 9" in rendered
+    assert "All router and device source-record occurrences: 11" in rendered
     client_details = rendered.split("Client identifiers and event types:", 1)[1]
     assert "SYNTHETIC CLIENT (02:00:00:00:00:09)" in client_details
     assert "Router/System" not in client_details
     assert analyzer.SYSTEM_ACTOR not in client_details
+
+
+def test_operational_status_summary_describes_visible_high_and_low_findings_when_clean() -> None:
+    report = operational_tp_link_report(findings=[
+        {"kind": "router_security_event", "severity": "high"},
+        {"kind": "router_client_count_anomaly", "severity": "low"},
+    ])
+
+    summary = analyzer.operational_status_summary(report)
+
+    assert summary == (
+        "Clean — 1 high-severity and 1 low-severity findings remain visible below."
+    )
+
+
+@pytest.mark.parametrize(
+    ("counts_line", "expected_reason", "expected_verbose_reason"),
+    [
+        (None, "missing_snapshot_counts", "no client snapshot counts"),
+        ("# Clients connected: 3 ; WI-FI : 4", "inconsistent_snapshot_counts", "inconsistent snapshot counts"),
+        ("# Clients connected: 9999999999 ; WI-FI : 0", "snapshot_count_out_of_range", "snapshot counts were out of range"),
+    ],
+    ids=("missing", "inconsistent", "out-of-range"),
+)
+def test_router_report_preserves_snapshot_exclusion_reasons_in_verbose_evidence(
+    counts_line: str | None,
+    expected_reason: str,
+    expected_verbose_reason: str,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(
+            ["2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected"],
+            counts_line=counts_line,
+        ),
+        "synthetic-snapshot-reason.log",
+        "tp-link-archer",
+    )
+    sections = analyzer.build_router_report_sections(
+        parsed,
+        "SYNTHETIC ROUTER",
+        parsed.events,
+        {"all": []},
+        [],
+        0,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    )
+
+    assert sections["snapshot"]["unavailable_reason"] == expected_reason
+    assert sections["availability"]["checks"]["snapshot_counts"] == {
+        "available": False,
+        "unavailable_reason": expected_reason,
+    }
+
+    report = operational_tp_link_report()
+    report.update(sections)
+    verbose = analyzer.render_text_report(report, verbose=True)
+    assert (
+        "Client snapshot counts (snapshot_counts): unavailable — " + expected_verbose_reason
+    ) in verbose
 
 
 def test_tp_link_verbose_technical_rows_wrap_at_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:
