@@ -9834,6 +9834,7 @@ def build_router_report_sections(
         "explicit_security_mapping": bool(security_findings) or any(
             is_explicit_router_security_event(event) for event in events
         ),
+        "ambiguous_firmware_profile": "ambiguous_firmware_profile" in parsed.warnings,
     }
     checks = {
         name: asdict(detector_eligibility(name, parsed.capabilities, events, eligibility_evidence))
@@ -10735,6 +10736,11 @@ def operational_limitation_lines(report: Dict[str, Any], verbose: bool = False) 
     warnings.difference_update({"missing_lan_header", "missing_wan_header", "missing_wan_gateway_dns_header"})
     if not checks.get("router_security", {}).get("available", True):
         lines.append("No recognized router-security mapping was available in this export.")
+    if checks.get("router_behavior", {}).get("unavailable_reason") == "ambiguous_firmware_profile":
+        lines.append(
+            "Router behavior comparison was unavailable because events could not be assigned "
+            "unambiguously to a firmware profile."
+        )
     if coverage.get("body_records", 0) and not coverage.get("trusted_records", 0):
         lines.append("Body-event calendar and time analysis was unavailable because no trusted timestamps were present.")
     malformed = coverage.get("malformed_lines", 0)
@@ -10848,10 +10854,16 @@ def render_operational_text_report(report: Dict[str, Any], width: int, verbose: 
     lines.extend(operational_section("Router Activity", operational_activity_lines(activity, occurrences, width), width))
     device_items = [item for item in report.get("device_summary", []) if item.get("mac") != SYSTEM_ACTOR]
     if device_items:
-        device_lines = [wrapped for item in group_device_summary(device_items) for wrapped in textwrap.wrap(
-            f"{item.get('name') or item.get('mac')}: {item.get('total_events', 0)} event(s), {item.get('dhcp_count', 0)} DHCP",
-            width=width, break_long_words=True, break_on_hyphens=False,
-        )]
+        device_lines: List[str] = []
+        for item in group_device_summary(device_items):
+            name = str(item.get("name") or "Unknown device")
+            heading = f"{name} ({item['count']})" if item["count"] > 1 else name
+            detail = f"{heading}: {item['events']} event(s), {item['dhcp']} DHCP"
+            if item["incident_explained"]:
+                detail += f", {item['incident_explained']} incident-explained"
+            device_lines.extend(textwrap.wrap(
+                detail, width=width, break_long_words=True, break_on_hyphens=False,
+            ))
         lines.extend(operational_section("Device Activity", device_lines, width))
     limitations = operational_limitation_lines(report, verbose=verbose)
     if limitations:

@@ -4922,6 +4922,21 @@ def test_tp_link_operational_report_handles_zero_events_and_missing_projection()
     assert "source/component detail was unavailable" in rendered
 
 
+def test_tp_link_device_activity_uses_grouped_counts_and_explained_events() -> None:
+    report = operational_tp_link_report()
+    report["device_summary"] = [
+        {"name": "SYNTHETIC SENSOR", "mac": "02:00:00:00:00:03", "total_events": 3,
+         "dhcp_count": 1, "incident_explained_events": 2, "event_types": []},
+        {"name": "SYNTHETIC SENSOR", "mac": "02:00:00:00:00:04", "total_events": 4,
+         "dhcp_count": 2, "incident_explained_events": 0, "event_types": []},
+    ]
+
+    rendered = analyzer.render_text_report(report)
+
+    assert "SYNTHETIC SENSOR (2): 7 event(s), 3 DHCP, 2 incident-explained" in rendered
+    assert "SYNTHETIC SENSOR (2): 0 event(s), 0 DHCP" not in rendered
+
+
 @pytest.mark.parametrize("columns", [60, 80])
 def test_tp_link_operational_report_wraps_at_60_and_80_columns(
     monkeypatch: pytest.MonkeyPatch, columns: int,
@@ -10396,6 +10411,12 @@ def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
     )
     assert "ambiguous_firmware_profile" in reports[1]["clock"]["warnings"]
     assert reports[1]["router_activity"]["behavior_history_queried"] is False
+    assert reports[1]["availability"]["checks"]["router_behavior"] == {
+        "available": False, "unavailable_reason": "ambiguous_firmware_profile",
+    }
+    assert "comparison was unavailable because events could not be assigned unambiguously to a firmware profile" in re.sub(
+        r"\s+", " ", analyzer.render_text_report(reports[1]),
+    )
     store = analyzer.StateStore(db_path)
     try:
         rows = list(store.conn.execute(
