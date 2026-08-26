@@ -273,6 +273,13 @@ class RouterBehaviorHistory:
 
 
 @dataclass(frozen=True)
+class FirmwareLearningPartition:
+    previous_profile: Tuple[Event, ...] = ()
+    ambiguous: Tuple[Event, ...] = ()
+    current_profile: Tuple[Event, ...] = ()
+
+
+@dataclass(frozen=True)
 class RouterIdentityCandidate:
     canonical_vendor: str
     lan_mac: Optional[str] = None
@@ -5327,9 +5334,21 @@ class StateStore:
         before_cursor: Tuple[str, int],
         exclude_run_id: Optional[int],
     ) -> Optional[str]:
+        context = self.fetch_previous_known_firmware_context(
+            router_instance_id, before_cursor, exclude_run_id,
+        )
+        return context[0] if context is not None else None
+
+    def fetch_previous_known_firmware_context(
+        self,
+        router_instance_id: int,
+        before_cursor: Tuple[str, int],
+        exclude_run_id: Optional[int],
+    ) -> Optional[Tuple[str, datetime]]:
         export_timestamp, cursor_run_id = before_cursor
         query = """
-            SELECT metadata.firmware_normalized
+            SELECT metadata.firmware_normalized,
+                   COALESCE(run.export_timestamp, metadata.export_timestamp) AS observed_at
             FROM router_metadata_observations AS metadata
             JOIN runs AS run ON run.id = metadata.run_id
             WHERE metadata.router_instance_id = ?
@@ -5354,7 +5373,9 @@ class StateStore:
             params.append(exclude_run_id)
         query += " ORDER BY COALESCE(run.export_timestamp, metadata.export_timestamp) DESC, run.id DESC LIMIT 1"
         row = self.conn.execute(query, params).fetchone()
-        return row["firmware_normalized"] if row is not None else None
+        if row is None:
+            return None
+        return row["firmware_normalized"], datetime.fromisoformat(row["observed_at"])
 
     def fetch_device_metric_history(
         self,
@@ -7769,11 +7790,16 @@ def detect_stable_client_discovery(
 
     findings: List[Finding] = []
     for mac, client_events in sorted(grouped.items()):
-        rejected = capabilities.client_access_decision_equivalence and any(
-            event.structured_evidence.get("action") in {"blocked", "denied", "rejected"}
-            or event.event_key in {"WLAN_ACCESS_REJECTED", "CLIENT_ACCESS_REJECTED"}
-            for event in client_events
-        )
+        rejected_events = [
+            event for event in client_events
+            if capabilities.client_access_decision_equivalence
+            and (
+                event.structured_evidence.get("action") in {"blocked", "denied", "rejected"}
+                or event.event_key in {"WLAN_ACCESS_REJECTED", "CLIENT_ACCESS_REJECTED"}
+            )
+        ]
+        rejected = bool(rejected_events)
+        rejection_event = rejected_events[0] if rejected_events else None
         known_device = devices_snapshot.get(mac)
         if known_device is not None:
             if not rejected or (known_device.get("status") or "").casefold() != "blocked":
@@ -7781,8 +7807,8 @@ def detect_stable_client_discovery(
             device_name = normalized_device_name(known_device.get("name"), mac)
             severity = enforce_policy_severity(
                 "critical", policy,
-                event_key=next(event.event_key for event in client_events if rejected),
-                event_family=next(event.event_family for event in client_events if rejected),
+                event_key=rejection_event.event_key if rejection_event is not None else None,
+                event_family=rejection_event.event_family if rejection_event is not None else None,
                 mac=mac, device_name=device_name,
                 finding_kind="blocked_device_activity",
             )
@@ -7797,8 +7823,8 @@ def detect_stable_client_discovery(
         severity = enforce_policy_severity(
             "high" if rejected else "medium",
             policy,
-            event_key=next((event.event_key for event in client_events if rejected), None),
-            event_family=next((event.event_family for event in client_events if rejected), None),
+            event_key=rejection_event.event_key if rejection_event is not None else None,
+            event_family=rejection_event.event_family if rejection_event is not None else None,
             mac=mac,
             device_name=normalized_device_name(devices_snapshot.get(mac, {}).get("name"), mac),
             finding_kind=kind,
@@ -7887,6 +7913,15 @@ ROUTER_SECURITY_EVENT_SEVERITY: Dict[Tuple[str, str], str] = {
 }
 
 
+def router_security_default_severity(event: Event) -> Optional[str]:
+    action = str(event.structured_evidence.get("action") or "").casefold()
+    return ROUTER_SECURITY_EVENT_SEVERITY.get(((event.component or "").casefold(), action))
+
+
+def is_explicit_router_security_event(event: Event) -> bool:
+    return router_security_default_severity(event) is not None
+
+
 def detect_router_security_events(
     events: Sequence[Event],
     capabilities: RouterCapabilities,
@@ -7897,8 +7932,7 @@ def detect_router_security_events(
     findings: List[Finding] = []
     for event in events:
         action = str(event.structured_evidence.get("action") or "").casefold()
-        mapping_key = ((event.component or "").casefold(), action)
-        default_severity = ROUTER_SECURITY_EVENT_SEVERITY.get(mapping_key)
+        default_severity = router_security_default_severity(event)
         if default_severity is None or not bool(event.occurrence_novel):
             continue
         severity = enforce_policy_severity(
@@ -7940,6 +7974,7 @@ def detect_router_behavior(
         if event.actor_scope == "router"
         and event.clock_trust == "trusted"
         and bool(event.occurrence_novel)
+        and not is_explicit_router_security_event(event)
         and (
             event.event_key in capabilities.supported_event_keys
             or event.event_family in capabilities.supported_event_families
@@ -7982,6 +8017,35 @@ def detect_router_behavior(
             },
         ))
     return findings
+
+
+def partition_router_firmware_learning_events(
+    events: Sequence[Event],
+    previous_observed_at: Optional[datetime],
+    firmware_changed: bool,
+) -> FirmwareLearningPartition:
+    if not firmware_changed or previous_observed_at is None:
+        return FirmwareLearningPartition(current_profile=tuple(events))
+    previous = tuple(event for event in events if event.timestamp < previous_observed_at)
+    later = [event for event in events if event.timestamp >= previous_observed_at]
+    post_upgrade_boot = min(
+        (
+            event.timestamp for event in later
+            if event.event_key == "ROUTER_BOOT"
+            and event.boot_session_id is not None
+        ),
+        default=None,
+    )
+    if post_upgrade_boot is None:
+        return FirmwareLearningPartition(
+            previous_profile=previous,
+            ambiguous=tuple(later),
+        )
+    return FirmwareLearningPartition(
+        previous_profile=previous,
+        ambiguous=tuple(event for event in later if event.timestamp < post_upgrade_boot),
+        current_profile=tuple(event for event in later if event.timestamp >= post_upgrade_boot),
+    )
 
 
 def detect_router_firmware_change(
@@ -11019,6 +11083,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         analysis_aggregate["subject_behavior_day_stats"] = analysis_subject_stats
         analysis_aggregate["behavior_subjects"] = analysis_subjects
         additional_findings: List[Finding] = []
+        router_behavior_events = [
+            event for event in analyzed_events
+            if event.actor_scope == "router" and not is_explicit_router_security_event(event)
+        ]
+        adapter_firmware_ambiguous = "ambiguous_firmware_profile" in parsed.warnings
         if (
             parsed.format_id != FORMAT_NETGEAR
             and existing_run is None
@@ -11033,7 +11102,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     epoch["id"],
                     cursor,
                     reserved_run_id,
-                    int(policy["learning"]["rolling_days_frequent"]),
+                    7,
                 )
                 additional_findings.extend(
                     detect_router_snapshot_count_anomaly(metrics, snapshot_history, policy)
@@ -11042,16 +11111,42 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             firmware_profile_id, current_firmware = store.current_router_firmware_context(
                 reserved_run_id, router_instance_id,
             )
-            previous_firmware = store.fetch_previous_known_firmware(
+            previous_context = store.fetch_previous_known_firmware_context(
                 router_instance_id, cursor, reserved_run_id,
             )
+            previous_firmware = previous_context[0] if previous_context is not None else None
             firmware_finding = detect_router_firmware_change(
                 previous_firmware, current_firmware, policy,
             )
             if firmware_finding is not None:
                 additional_findings.append(firmware_finding)
 
-            if firmware_profile_id is not None and "ambiguous_firmware_profile" not in parsed.warnings:
+            firmware_partition = partition_router_firmware_learning_events(
+                router_behavior_events,
+                previous_context[1] if previous_context is not None else None,
+                firmware_changed=(
+                    previous_firmware not in {None, "unknown-firmware", "unknown-legacy-firmware"}
+                    and current_firmware not in {None, "unknown-firmware", "unknown-legacy-firmware"}
+                    and previous_firmware != current_firmware
+                ),
+            )
+            router_behavior_events = list(firmware_partition.current_profile)
+            if firmware_partition.ambiguous:
+                if "ambiguous_firmware_profile" not in parsed.warnings:
+                    parsed.warnings.append("ambiguous_firmware_profile")
+                metadata_row = store.conn.execute(
+                    "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+                    (reserved_run_id,),
+                ).fetchone()
+                metadata = json.loads(metadata_row["metadata_json"] or "{}")
+                metadata["ambiguous_firmware_occurrence_count"] = len(firmware_partition.ambiguous)
+                metadata["previous_profile_occurrence_count"] = len(firmware_partition.previous_profile)
+                store.conn.execute(
+                    "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
+                    (json_dumps(metadata), reserved_run_id),
+                )
+
+            if firmware_profile_id is not None and not adapter_firmware_ambiguous:
                 router_history = store.fetch_router_behavior_history(
                     router_instance_id,
                     epoch["id"],
@@ -11060,7 +11155,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     reserved_run_id,
                 )
                 additional_findings.extend(detect_router_behavior(
-                    analyzed_events, parsed.capabilities, router_history, policy,
+                    router_behavior_events, parsed.capabilities, router_history, policy,
                 ))
         findings = detect_anomalies(
             aggregate=analysis_aggregate,
@@ -11097,10 +11192,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 event for event in analyzed_events if event.occurrence_digest is not None
             ]
             persistence_events = occurrence_events
+            router_behavior_digests = {
+                event.occurrence_digest for event in router_behavior_events
+                if event.occurrence_digest is not None
+            }
             learning_ownership_events = [
                 event for event in occurrence_events
                 if (
                     event.actor_scope == "router"
+                    and event.occurrence_digest in router_behavior_digests
                     and parsed.capabilities.router_system_events
                     and (
                         event.clock_trust == "trusted"
@@ -11129,8 +11229,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 seed_baseline,
                 devices_snapshot,
             )
+            subject_learning_events = [
+                event for event in persistence_events
+                if event.actor_scope != "router"
+                or event.occurrence_digest in router_behavior_digests
+            ]
+            subject_learning_aggregate = aggregate_events(
+                subject_learning_events,
+                seed_baseline,
+                devices_snapshot,
+            )
             persistence_subject_stats, persistence_subjects = build_subject_behavior_day_stats(
-                persistence_aggregate,
+                subject_learning_aggregate,
                 policy,
                 router_subject_key,
             )

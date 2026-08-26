@@ -9046,6 +9046,39 @@ def test_new_rejected_device_is_one_consolidated_high_finding() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ({"suppress": True}, None),
+        ({"maximum_severity": "medium"}, "medium"),
+        ({"minimum_severity": "critical"}, "critical"),
+    ],
+)
+def test_new_rejected_device_uses_rejection_event_policy(
+    override: dict[str, object],
+    expected: str | None,
+) -> None:
+    mac = "02:00:00:00:20:05"
+    present = replace(
+        make_event("2042-06-15T12:00:00", mac, "CLIENT_PRESENT", "CLIENT"),
+        actor_scope="device", stable_client_identity=mac, occurrence_novel=True,
+    )
+    rejected = replace(
+        make_event("2042-06-15T12:00:01", mac, "CLIENT_ACCESS_REJECTED", "ACCESS_CONTROL"),
+        actor_scope="device", stable_client_identity=mac, occurrence_novel=True,
+        structured_evidence={"action": "rejected"},
+    )
+    policy = copy.deepcopy(analyzer.DEFAULT_POLICY)
+    policy["event_overrides"]["CLIENT_ACCESS_REJECTED"] = override
+    capabilities = analyzer.RouterCapabilities(
+        stable_client_identity=True, client_access_decision_equivalence=True,
+    )
+    findings = analyzer.detect_stable_client_discovery(
+        [present, rejected], {}, capabilities, policy
+    )
+    assert ([finding.severity for finding in findings] or [None]) == [expected]
+
+
 def test_known_blocked_device_rejection_uses_existing_actionable_finding_path() -> None:
     mac = "02:00:00:00:20:04"
     rejected = replace(
@@ -9112,6 +9145,42 @@ def test_router_snapshot_history_uses_strict_cursor_and_seven_observation_limit(
         store.close()
 
 
+def test_main_snapshot_history_limit_is_fixed_at_seven_not_device_policy(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "snapshot-limit.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+        policy = copy.deepcopy(analyzer.DEFAULT_POLICY)
+        policy["learning"]["rolling_days_frequent"] = 2
+        store.import_policy(tmp_path / "synthetic-policy.json", policy)
+    finally:
+        store.close()
+    log_path = tmp_path / "synthetic-snapshot-limit.log"
+    log_path.write_text(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
+        ]),
+        encoding="utf-8",
+    )
+    observed_limits: list[int] = []
+    original = analyzer.StateStore.fetch_router_snapshot_history
+
+    def capture_limit(self: analyzer.StateStore, *args: object, **kwargs: object):
+        observed_limits.append(int(args[-1]))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(analyzer.StateStore, "fetch_router_snapshot_history", capture_limit)
+    assert analyzer.main([
+        str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+    ]) == 0
+    capsys.readouterr()
+    assert observed_limits == [7]
+
+
 def test_snapshot_count_anomaly_requires_three_history_rows_and_has_post_policy_low_ceiling() -> None:
     metrics = analyzer.RouterSnapshotMetrics(
         raw_total_clients="40", raw_wifi_clients="30",
@@ -9163,6 +9232,112 @@ def test_router_security_mapping_is_explicit_and_does_not_trust_syslog_severity_
         capabilities,
         copy.deepcopy(analyzer.DEFAULT_POLICY),
     ) == []
+
+
+def test_explicit_router_security_is_not_router_behavior_inventory() -> None:
+    security = replace(
+        make_event("2042-06-15T12:00:00", analyzer.SYSTEM_ACTOR, "FIREWALL_4101_FAILURE", "ROUTER_SYSTEM"),
+        actor_scope="router", component="firewall", vendor_event_code="4101",
+        structured_evidence={"action": "failure"}, clock_trust="trusted",
+        occurrence_novel=True,
+    )
+    capabilities = analyzer.RouterCapabilities(
+        router_system_events=True, supported_event_families={"ROUTER_SYSTEM"},
+    )
+    history = analyzer.RouterBehaviorHistory(eligible_observation_count=3)
+    assert analyzer.detect_router_security_events(
+        [security], capabilities, copy.deepcopy(analyzer.DEFAULT_POLICY)
+    )
+    assert analyzer.detect_router_behavior(
+        [security], capabilities, history, copy.deepcopy(analyzer.DEFAULT_POLICY)
+    ) == []
+
+
+def test_firmware_learning_partition_excludes_old_and_ambiguous_upgrade_records() -> None:
+    def router_event(timestamp: str, key: str, action: str) -> analyzer.Event:
+        return replace(
+            make_event(timestamp, analyzer.SYSTEM_ACTOR, key, "ROUTER_SYSTEM"),
+            actor_scope="router", component="service", clock_trust="trusted",
+            occurrence_novel=True, structured_evidence={"action": action},
+        )
+
+    older = router_event("2042-06-09T12:00:00", "SERVICE_1001_SUCCESS", "success")
+    ambiguous = router_event("2042-06-11T12:00:00", "SERVICE_1002_SUCCESS", "success")
+    boot = replace(
+        router_event("2042-06-12T12:00:00", "ROUTER_BOOT", "start"),
+        component="system", boot_session_id="synthetic-session",
+    )
+    current = router_event("2042-06-12T12:00:01", "SERVICE_1003_SUCCESS", "success")
+
+    partition = analyzer.partition_router_firmware_learning_events(
+        [older, ambiguous, boot, current],
+        previous_observed_at=datetime.fromisoformat("2042-06-10T12:00:00"),
+        firmware_changed=True,
+    )
+    assert partition.previous_profile == (older,)
+    assert partition.ambiguous == (ambiguous,)
+    assert partition.current_profile == (boot, current)
+
+    unresolved = analyzer.partition_router_firmware_learning_events(
+        [older, ambiguous],
+        previous_observed_at=datetime.fromisoformat("2042-06-10T12:00:00"),
+        firmware_changed=True,
+    )
+    assert unresolved.previous_profile == (older,)
+    assert unresolved.ambiguous == (ambiguous,)
+    assert unresolved.current_profile == ()
+
+
+def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "firmware-upgrade.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+    logs = [
+        ("2042-06-10", "9.99.1 Build 20420101 rel.10001n"),
+        ("2042-06-11", "9.99.2 Build 20420102 rel.10002n"),
+    ]
+    reports = []
+    for index, (day, firmware) in enumerate(logs, start=1):
+        log_path = tmp_path / f"synthetic-upgrade-{index}.log"
+        log_path.write_text(
+            tp_link_synthetic_snapshot(
+                [f"{day} 11:59:00 service[42]: <6> 2001 Routine health success"],
+                export_time=f"{day} 12:00:00",
+                firmware=firmware,
+            ),
+            encoding="utf-8",
+        )
+        assert analyzer.main([
+            str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+        ]) == 0
+        reports.append(json.loads(capsys.readouterr().out))
+
+    assert any(
+        finding["kind"] == "router_firmware_change"
+        for finding in reports[1]["findings"]["all"]
+    )
+    store = analyzer.StateStore(db_path)
+    try:
+        rows = list(store.conn.execute(
+            "SELECT metadata_json FROM router_metadata_observations ORDER BY run_id"
+        ))
+        first = json.loads(rows[0][0])
+        second = json.loads(rows[1][0])
+        assert first["learning_owned_occurrence_ids"]
+        assert second["learning_owned_occurrence_ids"] == []
+        assert second["ambiguous_firmware_occurrence_count"] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(DISTINCT subject_key) FROM subject_behavior_daily_stats "
+            "WHERE subject_type = 'router'"
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
 
 
 def test_high_router_security_finding_quarantines_only_its_router_profile_subject() -> None:
@@ -9335,6 +9510,7 @@ def test_tp_link_main_scores_explicit_security_and_fourth_snapshot_count_only_lo
                 "SELECT metadata_json FROM router_metadata_observations ORDER BY run_id"
             )
         ]
-        assert all(owned for owned in ownership), ownership
+        assert ownership[0] == []
+        assert all(owned for owned in ownership[1:]), ownership
     finally:
         store.close()
