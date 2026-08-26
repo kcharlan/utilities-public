@@ -6981,6 +6981,89 @@ def test_tp_link_activity_preserves_source_record_multiplicity_on_first_and_dupl
         store.close()
 
 
+def test_duplicate_collapse_preserves_source_order_with_report_only_events(tmp_path: Path) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+        ]),
+        "synthetic-collapse-order.log",
+        "tp-link-archer",
+    )
+    representative = parsed.events[0]
+    report_only = replace(
+        representative,
+        event_key="SYNTHETIC_REPORT_ONLY",
+        boot_context_id="synthetic-unresolved-boot",
+        source_sequence=3,
+    )
+    persistable = replace(
+        representative,
+        event_key="SYNTHETIC_PERSISTABLE",
+        boot_context_id=None,
+        source_sequence=2,
+    )
+    parsed.events = [report_only, persistable, replace(persistable, source_sequence=1)]
+    parsed.boot_candidates = [analyzer.BootSessionCandidate("synthetic-unresolved-boot")]
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        router_id = store.resolve_router_instance(parsed)
+        collapsed = store.collapse_existing_run_events(1, router_id, parsed)
+    finally:
+        store.close()
+
+    assert [event.source_sequence for event in collapsed] == [3, 2]
+    assert [(event.occurrence_novel, event.occurrence_repeated) for event in collapsed] == [
+        (False, True), (False, True),
+    ]
+    assert [event.source_record_count for event in collapsed] == [1, 2]
+
+
+def test_router_activity_event_type_sorting_distinguishes_missing_and_empty_vendor_codes() -> None:
+    base = make_event("2042-06-15T11:59:00", analyzer.SYSTEM_ACTOR, "SYNTHETIC_EVENT")
+    events = [
+        replace(base, actor_scope="router", component="synthetic", vendor_event_code=""),
+        replace(base, actor_scope="router", component="synthetic", vendor_event_code=None),
+    ]
+
+    activity = analyzer.project_router_activity(events)
+
+    assert [item["vendor_event_code"] for item in activity["event_type_counts"]] == [None, ""]
+
+
+@pytest.mark.parametrize("source_record_count", [0, -2, "synthetic-invalid"])
+def test_router_activity_and_persistence_fall_back_from_invalid_source_record_count(
+    tmp_path: Path,
+    source_record_count: object,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+        ]),
+        "synthetic-invalid-source-count.log",
+        "tp-link-archer",
+    )
+    parsed.events = [replace(parsed.events[0], source_record_count=source_record_count)]
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.resolve_router_instance(parsed)
+        run_id = store.insert_run(
+            epoch_id, None, "synthetic-invalid-source-count", tmp_path / "synthetic.log",
+            parsed.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=parsed.format_id,
+            export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+        )
+        result = store.persist_router_provenance(run_id, router_id, parsed)
+        assert result["events"][0].source_record_count == 1
+        assert store.conn.execute(
+            "SELECT source_count FROM run_event_occurrences WHERE run_id = ?", (run_id,)
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+    assert analyzer.project_router_activity(result["events"])["source_record_count"] == 1
+
+
 def test_cross_router_interface_client_conflict_warns_without_suppressing_client(
     tmp_path: Path,
 ) -> None:

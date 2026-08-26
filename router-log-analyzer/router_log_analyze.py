@@ -4004,7 +4004,10 @@ class StateStore:
             replace(event, source_record_count=max(1, source_count))
             for event, source_count in collapsed.values()
         ]
-        return [*persistable_events, *report_only_events]
+        return sorted(
+            [*persistable_events, *report_only_events],
+            key=lambda event: -(event.source_sequence or 0),
+        )
 
     def persist_router_provenance(
         self,
@@ -9790,7 +9793,10 @@ def project_router_activity(events: Sequence[Event]) -> Dict[str, Any]:
             for (component, event_key, vendor_event_code, outcome), event_count in sorted(
                 event_type_counts.items(),
                 key=lambda item: (
-                    item[0][0], item[0][1], item[0][2] or "", item[0][3],
+                    item[0][0],
+                    item[0][1],
+                    (0, "") if item[0][2] is None else (1, item[0][2]),
+                    item[0][3],
                 ),
             )
         ],
