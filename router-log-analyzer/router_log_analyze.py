@@ -7819,6 +7819,10 @@ def detector_eligibility(
     """Return the one local evidence/capability decision used by analysis paths."""
     has_trusted_time = any(event.clock_trust == "trusted" for event in events)
     checks: Dict[str, Tuple[bool, str]] = {
+        "duration_based_partial": (
+            capabilities.coverage_mode == "continuous_log",
+            "point_snapshot_not_continuous",
+        ),
         "stable_client_discovery": (
             capabilities.stable_client_identity,
             "no_stable_client_identity",
@@ -9697,6 +9701,7 @@ def build_priority_findings(findings: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 REPORT_CHECKS = (
+    "duration_based_partial",
     "stable_client_discovery",
     "current_rejected_client",
     "device_dhcp_metrics",
@@ -9719,6 +9724,7 @@ def build_router_report_sections(
     findings: Dict[str, Any],
     snapshot_history: Sequence[sqlite3.Row],
     router_behavior_history_count: int,
+    policy: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Project already-computed router evidence into stable, renderer-neutral sections."""
     metrics = parsed.snapshot_metrics or RouterSnapshotMetrics(
@@ -9762,15 +9768,24 @@ def build_router_report_sections(
         repeated_count = 0
         report_only_count = 0
 
-    learned_ranges: Dict[str, List[int]] = {}
+    learned_ranges: Dict[str, List[float]] = {}
     for key, column in (
         ("total", "total_clients"),
         ("wifi", "wifi_clients"),
         ("wired", "derived_wired_clients"),
     ):
         values = [int(row[column]) for row in snapshot_history if row[column] is not None]
-        if values:
-            learned_ranges[key] = [min(values), max(values)]
+        profile = compute_numeric_profile(
+            values,
+            None,
+            0.0,
+            float(policy["learning"]["stddev_floor"]),
+        )
+        if profile is not None:
+            learned_ranges[key] = [
+                round(profile["range_min"], 2),
+                round(profile["range_max"], 2),
+            ]
 
     boot_warnings = sorted({
         warning
@@ -10373,6 +10388,8 @@ def router_report_summary_items(report: Dict[str, Any]) -> List[Tuple[str, Any]]
     counts = snapshot["counts"]
     occurrences = report["occurrences"]
     activity = report["router_activity"]
+    clock = report["clock"]
+    coverage = report["coverage"]
     security_severities = [
         item["severity"].upper() for item in activity.get("security_findings", [])
     ]
@@ -10397,6 +10414,17 @@ def router_report_summary_items(report: Dict[str, Any]) -> List[Tuple[str, Any]]
             str(activity["new_device_finding_count"])
             if activity["new_device_finding_count"] else "0 (normal)"
         )
+    clock_segments = "; ".join(
+        (
+            f"{segment['segment_id']}: {segment['clock_trust']} "
+            f"(sequence "
+            f"{segment.get('start_sequence') if segment.get('start_sequence') is not None else 'n/a'}-"
+            f"{segment.get('end_sequence') if segment.get('end_sequence') is not None else 'n/a'})"
+        )
+        for segment in clock.get("segments", [])
+    ) or "None"
+    boot_warnings = ", ".join(clock.get("boot_resolution_warnings", [])) or "None"
+    parser_warnings = ", ".join(clock.get("warnings", [])) or "None"
     items: List[Tuple[str, Any]] = [
         ("Router", router["label"]),
         ("Router model", router.get("model") or "unavailable"),
@@ -10416,6 +10444,34 @@ def router_report_summary_items(report: Dict[str, Any]) -> List[Tuple[str, Any]]
         ("Router security findings", security_value),
         ("New device findings", new_device_value),
         ("Unavailable checks", unavailable_check_text(report)),
+        ("Clock segments", clock_segments),
+        (
+            "Boot resolution",
+            f"{clock['resolved_boot_session_count']} resolved / "
+            f"{clock['boot_candidate_count']} candidate(s)",
+        ),
+        ("Boot warnings", boot_warnings),
+        ("Parser warnings", parser_warnings),
+        (
+            "Coverage records",
+            f"body {coverage.get('body_records', 0)}, "
+            f"trusted {coverage.get('trusted_records', 0)}, "
+            f"untrusted {coverage.get('untrusted_records', 0)}, "
+            f"timing-eligible {coverage.get('timing_eligible_records', 0)}",
+        ),
+        (
+            "Coverage span",
+            f"{coverage.get('run_span_start') or 'unavailable'} to "
+            f"{coverage.get('run_span_end') or 'unavailable'}",
+        ),
+        (
+            "Coverage lines",
+            f"parsed {coverage['parsed_events']}, ignored {coverage['ignored_lines']}, "
+            f"malformed {coverage['malformed_lines']}, "
+            f"export-noise {coverage['export_noise_lines']}",
+        ),
+        ("LAN coverage", json_dumps(coverage.get("lan")) if coverage.get("lan") else "unavailable"),
+        ("WAN coverage", json_dumps(coverage.get("wan")) if coverage.get("wan") else "unavailable"),
     ]
     if occurrences["fully_repeated"]:
         items.append(("Snapshot body", "All body occurrences were already seen"))
@@ -11738,6 +11794,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             findings=findings_to_dict(findings, aggregate),
             snapshot_history=snapshot_history,
             router_behavior_history_count=router_behavior_history_count,
+            policy=policy,
         )
 
         report = build_report_data(

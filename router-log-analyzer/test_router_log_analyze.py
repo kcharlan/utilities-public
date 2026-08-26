@@ -4521,7 +4521,9 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
     log_path.write_text(
         tp_link_synthetic_snapshot([
             "2042-06-15 11:59:00 firewall[41]: <4> 4101 Policy failure",
-        ]),
+        ]).replace(
+            "# G = 198.51.100.1 ; DNS = 203.0.113.53 203.0.113.54\n", ""
+        ),
         encoding="utf-8",
     )
 
@@ -4565,7 +4567,12 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
     assert report["availability"]["checks"]["snapshot_counts"] == {
         "available": True, "unavailable_reason": None,
     }
+    assert report["availability"]["checks"]["duration_based_partial"] == {
+        "available": False,
+        "unavailable_reason": "point_snapshot_not_continuous",
+    }
     assert report["clock"]["segments"]
+    assert "missing_wan_gateway_dns_header" in report["clock"]["warnings"]
 
     rendered = {
         "text": analyzer.render_text_report(report),
@@ -4581,6 +4588,12 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
         assert "Unavailable checks" in output
         assert "Snapshot assessment" in output
         assert "normal" in output
+        assert "missing_wan_gateway_dns_header" in output
+        assert "Coverage records" in output
+        assert "Coverage lines" in output
+        for segment in report["clock"]["segments"]:
+            assert segment["segment_id"] in output
+            assert segment["clock_trust"] in output
 
 
 def test_tp_link_fully_repeated_snapshot_is_explicit_in_all_renderers(
@@ -4705,6 +4718,40 @@ def test_exported_baseline_remains_portable_and_excludes_router_provenance(
         "snapshot_metrics", "metadata_history",
     ):
         assert forbidden not in serialized
+
+
+def test_snapshot_report_ranges_use_the_detector_numeric_profiles() -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
+        ]),
+        "synthetic-profile-report.log",
+        "tp-link-archer",
+    )
+    history = [
+        {"total_clients": 10, "wifi_clients": 7, "derived_wired_clients": 3},
+        {"total_clients": 11, "wifi_clients": 8, "derived_wired_clients": 3},
+        {"total_clients": 9, "wifi_clients": 6, "derived_wired_clients": 3},
+    ]
+    policy = copy.deepcopy(analyzer.DEFAULT_POLICY)
+    policy["learning"]["stddev_floor"] = 1.5
+
+    sections = analyzer.build_router_report_sections(
+        parsed, "SYNTHETIC ROUTER", parsed.events, {"all": []}, history, 0, policy,
+    )
+
+    expected = {}
+    for label, field in (
+        ("total", "total_clients"),
+        ("wifi", "wifi_clients"),
+        ("wired", "derived_wired_clients"),
+    ):
+        profile = analyzer.compute_numeric_profile(
+            [float(row[field]) for row in history], None, 0.0, 1.5,
+        )
+        assert profile is not None
+        expected[label] = [round(profile["range_min"], 2), round(profile["range_max"], 2)]
+    assert sections["snapshot"]["learned_ranges"] == expected
 
 
 @pytest.mark.parametrize(
@@ -6336,6 +6383,7 @@ def test_anchorless_boot_context_stays_report_only_and_out_of_cross_run_history(
         assert all(event.occurrence_novel for event in result["events"])
         assert result["boot_session_ids"] == []
         assert result["novel_count"] == 0
+        parsed.warnings.append("synthetic_parser_warning")
         report_sections = analyzer.build_router_report_sections(
             parsed,
             "SYNTHETIC ROUTER",
@@ -6343,6 +6391,7 @@ def test_anchorless_boot_context_stays_report_only_and_out_of_cross_run_history(
             {"all": []},
             [],
             0,
+            copy.deepcopy(analyzer.DEFAULT_POLICY),
         )
         assert report_sections["occurrences"] == {
             "body_count": 2,
@@ -6351,6 +6400,53 @@ def test_anchorless_boot_context_stays_report_only_and_out_of_cross_run_history(
             "report_only_count": 2,
             "fully_repeated": False,
         }
+        report = {
+            "router": report_sections["router"],
+            "snapshot": report_sections["snapshot"],
+            "occurrences": report_sections["occurrences"],
+            "router_activity": report_sections["router_activity"],
+            "availability": report_sections["availability"],
+            "clock": report_sections["clock"],
+            "coverage": report_sections["coverage"],
+        }
+        summary_items = dict(analyzer.router_report_summary_items(report))
+        for segment in report_sections["clock"]["segments"]:
+            assert segment["segment_id"] in summary_items["Clock segments"]
+            assert segment["clock_trust"] in summary_items["Clock segments"]
+        assert summary_items["Boot resolution"] == "0 resolved / 1 candidate(s)"
+        assert "no_trusted_boot_anchor" in summary_items["Boot warnings"]
+        assert "synthetic_parser_warning" in summary_items["Parser warnings"]
+        assert summary_items["Coverage records"] == (
+            "body 2, trusted 0, untrusted 2, timing-eligible 0"
+        )
+        assert summary_items["Coverage lines"] == (
+            f"parsed 2, ignored {parsed.parse_stats.ignored_lines}, "
+            f"malformed {parsed.parse_stats.malformed_lines}, "
+            f"export-noise {parsed.parse_stats.export_noise_lines}"
+        )
+        report.update({
+            "parse_stats": analyzer.asdict(parsed.parse_stats),
+            "observation_range": {"start": None, "end": None},
+            "state": {"deduplicated": False},
+            "inputs": {"db": str(tmp_path / "network.db")},
+            "risk_score": 0,
+            "status": "Clean",
+            "risk_breakdown": {},
+            "findings": {"critical": [], "anomalies": [], "observations": [], "all": []},
+            "device_summary": [],
+            "analysis_adjustments": {},
+        })
+        for output in (
+            analyzer.render_text_report(report),
+            analyzer.render_markdown_report(report),
+            analyzer.render_html_report(report),
+        ):
+            assert "no_trusted_boot_anchor" in output
+            assert "synthetic_parser_warning" in output
+            assert "Coverage records" in output
+            for segment in report_sections["clock"]["segments"]:
+                assert segment["segment_id"] in output
+                assert segment["clock_trust"] in output
         assert store.conn.execute("SELECT COUNT(*) FROM router_boot_sessions").fetchone()[0] == 0
         assert store.conn.execute("SELECT COUNT(*) FROM router_event_occurrences").fetchone()[0] == 0
         assert store.conn.execute("SELECT COUNT(*) FROM device_event_daily_stats").fetchone()[0] == 0
