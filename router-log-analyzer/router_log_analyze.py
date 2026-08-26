@@ -9954,7 +9954,7 @@ def build_router_report_sections(
             "change_finding_count": len(router_change_findings),
             "change_findings": router_change_findings,
             "behavior_history_count": router_behavior_history_count,
-            "history_queried": router_behavior_history_queried,
+            "behavior_history_queried": router_behavior_history_queried,
         },
         "clock": {
             "segments": [asdict(segment) for segment in parsed.clock_segments],
@@ -10281,7 +10281,7 @@ def finding_field_lines(entry: Dict[str, Any]) -> List[Tuple[str, str]]:
         lines.extend([
             ("Event", humanize_event_key(metadata.get("event_key") or metadata.get("event") or "ROUTER SECURITY EVENT")),
             ("Component", str(metadata.get("component") or "unavailable")),
-            ("Outcome", str(metadata.get("outcome") or metadata.get("state") or "unavailable")),
+            ("Outcome", str(metadata.get("action") or metadata.get("state") or metadata.get("outcome") or "unavailable")),
         ])
         return lines
     if kind == "router_firmware_change":
@@ -10294,12 +10294,15 @@ def finding_field_lines(entry: Dict[str, Any]) -> List[Tuple[str, str]]:
                       ("State", str(metadata.get("state") or metadata.get("outcome") or "unavailable"))])
         return lines
     if kind == "router_client_count_anomaly":
-        metric = str(metadata.get("metric") or metadata.get("count_name") or "clients")
-        lines.extend([("Metric", metric),
-                      ("Observed", str(entry.get("event_count") if entry.get("event_count") is not None else metadata.get("observed") or "unavailable")),
-                      ("Range", expected_range_text(metadata)),
-                      ("Direction", str(metadata.get("direction") or "outside")),
-                      ("History", f"{metadata.get('history_count', 0)} prior snapshot(s)")])
+        for metric, detail in sorted((metadata.get("metrics") or {}).items()):
+            if not isinstance(detail, dict):
+                continue
+            learned_range = detail.get("learned_range") or ["?", "?"]
+            lines.extend([("Metric", str(metric)),
+                          ("Observed", str(detail.get("observed") if detail.get("observed") is not None else "unavailable")),
+                          ("Range", f"{compact_metric_value(learned_range[0])}-{compact_metric_value(learned_range[1])}"),
+                          ("Direction", str(detail.get("direction") or "outside")),
+                          ("History", f"{detail.get('history_count', 0)} prior snapshot(s)")])
         return lines
 
     if kind == "network_reset":
@@ -10664,18 +10667,22 @@ def operational_status_summary(report: Dict[str, Any]) -> str:
 
 def operational_activity_lines(activity: Dict[str, Any], occurrences: Dict[str, Any], width: int) -> List[str]:
     source_total = activity.get("source_record_count")
-    has_source_projection = isinstance(source_total, int)
-    if not has_source_projection:
+    projection_complete = isinstance(source_total, int) and all(
+        key in activity for key in ("component_counts", "outcome_counts", "event_type_counts")
+    )
+    if not projection_complete:
         source_total = occurrences.get("body_count", 0)
     components = [item for item in activity.get("component_counts", [])
                   if isinstance(item, dict) and item.get("component")]
     if source_total == 0:
         lines = ["No router activity records were parsed."]
     else:
-        total_label = "Source records" if has_source_projection else "Semantic occurrences"
+        total_label = "Source records" if projection_complete else "Semantic occurrences"
         lines = [f"{total_label}: {source_total}", f"Active components: {len(components)}"]
     if not components:
-        return lines + ["Router source/component detail was unavailable; only the semantic total is shown."]
+        return lines if projection_complete else lines + [
+            "Router source/component detail was unavailable; only the semantic total is shown."
+        ]
     ranked = sorted(components, key=lambda item: (-int(item.get("event_count", 0)), str(item["component"])))
     component_outcomes: DefaultDict[str, Set[str]] = defaultdict(set)
     for item in activity.get("event_type_counts", []):
@@ -10695,10 +10702,14 @@ def operational_activity_lines(activity: Dict[str, Any], occurrences: Dict[str, 
         lines.append(f"Remaining: {tail_count} source record(s) across {len(tail)} other component(s).")
     outcomes = {str(item.get("outcome")).casefold(): int(item.get("event_count", 0))
                 for item in activity.get("outcome_counts", []) if isinstance(item, dict) and item.get("outcome") != "other"}
-    ordered = [name for name in ("failure", "rejected", "blocked", "denied", "disconnected", "timeout") if name in outcomes]
-    ordered.extend(sorted(name for name in outcomes if name not in ordered and name != "success"))
+    ordered = [name for name in (
+        "failure", "rejected", "blocked", "denied", "disconnected", "timeout",
+        "stopped", "disabled", "stop", "disable", "release", "restart", "start",
+        "running", "enabled", "enable", "connected", "ready", "success",
+    ) if name in outcomes]
+    ordered.extend(sorted(name for name in outcomes if name not in ordered))
     if ordered:
-        lines.append("Consequential outcomes: " + ", ".join(f"{name} {outcomes[name]}" for name in ordered))
+        lines.append("Outcomes: " + ", ".join(f"{name} {outcomes[name]}" for name in ordered))
     return [wrapped for line in lines for wrapped in textwrap.wrap(line, width=width, break_long_words=True, break_on_hyphens=False) or [line]]
 
 
@@ -10714,6 +10725,7 @@ def operational_limitation_lines(report: Dict[str, Any], verbose: bool = False) 
         lines.append("WAN header was missing from this export.")
     if "missing_wan_gateway_dns_header" in warnings:
         lines.append("WAN gateway/DNS detail was missing from this export.")
+    warnings.difference_update({"missing_lan_header", "missing_wan_header", "missing_wan_gateway_dns_header"})
     if not checks.get("router_security", {}).get("available", True):
         lines.append("No recognized router-security mapping was available in this export.")
     if coverage.get("body_records", 0) and not coverage.get("trusted_records", 0):
@@ -10731,15 +10743,13 @@ def operational_limitation_lines(report: Dict[str, Any], verbose: bool = False) 
         if verbose:
             lines.append("Boot warning details: " + ", ".join(sorted(boot_warnings)))
     unavailable = {name for name, item in checks.items() if not item.get("available")}
-    if unavailable & {"stable_client_discovery", "current_rejected_client"}:
+    unavailable_reasons = {name: str(item.get("unavailable_reason")) for name, item in checks.items() if not item.get("available")}
+    if "no_stable_client_identity" in unavailable_reasons.values():
         lines.append("Stable identity and rejected-client evidence were incomplete.")
     if unavailable & {"device_dhcp_metrics", "device_event_volume", "device_behavior", "cluster_visibility"}:
         lines.append("Client DHCP, event-volume, behavior, and cluster evidence were incomplete.")
-    reset_reasons = {
-        str(checks[name].get("unavailable_reason"))
-        for name in {"confirmed_reset", "inferred_reset"} & unavailable
-    }
-    if {"no_wan_transition", "no_client_recovery"} & reset_reasons:
+    reset_reasons = set(unavailable_reasons.values())
+    if {"no_wan_transition_coverage", "no_client_recovery_equivalence"} & reset_reasons:
         lines.append("Internet-reset assessment lacked WAN-transition and client-recovery evidence classes.")
     return list(dict.fromkeys(lines))
 
@@ -10750,12 +10760,12 @@ def render_operational_text_report(report: Dict[str, Any], width: int, verbose: 
     counts = snapshot.get("counts", {})
     activity = report.get("router_activity", {})
     occurrences = report.get("occurrences", {})
-    title = str(router.get("label") or "Router")
+    title = f"Network Analysis Report — {str(router.get('label') or 'Router')}"
     lines: List[str] = [
         *textwrap.wrap(title, width=width, break_long_words=True, break_on_hyphens=False),
         "=" * min(width, max(8, len(title))),
         *textwrap.wrap(
-            f"Status: {report.get('status', 'Unknown')} | Risk: {report.get('risk_score', 0)} / 100 — "
+            f"{str(report.get('status', 'Unknown')).upper()} | Risk {report.get('risk_score', 0)}/100 — "
             f"{operational_status_summary(report).split(' — ', 1)[-1]}",
             width=width, break_long_words=True, break_on_hyphens=False,
         ),
@@ -10788,7 +10798,7 @@ def render_operational_text_report(report: Dict[str, Any], width: int, verbose: 
         baseline_lines.append("First comparable snapshot." if not count else f"Compared with {count} prior eligible snapshot(s).")
     else:
         baseline_lines.append("Snapshot comparison was not evaluated.")
-    if activity.get("history_queried"):
+    if activity.get("behavior_history_queried"):
         count = activity.get("behavior_history_count", 0)
         baseline_lines.append("First comparable router behavior." if not count else f"Compared with {count} prior router behavior observation(s).")
     else:
@@ -10803,6 +10813,13 @@ def render_operational_text_report(report: Dict[str, Any], width: int, verbose: 
         )
     if occurrences.get("report_only_count"):
         baseline_lines.append(f"{occurrences['report_only_count']} current-evidence occurrence(s) were report-only and excluded from body-event calendar/time history.")
+    persistence = report.get("persistence")
+    if isinstance(persistence, dict) and not persistence.get("available", True):
+        baseline_lines.append("Current-only evidence; persistence was unavailable.")
+    elif report.get("state", {}).get("deduplicated"):
+        baseline_lines.append("Already-stored duplicate; it does not add new learning.")
+    else:
+        baseline_lines.append(f"{run_persistence_text(report)}; only eligible novel occurrences may contribute to learning.")
     lines.extend(operational_section("Baseline and Change", baseline_lines, width))
     lines.extend(operational_section("Router Activity", operational_activity_lines(activity, occurrences, width), width))
     device_items = [item for item in report.get("device_summary", []) if item.get("mac") != SYSTEM_ACTOR]
