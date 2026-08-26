@@ -4329,7 +4329,10 @@ class StateStore:
             },
             "occurrence_ids": [
                 row[0] for row in self.conn.execute(
-                    "SELECT occurrence_id FROM run_event_occurrences WHERE run_id = ?",
+                    """
+                    SELECT occurrence_id FROM run_event_occurrences
+                    WHERE run_id = ? AND is_novel = 1
+                    """,
                     (run_id,),
                 )
             ],

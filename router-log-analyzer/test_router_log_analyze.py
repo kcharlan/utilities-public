@@ -3179,6 +3179,67 @@ def test_run_owned_removal_preserves_shared_occurrence_and_session_until_orphane
         store.close()
 
 
+def test_occurrence_promotion_does_not_repromote_repeated_evidence_owned_by_another_run(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    client_mac = "02:00:00:00:00:47"
+    y_record = "2042-06-15 11:50:00 clientmon[101]: <5> 7001 client observed"
+    x_record = "2042-06-15 11:51:00 clientmon[101]: <5> 7001 client observed"
+    try:
+        epoch_id = seed_epoch(store)
+        run_ids = []
+        for index, records in enumerate(([y_record], [x_record, y_record], [x_record]), start=1):
+            parsed = analyzer.parse_router_log(
+                tp_link_synthetic_snapshot(
+                    list(records), export_time=f"2042-06-15 12:0{index}:00"
+                ),
+                f"synthetic-owner-{index}.log",
+                "tp-link-archer",
+            )
+            parsed.events = [
+                replace(event, mac=client_mac, actor_scope="device", stable_client_identity=client_mac)
+                for event in parsed.events
+            ]
+            router_id = store.resolve_router_instance(parsed)
+            run_id = store.insert_run(
+                epoch_id, None, f"synthetic-owner-hash-{index}",
+                tmp_path / f"synthetic-owner-{index}.log", parsed.parse_stats,
+                None, None, [], 0, "Clean", False, router_instance_id=router_id,
+                format_id=parsed.format_id, export_timestamp=parsed.export_timestamp.isoformat(),
+                capabilities=parsed.capabilities,
+            )
+            store.persist_router_provenance(run_id, router_id, parsed)
+            novel_events = [event for event in parsed.events if event.occurrence_novel]
+            if novel_events:
+                aggregate = analyzer.aggregate_events(
+                    novel_events, {"devices": {}}, store.load_devices_snapshot()
+                )
+                for stat in aggregate["device_day_stats"].values():
+                    store.insert_device_daily_stat(run_id, epoch_id, stat, True, None)
+                for stat in aggregate["event_day_stats"].values():
+                    store.insert_device_event_daily_stat(run_id, epoch_id, stat, True, None)
+            run_ids.append(run_id)
+        store.commit()
+        assert store.conn.execute(
+            "SELECT SUM(count) FROM device_event_daily_stats"
+        ).fetchone()[0] == 2
+
+        store.conn.execute("BEGIN IMMEDIATE")
+        affected = store.remove_run_owned_evidence(run_ids[1])
+        store.promote_surviving_occurrence_learning(affected)
+
+        assert store.conn.execute(
+            "SELECT SUM(count) FROM device_event_daily_stats"
+        ).fetchone()[0] == 2
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats WHERE run_id = ?", (run_ids[2],)
+        ).fetchone()[0] == 1
+        store.conn.rollback()
+    finally:
+        store.close()
+
+
 def test_summary_extrema_remain_chronological_when_older_evidence_arrives_later(
     tmp_path: Path,
 ) -> None:
