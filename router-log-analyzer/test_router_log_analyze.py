@@ -9855,7 +9855,12 @@ def test_tp_link_pre_sync_timestamps_do_not_enter_temporal_learning(
     assert analyzer.main([
         str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
     ]) == 0
-    capsys.readouterr()
+    report = json.loads(capsys.readouterr().out)
+    assert report["observation_range"] == {
+        "start": "2042-06-15T11:59:32",
+        "end": "2042-06-15T11:59:59",
+    }
+    assert report["parse_stats"]["parsed_events"] == 4
 
     store = analyzer.StateStore(db_path)
     try:
@@ -9871,10 +9876,10 @@ def test_tp_link_pre_sync_timestamps_do_not_enter_temporal_learning(
             "2042-06-15T11:59:59",
             ["2042-06-15"],
         )
-        assert store.conn.execute(
-            "SELECT COUNT(*) FROM subject_behavior_daily_stats "
-            "WHERE subject_type = 'router' AND observed_date = '2042-01-01'"
-        ).fetchone()[0] == 0
+        assert [row[0] for row in store.conn.execute(
+            "SELECT DISTINCT observed_date FROM subject_behavior_daily_stats "
+            "WHERE subject_type = 'router' ORDER BY observed_date"
+        )] == ["2042-06-15"]
         assert store.conn.execute(
             "SELECT COUNT(*) FROM subject_behavior_daily_stats "
             "WHERE subject_type = 'router' AND observed_date = '2042-06-15'"

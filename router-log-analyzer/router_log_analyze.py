@@ -11530,6 +11530,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 parsed,
             )
         aggregate = aggregate_events(events, seed_baseline, devices_snapshot)
+        trusted_temporal_aggregate = aggregate
+        if parsed.format_id != FORMAT_NETGEAR:
+            trusted_temporal_aggregate = aggregate_events(
+                [event for event in events if event.clock_trust == "trusted"],
+                seed_baseline,
+                devices_snapshot,
+            )
+            aggregate["observation_range"] = trusted_temporal_aggregate["observation_range"]
+            aggregate["observed_dates"] = trusted_temporal_aggregate["observed_dates"]
         if parsed.format_id == FORMAT_NETGEAR:
             incidents = detect_network_incidents(events, seed_baseline, devices_snapshot, policy)
         else:
@@ -11578,6 +11587,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         ]
         analysis_aggregate = aggregate_events(analyzed_events, seed_baseline, devices_snapshot)
+        if parsed.format_id != FORMAT_NETGEAR:
+            trusted_analysis_aggregate = aggregate_events(
+                [event for event in analyzed_events if event.clock_trust == "trusted"],
+                seed_baseline,
+                devices_snapshot,
+            )
+            analysis_aggregate["observation_range"] = trusted_analysis_aggregate[
+                "observation_range"
+            ]
+            analysis_aggregate["observed_dates"] = trusted_analysis_aggregate["observed_dates"]
         analysis_subject_stats, analysis_subjects = build_subject_behavior_day_stats(
             analysis_aggregate, policy, router_subject_key,
         )
@@ -11785,11 +11804,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 persistence_subjects.update(previous_subjects)
             persistence_aggregate["subject_behavior_day_stats"] = persistence_subject_stats
             persistence_aggregate["behavior_subjects"] = persistence_subjects
-            trusted_temporal_aggregate = aggregate_events(
-                [event for event in events if event.clock_trust == "trusted"],
-                seed_baseline,
-                devices_snapshot,
-            )
             persistence_aggregate["observation_range"] = trusted_temporal_aggregate[
                 "observation_range"
             ]
