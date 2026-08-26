@@ -4196,6 +4196,7 @@ def test_identityless_log_reports_full_current_evidence_without_opening_state(
     assert report["snapshot"]["counts"] == {"total": 4, "wifi": 3, "wired": 1}
     assert report["occurrences"] == {
         "body_count": 1,
+        "source_record_count": 1,
         "novel_count": 0,
         "repeated_count": 0,
         "report_only_count": 1,
@@ -4217,9 +4218,8 @@ def test_identityless_log_reports_full_current_evidence_without_opening_state(
     ]) == 0
     rendered = capsys.readouterr().out
     for expected in (
-        "SYNTHETIC-IDENTITYLESS-X9000", "Total clients", "synthetic-clock-1",
-        "synthetic_boot_warning", "synthetic_parser_warning", "Coverage records",
-        "HIGH | router_security_event",
+        "SYNTHETIC-IDENTITYLESS-X9000", "Clients: total 4", "Boot resolution reported",
+        "Parser reported", "Router Snapshot", "HIGH | Router | Security event",
     ):
         assert expected in rendered
     assert not db_path.exists()
@@ -4671,18 +4671,20 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
         "format": "tp-link-archer",
         "export_time": "2042-06-15T12:00:00",
     }
-    assert report["router"]["label"].startswith("TP-Link SYNTHETIC-ARCHER-X9000 ")
+    assert report["router"]["label"] == "TP-Link SYNTHETIC-ARCHER-X9000"
     assert "02:00:00" not in report["router"]["label"]
     assert report["snapshot"] == {
         "counts": {"total": 7, "wifi": 5, "wired": 2},
         "eligible": True,
         "unavailable_reason": None,
         "history_count": 0,
+        "history_queried": True,
         "learned_ranges": {},
         "change_findings": [],
     }
     assert report["occurrences"] == {
         "body_count": 1,
+        "source_record_count": 1,
         "novel_count": 1,
         "repeated_count": 0,
         "report_only_count": 0,
@@ -4690,6 +4692,9 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
     }
     assert report["router_activity"]["security_finding_count"] == 1
     assert report["router_activity"]["new_device_finding_count"] == 0
+    assert report["router_activity"]["source_record_count"] == 1
+    assert sum(item["event_count"] for item in report["router_activity"]["component_counts"]) == 1
+    assert sum(item["event_count"] for item in report["router_activity"]["event_type_counts"]) == 1
     assert report["coverage"]["body_records"] == 1
     assert report["coverage"]["parsed_events"] == 1
     assert report["coverage"]["malformed_lines"] == 0
@@ -4709,11 +4714,24 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
 
     rendered = {
         "text": analyzer.render_text_report(report),
+        "verbose_text": analyzer.render_text_report(report, verbose=True),
         "markdown": analyzer.render_markdown_report(report),
         "html": analyzer.render_html_report(report),
     }
     for output in rendered.values():
         assert report["router"]["label"] in output
+    text_output = rendered["text"]
+    assert "Router Snapshot" in text_output
+    assert "Baseline and Change" in text_output
+    assert "Router Activity" in text_output
+    assert "Attention / Limitations" in text_output
+    assert "Security event" in text_output
+    assert "missing_wan_gateway_dns_header" not in text_output
+    verbose_text_output = rendered["verbose_text"]
+    for expected in ("Technical Details", "Clock segments", "Coverage records", "Availability checks",
+                     "missing_wan_gateway_dns_header"):
+        assert expected in verbose_text_output
+    for output in (rendered["markdown"], rendered["html"]):
         assert "Total clients" in output
         assert "Novel occurrences" in output
         assert "Router security findings" in output
@@ -4724,9 +4742,21 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
         assert "missing_wan_gateway_dns_header" in output
         assert "Coverage records" in output
         assert "Coverage lines" in output
+        assert "Router Activity" in output
+        assert "Router Event Types" in output
+        assert "Source-record total: 1" in output
         for segment in report["clock"]["segments"]:
             assert segment["segment_id"] in output
             assert segment["clock_trust"] in output
+    markdown_device_summary = markdown_section(
+        rendered["markdown"], "## Device Summary", "## Router Activity",
+    )
+    assert "Router/System" not in markdown_device_summary
+    assert "Router/System" not in html_section(rendered["html"], "Device Summary")
+    for item in report["router_activity"]["event_type_counts"]:
+        expected_event = analyzer.humanize_event_key(item["event_key"])
+        assert expected_event in rendered["markdown"]
+        assert expected_event in rendered["html"]
 
 
 def test_tp_link_fully_repeated_snapshot_is_explicit_in_all_renderers(
@@ -4767,6 +4797,513 @@ def test_tp_link_fully_repeated_snapshot_is_explicit_in_all_renderers(
         assert "All body occurrences were already seen" in output
 
 
+def operational_tp_link_report(*, findings: list[dict[str, object]] | None = None) -> dict[str, object]:
+    """A deliberately small TP-Link text-report fixture with synthetic evidence."""
+    entries = findings or []
+    return {
+        "parse_stats": {"parsed_events": 6, "malformed_lines": 0, "ignored_lines": 0,
+                        "duplicate_events": 0, "spam_filtered": 0, "export_noise_lines": 0,
+                        "malformed_samples": []},
+        "observation_range": {"start": "2042-06-15T11:55:00", "end": "2042-06-15T11:59:00"},
+        "inputs": {"db": "/tmp/synthetic-router.db"},
+        "state": {"deduplicated": False}, "risk_score": 0, "status": "Clean",
+        "risk_breakdown": {}, "priority_findings": [], "findings": {
+            "critical": [], "anomalies": [], "observations": entries, "all": entries,
+        }, "device_summary": [],
+        "router": {"label": "TP-Link SYNTHETIC-ARCHER-X9000", "vendor": "tp-link",
+                   "model": "SYNTHETIC-ARCHER-X9000", "hardware": "SYNTHETIC-HW-9000",
+                   "firmware": "9.99.9 Build 20420101 rel.99999n", "format": "tp-link-archer",
+                   "export_time": "2042-06-15T12:00:00"},
+        "snapshot": {"counts": {"total": 7, "wifi": 5, "wired": 2}, "eligible": True,
+                     "unavailable_reason": None, "history_count": 0, "learned_ranges": {},
+                     "change_findings": [], "history_queried": True},
+        "occurrences": {"body_count": 6, "source_record_count": 8, "novel_count": 6,
+                        "repeated_count": 0, "report_only_count": 0, "fully_repeated": False},
+        "router_activity": {"source_record_count": 8, "system_event_count": 6,
+                            "component_counts": [{"component": "service", "event_count": 5},
+                                                 {"component": "firewall", "event_count": 2},
+                                                 {"component": "wan", "event_count": 1}],
+                            "outcome_counts": [{"outcome": "success", "event_count": 5},
+                                               {"outcome": "failure", "event_count": 2},
+                                               {"outcome": "disconnected", "event_count": 1}],
+                            "event_type_counts": [
+                                {"component": "firewall", "event_key": "FIREWALL_POLICY_FAILURE",
+                                 "vendor_event_code": "9001", "outcome": "failure", "event_count": 2},
+                                {"component": "service", "event_key": "SERVICE_HEALTH_SUCCESS",
+                                 "vendor_event_code": "2001", "outcome": "success", "event_count": 5},
+                                {"component": "wan", "event_key": "WAN_LINK_DISCONNECTED",
+                                 "vendor_event_code": None, "outcome": "disconnected", "event_count": 1},
+                            ],
+                            "security_finding_count": 0, "security_findings": [],
+                            "new_device_finding_count": 0, "new_device_findings": [],
+                            "change_finding_count": 0, "change_findings": [],
+                            "behavior_history_count": 0, "behavior_history_queried": True},
+        "availability": {"checks": {"snapshot_counts": {"available": True, "unavailable_reason": None},
+                                      "router_security": {"available": True, "unavailable_reason": None}}},
+        "clock": {"segments": [], "boot_candidate_count": 0, "resolved_boot_session_count": 0,
+                  "boot_resolution_warnings": [], "warnings": []},
+        "coverage": {"body_records": 6, "trusted_records": 6, "untrusted_records": 0,
+                     "timing_eligible_records": 6, "parsed_events": 6, "ignored_lines": 0,
+                     "malformed_lines": 0, "export_noise_lines": 0,
+                     "lan": {"mac": "02:00:00:00:00:01"}, "wan": {"ipv4": "192.0.2.99"}},
+    }
+
+
+def test_tp_link_saved_markdown_report_uses_counted_router_activity_tables() -> None:
+    report = operational_tp_link_report()
+    report["device_summary"] = [
+        {"name": "Router/System", "mac": analyzer.SYSTEM_ACTOR, "total_events": 6,
+         "dhcp_count": 0, "incident_explained_events": 0,
+         "event_types": ["FIREWALL_POLICY_FAILURE", "SERVICE_HEALTH_SUCCESS", "WAN_LINK_DISCONNECTED"]},
+        {"name": "SYNTHETIC CLIENT", "mac": "02:00:00:00:00:09", "total_events": 2,
+         "dhcp_count": 1, "incident_explained_events": 0, "event_types": ["CLIENT_PRESENT"]},
+    ]
+
+    rendered = analyzer.render_markdown_report(report)
+    device_summary = markdown_section(rendered, "## Device Summary", "## Router Activity")
+    activity = markdown_section(rendered, "## Router Activity", "## Router Event Types")
+    event_types = markdown_section(rendered, "## Router Event Types")
+
+    assert "Router/System" not in device_summary
+    assert "SYNTHETIC CLIENT" in device_summary
+    assert "Firewall | 2" in activity
+    assert "Service | 5" in activity
+    assert "Wan | 1" in activity
+    assert "| Firewall Policy Failure | 9001 | Firewall | failure | 2 |" in event_types
+    assert "| Service Health Success | 2001 | Service | success | 5 |" in event_types
+    assert "| Wan Link Disconnected | n/a | Wan | disconnected | 1 |" in event_types
+    assert "Firewall Policy Failure, Service Health Success, Wan Link Disconnected" not in rendered
+    assert sum(item["event_count"] for item in report["router_activity"]["component_counts"]) == 8
+    assert sum(item["event_count"] for item in report["router_activity"]["event_type_counts"]) == 8
+    assert "Router Snapshot" in rendered
+    assert "Finding Index" in rendered
+    assert "Coverage records" in rendered
+
+
+def test_tp_link_saved_html_report_uses_counted_router_activity_tables() -> None:
+    report = operational_tp_link_report()
+    report["device_summary"] = [
+        {"name": "Router/System", "mac": analyzer.SYSTEM_ACTOR, "total_events": 6,
+         "dhcp_count": 0, "incident_explained_events": 0,
+         "event_types": ["FIREWALL_POLICY_FAILURE", "SERVICE_HEALTH_SUCCESS", "WAN_LINK_DISCONNECTED"]},
+        {"name": "SYNTHETIC CLIENT", "mac": "02:00:00:00:00:09", "total_events": 2,
+         "dhcp_count": 1, "incident_explained_events": 0, "event_types": ["CLIENT_PRESENT"]},
+    ]
+
+    rendered = analyzer.render_html_report(report)
+    device_summary = html_section(rendered, "Device Summary")
+    activity = html_section(rendered, "Router Activity")
+    event_types = html_section(rendered, "Router Event Types")
+
+    assert "Router/System" not in device_summary
+    assert "SYNTHETIC CLIENT" in device_summary
+    assert "<td>Firewall</td><td>2</td>" in activity
+    assert "<td>Service</td><td>5</td>" in activity
+    assert "<td>Wan</td><td>1</td>" in activity
+    assert "<td>Firewall Policy Failure</td><td><code>9001</code></td><td>Firewall</td><td>failure</td><td>2</td>" in event_types
+    assert "<td>Service Health Success</td><td><code>2001</code></td><td>Service</td><td>success</td><td>5</td>" in event_types
+    assert "<td>Wan Link Disconnected</td><td>n/a</td><td>Wan</td><td>disconnected</td><td>1</td>" in event_types
+    assert "Firewall Policy Failure, Service Health Success, Wan Link Disconnected" not in rendered
+    assert sum(item["event_count"] for item in report["router_activity"]["component_counts"]) == 8
+    assert sum(item["event_count"] for item in report["router_activity"]["event_type_counts"]) == 8
+    assert "Router Snapshot" in rendered
+    assert "Finding Index" in rendered
+    assert "Coverage records" in rendered
+
+
+def test_tp_link_verbose_text_appends_complete_technical_evidence() -> None:
+    report = operational_tp_link_report()
+    report["occurrences"].update({"body_count": 6, "source_record_count": 8})
+    report["clock"].update({
+        "segments": [{"segment_id": "synthetic-clock-1", "clock_trust": "trusted",
+                      "start_sequence": 1, "end_sequence": 6}],
+        "boot_candidate_count": 1, "resolved_boot_session_count": 1,
+        "boot_resolution_warnings": ["synthetic_boot_warning"],
+        "warnings": ["synthetic_parser_warning"],
+    })
+    report["availability"]["checks"].update({
+        "router_behavior": {"available": False, "unavailable_reason": "no_router_behavior_history"},
+        "duration_based_partial": {"available": False, "unavailable_reason": "point_snapshot_not_continuous"},
+    })
+    report["persistence"] = {"available": False, "reason": "no_stable_router_identity"}
+
+    concise = analyzer.render_text_report(report)
+    verbose = analyzer.render_text_report(report, verbose=True)
+
+    assert "Technical Details" not in concise
+    assert verbose.index("Technical Details") > verbose.index("Router Activity")
+    for expected in (
+        "Router-only source-record total: 8", "Router-only semantic-occurrence total: 6",
+        "Router-only component reconciliation: 8 source record(s)",
+        "Router-only outcome reconciliation: 8 source record(s)",
+        "Router-only event-type reconciliation: 8 source record(s)",
+        "Firewall", "Service", "Wan", "Firewall Policy Failure", "9001", "failure",
+        "Router behavior comparison (router_behavior): unavailable — no router behavior history",
+        "Duration-based partial-run detection (duration_based_partial): unavailable — point snapshot is not a",
+        "continuous log",
+        "Novel occurrences: 6", "Clock segments", "synthetic-clock-1", "synthetic_boot_warning",
+        "synthetic_parser_warning", "Coverage records", "LAN coverage", "WAN coverage",
+        "Database: /tmp/synthetic-router.db", "Run persistence: Unavailable",
+    ):
+        assert expected in verbose
+
+
+def test_tp_link_verbose_details_keep_router_and_client_populations_separate() -> None:
+    report = operational_tp_link_report()
+    report["occurrences"]["body_count"] = 9
+    report["occurrences"]["source_record_count"] = 11
+    report["router_activity"]["system_event_count"] = 6
+    report["device_summary"] = [
+        {"name": "Router/System", "mac": analyzer.SYSTEM_ACTOR, "total_events": 6,
+         "dhcp_count": 0, "incident_explained_events": 0,
+         "event_types": ["FIREWALL_POLICY_FAILURE", "SERVICE_HEALTH_SUCCESS"]},
+        {"name": "SYNTHETIC CLIENT", "mac": "02:00:00:00:00:09", "total_events": 3,
+         "dhcp_count": 1, "incident_explained_events": 0,
+         "event_types": ["CLIENT_PRESENT"]},
+    ]
+
+    rendered = analyzer.render_text_report(report, verbose=True)
+
+    assert "Router-only source-record total: 8" in rendered
+    assert "Router-only semantic-occurrence total: 6" in rendered
+    assert "All semantic occurrences (router and device): 9" in rendered
+    assert "All router and device source-record occurrences: 11" in rendered
+    client_details = rendered.split("Client identifiers and event types:", 1)[1]
+    assert "SYNTHETIC CLIENT (02:00:00:00:00:09)" in client_details
+    assert "Router/System" not in client_details
+    assert analyzer.SYSTEM_ACTOR not in client_details
+
+
+def test_operational_status_summary_describes_visible_high_and_low_findings_when_clean() -> None:
+    report = operational_tp_link_report(findings=[
+        {"kind": "router_security_event", "severity": "high"},
+        {"kind": "router_client_count_anomaly", "severity": "low"},
+    ])
+
+    summary = analyzer.operational_status_summary(report)
+
+    assert summary == (
+        "Clean — 1 high-severity and 1 low-severity findings remain visible below."
+    )
+
+
+@pytest.mark.parametrize(
+    ("counts_line", "expected_reason", "expected_verbose_reason"),
+    [
+        (None, "missing_snapshot_counts", "no client snapshot counts"),
+        ("# Clients connected: 3 ; WI-FI : 4", "inconsistent_snapshot_counts", "inconsistent snapshot counts"),
+        ("# Clients connected: 9999999999 ; WI-FI : 0", "snapshot_count_out_of_range", "snapshot counts were out of range"),
+    ],
+    ids=("missing", "inconsistent", "out-of-range"),
+)
+def test_router_report_preserves_snapshot_exclusion_reasons_in_verbose_evidence(
+    counts_line: str | None,
+    expected_reason: str,
+    expected_verbose_reason: str,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot(
+            ["2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected"],
+            counts_line=counts_line,
+        ),
+        "synthetic-snapshot-reason.log",
+        "tp-link-archer",
+    )
+    sections = analyzer.build_router_report_sections(
+        parsed,
+        "SYNTHETIC ROUTER",
+        parsed.events,
+        {"all": []},
+        [],
+        0,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    )
+
+    assert sections["snapshot"]["unavailable_reason"] == expected_reason
+    assert sections["availability"]["checks"]["snapshot_counts"] == {
+        "available": False,
+        "unavailable_reason": expected_reason,
+    }
+
+    report = operational_tp_link_report()
+    report.update(sections)
+    verbose = analyzer.render_text_report(report, verbose=True)
+    assert (
+        "Client snapshot counts (snapshot_counts): unavailable — " + expected_verbose_reason
+    ) in verbose
+
+
+def test_tp_link_verbose_technical_rows_wrap_at_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:
+    report = operational_tp_link_report()
+    monkeypatch.setattr(analyzer.shutil, "get_terminal_size", lambda _fallback: os.terminal_size((60, 24)))
+
+    rendered = analyzer.render_text_report(report, verbose=True)
+
+    assert all(len(line) <= 60 for line in rendered.splitlines())
+
+
+def test_tp_link_operational_report_clean_hierarchy_and_history_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    report = operational_tp_link_report()
+    monkeypatch.setattr(analyzer.shutil, "get_terminal_size", lambda _fallback: os.terminal_size((80, 24)))
+
+    rendered = analyzer.render_text_report(report)
+
+    assert rendered.startswith("Network Analysis Report — TP-Link SYNTHETIC-ARCHER-X9000\n")
+    assert "CLEAN | Risk 0/100" in rendered
+    assert "No findings were detected by the checks that were available." in re.sub(r"\s+", " ", rendered)
+    assert "Findings\n" not in rendered
+    assert rendered.index("Router Snapshot") < rendered.index("Baseline and Change") < rendered.index("Router Activity")
+    assert "First comparable client-count snapshot and router-behavior observation." in rendered
+    assert "First comparable snapshot." not in rendered
+    assert "First comparable router behavior." not in rendered
+    assert "comparison was not evaluated" not in rendered
+    assert "Risk Breakdown" not in rendered
+
+
+def test_tp_link_operational_report_surfaces_router_finding_evidence() -> None:
+    finding = {"kind": "router_security_event", "severity": "high", "mac": None,
+               "rendered_message": "", "metadata": {"event_key": "FIREWALL_POLICY_FAILURE",
+               "component": "firewall", "outcome": "failure", "day": "2042-06-15"}}
+    report = operational_tp_link_report(findings=[finding])
+
+    rendered = analyzer.render_text_report(report)
+
+    assert "Findings" in rendered
+    assert "HIGH | Router | Security event" in rendered
+    assert "Event" in rendered and "Firewall Policy Failure" in rendered
+    assert "Component" in rendered and "firewall" in rendered
+    assert "Outcome" in rendered and "failure" in rendered
+
+
+def test_tp_link_operational_report_promotes_consequential_tail_outcomes() -> None:
+    report = operational_tp_link_report()
+    activity = report["router_activity"]
+    assert isinstance(activity, dict)
+    activity["component_counts"] = [
+        {"component": name, "event_count": count}
+        for name, count in (("alpha", 10), ("bravo", 9), ("charlie", 8), ("delta", 7),
+                            ("echo", 6), ("foxtrot", 1), ("golf", 1), ("hotel", 2))
+    ]
+    activity["source_record_count"] = 44
+    activity["outcome_counts"] = [
+        {"outcome": "success", "event_count": 32}, {"outcome": "failure", "event_count": 10},
+        {"outcome": "disconnected", "event_count": 1}, {"outcome": "timeout", "event_count": 1},
+    ]
+    activity["event_type_counts"] = [
+        {"component": "alpha", "outcome": "failure", "event_count": 10},
+        {"component": "bravo", "outcome": "success", "event_count": 9},
+        {"component": "charlie", "outcome": "success", "event_count": 8},
+        {"component": "delta", "outcome": "success", "event_count": 7},
+        {"component": "echo", "outcome": "success", "event_count": 6},
+        {"component": "foxtrot", "outcome": "disconnected", "event_count": 1},
+        {"component": "golf", "outcome": "timeout", "event_count": 1},
+        {"component": "hotel", "outcome": "success", "event_count": 2},
+    ]
+
+    rendered = analyzer.render_text_report(report)
+
+    activity_text = rendered.split("Router Activity", 1)[1]
+    assert "Source records: 44" in activity_text
+    for component in ("Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf"):
+        assert activity_text.count(component) == 1
+    assert "Hotel" not in activity_text
+    assert "Remaining: 2 source record(s) across 1 other component(s)." in activity_text
+    assert "Outcomes: failure 10, disconnected 1, timeout 1, success 32" in activity_text
+
+
+def test_tp_link_activity_humanizes_and_tie_sorts_component_names() -> None:
+    report = operational_tp_link_report()
+    activity = report["router_activity"]
+    assert isinstance(activity, dict)
+    activity.update({
+        "source_record_count": 4,
+        "component_counts": [
+            {"component": "wan", "event_count": 2},
+            {"component": "access_control", "event_count": 2},
+        ],
+        "outcome_counts": [{"outcome": "success", "event_count": 4}],
+        "event_type_counts": [
+            {"component": "wan", "outcome": "success", "event_count": 2},
+            {"component": "access_control", "outcome": "success", "event_count": 2},
+        ],
+    })
+
+    activity_text = analyzer.render_text_report(report).split("Router Activity", 1)[1]
+
+    assert "Components: Access Control 2, Wan 2" in activity_text
+    assert "access_control" not in activity_text
+
+
+def test_tp_link_operational_report_handles_zero_events_and_missing_projection() -> None:
+    report = operational_tp_link_report()
+    report["router_activity"] = {"system_event_count": 0}
+    report["occurrences"] = {"body_count": 0, "source_record_count": 0, "novel_count": 0,
+                             "repeated_count": 0, "report_only_count": 0, "fully_repeated": False}
+
+    rendered = analyzer.render_text_report(report)
+
+    assert "No router activity records were parsed." in rendered
+    assert "source/component detail was unavailable" in rendered
+
+
+def test_tp_link_device_activity_uses_grouped_counts_and_explained_events() -> None:
+    report = operational_tp_link_report()
+    report["device_summary"] = [
+        {"name": "SYNTHETIC SENSOR", "mac": "02:00:00:00:00:03", "total_events": 3,
+         "dhcp_count": 1, "incident_explained_events": 2, "event_types": []},
+        {"name": "SYNTHETIC SENSOR", "mac": "02:00:00:00:00:04", "total_events": 4,
+         "dhcp_count": 2, "incident_explained_events": 0, "event_types": []},
+    ]
+
+    rendered = analyzer.render_text_report(report)
+
+    assert "SYNTHETIC SENSOR (2): 7 event(s), 3 DHCP, 2 incident-explained" in rendered
+    assert "SYNTHETIC SENSOR (2): 0 event(s), 0 DHCP" not in rendered
+
+
+@pytest.mark.parametrize("columns", [60, 80])
+def test_tp_link_operational_report_wraps_at_60_and_80_columns(
+    monkeypatch: pytest.MonkeyPatch, columns: int,
+) -> None:
+    report = operational_tp_link_report()
+    report["router"]["firmware"] = "SYNTHETIC-FIRMWARE-VALUE-THAT-MUST-REMAIN-VISIBLE-WHEN-WRAPPED"
+    report["findings"]["all"] = [{"kind": "router_new_event_type", "severity": "medium", "mac": None,
+        "rendered_message": "", "metadata": {"event_key": "SYNTHETIC_ROUTER_EVENT_NAME_THAT_IS_TOO_LONG_FOR_ONE_TERMINAL_LINE"}}]
+    report["device_summary"] = [{"name": "SYNTHETIC DEVICE NAME THAT IS TOO LONG FOR ONE TERMINAL LINE", "mac": "02:00:00:00:00:03",
+        "total_events": 1, "dhcp_count": 0, "incident_explained_events": 0, "event_types": []}]
+    monkeypatch.setattr(analyzer.shutil, "get_terminal_size", lambda _fallback: os.terminal_size((columns, 24)))
+
+    rendered = analyzer.render_text_report(report)
+
+    assert all(len(line) <= columns for line in rendered.splitlines())
+    assert "SYNTHETIC-FIRMWARE-VALUE-THAT-MUST-REMAIN-VISIBLE-WHEN-WRAPPED" in re.sub(r"\s+", "", rendered)
+
+
+def test_tp_link_history_wording_distinguishes_queried_none_from_unavailable() -> None:
+    queried = operational_tp_link_report()
+    unavailable = operational_tp_link_report()
+    unavailable["snapshot"]["history_queried"] = False
+    unavailable["router_activity"]["behavior_history_queried"] = False
+
+    assert "First comparable client-count snapshot and router-behavior observation." in analyzer.render_text_report(queried)
+    assert "Snapshot comparison was not evaluated" in analyzer.render_text_report(unavailable)
+    assert "Router behavior comparison was not evaluated" in analyzer.render_text_report(unavailable)
+
+
+def test_persistent_tp_link_default_label_omits_instance_hash_and_preserves_custom_label(tmp_path: Path) -> None:
+    parsed = analyzer.parse_router_log(tp_link_synthetic_snapshot([]), source="synthetic", requested_format="tp-link-archer")
+    instance_key = analyzer.tp_link_router_instance_key("02:00:00:00:00:01")
+    store = analyzer.StateStore(tmp_path / "labels.db")
+    try:
+        router_id = store.resolve_router_instance(parsed)
+        assert store.conn.execute("SELECT label FROM router_instances WHERE id = ?", (router_id,)).fetchone()["label"] == "TP-Link SYNTHETIC-ARCHER-X9000"
+        store.resolve_router_instance(parsed, router_label="SYNTHETIC CUSTOM ROUTER")
+        store.resolve_router_instance(parsed)
+        assert store.conn.execute("SELECT label FROM router_instances WHERE id = ?", (router_id,)).fetchone()["label"] == "SYNTHETIC CUSTOM ROUTER"
+        store.conn.execute("UPDATE router_instances SET label = ? WHERE id = ?", (f"TP-Link SYNTHETIC-ARCHER-X9000 {instance_key[:8]}", router_id))
+        store.resolve_router_instance(parsed)
+        assert store.conn.execute("SELECT label FROM router_instances WHERE id = ?", (router_id,)).fetchone()["label"] == "TP-Link SYNTHETIC-ARCHER-X9000"
+    finally:
+        store.close()
+
+
+def test_tp_link_operational_title_activity_and_persistence_contract() -> None:
+    report = operational_tp_link_report()
+    report["persistence"] = {"available": False, "reason": "no_stable_router_identity"}
+    rendered = analyzer.render_text_report(report)
+
+    assert rendered.startswith("Network Analysis Report — TP-Link SYNTHETIC-ARCHER-X9000\n")
+    assert "CLEAN" in rendered
+    assert "Risk 0/100" in rendered
+    assert "Current-only evidence; persistence was unavailable." in rendered
+    assert "Outcomes: failure 2, disconnected 1, success 5" in rendered
+
+
+def test_tp_link_router_finding_fields_follow_actual_producer_schemas() -> None:
+    security_event = analyzer.Event(
+        datetime.fromisoformat("2042-06-15T11:59:00"), analyzer.SYSTEM_ACTOR,
+        "ROUTER_SYSTEM", "FIREWALL_4101_FAILURE", None, "", "", "synthetic",
+        actor_scope="router", component="firewall", structured_evidence={"action": "failure"},
+        occurrence_novel=True,
+    )
+    security = analyzer.detect_router_security_events(
+        [security_event], analyzer.RouterCapabilities(router_system_events=True), analyzer.DEFAULT_POLICY,
+    )[0]
+    firmware = analyzer.detect_router_firmware_change("SYNTHETIC-OLD", "SYNTHETIC-NEW", analyzer.DEFAULT_POLICY)
+    assert firmware is not None
+    behavior_event = replace(security_event, component="service", event_key="SYNTHETIC_NEW_ROUTER_EVENT", structured_evidence={"state": "running"}, clock_trust="trusted")
+    new_event = analyzer.detect_router_behavior(
+        [behavior_event], analyzer.RouterCapabilities(router_system_events=True, supported_event_keys={behavior_event.event_key}),
+        analyzer.RouterBehaviorHistory(eligible_observation_count=3, event_keys=frozenset()), analyzer.DEFAULT_POLICY,
+    )[0]
+    state_event = replace(behavior_event, event_key="SYNTHETIC_SERVICE_STOP", structured_evidence={"state": "stopped"})
+    state_change = analyzer.detect_router_behavior(
+        [state_event], analyzer.RouterCapabilities(router_system_events=True, supported_event_keys={state_event.event_key}),
+        analyzer.RouterBehaviorHistory(eligible_observation_count=3, event_keys=frozenset({state_event.event_key}), running_components=frozenset({"service"})), analyzer.DEFAULT_POLICY,
+    )[0]
+    metrics = analyzer.detect_router_snapshot_count_anomaly(
+        analyzer.RouterSnapshotMetrics(total_clients=20, wifi_clients=16, derived_wired_clients=4, eligible=True),
+        [{"total_clients": 2, "wifi_clients": 1, "derived_wired_clients": 1} for _ in range(3)], analyzer.DEFAULT_POLICY,
+    )[0]
+
+    assert ("Outcome", "failure") in analyzer.finding_field_lines(analyzer.asdict(security))
+    assert ("Previous", "SYNTHETIC-OLD") in analyzer.finding_field_lines(analyzer.asdict(firmware))
+    assert new_event.kind == "router_new_event_type"
+    assert ("Event", "Synthetic New Router Event") in analyzer.finding_field_lines(analyzer.asdict(new_event))
+    assert state_change.kind == "router_state_change"
+    assert ("State", "stopped") in analyzer.finding_field_lines(analyzer.asdict(state_change))
+    metric_lines = analyzer.finding_field_lines(analyzer.asdict(metrics))
+    assert ("Metric", "total") in metric_lines
+    assert ("Observed", "20") in metric_lines
+    assert ("History", "3 prior snapshot(s)") in metric_lines
+
+
+def test_tp_link_operational_zero_projection_and_limitation_reasons() -> None:
+    report = operational_tp_link_report()
+    report["router_activity"] = {"source_record_count": 0, "component_counts": [], "outcome_counts": [], "event_type_counts": []}
+    report["coverage"]["body_records"] = 0
+    report["coverage"]["trusted_records"] = 0
+    report["availability"]["checks"].update({
+        "stable_client_discovery": {"available": True, "unavailable_reason": None},
+        "current_rejected_client": {"available": False, "unavailable_reason": "no_client_access_decisions"},
+        "confirmed_reset": {"available": False, "unavailable_reason": "no_wan_transition_coverage"},
+        "inferred_reset": {"available": False, "unavailable_reason": "no_client_recovery_equivalence"},
+    })
+    rendered = analyzer.render_text_report(report)
+
+    assert "No router activity records were parsed." in rendered
+    assert "source/component detail was unavailable" not in rendered
+    assert "Body-event calendar and time analysis was unavailable" not in rendered
+    assert "Stable identity and rejected-client evidence were incomplete." not in rendered
+    assert "Internet-reset assessment lacked WAN-transition and client-recovery evidence." in rendered
+
+
+def test_tp_link_history_query_flags_follow_first_and_exact_duplicate_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "history-flags.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+    log_path = tmp_path / "synthetic-history-flags.log"
+    log_path.write_text(tp_link_synthetic_snapshot([
+        "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
+    ]), encoding="utf-8")
+
+    assert analyzer.main([str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["snapshot"]["history_queried"] is True
+    assert first["router_activity"]["behavior_history_queried"] is True
+
+    assert analyzer.main([str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json"]) == 0
+    duplicate = json.loads(capsys.readouterr().out)
+    assert duplicate["state"]["deduplicated"] is True
+    assert duplicate["snapshot"]["history_queried"] is False
+    assert duplicate["router_activity"]["behavior_history_queried"] is False
+
+
 def test_tp_link_cli_writes_consistent_markdown_html_and_json_reports(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -4802,6 +5339,74 @@ def test_tp_link_cli_writes_consistent_markdown_html_and_json_reports(
     assert label in report_paths["markdown"].read_text(encoding="utf-8")
     assert label in report_paths["html"].read_text(encoding="utf-8")
     assert all(str(path) in output for path in report_paths.values())
+
+
+def test_verbose_cli_help_and_text_output_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert analyzer.parse_args(["--verbose"]).verbose is True
+    with pytest.raises(SystemExit):
+        analyzer.parse_args(["--help"])
+    help_text = capsys.readouterr().out
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"-\s+", "-", help_text))
+    assert "expanded event and diagnostic details in TP-Link text output" in normalized_help
+    assert "NETGEAR text is unchanged" in normalized_help
+
+    report = operational_tp_link_report()
+    expected_body = analyzer.render_text_report(report, verbose=True)
+    report_dir = tmp_path / "reports"
+    analyzer.emit_report_outputs(
+        report, ["text", "json"], tmp_path / "synthetic.log", report_dir, verbose=True,
+    )
+    output = capsys.readouterr().out
+    text_path = report_dir / "synthetic.report.txt"
+    json_path = report_dir / "synthetic.report.json"
+    assert output.startswith(expected_body)
+    assert "Generated reports:" in output
+    assert text_path.read_text(encoding="utf-8") == expected_body + "\n"
+    assert json.loads(json_path.read_text(encoding="utf-8"))["occurrences"] == report["occurrences"]
+
+    captured_verbose: list[bool] = []
+    monkeypatch.setattr(
+        analyzer, "render_text_report",
+        lambda _report, verbose=False: captured_verbose.append(verbose) or "synthetic text\n",
+    )
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+    monkeypatch.setattr(
+        analyzer, "StateStore",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not open SQLite")),
+    )
+    assert analyzer.main([str(log_path), "--format", "tp-link-archer", "--db", str(db_path), "--verbose"]) == 0
+    assert captured_verbose == [True]
+    assert not db_path.exists()
+
+
+def test_verbose_is_ignored_for_json_and_non_text_renderers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = operational_tp_link_report()
+    markdown = analyzer.render_markdown_report(report)
+    html = analyzer.render_html_report(report)
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+    monkeypatch.setattr(
+        analyzer, "StateStore",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not open SQLite")),
+    )
+    assert analyzer.main([str(log_path), "--format", "tp-link-archer", "--json", "--verbose"]) == 0
+
+    output = capsys.readouterr().out
+    assert json.loads(output)["persistence"]["available"] is False
+    assert analyzer.render_markdown_report(report) == markdown
+    assert analyzer.render_html_report(report) == html
 
 
 def test_cli_version_and_help_describe_supported_router_contracts(
@@ -4885,6 +5490,96 @@ def test_snapshot_report_ranges_use_the_detector_numeric_profiles() -> None:
         assert profile is not None
         expected[label] = [round(profile["range_min"], 2), round(profile["range_max"], 2)]
     assert sections["snapshot"]["learned_ranges"] == expected
+
+
+def test_router_report_projects_reconciled_component_outcome_and_event_type_counts() -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
+        ]),
+        "synthetic-router-activity.log",
+        "tp-link-archer",
+    )
+    representative = parsed.events[0]
+    events = [
+        replace(
+            representative,
+            actor_scope="router",
+            component="synthetic_firewall",
+            event_key="SYNTHETIC_FIREWALL_9001_FAILURE",
+            vendor_event_code="9001",
+            structured_evidence={"action": "failure"},
+            source_record_count=2,
+        ),
+        replace(
+            representative,
+            actor_scope="router",
+            component="synthetic_service",
+            event_key="SYNTHETIC_SERVICE_9002_START",
+            vendor_event_code="9002",
+            structured_evidence={"action": "start"},
+        ),
+        replace(
+            representative,
+            actor_scope="router",
+            component=None,
+            event_key="SYNTHETIC_UNKNOWN_9003_OTHER",
+            vendor_event_code=None,
+            structured_evidence={},
+        ),
+    ]
+
+    sections = analyzer.build_router_report_sections(
+        parsed, "SYNTHETIC ROUTER", events, {"all": []}, [], 0,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    )
+
+    activity = sections["router_activity"]
+    assert {
+        key: activity[key]
+        for key in (
+            "source_record_count", "component_counts", "outcome_counts", "event_type_counts",
+        )
+    } == {
+        "source_record_count": 4,
+        "component_counts": [
+            {"component": "other", "event_count": 1},
+            {"component": "synthetic_firewall", "event_count": 2},
+            {"component": "synthetic_service", "event_count": 1},
+        ],
+        "outcome_counts": [
+            {"outcome": "failure", "event_count": 2},
+            {"outcome": "other", "event_count": 1},
+            {"outcome": "start", "event_count": 1},
+        ],
+        "event_type_counts": [
+            {
+                "component": "other",
+                "event_key": "SYNTHETIC_UNKNOWN_9003_OTHER",
+                "vendor_event_code": None,
+                "outcome": "other",
+                "event_count": 1,
+            },
+            {
+                "component": "synthetic_firewall",
+                "event_key": "SYNTHETIC_FIREWALL_9001_FAILURE",
+                "vendor_event_code": "9001",
+                "outcome": "failure",
+                "event_count": 2,
+            },
+            {
+                "component": "synthetic_service",
+                "event_key": "SYNTHETIC_SERVICE_9002_START",
+                "vendor_event_code": "9002",
+                "outcome": "start",
+                "event_count": 1,
+            },
+        ],
+    }
+    assert sum(item["event_count"] for item in activity["component_counts"]) == 4
+    assert sum(item["event_count"] for item in activity["outcome_counts"]) == 4
+    assert sum(item["event_count"] for item in activity["event_type_counts"]) == 4
+    assert activity["system_event_count"] == 3
 
 
 def test_snapshot_change_detail_excludes_noncount_router_changes() -> None:
@@ -6325,7 +7020,7 @@ def test_tp_link_router_identity_is_stable_and_model_label_are_not_identity() ->
 
     assert analyzer.router_instance_key_for_parse(first, None) == expected
     assert analyzer.router_instance_key_for_parse(second, None) == expected
-    assert analyzer.default_router_label(first, expected).startswith("TP-Link SYNTHETIC-ARCHER-X9000 ")
+    assert analyzer.default_router_label(first, expected) == "TP-Link SYNTHETIC-ARCHER-X9000"
     assert "02:00:00" not in analyzer.default_router_label(first, expected)
 
 
@@ -6556,6 +7251,7 @@ def test_anchorless_boot_context_stays_report_only_and_out_of_cross_run_history(
         )
         assert report_sections["occurrences"] == {
             "body_count": 2,
+            "source_record_count": 2,
             "novel_count": 0,
             "repeated_count": 0,
             "report_only_count": 2,
@@ -6598,13 +7294,14 @@ def test_anchorless_boot_context_stays_report_only_and_out_of_cross_run_history(
             "analysis_adjustments": {},
         })
         for output in (
-            analyzer.render_text_report(report),
+            analyzer.render_text_report(report, verbose=True),
             analyzer.render_markdown_report(report),
             analyzer.render_html_report(report),
         ):
             assert "no_trusted_boot_anchor" in output
             assert "synthetic_parser_warning" in output
-            assert "Coverage records" in output
+        assert "Body-event calendar and time analysis was unavailable" in analyzer.render_text_report(report)
+        for output in (analyzer.render_markdown_report(report), analyzer.render_html_report(report)):
             for segment in report_sections["clock"]["segments"]:
                 assert segment["segment_id"] in output
                 assert segment["clock_trust"] in output
@@ -6838,6 +7535,193 @@ def test_identical_tp_link_reopen_collapses_boot_lines_by_persisted_session(
     )
     assert first_system["total_events"] == 1
     assert repeated_system["total_events"] == 1
+
+
+def test_tp_link_activity_preserves_source_record_multiplicity_on_first_and_duplicate_ingest(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_path = tmp_path / "synthetic-multiplicity.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    db_path = tmp_path / "network.db"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    record = "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected"
+    log_path.write_text(tp_link_synthetic_snapshot([record, record]), encoding="utf-8")
+    first_args = [
+        str(log_path), str(baseline_path), "--format", "tp-link-archer", "--json",
+        "--db", str(db_path),
+    ]
+    duplicate_args = [
+        str(log_path), "--format", "tp-link-archer", "--json", "--db", str(db_path),
+    ]
+
+    assert analyzer.main(first_args) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert analyzer.main(duplicate_args) == 0
+    duplicate = json.loads(capsys.readouterr().out)
+
+    for report, novelty_key in ((first, "novel_count"), (duplicate, "repeated_count")):
+        activity = report["router_activity"]
+        assert report["occurrences"]["body_count"] == 1
+        assert report["occurrences"][novelty_key] == 1
+        assert report["occurrences"]["source_record_count"] == 2
+        assert activity["source_record_count"] == 2
+        assert activity["event_type_counts"] == [
+            {
+                "component": "firewall",
+                "event_key": "FIREWALL_9001_FAILURE",
+                "vendor_event_code": "9001",
+                "outcome": "failure",
+                "event_count": 2,
+            }
+        ]
+
+    store = analyzer.StateStore(db_path)
+    try:
+        assert [row[0] for row in store.conn.execute(
+            "SELECT source_count FROM run_event_occurrences"
+        )] == [2]
+    finally:
+        store.close()
+
+
+def test_duplicate_collapse_preserves_source_order_with_report_only_events(tmp_path: Path) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+        ]),
+        "synthetic-collapse-order.log",
+        "tp-link-archer",
+    )
+    representative = parsed.events[0]
+    report_only = replace(
+        representative,
+        event_key="SYNTHETIC_REPORT_ONLY",
+        boot_context_id="synthetic-unresolved-boot",
+        source_sequence=3,
+    )
+    persistable = replace(
+        representative,
+        event_key="SYNTHETIC_PERSISTABLE",
+        boot_context_id=None,
+        source_sequence=2,
+    )
+    parsed.events = [report_only, persistable, replace(persistable, source_sequence=1)]
+    parsed.boot_candidates = [analyzer.BootSessionCandidate("synthetic-unresolved-boot")]
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        router_id = store.resolve_router_instance(parsed)
+        collapsed = store.collapse_existing_run_events(1, router_id, parsed)
+    finally:
+        store.close()
+
+    assert [event.source_sequence for event in collapsed] == [3, 2]
+    assert [(event.occurrence_novel, event.occurrence_repeated) for event in collapsed] == [
+        (False, True), (False, True),
+    ]
+    assert [event.source_record_count for event in collapsed] == [1, 2]
+
+
+def test_router_activity_event_type_sorting_distinguishes_missing_and_empty_vendor_codes() -> None:
+    base = make_event("2042-06-15T11:59:00", analyzer.SYSTEM_ACTOR, "SYNTHETIC_EVENT")
+    events = [
+        replace(base, actor_scope="router", component="synthetic", vendor_event_code=""),
+        replace(base, actor_scope="router", component="synthetic", vendor_event_code=None),
+    ]
+
+    activity = analyzer.project_router_activity(events)
+
+    assert [item["vendor_event_code"] for item in activity["event_type_counts"]] == [None, ""]
+
+
+def test_router_activity_projects_invalid_source_record_counts_as_one_each() -> None:
+    base = replace(
+        make_event("2042-06-15T11:59:00", analyzer.SYSTEM_ACTOR, "SYNTHETIC_EVENT"),
+        actor_scope="router",
+        component="synthetic",
+        structured_evidence={"action": "synthetic-action"},
+    )
+
+    activity = analyzer.project_router_activity([
+        replace(base, source_record_count=0),
+        replace(base, source_record_count=-2),
+        replace(base, source_record_count="synthetic-invalid"),
+    ])
+
+    assert activity["source_record_count"] == 3
+    assert activity["component_counts"] == [{"component": "synthetic", "event_count": 3}]
+    assert activity["outcome_counts"] == [{"outcome": "synthetic-action", "event_count": 3}]
+    assert activity["event_type_counts"] == [{
+        "component": "synthetic",
+        "event_key": "SYNTHETIC_EVENT",
+        "vendor_event_code": None,
+        "outcome": "synthetic-action",
+        "event_count": 3,
+    }]
+    assert all(
+        sum(item["event_count"] for item in activity[key]) == activity["source_record_count"]
+        for key in ("component_counts", "outcome_counts", "event_type_counts")
+    )
+
+
+def test_duplicate_collapse_falls_back_from_invalid_source_record_counts(tmp_path: Path) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+        ]),
+        "synthetic-invalid-collapse-count.log",
+        "tp-link-archer",
+    )
+    representative = parsed.events[0]
+    parsed.events = [
+        replace(representative, source_sequence=3, source_record_count=0),
+        replace(representative, source_sequence=2, source_record_count=-2),
+        replace(representative, source_sequence=1, source_record_count="synthetic-invalid"),
+    ]
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        router_id = store.resolve_router_instance(parsed)
+        collapsed = store.collapse_existing_run_events(1, router_id, parsed)
+    finally:
+        store.close()
+
+    assert len(collapsed) == 1
+    assert collapsed[0].source_record_count == 3
+    assert collapsed[0].source_record_count > 0
+
+
+@pytest.mark.parametrize("source_record_count", [0, -2, "synthetic-invalid"])
+def test_router_activity_and_persistence_fall_back_from_invalid_source_record_count(
+    tmp_path: Path,
+    source_record_count: object,
+) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+        ]),
+        "synthetic-invalid-source-count.log",
+        "tp-link-archer",
+    )
+    parsed.events = [replace(parsed.events[0], source_record_count=source_record_count)]
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.resolve_router_instance(parsed)
+        run_id = store.insert_run(
+            epoch_id, None, "synthetic-invalid-source-count", tmp_path / "synthetic.log",
+            parsed.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=parsed.format_id,
+            export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+        )
+        result = store.persist_router_provenance(run_id, router_id, parsed)
+        assert result["events"][0].source_record_count == 1
+        assert store.conn.execute(
+            "SELECT source_count FROM run_event_occurrences WHERE run_id = ?", (run_id,)
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+    assert analyzer.project_router_activity(result["events"])["source_record_count"] == 1
 
 
 def test_cross_router_interface_client_conflict_warns_without_suppressing_client(
@@ -7784,6 +8668,19 @@ def test_build_priority_findings_surfaces_security_events_first() -> None:
 
 def test_new_device_is_security_priority_so_medium_discovery_stays_visible() -> None:
     assert analyzer.finding_security_priority("new_device", {}) == 2
+
+
+def test_medium_new_device_is_retained_in_effective_priority_findings() -> None:
+    finding = analyzer.Finding(
+        kind="new_device", severity="medium", mac="02:00:00:00:00:0F",
+        message="Synthetic device first observed.", metadata={"day": "2042-06-15"},
+    )
+    findings = {"critical": [], "anomalies": [finding], "observations": [], "all": [finding]}
+    priority = analyzer.build_priority_findings(
+        analyzer.findings_to_dict(findings, make_aggregate({"02:00:00:00:00:0F": "SYNTHETIC NEW DEVICE"}))
+    )
+
+    assert [(entry["kind"], entry["severity"]) for entry in priority] == [("new_device", "medium")]
 
 
 def test_cluster_partial_visibility_detail_lines_do_not_report_zero_minutes() -> None:
@@ -9804,6 +10701,27 @@ def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
         finding["kind"] == "router_firmware_change"
         for finding in reports[1]["findings"]["all"]
     )
+    assert "ambiguous_firmware_profile" in reports[1]["clock"]["warnings"]
+    assert reports[1]["router_activity"]["behavior_history_queried"] is False
+    assert reports[1]["availability"]["checks"]["router_behavior"] == {
+        "available": False, "unavailable_reason": "ambiguous_firmware_profile",
+    }
+    assert "comparison was unavailable because events could not be assigned unambiguously to a firmware profile" in re.sub(
+        r"\s+", " ", analyzer.render_text_report(reports[1]),
+    )
+    assert "unexpected warning(s)" not in analyzer.render_text_report(reports[1])
+    duplicate_path = tmp_path / "synthetic-upgrade-2.log"
+    assert analyzer.main([
+        str(duplicate_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+    ]) == 0
+    duplicate = json.loads(capsys.readouterr().out)
+    assert duplicate["state"]["deduplicated"] is True
+    assert duplicate["availability"]["checks"]["router_behavior"] == {
+        "available": False, "unavailable_reason": "ambiguous_firmware_profile",
+    }
+    duplicate_text = analyzer.render_text_report(duplicate)
+    assert "comparison was unavailable because events could not be assigned unambiguously to a firmware profile" in re.sub(r"\s+", " ", duplicate_text)
+    assert "unexpected warning(s)" not in duplicate_text
     store = analyzer.StateStore(db_path)
     try:
         rows = list(store.conn.execute(

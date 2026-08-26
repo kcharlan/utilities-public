@@ -231,6 +231,7 @@ class Event:
     trusted_overlap_identity: Optional[str] = None
     occurrence_novel: Optional[bool] = None
     occurrence_repeated: Optional[bool] = None
+    source_record_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -528,6 +529,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Stable router-instance override; its raw value is never persisted or displayed.",
     )
     parser.add_argument("--json", action="store_true", help="Emit report as JSON.")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Include expanded event and diagnostic details in TP-Link text output; NETGEAR text is unchanged.",
+    )
     parser.add_argument(
         "--report",
         help="Comma-separated report outputs: text, markdown, html, json.",
@@ -3694,6 +3700,11 @@ class StateStore:
                     "UPDATE router_instances SET label = ? WHERE id = ?",
                     (requested_label, row["id"]),
                 )
+            elif router_label is None and row["label"] == legacy_default_router_label(parsed, instance_key):
+                self.conn.execute(
+                    "UPDATE router_instances SET label = ? WHERE id = ?",
+                    (requested_label, row["id"]),
+                )
             return int(row["id"])
         cursor = self.conn.execute(
             """
@@ -3957,8 +3968,8 @@ class StateStore:
             if row is not None:
                 boot_sessions[candidate.session_id] = int(row[0])
 
-        collapsed: List[Event] = []
-        seen_occurrences: Set[str] = set()
+        collapsed: Dict[str, Tuple[Event, int]] = {}
+        report_only_events: List[Event] = []
         for event in parsed.events:
             boot_session_id = (
                 boot_sessions.get(event.boot_context_id)
@@ -3970,10 +3981,11 @@ class StateStore:
                 or (event.boot_context_id is None and event.clock_trust == "trusted")
             )
             if not persistable:
-                collapsed.append(replace(
+                report_only_events.append(replace(
                     event,
                     occurrence_novel=False,
                     occurrence_repeated=True,
+                    source_record_count=1,
                 ))
                 continue
             digest = self._occurrence_digest(
@@ -3981,17 +3993,31 @@ class StateStore:
                 event,
                 boot_session_id,
             )
-            if digest in seen_occurrences:
+            source_count = event.source_record_count
+            if not isinstance(source_count, int) or source_count <= 0:
+                source_count = 1
+            if digest in collapsed:
+                representative, accumulated_count = collapsed[digest]
+                collapsed[digest] = (representative, accumulated_count + source_count)
                 continue
-            seen_occurrences.add(digest)
-            collapsed.append(replace(
-                event,
-                boot_session_id=str(boot_session_id) if boot_session_id is not None else None,
-                occurrence_digest=digest,
-                occurrence_novel=False,
-                occurrence_repeated=True,
-            ))
-        return collapsed
+            collapsed[digest] = (
+                replace(
+                    event,
+                    boot_session_id=str(boot_session_id) if boot_session_id is not None else None,
+                    occurrence_digest=digest,
+                    occurrence_novel=False,
+                    occurrence_repeated=True,
+                ),
+                source_count,
+            )
+        persistable_events = [
+            replace(event, source_record_count=max(1, source_count))
+            for event, source_count in collapsed.values()
+        ]
+        return sorted(
+            [*persistable_events, *report_only_events],
+            key=lambda event: -(event.source_sequence or 0),
+        )
 
     def persist_router_provenance(
         self,
@@ -4229,8 +4255,12 @@ class StateStore:
                 boot_sessions.get(event.boot_context_id) if event.boot_context_id is not None else None
             )
             if event.boot_context_id is not None and boot_session_id is None:
-                event.occurrence_novel = True
-                event.occurrence_repeated = False
+                event = replace(
+                    event,
+                    occurrence_novel=True,
+                    occurrence_repeated=False,
+                    source_record_count=1,
+                )
                 report_only_events.append(event)
                 report_only_signatures.append(hashlib.sha256(
                     (
@@ -4246,8 +4276,12 @@ class StateStore:
                 ).hexdigest())
                 continue
             if event.boot_context_id is None and event.clock_trust != "trusted":
-                event.occurrence_novel = True
-                event.occurrence_repeated = False
+                event = replace(
+                    event,
+                    occurrence_novel=True,
+                    occurrence_repeated=False,
+                    source_record_count=1,
+                )
                 report_only_events.append(event)
                 report_only_signatures.append(hashlib.sha256(
                     (
@@ -4265,15 +4299,20 @@ class StateStore:
             digest = self._occurrence_digest(router_row["instance_key"], event, boot_session_id)
             event.occurrence_digest = digest
             event.boot_session_id = str(boot_session_id) if boot_session_id is not None else None
+            source_count = event.source_record_count
+            if not isinstance(source_count, int) or source_count <= 0:
+                source_count = 1
             if digest in collapsed:
-                collapsed[digest] = (collapsed[digest][0], collapsed[digest][1] + 1)
+                collapsed[digest] = (collapsed[digest][0], collapsed[digest][1] + source_count)
             else:
-                collapsed[digest] = (event, 1)
+                collapsed[digest] = (event, source_count)
 
         novel_count = 0
         repeated_count = 0
         report_events: List[Event] = []
         for digest, (event, source_count) in collapsed.items():
+            source_count = max(1, source_count)
+            event = replace(event, source_record_count=source_count)
             existing = self.conn.execute(
                 """
                 SELECT occurrence.id,
@@ -9718,6 +9757,104 @@ REPORT_CHECKS = (
 )
 
 
+REPORT_CHECK_LABELS = {
+    "duration_based_partial": "Duration-based partial-run detection",
+    "stable_client_discovery": "Stable client discovery",
+    "current_rejected_client": "Current rejected-client detection",
+    "device_dhcp_metrics": "Device DHCP metrics",
+    "device_event_volume": "Device event-volume comparison",
+    "device_behavior": "Device behavior comparison",
+    "cluster_visibility": "Cluster visibility",
+    "confirmed_reset": "Confirmed internet-reset detection",
+    "inferred_reset": "Inferred internet-reset detection",
+    "router_inventory": "Router inventory",
+    "router_security": "Router-security mapping",
+    "router_behavior": "Router behavior comparison",
+    "snapshot_counts": "Client snapshot counts",
+}
+
+
+REPORT_UNAVAILABLE_REASON_LABELS = {
+    "ambiguous_firmware_profile": "ambiguous firmware profile",
+    "incomparable_event_coverage": "incomparable event coverage",
+    "invalid_snapshot_counts": "invalid snapshot counts",
+    "inconsistent_snapshot_counts": "inconsistent snapshot counts",
+    "missing_snapshot_counts": "no client snapshot counts",
+    "no_client_access_decisions": "no client access decisions",
+    "no_client_dhcp_coverage": "no client DHCP coverage",
+    "no_client_recovery_equivalence": "no equivalent client recovery evidence",
+    "no_comparable_device_behavior": "no comparable device behavior coverage",
+    "no_negative_client_coverage": "no negative client coverage",
+    "no_router_behavior_coverage": "no router behavior coverage",
+    "no_router_behavior_history": "no router behavior history",
+    "no_router_event_coverage": "no router event coverage",
+    "no_router_security_mapping": "no recognized router-security mapping",
+    "no_snapshot_counts": "no client snapshot counts",
+    "no_stable_client_identity": "no stable client identity",
+    "no_trusted_boot_anchor": "no trusted boot anchor",
+    "no_wan_transition_coverage": "no WAN transition coverage",
+    "point_snapshot_not_continuous": "point snapshot is not a continuous log",
+    "snapshot_count_out_of_range": "snapshot counts were out of range",
+    "untrusted_time": "router-local timestamps were not trusted",
+}
+
+
+def project_router_activity(events: Sequence[Event]) -> Dict[str, Any]:
+    """Summarize router-scoped source records without changing event semantics."""
+    component_counts: Counter = Counter()
+    outcome_counts: Counter = Counter()
+    event_type_counts: Counter = Counter()
+    source_record_count = 0
+    for event in events:
+        if event.actor_scope != "router":
+            continue
+        component = " ".join((event.component or "").split()).casefold() or "other"
+        outcome = "other"
+        for key in ("state", "action"):
+            value = event.structured_evidence.get(key)
+            normalized = " ".join(str(value).split()).casefold() if value is not None else ""
+            if normalized:
+                outcome = normalized
+                break
+        source_count = event.source_record_count
+        if not isinstance(source_count, int) or source_count <= 0:
+            source_count = 1
+        source_record_count += source_count
+        component_counts[component] += source_count
+        outcome_counts[outcome] += source_count
+        event_type_counts[(component, event.event_key, event.vendor_event_code, outcome)] += source_count
+
+    return {
+        "source_record_count": source_record_count,
+        "component_counts": [
+            {"component": component, "event_count": event_count}
+            for component, event_count in sorted(component_counts.items())
+        ],
+        "outcome_counts": [
+            {"outcome": outcome, "event_count": event_count}
+            for outcome, event_count in sorted(outcome_counts.items())
+        ],
+        "event_type_counts": [
+            {
+                "component": component,
+                "event_key": event_key,
+                "vendor_event_code": vendor_event_code,
+                "outcome": outcome,
+                "event_count": event_count,
+            }
+            for (component, event_key, vendor_event_code, outcome), event_count in sorted(
+                event_type_counts.items(),
+                key=lambda item: (
+                    item[0][0],
+                    item[0][1],
+                    (0, "") if item[0][2] is None else (1, item[0][2]),
+                    item[0][3],
+                ),
+            )
+        ],
+    }
+
+
 def build_router_report_sections(
     parsed: ParsedRouterLog,
     router_label: str,
@@ -9726,6 +9863,9 @@ def build_router_report_sections(
     snapshot_history: Sequence[sqlite3.Row],
     router_behavior_history_count: int,
     policy: Dict[str, Any],
+    *,
+    snapshot_history_queried: bool = False,
+    router_behavior_history_queried: bool = False,
 ) -> Dict[str, Any]:
     """Project already-computed router evidence into stable, renderer-neutral sections."""
     metrics = parsed.snapshot_metrics or RouterSnapshotMetrics(
@@ -9738,9 +9878,11 @@ def build_router_report_sections(
     eligibility_evidence = {
         **parsed.coverage_stats,
         "snapshot_counts_valid": bool(metrics.eligible),
+        "snapshot_exclusion_reason": metrics.exclusion_reason,
         "explicit_security_mapping": bool(security_findings) or any(
             is_explicit_router_security_event(event) for event in events
         ),
+        "ambiguous_firmware_profile": "ambiguous_firmware_profile" in parsed.warnings,
     }
     checks = {
         name: asdict(detector_eligibility(name, parsed.capabilities, events, eligibility_evidence))
@@ -9800,6 +9942,12 @@ def build_router_report_sections(
         for candidate in parsed.boot_candidates
         for warning in candidate.warnings
     })
+    occurrence_source_record_count = sum(
+        event.source_record_count
+        if isinstance(event.source_record_count, int) and event.source_record_count > 0
+        else 1
+        for event in events
+    )
     return {
         "router": {
             "label": router_label,
@@ -9830,11 +9978,13 @@ def build_router_report_sections(
             "eligible": metrics.eligible,
             "unavailable_reason": metrics.exclusion_reason,
             "history_count": len(snapshot_history),
+            "history_queried": snapshot_history_queried,
             "learned_ranges": learned_ranges,
             "change_findings": snapshot_change_findings,
         },
         "occurrences": {
             "body_count": len(events),
+            "source_record_count": occurrence_source_record_count,
             "novel_count": novel_count,
             "repeated_count": repeated_count,
             "report_only_count": report_only_count,
@@ -9844,6 +9994,7 @@ def build_router_report_sections(
             ),
         },
         "router_activity": {
+            **project_router_activity(events),
             "system_event_count": sum(event.actor_scope == "router" for event in events),
             "security_finding_count": len(security_findings),
             "security_findings": security_findings,
@@ -9852,6 +10003,7 @@ def build_router_report_sections(
             "change_finding_count": len(router_change_findings),
             "change_findings": router_change_findings,
             "behavior_history_count": router_behavior_history_count,
+            "behavior_history_queried": router_behavior_history_queried,
         },
         "clock": {
             "segments": [asdict(segment) for segment in parsed.clock_segments],
@@ -10072,6 +10224,8 @@ def finding_detail_lines(entry: Dict[str, Any]) -> List[str]:
 
 def finding_subject_label(entry: Dict[str, Any]) -> str:
     metadata = entry.get("metadata", {})
+    if entry["kind"].startswith("router_"):
+        return "Router"
     if entry["kind"] == "network_reset":
         return "Network recovery"
     if entry["kind"] == "cluster_anomaly":
@@ -10086,6 +10240,8 @@ def finding_subject_label(entry: Dict[str, Any]) -> str:
 
 def finding_subject_key(entry: Dict[str, Any]) -> str:
     metadata = entry.get("metadata", {})
+    if entry["kind"].startswith("router_"):
+        return "router"
     if entry["kind"] == "network_reset":
         return f"incident:{metadata.get('incident_id') or 'network-reset'}"
     if entry["kind"] == "cluster_anomaly":
@@ -10094,6 +10250,8 @@ def finding_subject_key(entry: Dict[str, Any]) -> str:
 
 
 def finding_subject_identifier(entry: Dict[str, Any]) -> str:
+    if entry["kind"].startswith("router_"):
+        return ""
     if entry["kind"] == "network_reset":
         return str(entry.get("metadata", {}).get("incident_id") or "Network incident")
     if entry["kind"] == "cluster_anomaly":
@@ -10104,6 +10262,16 @@ def finding_subject_identifier(entry: Dict[str, Any]) -> str:
 def finding_issue_summary(entry: Dict[str, Any]) -> str:
     metadata = entry.get("metadata", {})
     kind = entry["kind"]
+    if kind == "router_security_event":
+        return "Security event"
+    if kind == "router_firmware_change":
+        return "Firmware changed"
+    if kind == "router_new_event_type":
+        return f"First observed {humanize_event_key(metadata.get('event_key', 'ROUTER EVENT'))}"
+    if kind == "router_state_change":
+        return "Router state changed"
+    if kind == "router_client_count_anomaly":
+        return "Client count outside learned range"
     if kind == "unknown_device":
         return "Unknown device activity"
     if kind == "blocked_device_activity":
@@ -10156,6 +10324,34 @@ def finding_field_lines(entry: Dict[str, Any]) -> List[Tuple[str, str]]:
 
     if kind in {"unknown_device", "blocked_device_activity"}:
         lines.append(("Events", f"{entry.get('event_count', 0)} event(s)"))
+        return lines
+
+    if kind == "router_security_event":
+        lines.extend([
+            ("Event", humanize_event_key(metadata.get("event_key") or metadata.get("event") or "ROUTER SECURITY EVENT")),
+            ("Component", str(metadata.get("component") or "unavailable")),
+            ("Outcome", str(metadata.get("action") or metadata.get("state") or metadata.get("outcome") or "unavailable")),
+        ])
+        return lines
+    if kind == "router_firmware_change":
+        lines.extend([("Previous", str(metadata.get("previous_firmware") or metadata.get("previous") or "unavailable")),
+                      ("Current", str(metadata.get("current_firmware") or metadata.get("current") or "unavailable"))])
+        return lines
+    if kind in {"router_new_event_type", "router_state_change"}:
+        lines.extend([("Event", humanize_event_key(metadata.get("event_key") or metadata.get("event") or "ROUTER EVENT")),
+                      ("Component", str(metadata.get("component") or "unavailable")),
+                      ("State", str(metadata.get("state") or metadata.get("outcome") or "unavailable"))])
+        return lines
+    if kind == "router_client_count_anomaly":
+        for metric, detail in sorted((metadata.get("metrics") or {}).items()):
+            if not isinstance(detail, dict):
+                continue
+            learned_range = detail.get("learned_range") or ["?", "?"]
+            lines.extend([("Metric", str(metric)),
+                          ("Observed", str(detail.get("observed") if detail.get("observed") is not None else "unavailable")),
+                          ("Range", f"{compact_metric_value(learned_range[0])}-{compact_metric_value(learned_range[1])}"),
+                          ("Direction", str(detail.get("direction") or "outside")),
+                          ("History", f"{detail.get('history_count', 0)} prior snapshot(s)")])
         return lines
 
     if kind == "network_reset":
@@ -10335,6 +10531,32 @@ def markdown_table_cell(value: Any) -> str:
     return str(value).replace("\\", "\\\\").replace("|", "\\|")
 
 
+def saved_router_activity_rows(report: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Any]:
+    """Return deterministic saved-report rows without reconstructing router activity."""
+    activity = report.get("router_activity", {})
+    components = [
+        item for item in activity.get("component_counts", [])
+        if isinstance(item, dict) and item.get("component")
+    ]
+    event_types = [
+        item for item in activity.get("event_type_counts", [])
+        if isinstance(item, dict) and item.get("event_key")
+    ]
+    components.sort(key=lambda item: (
+        -int(item.get("event_count", 0)),
+        humanize_event_key(str(item["component"])).casefold(),
+        str(item["component"]),
+    ))
+    event_types.sort(key=lambda item: (
+        -int(item.get("event_count", 0)),
+        str(item.get("component") or ""),
+        str(item.get("event_key") or ""),
+        "" if item.get("vendor_event_code") is None else str(item.get("vendor_event_code")),
+        str(item.get("outcome") or ""),
+    ))
+    return components, event_types, activity.get("source_record_count")
+
+
 def report_entry_lines(entry: Dict[str, Any], width: int) -> List[str]:
     detail_width = max(30, width - 8)
     lines = finding_detail_lines(entry)
@@ -10489,8 +10711,416 @@ def router_report_summary_items(report: Dict[str, Any]) -> List[Tuple[str, Any]]
     return items
 
 
-def render_text_report(report: Dict[str, Any]) -> str:
-    width = min(max(shutil.get_terminal_size((110, 24)).columns, 80), 120)
+def operational_line(label: str, value: Any, width: int) -> List[str]:
+    """Render a compact wrapped label/value line without losing long values."""
+    prefix = f"{label}: "
+    available = max(12, width - len(prefix))
+    parts = textwrap.wrap(str(value), width=available, break_long_words=True, break_on_hyphens=False) or [""]
+    return [prefix + parts[0]] + [" " * len(prefix) + part for part in parts[1:]]
+
+
+def operational_section(title: str, body: Sequence[str], width: int) -> List[str]:
+    lines = [section_rule(title, width)]
+    for line in body:
+        if len(line) <= width:
+            lines.append(line)
+        else:
+            lines.extend(textwrap.wrap(line, width=width, break_long_words=True, break_on_hyphens=False) or [line])
+    lines.append("")
+    return lines
+
+
+def operational_status_summary(report: Dict[str, Any]) -> str:
+    entries = all_report_findings(report)
+    if report.get("status") == "Clean" and not entries:
+        return "Clean — No findings were detected by the checks that were available."
+    if report.get("status") == "Clean":
+        severity_counts = Counter(
+            str(entry.get("severity") or "unknown").casefold() for entry in entries
+        )
+        severity_parts = [
+            f"{severity_counts[severity]} {severity}-severity"
+            for severity in sorted(severity_counts, key=lambda severity: (-SEVERITY_ORDER.get(severity, 0), severity))
+        ]
+        if len(severity_parts) == 1:
+            severity_text = severity_parts[0]
+        elif len(severity_parts) == 2:
+            severity_text = " and ".join(severity_parts)
+        else:
+            severity_text = ", ".join(severity_parts[:-1]) + ", and " + severity_parts[-1]
+        noun = "finding remains" if len(entries) == 1 else "findings remain"
+        return f"Clean — {severity_text} {noun} visible below."
+    return f"{report.get('status', 'Unknown')} — {len(entries)} finding(s) require review."
+
+
+def operational_activity_lines(activity: Dict[str, Any], occurrences: Dict[str, Any], width: int) -> List[str]:
+    source_total = activity.get("source_record_count")
+    projection_complete = isinstance(source_total, int) and all(
+        key in activity for key in ("component_counts", "outcome_counts", "event_type_counts")
+    )
+    if not projection_complete:
+        source_total = occurrences.get("body_count", 0)
+    components = [item for item in activity.get("component_counts", [])
+                  if isinstance(item, dict) and item.get("component")]
+    if source_total == 0:
+        lines = ["No router activity records were parsed."]
+    else:
+        total_label = "Source records" if projection_complete else "Semantic occurrences"
+        lines = [f"{total_label}: {source_total}", f"Active components: {len(components)}"]
+    if not components:
+        return lines if projection_complete else lines + [
+            "Router source/component detail was unavailable; only the semantic total is shown."
+        ]
+    ranked = sorted(
+        components,
+        key=lambda item: (
+            -int(item.get("event_count", 0)),
+            humanize_event_key(str(item["component"])).casefold(),
+            str(item["component"]),
+        ),
+    )
+    component_outcomes: DefaultDict[str, Set[str]] = defaultdict(set)
+    for item in activity.get("event_type_counts", []):
+        if isinstance(item, dict) and item.get("component") and item.get("outcome"):
+            component_outcomes[str(item["component"])].add(str(item["outcome"]).casefold())
+    consequential = {"failure", "rejected", "blocked", "denied", "disconnected", "timeout"}
+    top = ranked[:5]
+    promoted = [item for item in ranked[5:] if component_outcomes[str(item["component"])] & consequential]
+    shown = top + promoted
+    shown_names = {str(item["component"]) for item in shown}
+    lines.append("Components: " + ", ".join(
+        f"{humanize_event_key(str(item['component']))} {item.get('event_count', 0)}" for item in shown
+    ))
+    tail = [item for item in ranked if str(item["component"]) not in shown_names]
+    tail_count = sum(int(item.get("event_count", 0)) for item in tail)
+    if tail:
+        lines.append(f"Remaining: {tail_count} source record(s) across {len(tail)} other component(s).")
+    outcomes = {str(item.get("outcome")).casefold(): int(item.get("event_count", 0))
+                for item in activity.get("outcome_counts", []) if isinstance(item, dict) and item.get("outcome") != "other"}
+    ordered = [name for name in (
+        "failure", "rejected", "blocked", "denied", "disconnected", "timeout",
+        "stopped", "disabled", "stop", "disable", "release", "restart", "start",
+        "running", "enabled", "enable", "connected", "ready", "success",
+    ) if name in outcomes]
+    ordered.extend(sorted(name for name in outcomes if name not in ordered))
+    if ordered:
+        lines.append("Outcomes: " + ", ".join(f"{name} {outcomes[name]}" for name in ordered))
+    return [wrapped for line in lines for wrapped in textwrap.wrap(line, width=width, break_long_words=True, break_on_hyphens=False) or [line]]
+
+
+def operational_limitation_lines(report: Dict[str, Any], verbose: bool = False) -> List[str]:
+    coverage = report.get("coverage", {})
+    clock = report.get("clock", {})
+    checks = report.get("availability", {}).get("checks", {})
+    warnings = set(clock.get("warnings", []))
+    lines: List[str] = []
+    if "missing_lan_header" in warnings:
+        lines.append("LAN header was missing from this export.")
+    if "missing_wan_header" in warnings:
+        lines.append("WAN header was missing from this export.")
+    if "missing_wan_gateway_dns_header" in warnings:
+        lines.append("WAN gateway/DNS detail was missing from this export.")
+    warnings.difference_update({"missing_lan_header", "missing_wan_header", "missing_wan_gateway_dns_header"})
+    if not checks.get("router_security", {}).get("available", True):
+        lines.append("No recognized router-security mapping was available in this export.")
+    if checks.get("router_behavior", {}).get("unavailable_reason") == "ambiguous_firmware_profile":
+        lines.append(
+            "Router behavior comparison was unavailable because events could not be assigned "
+            "unambiguously to a firmware profile."
+        )
+        warnings.discard("ambiguous_firmware_profile")
+    if coverage.get("body_records", 0) and not coverage.get("trusted_records", 0):
+        lines.append("Body-event calendar and time analysis was unavailable because no trusted timestamps were present.")
+    malformed = coverage.get("malformed_lines", 0)
+    if malformed:
+        lines.append(f"Parser skipped {malformed} malformed line(s).")
+    if warnings:
+        lines.append(f"Parser reported {len(warnings)} unexpected warning(s); use --verbose for details.")
+        if verbose:
+            lines.append("Parser warning details: " + ", ".join(sorted(warnings)))
+    boot_warnings = clock.get("boot_resolution_warnings", [])
+    if boot_warnings:
+        lines.append(f"Boot resolution reported {len(boot_warnings)} warning(s).")
+        if verbose:
+            lines.append("Boot warning details: " + ", ".join(sorted(boot_warnings)))
+    unavailable = {name for name, item in checks.items() if not item.get("available")}
+    unavailable_reasons = {name: str(item.get("unavailable_reason")) for name, item in checks.items() if not item.get("available")}
+    if "no_stable_client_identity" in unavailable_reasons.values():
+        lines.append("Stable identity and rejected-client evidence were incomplete.")
+    client_areas = {
+        "device_dhcp_metrics": "DHCP",
+        "device_event_volume": "event-volume",
+        "device_behavior": "behavior",
+        "cluster_visibility": "cluster comparison",
+    }
+    affected_client_areas = [label for name, label in client_areas.items() if name in unavailable]
+    if affected_client_areas:
+        lines.append("Client telemetry/comparison was incomplete for " + ", ".join(affected_client_areas) + ".")
+    reset_reasons = set(unavailable_reasons.values())
+    reset_areas = []
+    if "no_wan_transition_coverage" in reset_reasons:
+        reset_areas.append("WAN-transition")
+    if "no_client_recovery_equivalence" in reset_reasons:
+        reset_areas.append("client-recovery")
+    if reset_areas:
+        lines.append("Internet-reset assessment lacked " + " and ".join(reset_areas) + " evidence.")
+    return list(dict.fromkeys(lines))
+
+
+def verbose_router_activity_lines(report: Dict[str, Any], width: int) -> List[str]:
+    """Render exhaustive TP-Link router activity with explicit count units."""
+    activity = report.get("router_activity", {})
+    occurrences = report.get("occurrences", {})
+    source_total = activity.get("source_record_count")
+    router_semantic_total = activity.get("system_event_count")
+    lines: List[str] = []
+    if isinstance(source_total, int):
+        lines.append(f"Router-only source-record total: {source_total}")
+        if isinstance(router_semantic_total, int):
+            lines.append(f"Router-only semantic-occurrence total: {router_semantic_total}")
+        if isinstance(router_semantic_total, int) and source_total != router_semantic_total:
+            lines.append(
+                "Source records describe snapshot rows; semantic occurrences describe "
+                "deduplicated analyzer events."
+            )
+    else:
+        if isinstance(router_semantic_total, int):
+            lines.append(f"Router-only semantic-occurrence total: {router_semantic_total}")
+        lines.append("Source-record/component detail was unavailable in this compatibility report.")
+
+    for title, key, label in (
+        ("Components", "component_counts", "Component"),
+        ("Outcomes", "outcome_counts", "Outcome"),
+    ):
+        items = [item for item in activity.get(key, []) if isinstance(item, dict)]
+        if not items:
+            continue
+        lines.append(title + ":")
+        for item in items:
+            lines.extend(operational_line(
+                "  " + humanize_event_key(str(item.get("component") or item.get("outcome") or "other")),
+                f"{item.get('event_count', 0)} source record(s)",
+                width,
+            ))
+        if isinstance(source_total, int):
+            lines.append(
+                f"Router-only {label.casefold()} reconciliation: "
+                f"{sum(int(item.get('event_count', 0)) for item in items)} source record(s)"
+            )
+
+    event_types = [item for item in activity.get("event_type_counts", []) if isinstance(item, dict)]
+    if event_types:
+        lines.append("Router event types:")
+        for item in event_types:
+            code = item.get("vendor_event_code")
+            event_label = humanize_event_key(str(item.get("event_key") or "other"))
+            if code not in (None, ""):
+                event_label += f" ({code})"
+            row = (
+                f"  {humanize_event_key(str(item.get('component') or 'other'))} | "
+                f"{event_label} | {item.get('outcome') or 'other'}: "
+                f"{item.get('event_count', 0)} source record(s)"
+            )
+            lines.extend(textwrap.wrap(row, width=width, subsequent_indent="    ", break_long_words=True, break_on_hyphens=False) or [row])
+        if isinstance(source_total, int):
+            lines.append(
+                "Router-only event-type reconciliation: "
+                f"{sum(int(item.get('event_count', 0)) for item in event_types)} source record(s)"
+            )
+    return lines
+
+
+def verbose_technical_detail_lines(report: Dict[str, Any], width: int) -> List[str]:
+    """Project exhaustive TP-Link text evidence without changing report semantics."""
+    router = report.get("router", {})
+    snapshot = report.get("snapshot", {})
+    occurrences = report.get("occurrences", {})
+    activity = report.get("router_activity", {})
+    clock = report.get("clock", {})
+    coverage = report.get("coverage", {})
+    lines = verbose_router_activity_lines(report, width)
+
+    lines.append("Availability checks:")
+    for name, item in sorted(report.get("availability", {}).get("checks", {}).items()):
+        if not isinstance(item, dict):
+            continue
+        label = REPORT_CHECK_LABELS.get(name, humanize_event_key(name))
+        if item.get("available"):
+            value = "available"
+        else:
+            reason = str(item.get("unavailable_reason") or "no reason supplied")
+            value = "unavailable — " + REPORT_UNAVAILABLE_REASON_LABELS.get(
+                reason, humanize_event_key(reason).casefold(),
+            )
+        lines.extend(operational_line(f"  {label} ({name})", value, width))
+
+    lines.append("Occurrence evidence:")
+    for label, key in (
+        ("All semantic occurrences (router and device)", "body_count"),
+        ("All router and device source-record occurrences", "source_record_count"),
+        ("Novel occurrences", "novel_count"),
+        ("Repeated occurrences", "repeated_count"),
+        ("Report-only occurrences", "report_only_count"),
+    ):
+        lines.extend(operational_line("  " + label, occurrences.get(key, 0), width))
+    lines.extend(operational_line("  Fully repeated snapshot body", occurrences.get("fully_repeated", False), width))
+
+    lines.append("Clock and boot evidence:")
+    lines.append("  Clock segments:")
+    for segment in clock.get("segments", []):
+        if not isinstance(segment, dict):
+            continue
+        value = (
+            f"{segment.get('clock_trust', 'unknown')} (sequence "
+            f"{segment.get('start_sequence', 'n/a')}-{segment.get('end_sequence', 'n/a')})"
+        )
+        lines.extend(operational_line(f"  Clock segment {segment.get('segment_id', 'unknown')}", value, width))
+    lines.extend(operational_line("  Boot resolution", f"{clock.get('resolved_boot_session_count', 0)} resolved / {clock.get('boot_candidate_count', 0)} candidate(s)", width))
+    lines.extend(operational_line("  Boot warnings", ", ".join(clock.get("boot_resolution_warnings", [])) or "None", width))
+    lines.extend(operational_line("  Parser warnings", ", ".join(clock.get("warnings", [])) or "None", width))
+
+    lines.append("Coverage evidence:")
+    lines.extend(operational_line(
+        "  Coverage records",
+        f"body {coverage.get('body_records', 0)}, trusted {coverage.get('trusted_records', 0)}, "
+        f"untrusted {coverage.get('untrusted_records', 0)}, timing-eligible {coverage.get('timing_eligible_records', 0)}",
+        width,
+    ))
+    lines.extend(operational_line(
+        "  Coverage lines",
+        f"parsed {coverage.get('parsed_events', 0)}, ignored {coverage.get('ignored_lines', 0)}, "
+        f"malformed {coverage.get('malformed_lines', 0)}, export-noise {coverage.get('export_noise_lines', 0)}",
+        width,
+    ))
+    lines.extend(operational_line("  Coverage span", f"{coverage.get('run_span_start') or 'unavailable'} to {coverage.get('run_span_end') or 'unavailable'}", width))
+    lines.extend(operational_line("  LAN coverage", json_dumps(coverage.get("lan")) if coverage.get("lan") else "unavailable", width))
+    lines.extend(operational_line("  WAN coverage", json_dumps(coverage.get("wan")) if coverage.get("wan") else "unavailable", width))
+
+    lines.append("Database and persistence:")
+    lines.extend(operational_line("  Database", report.get("inputs", {}).get("db") or "unavailable", width))
+    lines.extend(operational_line("  Run persistence", run_persistence_text(report), width))
+    lines.extend(operational_line("  Router", router.get("label") or "unavailable", width))
+    lines.extend(operational_line("  Client snapshot history", snapshot.get("history_count", 0), width))
+    lines.extend(operational_line("  Router behavior history", activity.get("behavior_history_count", 0), width))
+
+    device_items = [
+        item for item in report.get("device_summary", [])
+        if item.get("mac") != SYSTEM_ACTOR
+    ]
+    if device_items:
+        lines.append("Client identifiers and event types:")
+        for item in sorted(device_items, key=lambda entry: (str(entry.get("name", "")).casefold(), str(entry.get("mac", "")))):
+            event_types = ", ".join(humanize_event_key(str(event_type)) for event_type in item.get("event_types", [])) or "None"
+            lines.extend(operational_line(
+                f"  {item.get('name') or 'Unknown device'} ({item.get('mac') or 'unavailable'})",
+                event_types,
+                width,
+            ))
+    return lines
+
+
+def render_operational_text_report(report: Dict[str, Any], width: int, verbose: bool = False) -> str:
+    router = report["router"]
+    snapshot = report.get("snapshot", {})
+    counts = snapshot.get("counts", {})
+    activity = report.get("router_activity", {})
+    occurrences = report.get("occurrences", {})
+    title = f"Network Analysis Report — {str(router.get('label') or 'Router')}"
+    lines: List[str] = [
+        *textwrap.wrap(title, width=width, break_long_words=True, break_on_hyphens=False),
+        "=" * min(width, max(8, len(title))),
+        *textwrap.wrap(
+            f"{str(report.get('status', 'Unknown')).upper()} | Risk {report.get('risk_score', 0)}/100 — "
+            f"{operational_status_summary(report).split(' — ', 1)[-1]}",
+            width=width, break_long_words=True, break_on_hyphens=False,
+        ),
+        "",
+    ]
+    entries = all_report_findings(report)
+    if entries:
+        finding_lines: List[str] = []
+        for entry in sorted(entries, key=finding_entry_sort_key):
+            finding_lines.extend(textwrap.wrap(
+                f"{entry['severity'].upper()} | {finding_subject_label(entry)} | {finding_issue_summary(entry)}",
+                width=width, break_long_words=True, break_on_hyphens=False,
+            ))
+            for label, value in finding_field_lines(entry):
+                if label != "Issue":
+                    finding_lines.extend(operational_line("  " + label, value, width))
+        lines.extend(operational_section("Findings", finding_lines, width))
+    snapshot_lines: List[str] = []
+    for label, value in (("Model", router.get("model") or "unavailable"), ("Hardware", router.get("hardware") or "unavailable"),
+                         ("Firmware", router.get("firmware") or "unavailable"), ("Export local time", router.get("export_time") or "unavailable")):
+        snapshot_lines.extend(operational_line(label, value, width))
+    if snapshot.get("eligible"):
+        snapshot_lines.append(f"Clients: total {counts.get('total')}, Wi-Fi {counts.get('wifi')}, wired {counts.get('wired')}")
+    else:
+        snapshot_lines.append("Client snapshot counts were unavailable.")
+    lines.extend(operational_section("Router Snapshot", snapshot_lines, width))
+    baseline_lines: List[str] = []
+    snapshot_first = bool(snapshot.get("history_queried") and not snapshot.get("history_count", 0))
+    behavior_first = bool(activity.get("behavior_history_queried") and not activity.get("behavior_history_count", 0))
+    if snapshot_first and behavior_first:
+        baseline_lines.append("First comparable client-count snapshot and router-behavior observation.")
+    else:
+        if snapshot.get("history_queried"):
+            count = snapshot.get("history_count", 0)
+            baseline_lines.append("First comparable snapshot." if not count else f"Compared with {count} prior eligible snapshot(s).")
+        else:
+            baseline_lines.append("Snapshot comparison was not evaluated.")
+        if activity.get("behavior_history_queried"):
+            count = activity.get("behavior_history_count", 0)
+            baseline_lines.append("First comparable router behavior." if not count else f"Compared with {count} prior router behavior observation(s).")
+        else:
+            baseline_lines.append("Router behavior comparison was not evaluated.")
+    if occurrences.get("fully_repeated"):
+        baseline_lines.append("All body occurrences were already seen; this is snapshot-buffer context, not zero activity.")
+    else:
+        baseline_lines.append(
+            f"Current evidence: {occurrences.get('novel_count', 0)} novel, "
+            f"{occurrences.get('repeated_count', 0)} repeated, and "
+            f"{occurrences.get('report_only_count', 0)} report-only occurrence(s)."
+        )
+    if occurrences.get("report_only_count"):
+        baseline_lines.append(f"{occurrences['report_only_count']} current-evidence occurrence(s) were report-only and excluded from body-event calendar/time history.")
+    persistence = report.get("persistence")
+    if isinstance(persistence, dict) and not persistence.get("available", True):
+        baseline_lines.append("Current-only evidence; persistence was unavailable.")
+    elif report.get("state", {}).get("deduplicated"):
+        baseline_lines.append("Already-stored duplicate; it does not add new learning.")
+    else:
+        baseline_lines.append(f"{run_persistence_text(report)}; only eligible novel occurrences may contribute to learning.")
+    lines.extend(operational_section("Baseline and Change", baseline_lines, width))
+    lines.extend(operational_section("Router Activity", operational_activity_lines(activity, occurrences, width), width))
+    device_items = [item for item in report.get("device_summary", []) if item.get("mac") != SYSTEM_ACTOR]
+    if device_items:
+        device_lines: List[str] = []
+        for item in group_device_summary(device_items):
+            name = str(item.get("name") or "Unknown device")
+            heading = f"{name} ({item['count']})" if item["count"] > 1 else name
+            detail = f"{heading}: {item['events']} event(s), {item['dhcp']} DHCP"
+            if item["incident_explained"]:
+                detail += f", {item['incident_explained']} incident-explained"
+            device_lines.extend(textwrap.wrap(
+                detail, width=width, break_long_words=True, break_on_hyphens=False,
+            ))
+        lines.extend(operational_section("Device Activity", device_lines, width))
+    limitations = operational_limitation_lines(report, verbose=verbose)
+    if limitations:
+        lines.extend(operational_section("Attention / Limitations", limitations, width))
+    if verbose:
+        lines.extend(operational_section("Technical Details", verbose_technical_detail_lines(report, width), width))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_text_report(report: Dict[str, Any], verbose: bool = False) -> str:
+    columns = shutil.get_terminal_size((110, 24)).columns
+    if has_extended_router_report(report):
+        return render_operational_text_report(report, min(max(columns, 40), 120), verbose=verbose)
+    return render_legacy_text_report(report, min(max(columns, 80), 120))
+
+
+def render_legacy_text_report(report: Dict[str, Any], width: int) -> str:
     parse_stats = report["parse_stats"]
     observation_range = report["observation_range"]
     adjustments = report.get("analysis_adjustments", {})
@@ -10689,16 +11319,48 @@ def render_markdown_report(report: Dict[str, Any]) -> str:
         lines.append("- None")
     lines.append("")
 
+    extended_router_report = has_extended_router_report(report)
+    device_summary = report["device_summary"]
+    if extended_router_report:
+        device_summary = [item for item in device_summary if item.get("mac") != SYSTEM_ACTOR]
+
     lines.append("## Device Summary")
     lines.append("")
     lines.append("| Name | MAC | DHCP | Events | Reset-Explained | Types |")
     lines.append("| --- | --- | ---: | ---: | ---: | --- |")
-    for item in report["device_summary"]:
+    for item in device_summary:
         lines.append(
             f"| {item['name']} | `{item['mac']}` | {item['dhcp_count']} | {item['total_events']} | "
             f"{item.get('incident_explained_events', 0)} | "
             f"{', '.join(humanize_event_key(event_type) for event_type in item['event_types'])} |"
         )
+    if extended_router_report:
+        components, event_types, source_total = saved_router_activity_rows(report)
+        source_text = source_total if isinstance(source_total, int) else "unavailable"
+        lines.extend(["", "## Router Activity", "", f"- Source-record total: {source_text}", ""])
+        lines.append("| Component | Source Records |")
+        lines.append("| --- | ---: |")
+        if components:
+            lines.extend(
+                f"| {markdown_table_cell(humanize_event_key(str(item['component'])))} | {item.get('event_count', 0)} |"
+                for item in components
+            )
+        else:
+            lines.append("| No component detail available | n/a |")
+        lines.extend(["", "## Router Event Types", "", f"- Source-record total: {source_text}", ""])
+        lines.append("| Event Type | Vendor Code | Component | Outcome | Source Records |")
+        lines.append("| --- | --- | --- | --- | ---: |")
+        if event_types:
+            for item in event_types:
+                vendor_code = item.get("vendor_event_code")
+                lines.append(
+                    f"| {markdown_table_cell(humanize_event_key(str(item['event_key'])))} | "
+                    f"{markdown_table_cell(vendor_code if vendor_code not in (None, "") else "n/a")} | "
+                    f"{markdown_table_cell(humanize_event_key(str(item.get('component') or 'other')))} | "
+                    f"{markdown_table_cell(item.get('outcome') or 'other')} | {item.get('event_count', 0)} |"
+                )
+        else:
+            lines.append("| No event-type detail available | n/a | n/a | n/a | n/a |")
     return "\n".join(lines) + "\n"
 
 
@@ -10763,6 +11425,10 @@ def render_html_report(report: Dict[str, Any]) -> str:
             )
         return f"<section><h2>Findings by Device/Group</h2>{''.join(group_blocks)}</section>"
 
+    extended_router_report = has_extended_router_report(report)
+    device_summary = report["device_summary"]
+    if extended_router_report:
+        device_summary = [item for item in device_summary if item.get("mac") != SYSTEM_ACTOR]
     device_rows = "".join(
         "<tr>"
         f"<td>{esc(item['name'])}</td>"
@@ -10772,14 +11438,15 @@ def render_html_report(report: Dict[str, Any]) -> str:
         f"<td>{item.get('incident_explained_events', 0)}</td>"
         f"<td>{esc(', '.join(humanize_event_key(event_type) for event_type in item['event_types']))}</td>"
         "</tr>"
-        for item in report["device_summary"]
+        for item in device_summary
     )
     risk_rows = "".join(
         f"<li><code>{esc(key)}</code>: {value}</li>"
         for key, value in sorted(report["risk_breakdown"].items())
     ) or "<li>None</li>"
     router_summary_html = ""
-    if has_extended_router_report(report):
+    router_activity_html = ""
+    if extended_router_report:
         router_rows = "".join(
             f"<dt>{esc(label)}</dt><dd>{esc(value)}</dd>"
             for label, value in router_report_summary_items(report)
@@ -10787,6 +11454,36 @@ def render_html_report(report: Dict[str, Any]) -> str:
         router_summary_html = (
             "<section><h2>Router Snapshot</h2>"
             f"<dl>{router_rows}</dl></section>"
+        )
+        components, event_types, source_total = saved_router_activity_rows(report)
+        source_text = esc(source_total) if isinstance(source_total, int) else "unavailable"
+        component_rows = "".join(
+            "<tr>"
+            f"<td>{esc(humanize_event_key(str(item['component'])))}</td>"
+            f"<td>{esc(item.get('event_count', 0))}</td>"
+            "</tr>"
+            for item in components
+        ) or "<tr><td>No component detail available</td><td>n/a</td></tr>"
+        event_type_rows = "".join(
+            "<tr>"
+            f"<td>{esc(humanize_event_key(str(item['event_key'])))}</td>"
+            f"<td>{f'<code>{esc(item["vendor_event_code"])}</code>' if item.get('vendor_event_code') not in (None, '') else 'n/a'}</td>"
+            f"<td>{esc(humanize_event_key(str(item.get('component') or 'other')))}</td>"
+            f"<td>{esc(item.get('outcome') or 'other')}</td>"
+            f"<td>{esc(item.get('event_count', 0))}</td>"
+            "</tr>"
+            for item in event_types
+        ) or "<tr><td>No event-type detail available</td><td>n/a</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>"
+        router_activity_html = (
+            "<section><h2>Router Activity</h2>"
+            f"<p>Source-record total: {source_text}</p>"
+            "<table><thead><tr><th>Component</th><th>Source Records</th></tr></thead>"
+            f"<tbody>{component_rows}</tbody></table></section>"
+            "<section><h2>Router Event Types</h2>"
+            f"<p>Source-record total: {source_text}</p>"
+            "<table><thead><tr><th>Event Type</th><th>Vendor Code</th><th>Component</th>"
+            "<th>Outcome</th><th>Source Records</th></tr></thead>"
+            f"<tbody>{event_type_rows}</tbody></table></section>"
         )
 
     return f"""<!DOCTYPE html>
@@ -10863,6 +11560,7 @@ def render_html_report(report: Dict[str, Any]) -> str:
         <tbody>{device_rows}</tbody>
       </table>
     </section>
+    {router_activity_html}
   </main>
 </body>
 </html>
@@ -10874,13 +11572,15 @@ def emit_report_outputs(
     report_formats: Sequence[str],
     logfile_path: Path,
     report_dir: Optional[Path],
+    verbose: bool = False,
 ) -> None:
     report_paths = build_report_paths(logfile_path, report_formats, report_dir)
     if "text" in report_formats:
-        print(render_text_report(report))
+        text_body = render_text_report(report, verbose=verbose)
+        print(text_body)
         if len(report_formats) > 1:
             report_paths["text"] = (report_dir.expanduser().resolve() if report_dir else Path.cwd()) / f"{logfile_path.stem}.report.txt"
-            report_paths["text"].write_text(render_text_report(report) + "\n", encoding="utf-8")
+            report_paths["text"].write_text(text_body + "\n", encoding="utf-8")
 
     if "markdown" in report_formats:
         report_paths["markdown"].write_text(render_markdown_report(report), encoding="utf-8")
@@ -11310,7 +12010,12 @@ def router_instance_key_for_parse(
 def default_router_label(parsed: ParsedRouterLog, instance_key: str) -> str:
     vendor = "TP-Link" if parsed.identity.canonical_vendor == "tp-link" else "NETGEAR"
     model = " ".join((parsed.model or "Router").split())
-    return f"{vendor} {model} {instance_key[:8]}"
+    return f"{vendor} {model}"
+
+
+def legacy_default_router_label(parsed: ParsedRouterLog, instance_key: str) -> str:
+    """The v4 automatic label, retained only for safe in-place label cleanup."""
+    return f"{default_router_label(parsed, instance_key)} {instance_key[:8]}"
 
 
 def emit_nonpersistent_report(
@@ -11383,7 +12088,7 @@ def emit_nonpersistent_report(
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
-        print(render_text_report(report))
+        print(render_text_report(report, verbose=args.verbose))
 
 
 def is_in_windows(timestamp: datetime, windows: Sequence[Dict[str, Any]]) -> bool:
@@ -11529,6 +12234,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 router_instance_id,
                 parsed,
             )
+            metadata_row = store.conn.execute(
+                "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+                (int(existing_run["id"]),),
+            ).fetchone()
+            duplicate_metadata = json.loads(metadata_row["metadata_json"] or "{}") if metadata_row else {}
+            if duplicate_metadata.get("ambiguous_firmware_occurrence_count"):
+                parsed.warnings.append("ambiguous_firmware_profile")
         aggregate = aggregate_events(events, seed_baseline, devices_snapshot)
         trusted_temporal_aggregate = aggregate
         if parsed.format_id != FORMAT_NETGEAR:
@@ -11609,13 +12321,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             and event.clock_trust == "trusted"
             and not is_explicit_router_security_event(event)
         ]
-        adapter_firmware_ambiguous = "ambiguous_firmware_profile" in parsed.warnings
         current_firmware_profile_id: Optional[int] = None
         previous_firmware_profile_id: Optional[int] = None
         previous_profile_events: List[Event] = []
         previous_router_subject_key: Optional[str] = None
         snapshot_history: List[sqlite3.Row] = []
         router_behavior_history_count = 0
+        snapshot_history_queried = False
+        router_behavior_history_queried = False
         if (
             parsed.format_id != FORMAT_NETGEAR
             and existing_run is None
@@ -11632,6 +12345,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     reserved_run_id,
                     7,
                 )
+                snapshot_history_queried = True
                 additional_findings.extend(
                     detect_router_snapshot_count_anomaly(metrics, snapshot_history, policy)
                 )
@@ -11681,7 +12395,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     (json_dumps(metadata), reserved_run_id),
                 )
 
-            if firmware_profile_id is not None and not adapter_firmware_ambiguous:
+            if firmware_profile_id is not None and "ambiguous_firmware_profile" not in parsed.warnings:
                 router_history = store.fetch_router_behavior_history(
                     router_instance_id,
                     epoch["id"],
@@ -11689,6 +12403,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     cursor,
                     reserved_run_id,
                 )
+                router_behavior_history_queried = True
                 router_behavior_history_count = router_history.eligible_observation_count
                 additional_findings.extend(detect_router_behavior(
                     router_behavior_events, parsed.capabilities, router_history, policy,
@@ -11880,6 +12595,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             snapshot_history=snapshot_history,
             router_behavior_history_count=router_behavior_history_count,
             policy=policy,
+            snapshot_history_queried=snapshot_history_queried,
+            router_behavior_history_queried=router_behavior_history_queried,
         )
 
         report = build_report_data(
@@ -11908,9 +12625,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 report_formats=report_formats,
                 logfile_path=logfile_path,
                 report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
+                verbose=args.verbose,
             )
         else:
-            print(render_text_report(report))
+            print(render_text_report(report, verbose=args.verbose))
         return 0
     except BaseException:
         if log_transaction_active and store.conn.in_transaction:
