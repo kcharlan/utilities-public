@@ -5726,6 +5726,40 @@ def test_identical_tp_link_reopen_keeps_first_run_semantic_tuple_collapse(
     assert repeated_system["total_events"] == 2
 
 
+def test_identical_tp_link_reopen_collapses_boot_lines_by_persisted_session(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_path = tmp_path / "synthetic-identical-boot-reopen.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    db_path = tmp_path / "network.db"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    identical_boot = "2042-06-15 11:50:00 system[101]: <5> 1000 System startup"
+    log_path.write_text(
+        tp_link_synthetic_snapshot([identical_boot, identical_boot]),
+        encoding="utf-8",
+    )
+    first_args = [
+        str(log_path), str(baseline_path), "--format", "tp-link-archer", "--json",
+        "--db", str(db_path),
+    ]
+    repeat_args = [
+        str(log_path), "--format", "tp-link-archer", "--json", "--db", str(db_path),
+    ]
+
+    assert analyzer.main(first_args) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert analyzer.main(repeat_args) == 0
+    repeated = json.loads(capsys.readouterr().out)
+
+    first_system = next(item for item in first["device_summary"] if item["mac"] == analyzer.SYSTEM_ACTOR)
+    repeated_system = next(
+        item for item in repeated["device_summary"] if item["mac"] == analyzer.SYSTEM_ACTOR
+    )
+    assert first_system["total_events"] == 1
+    assert repeated_system["total_events"] == 1
+
+
 def test_cross_router_interface_client_conflict_warns_without_suppressing_client(
     tmp_path: Path,
 ) -> None:

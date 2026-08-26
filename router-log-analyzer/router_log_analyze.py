@@ -3859,6 +3859,91 @@ class StateStore:
                 resolved[candidate.session_id] = boot_session_id
         return resolved
 
+    def collapse_existing_run_events(
+        self,
+        run_id: int,
+        router_instance_id: int,
+        parsed: ParsedRouterLog,
+    ) -> List[Event]:
+        """Rebuild an exact duplicate report from its persisted occurrence identities."""
+        router_row = self.conn.execute(
+            "SELECT instance_key FROM router_instances WHERE id = ?",
+            (router_instance_id,),
+        ).fetchone()
+        if router_row is None:
+            raise RuntimeError("Router instance disappeared before duplicate reporting")
+        self._scope_trusted_overlap_to_resolved_router(parsed, router_row["instance_key"])
+
+        boot_sessions: Dict[str, int] = {}
+        for candidate in parsed.boot_candidates:
+            candidate_events = [
+                event
+                for event in parsed.events
+                if event.boot_context_id == candidate.session_id
+            ]
+            boot_session_id = self._find_boot_session_by_overlap(
+                router_instance_id,
+                candidate_events,
+            )
+            if boot_session_id is not None:
+                boot_sessions[candidate.session_id] = boot_session_id
+                continue
+            if candidate.trusted_anchor is None:
+                continue
+            row = self.conn.execute(
+                """
+                SELECT session.id
+                FROM router_boot_sessions AS session
+                JOIN run_router_boot_sessions AS link ON link.boot_session_id = session.id
+                WHERE link.run_id = ? AND session.router_instance_id = ?
+                  AND session.trusted_local_anchor = ? AND session.startup_signature = ?
+                """,
+                (
+                    run_id,
+                    router_instance_id,
+                    candidate.trusted_anchor.isoformat(sep=" "),
+                    candidate.startup_signature or "startup-signature-v1:empty",
+                ),
+            ).fetchone()
+            if row is not None:
+                boot_sessions[candidate.session_id] = int(row[0])
+
+        collapsed: List[Event] = []
+        seen_occurrences: Set[str] = set()
+        for event in parsed.events:
+            boot_session_id = (
+                boot_sessions.get(event.boot_context_id)
+                if event.boot_context_id is not None
+                else None
+            )
+            persistable = (
+                (event.boot_context_id is not None and boot_session_id is not None)
+                or (event.boot_context_id is None and event.clock_trust == "trusted")
+            )
+            if not persistable:
+                collapsed.append(replace(
+                    event,
+                    occurrence_novel=False,
+                    occurrence_repeated=True,
+                ))
+                continue
+            digest = self._occurrence_digest(
+                router_row["instance_key"],
+                event,
+                boot_session_id,
+            )
+            if digest in seen_occurrences:
+                continue
+            seen_occurrences.add(digest)
+            collapsed.append(replace(
+                event,
+                boot_session_id=str(boot_session_id) if boot_session_id is not None else None,
+                occurrence_digest=digest,
+                occurrence_novel=False,
+                occurrence_repeated=True,
+            ))
+        return collapsed
+
     def persist_router_provenance(
         self,
         run_id: int,
@@ -9589,33 +9674,6 @@ def default_router_label(parsed: ParsedRouterLog, instance_key: str) -> str:
     return f"{vendor} {model} {instance_key[:8]}"
 
 
-def collapse_snapshot_events_for_report(events: Sequence[Event]) -> List[Event]:
-    """Apply the occurrence tuple's within-run collapse without touching persistence."""
-    collapsed: List[Event] = []
-    seen: Set[Tuple[Any, ...]] = set()
-    for event in events:
-        key = (
-            event.timestamp,
-            event.boot_context_id,
-            event.component,
-            event.process_id,
-            event.vendor_event_code,
-            event.syslog_severity,
-            event.normalized_message,
-            event.actor_scope,
-            event.stable_client_identity,
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        collapsed.append(replace(
-            event,
-            occurrence_novel=False,
-            occurrence_repeated=True,
-        ))
-    return collapsed
-
-
 def emit_nonpersistent_report(
     args: argparse.Namespace,
     parsed: ParsedRouterLog,
@@ -9764,7 +9822,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             events = parsed.events
         elif parsed.capabilities.snapshot_buffer_semantic_dedup and existing_run is not None:
-            events = collapse_snapshot_events_for_report(events)
+            events = store.collapse_existing_run_events(
+                int(existing_run["id"]),
+                router_instance_id,
+                parsed,
+            )
         aggregate = aggregate_events(events, seed_baseline, devices_snapshot)
         incidents = detect_network_incidents(events, seed_baseline, devices_snapshot, policy)
         if parsed.capabilities.snapshot_buffer_semantic_dedup:
