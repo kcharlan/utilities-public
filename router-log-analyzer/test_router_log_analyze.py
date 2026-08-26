@@ -4797,7 +4797,7 @@ def operational_tp_link_report(*, findings: list[dict[str, object]] | None = Non
                      "change_findings": [], "history_queried": True},
         "occurrences": {"body_count": 6, "source_record_count": 8, "novel_count": 6,
                         "repeated_count": 0, "report_only_count": 0, "fully_repeated": False},
-        "router_activity": {"source_record_count": 8, "system_event_count": 8,
+        "router_activity": {"source_record_count": 8, "system_event_count": 6,
                             "component_counts": [{"component": "service", "event_count": 5},
                                                  {"component": "firewall", "event_count": 2},
                                                  {"component": "wan", "event_count": 1}],
@@ -4849,7 +4849,7 @@ def test_tp_link_verbose_text_appends_complete_technical_evidence() -> None:
     assert "Technical Details" not in concise
     assert verbose.index("Technical Details") > verbose.index("Router Activity")
     for expected in (
-        "Source-record total: 8", "Semantic-occurrence total: 6",
+        "Source-record total: 8", "Router semantic-occurrence total: 6",
         "Component reconciliation: 8 source record(s)",
         "Outcome reconciliation: 8 source record(s)",
         "Event-type reconciliation: 8 source record(s)",
@@ -4862,6 +4862,30 @@ def test_tp_link_verbose_text_appends_complete_technical_evidence() -> None:
         "Database: /tmp/synthetic-router.db", "Run persistence: Unavailable",
     ):
         assert expected in verbose
+
+
+def test_tp_link_verbose_details_keep_router_and_client_populations_separate() -> None:
+    report = operational_tp_link_report()
+    report["occurrences"]["body_count"] = 9
+    report["router_activity"]["system_event_count"] = 6
+    report["device_summary"] = [
+        {"name": "Router/System", "mac": analyzer.SYSTEM_ACTOR, "total_events": 6,
+         "dhcp_count": 0, "incident_explained_events": 0,
+         "event_types": ["FIREWALL_POLICY_FAILURE", "SERVICE_HEALTH_SUCCESS"]},
+        {"name": "SYNTHETIC CLIENT", "mac": "02:00:00:00:00:09", "total_events": 3,
+         "dhcp_count": 1, "incident_explained_events": 0,
+         "event_types": ["CLIENT_PRESENT"]},
+    ]
+
+    rendered = analyzer.render_text_report(report, verbose=True)
+
+    assert "Source-record total: 8" in rendered
+    assert "Router semantic-occurrence total: 6" in rendered
+    assert "All semantic occurrences (router and device): 9" in rendered
+    client_details = rendered.split("Client identifiers and event types:", 1)[1]
+    assert "SYNTHETIC CLIENT (02:00:00:00:00:09)" in client_details
+    assert "Router/System" not in client_details
+    assert analyzer.SYSTEM_ACTOR not in client_details
 
 
 def test_tp_link_verbose_technical_rows_wrap_at_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:

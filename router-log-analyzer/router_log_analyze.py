@@ -10829,18 +10829,20 @@ def verbose_router_activity_lines(report: Dict[str, Any], width: int) -> List[st
     activity = report.get("router_activity", {})
     occurrences = report.get("occurrences", {})
     source_total = activity.get("source_record_count")
-    semantic_total = occurrences.get("body_count", 0)
+    router_semantic_total = activity.get("system_event_count")
     lines: List[str] = []
     if isinstance(source_total, int):
         lines.append(f"Source-record total: {source_total}")
-        lines.append(f"Semantic-occurrence total: {semantic_total}")
-        if source_total != semantic_total:
+        if isinstance(router_semantic_total, int):
+            lines.append(f"Router semantic-occurrence total: {router_semantic_total}")
+        if isinstance(router_semantic_total, int) and source_total != router_semantic_total:
             lines.append(
                 "Source records describe snapshot rows; semantic occurrences describe "
                 "deduplicated analyzer events."
             )
     else:
-        lines.append(f"Semantic-occurrence total: {semantic_total}")
+        if isinstance(router_semantic_total, int):
+            lines.append(f"Router semantic-occurrence total: {router_semantic_total}")
         lines.append("Source-record/component detail was unavailable in this compatibility report.")
 
     for title, key, label in (
@@ -10910,7 +10912,7 @@ def verbose_technical_detail_lines(report: Dict[str, Any], width: int) -> List[s
 
     lines.append("Occurrence evidence:")
     for label, key in (
-        ("Body semantic occurrences", "body_count"),
+        ("All semantic occurrences (router and device)", "body_count"),
         ("Source records", "source_record_count"),
         ("Novel occurrences", "novel_count"),
         ("Repeated occurrences", "repeated_count"),
@@ -10957,7 +10959,10 @@ def verbose_technical_detail_lines(report: Dict[str, Any], width: int) -> List[s
     lines.extend(operational_line("  Client snapshot history", snapshot.get("history_count", 0), width))
     lines.extend(operational_line("  Router behavior history", activity.get("behavior_history_count", 0), width))
 
-    device_items = report.get("device_summary", [])
+    device_items = [
+        item for item in report.get("device_summary", [])
+        if item.get("mac") != SYSTEM_ACTOR
+    ]
     if device_items:
         lines.append("Client identifiers and event types:")
         for item in sorted(device_items, key=lambda entry: (str(entry.get("name", "")).casefold(), str(entry.get("mac", "")))):
