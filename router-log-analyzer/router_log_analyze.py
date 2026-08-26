@@ -10,23 +10,52 @@ import argparse
 import copy
 import hashlib
 import html
+import ipaddress
 import json
 import math
 import os
 import re
 import shutil
 import sqlite3
+import stat as stat_module
 import sys
+import tempfile
 import textwrap
+import unicodedata
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
-from typing import Any, DefaultDict, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, DefaultDict, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 
 DB_FILENAME = "network.db"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+MIGRATABLE_SCHEMA_VERSION = 3
+FORMAT_NETGEAR = "netgear"
+FORMAT_TP_LINK_ARCHER = "tp_link_archer"
+LEGACY_NETGEAR_INSTANCE_KEY = hashlib.sha256(
+    b"router-instance:v1\0netgear\0legacy-default"
+).hexdigest()
+LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY = hashlib.sha256(
+    b"firmware-profile:v1\0netgear\0unknown-legacy-firmware"
+).hexdigest()
+LEGACY_NETGEAR_ROUTER_SUBJECT_KEY = hashlib.sha256(
+    (
+        "router-subject:v1\0"
+        + LEGACY_NETGEAR_INSTANCE_KEY
+        + "\0"
+        + LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY
+    ).encode("utf-8")
+).hexdigest()
+CLI_FORMAT_TO_ID = {
+    "netgear": FORMAT_NETGEAR,
+    "tp-link-archer": FORMAT_TP_LINK_ARCHER,
+}
+AUTO_FORMAT = "auto"
+FORMAT_DETECTION_THRESHOLD = 0.80
+FORMAT_AMBIGUITY_MARGIN = 0.15
 TIMESTAMP_FORMAT = "%A, %B %d, %Y %H:%M:%S"
 SYSTEM_ACTOR = "__SYSTEM__"
 SYSTEM_NAME = "Router/System"
@@ -136,14 +165,21 @@ SEVERITY_ORDER = {
 FINDING_KIND_ORDER = {
     "unknown_device": 0,
     "blocked_device_activity": 1,
-    "network_reset": 2,
-    "new_event_type": 3,
-    "rare_event_activity": 4,
-    "timing_anomaly": 5,
-    "event_behavior_anomaly": 6,
-    "dhcp_anomaly": 7,
-    "event_volume_anomaly": 8,
-    "cluster_anomaly": 9,
+    "new_rejected_device": 2,
+    "new_device": 3,
+    "router_security_event": 4,
+    "router_firmware_change": 5,
+    "router_new_event_type": 6,
+    "router_state_change": 7,
+    "router_client_count_anomaly": 8,
+    "network_reset": 9,
+    "new_event_type": 10,
+    "rare_event_activity": 11,
+    "timing_anomaly": 12,
+    "event_behavior_anomaly": 13,
+    "dhcp_anomaly": 14,
+    "event_volume_anomaly": 15,
+    "cluster_anomaly": 16,
 }
 METRIC_BASELINE_RECOVERY_REASONS = {"dhcp_anomaly", "event_volume_anomaly"}
 PRIORITY_FINDING_LIMIT = 5
@@ -176,6 +212,138 @@ class Event:
     source: str
     incident_id: Optional[str] = None
     incident_role: Optional[str] = None
+    actor_scope: Optional[str] = None
+    stable_client_identity: Optional[str] = None
+    component: Optional[str] = None
+    process_id: Optional[str] = None
+    syslog_severity: Optional[str] = None
+    vendor_event_code: Optional[str] = None
+    normalized_message: Optional[str] = None
+    structured_evidence: Dict[str, Any] = field(default_factory=dict)
+    source_sequence: Optional[int] = None
+    raw_timestamp: Optional[str] = None
+    clock_trust: Optional[str] = None
+    clock_reason: Optional[str] = None
+    clock_segment_id: Optional[str] = None
+    boot_context_id: Optional[str] = None
+    boot_session_id: Optional[str] = None
+    occurrence_digest: Optional[str] = None
+    trusted_overlap_identity: Optional[str] = None
+    occurrence_novel: Optional[bool] = None
+    occurrence_repeated: Optional[bool] = None
+
+
+@dataclass(frozen=True)
+class RouterCapabilities:
+    stable_client_identity: bool = False
+    client_dhcp_equivalence: bool = False
+    client_access_decision_equivalence: bool = False
+    comparable_device_event_coverage: bool = False
+    router_system_events: bool = False
+    wan_transitions: bool = False
+    snapshot_counts: bool = False
+    potentially_trustworthy_router_local_time: bool = False
+    supported_event_keys: FrozenSet[str] = field(default_factory=frozenset)
+    supported_event_families: FrozenSet[str] = field(default_factory=frozenset)
+    coverage_mode: str = "continuous_log"
+    snapshot_buffer_semantic_dedup: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "supported_event_keys", frozenset(self.supported_event_keys))
+        object.__setattr__(self, "supported_event_families", frozenset(self.supported_event_families))
+
+    def to_json(self) -> Dict[str, Any]:
+        payload = asdict(self)
+        payload["supported_event_keys"] = sorted(self.supported_event_keys)
+        payload["supported_event_families"] = sorted(self.supported_event_families)
+        return payload
+
+
+@dataclass(frozen=True)
+class DetectorEligibility:
+    available: bool
+    unavailable_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RouterBehaviorHistory:
+    eligible_observation_count: int = 0
+    event_keys: FrozenSet[str] = field(default_factory=frozenset)
+    running_components: FrozenSet[str] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True)
+class FirmwareLearningPartition:
+    previous_profile: Tuple[Event, ...] = ()
+    ambiguous: Tuple[Event, ...] = ()
+    current_profile: Tuple[Event, ...] = ()
+
+
+@dataclass(frozen=True)
+class RouterIdentityCandidate:
+    canonical_vendor: str
+    lan_mac: Optional[str] = None
+    router_owned_interfaces: FrozenSet[str] = field(default_factory=frozenset)
+    warnings: Tuple[str, ...] = ()
+    persistence_safe_without_override: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "router_owned_interfaces", frozenset(self.router_owned_interfaces))
+
+    def to_json(self) -> Dict[str, Any]:
+        payload = asdict(self)
+        payload["router_owned_interfaces"] = sorted(self.router_owned_interfaces)
+        payload["warnings"] = list(self.warnings)
+        return payload
+
+
+@dataclass(frozen=True)
+class RouterSnapshotMetrics:
+    raw_total_clients: Optional[str] = None
+    raw_wifi_clients: Optional[str] = None
+    total_clients: Optional[int] = None
+    wifi_clients: Optional[int] = None
+    derived_wired_clients: Optional[int] = None
+    eligible: bool = False
+    exclusion_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ClockSegment:
+    segment_id: str
+    clock_trust: str
+    start_sequence: Optional[int] = None
+    end_sequence: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class BootSessionCandidate:
+    session_id: str
+    start_sequence: Optional[int] = None
+    trusted_anchor: Optional[datetime] = None
+    trusted_overlap_identities: Tuple[str, ...] = ()
+    startup_signature: Optional[str] = None
+    warnings: Tuple[str, ...] = ()
+
+
+@dataclass
+class ParsedRouterLog:
+    format_id: str
+    capabilities: RouterCapabilities
+    identity: RouterIdentityCandidate
+    events: List[Event]
+    parse_stats: "ParseStats"
+    model: Optional[str] = None
+    hardware: Optional[str] = None
+    firmware: Optional[str] = None
+    export_timestamp: Optional[datetime] = None
+    snapshot_metrics: Optional[RouterSnapshotMetrics] = None
+    coverage_stats: Dict[str, Any] = field(default_factory=dict)
+    order_stats: Dict[str, Any] = field(default_factory=dict)
+    clock_segments: List[ClockSegment] = field(default_factory=list)
+    boot_candidates: List[BootSessionCandidate] = field(default_factory=list)
+    trusted_overlap_identities: Tuple[str, ...] = ()
+    warnings: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -324,28 +492,41 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     prog_name = Path(sys.argv[0]).name or "router_log_analyze.py"
     parser = argparse.ArgumentParser(
         prog=prog_name,
-        description="Analyze NETGEAR router logs with persistent SQLite-backed learning.",
+        description="Analyze NETGEAR and TP-Link Archer router logs with persistent SQLite-backed learning.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(
             f"""\
             Examples:
               {prog_name} router-log.pdf
               {prog_name} router-log.pdf baseline.json
+              {prog_name} router-log.txt --format tp-link-archer --router-label "Home router"
+              {prog_name} router-log.txt --format tp-link-archer --router-instance stable-local-name
               {prog_name} --import-baseline baseline.json
-              {prog_name} --import-config router-security-config.md
+              {prog_name} --import-config router-security-config.md  # NETGEAR access-control only
               {prog_name} --export-baseline learned-baseline.json
               {prog_name} --import-policy policy.json
             """
         ),
     )
-    parser.add_argument("logfile", nargs="?", help="NETGEAR log export in PDF or plain-text format.")
+    parser.add_argument("logfile", nargs="?", help="Router log export in PDF or plain-text format.")
     parser.add_argument(
         "baseline",
         nargs="?",
         help="Optional bootstrap baseline JSON. Used automatically if no active baseline epoch exists.",
     )
-    parser.add_argument("--config", help="Router access-control markdown export.")
+    parser.add_argument("--config", help="NETGEAR access-control markdown export.")
     parser.add_argument("--db", help="Path to the SQLite state database.")
+    parser.add_argument(
+        "--format",
+        choices=[AUTO_FORMAT, *CLI_FORMAT_TO_ID],
+        default=AUTO_FORMAT,
+        help="Router log format: auto, NETGEAR, or TP-Link Archer (default: auto).",
+    )
+    parser.add_argument("--router-label", help="Presentation-only label for the analyzed router.")
+    parser.add_argument(
+        "--router-instance",
+        help="Stable router-instance override; its raw value is never persisted or displayed.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit report as JSON.")
     parser.add_argument(
         "--report",
@@ -357,13 +538,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--import-baseline", dest="import_baseline", help="Import a baseline JSON and activate a new epoch.")
     parser.add_argument("--export-baseline", dest="export_baseline", help="Export the active learned baseline to JSON.")
-    parser.add_argument("--import-config", dest="import_config", help="Import router security config into the database.")
+    parser.add_argument(
+        "--import-config", dest="import_config",
+        help="Import a NETGEAR access-control security config into the database.",
+    )
     parser.add_argument("--import-policy", dest="import_policy", help="Import and activate a policy JSON document.")
     parser.add_argument("--export-policy", dest="export_policy", help="Export the active merged policy to JSON.")
     parser.add_argument(
         "--version",
         action="version",
-        version="router-log-analyzer 0.4.0",
+        version="router-log-analyzer 0.5.0",
     )
     parser.add_argument(
         "--reprocess",
@@ -421,6 +605,17 @@ def normalize_mac(value: Optional[str]) -> Optional[str]:
 
 def is_real_mac(value: Optional[str]) -> bool:
     return normalize_mac(value) is not None
+
+
+def is_identity_grade_mac(value: Optional[str]) -> bool:
+    """Return whether a syntactically valid MAC is safe as a stable client identity."""
+    normalized = normalize_mac(value)
+    if normalized is None:
+        return False
+    octets = bytes.fromhex(normalized.replace(":", ""))
+    if octets == b"\x00" * 6 or octets == b"\xff" * 6:
+        return False
+    return not bool(octets[0] & 1)
 
 
 def load_json_file(path: Path) -> Dict[str, Any]:
@@ -515,21 +710,2169 @@ def validate_policy(policy: Dict[str, Any]) -> Dict[str, Any]:
     return policy
 
 
+SqlDdlToken = Tuple[str, str, str]
+
+SQLITE_CANONICAL_DDL_KEYWORDS = frozenset({
+    "action",
+    "and",
+    "asc",
+    "cascade",
+    "check",
+    "collate",
+    "constraint",
+    "create",
+    "default",
+    "deferrable",
+    "delete",
+    "desc",
+    "false",
+    "foreign",
+    "if",
+    "in",
+    "index",
+    "initially",
+    "is",
+    "key",
+    "match",
+    "no",
+    "not",
+    "null",
+    "on",
+    "or",
+    "primary",
+    "references",
+    "restrict",
+    "set",
+    "table",
+    "true",
+    "unique",
+    "update",
+})
+
+
+def _ascii_sql_lower(value: str) -> str:
+    """Apply SQLite's ASCII-only case-insensitive identifier normalization."""
+    return value.translate(
+        str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+    )
+
+
+def _sql_ddl_token(kind: str, value: str, quote: str = "") -> SqlDdlToken:
+    return (kind, value, quote)
+
+
+def _sql_ddl_token_is_symbol(token: SqlDdlToken, symbol: str) -> bool:
+    return token[0] == "symbol" and token[1] == symbol
+
+
+def _sql_ddl_token_is_word(token: SqlDdlToken, word: str) -> bool:
+    return token[0] == "word" and token[1] == word
+
+
+def _sql_ddl_tokens_match(
+    actual_tokens: Sequence[SqlDdlToken],
+    expected_tokens: Sequence[SqlDdlToken],
+) -> bool:
+    if len(actual_tokens) != len(expected_tokens):
+        return False
+    for actual, expected in zip(actual_tokens, expected_tokens):
+        actual_kind, actual_value, _actual_quote = actual
+        expected_kind, expected_value, _expected_quote = expected
+        if actual_kind in {"word", "quoted_identifier"} and not actual_value.isascii():
+            return False
+        if expected_kind == "word":
+            if expected_value in SQLITE_CANONICAL_DDL_KEYWORDS:
+                if actual_kind != "word" or actual_value != expected_value:
+                    return False
+            elif (
+                actual_kind not in {"word", "quoted_identifier"}
+                or actual_value != expected_value
+            ):
+                return False
+        elif expected_kind == "quoted_identifier":
+            if (
+                actual_kind not in {"word", "quoted_identifier"}
+                or actual_value != expected_value
+            ):
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
+def _sql_ddl_clause_collections_match(
+    actual_clauses: Sequence[Sequence[SqlDdlToken]],
+    expected_clauses: Sequence[Sequence[SqlDdlToken]],
+) -> bool:
+    unmatched_actual = list(actual_clauses)
+    for expected_clause in expected_clauses:
+        match_index = next(
+            (
+                index
+                for index, actual_clause in enumerate(unmatched_actual)
+                if _sql_ddl_tokens_match(actual_clause, expected_clause)
+            ),
+            None,
+        )
+        if match_index is None:
+            return False
+        unmatched_actual.pop(match_index)
+    return not unmatched_actual
+
+
+def _tokenize_sqlite_ddl(sql: str) -> Tuple[SqlDdlToken, ...]:
+    """Tokenize SQLite DDL while discarding comments and normalizing identifiers."""
+    tokens: List[SqlDdlToken] = []
+    index = 0
+    length = len(sql)
+    while index < length:
+        character = sql[index]
+        if character.isspace():
+            index += 1
+            continue
+        if sql.startswith("--", index):
+            newline = sql.find("\n", index + 2)
+            index = length if newline < 0 else newline + 1
+            continue
+        if sql.startswith("/*", index):
+            comment_end = sql.find("*/", index + 2)
+            if comment_end < 0:
+                raise ValueError("unterminated SQL block comment")
+            index = comment_end + 2
+            continue
+        if character == "'":
+            index += 1
+            literal: List[str] = []
+            while index < length:
+                if sql[index] == "'":
+                    if index + 1 < length and sql[index + 1] == "'":
+                        literal.append("'")
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                literal.append(sql[index])
+                index += 1
+            else:
+                raise ValueError("unterminated SQL string literal")
+            tokens.append(_sql_ddl_token("string", "".join(literal), "'"))
+            continue
+        if character in {'"', "`", "["}:
+            closing = "]" if character == "[" else character
+            index += 1
+            identifier: List[str] = []
+            while index < length:
+                if sql[index] == closing:
+                    if closing != "]" and index + 1 < length and sql[index + 1] == closing:
+                        identifier.append(closing)
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                identifier.append(sql[index])
+                index += 1
+            else:
+                raise ValueError("unterminated quoted SQL identifier")
+            tokens.append(
+                _sql_ddl_token(
+                    "quoted_identifier",
+                    _ascii_sql_lower("".join(identifier)),
+                    character,
+                )
+            )
+            continue
+        if character.isdigit():
+            token_end = index + 1
+            while token_end < length and sql[token_end].isdigit():
+                token_end += 1
+            tokens.append(_sql_ddl_token("number", sql[index:token_end]))
+            index = token_end
+            continue
+        if character.isalnum() or character in {"_", "$"}:
+            token_end = index + 1
+            while token_end < length and (
+                sql[token_end].isalnum() or sql[token_end] in {"_", "$"}
+            ):
+                token_end += 1
+            tokens.append(
+                _sql_ddl_token(
+                    "word",
+                    _ascii_sql_lower(sql[index:token_end]),
+                )
+            )
+            index = token_end
+            continue
+        three_character_operator = sql[index:index + 3]
+        if three_character_operator in {"->>"}:
+            tokens.append(_sql_ddl_token("symbol", three_character_operator))
+            index += 3
+            continue
+        two_character_operator = sql[index:index + 2]
+        if two_character_operator in {"!=", "<=", ">=", "==", "<>", "||", "->"}:
+            tokens.append(_sql_ddl_token("symbol", two_character_operator))
+            index += 2
+            continue
+        tokens.append(_sql_ddl_token("symbol", character))
+        index += 1
+    return tuple(tokens)
+
+
+def _sqlite_table_definition_clauses(
+    sql: str,
+) -> Tuple[Tuple[Tuple[SqlDdlToken, ...], ...], Tuple[SqlDdlToken, ...]]:
+    tokens = _tokenize_sqlite_ddl(sql)
+    if any(
+        kind in {"word", "quoted_identifier"} and not value.isascii()
+        for kind, value, _quote in tokens
+    ):
+        raise ValueError("CREATE TABLE contains a non-ASCII identifier")
+    opening_parenthesis = next(
+        (
+            token_index
+            for token_index, token in enumerate(tokens)
+            if _sql_ddl_token_is_symbol(token, "(")
+        ),
+        None,
+    )
+    if opening_parenthesis is None:
+        raise ValueError("CREATE TABLE has no definition list")
+    clauses: List[Tuple[SqlDdlToken, ...]] = []
+    clause: List[SqlDdlToken] = []
+    depth = 0
+    closing_parenthesis: Optional[int] = None
+    for token_index in range(opening_parenthesis + 1, len(tokens)):
+        token = tokens[token_index]
+        if _sql_ddl_token_is_symbol(token, "("):
+            depth += 1
+            clause.append(token)
+        elif _sql_ddl_token_is_symbol(token, ")"):
+            if depth == 0:
+                if clause:
+                    clauses.append(tuple(clause))
+                closing_parenthesis = token_index
+                break
+            depth -= 1
+            clause.append(token)
+        elif _sql_ddl_token_is_symbol(token, ",") and depth == 0:
+            if not clause:
+                raise ValueError("CREATE TABLE has an empty definition clause")
+            clauses.append(tuple(clause))
+            clause = []
+        else:
+            clause.append(token)
+    if closing_parenthesis is None or depth != 0:
+        raise ValueError("CREATE TABLE has unbalanced definition parentheses")
+    tail = tokens[closing_parenthesis + 1:]
+    if len(tail) == 1 and _sql_ddl_token_is_symbol(tail[0], ";"):
+        tail = ()
+    return tuple(clauses), tail
+
+
+def _expected_check_clauses(expressions: Set[str]) -> Set[Tuple[SqlDdlToken, ...]]:
+    return {
+        _tokenize_sqlite_ddl(f"CHECK({expression})")
+        for expression in expressions
+    }
+
+
+def _expected_foreign_key_clauses(
+    foreign_keys: Set[Tuple[str, str, str]],
+) -> Set[Tuple[SqlDdlToken, ...]]:
+    return {
+        _tokenize_sqlite_ddl(
+            f'FOREIGN KEY("{source_column}") '
+            f'REFERENCES "{destination_table}"("{destination_column}")'
+        )
+        for source_column, destination_table, destination_column in foreign_keys
+    }
+
+
+V3_REQUIRED_COLUMNS: Dict[str, Tuple[str, ...]] = {
+    "metadata": ("key", "value"),
+    "baseline_epochs": ("id", "created_at", "source_path", "source_hash", "label", "is_active"),
+    "baseline_seed_devices": (
+        "id", "epoch_id", "mac", "name", "dhcp_min", "dhcp_max", "dhcp_seed_weight",
+        "total_events_min", "total_events_max", "total_events_seed_weight", "active_hours_json",
+        "expected_windows_json", "expected_events_json", "pattern", "soft_max",
+    ),
+    "baseline_seed_clusters": (
+        "id", "epoch_id", "cluster_name", "mac_prefixes_json", "cluster_size",
+        "min_cluster_size", "cluster_time_window_seconds", "expected_windows_json",
+    ),
+    "policy_profiles": (
+        "id", "created_at", "name", "schema_version", "source_path", "source_hash",
+        "is_active", "policy_json",
+    ),
+    "runs": (
+        "id", "epoch_id", "policy_profile_id", "file_hash", "source_path", "ingested_at",
+        "observation_start", "observation_end", "observed_dates_json", "parsed_event_count",
+        "malformed_line_count", "export_noise_line_count", "risk_score", "status", "is_partial",
+    ),
+    "network_incidents": (
+        "id", "run_id", "incident_id", "incident_type", "confidence", "start", "restored_at",
+        "recovery_end", "disconnect_count", "connect_count", "affected_macs_json",
+        "event_counts_json", "explained_event_count", "active_known_devices",
+        "affected_device_fraction",
+    ),
+    "devices": ("mac", "name", "status", "connection_type", "source", "first_seen", "last_seen"),
+    "device_daily_stats": (
+        "id", "run_id", "epoch_id", "observed_date", "mac", "dhcp_count", "total_events",
+        "first_seen", "last_seen", "event_types_json", "active_hours_json", "included_in_learning",
+        "exclusion_reason",
+    ),
+    "device_event_daily_stats": (
+        "id", "run_id", "epoch_id", "observed_date", "mac", "event_key", "event_family", "count",
+        "first_seen", "last_seen", "hour_histogram_json", "included_in_learning", "exclusion_reason",
+    ),
+    "behavior_subjects": (
+        "subject_key", "subject_type", "display_name", "attributes_json", "first_seen", "last_seen",
+    ),
+    "subject_behavior_daily_stats": (
+        "id", "run_id", "epoch_id", "observed_date", "subject_key", "subject_type", "behavior_key",
+        "behavior_family", "count", "first_seen", "last_seen", "hour_histogram_json",
+        "occurrence_starts_json", "occurrence_ends_json", "occurrence_sizes_json", "context_json",
+        "included_in_learning", "exclusion_reason",
+    ),
+}
+
+V4_REQUIRED_COLUMNS: Dict[str, Tuple[str, ...]] = {
+    **{name: columns for name, columns in V3_REQUIRED_COLUMNS.items() if name != "runs"},
+    "router_instances": (
+        "id", "instance_key", "canonical_vendor", "identity_source", "label", "first_seen", "last_seen",
+        "identity_version",
+    ),
+    "router_firmware_profiles": (
+        "id", "profile_key", "canonical_vendor", "normalized_firmware", "identity_version",
+    ),
+    "runs": (
+        "id", "epoch_id", "policy_profile_id", "router_instance_id", "format_id", "file_hash",
+        "source_path", "ingested_at", "export_timestamp", "observation_start", "observation_end",
+        "observed_dates_json", "capabilities_json", "body_digest", "novel_event_count",
+        "repeated_event_count", "parsed_event_count", "malformed_line_count", "export_noise_line_count",
+        "risk_score", "status", "is_partial",
+    ),
+    "device_registrations": (
+        "id", "mac", "registration_source", "source_key", "epoch_id", "registered_name",
+        "registered_status", "registered_connection_type", "first_seen", "last_seen",
+        "registration_sequence", "registered_at", "last_confirmed_at",
+    ),
+    "device_observations": (
+        "id", "run_id", "mac", "evidence_kind", "seen_at", "evidence_digest", "attributes_json",
+    ),
+    "router_metadata_observations": (
+        "run_id", "router_instance_id", "observed_at", "export_timestamp", "model", "hardware",
+        "firmware_raw", "firmware_normalized", "firmware_profile_id", "router_owned_interfaces_json",
+        "metadata_json",
+    ),
+    "router_snapshot_metrics": (
+        "run_id", "router_instance_id", "epoch_id", "export_timestamp", "raw_total_clients",
+        "raw_wifi_clients", "total_clients", "wifi_clients", "derived_wired_clients", "eligible",
+        "exclusion_reason",
+    ),
+    "router_boot_sessions": (
+        "id", "router_instance_id", "session_key", "trusted_local_anchor", "adapter_boot_id",
+        "startup_signature", "identity_version", "created_at",
+    ),
+    "run_router_boot_sessions": ("run_id", "boot_session_id"),
+    "router_event_occurrences": (
+        "id", "router_instance_id", "occurrence_digest", "identity_version", "boot_session_id",
+        "local_timestamp", "clock_trust", "component", "process_id", "vendor_event_code",
+        "syslog_severity", "normalized_message", "canonical_event_key", "canonical_event_family",
+        "actor_scope", "actor_identity", "structured_evidence_json",
+    ),
+    "run_event_occurrences": (
+        "run_id", "occurrence_id", "is_novel", "is_repeated", "source_sequence", "source_count",
+    ),
+}
+
+REQUIRED_INDEX_COLUMNS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
+    "idx_baseline_epochs_active": ("baseline_epochs", ("is_active",)),
+    "idx_seed_devices_epoch_mac": ("baseline_seed_devices", ("epoch_id", "mac")),
+    "idx_policy_profiles_active": ("policy_profiles", ("is_active",)),
+    "idx_runs_epoch_time": ("runs", ("epoch_id", "ingested_at")),
+    "idx_network_incidents_run": ("network_incidents", ("run_id",)),
+    "idx_device_daily_epoch_mac_date": ("device_daily_stats", ("epoch_id", "mac", "observed_date")),
+    "idx_device_event_daily_epoch_mac_key_date": (
+        "device_event_daily_stats", ("epoch_id", "mac", "event_key", "observed_date"),
+    ),
+    "idx_behavior_subjects_type_key": ("behavior_subjects", ("subject_type", "subject_key")),
+    "idx_subject_behavior_epoch_subject_date": (
+        "subject_behavior_daily_stats",
+        ("epoch_id", "subject_key", "subject_type", "behavior_key", "observed_date"),
+    ),
+}
+
+V4_INDEX_COLUMNS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
+    **REQUIRED_INDEX_COLUMNS,
+    "idx_runs_router_export": ("runs", ("router_instance_id", "export_timestamp", "id")),
+    "idx_device_registrations_mac_sequence": (
+        "device_registrations", ("mac", "registration_sequence"),
+    ),
+    "idx_device_observations_mac_seen": ("device_observations", ("mac", "seen_at", "run_id")),
+    "idx_router_snapshot_history": (
+        "router_snapshot_metrics", ("router_instance_id", "epoch_id", "export_timestamp", "run_id"),
+    ),
+    "idx_router_boot_sessions_match": (
+        "router_boot_sessions", ("router_instance_id", "trusted_local_anchor", "startup_signature"),
+    ),
+    "idx_router_event_occurrences_history": (
+        "router_event_occurrences", ("router_instance_id", "canonical_event_key", "local_timestamp"),
+    ),
+    "idx_run_event_occurrences_occurrence": (
+        "run_event_occurrences", ("occurrence_id",),
+    ),
+    "idx_run_router_boot_sessions_boot_session": (
+        "run_router_boot_sessions", ("boot_session_id",),
+    ),
+    "idx_router_event_occurrences_boot_session": (
+        "router_event_occurrences", ("boot_session_id",),
+    ),
+}
+
+V3_REQUIRED_FOREIGN_KEYS: Dict[str, Set[Tuple[str, str, str]]] = {
+    "baseline_seed_devices": {("epoch_id", "baseline_epochs", "id")},
+    "baseline_seed_clusters": {("epoch_id", "baseline_epochs", "id")},
+    "runs": {("epoch_id", "baseline_epochs", "id"), ("policy_profile_id", "policy_profiles", "id")},
+    "network_incidents": {("run_id", "runs", "id")},
+    "device_daily_stats": {("run_id", "runs", "id"), ("epoch_id", "baseline_epochs", "id")},
+    "device_event_daily_stats": {("run_id", "runs", "id"), ("epoch_id", "baseline_epochs", "id")},
+    "subject_behavior_daily_stats": {("run_id", "runs", "id"), ("epoch_id", "baseline_epochs", "id")},
+}
+
+V4_REQUIRED_FOREIGN_KEYS: Dict[str, Set[Tuple[str, str, str]]] = {
+    **{name: keys for name, keys in V3_REQUIRED_FOREIGN_KEYS.items() if name != "runs"},
+    "runs": {
+        ("epoch_id", "baseline_epochs", "id"), ("policy_profile_id", "policy_profiles", "id"),
+        ("router_instance_id", "router_instances", "id"),
+    },
+    "device_registrations": {("epoch_id", "baseline_epochs", "id")},
+    "device_observations": {("run_id", "runs", "id"), ("mac", "devices", "mac")},
+    "router_metadata_observations": {
+        ("run_id", "runs", "id"), ("router_instance_id", "router_instances", "id"),
+        ("firmware_profile_id", "router_firmware_profiles", "id"),
+    },
+    "router_snapshot_metrics": {
+        ("run_id", "runs", "id"), ("router_instance_id", "router_instances", "id"),
+        ("epoch_id", "baseline_epochs", "id"),
+    },
+    "router_boot_sessions": {("router_instance_id", "router_instances", "id")},
+    "run_router_boot_sessions": {
+        ("run_id", "runs", "id"), ("boot_session_id", "router_boot_sessions", "id"),
+    },
+    "router_event_occurrences": {
+        ("router_instance_id", "router_instances", "id"),
+        ("boot_session_id", "router_boot_sessions", "id"),
+    },
+    "run_event_occurrences": {
+        ("run_id", "runs", "id"), ("occurrence_id", "router_event_occurrences", "id"),
+    },
+}
+
+V3_REQUIRED_UNIQUE_KEYS: Dict[str, Set[Tuple[str, ...]]] = {
+    "metadata": {("key",)},
+    "baseline_epochs": {("id",)},
+    "baseline_seed_devices": {("id",), ("epoch_id", "mac")},
+    "baseline_seed_clusters": {("id",), ("epoch_id", "cluster_name")},
+    "policy_profiles": {("id",)},
+    "runs": {("id",), ("file_hash",)},
+    "network_incidents": {("id",), ("run_id", "incident_id")},
+    "devices": {("mac",)},
+    "device_daily_stats": {("id",), ("run_id", "observed_date", "mac")},
+    "device_event_daily_stats": {
+        ("id",), ("run_id", "observed_date", "mac", "event_key"),
+    },
+    "behavior_subjects": {("subject_key", "subject_type")},
+    "subject_behavior_daily_stats": {
+        ("id",),
+        ("run_id", "observed_date", "subject_key", "subject_type", "behavior_key"),
+    },
+}
+
+V4_REQUIRED_UNIQUE_KEYS: Dict[str, Set[Tuple[str, ...]]] = {
+    **{name: keys for name, keys in V3_REQUIRED_UNIQUE_KEYS.items() if name != "runs"},
+    "router_instances": {("id",), ("instance_key",)},
+    "router_firmware_profiles": {("id",), ("profile_key",)},
+    "runs": {("id",), ("router_instance_id", "file_hash")},
+    "device_registrations": {
+        ("id",), ("registration_sequence",), ("mac", "registration_source", "source_key"),
+    },
+    "device_observations": {
+        ("id",), ("run_id", "mac", "evidence_kind", "seen_at", "evidence_digest"),
+    },
+    "router_metadata_observations": {("run_id",)},
+    "router_snapshot_metrics": {("run_id",)},
+    "router_boot_sessions": {("id",), ("session_key",)},
+    "run_router_boot_sessions": {("run_id", "boot_session_id")},
+    "router_event_occurrences": {
+        ("id",), ("router_instance_id", "occurrence_digest"),
+    },
+    "run_event_occurrences": {("run_id", "occurrence_id")},
+}
+
+V3_REQUIRED_PRIMARY_KEYS: Dict[str, Tuple[str, ...]] = {
+    "metadata": ("key",),
+    "baseline_epochs": ("id",),
+    "baseline_seed_devices": ("id",),
+    "baseline_seed_clusters": ("id",),
+    "policy_profiles": ("id",),
+    "runs": ("id",),
+    "network_incidents": ("id",),
+    "devices": ("mac",),
+    "device_daily_stats": ("id",),
+    "device_event_daily_stats": ("id",),
+    "behavior_subjects": ("subject_key", "subject_type"),
+    "subject_behavior_daily_stats": ("id",),
+}
+
+V4_REQUIRED_PRIMARY_KEYS: Dict[str, Tuple[str, ...]] = {
+    **V3_REQUIRED_PRIMARY_KEYS,
+    "router_instances": ("id",),
+    "router_firmware_profiles": ("id",),
+    "device_registrations": ("id",),
+    "device_observations": ("id",),
+    "router_metadata_observations": ("run_id",),
+    "router_snapshot_metrics": ("run_id",),
+    "router_boot_sessions": ("id",),
+    "run_router_boot_sessions": ("run_id", "boot_session_id"),
+    "router_event_occurrences": ("id",),
+    "run_event_occurrences": ("run_id", "occurrence_id"),
+}
+
+V3_REQUIRED_NOT_NULL: Dict[str, Set[str]] = {
+    "metadata": {"value"},
+    "baseline_epochs": {"created_at", "is_active"},
+    "baseline_seed_devices": {"epoch_id", "mac"},
+    "baseline_seed_clusters": {"epoch_id", "cluster_name"},
+    "policy_profiles": {
+        "created_at", "name", "schema_version", "is_active", "policy_json",
+    },
+    "runs": {
+        "epoch_id", "file_hash", "ingested_at", "parsed_event_count",
+        "malformed_line_count", "export_noise_line_count", "is_partial",
+    },
+    "network_incidents": {
+        "run_id", "incident_id", "incident_type", "confidence", "start", "restored_at",
+        "recovery_end", "disconnect_count", "connect_count", "affected_macs_json",
+        "event_counts_json", "explained_event_count", "active_known_devices",
+        "affected_device_fraction",
+    },
+    "devices": set(),
+    "device_daily_stats": {
+        "run_id", "epoch_id", "observed_date", "mac", "dhcp_count", "total_events",
+        "included_in_learning",
+    },
+    "device_event_daily_stats": {
+        "run_id", "epoch_id", "observed_date", "mac", "event_key", "event_family", "count",
+        "included_in_learning",
+    },
+    "behavior_subjects": {"subject_key", "subject_type"},
+    "subject_behavior_daily_stats": {
+        "run_id", "epoch_id", "observed_date", "subject_key", "subject_type", "behavior_key",
+        "behavior_family", "count", "included_in_learning",
+    },
+}
+
+V4_REQUIRED_NOT_NULL: Dict[str, Set[str]] = {
+    **{name: columns for name, columns in V3_REQUIRED_NOT_NULL.items() if name != "runs"},
+    "router_instances": {
+        "instance_key", "canonical_vendor", "identity_source", "identity_version",
+    },
+    "router_firmware_profiles": {
+        "profile_key", "canonical_vendor", "normalized_firmware", "identity_version",
+    },
+    "runs": {
+        "epoch_id", "router_instance_id", "format_id", "file_hash", "ingested_at",
+        "capabilities_json", "novel_event_count", "repeated_event_count", "parsed_event_count",
+        "malformed_line_count", "export_noise_line_count", "is_partial",
+    },
+    "device_registrations": {
+        "mac", "registration_source", "source_key", "registration_sequence", "registered_at",
+        "last_confirmed_at",
+    },
+    "device_observations": {
+        "run_id", "mac", "evidence_kind", "seen_at", "evidence_digest", "attributes_json",
+    },
+    "router_metadata_observations": {
+        "router_instance_id", "router_owned_interfaces_json", "metadata_json",
+    },
+    "router_snapshot_metrics": {"router_instance_id", "epoch_id", "eligible"},
+    "router_boot_sessions": {
+        "router_instance_id", "session_key", "startup_signature", "identity_version", "created_at",
+    },
+    "run_router_boot_sessions": {"run_id", "boot_session_id"},
+    "router_event_occurrences": {
+        "router_instance_id", "occurrence_digest", "identity_version", "clock_trust",
+        "normalized_message", "canonical_event_key", "canonical_event_family", "actor_scope",
+        "structured_evidence_json",
+    },
+    "run_event_occurrences": {
+        "run_id", "occurrence_id", "is_novel", "is_repeated", "source_count",
+    },
+}
+
+V3_INTEGER_COLUMNS: Dict[str, Set[str]] = {
+    "metadata": set(),
+    "baseline_epochs": {"id", "is_active"},
+    "baseline_seed_devices": {"id", "epoch_id"},
+    "baseline_seed_clusters": {
+        "id", "epoch_id", "cluster_size", "min_cluster_size", "cluster_time_window_seconds",
+    },
+    "policy_profiles": {"id", "schema_version", "is_active"},
+    "runs": {
+        "id", "epoch_id", "policy_profile_id", "parsed_event_count", "malformed_line_count",
+        "export_noise_line_count", "risk_score", "is_partial",
+    },
+    "network_incidents": {
+        "id", "run_id", "disconnect_count", "connect_count", "explained_event_count",
+        "active_known_devices",
+    },
+    "devices": set(),
+    "device_daily_stats": {
+        "id", "run_id", "epoch_id", "dhcp_count", "total_events", "included_in_learning",
+    },
+    "device_event_daily_stats": {"id", "run_id", "epoch_id", "count", "included_in_learning"},
+    "behavior_subjects": set(),
+    "subject_behavior_daily_stats": {
+        "id", "run_id", "epoch_id", "count", "included_in_learning",
+    },
+}
+
+V3_REAL_COLUMNS: Dict[str, Set[str]] = {
+    "baseline_seed_devices": {
+        "dhcp_min", "dhcp_max", "dhcp_seed_weight", "total_events_min", "total_events_max",
+        "total_events_seed_weight", "soft_max",
+    },
+    "network_incidents": {"affected_device_fraction"},
+}
+
+V4_INTEGER_COLUMNS: Dict[str, Set[str]] = {
+    **{name: columns for name, columns in V3_INTEGER_COLUMNS.items() if name != "runs"},
+    "router_instances": {"id"},
+    "router_firmware_profiles": {"id"},
+    "runs": {
+        "id", "epoch_id", "policy_profile_id", "router_instance_id", "novel_event_count",
+        "repeated_event_count", "parsed_event_count", "malformed_line_count",
+        "export_noise_line_count", "risk_score", "is_partial",
+    },
+    "device_registrations": {"id", "epoch_id", "registration_sequence"},
+    "device_observations": {"id", "run_id"},
+    "router_metadata_observations": {"run_id", "router_instance_id", "firmware_profile_id"},
+    "router_snapshot_metrics": {
+        "run_id", "router_instance_id", "epoch_id", "total_clients", "wifi_clients",
+        "derived_wired_clients", "eligible",
+    },
+    "router_boot_sessions": {"id", "router_instance_id"},
+    "run_router_boot_sessions": {"run_id", "boot_session_id"},
+    "router_event_occurrences": {"id", "router_instance_id", "boot_session_id"},
+    "run_event_occurrences": {
+        "run_id", "occurrence_id", "is_novel", "is_repeated", "source_sequence", "source_count",
+    },
+}
+
+
+def _expected_declared_types(
+    columns_by_table: Dict[str, Tuple[str, ...]],
+    integer_columns: Dict[str, Set[str]],
+    real_columns: Dict[str, Set[str]],
+) -> Dict[str, Dict[str, str]]:
+    return {
+        table: {
+            column: (
+                "INTEGER"
+                if column in integer_columns.get(table, set())
+                else "REAL"
+                if column in real_columns.get(table, set())
+                else "TEXT"
+            )
+            for column in columns
+        }
+        for table, columns in columns_by_table.items()
+    }
+
+
+V3_REQUIRED_TYPES = _expected_declared_types(
+    V3_REQUIRED_COLUMNS, V3_INTEGER_COLUMNS, V3_REAL_COLUMNS
+)
+V4_REQUIRED_TYPES = _expected_declared_types(
+    V4_REQUIRED_COLUMNS, V4_INTEGER_COLUMNS, V3_REAL_COLUMNS
+)
+
+V3_REQUIRED_DEFAULTS: Dict[str, Dict[str, str]] = {
+    table: {} for table in V3_REQUIRED_COLUMNS
+}
+V3_REQUIRED_DEFAULTS.update({
+    "baseline_epochs": {"is_active": "0"},
+    "policy_profiles": {"is_active": "0"},
+    "runs": {
+        "parsed_event_count": "0", "malformed_line_count": "0",
+        "export_noise_line_count": "0", "is_partial": "0",
+    },
+    "network_incidents": {
+        "disconnect_count": "0", "connect_count": "0", "explained_event_count": "0",
+        "active_known_devices": "0", "affected_device_fraction": "0",
+    },
+    "device_daily_stats": {"dhcp_count": "0", "total_events": "0", "included_in_learning": "1"},
+    "device_event_daily_stats": {"count": "0", "included_in_learning": "1"},
+    "subject_behavior_daily_stats": {"count": "0", "included_in_learning": "1"},
+})
+
+V4_REQUIRED_DEFAULTS: Dict[str, Dict[str, str]] = {
+    table: dict(V3_REQUIRED_DEFAULTS.get(table, {})) for table in V4_REQUIRED_COLUMNS
+}
+V4_REQUIRED_DEFAULTS.update({
+    "runs": {
+        "novel_event_count": "0", "repeated_event_count": "0", "parsed_event_count": "0",
+        "malformed_line_count": "0", "export_noise_line_count": "0", "is_partial": "0",
+    },
+    "device_observations": {"attributes_json": "'{}'"},
+    "router_metadata_observations": {
+        "router_owned_interfaces_json": "'[]'", "metadata_json": "'{}'",
+    },
+    "router_snapshot_metrics": {"eligible": "0"},
+    "router_event_occurrences": {"structured_evidence_json": "'{}'"},
+    "run_event_occurrences": {"source_count": "1"},
+})
+
+V4_REQUIRED_CHECKS: Dict[str, Set[str]] = {
+    table: set() for table in V4_REQUIRED_COLUMNS
+}
+V4_REQUIRED_CHECKS.update({
+    "router_boot_sessions": {
+        "trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL",
+    },
+    "run_event_occurrences": {
+        "is_novel IN (0, 1)",
+        "is_repeated IN (0, 1)",
+        "is_novel + is_repeated = 1",
+    },
+})
+
+V4_INDEX_DESCENDING: Dict[str, Tuple[int, ...]] = {
+    index: tuple(0 for _ in columns)
+    for index, (_, columns) in V4_INDEX_COLUMNS.items()
+}
+V4_INDEX_DESCENDING.update({
+    "idx_device_registrations_mac_sequence": (0, 1),
+    "idx_router_snapshot_history": (0, 0, 1, 1),
+})
+V4_PRE_RELEASE_MAINTENANCE_INDEXES: Tuple[str, ...] = (
+    "idx_run_event_occurrences_occurrence",
+    "idx_run_router_boot_sessions_boot_session",
+    "idx_router_event_occurrences_boot_session",
+)
+V4_PRE_RELEASE_MAINTENANCE_INDEX_SET = frozenset(
+    V4_PRE_RELEASE_MAINTENANCE_INDEXES
+)
+SQLITE_DATABASE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
+
+
+def _canonical_v4_index_sql(index_name: str) -> str:
+    table, columns = V4_INDEX_COLUMNS[index_name]
+    directions = V4_INDEX_DESCENDING[index_name]
+    columns_sql = ", ".join(
+        f'"{column}"' + (" DESC" if descending else "")
+        for column, descending in zip(columns, directions)
+    )
+    return f'CREATE INDEX "{index_name}" ON "{table}"({columns_sql})'
+
+
 class StateStore:
     def __init__(self, db_path: Path):
-        self.db_path = db_path.expanduser()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row
-        self.ensure_schema()
+        is_memory = str(db_path) == ":memory:"
+        self.db_path = Path(":memory:") if is_memory else db_path.expanduser()
+        if not is_memory:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            artifacts = self._database_artifact_signature()
+            main_artifact = artifacts.get("")
+            has_sidecars = any(suffix != "" for suffix in artifacts)
+            if has_sidecars and (main_artifact is None or main_artifact[2] == 0):
+                self._raise_schema_error(
+                    "a SQLite sidecar or journal artifact exists without a non-empty main database"
+                )
+            if main_artifact is not None and main_artifact[2] > 0:
+                self._preflight_existing_database()
+            if self._database_artifact_signature() != artifacts:
+                self._raise_schema_error(
+                    "the database artifacts changed during read-only preflight; retry when idle"
+                )
+        # The runtime directory is owned by one trusted local user and analyzer process;
+        # preflight rejects unsafe artifact types but does not defend against path replacement.
+        self.conn = self._open_connection(":memory:" if is_memory else str(self.db_path))
+        try:
+            self.ensure_schema()
+        except BaseException:
+            self.conn.close()
+            raise
+
+    @staticmethod
+    def _open_connection(database: str) -> sqlite3.Connection:
+        connection = sqlite3.connect(database)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            connection.close()
+            raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
+        return connection
+
+    def _database_artifact_signature(self) -> Dict[str, Tuple[int, int, int, int]]:
+        signature: Dict[str, Tuple[int, int, int, int]] = {}
+        for suffix in SQLITE_DATABASE_ARTIFACT_SUFFIXES:
+            artifact = Path(f"{self.db_path}{suffix}")
+            try:
+                artifact_stat = artifact.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                self._raise_schema_error(
+                    "a database or journal artifact could not be inspected "
+                    f"safely ({type(exc).__name__})"
+                )
+            if not stat_module.S_ISREG(artifact_stat.st_mode):
+                self._raise_schema_error(
+                    "a database or journal artifact is not an ordinary file"
+                )
+            signature[suffix] = (
+                artifact_stat.st_dev,
+                artifact_stat.st_ino,
+                artifact_stat.st_size,
+                artifact_stat.st_mtime_ns,
+            )
+        return signature
+
+    def _preflight_existing_database(self) -> None:
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="router-log-analyzer-schema-preflight-"
+            ) as temporary_directory:
+                snapshot_path: Optional[Path] = None
+                for attempt in range(3):
+                    before = self._database_artifact_signature()
+                    attempt_directory = Path(temporary_directory) / str(attempt)
+                    attempt_directory.mkdir()
+                    candidate_path = attempt_directory / "database.db"
+                    try:
+                        for suffix in SQLITE_DATABASE_ARTIFACT_SUFFIXES:
+                            if suffix not in before:
+                                continue
+                            shutil.copy2(
+                                Path(f"{self.db_path}{suffix}"),
+                                Path(f"{candidate_path}{suffix}"),
+                                follow_symlinks=False,
+                            )
+                    except FileNotFoundError:
+                        continue
+                    if self._database_artifact_signature() == before:
+                        snapshot_path = candidate_path
+                        break
+                if snapshot_path is None:
+                    self._raise_schema_error(
+                        "the database changed during read-only preflight; close other writers and retry"
+                    )
+
+                snapshot_store = object.__new__(StateStore)
+                snapshot_store.db_path = snapshot_path
+                snapshot_artifacts = snapshot_store._database_artifact_signature()
+                snapshot_main = snapshot_artifacts.get("")
+                if snapshot_main is None or snapshot_main[2] == 0:
+                    self._raise_schema_error(
+                        "the database snapshot has no non-empty ordinary main file"
+                    )
+                snapshot_connection = self._open_connection(str(snapshot_path))
+                snapshot_store.conn = snapshot_connection
+                try:
+                    snapshot_store._classify_and_validate_schema()
+                finally:
+                    snapshot_connection.close()
+        except RuntimeError:
+            raise
+        except (OSError, sqlite3.DatabaseError) as exc:
+            self._raise_schema_error(
+                f"the database could not be read safely during preflight ({type(exc).__name__})"
+            )
 
     def close(self) -> None:
         self.conn.close()
 
     def ensure_schema(self) -> None:
-        self.conn.executescript(
+        version = self._classify_and_validate_schema()
+        if version is None:
+            self._create_v4_schema()
+            self._validate_schema(SCHEMA_VERSION)
+        elif version == MIGRATABLE_SCHEMA_VERSION:
+            self._migrate_v3_to_v4()
+        self.conn.execute("PRAGMA journal_mode = WAL")
+
+    def _classify_and_validate_schema(self) -> Optional[int]:
+        user_objects = list(self.conn.execute(
             """
-            PRAGMA journal_mode = WAL;
+            SELECT type, name
+            FROM sqlite_master
+            WHERE name NOT LIKE 'sqlite_%'
+            ORDER BY type, name
+            """
+        ))
+        if not user_objects:
+            return None
+
+        table_names = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if "metadata" not in table_names:
+            self._raise_schema_error("the metadata table is missing")
+        try:
+            version_rows = self.conn.execute(
+                "SELECT value FROM metadata WHERE key = 'schema_version'"
+            ).fetchall()
+        except sqlite3.DatabaseError as exc:
+            self._raise_schema_error(f"the metadata table is unreadable ({exc})")
+        if len(version_rows) != 1:
+            self._raise_schema_error("metadata.schema_version is missing")
+        raw_version = version_rows[0][0]
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError):
+            self._raise_schema_error("metadata.schema_version is not an integer")
+        if str(version) != str(raw_version):
+            self._raise_schema_error("metadata.schema_version is not canonical")
+        if version == SCHEMA_VERSION:
+            if self._has_pre_release_reverse_index_shape():
+                self._validate_schema(
+                    SCHEMA_VERSION,
+                    ignored_indexes=V4_PRE_RELEASE_MAINTENANCE_INDEX_SET,
+                )
+                self._repair_pre_release_reverse_indexes()
+            else:
+                self._validate_schema(SCHEMA_VERSION)
+        elif version == MIGRATABLE_SCHEMA_VERSION:
+            self._validate_schema(MIGRATABLE_SCHEMA_VERSION)
+        else:
+            self._raise_schema_error(
+                f"schema version {version} is unsupported; only version 3 can migrate to version 4"
+            )
+        return version
+
+    @staticmethod
+    def _schema_recovery_message(detail: str) -> str:
+        return (
+            f"Unsupported or malformed router-log-analyzer database: {detail}. "
+            "No schema migration was attempted; restore a backup or choose a new --db path."
+        )
+
+    def _raise_schema_error(self, detail: str) -> None:
+        raise RuntimeError(self._schema_recovery_message(detail))
+
+    def _has_pre_release_reverse_index_shape(self) -> bool:
+        existing_objects = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE name IN (?, ?, ?)",
+                V4_PRE_RELEASE_MAINTENANCE_INDEXES,
+            )
+        }
+        return not existing_objects
+
+    def _repair_pre_release_reverse_indexes(self) -> None:
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            for index_name in V4_PRE_RELEASE_MAINTENANCE_INDEXES:
+                self.conn.execute(_canonical_v4_index_sql(index_name))
+            self._validate_v4_maintenance_before_commit()
+            self.conn.commit()
+        except BaseException:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            raise
+
+    def _validate_v4_maintenance_before_commit(self) -> None:
+        self._validate_schema(SCHEMA_VERSION)
+
+    def _validate_schema(
+        self,
+        version: int,
+        *,
+        ignored_indexes: FrozenSet[str] = frozenset(),
+    ) -> None:
+        if ignored_indexes and (
+            version != SCHEMA_VERSION
+            or ignored_indexes != V4_PRE_RELEASE_MAINTENANCE_INDEX_SET
+        ):
+            raise RuntimeError("Invalid internal schema-validation index exemption")
+        integrity_results = [row[0] for row in self.conn.execute("PRAGMA integrity_check")]
+        if integrity_results != ["ok"]:
+            self._raise_schema_error("SQLite integrity_check reported corruption")
+        columns_by_table = V4_REQUIRED_COLUMNS if version == SCHEMA_VERSION else V3_REQUIRED_COLUMNS
+        indexes = V4_INDEX_COLUMNS if version == SCHEMA_VERSION else REQUIRED_INDEX_COLUMNS
+        foreign_keys = (
+            V4_REQUIRED_FOREIGN_KEYS if version == SCHEMA_VERSION else V3_REQUIRED_FOREIGN_KEYS
+        )
+        unique_keys = (
+            V4_REQUIRED_UNIQUE_KEYS if version == SCHEMA_VERSION else V3_REQUIRED_UNIQUE_KEYS
+        )
+        primary_keys = (
+            V4_REQUIRED_PRIMARY_KEYS if version == SCHEMA_VERSION else V3_REQUIRED_PRIMARY_KEYS
+        )
+        not_null_columns = (
+            V4_REQUIRED_NOT_NULL if version == SCHEMA_VERSION else V3_REQUIRED_NOT_NULL
+        )
+        declared_types = V4_REQUIRED_TYPES if version == SCHEMA_VERSION else V3_REQUIRED_TYPES
+        defaults = V4_REQUIRED_DEFAULTS if version == SCHEMA_VERSION else V3_REQUIRED_DEFAULTS
+        checks = (
+            V4_REQUIRED_CHECKS
+            if version == SCHEMA_VERSION
+            else {table: set() for table in V3_REQUIRED_COLUMNS}
+        )
+        objects = {
+            (row[0], row[1])
+            for row in self.conn.execute(
+                "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            )
+        }
+        required_table_names = set(columns_by_table)
+        attached_triggers = list(self.conn.execute(
+            """
+            SELECT name, tbl_name
+            FROM sqlite_master
+            WHERE type = 'trigger'
+            ORDER BY name
+            """
+        ))
+        for trigger in attached_triggers:
+            if trigger["tbl_name"] in required_table_names:
+                self._raise_schema_error(
+                    f"trigger {trigger['name']!r} is attached to required table "
+                    f"{trigger['tbl_name']!r}"
+                )
+        for table, expected_columns in columns_by_table.items():
+            if ("table", table) not in objects:
+                self._raise_schema_error(f"required table {table!r} is missing or has the wrong object type")
+            actual_columns = tuple(
+                row[1] for row in self.conn.execute(f'PRAGMA table_info("{table}")')
+            )
+            if actual_columns != expected_columns:
+                self._raise_schema_error(f"required table {table!r} has unexpected columns")
+            actual_not_null = {
+                row[1]
+                for row in self.conn.execute(f'PRAGMA table_info("{table}")')
+                if row[3]
+            }
+            if actual_not_null != not_null_columns[table]:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected NOT NULL constraints"
+                )
+            actual_types = {
+                row[1]: str(row[2]).upper()
+                for row in self.conn.execute(f'PRAGMA table_xinfo("{table}")')
+            }
+            if actual_types != declared_types[table]:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected declared types"
+                )
+            actual_defaults = {
+                row[1]: str(row[4])
+                for row in self.conn.execute(f'PRAGMA table_xinfo("{table}")')
+                if row[4] is not None
+            }
+            if actual_defaults != defaults[table]:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected default values"
+                )
+            table_sql_row = self.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()
+            try:
+                definition_clauses, table_options = _sqlite_table_definition_clauses(
+                    table_sql_row[0] or ""
+                )
+            except ValueError as exc:
+                self._raise_schema_error(
+                    f"required table {table!r} has malformed SQL ({exc})"
+                )
+            if table_options:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected table options"
+                )
+            actual_check_clauses = [
+                clause
+                for clause in definition_clauses
+                if any(_sql_ddl_token_is_word(token, "check") for token in clause)
+            ]
+            expected_check_clauses = _expected_check_clauses(checks[table])
+            if not _sql_ddl_clause_collections_match(
+                actual_check_clauses,
+                tuple(expected_check_clauses),
+            ):
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected CHECK constraints"
+                )
+            actual_foreign_key_clauses = [
+                clause
+                for clause in definition_clauses
+                if any(_sql_ddl_token_is_word(token, "references") for token in clause)
+            ]
+            expected_foreign_key_clauses = _expected_foreign_key_clauses(
+                foreign_keys.get(table, set())
+            )
+            if not _sql_ddl_clause_collections_match(
+                actual_foreign_key_clauses,
+                tuple(expected_foreign_key_clauses),
+            ):
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected foreign-key SQL"
+                )
+
+        for index, (table, expected_columns) in indexes.items():
+            if index in ignored_indexes:
+                continue
+            row = self.conn.execute(
+                "SELECT type, tbl_name, sql FROM sqlite_master WHERE name = ?",
+                (index,),
+            ).fetchone()
+            if row is None or row[0] != "index" or row[1] != table:
+                self._raise_schema_error(f"required index {index!r} is missing or malformed")
+            actual_columns = tuple(
+                item[2] for item in self.conn.execute(f'PRAGMA index_info("{index}")')
+            )
+            if actual_columns != expected_columns:
+                self._raise_schema_error(f"required index {index!r} has unexpected columns")
+            index_list_row = next(
+                (
+                    item
+                    for item in self.conn.execute(f'PRAGMA index_list("{table}")')
+                    if item[1] == index
+                ),
+                None,
+            )
+            if index_list_row is None or index_list_row[4] != 0:
+                self._raise_schema_error(f"required index {index!r} is unexpectedly partial")
+            index_xinfo = [
+                item
+                for item in self.conn.execute(f'PRAGMA index_xinfo("{index}")')
+                if item[5]
+            ]
+            actual_directions = tuple(item[3] for item in index_xinfo)
+            expected_directions = (
+                V4_INDEX_DESCENDING[index]
+                if version == SCHEMA_VERSION
+                else tuple(0 for _ in expected_columns)
+            )
+            if actual_directions != expected_directions or any(
+                str(item[4]).upper() != "BINARY" for item in index_xinfo
+            ):
+                self._raise_schema_error(
+                    f"required index {index!r} has unexpected direction or collation"
+                )
+            if version == SCHEMA_VERSION:
+                expected_index_sql = _canonical_v4_index_sql(index)
+            else:
+                expected_index_columns_sql = ", ".join(
+                    f'"{column}"' + (" DESC" if descending else "")
+                    for column, descending in zip(expected_columns, expected_directions)
+                )
+                expected_index_sql = (
+                    f'CREATE INDEX "{index}" ON "{table}"({expected_index_columns_sql})'
+                )
+            try:
+                actual_index_tokens = _tokenize_sqlite_ddl(row[2] or "")
+            except ValueError as exc:
+                self._raise_schema_error(
+                    f"required index {index!r} has malformed SQL ({exc})"
+                )
+            if not _sql_ddl_tokens_match(
+                actual_index_tokens,
+                _tokenize_sqlite_ddl(expected_index_sql),
+            ):
+                self._raise_schema_error(f"required index {index!r} has unexpected SQL")
+
+        for table, expected in foreign_keys.items():
+            actual = {
+                (row[3], row[2], row[4], row[5], row[6], row[7])
+                for row in self.conn.execute(f'PRAGMA foreign_key_list("{table}")')
+            }
+            expected_detailed = {
+                (*foreign_key, "NO ACTION", "NO ACTION", "NONE")
+                for foreign_key in expected
+            }
+            if actual != expected_detailed:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected foreign-key declarations"
+                )
+
+        for table, expected in unique_keys.items():
+            primary_key = tuple(
+                row[1]
+                for row in sorted(
+                    (
+                        row
+                        for row in self.conn.execute(f'PRAGMA table_info("{table}")')
+                        if row[5]
+                    ),
+                    key=lambda row: row[5],
+                )
+            )
+            if primary_key != primary_keys[table]:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected primary-key columns"
+                )
+            actual: Set[Tuple[str, ...]] = set()
+            for index_row in self.conn.execute(f'PRAGMA index_list("{table}")'):
+                if not index_row[2]:
+                    continue
+                index_xinfo = [
+                    row
+                    for row in self.conn.execute(f'PRAGMA index_xinfo("{index_row[1]}")')
+                    if row[5]
+                ]
+                columns = tuple(row[2] for row in index_xinfo)
+                if (
+                    index_row[4]
+                    or any(row[3] != 0 for row in index_xinfo)
+                    or any(str(row[4]).upper() != "BINARY" for row in index_xinfo)
+                    or any(column is None for column in columns)
+                ):
+                    self._raise_schema_error(
+                        f"required table {table!r} has a malformed unique key"
+                    )
+                if index_row[3] != "pk" and columns:
+                    actual.add(columns)
+            expected_secondary = expected - {primary_keys[table]}
+            if actual != expected_secondary:
+                self._raise_schema_error(
+                    f"required table {table!r} has unexpected unique keys"
+                )
+
+        violations = list(self.conn.execute("PRAGMA foreign_key_check"))
+        if violations:
+            self._raise_schema_error("foreign-key violations were detected")
+        if version == SCHEMA_VERSION:
+            self._validate_v4_data_relationships()
+            for table in (
+                "network_incidents", "device_daily_stats", "device_event_daily_stats",
+                "subject_behavior_daily_stats", "device_observations",
+                "router_metadata_observations", "router_snapshot_metrics",
+                "run_router_boot_sessions", "run_event_occurrences",
+            ):
+                sql_row = self.conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    (table,),
+                ).fetchone()
+                sql = _ascii_sql_lower(sql_row[0] or "")
+                if "runs_v4" in sql or "runs_temp" in sql or "runs_old" in sql:
+                    self._raise_schema_error(f"required table {table!r} references a temporary runs table")
+
+    def _validate_v4_data_relationships(self) -> None:
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM runs AS run
+            LEFT JOIN router_metadata_observations AS metadata ON metadata.run_id = run.id
+            WHERE metadata.run_id IS NULL
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_metadata_observations does not contain exactly one row for every run"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM router_metadata_observations AS metadata
+            JOIN runs AS run ON run.id = metadata.run_id
+            WHERE metadata.router_instance_id != run.router_instance_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_metadata_observations has a row that does not match its run identity"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM router_metadata_observations AS metadata
+            JOIN router_instances AS router ON router.id = metadata.router_instance_id
+            JOIN router_firmware_profiles AS firmware ON firmware.id = metadata.firmware_profile_id
+            WHERE firmware.canonical_vendor != router.canonical_vendor
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_metadata_observations has a firmware profile from another vendor"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM runs AS run
+            LEFT JOIN router_snapshot_metrics AS snapshot ON snapshot.run_id = run.id
+            WHERE snapshot.run_id IS NULL
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_snapshot_metrics does not contain exactly one row for every run"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM router_snapshot_metrics AS snapshot
+            JOIN runs AS run ON run.id = snapshot.run_id
+            WHERE snapshot.router_instance_id != run.router_instance_id
+               OR snapshot.epoch_id != run.epoch_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_snapshot_metrics has a row that does not match its run identity or epoch"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM run_router_boot_sessions AS link
+            JOIN runs AS run ON run.id = link.run_id
+            JOIN router_boot_sessions AS session ON session.id = link.boot_session_id
+            WHERE run.router_instance_id != session.router_instance_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "run_router_boot_sessions links a run to another router instance"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM router_event_occurrences AS occurrence
+            JOIN router_boot_sessions AS session ON session.id = occurrence.boot_session_id
+            WHERE occurrence.router_instance_id != session.router_instance_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "router_event_occurrences references another router instance's boot session"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM run_event_occurrences AS link
+            JOIN runs AS run ON run.id = link.run_id
+            JOIN router_event_occurrences AS occurrence ON occurrence.id = link.occurrence_id
+            WHERE run.router_instance_id != occurrence.router_instance_id
+            """
+        ).fetchone()[0]:
+            self._raise_schema_error(
+                "run_event_occurrences links a run to another router instance"
+            )
+        for row in self.conn.execute("SELECT id, capabilities_json FROM runs"):
+            try:
+                capabilities = json.loads(row["capabilities_json"])
+            except (TypeError, json.JSONDecodeError):
+                self._raise_schema_error(f"run {row['id']} has invalid capabilities_json")
+            if not isinstance(capabilities, dict):
+                self._raise_schema_error(f"run {row['id']} capabilities_json is not an object")
+
+    def _migrate_v3_to_v4(self) -> None:
+        legacy_snapshot = {
+            "counts": {
+                table: self.conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                for table in V3_REQUIRED_COLUMNS
+            },
+            "ids": {
+                table: tuple(
+                    row[0]
+                    for row in self.conn.execute(f'SELECT id FROM "{table}" ORDER BY id')
+                )
+                for table, columns in V3_REQUIRED_COLUMNS.items()
+                if "id" in columns
+            },
+            "device_macs": tuple(
+                row[0] for row in self.conn.execute("SELECT mac FROM devices ORDER BY mac")
+            ),
+        }
+        self._migration_legacy_snapshot = legacy_snapshot
+        if self.conn.in_transaction:
+            self.conn.commit()
+        prior_foreign_keys = int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        if prior_foreign_keys != 1:
+            raise RuntimeError("SQLite foreign-key enforcement was not enabled before migration")
+        migration_committed = False
+        try:
+            self.conn.execute("PRAGMA foreign_keys = OFF")
+            if self.conn.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+                raise RuntimeError("Could not disable SQLite foreign keys for the v3 table rebuild")
+            self.conn.execute("BEGIN IMMEDIATE")
+            self._create_v4_identity_tables_for_migration()
+            legacy_router_id, legacy_profile_id = self._insert_legacy_router_identity()
+            self._rebuild_runs_for_v4(legacy_router_id)
+            self._create_v4_run_owned_tables_for_migration()
+            self._backfill_v3_provenance(legacy_router_id, legacy_profile_id)
+            self._rekey_legacy_system_behavior()
+            self._refresh_migrated_caches(legacy_router_id)
+            self._validate_migrated_v4_before_version_update()
+            updated = self.conn.execute(
+                "UPDATE metadata SET value = ? WHERE key = 'schema_version' AND value = '3'",
+                (str(SCHEMA_VERSION),),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("The schema version changed during migration")
+            self.conn.commit()
+            migration_committed = True
+        except BaseException:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            raise
+        finally:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            if self.conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                raise RuntimeError("SQLite foreign-key enforcement could not be restored after migration")
+            if hasattr(self, "_migration_legacy_snapshot"):
+                del self._migration_legacy_snapshot
+        if not migration_committed:
+            raise RuntimeError("Schema migration did not commit")
+        self._validate_schema(SCHEMA_VERSION)
+
+    def _create_v4_identity_tables_for_migration(self) -> None:
+        self._execute_migration_ddl(
+            """
+            CREATE TABLE router_instances (
+              id INTEGER PRIMARY KEY,
+              instance_key TEXT NOT NULL UNIQUE,
+              canonical_vendor TEXT NOT NULL,
+              identity_source TEXT NOT NULL,
+              label TEXT,
+              first_seen TEXT,
+              last_seen TEXT,
+              identity_version TEXT NOT NULL
+            );
+            CREATE TABLE router_firmware_profiles (
+              id INTEGER PRIMARY KEY,
+              profile_key TEXT NOT NULL UNIQUE,
+              canonical_vendor TEXT NOT NULL,
+              normalized_firmware TEXT NOT NULL,
+              identity_version TEXT NOT NULL
+            );
+            CREATE TABLE device_registrations (
+              id INTEGER PRIMARY KEY,
+              mac TEXT NOT NULL,
+              registration_source TEXT NOT NULL,
+              source_key TEXT NOT NULL,
+              epoch_id INTEGER,
+              registered_name TEXT,
+              registered_status TEXT,
+              registered_connection_type TEXT,
+              first_seen TEXT,
+              last_seen TEXT,
+              registration_sequence INTEGER NOT NULL UNIQUE,
+              registered_at TEXT NOT NULL,
+              last_confirmed_at TEXT NOT NULL,
+              UNIQUE(mac, registration_source, source_key),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+            );
+            CREATE INDEX idx_device_registrations_mac_sequence
+              ON device_registrations(mac, registration_sequence DESC);
+            """
+        )
+
+    def _insert_legacy_router_identity(self) -> Tuple[int, int]:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO router_instances(
+              instance_key, canonical_vendor, identity_source, label,
+              first_seen, last_seen, identity_version
+            )
+            SELECT ?, 'netgear', 'legacy_default', 'Legacy NETGEAR Router',
+                   MIN(COALESCE(observation_start, ingested_at)),
+                   MAX(COALESCE(observation_end, ingested_at)), 'v1'
+            FROM runs
+            """,
+            (LEGACY_NETGEAR_INSTANCE_KEY,),
+        )
+        legacy_router_id = int(cursor.lastrowid)
+        cursor = self.conn.execute(
+            """
+            INSERT INTO router_firmware_profiles(
+              profile_key, canonical_vendor, normalized_firmware, identity_version
+            ) VALUES(?, 'netgear', 'unknown-legacy-firmware', 'v1')
+            """,
+            (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+        )
+        return legacy_router_id, int(cursor.lastrowid)
+
+    def _rebuild_runs_for_v4(self, legacy_router_id: int) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE runs_v4 (
+              id INTEGER PRIMARY KEY,
+              epoch_id INTEGER NOT NULL,
+              policy_profile_id INTEGER,
+              router_instance_id INTEGER NOT NULL,
+              format_id TEXT NOT NULL,
+              file_hash TEXT NOT NULL,
+              source_path TEXT,
+              ingested_at TEXT NOT NULL,
+              export_timestamp TEXT,
+              observation_start TEXT,
+              observation_end TEXT,
+              observed_dates_json TEXT,
+              capabilities_json TEXT NOT NULL,
+              body_digest TEXT,
+              novel_event_count INTEGER NOT NULL DEFAULT 0,
+              repeated_event_count INTEGER NOT NULL DEFAULT 0,
+              parsed_event_count INTEGER NOT NULL DEFAULT 0,
+              malformed_line_count INTEGER NOT NULL DEFAULT 0,
+              export_noise_line_count INTEGER NOT NULL DEFAULT 0,
+              risk_score INTEGER,
+              status TEXT,
+              is_partial INTEGER NOT NULL DEFAULT 0,
+              UNIQUE(router_instance_id, file_hash),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id),
+              FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)
+            )
+            """
+        )
+        capabilities_json = json_dumps(NetgearLogAdapter.capabilities.to_json())
+        self.conn.execute(
+            """
+            INSERT INTO runs_v4(
+              id, epoch_id, policy_profile_id, router_instance_id, format_id, file_hash,
+              source_path, ingested_at, export_timestamp, observation_start, observation_end,
+              observed_dates_json, capabilities_json, body_digest, novel_event_count,
+              repeated_event_count, parsed_event_count, malformed_line_count,
+              export_noise_line_count, risk_score, status, is_partial
+            )
+            SELECT id, epoch_id, policy_profile_id, ?, 'netgear', file_hash,
+                   source_path, ingested_at, NULL, observation_start, observation_end,
+                   observed_dates_json, ?, NULL, 0, 0, parsed_event_count,
+                   malformed_line_count, export_noise_line_count, risk_score, status, is_partial
+            FROM runs
+            ORDER BY id
+            """,
+            (legacy_router_id, capabilities_json),
+        )
+        self.conn.execute("DROP TABLE runs")
+        self.conn.execute("ALTER TABLE runs_v4 RENAME TO runs")
+        self.conn.execute("CREATE INDEX idx_runs_epoch_time ON runs(epoch_id, ingested_at)")
+        self.conn.execute(
+            "CREATE INDEX idx_runs_router_export ON runs(router_instance_id, export_timestamp, id)"
+        )
+
+    def _create_v4_run_owned_tables_for_migration(self) -> None:
+        self._execute_migration_ddl(
+            """
+            CREATE TABLE device_observations (
+              id INTEGER PRIMARY KEY,
+              run_id INTEGER NOT NULL,
+              mac TEXT NOT NULL,
+              evidence_kind TEXT NOT NULL,
+              seen_at TEXT NOT NULL,
+              evidence_digest TEXT NOT NULL,
+              attributes_json TEXT NOT NULL DEFAULT '{}',
+              UNIQUE(run_id, mac, evidence_kind, seen_at, evidence_digest),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(mac) REFERENCES devices(mac)
+            );
+            CREATE INDEX idx_device_observations_mac_seen
+              ON device_observations(mac, seen_at, run_id);
+            CREATE TABLE router_metadata_observations (
+              run_id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              observed_at TEXT,
+              export_timestamp TEXT,
+              model TEXT,
+              hardware TEXT,
+              firmware_raw TEXT,
+              firmware_normalized TEXT,
+              firmware_profile_id INTEGER,
+              router_owned_interfaces_json TEXT NOT NULL DEFAULT '[]',
+              metadata_json TEXT NOT NULL DEFAULT '{}',
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(firmware_profile_id) REFERENCES router_firmware_profiles(id)
+            );
+            CREATE TABLE router_snapshot_metrics (
+              run_id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              epoch_id INTEGER NOT NULL,
+              export_timestamp TEXT,
+              raw_total_clients TEXT,
+              raw_wifi_clients TEXT,
+              total_clients INTEGER,
+              wifi_clients INTEGER,
+              derived_wired_clients INTEGER,
+              eligible INTEGER NOT NULL DEFAULT 0,
+              exclusion_reason TEXT,
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+            );
+            CREATE INDEX idx_router_snapshot_history
+              ON router_snapshot_metrics(
+                router_instance_id, epoch_id, export_timestamp DESC, run_id DESC
+              );
+            CREATE TABLE router_boot_sessions (
+              id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              session_key TEXT NOT NULL UNIQUE,
+              trusted_local_anchor TEXT,
+              adapter_boot_id TEXT,
+              startup_signature TEXT NOT NULL,
+              identity_version TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)
+            );
+            CREATE INDEX idx_router_boot_sessions_match
+              ON router_boot_sessions(
+                router_instance_id, trusted_local_anchor, startup_signature
+              );
+            CREATE TABLE run_router_boot_sessions (
+              run_id INTEGER NOT NULL,
+              boot_session_id INTEGER NOT NULL,
+              PRIMARY KEY(run_id, boot_session_id),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
+            );
+            CREATE INDEX idx_run_router_boot_sessions_boot_session
+              ON run_router_boot_sessions(boot_session_id);
+            CREATE TABLE router_event_occurrences (
+              id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              occurrence_digest TEXT NOT NULL,
+              identity_version TEXT NOT NULL,
+              boot_session_id INTEGER,
+              local_timestamp TEXT,
+              clock_trust TEXT NOT NULL,
+              component TEXT,
+              process_id TEXT,
+              vendor_event_code TEXT,
+              syslog_severity TEXT,
+              normalized_message TEXT NOT NULL,
+              canonical_event_key TEXT NOT NULL,
+              canonical_event_family TEXT NOT NULL,
+              actor_scope TEXT NOT NULL,
+              actor_identity TEXT,
+              structured_evidence_json TEXT NOT NULL DEFAULT '{}',
+              UNIQUE(router_instance_id, occurrence_digest),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
+            );
+            CREATE INDEX idx_router_event_occurrences_history
+              ON router_event_occurrences(
+                router_instance_id, canonical_event_key, local_timestamp
+              );
+            CREATE INDEX idx_router_event_occurrences_boot_session
+              ON router_event_occurrences(boot_session_id);
+            CREATE TABLE run_event_occurrences (
+              run_id INTEGER NOT NULL,
+              occurrence_id INTEGER NOT NULL,
+              is_novel INTEGER NOT NULL,
+              is_repeated INTEGER NOT NULL,
+              source_sequence INTEGER,
+              source_count INTEGER NOT NULL DEFAULT 1,
+              PRIMARY KEY(run_id, occurrence_id),
+              CHECK(is_novel IN (0, 1)),
+              CHECK(is_repeated IN (0, 1)),
+              CHECK(is_novel + is_repeated = 1),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(occurrence_id) REFERENCES router_event_occurrences(id)
+            );
+            CREATE INDEX idx_run_event_occurrences_occurrence
+              ON run_event_occurrences(occurrence_id);
+            """
+        )
+
+    def _execute_migration_ddl(self, script: str) -> None:
+        if not self.conn.in_transaction:
+            raise RuntimeError("Migration DDL requires an active transaction")
+        for statement in script.split(";"):
+            statement = statement.strip()
+            if statement:
+                self.conn.execute(statement)
+
+    def _backfill_v3_provenance(self, legacy_router_id: int, legacy_profile_id: int) -> None:
+        sequence = 0
+        represented_macs: Set[str] = set()
+        for row in self.conn.execute(
+            """
+            SELECT seed.*, epoch.created_at AS epoch_created_at
+            FROM baseline_seed_devices AS seed
+            JOIN baseline_epochs AS epoch ON epoch.id = seed.epoch_id
+            ORDER BY seed.epoch_id, seed.id
+            """
+        ):
+            if not is_real_mac(row["mac"]):
+                continue
+            sequence += 1
+            represented_macs.add(row["mac"])
+            registered_at = row["epoch_created_at"]
+            self.conn.execute(
+                """
+                INSERT INTO device_registrations(
+                  mac, registration_source, source_key, epoch_id, registered_name,
+                  registered_status, registered_connection_type, first_seen, last_seen,
+                  registration_sequence, registered_at, last_confirmed_at
+                ) VALUES(?, 'legacy_baseline_registration', ?, ?, ?, 'allowed', NULL,
+                         ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["mac"], f"legacy-baseline-epoch:{row['epoch_id']}", row["epoch_id"],
+                    row["name"], registered_at, registered_at, sequence,
+                    registered_at, registered_at,
+                ),
+            )
+
+        for row in self.conn.execute(
+            "SELECT * FROM devices WHERE source = 'config_import' ORDER BY mac"
+        ):
+            if not is_real_mac(row["mac"]):
+                continue
+            sequence += 1
+            represented_macs.add(row["mac"])
+            registered_at = row["first_seen"] or row["last_seen"] or "1970-01-01T00:00:00Z"
+            self.conn.execute(
+                """
+                INSERT INTO device_registrations(
+                  mac, registration_source, source_key, epoch_id, registered_name,
+                  registered_status, registered_connection_type, first_seen, last_seen,
+                  registration_sequence, registered_at, last_confirmed_at
+                ) VALUES(?, 'legacy_config_registration', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["mac"], f"legacy-config-without-source-bytes:v1:{row['mac']}",
+                    row["name"], row["status"], row["connection_type"], row["first_seen"],
+                    row["last_seen"], sequence, registered_at, row["last_seen"] or registered_at,
+                ),
+            )
+
+        observed_macs: Set[str] = set()
+        legacy_daily_rows: List[Tuple[str, sqlite3.Row]] = []
+        for table, mac_column in (
+            ("device_daily_stats", "mac"),
+            ("device_event_daily_stats", "mac"),
+            ("subject_behavior_daily_stats", "subject_key"),
+        ):
+            predicate = " WHERE subject_type = 'device'" if table == "subject_behavior_daily_stats" else ""
+            for row in self.conn.execute(
+                f"""
+                SELECT id, run_id, {mac_column} AS mac, first_seen, last_seen
+                FROM {table}{predicate}
+                ORDER BY id
+                """
+            ):
+                legacy_daily_rows.append((table, row))
+        for table, row in legacy_daily_rows:
+            if not is_real_mac(row["mac"]):
+                continue
+            evidence_prefix = {
+                "device_daily_stats": "legacy_device_daily",
+                "device_event_daily_stats": "legacy_device_event_daily",
+                "subject_behavior_daily_stats": "legacy_subject_behavior_daily",
+            }[table]
+            extrema = [(f"{evidence_prefix}_first_seen", row["first_seen"])]
+            if row["last_seen"] != row["first_seen"]:
+                extrema.append((f"{evidence_prefix}_last_seen", row["last_seen"]))
+            for evidence_kind, seen_at in extrema:
+                if seen_at is None:
+                    continue
+                evidence_digest = sha256_bytes(
+                    (
+                        f"legacy-device-observation:v1\0{row['id']}\0"
+                        f"{table}\0{evidence_kind}\0{seen_at}"
+                    ).encode("utf-8")
+                )
+                self.conn.execute(
+                    """
+                    INSERT INTO device_observations(
+                      run_id, mac, evidence_kind, seen_at, evidence_digest, attributes_json
+                    ) VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["run_id"], row["mac"], evidence_kind, seen_at, evidence_digest,
+                        json_dumps({"legacy_daily_source": table, "legacy_daily_stat_id": row["id"]}),
+                    ),
+                )
+                observed_macs.add(row["mac"])
+
+        for row in self.conn.execute("SELECT * FROM devices ORDER BY mac"):
+            if not is_real_mac(row["mac"]):
+                continue
+            existing_registrations = list(self.conn.execute(
+                "SELECT * FROM device_registrations WHERE mac = ?",
+                (row["mac"],),
+            ))
+
+            def unrepresented_catalog_value(
+                catalog_column: str,
+                registration_column: str,
+            ) -> Optional[str]:
+                value = row[catalog_column]
+                if value is None:
+                    return None
+                if any(
+                    registration[registration_column] == value
+                    for registration in existing_registrations
+                ):
+                    return None
+                return value
+
+            catalog_name = unrepresented_catalog_value("name", "registered_name")
+            catalog_status = unrepresented_catalog_value("status", "registered_status")
+            catalog_connection_type = unrepresented_catalog_value(
+                "connection_type", "registered_connection_type"
+            )
+            is_wholly_unrepresented = not existing_registrations and row["mac"] not in observed_macs
+            catalog_first_seen = row["first_seen"] if is_wholly_unrepresented else None
+            catalog_last_seen = row["last_seen"] if is_wholly_unrepresented else None
+            if not is_wholly_unrepresented and not any((
+                catalog_name,
+                catalog_status,
+                catalog_connection_type,
+                catalog_first_seen,
+                catalog_last_seen,
+            )):
+                continue
+            sequence += 1
+            registered_at = row["first_seen"] or row["last_seen"] or "1970-01-01T00:00:00Z"
+            self.conn.execute(
+                """
+                INSERT INTO device_registrations(
+                  mac, registration_source, source_key, epoch_id, registered_name,
+                  registered_status, registered_connection_type, first_seen, last_seen,
+                  registration_sequence, registered_at, last_confirmed_at
+                ) VALUES(?, 'legacy_device_catalog', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["mac"], f"legacy-device-catalog:v1:{row['mac']}", catalog_name,
+                    catalog_status, catalog_connection_type, catalog_first_seen,
+                    catalog_last_seen, sequence, registered_at,
+                    row["last_seen"] or registered_at,
+                ),
+            )
+
+        self.conn.execute(
+            """
+            INSERT INTO router_metadata_observations(
+              run_id, router_instance_id, observed_at, export_timestamp, model, hardware,
+              firmware_raw, firmware_normalized, firmware_profile_id,
+              router_owned_interfaces_json, metadata_json
+            )
+            SELECT id, ?, COALESCE(observation_end, observation_start, ingested_at), NULL,
+                   NULL, NULL, NULL, 'unknown-legacy-firmware', ?, '[]',
+                   '{"migration_source":"schema_v3"}'
+            FROM runs
+            ORDER BY id
+            """,
+            (legacy_router_id, legacy_profile_id),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO router_snapshot_metrics(
+              run_id, router_instance_id, epoch_id, export_timestamp, raw_total_clients,
+              raw_wifi_clients, total_clients, wifi_clients, derived_wired_clients,
+              eligible, exclusion_reason
+            )
+            SELECT id, ?, epoch_id, NULL, NULL, NULL, NULL, NULL, NULL, 0,
+                   'legacy_snapshot_unavailable'
+            FROM runs
+            ORDER BY id
+            """,
+            (legacy_router_id,),
+        )
+
+    def _rekey_legacy_system_behavior(self) -> None:
+        self.conn.execute(
+            """
+            UPDATE subject_behavior_daily_stats
+            SET subject_key = ?, subject_type = 'router'
+            WHERE subject_key = ?
+            """,
+            (LEGACY_NETGEAR_ROUTER_SUBJECT_KEY, SYSTEM_ACTOR),
+        )
+        for row in self.conn.execute(
+            "SELECT subject_type, attributes_json FROM behavior_subjects WHERE subject_key = ?",
+            (SYSTEM_ACTOR,),
+        ).fetchall():
+            try:
+                attributes = json.loads(row["attributes_json"] or "{}")
+            except json.JSONDecodeError:
+                attributes = {"legacy_attributes_json": row["attributes_json"]}
+            if not isinstance(attributes, dict):
+                attributes = {"legacy_attributes": attributes}
+            attributes.update({
+                "firmware_profile_key": LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,
+                "identity_version": "v1",
+                "router_instance_key": LEGACY_NETGEAR_INSTANCE_KEY,
+            })
+            self.conn.execute(
+                """
+                UPDATE behavior_subjects
+                SET subject_key = ?, subject_type = 'router', attributes_json = ?
+                WHERE subject_key = ? AND subject_type = ?
+                """,
+                (
+                    LEGACY_NETGEAR_ROUTER_SUBJECT_KEY, json_dumps(attributes),
+                    SYSTEM_ACTOR, row["subject_type"],
+                ),
+            )
+
+    def _refresh_migrated_caches(self, legacy_router_id: int) -> None:
+        real_macs = [
+            row[0]
+            for row in self.conn.execute(
+                """
+                SELECT mac FROM devices
+                UNION
+                SELECT mac FROM device_registrations
+                UNION
+                SELECT mac FROM device_observations
+                ORDER BY mac
+                """
+            )
+            if is_real_mac(row[0])
+        ]
+        for mac in real_macs:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO devices(mac) VALUES(?)",
+                (mac,),
+            )
+            registrations = list(self.conn.execute(
+                """
+                SELECT * FROM device_registrations
+                WHERE mac = ?
+                ORDER BY registration_sequence DESC
+                """,
+                (mac,),
+            ))
+            observations = list(self.conn.execute(
+                "SELECT seen_at FROM device_observations WHERE mac = ? ORDER BY seen_at",
+                (mac,),
+            ))
+
+            def latest_nonnull(column: str) -> Optional[str]:
+                return next((row[column] for row in registrations if row[column] is not None), None)
+
+            extrema = [
+                value
+                for row in registrations
+                for value in (row["first_seen"], row["last_seen"])
+                if value is not None
+            ]
+            extrema.extend(row["seen_at"] for row in observations)
+            self.conn.execute(
+                """
+                UPDATE devices
+                SET name = ?, status = ?, connection_type = ?, source = ?,
+                    first_seen = ?, last_seen = ?
+                WHERE mac = ?
+                """,
+                (
+                    latest_nonnull("registered_name"), latest_nonnull("registered_status"),
+                    latest_nonnull("registered_connection_type"),
+                    registrations[0]["registration_source"] if registrations else "observed",
+                    min(extrema) if extrema else None, max(extrema) if extrema else None, mac,
+                ),
+            )
+
+        for subject in self.conn.execute(
+            "SELECT subject_key, subject_type FROM behavior_subjects"
+        ).fetchall():
+            extrema = self.conn.execute(
+                """
+                SELECT MIN(seen_at), MAX(seen_at)
+                FROM (
+                  SELECT first_seen AS seen_at
+                  FROM subject_behavior_daily_stats
+                  WHERE subject_key = ? AND subject_type = ?
+                  UNION ALL
+                  SELECT last_seen AS seen_at
+                  FROM subject_behavior_daily_stats
+                  WHERE subject_key = ? AND subject_type = ?
+                )
+                WHERE seen_at IS NOT NULL
+                """,
+                (
+                    subject["subject_key"], subject["subject_type"],
+                    subject["subject_key"], subject["subject_type"],
+                ),
+            ).fetchone()
+            self.conn.execute(
+                """
+                UPDATE behavior_subjects SET first_seen = ?, last_seen = ?
+                WHERE subject_key = ? AND subject_type = ?
+                """,
+                (
+                    extrema[0], extrema[1],
+                    subject["subject_key"], subject["subject_type"],
+                ),
+            )
+        router_extrema = self.conn.execute(
+            """
+            SELECT MIN(seen_at), MAX(seen_at)
+            FROM (
+              SELECT CASE
+                       WHEN observation_start IS NULL AND observation_end IS NULL
+                         THEN ingested_at
+                       ELSE observation_start
+                     END AS seen_at
+              FROM runs
+              WHERE router_instance_id = ?
+              UNION ALL
+              SELECT CASE
+                       WHEN observation_start IS NULL AND observation_end IS NULL
+                         THEN ingested_at
+                       ELSE observation_end
+                     END AS seen_at
+              FROM runs
+              WHERE router_instance_id = ?
+            )
+            WHERE seen_at IS NOT NULL
+            """,
+            (legacy_router_id, legacy_router_id),
+        ).fetchone()
+        self.conn.execute(
+            "UPDATE router_instances SET first_seen = ?, last_seen = ? WHERE id = ?",
+            (router_extrema[0], router_extrema[1], legacy_router_id),
+        )
+
+    def _validate_migrated_v4_before_version_update(self) -> None:
+        self._validate_schema(SCHEMA_VERSION)
+        snapshot = self._migration_legacy_snapshot
+        for table, expected_count in snapshot["counts"].items():
+            if table == "devices":
+                continue
+            actual_count = self.conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            if actual_count != expected_count:
+                raise RuntimeError(f"Migration changed the row count for {table}")
+        for table, expected_ids in snapshot["ids"].items():
+            actual_ids = tuple(
+                row[0] for row in self.conn.execute(f'SELECT id FROM "{table}" ORDER BY id')
+            )
+            if actual_ids != expected_ids:
+                raise RuntimeError(f"Migration changed primary-key IDs for {table}")
+        expected_device_macs = set(snapshot["device_macs"])
+        expected_device_macs.update(
+            row[0] for row in self.conn.execute("SELECT mac FROM device_registrations")
+        )
+        expected_device_macs.update(
+            row[0] for row in self.conn.execute("SELECT mac FROM device_observations")
+        )
+        actual_device_macs = {
+            row[0] for row in self.conn.execute("SELECT mac FROM devices")
+        }
+        if actual_device_macs != expected_device_macs:
+            raise RuntimeError("Migration did not materialize the exact device provenance cache")
+        run_count = snapshot["counts"]["runs"]
+        if self.conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE router_instance_id IS NULL OR format_id IS NULL "
+            "OR capabilities_json IS NULL"
+        ).fetchone()[0]:
+            raise RuntimeError("Migration left a run without required router identity fields")
+        for table in ("router_metadata_observations", "router_snapshot_metrics"):
+            if self.conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] != run_count:
+                raise RuntimeError(f"Migration did not create exactly one {table} row per run")
+        unique_run_indexes = {
+            tuple(row[2] for row in self.conn.execute(f'PRAGMA index_info("{index[1]}")'))
+            for index in self.conn.execute('PRAGMA index_list("runs")')
+            if index[2]
+        }
+        if ("router_instance_id", "file_hash") not in unique_run_indexes:
+            raise RuntimeError("Migrated runs lacks router-scoped file-hash uniqueness")
+        if ("file_hash",) in unique_run_indexes:
+            raise RuntimeError("Migrated runs retained global file-hash uniqueness")
+        expected_observations = 0
+        for table, mac_column, subject_predicate in (
+            ("device_daily_stats", "mac", ""),
+            ("device_event_daily_stats", "mac", ""),
+            ("subject_behavior_daily_stats", "subject_key", " WHERE subject_type = 'device'"),
+        ):
+            for row in self.conn.execute(
+                f"SELECT {mac_column} AS mac, first_seen, last_seen FROM {table}{subject_predicate}"
+            ):
+                if not is_real_mac(row["mac"]):
+                    continue
+                if row["first_seen"] is not None:
+                    expected_observations += 1
+                if row["last_seen"] is not None and row["last_seen"] != row["first_seen"]:
+                    expected_observations += 1
+        actual_observations = self.conn.execute(
+            "SELECT COUNT(*) FROM device_observations"
+        ).fetchone()[0]
+        if actual_observations != expected_observations:
+            raise RuntimeError(
+                "Migration did not preserve every real-MAC daily first/last-seen observation"
+            )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM device_registrations
+            WHERE registration_source NOT IN (
+              'legacy_baseline_registration',
+              'legacy_config_registration',
+              'legacy_device_catalog'
+            )
+            """
+        ).fetchone()[0]:
+            raise RuntimeError("Migration created an unsupported registration source")
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM device_registrations
+            WHERE registration_source = 'legacy_baseline_registration'
+              AND (epoch_id IS NULL OR source_key != 'legacy-baseline-epoch:' || epoch_id)
+            """
+        ).fetchone()[0]:
+            raise RuntimeError("Migration created an invalid legacy baseline source key")
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM device_registrations
+            WHERE registration_source = 'legacy_config_registration'
+              AND source_key != 'legacy-config-without-source-bytes:v1:' || mac
+            """
+        ).fetchone()[0]:
+            raise RuntimeError("Migration invented or malformed legacy config provenance")
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM device_registrations
+            WHERE registration_source = 'legacy_device_catalog'
+              AND source_key != 'legacy-device-catalog:v1:' || mac
+            """
+        ).fetchone()[0]:
+            raise RuntimeError("Migration created an invalid legacy device-catalog source key")
+        for row in self.conn.execute("SELECT mac, source FROM devices"):
+            if not is_real_mac(row["mac"]):
+                continue
+            registration_count = self.conn.execute(
+                "SELECT COUNT(*) FROM device_registrations WHERE mac = ?",
+                (row["mac"],),
+            ).fetchone()[0]
+            observation_count = self.conn.execute(
+                "SELECT COUNT(*) FROM device_observations WHERE mac = ?",
+                (row["mac"],),
+            ).fetchone()[0]
+            if not registration_count and not observation_count:
+                raise RuntimeError(
+                    "Migration left a real-MAC device cache row without explicit provenance"
+                )
+        if self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM behavior_subjects
+            WHERE subject_key = ?
+            """,
+            (SYSTEM_ACTOR,),
+        ).fetchone()[0] or self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM subject_behavior_daily_stats
+            WHERE subject_key = ?
+            """,
+            (SYSTEM_ACTOR,),
+        ).fetchone()[0]:
+            raise RuntimeError("Migration left legacy system behavior outside router-scoped identity")
+
+    def _create_v4_schema(self) -> None:
+        try:
+            self.conn.executescript(
+                """
+            BEGIN IMMEDIATE;
 
             CREATE TABLE IF NOT EXISTS metadata (
               key TEXT PRIMARY KEY,
@@ -595,27 +2938,57 @@ class StateStore:
             CREATE INDEX IF NOT EXISTS idx_policy_profiles_active
               ON policy_profiles(is_active);
 
+            CREATE TABLE IF NOT EXISTS router_instances (
+              id INTEGER PRIMARY KEY,
+              instance_key TEXT NOT NULL UNIQUE,
+              canonical_vendor TEXT NOT NULL,
+              identity_source TEXT NOT NULL,
+              label TEXT,
+              first_seen TEXT,
+              last_seen TEXT,
+              identity_version TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS router_firmware_profiles (
+              id INTEGER PRIMARY KEY,
+              profile_key TEXT NOT NULL UNIQUE,
+              canonical_vendor TEXT NOT NULL,
+              normalized_firmware TEXT NOT NULL,
+              identity_version TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS runs (
               id INTEGER PRIMARY KEY,
               epoch_id INTEGER NOT NULL,
               policy_profile_id INTEGER,
-              file_hash TEXT NOT NULL UNIQUE,
+              router_instance_id INTEGER NOT NULL,
+              format_id TEXT NOT NULL,
+              file_hash TEXT NOT NULL,
               source_path TEXT,
               ingested_at TEXT NOT NULL,
+              export_timestamp TEXT,
               observation_start TEXT,
               observation_end TEXT,
               observed_dates_json TEXT,
+              capabilities_json TEXT NOT NULL,
+              body_digest TEXT,
+              novel_event_count INTEGER NOT NULL DEFAULT 0,
+              repeated_event_count INTEGER NOT NULL DEFAULT 0,
               parsed_event_count INTEGER NOT NULL DEFAULT 0,
               malformed_line_count INTEGER NOT NULL DEFAULT 0,
               export_noise_line_count INTEGER NOT NULL DEFAULT 0,
               risk_score INTEGER,
               status TEXT,
               is_partial INTEGER NOT NULL DEFAULT 0,
+              UNIQUE(router_instance_id, file_hash),
               FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id),
-              FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id)
+              FOREIGN KEY(policy_profile_id) REFERENCES policy_profiles(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)
             );
             CREATE INDEX IF NOT EXISTS idx_runs_epoch_time
               ON runs(epoch_id, ingested_at);
+            CREATE INDEX IF NOT EXISTS idx_runs_router_export
+              ON runs(router_instance_id, export_timestamp, id);
 
             CREATE TABLE IF NOT EXISTS network_incidents (
               id INTEGER PRIMARY KEY,
@@ -648,6 +3021,77 @@ class StateStore:
               first_seen TEXT,
               last_seen TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS device_registrations (
+              id INTEGER PRIMARY KEY,
+              mac TEXT NOT NULL,
+              registration_source TEXT NOT NULL,
+              source_key TEXT NOT NULL,
+              epoch_id INTEGER,
+              registered_name TEXT,
+              registered_status TEXT,
+              registered_connection_type TEXT,
+              first_seen TEXT,
+              last_seen TEXT,
+              registration_sequence INTEGER NOT NULL UNIQUE,
+              registered_at TEXT NOT NULL,
+              last_confirmed_at TEXT NOT NULL,
+              UNIQUE(mac, registration_source, source_key),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_device_registrations_mac_sequence
+              ON device_registrations(mac, registration_sequence DESC);
+
+            CREATE TABLE IF NOT EXISTS device_observations (
+              id INTEGER PRIMARY KEY,
+              run_id INTEGER NOT NULL,
+              mac TEXT NOT NULL,
+              evidence_kind TEXT NOT NULL,
+              seen_at TEXT NOT NULL,
+              evidence_digest TEXT NOT NULL,
+              attributes_json TEXT NOT NULL DEFAULT '{}',
+              UNIQUE(run_id, mac, evidence_kind, seen_at, evidence_digest),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(mac) REFERENCES devices(mac)
+            );
+            CREATE INDEX IF NOT EXISTS idx_device_observations_mac_seen
+              ON device_observations(mac, seen_at, run_id);
+
+            CREATE TABLE IF NOT EXISTS router_metadata_observations (
+              run_id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              observed_at TEXT,
+              export_timestamp TEXT,
+              model TEXT,
+              hardware TEXT,
+              firmware_raw TEXT,
+              firmware_normalized TEXT,
+              firmware_profile_id INTEGER,
+              router_owned_interfaces_json TEXT NOT NULL DEFAULT '[]',
+              metadata_json TEXT NOT NULL DEFAULT '{}',
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(firmware_profile_id) REFERENCES router_firmware_profiles(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS router_snapshot_metrics (
+              run_id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              epoch_id INTEGER NOT NULL,
+              export_timestamp TEXT,
+              raw_total_clients TEXT,
+              raw_wifi_clients TEXT,
+              total_clients INTEGER,
+              wifi_clients INTEGER,
+              derived_wired_clients INTEGER,
+              eligible INTEGER NOT NULL DEFAULT 0,
+              exclusion_reason TEXT,
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(epoch_id) REFERENCES baseline_epochs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_router_snapshot_history
+              ON router_snapshot_metrics(router_instance_id, epoch_id, export_timestamp DESC, run_id DESC);
 
             CREATE TABLE IF NOT EXISTS device_daily_stats (
               id INTEGER PRIMARY KEY,
@@ -728,10 +3172,88 @@ class StateStore:
             );
             CREATE INDEX IF NOT EXISTS idx_subject_behavior_epoch_subject_date
               ON subject_behavior_daily_stats(epoch_id, subject_key, subject_type, behavior_key, observed_date);
+
+            CREATE TABLE IF NOT EXISTS router_boot_sessions (
+              id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              session_key TEXT NOT NULL UNIQUE,
+              trusted_local_anchor TEXT,
+              adapter_boot_id TEXT,
+              startup_signature TEXT NOT NULL,
+              identity_version TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_router_boot_sessions_match
+              ON router_boot_sessions(router_instance_id, trusted_local_anchor, startup_signature);
+
+            CREATE TABLE IF NOT EXISTS run_router_boot_sessions (
+              run_id INTEGER NOT NULL,
+              boot_session_id INTEGER NOT NULL,
+              PRIMARY KEY(run_id, boot_session_id),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_run_router_boot_sessions_boot_session
+              ON run_router_boot_sessions(boot_session_id);
+
+            CREATE TABLE IF NOT EXISTS router_event_occurrences (
+              id INTEGER PRIMARY KEY,
+              router_instance_id INTEGER NOT NULL,
+              occurrence_digest TEXT NOT NULL,
+              identity_version TEXT NOT NULL,
+              boot_session_id INTEGER,
+              local_timestamp TEXT,
+              clock_trust TEXT NOT NULL,
+              component TEXT,
+              process_id TEXT,
+              vendor_event_code TEXT,
+              syslog_severity TEXT,
+              normalized_message TEXT NOT NULL,
+              canonical_event_key TEXT NOT NULL,
+              canonical_event_family TEXT NOT NULL,
+              actor_scope TEXT NOT NULL,
+              actor_identity TEXT,
+              structured_evidence_json TEXT NOT NULL DEFAULT '{}',
+              UNIQUE(router_instance_id, occurrence_digest),
+              FOREIGN KEY(router_instance_id) REFERENCES router_instances(id),
+              FOREIGN KEY(boot_session_id) REFERENCES router_boot_sessions(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_router_event_occurrences_history
+              ON router_event_occurrences(router_instance_id, canonical_event_key, local_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_router_event_occurrences_boot_session
+              ON router_event_occurrences(boot_session_id);
+
+            CREATE TABLE IF NOT EXISTS run_event_occurrences (
+              run_id INTEGER NOT NULL,
+              occurrence_id INTEGER NOT NULL,
+              is_novel INTEGER NOT NULL,
+              is_repeated INTEGER NOT NULL,
+              source_sequence INTEGER,
+              source_count INTEGER NOT NULL DEFAULT 1,
+              PRIMARY KEY(run_id, occurrence_id),
+              CHECK(is_novel IN (0, 1)),
+              CHECK(is_repeated IN (0, 1)),
+              CHECK(is_novel + is_repeated = 1),
+              FOREIGN KEY(run_id) REFERENCES runs(id),
+              FOREIGN KEY(occurrence_id) REFERENCES router_event_occurrences(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_run_event_occurrences_occurrence
+              ON run_event_occurrences(occurrence_id);
+
             """
-        )
-        self.set_metadata("schema_version", str(SCHEMA_VERSION))
-        self.conn.commit()
+            )
+            self._validate_schema(SCHEMA_VERSION)
+            self.conn.execute(
+                "INSERT INTO metadata(key, value) VALUES('schema_version', ?)",
+                (str(SCHEMA_VERSION),),
+            )
+            self.conn.commit()
+        except BaseException:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            raise
 
     def get_metadata(self, key: str) -> Optional[str]:
         row = self.conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
@@ -857,12 +3379,14 @@ class StateStore:
                     config.get("soft_max"),
                 ),
             )
-            self.upsert_device(
+            self.register_device(
                 mac=mac,
-                name=config.get("name"),
-                status="allowed",
-                connection_type=None,
-                source="baseline_import",
+                registration_source="baseline_import",
+                source_key=str(epoch_id),
+                epoch_id=epoch_id,
+                registered_name=config.get("name"),
+                registered_status="allowed",
+                registered_connection_type=None,
             )
         self.conn.commit()
         return epoch_id
@@ -909,20 +3433,154 @@ class StateStore:
             }
         return {"devices": devices}
 
-    def import_config(self, source_path: Path, router_config: Dict[str, Any]) -> int:
+    def import_config(
+        self,
+        source_path: Path,
+        router_config: Dict[str, Any],
+        *,
+        source_digest: str,
+    ) -> int:
         count = 0
         for device in router_config["devices"].values():
             status = "blocked" if device.mac in router_config["blocked_macs"] else "allowed"
-            self.upsert_device(
+            self.register_device(
                 mac=device.mac,
-                name=device.name,
-                status=status,
-                connection_type=device.connection_type,
-                source="config_import",
+                registration_source="config_import",
+                source_key=source_digest,
+                epoch_id=None,
+                registered_name=device.name,
+                registered_status=status,
+                registered_connection_type=device.connection_type,
             )
             count += 1
         self.conn.commit()
         return count
+
+    def register_device(
+        self,
+        mac: str,
+        registration_source: str,
+        source_key: str,
+        epoch_id: Optional[int],
+        registered_name: Optional[str],
+        registered_status: Optional[str],
+        registered_connection_type: Optional[str],
+        first_seen: Optional[str] = None,
+        last_seen: Optional[str] = None,
+    ) -> int:
+        now = utcnow_iso()
+        existing = self.conn.execute(
+            """
+            SELECT * FROM device_registrations
+            WHERE mac = ? AND registration_source = ? AND source_key = ?
+            """,
+            (mac, registration_source, source_key),
+        ).fetchone()
+        if existing is not None:
+            self.conn.execute(
+                """
+                UPDATE device_registrations
+                SET registered_name = COALESCE(?, registered_name),
+                    registered_status = COALESCE(?, registered_status),
+                    registered_connection_type = COALESCE(?, registered_connection_type),
+                    first_seen = CASE
+                      WHEN ? IS NULL THEN first_seen
+                      WHEN first_seen IS NULL OR ? < first_seen THEN ?
+                      ELSE first_seen
+                    END,
+                    last_seen = CASE
+                      WHEN ? IS NULL THEN last_seen
+                      WHEN last_seen IS NULL OR ? > last_seen THEN ?
+                      ELSE last_seen
+                    END,
+                    last_confirmed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    registered_name, registered_status, registered_connection_type,
+                    first_seen, first_seen, first_seen, last_seen, last_seen, last_seen,
+                    now, existing["id"],
+                ),
+            )
+            registration_id = int(existing["id"])
+        else:
+            sequence = int(self.conn.execute(
+                "SELECT COALESCE(MAX(registration_sequence), 0) + 1 FROM device_registrations"
+            ).fetchone()[0])
+            cursor = self.conn.execute(
+                """
+                INSERT INTO device_registrations(
+                  mac, registration_source, source_key, epoch_id, registered_name,
+                  registered_status, registered_connection_type, first_seen, last_seen,
+                  registration_sequence, registered_at, last_confirmed_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mac, registration_source, source_key, epoch_id, registered_name,
+                    registered_status, registered_connection_type,
+                    first_seen or now, last_seen or now, sequence, now, now,
+                ),
+            )
+            registration_id = int(cursor.lastrowid)
+        self._refresh_device_from_provenance(mac)
+        return registration_id
+
+    def _refresh_device_from_provenance(self, mac: str) -> None:
+        existing = self.conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+        registrations = list(self.conn.execute(
+            """
+            SELECT * FROM device_registrations
+            WHERE mac = ?
+            ORDER BY registration_sequence DESC
+            """,
+            (mac,),
+        ))
+        observations = list(self.conn.execute(
+            "SELECT seen_at FROM device_observations WHERE mac = ? ORDER BY seen_at",
+            (mac,),
+        ))
+
+        def latest_nonnull(column: str) -> Optional[str]:
+            return next((row[column] for row in registrations if row[column] is not None), None)
+
+        extrema = [
+            value
+            for row in registrations
+            for value in (row["first_seen"], row["last_seen"])
+            if value is not None
+        ]
+        extrema.extend(row["seen_at"] for row in observations)
+        if existing is not None:
+            extrema.extend(
+                value for value in (existing["first_seen"], existing["last_seen"]) if value is not None
+            )
+        first_seen = min(extrema) if extrema else None
+        last_seen = max(extrema) if extrema else None
+        name = latest_nonnull("registered_name")
+        status = latest_nonnull("registered_status")
+        connection_type = latest_nonnull("registered_connection_type")
+        source = registrations[0]["registration_source"] if registrations else None
+        if existing is None:
+            self.conn.execute(
+                """
+                INSERT INTO devices(
+                  mac, name, status, connection_type, source, first_seen, last_seen
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (mac, name, status, connection_type, source, first_seen, last_seen),
+            )
+        else:
+            self.conn.execute(
+                """
+                UPDATE devices
+                SET name = COALESCE(?, name), status = COALESCE(?, status),
+                    connection_type = COALESCE(?, connection_type),
+                    source = COALESCE(?, source), first_seen = COALESCE(?, first_seen),
+                    last_seen = COALESCE(?, last_seen)
+                WHERE mac = ?
+                """,
+                (name, status, connection_type, source, first_seen, last_seen, mac),
+            )
 
     def upsert_device(
         self,
@@ -952,11 +3610,15 @@ class StateStore:
               status = COALESCE(?, status),
               connection_type = COALESCE(?, connection_type),
               source = COALESCE(?, source),
-              first_seen = COALESCE(first_seen, ?),
-              last_seen = ?
+              first_seen = CASE
+                WHEN first_seen IS NULL OR ? < first_seen THEN ? ELSE first_seen
+              END,
+              last_seen = CASE
+                WHEN last_seen IS NULL OR ? > last_seen THEN ? ELSE last_seen
+              END
             WHERE mac = ?
             """,
-            (name, status, connection_type, source, seen_at, seen_at, mac),
+            (name, status, connection_type, source, seen_at, seen_at, seen_at, seen_at, mac),
         )
 
     def load_devices_snapshot(self) -> Dict[str, Dict[str, Any]]:
@@ -975,14 +3637,881 @@ class StateStore:
             }
         return devices
 
-    def get_run_by_hash(self, file_hash: str) -> Optional[sqlite3.Row]:
-        return self.conn.execute("SELECT * FROM runs WHERE file_hash = ?", (file_hash,)).fetchone()
+    def get_or_create_legacy_netgear_router_instance(self) -> int:
+        row = self.conn.execute(
+            "SELECT id FROM router_instances WHERE instance_key = ?",
+            (LEGACY_NETGEAR_INSTANCE_KEY,),
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cursor = self.conn.execute(
+            """
+            INSERT INTO router_instances(
+              instance_key, canonical_vendor, identity_source, label,
+              first_seen, last_seen, identity_version
+            ) VALUES(?, 'netgear', 'legacy_default', 'Legacy NETGEAR Router',
+                     NULL, NULL, 'v1')
+            """,
+            (LEGACY_NETGEAR_INSTANCE_KEY,),
+        )
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO router_firmware_profiles(
+              profile_key, canonical_vendor, normalized_firmware, identity_version
+            ) VALUES(?, 'netgear', 'unknown-legacy-firmware', 'v1')
+            """,
+            (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+        )
+        return int(cursor.lastrowid)
 
-    def delete_run(self, run_id: int) -> bool:
-        existing = self.conn.execute("SELECT id FROM runs WHERE id = ?", (run_id,)).fetchone()
+    def resolve_router_instance(
+        self,
+        parsed: ParsedRouterLog,
+        router_instance_override: Optional[str] = None,
+        router_label: Optional[str] = None,
+    ) -> int:
+        if parsed.format_id == FORMAT_NETGEAR and router_instance_override is None:
+            router_id = self.get_or_create_legacy_netgear_router_instance()
+            if router_label is not None and router_label.strip():
+                self.conn.execute(
+                    "UPDATE router_instances SET label = ? WHERE id = ?",
+                    (router_label.strip(), router_id),
+                )
+            return router_id
+        instance_key = router_instance_key_for_parse(parsed, router_instance_override)
+        row = self.conn.execute(
+            "SELECT id, label FROM router_instances WHERE instance_key = ?",
+            (instance_key,),
+        ).fetchone()
+        requested_label = (
+            router_label.strip()
+            if router_label is not None and router_label.strip()
+            else default_router_label(parsed, instance_key)
+        )
+        if row is not None:
+            if router_label is not None and router_label.strip() and row["label"] != requested_label:
+                self.conn.execute(
+                    "UPDATE router_instances SET label = ? WHERE id = ?",
+                    (requested_label, row["id"]),
+                )
+            return int(row["id"])
+        cursor = self.conn.execute(
+            """
+            INSERT INTO router_instances(
+              instance_key, canonical_vendor, identity_source, label,
+              first_seen, last_seen, identity_version
+            ) VALUES(?, ?, ?, ?, NULL, NULL, 'v1')
+            """,
+            (
+                instance_key,
+                parsed.identity.canonical_vendor,
+                "user_override" if router_instance_override is not None else "adapter_lan_mac",
+                requested_label,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def _occurrence_digest(
+        router_instance_key: str,
+        event: Event,
+        boot_session_id: Optional[int],
+    ) -> str:
+        fields: Sequence[Optional[str]] = (
+            router_instance_key,
+            event.timestamp.isoformat(sep=" "),
+            str(boot_session_id) if event.boot_context_id is not None and boot_session_id is not None else None,
+            event.component,
+            event.process_id,
+            event.vendor_event_code,
+            event.syslog_severity,
+            event.normalized_message,
+            event.actor_scope,
+            event.stable_client_identity,
+        )
+        encoded = "\0".join(
+            ["occurrence-v1", *(field if field is not None else "<absent>" for field in fields)]
+        )
+        return "occurrence-v1:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _durable_structured_evidence(evidence: Dict[str, Any]) -> Dict[str, Any]:
+        durable: Dict[str, Any] = {}
+        action = evidence.get("action")
+        if isinstance(action, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,31}", action):
+            durable["action"] = action
+        state = evidence.get("state")
+        if isinstance(state, str) and state in {
+            "running", "enabled", "stopped", "disabled",
+        }:
+            durable["state"] = state
+        for source_key, durable_key in (
+            ("ipv4_addresses", "ipv4_address_count"),
+            ("ipv6_addresses", "ipv6_address_count"),
+            ("mac_addresses", "mac_address_count"),
+            ("actor_names", "actor_name_count"),
+        ):
+            values = evidence.get(source_key)
+            if isinstance(values, list) and values:
+                durable[durable_key] = len(values)
+        return durable
+
+    @staticmethod
+    def _resolved_trusted_overlap_identity(
+        router_instance_key: str,
+        event: Event,
+    ) -> Optional[str]:
+        if event.clock_trust != "trusted":
+            return None
+        return TpLinkArcherAdapter._versioned_digest(
+            "trusted-overlap-v1",
+            (
+                router_instance_key,
+                event.timestamp.isoformat(sep=" "),
+                event.component,
+                event.process_id,
+                event.vendor_event_code,
+                event.syslog_severity,
+                event.normalized_message,
+                event.actor_scope,
+                event.stable_client_identity,
+            ),
+        )
+
+    def _scope_trusted_overlap_to_resolved_router(
+        self,
+        parsed: ParsedRouterLog,
+        router_instance_key: str,
+    ) -> None:
+        parsed.events = [
+            replace(
+                event,
+                trusted_overlap_identity=self._resolved_trusted_overlap_identity(
+                    router_instance_key,
+                    event,
+                ),
+            )
+            for event in parsed.events
+        ]
+        parsed.boot_candidates = [
+            replace(
+                candidate,
+                trusted_overlap_identities=tuple(
+                    event.trusted_overlap_identity
+                    for event in parsed.events
+                    if event.boot_context_id == candidate.session_id
+                    and event.trusted_overlap_identity is not None
+                ),
+            )
+            for candidate in parsed.boot_candidates
+        ]
+        parsed.trusted_overlap_identities = tuple(
+            event.trusted_overlap_identity
+            for event in parsed.events
+            if event.trusted_overlap_identity is not None
+        )
+
+    def _find_boot_session_by_overlap(
+        self,
+        router_instance_id: int,
+        events: Sequence[Event],
+    ) -> Optional[int]:
+        matches: Set[int] = set()
+        for event in events:
+            if event.clock_trust != "trusted":
+                continue
+            rows = self.conn.execute(
+                """
+                SELECT DISTINCT occurrence.boot_session_id
+                FROM router_event_occurrences AS occurrence
+                JOIN run_event_occurrences AS link ON link.occurrence_id = occurrence.id
+                WHERE occurrence.router_instance_id = ?
+                  AND occurrence.boot_session_id IS NOT NULL
+                  AND occurrence.local_timestamp = ?
+                  AND occurrence.component IS ?
+                  AND occurrence.process_id IS ?
+                  AND occurrence.vendor_event_code IS ?
+                  AND occurrence.syslog_severity IS ?
+                  AND occurrence.normalized_message = ?
+                  AND occurrence.actor_scope = ?
+                  AND occurrence.actor_identity IS ?
+                """,
+                (
+                    router_instance_id,
+                    event.timestamp.isoformat(sep=" "),
+                    event.component,
+                    event.process_id,
+                    event.vendor_event_code,
+                    event.syslog_severity,
+                    event.normalized_message or "",
+                    event.actor_scope or "router",
+                    event.stable_client_identity,
+                ),
+            ).fetchall()
+            matches.update(int(row[0]) for row in rows)
+        return next(iter(matches)) if len(matches) == 1 else None
+
+    def _resolve_boot_sessions(
+        self,
+        router_instance_id: int,
+        parsed: ParsedRouterLog,
+    ) -> Dict[str, int]:
+        resolved: Dict[str, int] = {}
+        for candidate in parsed.boot_candidates:
+            candidate_events = [
+                event for event in parsed.events if event.boot_context_id == candidate.session_id
+            ]
+            boot_session_id = self._find_boot_session_by_overlap(
+                router_instance_id,
+                candidate_events,
+            )
+            if boot_session_id is None and candidate.trusted_anchor is not None:
+                row = self.conn.execute(
+                    """
+                    SELECT id FROM router_boot_sessions
+                    WHERE router_instance_id = ? AND trusted_local_anchor = ?
+                      AND startup_signature = ?
+                    """,
+                    (
+                        router_instance_id,
+                        candidate.trusted_anchor.isoformat(sep=" "),
+                        candidate.startup_signature or "startup-signature-v1:empty",
+                    ),
+                ).fetchone()
+                if row is not None:
+                    boot_session_id = int(row["id"])
+            has_explicit_boot = any(event.event_key == "ROUTER_BOOT" for event in candidate_events)
+            if boot_session_id is None and candidate.trusted_anchor is not None and has_explicit_boot:
+                signature = candidate.startup_signature or "startup-signature-v1:empty"
+                session_key_payload = (
+                    f"boot-session-v1\0{router_instance_id}\0"
+                    f"{candidate.trusted_anchor.isoformat(sep=' ')}\0{signature}"
+                )
+                session_key = hashlib.sha256(session_key_payload.encode("utf-8")).hexdigest()
+                cursor = self.conn.execute(
+                    """
+                    INSERT INTO router_boot_sessions(
+                      router_instance_id, session_key, trusted_local_anchor, adapter_boot_id,
+                      startup_signature, identity_version, created_at
+                    ) VALUES(?, ?, ?, NULL, ?, 'v1', ?)
+                    """,
+                    (
+                        router_instance_id,
+                        session_key,
+                        candidate.trusted_anchor.isoformat(sep=" "),
+                        signature,
+                        utcnow_iso(),
+                    ),
+                )
+                boot_session_id = int(cursor.lastrowid)
+            if boot_session_id is not None:
+                resolved[candidate.session_id] = boot_session_id
+        return resolved
+
+    def collapse_existing_run_events(
+        self,
+        run_id: int,
+        router_instance_id: int,
+        parsed: ParsedRouterLog,
+    ) -> List[Event]:
+        """Rebuild an exact duplicate report from its persisted occurrence identities."""
+        router_row = self.conn.execute(
+            "SELECT instance_key FROM router_instances WHERE id = ?",
+            (router_instance_id,),
+        ).fetchone()
+        if router_row is None:
+            raise RuntimeError("Router instance disappeared before duplicate reporting")
+        self._scope_trusted_overlap_to_resolved_router(parsed, router_row["instance_key"])
+
+        boot_sessions: Dict[str, int] = {}
+        for candidate in parsed.boot_candidates:
+            candidate_events = [
+                event
+                for event in parsed.events
+                if event.boot_context_id == candidate.session_id
+            ]
+            boot_session_id = self._find_boot_session_by_overlap(
+                router_instance_id,
+                candidate_events,
+            )
+            if boot_session_id is not None:
+                boot_sessions[candidate.session_id] = boot_session_id
+                continue
+            if candidate.trusted_anchor is None:
+                continue
+            row = self.conn.execute(
+                """
+                SELECT session.id
+                FROM router_boot_sessions AS session
+                JOIN run_router_boot_sessions AS link ON link.boot_session_id = session.id
+                WHERE link.run_id = ? AND session.router_instance_id = ?
+                  AND session.trusted_local_anchor = ? AND session.startup_signature = ?
+                """,
+                (
+                    run_id,
+                    router_instance_id,
+                    candidate.trusted_anchor.isoformat(sep=" "),
+                    candidate.startup_signature or "startup-signature-v1:empty",
+                ),
+            ).fetchone()
+            if row is not None:
+                boot_sessions[candidate.session_id] = int(row[0])
+
+        collapsed: List[Event] = []
+        seen_occurrences: Set[str] = set()
+        for event in parsed.events:
+            boot_session_id = (
+                boot_sessions.get(event.boot_context_id)
+                if event.boot_context_id is not None
+                else None
+            )
+            persistable = (
+                (event.boot_context_id is not None and boot_session_id is not None)
+                or (event.boot_context_id is None and event.clock_trust == "trusted")
+            )
+            if not persistable:
+                collapsed.append(replace(
+                    event,
+                    occurrence_novel=False,
+                    occurrence_repeated=True,
+                ))
+                continue
+            digest = self._occurrence_digest(
+                router_row["instance_key"],
+                event,
+                boot_session_id,
+            )
+            if digest in seen_occurrences:
+                continue
+            seen_occurrences.add(digest)
+            collapsed.append(replace(
+                event,
+                boot_session_id=str(boot_session_id) if boot_session_id is not None else None,
+                occurrence_digest=digest,
+                occurrence_novel=False,
+                occurrence_repeated=True,
+            ))
+        return collapsed
+
+    def persist_router_provenance(
+        self,
+        run_id: int,
+        router_instance_id: int,
+        parsed: ParsedRouterLog,
+    ) -> Dict[str, Any]:
+        router_row = self.conn.execute(
+            "SELECT instance_key FROM router_instances WHERE id = ?",
+            (router_instance_id,),
+        ).fetchone()
+        if router_row is None:
+            raise RuntimeError("Router instance disappeared before provenance persistence")
+        self._scope_trusted_overlap_to_resolved_router(parsed, router_row["instance_key"])
+        current_clients = {
+            event.stable_client_identity
+            for event in parsed.events
+            if event.actor_scope == "device"
+            and is_identity_grade_mac(event.stable_client_identity)
+            and event.stable_client_identity not in parsed.identity.router_owned_interfaces
+        }
+        historical_other_interfaces: Set[str] = set()
+        for row in self.conn.execute(
+            """
+            SELECT router_owned_interfaces_json
+            FROM router_metadata_observations
+            WHERE router_instance_id != ?
+            """,
+            (router_instance_id,),
+        ):
+            historical_other_interfaces.update(json.loads(row[0]))
+        historical_other_clients = {
+            row[0]
+            for row in self.conn.execute(
+                """
+                SELECT DISTINCT observation.mac
+                FROM device_observations AS observation
+                JOIN runs AS run ON run.id = observation.run_id
+                WHERE run.router_instance_id != ?
+                """,
+                (router_instance_id,),
+            )
+        }
+        if (
+            current_clients.intersection(historical_other_interfaces)
+            or parsed.identity.router_owned_interfaces.intersection(historical_other_clients)
+        ):
+            warning = "router_interface_client_conflict"
+            if warning not in parsed.identity.warnings:
+                parsed.identity = replace(
+                    parsed.identity,
+                    warnings=(*parsed.identity.warnings, warning),
+                )
+            if warning not in parsed.warnings:
+                parsed.warnings.append(warning)
+        prior_model = self.conn.execute(
+            """
+            SELECT model FROM router_metadata_observations
+            WHERE router_instance_id = ? AND run_id != ? AND model IS NOT NULL
+            ORDER BY COALESCE(export_timestamp, observed_at) DESC, run_id DESC LIMIT 1
+            """,
+            (router_instance_id, run_id),
+        ).fetchone()
+        if prior_model is not None and parsed.model is not None and prior_model["model"] != parsed.model:
+            parsed.warnings.append("router_model_changed")
+
+        normalized_firmware: Optional[str] = (
+            " ".join(parsed.firmware.split()).casefold() if parsed.firmware else None
+        )
+        if normalized_firmware is None and parsed.export_timestamp is not None:
+            current_export = parsed.export_timestamp.isoformat()
+            prior_firmware = self.conn.execute(
+                """
+                SELECT metadata.firmware_normalized
+                FROM router_metadata_observations AS metadata
+                JOIN runs AS run ON run.id = metadata.run_id
+                WHERE metadata.router_instance_id = ? AND metadata.run_id != ?
+                  AND metadata.firmware_normalized IS NOT NULL
+                  AND metadata.firmware_normalized NOT IN (
+                    'unknown-firmware', 'unknown-legacy-firmware'
+                  )
+                  AND COALESCE(run.export_timestamp, metadata.export_timestamp) IS NOT NULL
+                  AND (
+                    COALESCE(run.export_timestamp, metadata.export_timestamp) < ?
+                    OR (
+                      COALESCE(run.export_timestamp, metadata.export_timestamp) = ?
+                      AND run.id < ?
+                    )
+                  )
+                ORDER BY COALESCE(run.export_timestamp, metadata.export_timestamp) DESC,
+                         run.id DESC
+                LIMIT 1
+                """,
+                (router_instance_id, run_id, current_export, current_export, run_id),
+            ).fetchone()
+            if prior_firmware is not None:
+                normalized_firmware = prior_firmware["firmware_normalized"]
+        normalized_firmware = normalized_firmware or "unknown-firmware"
+        profile_key = hashlib.sha256(
+            (
+                "firmware-profile:v1\0"
+                + parsed.identity.canonical_vendor.casefold()
+                + "\0"
+                + normalized_firmware
+            ).encode("utf-8")
+        ).hexdigest()
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO router_firmware_profiles(
+              profile_key, canonical_vendor, normalized_firmware, identity_version
+            ) VALUES(?, ?, ?, 'v1')
+            """,
+            (profile_key, parsed.identity.canonical_vendor, normalized_firmware),
+        )
+        profile_id = int(self.conn.execute(
+            "SELECT id FROM router_firmware_profiles WHERE profile_key = ?", (profile_key,)
+        ).fetchone()[0])
+        observed_at = (
+            parsed.export_timestamp.isoformat() if parsed.export_timestamp is not None else None
+        )
+        self.conn.execute(
+            """
+            UPDATE router_metadata_observations
+            SET observed_at = ?, export_timestamp = ?, model = ?, hardware = ?,
+                firmware_raw = ?, firmware_normalized = ?, firmware_profile_id = ?,
+                router_owned_interfaces_json = ?, metadata_json = ?
+            WHERE run_id = ? AND router_instance_id = ?
+            """,
+            (
+                observed_at,
+                observed_at,
+                parsed.model,
+                parsed.hardware,
+                parsed.firmware,
+                normalized_firmware,
+                profile_id,
+                json_dumps(sorted(parsed.identity.router_owned_interfaces)),
+                json_dumps({"identity_warnings": list(parsed.identity.warnings)}),
+                run_id,
+                router_instance_id,
+            ),
+        )
+        metrics = parsed.snapshot_metrics or RouterSnapshotMetrics(
+            exclusion_reason="snapshot_counts_unavailable"
+        )
+        self.conn.execute(
+            """
+            UPDATE router_snapshot_metrics
+            SET export_timestamp = ?, raw_total_clients = ?, raw_wifi_clients = ?,
+                total_clients = ?, wifi_clients = ?, derived_wired_clients = ?,
+                eligible = ?, exclusion_reason = ?
+            WHERE run_id = ? AND router_instance_id = ?
+            """,
+            (
+                observed_at,
+                metrics.raw_total_clients,
+                metrics.raw_wifi_clients,
+                metrics.total_clients,
+                metrics.wifi_clients,
+                metrics.derived_wired_clients,
+                1 if metrics.eligible else 0,
+                metrics.exclusion_reason,
+                run_id,
+                router_instance_id,
+            ),
+        )
+
+        boot_sessions = self._resolve_boot_sessions(router_instance_id, parsed)
+        for boot_session_id in sorted(set(boot_sessions.values())):
+            self.conn.execute(
+                "INSERT INTO run_router_boot_sessions(run_id, boot_session_id) VALUES(?, ?)",
+                (run_id, boot_session_id),
+            )
+
+        collapsed: Dict[str, Tuple[Event, int]] = {}
+        report_only_events: List[Event] = []
+        report_only_signatures: List[str] = []
+        owned_interfaces = parsed.identity.router_owned_interfaces
+        observed_client_evidence: Set[Tuple[str, str, str]] = set()
+        for event in parsed.events:
+            if event.stable_client_identity in owned_interfaces or event.mac in owned_interfaces:
+                event = replace(
+                    event,
+                    mac=SYSTEM_ACTOR,
+                    actor_scope="router",
+                    stable_client_identity=None,
+                )
+            client_identity = event.stable_client_identity
+            if (
+                event.actor_scope == "device"
+                and is_identity_grade_mac(client_identity)
+                and client_identity not in owned_interfaces
+                and event.clock_trust == "trusted"
+            ):
+                assert client_identity is not None
+                seen_at = event.timestamp.isoformat(sep=" ")
+                evidence_digest = hashlib.sha256(
+                    (
+                        "device-observation-v1\0"
+                        + router_row["instance_key"]
+                        + "\0"
+                        + seen_at
+                        + "\0"
+                        + event.event_key
+                        + "\0"
+                        + (event.normalized_message or "")
+                    ).encode("utf-8")
+                ).hexdigest()
+                observation_key = (client_identity, seen_at, evidence_digest)
+                if observation_key not in observed_client_evidence:
+                    self.upsert_device(
+                        mac=client_identity,
+                        name=None,
+                        status=None,
+                        connection_type=None,
+                        source="observed",
+                        seen_at=seen_at,
+                    )
+                    self.conn.execute(
+                        """
+                        INSERT INTO device_observations(
+                          run_id, mac, evidence_kind, seen_at, evidence_digest, attributes_json
+                        ) VALUES(?, ?, 'stable_client_identity', ?, ?, ?)
+                        """,
+                        (
+                            run_id,
+                            client_identity,
+                            seen_at,
+                            evidence_digest,
+                            json_dumps({"event_key": event.event_key}),
+                        ),
+                    )
+                    observed_client_evidence.add(observation_key)
+            boot_session_id = (
+                boot_sessions.get(event.boot_context_id) if event.boot_context_id is not None else None
+            )
+            if event.boot_context_id is not None and boot_session_id is None:
+                event.occurrence_novel = True
+                event.occurrence_repeated = False
+                report_only_events.append(event)
+                report_only_signatures.append(hashlib.sha256(
+                    (
+                        "report-only-v1\0"
+                        + event.timestamp.isoformat(sep=" ")
+                        + "\0"
+                        + (event.component or "<absent>")
+                        + "\0"
+                        + (event.vendor_event_code or "<absent>")
+                        + "\0"
+                        + (event.normalized_message or "")
+                    ).encode("utf-8")
+                ).hexdigest())
+                continue
+            if event.boot_context_id is None and event.clock_trust != "trusted":
+                event.occurrence_novel = True
+                event.occurrence_repeated = False
+                report_only_events.append(event)
+                report_only_signatures.append(hashlib.sha256(
+                    (
+                        "report-only-v1\0"
+                        + event.timestamp.isoformat(sep=" ")
+                        + "\0"
+                        + (event.component or "<absent>")
+                        + "\0"
+                        + (event.vendor_event_code or "<absent>")
+                        + "\0"
+                        + (event.normalized_message or "")
+                    ).encode("utf-8")
+                ).hexdigest())
+                continue
+            digest = self._occurrence_digest(router_row["instance_key"], event, boot_session_id)
+            event.occurrence_digest = digest
+            event.boot_session_id = str(boot_session_id) if boot_session_id is not None else None
+            if digest in collapsed:
+                collapsed[digest] = (collapsed[digest][0], collapsed[digest][1] + 1)
+            else:
+                collapsed[digest] = (event, 1)
+
+        novel_count = 0
+        repeated_count = 0
+        report_events: List[Event] = []
+        for digest, (event, source_count) in collapsed.items():
+            existing = self.conn.execute(
+                """
+                SELECT occurrence.id,
+                       EXISTS(SELECT 1 FROM run_event_occurrences AS link
+                              WHERE link.occurrence_id = occurrence.id) AS has_link
+                FROM router_event_occurrences AS occurrence
+                WHERE occurrence.router_instance_id = ? AND occurrence.occurrence_digest = ?
+                """,
+                (router_instance_id, digest),
+            ).fetchone()
+            is_repeated = existing is not None and bool(existing["has_link"])
+            if existing is None:
+                cursor = self.conn.execute(
+                    """
+                    INSERT INTO router_event_occurrences(
+                      router_instance_id, occurrence_digest, identity_version, boot_session_id,
+                      local_timestamp, clock_trust, component, process_id, vendor_event_code,
+                      syslog_severity, normalized_message, canonical_event_key,
+                      canonical_event_family, actor_scope, actor_identity,
+                      structured_evidence_json
+                    ) VALUES(?, ?, 'v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        router_instance_id,
+                        digest,
+                        int(event.boot_session_id) if event.boot_session_id else None,
+                        event.timestamp.isoformat(sep=" "),
+                        event.clock_trust or "clock_untrusted",
+                        event.component,
+                        event.process_id,
+                        event.vendor_event_code,
+                        event.syslog_severity,
+                        event.normalized_message or "",
+                        event.event_key,
+                        event.event_family,
+                        event.actor_scope or "router",
+                        event.stable_client_identity,
+                        json_dumps(self._durable_structured_evidence(event.structured_evidence)),
+                    ),
+                )
+                occurrence_id = int(cursor.lastrowid)
+            else:
+                occurrence_id = int(existing["id"])
+            self.conn.execute(
+                """
+                INSERT INTO run_event_occurrences(
+                  run_id, occurrence_id, is_novel, is_repeated, source_sequence, source_count
+                ) VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    occurrence_id,
+                    0 if is_repeated else 1,
+                    1 if is_repeated else 0,
+                    event.source_sequence,
+                    source_count,
+                ),
+            )
+            event.occurrence_novel = not is_repeated
+            event.occurrence_repeated = is_repeated
+            report_events.append(event)
+            novel_count += 0 if is_repeated else 1
+            repeated_count += 1 if is_repeated else 0
+
+        report_events.extend(report_only_events)
+        report_events.sort(key=lambda event: -(event.source_sequence or 0))
+        parsed.events = report_events
+        body_digest_payload = "\0".join([*collapsed.keys(), *report_only_signatures])
+        body_digest = hashlib.sha256(
+            f"body-digest-v1\0{body_digest_payload}".encode("utf-8")
+        ).hexdigest()
+        self.conn.execute(
+            """
+            UPDATE runs
+            SET body_digest = ?, novel_event_count = ?, repeated_event_count = ?
+            WHERE id = ?
+            """,
+            (body_digest, novel_count, repeated_count, run_id),
+        )
+        metadata_row = self.conn.execute(
+            "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        metadata = json.loads(metadata_row["metadata_json"] or "{}") if metadata_row else {}
+        # Analysis decides which novel occurrences actually enter learned daily rows.
+        metadata["learning_owned_occurrence_ids"] = []
+        self.conn.execute(
+            "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
+            (json_dumps(metadata), run_id),
+        )
+        return {
+            "novel_count": novel_count,
+            "repeated_count": repeated_count,
+            "body_digest": body_digest,
+            "boot_session_ids": sorted(set(boot_sessions.values())),
+            "events": report_events,
+        }
+
+    def set_materialized_occurrence_ownership(
+        self,
+        run_id: int,
+        events: Sequence[Event],
+        occurrence_profiles: Optional[Dict[int, Sequence[Event]]] = None,
+    ) -> None:
+        def occurrence_ids_for(profile_events: Sequence[Event]) -> List[int]:
+            digests = sorted({
+                event.occurrence_digest
+                for event in profile_events
+                if event.occurrence_digest is not None
+            })
+            occurrence_ids: List[int] = []
+            for digest in digests:
+                row = self.conn.execute(
+                    """
+                    SELECT occurrence.id
+                    FROM router_event_occurrences AS occurrence
+                    JOIN run_event_occurrences AS link ON link.occurrence_id = occurrence.id
+                    WHERE link.run_id = ? AND occurrence.occurrence_digest = ?
+                    """,
+                    (run_id, digest),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("Materialized learning event has no persisted occurrence link")
+                occurrence_ids.append(int(row["id"]))
+            return occurrence_ids
+
+        occurrence_ids = occurrence_ids_for(events)
+        profile_owners: Dict[str, List[int]] = {}
+        for profile_id, profile_events in (occurrence_profiles or {}).items():
+            profile_owners[str(profile_id)] = occurrence_ids_for(profile_events)
+        metadata_row = self.conn.execute(
+            "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if metadata_row is None:
+            raise RuntimeError("Materialized occurrence owner has no router metadata observation")
+        metadata = json.loads(metadata_row["metadata_json"] or "{}")
+        metadata["learning_owned_occurrence_ids"] = sorted(occurrence_ids)
+        if occurrence_profiles is not None:
+            metadata["learning_owned_occurrence_profiles"] = profile_owners
+        self.conn.execute(
+            "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
+            (json_dumps(metadata), run_id),
+        )
+
+    def get_run_by_hash(
+        self,
+        router_instance_id: int,
+        file_hash: str,
+    ) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM runs WHERE router_instance_id = ? AND file_hash = ?",
+            (router_instance_id, file_hash),
+        ).fetchone()
+
+    def remove_run_owned_evidence(self, run_id: int) -> Optional[Dict[str, Any]]:
+        existing = self.conn.execute(
+            "SELECT id, router_instance_id FROM runs WHERE id = ?", (run_id,)
+        ).fetchone()
         if existing is None:
-            return False
+            return None
+        metadata_row = self.conn.execute(
+            "SELECT firmware_profile_id, metadata_json "
+            "FROM router_metadata_observations WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        metadata = json.loads(metadata_row["metadata_json"] or "{}") if metadata_row else {}
+        recorded_owner_ids = metadata.get("learning_owned_occurrence_ids")
+        if isinstance(recorded_owner_ids, list) and all(
+            isinstance(occurrence_id, int) for occurrence_id in recorded_owner_ids
+        ):
+            owned_occurrence_ids = list(recorded_owner_ids)
+        else:
+            # Compatibility for v4 runs written before materialized ownership was recorded.
+            owned_occurrence_ids = [
+                row[0] for row in self.conn.execute(
+                    """
+                    SELECT occurrence_id FROM run_event_occurrences
+                    WHERE run_id = ? AND is_novel = 1
+                    """,
+                    (run_id,),
+                )
+            ]
+        occurrence_profile_ids: Dict[int, int] = {}
+        recorded_profile_owners = metadata.get("learning_owned_occurrence_profiles")
+        if isinstance(recorded_profile_owners, dict):
+            for profile_id, occurrence_ids in recorded_profile_owners.items():
+                if not str(profile_id).isdigit() or not isinstance(occurrence_ids, list):
+                    continue
+                for occurrence_id in occurrence_ids:
+                    if isinstance(occurrence_id, int):
+                        occurrence_profile_ids[occurrence_id] = int(profile_id)
+        elif metadata_row is not None and metadata_row["firmware_profile_id"] is not None:
+            occurrence_profile_ids = {
+                occurrence_id: int(metadata_row["firmware_profile_id"])
+                for occurrence_id in owned_occurrence_ids
+            }
+        affected: Dict[str, Any] = {
+            "router_instance_ids": {int(existing["router_instance_id"])},
+            "device_macs": {
+                row[0] for row in self.conn.execute(
+                    """
+                    SELECT mac FROM device_observations WHERE run_id = ?
+                    UNION SELECT mac FROM device_daily_stats WHERE run_id = ?
+                    """,
+                    (run_id, run_id),
+                )
+            },
+            "subjects": {
+                (row[0], row[1]) for row in self.conn.execute(
+                    "SELECT subject_key, subject_type FROM subject_behavior_daily_stats WHERE run_id = ?",
+                    (run_id,),
+                )
+            },
+            "occurrence_ids": owned_occurrence_ids,
+            "occurrence_profile_ids": occurrence_profile_ids,
+            "device_learning_rows": [
+                dict(row) for row in self.conn.execute(
+                    "SELECT * FROM device_daily_stats WHERE run_id = ?", (run_id,)
+                )
+            ],
+            "event_learning_rows": [
+                dict(row) for row in self.conn.execute(
+                    "SELECT * FROM device_event_daily_stats WHERE run_id = ?", (run_id,)
+                )
+            ],
+            "subject_learning_rows": [
+                dict(row) for row in self.conn.execute(
+                    "SELECT * FROM subject_behavior_daily_stats WHERE run_id = ?", (run_id,)
+                )
+            ],
+        }
         for table in (
+            "run_event_occurrences",
+            "run_router_boot_sessions",
+            "router_snapshot_metrics",
+            "router_metadata_observations",
+            "device_observations",
             "network_incidents",
             "device_daily_stats",
             "device_event_daily_stats",
@@ -990,7 +4519,452 @@ class StateStore:
         ):
             self.conn.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
         self.conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
-        return True
+        return affected
+
+    def delete_run(self, run_id: int) -> bool:
+        """Compatibility wrapper; transaction ownership remains with the caller."""
+        return self.remove_run_owned_evidence(run_id) is not None
+
+    def promote_surviving_occurrence_learning(self, affected: Dict[str, Any]) -> None:
+        """Move removed occurrence-owned daily evidence to its earliest surviving run link."""
+        device_templates = {
+            (row["observed_date"], row["mac"]): row
+            for row in affected.get("device_learning_rows", [])
+        }
+        event_templates = {
+            (row["observed_date"], row["mac"], row["event_key"]): row
+            for row in affected.get("event_learning_rows", [])
+        }
+        subject_templates = {
+            (row["observed_date"], row["subject_key"], row["subject_type"], row["behavior_key"]): row
+            for row in affected.get("subject_learning_rows", [])
+        }
+        promoted_owners: DefaultDict[int, List[int]] = defaultdict(list)
+        promoted_profile_owners: DefaultDict[int, DefaultDict[int, List[int]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+
+        def promote_subject_occurrence(
+            owner_run_id: int,
+            owner_epoch_id: int,
+            timestamp: datetime,
+            event_key: str,
+            event_family: str,
+            template: Dict[str, Any],
+            member_mac: str,
+            member_name: str,
+        ) -> None:
+            subject_key = template["subject_key"]
+            subject_type = template["subject_type"]
+            stat = SubjectBehaviorDayAggregate(
+                observed_date=timestamp.date().isoformat(),
+                subject_key=subject_key,
+                subject_type=subject_type,
+                behavior_key=event_key,
+                behavior_family=event_family,
+            )
+            stat.add_occurrence(
+                timestamp,
+                timestamp,
+                1,
+                {"members": [{"mac": member_mac, "name": member_name,
+                              "timestamp": timestamp.isoformat()}]},
+            )
+            existing = self.conn.execute(
+                """
+                SELECT * FROM subject_behavior_daily_stats
+                WHERE run_id = ? AND observed_date = ? AND subject_key = ?
+                  AND subject_type = ? AND behavior_key = ?
+                """,
+                (owner_run_id, stat.observed_date, subject_key, subject_type, event_key),
+            ).fetchone()
+            if existing is None:
+                catalog = self.conn.execute(
+                    "SELECT display_name, attributes_json FROM behavior_subjects "
+                    "WHERE subject_key = ? AND subject_type = ?",
+                    (subject_key, subject_type),
+                ).fetchone()
+                self.upsert_behavior_subject(
+                    subject_key,
+                    subject_type,
+                    catalog["display_name"] if catalog is not None else member_name,
+                    (
+                        json.loads(catalog["attributes_json"] or "{}")
+                        if catalog is not None else {"source": subject_type}
+                    ),
+                    timestamp.isoformat(),
+                )
+                self.insert_subject_behavior_daily_stat(
+                    owner_run_id,
+                    owner_epoch_id,
+                    stat,
+                    bool(template["included_in_learning"]),
+                    template["exclusion_reason"],
+                )
+                return
+            histogram = json.loads(existing["hour_histogram_json"] or "{}")
+            hour_key = str(timestamp.hour)
+            histogram[hour_key] = int(histogram.get(hour_key, 0)) + 1
+            starts = json.loads(existing["occurrence_starts_json"] or "[]")
+            ends = json.loads(existing["occurrence_ends_json"] or "[]")
+            sizes = json.loads(existing["occurrence_sizes_json"] or "[]")
+            contexts = json.loads(existing["context_json"] or "[]")
+            starts.append(timestamp.isoformat())
+            ends.append(timestamp.isoformat())
+            sizes.append(1)
+            contexts.extend(stat.contexts)
+            self.conn.execute(
+                """
+                UPDATE subject_behavior_daily_stats
+                SET count = count + 1, first_seen = MIN(first_seen, ?),
+                    last_seen = MAX(last_seen, ?), hour_histogram_json = ?,
+                    occurrence_starts_json = ?, occurrence_ends_json = ?,
+                    occurrence_sizes_json = ?, context_json = ?,
+                    included_in_learning = ?, exclusion_reason = COALESCE(exclusion_reason, ?)
+                WHERE id = ?
+                """,
+                (
+                    timestamp.isoformat(), timestamp.isoformat(),
+                    json.dumps(histogram, sort_keys=True), json.dumps(starts),
+                    json.dumps(ends), json.dumps(sizes), json.dumps(contexts, sort_keys=True),
+                    int(bool(existing["included_in_learning"]) and bool(
+                        template["included_in_learning"]
+                    )), template["exclusion_reason"], existing["id"],
+                ),
+            )
+
+        for occurrence_id in affected.get("occurrence_ids", []):
+            row = self.conn.execute(
+                """
+                SELECT occurrence.*, run.id AS owner_run_id, run.epoch_id AS owner_epoch_id
+                FROM router_event_occurrences AS occurrence
+                JOIN run_event_occurrences AS link ON link.occurrence_id = occurrence.id
+                JOIN runs AS run ON run.id = link.run_id
+                WHERE occurrence.id = ? AND run.is_partial = 0
+                ORDER BY COALESCE(run.export_timestamp, run.observation_end, run.ingested_at), run.id
+                LIMIT 1
+                """,
+                (occurrence_id,),
+            ).fetchone()
+            if row is None or row["local_timestamp"] is None:
+                continue
+            timestamp = datetime.fromisoformat(row["local_timestamp"])
+            observed_date = timestamp.date().isoformat()
+            mac = (
+                row["actor_identity"]
+                if row["actor_scope"] == "device" and is_identity_grade_mac(row["actor_identity"])
+                else SYSTEM_ACTOR
+            )
+            event_key = row["canonical_event_key"]
+            event_family = row["canonical_event_family"]
+            if event_key is None or event_family is None:
+                continue
+            owner_run_id = int(row["owner_run_id"])
+            owner_epoch_id = int(row["owner_epoch_id"])
+            if row["actor_scope"] == "router":
+                profile_id = affected.get("occurrence_profile_ids", {}).get(int(occurrence_id))
+                if profile_id is None:
+                    continue
+                subject_key = self.router_behavior_subject(
+                    int(row["router_instance_id"]), profile_id,
+                )
+                subject_template = subject_templates.get(
+                    (observed_date, subject_key, "router", event_key)
+                )
+                if subject_template is None:
+                    continue
+                promote_subject_occurrence(
+                    owner_run_id,
+                    owner_epoch_id,
+                    timestamp,
+                    event_key,
+                    event_family,
+                    subject_template,
+                    SYSTEM_ACTOR,
+                    SYSTEM_NAME,
+                )
+                promoted_owners[owner_run_id].append(int(occurrence_id))
+                promoted_profile_owners[owner_run_id][profile_id].append(int(occurrence_id))
+                continue
+            event_template = event_templates.get((observed_date, mac, event_key))
+            if event_template is None:
+                # The removed run did not materialize this occurrence into learned history.
+                continue
+            device_template = device_templates.get((observed_date, mac))
+            subject_type = "system" if mac == SYSTEM_ACTOR else "device"
+            subject_template = subject_templates.get(
+                (observed_date, mac, subject_type, event_key)
+            )
+            event = Event(
+                timestamp=timestamp,
+                mac=mac,
+                event_family=event_family,
+                event_key=event_key,
+                ip=None,
+                raw_label=event_key,
+                raw_line="",
+                source="persisted_occurrence",
+            )
+
+            device_stat = DeviceDayAggregate(observed_date=observed_date, mac=mac)
+            device_stat.add_event(event)
+            existing_device = self.conn.execute(
+                """
+                SELECT * FROM device_daily_stats
+                WHERE run_id = ? AND observed_date = ? AND mac = ?
+                """,
+                (owner_run_id, observed_date, mac),
+            ).fetchone()
+            if existing_device is None:
+                self.insert_device_daily_stat(
+                    owner_run_id, owner_epoch_id, device_stat,
+                    bool(device_template["included_in_learning"]) if device_template else True,
+                    device_template["exclusion_reason"] if device_template else None,
+                )
+            else:
+                event_types = json.loads(existing_device["event_types_json"] or "{}")
+                event_types[event_key] = int(event_types.get(event_key, 0)) + 1
+                active_hours = sorted(set(json.loads(existing_device["active_hours_json"] or "[]")) | {timestamp.hour})
+                self.conn.execute(
+                    """
+                    UPDATE device_daily_stats
+                    SET dhcp_count = dhcp_count + ?, total_events = total_events + 1,
+                        first_seen = MIN(first_seen, ?), last_seen = MAX(last_seen, ?),
+                        event_types_json = ?, active_hours_json = ?,
+                        included_in_learning = ?, exclusion_reason = COALESCE(exclusion_reason, ?)
+                    WHERE id = ?
+                    """,
+                    (
+                        1 if event_key == "DHCP_IP" else 0, timestamp.isoformat(),
+                        timestamp.isoformat(), json.dumps(event_types, sort_keys=True),
+                        json.dumps(active_hours),
+                        int(bool(existing_device["included_in_learning"]) and bool(
+                            device_template["included_in_learning"] if device_template else True
+                        )), device_template["exclusion_reason"] if device_template else None,
+                        existing_device["id"],
+                    ),
+                )
+
+            event_stat = EventDayAggregate(
+                observed_date=observed_date, mac=mac,
+                event_key=event_key, event_family=event_family,
+            )
+            event_stat.add_event(event)
+            existing_event = self.conn.execute(
+                """
+                SELECT * FROM device_event_daily_stats
+                WHERE run_id = ? AND observed_date = ? AND mac = ? AND event_key = ?
+                """,
+                (owner_run_id, observed_date, mac, event_key),
+            ).fetchone()
+            if existing_event is None:
+                self.insert_device_event_daily_stat(
+                    owner_run_id, owner_epoch_id, event_stat,
+                    bool(event_template["included_in_learning"]), event_template["exclusion_reason"],
+                )
+            else:
+                histogram = json.loads(existing_event["hour_histogram_json"] or "{}")
+                hour_key = str(timestamp.hour)
+                histogram[hour_key] = int(histogram.get(hour_key, 0)) + 1
+                self.conn.execute(
+                    """
+                    UPDATE device_event_daily_stats
+                    SET count = count + 1, first_seen = MIN(first_seen, ?),
+                        last_seen = MAX(last_seen, ?), hour_histogram_json = ?,
+                        included_in_learning = ?, exclusion_reason = COALESCE(exclusion_reason, ?)
+                    WHERE id = ?
+                    """,
+                    (
+                        timestamp.isoformat(), timestamp.isoformat(),
+                        json.dumps(histogram, sort_keys=True),
+                        int(bool(existing_event["included_in_learning"]) and bool(
+                            event_template["included_in_learning"]
+                        )), event_template["exclusion_reason"], existing_event["id"],
+                    ),
+                )
+
+            if subject_template is not None:
+                promote_subject_occurrence(
+                    owner_run_id,
+                    owner_epoch_id,
+                    timestamp,
+                    event_key,
+                    event_family,
+                    subject_template,
+                    mac,
+                    mac,
+                )
+            promoted_owners[owner_run_id].append(int(occurrence_id))
+
+        for owner_run_id, occurrence_ids in promoted_owners.items():
+            metadata_row = self.conn.execute(
+                "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+                (owner_run_id,),
+            ).fetchone()
+            if metadata_row is None:
+                raise RuntimeError("Promoted occurrence owner has no router metadata observation")
+            metadata = json.loads(metadata_row["metadata_json"] or "{}")
+            prior_ids = metadata.get("learning_owned_occurrence_ids", [])
+            if not isinstance(prior_ids, list):
+                prior_ids = []
+            metadata["learning_owned_occurrence_ids"] = sorted({
+                *(value for value in prior_ids if isinstance(value, int)),
+                *occurrence_ids,
+            })
+            profile_owners = metadata.get("learning_owned_occurrence_profiles", {})
+            if not isinstance(profile_owners, dict):
+                profile_owners = {}
+            for profile_id, profile_occurrence_ids in promoted_profile_owners[owner_run_id].items():
+                prior_profile_ids = profile_owners.get(str(profile_id), [])
+                if not isinstance(prior_profile_ids, list):
+                    prior_profile_ids = []
+                profile_owners[str(profile_id)] = sorted({
+                    *(value for value in prior_profile_ids if isinstance(value, int)),
+                    *profile_occurrence_ids,
+                })
+            metadata["learning_owned_occurrence_profiles"] = profile_owners
+            self.conn.execute(
+                "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
+                (json_dumps(metadata), owner_run_id),
+            )
+
+    def refresh_derived_state(self, affected: Dict[str, Any]) -> None:
+        for mac in affected.get("device_macs", set()):
+            registrations = list(self.conn.execute(
+                """
+                SELECT * FROM device_registrations
+                WHERE mac = ? ORDER BY registration_sequence DESC
+                """,
+                (mac,),
+            ))
+            extrema = [
+                value
+                for row in registrations
+                for value in (row["first_seen"], row["last_seen"])
+                if value is not None
+            ]
+            extrema.extend(
+                row[0] for row in self.conn.execute(
+                    "SELECT seen_at FROM device_observations WHERE mac = ?", (mac,)
+                ) if row[0] is not None
+            )
+            extrema.extend(
+                value
+                for row in self.conn.execute(
+                    "SELECT first_seen, last_seen FROM device_daily_stats WHERE mac = ?", (mac,)
+                )
+                for value in row
+                if value is not None
+            )
+            if not registrations and not extrema:
+                self.conn.execute("DELETE FROM devices WHERE mac = ?", (mac,))
+                continue
+
+            def latest_nonnull(column: str) -> Optional[str]:
+                return next((row[column] for row in registrations if row[column] is not None), None)
+
+            existing = self.conn.execute(
+                "SELECT name, status, connection_type FROM devices WHERE mac = ?", (mac,)
+            ).fetchone()
+            self.conn.execute("INSERT OR IGNORE INTO devices(mac) VALUES(?)", (mac,))
+            self.conn.execute(
+                """
+                UPDATE devices
+                SET name = ?, status = ?, connection_type = ?, source = ?,
+                    first_seen = ?, last_seen = ?
+                WHERE mac = ?
+                """,
+                (
+                    latest_nonnull("registered_name") or (existing["name"] if existing else None),
+                    latest_nonnull("registered_status") or (existing["status"] if existing else None),
+                    latest_nonnull("registered_connection_type")
+                    or (existing["connection_type"] if existing else None),
+                    registrations[0]["registration_source"] if registrations else "observed",
+                    min(extrema) if extrema else None,
+                    max(extrema) if extrema else None,
+                    mac,
+                ),
+            )
+
+        for subject_key, subject_type in affected.get("subjects", set()):
+            extrema = self.conn.execute(
+                """
+                SELECT MIN(seen_at), MAX(seen_at)
+                FROM (
+                  SELECT first_seen AS seen_at FROM subject_behavior_daily_stats
+                  WHERE subject_key = ? AND subject_type = ?
+                  UNION ALL
+                  SELECT last_seen AS seen_at FROM subject_behavior_daily_stats
+                  WHERE subject_key = ? AND subject_type = ?
+                ) WHERE seen_at IS NOT NULL
+                """,
+                (subject_key, subject_type, subject_key, subject_type),
+            ).fetchone()
+            if extrema[0] is None and extrema[1] is None:
+                self.conn.execute(
+                    "DELETE FROM behavior_subjects WHERE subject_key = ? AND subject_type = ?",
+                    (subject_key, subject_type),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    UPDATE behavior_subjects SET first_seen = ?, last_seen = ?
+                    WHERE subject_key = ? AND subject_type = ?
+                    """,
+                    (extrema[0], extrema[1], subject_key, subject_type),
+                )
+
+        for router_instance_id in affected.get("router_instance_ids", set()):
+            extrema = self.conn.execute(
+                """
+                SELECT MIN(seen_at), MAX(seen_at)
+                FROM (
+                  SELECT COALESCE(export_timestamp, observation_start, ingested_at) AS seen_at
+                  FROM runs WHERE router_instance_id = ?
+                  UNION ALL
+                  SELECT COALESCE(export_timestamp, observation_end, observation_start, ingested_at)
+                  FROM runs WHERE router_instance_id = ?
+                ) WHERE seen_at IS NOT NULL
+                """,
+                (router_instance_id, router_instance_id),
+            ).fetchone()
+            self.conn.execute(
+                "UPDATE router_instances SET first_seen = ?, last_seen = ? WHERE id = ?",
+                (extrema[0], extrema[1], router_instance_id),
+            )
+
+    def prune_orphan_provenance(self) -> None:
+        self.conn.execute(
+            """
+            DELETE FROM router_event_occurrences
+            WHERE NOT EXISTS (
+              SELECT 1 FROM run_event_occurrences
+              WHERE run_event_occurrences.occurrence_id = router_event_occurrences.id
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            DELETE FROM router_boot_sessions
+            WHERE NOT EXISTS (
+              SELECT 1 FROM run_router_boot_sessions
+              WHERE run_router_boot_sessions.boot_session_id = router_boot_sessions.id
+            ) AND NOT EXISTS (
+              SELECT 1 FROM router_event_occurrences
+              WHERE router_event_occurrences.boot_session_id = router_boot_sessions.id
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            DELETE FROM router_firmware_profiles
+            WHERE profile_key != ? AND NOT EXISTS (
+              SELECT 1 FROM router_metadata_observations
+              WHERE router_metadata_observations.firmware_profile_id = router_firmware_profiles.id
+            )
+            """,
+            (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+        )
 
     def insert_run(
         self,
@@ -1005,35 +4979,118 @@ class StateStore:
         risk_score: int,
         status: str,
         is_partial: bool,
+        router_instance_id: Optional[int] = None,
+        format_id: str = FORMAT_NETGEAR,
+        export_timestamp: Optional[str] = None,
+        capabilities: Optional[RouterCapabilities] = None,
+        body_digest: Optional[str] = None,
+        novel_event_count: int = 0,
+        repeated_event_count: int = 0,
+        run_id: Optional[int] = None,
     ) -> int:
-        cursor = self.conn.execute(
-            """
-            INSERT INTO runs(
-              epoch_id, policy_profile_id, file_hash, source_path, ingested_at,
-              observation_start, observation_end, observed_dates_json,
+        resolved_router_id = (
+            router_instance_id
+            if router_instance_id is not None
+            else self.get_or_create_legacy_netgear_router_instance()
+        )
+        capabilities_json = json_dumps(
+            (capabilities or NetgearLogAdapter.capabilities).to_json()
+        )
+        ingested_at = utcnow_iso()
+        columns = """
+              epoch_id, policy_profile_id, router_instance_id, format_id, file_hash,
+              source_path, ingested_at, export_timestamp, observation_start,
+              observation_end, observed_dates_json, capabilities_json, body_digest,
+              novel_event_count, repeated_event_count,
               parsed_event_count, malformed_line_count, export_noise_line_count,
               risk_score, status, is_partial
+        """
+        placeholders = ", ".join("?" for _ in range(21))
+        values: Tuple[Any, ...] = (
+            epoch_id, policy_profile_id, resolved_router_id, format_id, file_hash,
+            str(source_path.resolve()), ingested_at, export_timestamp, observation_start,
+            observation_end, json.dumps(observed_dates), capabilities_json, body_digest,
+            novel_event_count, repeated_event_count, parse_stats.parsed_events,
+            parse_stats.malformed_lines, parse_stats.export_noise_lines, risk_score,
+            status, 1 if is_partial else 0,
+        )
+        if run_id is not None:
+            columns = "id, " + columns
+            placeholders = "?, " + placeholders
+            values = (run_id, *values)
+        cursor = self.conn.execute(
+            f"""
+            INSERT INTO runs({columns})
+            VALUES({placeholders})
+            """,
+            values,
+        )
+        run_id = int(run_id if run_id is not None else cursor.lastrowid)
+        firmware_profile_id: Optional[int] = None
+        firmware_normalized: Optional[str] = None
+        if format_id == FORMAT_NETGEAR:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO router_firmware_profiles(
+                  profile_key, canonical_vendor, normalized_firmware, identity_version
+                ) VALUES(?, 'netgear', 'unknown-legacy-firmware', 'v1')
+                """,
+                (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            firmware_profile_row = self.conn.execute(
+                "SELECT id FROM router_firmware_profiles WHERE profile_key = ?",
+                (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+            ).fetchone()
+            firmware_profile_id = int(firmware_profile_row["id"])
+            firmware_normalized = "unknown-legacy-firmware"
+        self.conn.execute(
+            """
+            INSERT INTO router_metadata_observations(
+              run_id, router_instance_id, observed_at, export_timestamp, model, hardware,
+              firmware_raw, firmware_normalized, firmware_profile_id,
+              router_owned_interfaces_json, metadata_json
+            ) VALUES(?, ?, ?, ?, NULL, NULL, NULL, ?, ?, '[]', '{}')
             """,
             (
-                epoch_id,
-                policy_profile_id,
-                file_hash,
-                str(source_path.resolve()),
-                utcnow_iso(),
-                observation_start,
-                observation_end,
-                json.dumps(observed_dates),
-                parse_stats.parsed_events,
-                parse_stats.malformed_lines,
-                parse_stats.export_noise_lines,
-                risk_score,
-                status,
-                1 if is_partial else 0,
+                run_id, resolved_router_id,
+                observation_end or observation_start or ingested_at,
+                export_timestamp, firmware_normalized, firmware_profile_id,
             ),
         )
-        return int(cursor.lastrowid)
+        self.conn.execute(
+            """
+            INSERT INTO router_snapshot_metrics(
+              run_id, router_instance_id, epoch_id, export_timestamp, raw_total_clients,
+              raw_wifi_clients, total_clients, wifi_clients, derived_wired_clients,
+              eligible, exclusion_reason
+            ) VALUES(?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, ?)
+            """,
+            (
+                run_id, resolved_router_id, epoch_id, export_timestamp,
+                "snapshot_counts_unavailable" if format_id == FORMAT_NETGEAR else "not_persisted",
+            ),
+        )
+        router_first_seen = export_timestamp or observation_start or ingested_at
+        router_last_seen = export_timestamp or observation_end or observation_start or ingested_at
+        self.conn.execute(
+            """
+            UPDATE router_instances
+            SET first_seen = CASE
+                  WHEN first_seen IS NULL OR ? < first_seen THEN ?
+                  ELSE first_seen
+                END,
+                last_seen = CASE
+                  WHEN last_seen IS NULL OR ? > last_seen THEN ?
+                  ELSE last_seen
+                END
+            WHERE id = ?
+            """,
+            (
+                router_first_seen, router_first_seen,
+                router_last_seen, router_last_seen, resolved_router_id,
+            ),
+        )
+        return run_id
 
     def insert_device_daily_stat(
         self,
@@ -1164,8 +5221,12 @@ class StateStore:
                 WHEN ? IS NOT NULL AND ? != '{}' THEN ?
                 ELSE attributes_json
               END,
-              first_seen = COALESCE(first_seen, ?),
-              last_seen = ?
+              first_seen = CASE
+                WHEN first_seen IS NULL OR ? < first_seen THEN ? ELSE first_seen
+              END,
+              last_seen = CASE
+                WHEN last_seen IS NULL OR ? > last_seen THEN ? ELSE last_seen
+              END
             WHERE subject_key = ? AND subject_type = ?
             """,
             (
@@ -1173,6 +5234,8 @@ class StateStore:
                 attributes_json,
                 attributes_json,
                 attributes_json,
+                seen_at,
+                seen_at,
                 seen_at,
                 seen_at,
                 subject_key,
@@ -1240,6 +5303,219 @@ class StateStore:
             query += " LIMIT ?"
             params.append(limit)
         return list(self.conn.execute(query, params))
+
+    def fetch_router_snapshot_history(
+        self,
+        router_instance_id: int,
+        epoch_id: int,
+        before_cursor: Tuple[str, int],
+        exclude_run_id: Optional[int],
+        limit: int = 7,
+    ) -> List[sqlite3.Row]:
+        export_timestamp, run_id = before_cursor
+        query = """
+            SELECT *
+            FROM router_snapshot_metrics
+            WHERE router_instance_id = ? AND epoch_id = ? AND eligible = 1
+              AND export_timestamp IS NOT NULL
+              AND (export_timestamp < ? OR (export_timestamp = ? AND run_id < ?))
+        """
+        params: List[Any] = [
+            router_instance_id, epoch_id, export_timestamp, export_timestamp, run_id,
+        ]
+        if exclude_run_id is not None:
+            query += " AND run_id != ?"
+            params.append(exclude_run_id)
+        query += " ORDER BY export_timestamp DESC, run_id DESC LIMIT ?"
+        params.append(limit)
+        return list(self.conn.execute(query, params))
+
+    def fetch_router_behavior_history(
+        self,
+        router_instance_id: int,
+        epoch_id: int,
+        firmware_profile_id: int,
+        before_cursor: Tuple[str, int],
+        exclude_run_id: Optional[int],
+    ) -> RouterBehaviorHistory:
+        export_timestamp, cursor_run_id = before_cursor
+        query = """
+            SELECT run.id, metadata.firmware_profile_id, metadata.metadata_json
+            FROM runs AS run
+            JOIN router_metadata_observations AS metadata ON metadata.run_id = run.id
+            WHERE run.router_instance_id = ? AND run.epoch_id = ?
+              AND COALESCE(run.export_timestamp, metadata.export_timestamp) IS NOT NULL
+              AND (
+                COALESCE(run.export_timestamp, metadata.export_timestamp) < ?
+                OR (
+                  COALESCE(run.export_timestamp, metadata.export_timestamp) = ?
+                  AND run.id < ?
+                )
+              )
+        """
+        params: List[Any] = [
+            router_instance_id, epoch_id,
+            export_timestamp, export_timestamp, cursor_run_id,
+        ]
+        if exclude_run_id is not None:
+            query += " AND run.id != ?"
+            params.append(exclude_run_id)
+        query += " ORDER BY COALESCE(run.export_timestamp, metadata.export_timestamp), run.id"
+        owned_by_run: Dict[int, List[int]] = {}
+        for row in self.conn.execute(query, params):
+            metadata = json.loads(row["metadata_json"] or "{}")
+            profile_owners = metadata.get("learning_owned_occurrence_profiles")
+            if isinstance(profile_owners, dict):
+                occurrence_ids = profile_owners.get(str(firmware_profile_id))
+            elif int(row["firmware_profile_id"]) == firmware_profile_id:
+                occurrence_ids = metadata.get("learning_owned_occurrence_ids")
+            else:
+                occurrence_ids = None
+            if isinstance(occurrence_ids, list) and occurrence_ids and all(
+                isinstance(occurrence_id, int) for occurrence_id in occurrence_ids
+            ):
+                owned_by_run[int(row["id"])] = occurrence_ids
+
+        eligible_observation_count = 0
+        event_keys: Set[str] = set()
+        running_components: Set[str] = set()
+        for occurrence_ids in owned_by_run.values():
+            placeholders = ", ".join("?" for _ in occurrence_ids)
+            router_occurrences = list(self.conn.execute(
+                f"""
+                SELECT canonical_event_key, component, structured_evidence_json
+                FROM router_event_occurrences
+                WHERE router_instance_id = ? AND id IN ({placeholders})
+                  AND actor_scope = 'router'
+                """,
+                (router_instance_id, *occurrence_ids),
+            ))
+            if router_occurrences:
+                eligible_observation_count += 1
+            for occurrence in router_occurrences:
+                event_keys.add(occurrence["canonical_event_key"])
+                evidence = json.loads(occurrence["structured_evidence_json"] or "{}")
+                state = str(evidence.get("state") or evidence.get("action") or "").casefold()
+                if occurrence["component"] and state in {
+                    "start", "restart", "ready", "success", "running", "enabled",
+                }:
+                    running_components.add(str(occurrence["component"]).casefold())
+        return RouterBehaviorHistory(
+            eligible_observation_count=eligible_observation_count,
+            event_keys=frozenset(event_keys),
+            running_components=frozenset(running_components),
+        )
+
+    def current_router_firmware_context(
+        self,
+        run_id: int,
+        router_instance_id: int,
+    ) -> Tuple[Optional[int], Optional[str]]:
+        row = self.conn.execute(
+            """
+            SELECT metadata.firmware_profile_id, metadata.firmware_normalized
+            FROM router_metadata_observations AS metadata
+            WHERE metadata.run_id = ? AND metadata.router_instance_id = ?
+            """,
+            (run_id, router_instance_id),
+        ).fetchone()
+        if row is None:
+            return None, None
+        return (
+            int(row["firmware_profile_id"]) if row["firmware_profile_id"] is not None else None,
+            row["firmware_normalized"],
+        )
+
+    def router_behavior_subject_for_run(self, run_id: int) -> Optional[str]:
+        row = self.conn.execute(
+            """
+            SELECT metadata.router_instance_id, metadata.firmware_profile_id
+            FROM router_metadata_observations AS metadata
+            WHERE metadata.run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self.router_behavior_subject(
+            int(row["router_instance_id"]), int(row["firmware_profile_id"]),
+        )
+
+    def router_behavior_subject(
+        self,
+        router_instance_id: int,
+        firmware_profile_id: int,
+    ) -> str:
+        row = self.conn.execute(
+            """
+            SELECT router.instance_key, firmware.profile_key
+            FROM router_instances AS router
+            JOIN router_firmware_profiles AS firmware ON firmware.id = ?
+            WHERE router.id = ?
+            """,
+            (firmware_profile_id, router_instance_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Router behavior subject inputs disappeared")
+        return hashlib.sha256(
+            (
+                "router-subject:v1\0" + row["instance_key"] + "\0" + row["profile_key"]
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def fetch_previous_known_firmware(
+        self,
+        router_instance_id: int,
+        before_cursor: Tuple[str, int],
+        exclude_run_id: Optional[int],
+    ) -> Optional[str]:
+        context = self.fetch_previous_known_firmware_context(
+            router_instance_id, before_cursor, exclude_run_id,
+        )
+        return context[0] if context is not None else None
+
+    def fetch_previous_known_firmware_context(
+        self,
+        router_instance_id: int,
+        before_cursor: Tuple[str, int],
+        exclude_run_id: Optional[int],
+    ) -> Optional[Tuple[str, datetime, int]]:
+        export_timestamp, cursor_run_id = before_cursor
+        query = """
+            SELECT metadata.firmware_normalized,
+                   COALESCE(run.export_timestamp, metadata.export_timestamp) AS observed_at,
+                   metadata.firmware_profile_id
+            FROM router_metadata_observations AS metadata
+            JOIN runs AS run ON run.id = metadata.run_id
+            WHERE metadata.router_instance_id = ?
+              AND metadata.firmware_normalized NOT IN (
+                'unknown-firmware', 'unknown-legacy-firmware'
+              )
+              AND metadata.firmware_normalized IS NOT NULL
+              AND COALESCE(run.export_timestamp, metadata.export_timestamp) IS NOT NULL
+              AND (
+                COALESCE(run.export_timestamp, metadata.export_timestamp) < ?
+                OR (
+                  COALESCE(run.export_timestamp, metadata.export_timestamp) = ?
+                  AND run.id < ?
+                )
+              )
+        """
+        params: List[Any] = [
+            router_instance_id, export_timestamp, export_timestamp, cursor_run_id,
+        ]
+        if exclude_run_id is not None:
+            query += " AND run.id != ?"
+            params.append(exclude_run_id)
+        query += " ORDER BY COALESCE(run.export_timestamp, metadata.export_timestamp) DESC, run.id DESC LIMIT 1"
+        row = self.conn.execute(query, params).fetchone()
+        if row is None:
+            return None
+        return (
+            row["firmware_normalized"],
+            datetime.fromisoformat(row["observed_at"]),
+            int(row["firmware_profile_id"]),
+        )
 
     def fetch_device_metric_history(
         self,
@@ -1324,6 +5600,7 @@ class StateStore:
                 "SELECT DISTINCT mac FROM device_daily_stats WHERE epoch_id = ?",
                 (epoch_id,),
             )
+            if row["mac"] != SYSTEM_ACTOR
         }
         macs.update(
             row["mac"]
@@ -1331,6 +5608,7 @@ class StateStore:
                 "SELECT mac FROM baseline_seed_devices WHERE epoch_id = ?",
                 (epoch_id,),
             )
+            if row["mac"] != SYSTEM_ACTOR
         )
         return sorted(macs)
 
@@ -1383,21 +5661,34 @@ def parse_markdown_table_row(line: str) -> Optional[List[str]]:
     return cells
 
 
-def load_router_security_config(path: Optional[Path]) -> Dict[str, Any]:
+def empty_router_security_config() -> Dict[str, Any]:
+    return {
+        "devices": {},
+        "allowed_macs": set(),
+        "blocked_macs": set(),
+    }
+
+
+def load_router_security_config_snapshot(
+    path: Optional[Path],
+) -> Tuple[Dict[str, Any], Optional[str]]:
     if path is None:
-        return {
-            "devices": {},
-            "allowed_macs": set(),
-            "blocked_macs": set(),
-        }
+        return empty_router_security_config(), None
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        payload = path.read_bytes()
     except FileNotFoundError:
-        return {
-            "devices": {},
-            "allowed_macs": set(),
-            "blocked_macs": set(),
-        }
+        return empty_router_security_config(), None
+    config = parse_router_security_config_text(payload.decode("utf-8"))
+    return config, sha256_bytes(payload)
+
+
+def load_router_security_config(path: Optional[Path]) -> Dict[str, Any]:
+    config, _source_digest = load_router_security_config_snapshot(path)
+    return config
+
+
+def parse_router_security_config_text(text: str) -> Dict[str, Any]:
+    lines = text.splitlines()
 
     current_section = "allowed_connected"
     header_map: Dict[str, int] = {}
@@ -1493,7 +5784,7 @@ def load_log_content(path: Path) -> Tuple[bytes, str]:
     return raw_bytes, raw_bytes.decode("utf-8", errors="replace")
 
 
-def parse_timestamp_from_line(line: str) -> Optional[datetime]:
+def _netgear_parse_timestamp_from_line(line: str) -> Optional[datetime]:
     match = TIMESTAMP_PATTERN.search(line)
     if not match:
         return None
@@ -1503,11 +5794,11 @@ def parse_timestamp_from_line(line: str) -> Optional[datetime]:
         return None
 
 
-def is_export_noise_line(line: str) -> bool:
+def _netgear_is_export_noise_line(line: str) -> bool:
     return any(pattern.search(line) for pattern in EXPORT_NOISE_PATTERNS)
 
 
-def normalize_event_key(raw_label: str) -> str:
+def _netgear_normalize_event_key(raw_label: str) -> str:
     label = raw_label.strip()
     lowered = label.lower()
     if lowered.startswith("dhcp ip"):
@@ -1525,7 +5816,7 @@ def normalize_event_key(raw_label: str) -> str:
     return cleaned or "OTHER"
 
 
-def classify_event_family(event_key: str, line: str) -> str:
+def _netgear_classify_event_family(event_key: str, line: str) -> str:
     if event_key.startswith("DHCP"):
         return "DHCP"
     if event_key == "WLAN_ACCESS_ALLOWED":
@@ -1537,7 +5828,7 @@ def classify_event_family(event_key: str, line: str) -> str:
     return "OTHER"
 
 
-def extract_ip(line: str) -> Optional[str]:
+def _netgear_extract_ip(line: str) -> Optional[str]:
     dhcp_match = re.search(r"\[DHCP IP:\s*\(([^)]+)\)\]", line, re.IGNORECASE)
     if dhcp_match:
         return dhcp_match.group(1).strip()
@@ -1545,7 +5836,35 @@ def extract_ip(line: str) -> Optional[str]:
     return ip_match.group(0) if ip_match else None
 
 
-def reconstruct_wrapped_log_lines(text: str) -> List[str]:
+def parse_timestamp_from_line(line: str) -> Optional[datetime]:
+    """Compatibility wrapper for the legacy NETGEAR timestamp parser."""
+    return _netgear_parse_timestamp_from_line(line)
+
+
+def is_export_noise_line(line: str) -> bool:
+    """Compatibility wrapper for the legacy NETGEAR export-noise detector."""
+    return _netgear_is_export_noise_line(line)
+
+
+def normalize_event_key(raw_label: str) -> str:
+    """Compatibility wrapper for legacy NETGEAR event-key normalization."""
+    return _netgear_normalize_event_key(raw_label)
+
+
+def classify_event_family(event_key: str, line: str) -> str:
+    """Compatibility wrapper for legacy NETGEAR event-family classification."""
+    return _netgear_classify_event_family(event_key, line)
+
+
+def extract_ip(line: str) -> Optional[str]:
+    """Compatibility wrapper for the legacy NETGEAR IPv4 extractor."""
+    return _netgear_extract_ip(line)
+
+
+def _reconstruct_netgear_wrapped_log_lines(
+    text: str,
+    parse_timestamp: Callable[[str], Optional[datetime]] = _netgear_parse_timestamp_from_line,
+) -> List[str]:
     raw_lines = text.replace("\r\n", "\n").replace("\r", "\n").splitlines()
     logical_lines: List[str] = []
     index = 0
@@ -1554,7 +5873,7 @@ def reconstruct_wrapped_log_lines(text: str) -> List[str]:
         consumed = 1
         while index + consumed < len(raw_lines):
             continuation = raw_lines[index + consumed].strip()
-            if not continuation or parse_timestamp_from_line(merged) is not None:
+            if not continuation or parse_timestamp(merged) is not None:
                 break
             if not (
                 TIME_ONLY_PATTERN.fullmatch(continuation)
@@ -1562,7 +5881,7 @@ def reconstruct_wrapped_log_lines(text: str) -> List[str]:
             ):
                 break
             candidate = f"{merged.rstrip()} {continuation}"
-            if parse_timestamp_from_line(candidate) is None:
+            if parse_timestamp(candidate) is None:
                 break
             merged = candidate
             consumed += 1
@@ -1580,18 +5899,20 @@ def is_access_control_status_line(line: str) -> bool:
     )
 
 
-def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats]:
+def _build_netgear_event_objects(
+    adapter: "NetgearLogAdapter", text: str, source: str,
+) -> Tuple[List[Event], ParseStats]:
     stats = ParseStats()
     candidates: List[Event] = []
-    for raw_line in reconstruct_wrapped_log_lines(text):
+    for source_sequence, raw_line in enumerate(adapter.reconstruct_wrapped_log_lines(text), start=1):
         line = raw_line.strip()
         if not line:
             continue
         stats.total_lines += 1
-        if is_export_noise_line(line):
+        if adapter.is_export_noise_line(line):
             stats.export_noise_lines += 1
             continue
-        timestamp = parse_timestamp_from_line(line)
+        timestamp = adapter.parse_timestamp_from_line(line)
         mac = normalize_mac(line) or SYSTEM_ACTOR
         if timestamp is None:
             if "[" in line or MAC_PATTERN.search(line):
@@ -1604,20 +5925,28 @@ def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats
         if is_access_control_status_line(line):
             stats.ignored_lines += 1
             continue
+        timestamp_match = TIMESTAMP_PATTERN.search(line)
         label_match = re.search(r"\[([^\]]+)\]", line)
         raw_label = label_match.group(1) if label_match else ""
-        event_key = normalize_event_key(raw_label)
-        event_family = classify_event_family(event_key, line)
+        event_key = adapter.normalize_event_key(raw_label)
+        event_family = adapter.classify_event_family(event_key, line)
+        stable_client_identity = mac if is_identity_grade_mac(mac) else None
         candidates.append(
             Event(
                 timestamp=timestamp,
                 mac=mac,
                 event_family=event_family,
                 event_key=event_key,
-                ip=extract_ip(line),
+                ip=adapter.extract_ip(line),
                 raw_label=raw_label,
                 raw_line=line,
                 source=source,
+                actor_scope="device" if stable_client_identity is not None else "router",
+                stable_client_identity=stable_client_identity,
+                source_sequence=source_sequence,
+                raw_timestamp=timestamp_match.group("timestamp") if timestamp_match else None,
+                clock_trust="trusted",
+                clock_segment_id="netgear-local-time",
             )
         )
 
@@ -1659,8 +5988,1032 @@ def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats
     return deduped, stats
 
 
+class RouterLogAdapter:
+    format_id: str
+    cli_format: str
+
+    def detect(self, text: str) -> float:
+        raise NotImplementedError
+
+    def parse(self, text: str, source: str) -> ParsedRouterLog:
+        raise NotImplementedError
+
+
+class NetgearLogAdapter(RouterLogAdapter):
+    format_id = FORMAT_NETGEAR
+    cli_format = "netgear"
+    capabilities = RouterCapabilities(
+        stable_client_identity=True,
+        client_dhcp_equivalence=True,
+        client_access_decision_equivalence=True,
+        comparable_device_event_coverage=True,
+        router_system_events=True,
+        wan_transitions=True,
+        snapshot_counts=False,
+        potentially_trustworthy_router_local_time=True,
+        supported_event_keys={
+            "DHCP_IP", "WLAN_ACCESS_ALLOWED", "WLAN_ACCESS_REJECTED",
+            "INTERNET_DISCONNECTED", "INTERNET_CONNECTED", "EMAIL_SENT", "LOG_CLEARED",
+        },
+        supported_event_families={"DHCP", "WLAN_ALLOWED", "WLAN_REJECTED", "OTHER"},
+        coverage_mode="continuous_log",
+        snapshot_buffer_semantic_dedup=False,
+    )
+
+    def detect(self, text: str) -> float:
+        for line in self.reconstruct_wrapped_log_lines(text):
+            if (
+                self.is_export_noise_line(line)
+                or is_access_control_status_line(line)
+                or self.parse_timestamp_from_line(line) is None
+            ):
+                continue
+            if re.search(r"\[[^\]\n]+\]", line) is not None:
+                return 0.95
+        return 0.0
+
+    def reconstruct_wrapped_log_lines(self, text: str) -> List[str]:
+        return _reconstruct_netgear_wrapped_log_lines(text, self.parse_timestamp_from_line)
+
+    def parse_timestamp_from_line(self, line: str) -> Optional[datetime]:
+        return _netgear_parse_timestamp_from_line(line)
+
+    def is_export_noise_line(self, line: str) -> bool:
+        return _netgear_is_export_noise_line(line)
+
+    def normalize_event_key(self, raw_label: str) -> str:
+        return _netgear_normalize_event_key(raw_label)
+
+    def classify_event_family(self, event_key: str, line: str) -> str:
+        return _netgear_classify_event_family(event_key, line)
+
+    def extract_ip(self, line: str) -> Optional[str]:
+        return _netgear_extract_ip(line)
+
+    def build_event_objects(self, text: str, source: str) -> Tuple[List[Event], ParseStats]:
+        return _build_netgear_event_objects(self, text, source)
+
+    def parse(self, text: str, source: str) -> ParsedRouterLog:
+        events, parse_stats = self.build_event_objects(text, source)
+        if self.detect(text) < FORMAT_DETECTION_THRESHOLD:
+            raise SystemExit("The selected NETGEAR format does not contain plausible NETGEAR log structure.")
+        return ParsedRouterLog(
+            format_id=self.format_id,
+            capabilities=self.capabilities,
+            identity=RouterIdentityCandidate(
+                canonical_vendor=FORMAT_NETGEAR,
+                persistence_safe_without_override=True,
+            ),
+            events=events,
+            parse_stats=parse_stats,
+            coverage_stats={"continuous_log": True},
+            clock_segments=[ClockSegment("netgear-local-time", "trusted")],
+        )
+
+
+class TpLinkArcherAdapter(RouterLogAdapter):
+    """Parser for the evidenced TP-Link Archer point-snapshot system log."""
+
+    format_id = FORMAT_TP_LINK_ARCHER
+    cli_format = "tp-link-archer"
+    capabilities = RouterCapabilities(
+        stable_client_identity=False,
+        client_dhcp_equivalence=False,
+        client_access_decision_equivalence=False,
+        comparable_device_event_coverage=False,
+        router_system_events=True,
+        wan_transitions=True,
+        snapshot_counts=True,
+        potentially_trustworthy_router_local_time=True,
+        supported_event_keys={
+            "WAN_DHCP_DISCOVER", "WAN_DHCP_OFFER", "WAN_DHCP_REQUEST", "WAN_DHCP_ACK",
+            "WAN_DHCP_RELEASE", "INTERNET_CONNECTED", "INTERNET_DISCONNECTED", "ROUTER_BOOT",
+        },
+        supported_event_families={"WAN_DHCP", "WAN", "ROUTER_SYSTEM"},
+        coverage_mode="point_snapshot",
+        snapshot_buffer_semantic_dedup=True,
+    )
+    _body_pattern = re.compile(
+        r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) "
+        r"(?P<component>[A-Za-z][A-Za-z0-9_-]{0,31})"
+        r"(?:\[(?P<pid>\d{1,10})\])?:\s+"
+        r"<(?P<severity>[0-7])>\s+(?P<code>\d{1,10})"
+        r"(?:\s+(?P<message>.*))?$"
+    )
+    _banner_pattern = re.compile(r"^#\s+(?P<model>[A-Za-z0-9][A-Za-z0-9._ -]{0,95})\s+System Log\s*$")
+    _time_pattern = re.compile(r"^#\s+Time\s*=\s*(?P<value>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*$")
+    _version_pattern = re.compile(r"^#\s+H-Ver\s*=\s*(?P<hardware>[^;]+?)\s*;\s*S-Ver\s*=\s*(?P<firmware>.+?)\s*$")
+    _interface_pattern = re.compile(
+        r"^#\s+(?P<kind>LAN|WAN)\s+I\s*=\s*(?P<ip>[^;]+?)\s*;\s*"
+        r"M\s*=\s*(?P<mask>[^;]+?)\s*;\s*MAC\s*=\s*(?P<mac>\S+)\s*$"
+    )
+    _wan_continuation_pattern = re.compile(r"^#\s+G\s*=\s*(?P<gateway>[^;]+?)\s*;\s*DNS\s*=\s*(?P<dns>.+?)\s*$")
+    _counts_pattern = re.compile(
+        r"^#\s+Clients connected:\s*(?P<total>[^;]*?)\s*;\s*WI-FI\s*:\s*(?P<wifi>.*?)\s*$",
+        re.IGNORECASE,
+    )
+    _approved_actions = (
+        "discover", "offer", "request", "ack", "release", "connected", "disconnected",
+        "start", "stop", "restart", "initialize", "ready", "timeout", "failure", "success",
+    )
+    _failure_pattern = re.compile(
+        r"\b(?:fail(?:ed|ure|ures|ing)?|not|unable|denied|deny|error|unsuccessful|refused|rejected)\b",
+        re.IGNORECASE,
+    )
+    _dhcp_transition_codes = {
+        "1101": "discover",
+        "1102": "offer",
+        "1103": "request",
+        "1104": "ack",
+        "1105": "release",
+    }
+    _dhcp_success_patterns = {
+        "1101": (
+            re.compile(r"DHCP\s+DISCOVER", re.IGNORECASE),
+            re.compile(r"DHCP\s+DISCOVER\s+from\s+(?P<source>\S+)", re.IGNORECASE),
+        ),
+        "1102": (
+            re.compile(r"DHCP\s+OFFER", re.IGNORECASE),
+            re.compile(
+                r"DHCP\s+OFFER\s+(?P<offered>\S+)\s+from\s+(?P<source>\S+)",
+                re.IGNORECASE,
+            ),
+        ),
+        "1103": (
+            re.compile(r"DHCP\s+REQUEST", re.IGNORECASE),
+            re.compile(r"DHCP\s+REQUEST\s+for\s+(?P<requested>\S+)", re.IGNORECASE),
+        ),
+        "1104": (
+            re.compile(r"DHCP\s+ACK", re.IGNORECASE),
+            re.compile(
+                r"DHCP\s+ACK\s+from\s+(?P<source>\S+)\s+for\s+(?P<assigned>\S+)"
+                r"(?:\s+with\s+MAC\s+(?P<mac>\S+))?",
+                re.IGNORECASE,
+            ),
+            re.compile(r"DHCP\s+ACK\s+for\s+MAC\s+(?P<mac>\S+)", re.IGNORECASE),
+        ),
+        "1105": (
+            re.compile(r"DHCP\s+RELEASE", re.IGNORECASE),
+            re.compile(
+                r"DHCP\s+RELEASE\s+(?P<released>\S+)\s+from\s+(?P<source>\S+)",
+                re.IGNORECASE,
+            ),
+        ),
+    }
+    _internet_success_patterns = {
+        "3002": re.compile(r"Internet\s+(?:is\s+)?(?:connected|up)", re.IGNORECASE),
+        "3001": re.compile(r"Internet\s+(?:is\s+)?(?:disconnected|down)", re.IGNORECASE),
+    }
+    _router_boot_pattern = re.compile(
+        r"(?:system\s+startup|router\s+boot(?:ing)?)",
+        re.IGNORECASE,
+    )
+    _startup_actor_token = (
+        r'(?:"[^"\r\n]{1,128}"|\'[^\'\r\n]{1,128}\'|'
+        r"[A-Za-z0-9][A-Za-z0-9._%+@-]{0,127})"
+    )
+    _startup_fragment_patterns = {
+        ("service", "2001"): re.compile(
+            rf"starting\s+network\s+services(?:\s+for\s+actor\s+{_startup_actor_token})?",
+            re.IGNORECASE,
+        ),
+        ("service", "2003"): re.compile(
+            rf"initialize\s+alternate\s+network\s+core(?:\s+for\s+actor\s+{_startup_actor_token})?",
+            re.IGNORECASE,
+        ),
+    }
+
+    def detect(self, text: str) -> float:
+        lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines() if line.strip()]
+        score = 0.0
+        if any(self._banner_pattern.fullmatch(line) for line in lines):
+            score += 0.35
+        if any(self._time_pattern.fullmatch(line) for line in lines):
+            score += 0.20
+        if any(self._version_pattern.fullmatch(line) for line in lines):
+            score += 0.10
+        if any(self._interface_pattern.fullmatch(line) for line in lines):
+            score += 0.10
+        if any(self._counts_pattern.fullmatch(line) for line in lines):
+            score += 0.05
+        if any(self._body_pattern.fullmatch(line) for line in lines):
+            score += 0.25
+        return min(score, 0.99)
+
+    def parse(self, text: str, source: str) -> ParsedRouterLog:
+        if self.detect(text) < FORMAT_DETECTION_THRESHOLD:
+            raise SystemExit("The selected TP-Link Archer format does not contain plausible supported structure.")
+
+        model: Optional[str] = None
+        hardware: Optional[str] = None
+        firmware: Optional[str] = None
+        export_timestamp: Optional[datetime] = None
+        interfaces: Dict[str, Dict[str, Optional[str]]] = {}
+        wan_gateway: Optional[str] = None
+        wan_dns: List[str] = []
+        raw_total: Optional[str] = None
+        raw_wifi: Optional[str] = None
+        stats = ParseStats()
+        events: List[Event] = []
+        observed_headers: Dict[str, Any] = {}
+
+        def record_header(header_name: str, value: Any) -> None:
+            if header_name in observed_headers and observed_headers[header_name] != value:
+                raise SystemExit(
+                    f"Conflicting TP-Link {header_name} headers; refusing a mixed router snapshot."
+                )
+            observed_headers[header_name] = value
+
+        for source_sequence, raw_line in enumerate(
+            text.replace("\r\n", "\n").replace("\r", "\n").splitlines(), start=1,
+        ):
+            line = raw_line.strip()
+            if not line:
+                continue
+            stats.total_lines += 1
+            body_match = self._body_pattern.fullmatch(line)
+            if body_match is not None:
+                try:
+                    timestamp = datetime.strptime(body_match.group("timestamp"), "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    stats.malformed_lines += 1
+                    if len(stats.malformed_samples) < 5:
+                        stats.malformed_samples.append(f"line {source_sequence}: malformed TP-Link record")
+                    continue
+                message = body_match.group("message") or ""
+                component = body_match.group("component").lower()
+                code = body_match.group("code")
+                event_key, event_family, action = self._normalize_event(component, code, message)
+                normalized_message, structured_evidence = self._privacy_reduce_message(message)
+                structured_evidence["action"] = action
+                events.append(Event(
+                    timestamp=timestamp,
+                    mac=SYSTEM_ACTOR,
+                    event_family=event_family,
+                    event_key=event_key,
+                    ip=None,
+                    raw_label=message,
+                    raw_line=line,
+                    source=source,
+                    actor_scope="router",
+                    stable_client_identity=None,
+                    component=component,
+                    process_id=body_match.group("pid"),
+                    syslog_severity=body_match.group("severity"),
+                    vendor_event_code=code,
+                    normalized_message=normalized_message,
+                    structured_evidence=structured_evidence,
+                    source_sequence=source_sequence,
+                    raw_timestamp=body_match.group("timestamp"),
+                ))
+                continue
+
+            banner_match = self._banner_pattern.fullmatch(line)
+            time_match = self._time_pattern.fullmatch(line)
+            version_match = self._version_pattern.fullmatch(line)
+            interface_match = self._interface_pattern.fullmatch(line)
+            continuation_match = self._wan_continuation_pattern.fullmatch(line)
+            counts_match = self._counts_pattern.fullmatch(line)
+            if banner_match:
+                parsed_model = " ".join(banner_match.group("model").split())
+                record_header("model", parsed_model)
+                model = parsed_model
+            elif time_match:
+                raw_export_timestamp = time_match.group("value")
+                record_header("export-time", raw_export_timestamp)
+                try:
+                    export_timestamp = datetime.strptime(raw_export_timestamp, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    export_timestamp = None
+            elif version_match:
+                parsed_hardware = " ".join(version_match.group("hardware").split())
+                parsed_firmware = " ".join(version_match.group("firmware").split())
+                record_header("version", (parsed_hardware, parsed_firmware))
+                hardware = parsed_hardware
+                firmware = parsed_firmware
+            elif interface_match:
+                interface_kind = interface_match.group("kind").lower()
+                raw_interface_mac = interface_match.group("mac").strip()
+                interface_ip = interface_match.group("ip").strip()
+                interface_mask = interface_match.group("mask").strip()
+                record_header(
+                    f"{interface_kind}-interface",
+                    (interface_ip, interface_mask, raw_interface_mac),
+                )
+                interface_mac = self._normalize_exact_interface_mac(raw_interface_mac)
+                interface_fields: Dict[str, Optional[str]] = {
+                    "ip": interface_ip,
+                    "mask": interface_mask,
+                    "mac": interface_mac,
+                }
+                if interface_mac is None:
+                    interface_fields["raw_mac"] = raw_interface_mac
+                interfaces[interface_kind] = interface_fields
+            elif continuation_match:
+                parsed_gateway = continuation_match.group("gateway").strip()
+                parsed_dns = continuation_match.group("dns").split()
+                record_header("wan-continuation", (parsed_gateway, tuple(parsed_dns)))
+                wan_gateway = parsed_gateway
+                wan_dns = parsed_dns
+            elif counts_match:
+                parsed_total = counts_match.group("total").strip()
+                parsed_wifi = counts_match.group("wifi").strip()
+                record_header("client-counts", (parsed_total, parsed_wifi))
+                raw_total = parsed_total
+                raw_wifi = parsed_wifi
+            elif line.startswith("#"):
+                stats.ignored_lines += 1
+                continue
+            elif re.match(r"^\d{4}-\d{2}-\d{2}", line):
+                stats.malformed_lines += 1
+                if len(stats.malformed_samples) < 5:
+                    stats.malformed_samples.append(f"line {source_sequence}: malformed TP-Link record")
+                continue
+            else:
+                stats.ignored_lines += 1
+                continue
+            stats.ignored_lines += 1
+
+        events.reverse()
+        stats.parsed_events = len(events)
+        parsed_lan_mac = interfaces.get("lan", {}).get("mac")
+        lan_mac = parsed_lan_mac if is_identity_grade_mac(parsed_lan_mac) else None
+        owned_interfaces = frozenset(
+            mac for mac in (parsed_lan_mac, interfaces.get("wan", {}).get("mac")) if is_identity_grade_mac(mac)
+        )
+        identity_warnings: List[str] = []
+        if lan_mac is None:
+            identity_warnings.append("missing_or_invalid_lan_mac")
+        wan_mac = interfaces.get("wan", {}).get("mac")
+        if interfaces.get("wan") is not None and not is_identity_grade_mac(wan_mac):
+            identity_warnings.append("missing_or_invalid_wan_mac")
+        snapshot_metrics = self._parse_snapshot_metrics(raw_total, raw_wifi)
+        warnings = self._header_warnings(
+            model,
+            export_timestamp,
+            hardware,
+            firmware,
+            interfaces,
+            wan_gateway,
+            wan_dns,
+            raw_total,
+            raw_wifi,
+        )
+        events, clock_segments, boot_candidates, clock_warnings = self._classify_clock_and_boot(
+            events, export_timestamp, firmware, lan_mac,
+        )
+        warnings.extend(clock_warnings)
+        trusted_records = sum(event.clock_trust == "trusted" for event in events)
+        coverage_stats: Dict[str, Any] = {
+            "body_records": len(events),
+            "trusted_records": trusted_records,
+            "untrusted_records": len(events) - trusted_records,
+            "timing_eligible_records": trusted_records,
+            "run_span_start": min(
+                (event.timestamp.isoformat() for event in events if event.clock_trust == "trusted"), default=None,
+            ),
+            "run_span_end": max(
+                (event.timestamp.isoformat() for event in events if event.clock_trust == "trusted"), default=None,
+            ),
+            "lan": interfaces.get("lan"),
+            "wan": {
+                **(interfaces.get("wan") or {}),
+                "gateway": wan_gateway,
+                "dns": wan_dns,
+            },
+        }
+        return ParsedRouterLog(
+            format_id=self.format_id,
+            capabilities=self.capabilities,
+            identity=RouterIdentityCandidate(
+                canonical_vendor="tp-link",
+                lan_mac=lan_mac,
+                router_owned_interfaces=owned_interfaces,
+                warnings=tuple(identity_warnings),
+                persistence_safe_without_override=is_identity_grade_mac(lan_mac),
+            ),
+            events=events,
+            parse_stats=stats,
+            model=model,
+            hardware=hardware,
+            firmware=firmware,
+            export_timestamp=export_timestamp,
+            snapshot_metrics=snapshot_metrics,
+            coverage_stats=coverage_stats,
+            order_stats={"source_order": "newest_first", "emission_order_reconstructed": True},
+            clock_segments=clock_segments,
+            boot_candidates=boot_candidates,
+            trusted_overlap_identities=tuple(
+                event.trusted_overlap_identity
+                for event in events
+                if event.trusted_overlap_identity is not None
+            ),
+            warnings=warnings,
+        )
+
+    def _normalize_event(self, component: str, code: str, message: str) -> Tuple[str, str, str]:
+        lowered = message.casefold()
+        normalized_component = re.sub(r"[^a-z0-9]+", "_", component).strip("_").upper() or "COMPONENT"
+        action = next((candidate for candidate in self._approved_actions if re.search(rf"\b{candidate}\w*\b", lowered)), "other")
+        dhcp_action = self._dhcp_transition_codes.get(code) if component == "dhcpc" else None
+        if dhcp_action is not None and self._matches_dhcp_success(code, message):
+            return f"WAN_DHCP_{dhcp_action.upper()}", "WAN_DHCP", dhcp_action
+        outcome = self._without_benign_terminal_punctuation(message)
+        internet_pattern = self._internet_success_patterns.get(code) if component == "inet" else None
+        if internet_pattern is not None and internet_pattern.fullmatch(outcome) and code == "3002":
+            return "INTERNET_CONNECTED", "WAN", "connected"
+        if internet_pattern is not None and internet_pattern.fullmatch(outcome) and code == "3001":
+            return "INTERNET_DISCONNECTED", "WAN", "disconnected"
+        if component == "system" and code == "1000" and self._router_boot_pattern.fullmatch(outcome):
+            return "ROUTER_BOOT", "ROUTER_SYSTEM", "start"
+        if self._failure_pattern.search(lowered):
+            return f"{normalized_component}_{code}_FAILURE", "ROUTER_SYSTEM", "failure"
+        return f"{normalized_component}_{code}_{action.upper()}", "ROUTER_SYSTEM", action
+
+    @staticmethod
+    def _without_benign_terminal_punctuation(message: str) -> str:
+        candidate = message.strip()
+        if candidate.endswith((".", "!")):
+            candidate = candidate[:-1].rstrip()
+        return candidate
+
+    def _matches_dhcp_success(self, code: str, message: str) -> bool:
+        candidate = self._without_benign_terminal_punctuation(message)
+        for pattern in self._dhcp_success_patterns.get(code, ()):
+            match = pattern.fullmatch(candidate)
+            if match is None:
+                continue
+            if all(
+                self._is_approved_address_token(value, exact_mac=name == "mac")
+                for name, value in match.groupdict().items()
+                if value is not None
+            ):
+                return True
+        return False
+
+    def _is_approved_address_token(self, value: str, *, exact_mac: bool) -> bool:
+        if self._normalize_exact_interface_mac(value) is not None:
+            return True
+        if exact_mac:
+            return False
+        unwrapped = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+        if value.startswith("[") != value.endswith("]"):
+            return False
+        try:
+            ipaddress.ip_address(unwrapped)
+        except ValueError:
+            return False
+        return True
+
+    def _is_startup_marker(self, event: Event) -> bool:
+        if event.structured_evidence.get("action") == "failure":
+            return False
+        if event.event_key == "ROUTER_BOOT":
+            return True
+        pattern = self._startup_fragment_patterns.get((event.component or "", event.vendor_event_code or ""))
+        outcome = self._without_benign_terminal_punctuation(event.raw_label)
+        return pattern is not None and pattern.fullmatch(outcome) is not None
+
+    @staticmethod
+    def _normalize_exact_interface_mac(value: str) -> Optional[str]:
+        compact: Optional[str] = None
+        if re.fullmatch(
+            r"(?:(?:[0-9A-Fa-f]{2}:){5}|(?:[0-9A-Fa-f]{2}-){5})[0-9A-Fa-f]{2}",
+            value,
+        ):
+            compact = value.replace(":", "").replace("-", "")
+        elif re.fullmatch(r"[0-9A-Fa-f]{4}(?:\.[0-9A-Fa-f]{4}){2}", value):
+            compact = value.replace(".", "")
+        if compact is None:
+            return None
+        return ":".join(compact[index:index + 2] for index in range(0, 12, 2)).upper()
+
+    def _privacy_reduce_message(self, message: str) -> Tuple[str, Dict[str, Any]]:
+        evidence: Dict[str, Any] = {}
+        message_holder = [message]
+        exact_mac_pattern = re.compile(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
+
+        def collect(
+            pattern: re.Pattern[str],
+            key: str,
+            placeholder: str,
+            normalize: Callable[[str], Optional[str]],
+        ) -> None:
+            found: List[str] = []
+
+            def replace_match(match: re.Match[str]) -> str:
+                normalized = normalize(match.group(0))
+                if normalized is None:
+                    return match.group(0)
+                if normalized not in found:
+                    found.append(normalized)
+                return placeholder
+
+            message_holder[0] = pattern.sub(replace_match, message_holder[0])
+            if found:
+                evidence[key] = found
+
+        def is_complete_mac_token(source: str, start: int, end: int, separator: str) -> bool:
+            if start > 0 and source[start - 1].isalnum():
+                return False
+            if start > 0 and source[start - 1] == separator:
+                preceding = source[:start - 1]
+                label_match = re.search(r"([A-Za-z0-9_-]+)\s*$", preceding)
+                if label_match is None or re.fullmatch(r"[0-9A-Fa-f]+", label_match.group(1)):
+                    return False
+            if end < len(source) and source[end].isalnum():
+                return False
+            if end < len(source) and source[end] == separator:
+                remainder = source[end + 1:]
+                if remainder.startswith(separator):
+                    return False
+                next_segment = re.match(r"[0-9A-Fa-f]+", remainder)
+                if next_segment is not None:
+                    following_index = next_segment.end()
+                    if following_index == len(remainder) or not remainder[following_index].isalnum():
+                        return False
+            return True
+
+        mac_candidates: List[Tuple[int, int, str]] = []
+        for mac_candidate_pattern, separator in (
+            (re.compile(r"(?=((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}))"), ":"),
+            (re.compile(r"(?=((?:[0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}))"), "-"),
+            (re.compile(r"(?=([0-9A-Fa-f]{4}(?:\.[0-9A-Fa-f]{4}){2}))"), "."),
+        ):
+            for match in mac_candidate_pattern.finditer(message_holder[0]):
+                start, end = match.span(1)
+                if not is_complete_mac_token(message_holder[0], start, end, separator):
+                    continue
+                mac = self._normalize_exact_interface_mac(match.group(1))
+                if mac is not None:
+                    mac_candidates.append((start, end, mac))
+
+        mac_addresses: List[str] = []
+        mac_replacements: List[Tuple[int, int, str]] = []
+        for start, end, mac in sorted(mac_candidates):
+            if mac not in mac_addresses:
+                mac_addresses.append(mac)
+            mac_replacements.append((start, end, "<mac>"))
+
+        for start, end, placeholder in reversed(mac_replacements):
+            message_holder[0] = message_holder[0][:start] + placeholder + message_holder[0][end:]
+        if mac_addresses:
+            evidence["mac_addresses"] = mac_addresses
+
+        ipv6_like_pattern = re.compile(
+            r"(?<![0-9A-Za-z])(?:"
+            r"\[(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:\d{1,3}\.){3}\d{1,3}|[0-9A-Fa-f]{0,4})\]"
+            r"|(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:\d{1,3}\.){3}\d{1,3}|[0-9A-Fa-f]{0,4})"
+            r")(?![0-9A-Za-z])"
+        )
+
+        def normalize_ipv6_like(token: str) -> Optional[str]:
+            unwrapped = token[1:-1] if token.startswith("[") and token.endswith("]") else token
+            if exact_mac_pattern.fullmatch(unwrapped):
+                return None
+            if "::" not in unwrapped and unwrapped.count(":") < 6:
+                return None
+            return unwrapped
+
+        collect(ipv6_like_pattern, "ipv6_addresses", "<ipv6>", normalize_ipv6_like)
+        collect(
+            re.compile(r"(?<![A-Za-z0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9.])"),
+            "ipv4_addresses",
+            "<ipv4>",
+            lambda token: token,
+        )
+
+        actor_names: List[str] = []
+
+        def replace_actor(match: re.Match[str]) -> str:
+            name = match.group("name")
+            if len(name) >= 2 and name[0] == name[-1] and name[0] in {'"', "'"}:
+                name = name[1:-1]
+            if name not in actor_names:
+                actor_names.append(name)
+            return f"{match.group('label')}{match.group('separator')}<actor>"
+
+        message_holder[0] = re.sub(
+            r"(?i)\b(?P<label>actor|client|device|host(?:name)?|user)"
+            r"(?P<separator>\s*(?:=|:)\s*|\s+)"
+            r"(?P<name>"
+            r"\"[^\"\r\n]{1,128}\"|'[^'\r\n]{1,128}'|"
+            r"[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}"
+            r")(?=$|[\s,;)\]])",
+            replace_actor,
+            message_holder[0],
+        )
+        message_holder[0] = re.sub(
+            r"(?i)\b(?P<label>actor|client|device|host(?:name)?|user)"
+            r"(?P<separator>\s*(?:=|:)\s*|\s+)"
+            r"(?P<name>"
+            r"[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*){0,7}?"
+            r")(?=\s+(?:at|from|via|with|on|using|connected|disconnected|accepted|rejected|ready|started|stopped)\b|[,;]|$)",
+            replace_actor,
+            message_holder[0],
+        )
+        if actor_names:
+            evidence["actor_names"] = actor_names
+        normalized = " ".join(message_holder[0].split())
+        return f"normalized-message-v1\0{normalized}", evidence
+
+    def _parse_snapshot_metrics(self, raw_total: Optional[str], raw_wifi: Optional[str]) -> RouterSnapshotMetrics:
+        if raw_total is None or raw_wifi is None:
+            return RouterSnapshotMetrics(
+                raw_total_clients=raw_total,
+                raw_wifi_clients=raw_wifi,
+                exclusion_reason="missing_snapshot_counts",
+            )
+        def parse_count(raw_value: str) -> Tuple[Optional[int], str]:
+            if re.fullmatch(r"[+-]?\d+", raw_value) is None:
+                return None, "invalid"
+            digits = raw_value.lstrip("+-")
+            if raw_value.startswith("-"):
+                if len(digits) > 9:
+                    return None, "invalid"
+                try:
+                    return int(raw_value), "invalid"
+                except ValueError:
+                    return None, "invalid"
+            if len(digits) > 9:
+                return None, "out_of_range"
+            try:
+                return int(raw_value), "valid"
+            except ValueError:
+                return None, "out_of_range"
+
+        total, total_status = parse_count(raw_total)
+        wifi, wifi_status = parse_count(raw_wifi)
+        if "invalid" in {total_status, wifi_status}:
+            return RouterSnapshotMetrics(
+                raw_total_clients=raw_total,
+                raw_wifi_clients=raw_wifi,
+                total_clients=total,
+                wifi_clients=wifi,
+                exclusion_reason="invalid_snapshot_counts",
+            )
+        if "out_of_range" in {total_status, wifi_status}:
+            return RouterSnapshotMetrics(
+                raw_total_clients=raw_total,
+                raw_wifi_clients=raw_wifi,
+                total_clients=total,
+                wifi_clients=wifi,
+                exclusion_reason="snapshot_count_out_of_range",
+            )
+        if wifi > total:
+            return RouterSnapshotMetrics(
+                raw_total_clients=raw_total,
+                raw_wifi_clients=raw_wifi,
+                total_clients=total,
+                wifi_clients=wifi,
+                exclusion_reason="inconsistent_snapshot_counts",
+            )
+        return RouterSnapshotMetrics(
+            raw_total_clients=raw_total,
+            raw_wifi_clients=raw_wifi,
+            total_clients=total,
+            wifi_clients=wifi,
+            derived_wired_clients=total - wifi,
+            eligible=True,
+        )
+
+    def _header_warnings(
+        self,
+        model: Optional[str],
+        export_timestamp: Optional[datetime],
+        hardware: Optional[str],
+        firmware: Optional[str],
+        interfaces: Dict[str, Dict[str, Optional[str]]],
+        wan_gateway: Optional[str],
+        wan_dns: Sequence[str],
+        raw_total: Optional[str],
+        raw_wifi: Optional[str],
+    ) -> List[str]:
+        warnings: List[str] = []
+        for missing, value in (
+            ("missing_model_header", model),
+            ("missing_export_time_header", export_timestamp),
+            ("missing_hardware_header", hardware),
+            ("missing_firmware_header", firmware),
+            ("missing_lan_header", interfaces.get("lan")),
+            ("missing_wan_header", interfaces.get("wan")),
+            ("missing_client_counts_header", raw_total if raw_wifi is not None else None),
+        ):
+            if value is None:
+                warnings.append(missing)
+        if interfaces.get("wan") is not None and (wan_gateway is None or not wan_dns):
+            warnings.append("missing_wan_gateway_dns_header")
+        return warnings
+
+    @staticmethod
+    def _versioned_digest(version: str, fields: Sequence[Optional[str]]) -> str:
+        encoded = "\0".join([version, *(field if field is not None else "<null>" for field in fields)])
+        return f"{version}:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
+
+    @staticmethod
+    def _firmware_build_date(firmware: Optional[str]) -> Optional[date]:
+        if firmware is None:
+            return None
+        match = re.search(r"\bBuild\s+(\d{8})\b", firmware, re.IGNORECASE)
+        if match is None:
+            return None
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%d").date()
+        except ValueError:
+            return None
+
+    def _classify_clock_and_boot(
+        self,
+        events: List[Event],
+        export_timestamp: Optional[datetime],
+        firmware: Optional[str],
+        lan_mac: Optional[str],
+    ) -> Tuple[List[Event], List[ClockSegment], List[BootSessionCandidate], List[str]]:
+        if not events:
+            return events, [], [], []
+        firmware_date = self._firmware_build_date(firmware)
+        explicit_boot_indices = [index for index, event in enumerate(events) if event.event_key == "ROUTER_BOOT"]
+        startup_marker_indices = [
+            index
+            for index, event in enumerate(events)
+            if self._is_startup_marker(event)
+        ]
+        candidate_starts = list(explicit_boot_indices)
+        if startup_marker_indices and (
+            not explicit_boot_indices or startup_marker_indices[0] < explicit_boot_indices[0]
+        ):
+            candidate_starts.insert(0, startup_marker_indices[0])
+        candidate_starts = sorted(set(candidate_starts))
+        context_number_by_start = {
+            start: context_number for context_number, start in enumerate(candidate_starts, start=1)
+        }
+        epoch_starts = sorted(set([0, *candidate_starts]))
+        epoch_ranges = [
+            (start, epoch_starts[position + 1] if position + 1 < len(epoch_starts) else len(events))
+            for position, start in enumerate(epoch_starts)
+        ]
+        trust_by_index = ["trusted"] * len(events)
+        reason_by_index: List[Optional[str]] = [None] * len(events)
+        epoch_by_index: List[Optional[int]] = [None] * len(events)
+        clock_warnings: List[str] = []
+        if export_timestamp is None:
+            clock_warnings.append("clock_untrusted_missing_export_timestamp")
+
+        for start, end in epoch_ranges:
+            boot_at_start = start in candidate_starts
+            if boot_at_start:
+                context_number = context_number_by_start[start]
+                for index in range(start, end):
+                    epoch_by_index[index] = context_number
+
+            if export_timestamp is None:
+                for index in range(start, end):
+                    trust_by_index[index] = "clock_untrusted"
+                    reason_by_index[index] = "missing_export_timestamp"
+                continue
+
+            correction_index: Optional[int] = None
+            for index in range(start + 1, end):
+                delta = events[index].timestamp - events[index - 1].timestamp
+                near_export = (
+                    export_timestamp is not None
+                    and timedelta(minutes=-5) <= export_timestamp - events[index].timestamp <= timedelta(hours=48)
+                )
+                if delta >= timedelta(hours=24) and near_export:
+                    correction_index = index
+                    break
+
+            backward_boot_boundary = (
+                boot_at_start
+                and start > 0
+                and events[start - 1].timestamp - events[start].timestamp > timedelta(minutes=5)
+            )
+            firmware_startup_cluster = (
+                boot_at_start
+                and firmware_date is not None
+                and all(event.timestamp.date() == firmware_date for event in events[start:(correction_index or end)])
+            )
+            far_from_export = (
+                export_timestamp is not None
+                and export_timestamp - events[start].timestamp > timedelta(hours=48)
+            )
+
+            if correction_index is not None:
+                early_trust = "pre_synchronization" if firmware_startup_cluster else "clock_untrusted"
+                for index in range(start, correction_index):
+                    trust_by_index[index] = early_trust
+                    reason_by_index[index] = (
+                        "firmware_date_pre_synchronization"
+                        if early_trust == "pre_synchronization"
+                        else "large_clock_correction"
+                    )
+                for index in range(correction_index, end):
+                    trust_by_index[index] = "trusted"
+                    reason_by_index[index] = None
+            elif firmware_startup_cluster and far_from_export:
+                for index in range(start, end):
+                    trust_by_index[index] = "pre_synchronization"
+                    reason_by_index[index] = "firmware_date_pre_synchronization"
+            elif backward_boot_boundary:
+                for index in range(start, end):
+                    trust_by_index[index] = "clock_untrusted"
+                    reason_by_index[index] = "boot_boundary_backward_correction"
+
+            has_near_export_anchor = any(
+                timedelta(minutes=-5) <= export_timestamp - events[index].timestamp <= timedelta(hours=48)
+                for index in range(start, end)
+            )
+            for index in range(start, end):
+                if trust_by_index[index] != "trusted":
+                    continue
+                if events[index].timestamp > export_timestamp + timedelta(minutes=5):
+                    trust_by_index[index] = "clock_ambiguous"
+                    reason_by_index[index] = "after_export_tolerance"
+                elif not has_near_export_anchor:
+                    trust_by_index[index] = "clock_untrusted"
+                    reason_by_index[index] = "no_near_export_anchor"
+
+            high_water: Optional[datetime] = None
+            ambiguous_until: Optional[datetime] = None
+            for index in range(start, end):
+                if trust_by_index[index] != "trusted":
+                    continue
+                timestamp = events[index].timestamp
+                if ambiguous_until is not None:
+                    if timestamp >= ambiguous_until:
+                        ambiguous_until = None
+                        high_water = timestamp
+                    else:
+                        trust_by_index[index] = "clock_ambiguous"
+                        reason_by_index[index] = "backward_clock_correction"
+                    continue
+                if high_water is not None and high_water - timestamp > timedelta(minutes=5):
+                    ambiguous_until = high_water
+                    trust_by_index[index] = "clock_ambiguous"
+                    reason_by_index[index] = "backward_clock_correction"
+                    continue
+                high_water = timestamp if high_water is None else max(high_water, timestamp)
+
+        classified: List[Event] = []
+        segment_number = 0
+        previous_trust: Optional[str] = None
+        previous_epoch: Optional[int] = None
+        for index, event in enumerate(events):
+            epoch_number = epoch_by_index[index]
+            if trust_by_index[index] != previous_trust or epoch_number != previous_epoch:
+                segment_number += 1
+            classified_event = replace(
+                event,
+                clock_trust=trust_by_index[index],
+                clock_reason=reason_by_index[index],
+                clock_segment_id=f"tp-link-clock-{segment_number}",
+                boot_context_id=f"tp-link-boot-{epoch_number}" if epoch_number is not None else None,
+            )
+            if classified_event.clock_trust == "trusted":
+                classified_event = replace(
+                    classified_event,
+                    trusted_overlap_identity=self._versioned_digest("trusted-overlap-v1", (
+                        "tp-link",
+                        lan_mac,
+                        classified_event.timestamp.isoformat(sep=" "),
+                        classified_event.component,
+                        classified_event.process_id,
+                        classified_event.vendor_event_code,
+                        classified_event.syslog_severity,
+                        classified_event.normalized_message,
+                        classified_event.actor_scope,
+                        classified_event.stable_client_identity,
+                    )),
+                )
+            classified.append(classified_event)
+            previous_trust = trust_by_index[index]
+            previous_epoch = epoch_number
+
+        segments: List[ClockSegment] = []
+        for event in classified:
+            if not segments or segments[-1].segment_id != event.clock_segment_id:
+                segments.append(ClockSegment(
+                    segment_id=event.clock_segment_id or "tp-link-clock",
+                    clock_trust=event.clock_trust or "clock_untrusted",
+                    start_sequence=event.source_sequence,
+                    end_sequence=event.source_sequence,
+                ))
+            else:
+                sequences = [
+                    sequence
+                    for sequence in (
+                        segments[-1].start_sequence,
+                        segments[-1].end_sequence,
+                        event.source_sequence,
+                    )
+                    if sequence is not None
+                ]
+                segments[-1] = replace(
+                    segments[-1],
+                    start_sequence=min(sequences, default=None),
+                    end_sequence=max(sequences, default=None),
+                )
+
+        boot_candidates: List[BootSessionCandidate] = []
+        for candidate_number, boot_index in enumerate(candidate_starts, start=1):
+            end = candidate_starts[candidate_number] if candidate_number < len(candidate_starts) else len(classified)
+            boot_context_id = f"tp-link-boot-{epoch_by_index[boot_index]}"
+            boot_events = classified[boot_index:end]
+            trusted_events = [event for event in boot_events if event.clock_trust == "trusted"]
+            overlap_ids = tuple(
+                event.trusted_overlap_identity
+                for event in trusted_events
+                if event.trusted_overlap_identity is not None
+            )
+            startup_fields: List[Optional[str]] = ["tp-link", lan_mac]
+            for event in boot_events:
+                if not self._is_startup_marker(event):
+                    break
+                startup_fields.extend((
+                    event.component,
+                    event.vendor_event_code,
+                    str(event.structured_evidence.get("action", "other")),
+                ))
+            boot_candidates.append(BootSessionCandidate(
+                session_id=boot_context_id,
+                start_sequence=classified[boot_index].source_sequence,
+                trusted_anchor=trusted_events[0].timestamp if trusted_events else None,
+                trusted_overlap_identities=overlap_ids,
+                startup_signature=self._versioned_digest("startup-signature-v1", startup_fields),
+                warnings=() if trusted_events else ("no_trusted_boot_anchor",),
+            ))
+        return classified, segments, boot_candidates, clock_warnings
+
+
+ROUTER_LOG_ADAPTERS: Dict[str, RouterLogAdapter] = {
+    FORMAT_NETGEAR: NetgearLogAdapter(),
+    FORMAT_TP_LINK_ARCHER: TpLinkArcherAdapter(),
+}
+
+
+def _validate_adapter_detection_score(adapter: RouterLogAdapter, score: Any) -> float:
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise SystemExit(f"Adapter {adapter.cli_format} returned an invalid detection score.")
+    normalized_score = float(score)
+    if not math.isfinite(normalized_score) or not 0.0 <= normalized_score <= 1.0:
+        raise SystemExit(f"Adapter {adapter.cli_format} returned an invalid detection score.")
+    return normalized_score
+
+
+def _format_adapter_detection_score(score: float) -> str:
+    decimal_score = Decimal(str(score))
+    if decimal_score.as_tuple().exponent >= -2:
+        return f"{score:.2f}"
+    return format(decimal_score.normalize(), "f")
+
+
+def _adapter_selection_error(prefix: str, scored: Sequence[Tuple[RouterLogAdapter, float]]) -> SystemExit:
+    candidates = ", ".join(
+        f"{adapter.cli_format}={_format_adapter_detection_score(score)}" for adapter, score in scored
+    )
+    return SystemExit(f"{prefix} Available format confidence: {candidates}.")
+
+
+def select_router_adapter(text: str, requested_format: str = AUTO_FORMAT) -> RouterLogAdapter:
+    if requested_format == AUTO_FORMAT:
+        scored = [
+            (adapter, _validate_adapter_detection_score(adapter, adapter.detect(text)))
+            for adapter in ROUTER_LOG_ADAPTERS.values()
+        ]
+        scored.sort(key=lambda item: item[1], reverse=True)
+        top_adapter, top_score = scored[0]
+        if top_score < FORMAT_DETECTION_THRESHOLD:
+            raise _adapter_selection_error("Could not confidently identify a supported router log format.", scored)
+        contenders = [item for item in scored if item[1] >= FORMAT_DETECTION_THRESHOLD]
+        if len(contenders) > 1 and (
+            Decimal(str(contenders[0][1])) - Decimal(str(contenders[1][1]))
+        ) < Decimal(str(FORMAT_AMBIGUITY_MARGIN)):
+            raise _adapter_selection_error("Router log format is ambiguous.", contenders)
+        return top_adapter
+    format_id = CLI_FORMAT_TO_ID.get(requested_format)
+    if format_id is None:
+        raise SystemExit(f"Unsupported --format value: {requested_format}")
+    return ROUTER_LOG_ADAPTERS[format_id]
+
+
+def parse_router_log(text: str, source: str, requested_format: str = AUTO_FORMAT) -> ParsedRouterLog:
+    return select_router_adapter(text, requested_format).parse(text, source)
+
+
+def reconstruct_wrapped_log_lines(text: str) -> List[str]:
+    """Compatibility helper for existing callers of NETGEAR reconstruction."""
+    return ROUTER_LOG_ADAPTERS[FORMAT_NETGEAR].reconstruct_wrapped_log_lines(text)  # type: ignore[attr-defined]
+
+
+def build_event_objects(text: str, source: str) -> Tuple[List[Event], ParseStats]:
+    """Compatibility helper for existing callers of NETGEAR normalization."""
+    return ROUTER_LOG_ADAPTERS[FORMAT_NETGEAR].build_event_objects(text, source)  # type: ignore[attr-defined]
+
+
 def parse_log_text(text: str, source: str) -> Tuple[List[Event], ParseStats]:
-    return build_event_objects(text, source)
+    # This long-standing helper is intentionally permissive for callers that
+    # need malformed/noise accounting; CLI ingestion uses parse_router_log().
+    return ROUTER_LOG_ADAPTERS[FORMAT_NETGEAR].build_event_objects(text, source)  # type: ignore[attr-defined]
 
 
 def find_cluster_profiles(baseline: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -1720,18 +7073,7 @@ def attribute_ip_only_events(events: Sequence[Event]) -> List[Event]:
         if resolved_mac is None:
             attributed.append(event)
             continue
-        attributed.append(
-            Event(
-                timestamp=event.timestamp,
-                mac=resolved_mac,
-                event_family=event.event_family,
-                event_key=event.event_key,
-                ip=event.ip,
-                raw_label=event.raw_label,
-                raw_line=event.raw_line,
-                source=event.source,
-            )
-        )
+        attributed.append(replace(event, mac=resolved_mac))
     return attributed
 
 
@@ -2469,6 +7811,417 @@ def enforce_policy_severity(
     return result
 
 
+def detector_eligibility(
+    detector: str,
+    capabilities: RouterCapabilities,
+    events: Sequence[Event],
+    evidence: Dict[str, Any],
+) -> DetectorEligibility:
+    """Return the one local evidence/capability decision used by analysis paths."""
+    has_trusted_time = any(event.clock_trust == "trusted" for event in events)
+    checks: Dict[str, Tuple[bool, str]] = {
+        "duration_based_partial": (
+            capabilities.coverage_mode == "continuous_log",
+            "point_snapshot_not_continuous",
+        ),
+        "stable_client_discovery": (
+            capabilities.stable_client_identity,
+            "no_stable_client_identity",
+        ),
+        "current_rejected_client": (
+            capabilities.stable_client_identity
+            and capabilities.client_access_decision_equivalence,
+            (
+                "no_stable_client_identity"
+                if not capabilities.stable_client_identity
+                else "no_client_access_decisions"
+            ),
+        ),
+        "device_dhcp_metrics": (
+            capabilities.stable_client_identity
+            and capabilities.client_dhcp_equivalence
+            and bool(evidence.get("meaningful_device_coverage")),
+            "no_client_dhcp_coverage",
+        ),
+        "device_event_volume": (
+            capabilities.comparable_device_event_coverage
+            and bool(evidence.get("meaningful_device_coverage")),
+            "incomparable_event_coverage",
+        ),
+        "device_behavior": (
+            capabilities.stable_client_identity
+            and capabilities.comparable_device_event_coverage
+            and has_trusted_time,
+            (
+                "untrusted_time"
+                if capabilities.stable_client_identity
+                and capabilities.comparable_device_event_coverage
+                and not has_trusted_time
+                else "no_comparable_device_behavior"
+            ),
+        ),
+        "cluster_visibility": (
+            capabilities.stable_client_identity
+            and bool(evidence.get("negative_client_coverage"))
+            and has_trusted_time,
+            "no_negative_client_coverage",
+        ),
+        "confirmed_reset": (
+            capabilities.wan_transitions
+            and bool(evidence.get("negative_transition_coverage"))
+            and has_trusted_time,
+            "untrusted_time" if capabilities.wan_transitions and not has_trusted_time
+            else "no_wan_transition_coverage",
+        ),
+        "inferred_reset": (
+            capabilities.stable_client_identity
+            and capabilities.client_dhcp_equivalence
+            and has_trusted_time,
+            "untrusted_time"
+            if capabilities.stable_client_identity
+            and capabilities.client_dhcp_equivalence
+            and not has_trusted_time
+            else "no_client_recovery_equivalence",
+        ),
+        "router_inventory": (
+            capabilities.router_system_events
+            and bool(evidence.get("trusted_boot_anchor", has_trusted_time)),
+            "no_trusted_boot_anchor"
+            if capabilities.router_system_events
+            else "no_router_event_coverage",
+        ),
+        "router_behavior": (
+            capabilities.router_system_events and has_trusted_time
+            and not bool(evidence.get("ambiguous_firmware_profile")),
+            "ambiguous_firmware_profile"
+            if evidence.get("ambiguous_firmware_profile")
+            else ("untrusted_time" if capabilities.router_system_events else "no_router_behavior_coverage"),
+        ),
+        "router_security": (
+            capabilities.router_system_events
+            and bool(evidence.get("explicit_security_mapping")),
+            "no_router_security_mapping",
+        ),
+        "snapshot_counts": (
+            capabilities.snapshot_counts and bool(evidence.get("snapshot_counts_valid")),
+            str(evidence.get("snapshot_exclusion_reason") or (
+                "invalid_snapshot_counts" if capabilities.snapshot_counts else "no_snapshot_counts"
+            )),
+        ),
+    }
+    if detector not in checks:
+        raise ValueError(f"Unknown detector eligibility key: {detector}")
+    available, reason = checks[detector]
+    return DetectorEligibility(available, None if available else reason)
+
+
+def detect_stable_client_discovery(
+    events: Sequence[Event],
+    devices_snapshot: Dict[str, Dict[str, Any]],
+    capabilities: RouterCapabilities,
+    policy: Dict[str, Any],
+) -> List[Finding]:
+    if not detector_eligibility(
+        "stable_client_discovery", capabilities, events, {}
+    ).available:
+        return []
+    grouped: DefaultDict[str, List[Event]] = defaultdict(list)
+    for event in events:
+        identity = event.stable_client_identity
+        if event.actor_scope == "device" and is_identity_grade_mac(identity):
+            assert identity is not None
+            grouped[identity].append(event)
+
+    findings: List[Finding] = []
+    for mac, client_events in sorted(grouped.items()):
+        rejected_events = [
+            event for event in client_events
+            if capabilities.client_access_decision_equivalence
+            and (
+                event.structured_evidence.get("action") in {"blocked", "denied", "rejected"}
+                or event.event_key in {"WLAN_ACCESS_REJECTED", "CLIENT_ACCESS_REJECTED"}
+            )
+        ]
+        rejected = bool(rejected_events)
+        rejection_event = rejected_events[0] if rejected_events else None
+        known_device = devices_snapshot.get(mac)
+        if known_device is not None:
+            if not rejected or (known_device.get("status") or "").casefold() != "blocked":
+                continue
+            device_name = normalized_device_name(known_device.get("name"), mac)
+            severity = enforce_policy_severity(
+                "critical", policy,
+                event_key=rejection_event.event_key if rejection_event is not None else None,
+                event_family=rejection_event.event_family if rejection_event is not None else None,
+                mac=mac, device_name=device_name,
+                finding_kind="blocked_device_activity",
+            )
+            if severity != "normal":
+                findings.append(Finding(
+                    kind="blocked_device_activity", severity=severity, mac=mac,
+                    event_count=len(client_events),
+                    message=f"Blocked device {mac} generated {len(client_events)} event(s).",
+                ))
+            continue
+        kind = "new_rejected_device" if rejected else "new_device"
+        severity = enforce_policy_severity(
+            "high" if rejected else "medium",
+            policy,
+            event_key=rejection_event.event_key if rejection_event is not None else None,
+            event_family=rejection_event.event_family if rejection_event is not None else None,
+            mac=mac,
+            device_name=normalized_device_name(devices_snapshot.get(mac, {}).get("name"), mac),
+            finding_kind=kind,
+        )
+        if severity == "normal":
+            continue
+        findings.append(Finding(
+            kind=kind,
+            severity=severity,
+            mac=mac,
+            event_count=len(client_events),
+            message=(
+                f"Observed newly identified rejected device {mac}."
+                if rejected else f"Observed newly identified device {mac}."
+            ),
+            metadata={
+                "event_keys": sorted({event.event_key for event in client_events}),
+                "stable_identity": True,
+                "day": min(event.timestamp for event in client_events).date().isoformat(),
+            },
+        ))
+    return findings
+
+
+def detect_router_snapshot_count_anomaly(
+    metrics: RouterSnapshotMetrics,
+    history: Sequence[Any],
+    policy: Dict[str, Any],
+) -> List[Finding]:
+    if not metrics.eligible or len(history) < 3:
+        return []
+    metric_fields = (
+        ("total", "total_clients", metrics.total_clients),
+        ("wifi", "wifi_clients", metrics.wifi_clients),
+        ("wired", "derived_wired_clients", metrics.derived_wired_clients),
+    )
+    deviations: Dict[str, Dict[str, Any]] = {}
+    strongest = "normal"
+    for label, field_name, observed in metric_fields:
+        if observed is None:
+            continue
+        values = [float(row[field_name]) for row in history if row[field_name] is not None]
+        profile = compute_numeric_profile(
+            values, None, 0.0, float(policy["learning"]["stddev_floor"]),
+        )
+        if profile is None:
+            continue
+        tolerance = apply_tolerance(
+            float(observed), profile["range_min"], profile["range_max"],
+        )
+        severity = classify_severity(tolerance)
+        if severity == "normal":
+            continue
+        strongest = max_severity(strongest, severity)
+        deviations[label] = {
+            "observed": observed,
+            "learned_range": [round(profile["range_min"], 2), round(profile["range_max"], 2)],
+            "direction": tolerance["direction"],
+            "history_count": len(values),
+        }
+    if not deviations:
+        return []
+    severity = enforce_policy_severity(
+        strongest, policy, finding_kind="router_client_count_anomaly",
+    )
+    if severity == "normal":
+        return []
+    severity = min_severity(severity, "low")
+    return [Finding(
+        kind="router_client_count_anomaly",
+        severity=severity,
+        mac=None,
+        event_count=1,
+        message="Router client counts differ from the recent snapshot baseline.",
+        metadata={"metrics": deviations, "history_observations": len(history)},
+    )]
+
+
+ROUTER_SECURITY_EVENT_SEVERITY: Dict[Tuple[str, str], str] = {
+    ("firewall", "failure"): "high",
+    ("firewall", "denied"): "high",
+    ("firewall", "rejected"): "high",
+    ("access_control", "denied"): "high",
+    ("access_control", "rejected"): "high",
+    ("auth", "failure"): "medium",
+}
+
+
+def router_security_default_severity(event: Event) -> Optional[str]:
+    action = str(event.structured_evidence.get("action") or "").casefold()
+    return ROUTER_SECURITY_EVENT_SEVERITY.get(((event.component or "").casefold(), action))
+
+
+def is_explicit_router_security_event(event: Event) -> bool:
+    return router_security_default_severity(event) is not None
+
+
+def detect_router_security_events(
+    events: Sequence[Event],
+    capabilities: RouterCapabilities,
+    policy: Dict[str, Any],
+) -> List[Finding]:
+    if not capabilities.router_system_events:
+        return []
+    findings: List[Finding] = []
+    for event in events:
+        action = str(event.structured_evidence.get("action") or "").casefold()
+        default_severity = router_security_default_severity(event)
+        if default_severity is None or not bool(event.occurrence_novel):
+            continue
+        severity = enforce_policy_severity(
+            default_severity,
+            policy,
+            event_key=event.event_key,
+            event_family=event.event_family,
+            finding_kind="router_security_event",
+        )
+        if severity == "normal":
+            continue
+        findings.append(Finding(
+            kind="router_security_event",
+            severity=severity,
+            mac=None,
+            event_count=1,
+            message=f"Router security event: {event.event_key}.",
+            metadata={
+                "day": event.timestamp.date().isoformat(),
+                "event_key": event.event_key,
+                "event_family": event.event_family,
+                "component": event.component,
+                "action": action,
+            },
+        ))
+    return findings
+
+
+def detect_router_behavior(
+    events: Sequence[Event],
+    capabilities: RouterCapabilities,
+    history: RouterBehaviorHistory,
+    policy: Dict[str, Any],
+) -> List[Finding]:
+    if history.eligible_observation_count < 3:
+        return []
+    eligible = [
+        event for event in events
+        if event.actor_scope == "router"
+        and event.clock_trust == "trusted"
+        and bool(event.occurrence_novel)
+        and not is_explicit_router_security_event(event)
+        and (
+            event.event_key in capabilities.supported_event_keys
+            or event.event_family in capabilities.supported_event_families
+        )
+    ]
+    findings: List[Finding] = []
+    for event in eligible:
+        action = str(event.structured_evidence.get("state") or event.structured_evidence.get("action") or "").casefold()
+        stopped_transition = (
+            action in {"stop", "stopped", "disable", "disabled"}
+            and (event.component or "").casefold() in history.running_components
+        )
+        kind = "router_state_change" if stopped_transition else (
+            "router_new_event_type" if event.event_key not in history.event_keys else None
+        )
+        if kind is None:
+            continue
+        severity = enforce_policy_severity(
+            "medium", policy, event_key=event.event_key,
+            event_family=event.event_family, finding_kind=kind,
+        )
+        if severity == "normal":
+            continue
+        findings.append(Finding(
+            kind=kind,
+            severity=severity,
+            mac=None,
+            event_count=1,
+            message=(
+                f"Router component {event.component or 'unknown'} changed to {action}."
+                if stopped_transition
+                else f"Observed a new router event type: {event.event_key}."
+            ),
+            metadata={
+                "day": event.timestamp.date().isoformat(),
+                "event_key": event.event_key,
+                "event_family": event.event_family,
+                "component": event.component,
+                "state": action or None,
+            },
+        ))
+    return findings
+
+
+def partition_router_firmware_learning_events(
+    events: Sequence[Event],
+    previous_observed_at: Optional[datetime],
+    firmware_changed: bool,
+) -> FirmwareLearningPartition:
+    if not firmware_changed or previous_observed_at is None:
+        return FirmwareLearningPartition(current_profile=tuple(events))
+    previous = tuple(event for event in events if event.timestamp < previous_observed_at)
+    later = [event for event in events if event.timestamp >= previous_observed_at]
+    post_upgrade_boot = min(
+        (
+            event.timestamp for event in later
+            if event.event_key == "ROUTER_BOOT"
+            and event.boot_session_id is not None
+        ),
+        default=None,
+    )
+    if post_upgrade_boot is None:
+        return FirmwareLearningPartition(
+            previous_profile=previous,
+            ambiguous=tuple(later),
+        )
+    return FirmwareLearningPartition(
+        previous_profile=previous,
+        ambiguous=tuple(event for event in later if event.timestamp < post_upgrade_boot),
+        current_profile=tuple(event for event in later if event.timestamp >= post_upgrade_boot),
+    )
+
+
+def detect_router_firmware_change(
+    previous_firmware: Optional[str],
+    current_firmware: Optional[str],
+    policy: Dict[str, Any],
+) -> Optional[Finding]:
+    unknown = {None, "", "unknown-firmware", "unknown-legacy-firmware"}
+    if (
+        previous_firmware in unknown
+        or current_firmware in unknown
+        or previous_firmware == current_firmware
+    ):
+        return None
+    severity = enforce_policy_severity(
+        "low", policy, finding_kind="router_firmware_change",
+    )
+    if severity == "normal":
+        return None
+    return Finding(
+        kind="router_firmware_change",
+        severity=severity,
+        mac=None,
+        event_count=0,
+        message="Router firmware changed since the previous known observation.",
+        metadata={
+            "previous_firmware": previous_firmware,
+            "current_firmware": current_firmware,
+        },
+    )
+
+
 def detect_unknown_devices(
     aggregate: Dict[str, Any],
     seed_baseline: Dict[str, Any],
@@ -3014,16 +8767,21 @@ def group_cluster_events(
 def build_subject_behavior_day_stats(
     aggregate: Dict[str, Any],
     policy: Dict[str, Any],
+    router_subject_key: Optional[str] = None,
 ) -> Tuple[Dict[Tuple[str, str, str, str], SubjectBehaviorDayAggregate], Dict[Tuple[str, str], Dict[str, Any]]]:
     subject_stats: Dict[Tuple[str, str, str, str], SubjectBehaviorDayAggregate] = {}
     subject_catalog: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
     for (observed_date, mac, event_key), stat in sorted(aggregate["event_day_stats"].items()):
-        subject_type = "system" if mac == SYSTEM_ACTOR else "device"
-        subject_key = mac
+        subject_type = (
+            "router" if mac == SYSTEM_ACTOR and router_subject_key is not None
+            else ("system" if mac == SYSTEM_ACTOR else "device")
+        )
+        subject_key = router_subject_key if subject_type == "router" else mac
+        assert subject_key is not None
         subject_catalog[(subject_key, subject_type)] = {
             "display_name": aggregate["mac_to_name"].get(mac, mac),
-            "attributes": {"source": subject_type},
+            "attributes": {"source": subject_type, "identity_version": "v1"},
         }
         subject_stats[(observed_date, subject_key, subject_type, event_key)] = SubjectBehaviorDayAggregate(
             observed_date=observed_date,
@@ -3468,6 +9226,12 @@ def build_exclusion_maps(
             subject_key = (day, cluster_name, "group", "DHCP_IP")
             subject_day_exclusions.add(subject_key)
             subject_day_reasons[subject_key] = finding.kind
+        router_subject_key = finding.metadata.get("subject_key")
+        if router_subject_key and finding.metadata.get("subject_type") == "router" and day:
+            for subject_key in aggregate.get("subject_behavior_day_stats", {}):
+                if subject_key[:3] == (day, router_subject_key, "router"):
+                    subject_day_exclusions.add(subject_key)
+                    subject_day_reasons[subject_key] = finding.kind
 
     return (
         device_day_exclusions,
@@ -3486,6 +9250,16 @@ def detect_partial_run(events: List[Event], policy: Dict[str, Any]) -> bool:
     return span < timedelta(hours=float(policy["partial_detection"]["minimum_full_span_hours"]))
 
 
+def detect_partial_run_for_capabilities(
+    events: List[Event],
+    capabilities: RouterCapabilities,
+    policy: Dict[str, Any],
+) -> bool:
+    if capabilities.coverage_mode == "point_snapshot":
+        return False
+    return detect_partial_run(events, policy)
+
+
 def detect_anomalies(
     aggregate: Dict[str, Any],
     seed_baseline: Dict[str, Any],
@@ -3494,6 +9268,10 @@ def detect_anomalies(
     epoch_id: int,
     policy: Dict[str, Any],
     incidents: Optional[Sequence[NetworkIncident]] = None,
+    format_id: str = FORMAT_NETGEAR,
+    capabilities: Optional[RouterCapabilities] = None,
+    events: Optional[Sequence[Event]] = None,
+    additional_findings: Optional[Sequence[Finding]] = None,
 ) -> Dict[str, List[Finding]]:
     findings = {
         "critical": [],
@@ -3501,17 +9279,27 @@ def detect_anomalies(
         "anomalies": [],
         "all": [],
     }
-    all_findings = (
-        network_incident_findings(incidents or [], policy)
-        + detect_unknown_devices(aggregate, seed_baseline, devices_snapshot, policy)
-        + detect_blocked_devices(aggregate, devices_snapshot, policy)
-        + detect_device_metric_anomalies(aggregate, seed_baseline, store, epoch_id, policy)
-        + detect_timing_anomalies(aggregate, seed_baseline, policy)
-        + detect_new_event_types(aggregate, store, epoch_id, policy)
-        + detect_rare_event_activity(aggregate, store, epoch_id, policy)
-        + detect_event_behavior_anomalies(aggregate, store, epoch_id, policy)
-        + detect_cluster_anomalies(aggregate, store, epoch_id, policy)
-    )
+    all_findings = network_incident_findings(incidents or [], policy)
+    if format_id == FORMAT_NETGEAR:
+        all_findings += (
+            detect_unknown_devices(aggregate, seed_baseline, devices_snapshot, policy)
+            + detect_blocked_devices(aggregate, devices_snapshot, policy)
+            + detect_device_metric_anomalies(aggregate, seed_baseline, store, epoch_id, policy)
+            + detect_timing_anomalies(aggregate, seed_baseline, policy)
+            + detect_new_event_types(aggregate, store, epoch_id, policy)
+            + detect_rare_event_activity(aggregate, store, epoch_id, policy)
+            + detect_event_behavior_anomalies(aggregate, store, epoch_id, policy)
+            + detect_cluster_anomalies(aggregate, store, epoch_id, policy)
+        )
+    elif capabilities is not None:
+        current_events = list(events or [])
+        all_findings += detect_stable_client_discovery(
+            current_events, devices_snapshot, capabilities, policy,
+        )
+        all_findings += detect_router_security_events(
+            current_events, capabilities, policy,
+        )
+    all_findings += list(additional_findings or [])
     findings["all"].extend(all_findings)
     for finding in all_findings:
         if finding.severity == "critical":
@@ -3536,7 +9324,10 @@ def finding_day(metadata: Dict[str, Any]) -> str:
 def finding_security_priority(kind: str, metadata: Dict[str, Any]) -> int:
     event_key = metadata.get("event_key")
     event_family = metadata.get("event_family")
-    if kind in {"unknown_device", "blocked_device_activity"}:
+    if kind in {
+        "unknown_device", "blocked_device_activity", "new_rejected_device",
+        "new_device", "router_security_event",
+    }:
         return 2
     if event_key == "WLAN_ACCESS_REJECTED" or event_family == "WLAN_REJECTED":
         return 2
@@ -3910,9 +9701,180 @@ def build_priority_findings(findings: Dict[str, Any]) -> List[Dict[str, Any]]:
     return prioritized
 
 
+REPORT_CHECKS = (
+    "duration_based_partial",
+    "stable_client_discovery",
+    "current_rejected_client",
+    "device_dhcp_metrics",
+    "device_event_volume",
+    "device_behavior",
+    "cluster_visibility",
+    "confirmed_reset",
+    "inferred_reset",
+    "router_inventory",
+    "router_security",
+    "router_behavior",
+    "snapshot_counts",
+)
+
+
+def build_router_report_sections(
+    parsed: ParsedRouterLog,
+    router_label: str,
+    events: Sequence[Event],
+    findings: Dict[str, Any],
+    snapshot_history: Sequence[sqlite3.Row],
+    router_behavior_history_count: int,
+    policy: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Project already-computed router evidence into stable, renderer-neutral sections."""
+    metrics = parsed.snapshot_metrics or RouterSnapshotMetrics(
+        exclusion_reason="snapshot_counts_unavailable"
+    )
+    finding_entries = findings.get("all", [])
+    security_findings = [
+        item for item in finding_entries if item.get("kind") == "router_security_event"
+    ]
+    eligibility_evidence = {
+        **parsed.coverage_stats,
+        "snapshot_counts_valid": bool(metrics.eligible),
+        "explicit_security_mapping": bool(security_findings) or any(
+            is_explicit_router_security_event(event) for event in events
+        ),
+    }
+    checks = {
+        name: asdict(detector_eligibility(name, parsed.capabilities, events, eligibility_evidence))
+        for name in REPORT_CHECKS
+    }
+    new_device_findings = [
+        item for item in finding_entries
+        if item.get("kind") in {"new_device", "new_rejected_device"}
+    ]
+    router_change_findings = [
+        item for item in finding_entries
+        if item.get("kind") in {
+            "router_firmware_change", "router_new_event_type", "router_state_change",
+            "router_client_count_anomaly",
+        }
+    ]
+    snapshot_change_findings = [
+        item for item in finding_entries
+        if item.get("kind") == "router_client_count_anomaly"
+    ]
+    if parsed.capabilities.snapshot_buffer_semantic_dedup:
+        novel_count = sum(
+            event.occurrence_digest is not None and event.occurrence_novel is True
+            for event in events
+        )
+        repeated_count = sum(
+            event.occurrence_digest is not None and event.occurrence_repeated is True
+            for event in events
+        )
+        report_only_count = sum(event.occurrence_digest is None for event in events)
+    else:
+        novel_count = len(events)
+        repeated_count = 0
+        report_only_count = 0
+
+    learned_ranges: Dict[str, List[float]] = {}
+    for key, column in (
+        ("total", "total_clients"),
+        ("wifi", "wifi_clients"),
+        ("wired", "derived_wired_clients"),
+    ):
+        values = [int(row[column]) for row in snapshot_history if row[column] is not None]
+        profile = compute_numeric_profile(
+            values,
+            None,
+            0.0,
+            float(policy["learning"]["stddev_floor"]),
+        )
+        if profile is not None:
+            learned_ranges[key] = [
+                round(profile["range_min"], 2),
+                round(profile["range_max"], 2),
+            ]
+
+    boot_warnings = sorted({
+        warning
+        for candidate in parsed.boot_candidates
+        for warning in candidate.warnings
+    })
+    return {
+        "router": {
+            "label": router_label,
+            "vendor": parsed.identity.canonical_vendor,
+            "model": parsed.model,
+            "hardware": parsed.hardware,
+            "firmware": parsed.firmware,
+            "format": next(
+                (cli_name for cli_name, format_id in CLI_FORMAT_TO_ID.items()
+                 if format_id == parsed.format_id),
+                parsed.format_id,
+            ),
+            "export_time": (
+                parsed.export_timestamp.isoformat()
+                if parsed.export_timestamp is not None else None
+            ),
+        },
+        "availability": {
+            "capabilities": parsed.capabilities.to_json(),
+            "checks": checks,
+        },
+        "snapshot": {
+            "counts": {
+                "total": metrics.total_clients,
+                "wifi": metrics.wifi_clients,
+                "wired": metrics.derived_wired_clients,
+            },
+            "eligible": metrics.eligible,
+            "unavailable_reason": metrics.exclusion_reason,
+            "history_count": len(snapshot_history),
+            "learned_ranges": learned_ranges,
+            "change_findings": snapshot_change_findings,
+        },
+        "occurrences": {
+            "body_count": len(events),
+            "novel_count": novel_count,
+            "repeated_count": repeated_count,
+            "report_only_count": report_only_count,
+            "fully_repeated": bool(
+                parsed.capabilities.snapshot_buffer_semantic_dedup
+                and events and novel_count == 0 and report_only_count == 0
+            ),
+        },
+        "router_activity": {
+            "system_event_count": sum(event.actor_scope == "router" for event in events),
+            "security_finding_count": len(security_findings),
+            "security_findings": security_findings,
+            "new_device_finding_count": len(new_device_findings),
+            "new_device_findings": new_device_findings,
+            "change_finding_count": len(router_change_findings),
+            "change_findings": router_change_findings,
+            "behavior_history_count": router_behavior_history_count,
+        },
+        "clock": {
+            "segments": [asdict(segment) for segment in parsed.clock_segments],
+            "boot_candidate_count": len(parsed.boot_candidates),
+            "resolved_boot_session_count": len({
+                event.boot_session_id for event in events if event.boot_session_id is not None
+            }),
+            "boot_resolution_warnings": boot_warnings,
+            "warnings": list(parsed.warnings),
+        },
+        "coverage": {
+            **parsed.coverage_stats,
+            "parsed_events": parsed.parse_stats.parsed_events,
+            "ignored_lines": parsed.parse_stats.ignored_lines,
+            "malformed_lines": parsed.parse_stats.malformed_lines,
+            "export_noise_lines": parsed.parse_stats.export_noise_lines,
+        },
+    }
+
+
 def build_report_data(
     args: argparse.Namespace,
-    db_path: Path,
+    db_path: Optional[Path],
     parse_stats: ParseStats,
     aggregate: Dict[str, Any],
     findings: Dict[str, List[Finding]],
@@ -3925,17 +9887,18 @@ def build_report_data(
     incidents: Optional[Sequence[NetworkIncident]] = None,
     analyzed_event_count: Optional[int] = None,
     reprocessed_run_id: Optional[int] = None,
+    router_sections: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     findings_dict = findings_to_dict(findings, aggregate)
     incident_list = list(incidents or [])
     raw_event_count = len(aggregate.get("events", []))
     explained_event_count = sum(incident.explained_event_count for incident in incident_list)
-    return {
+    report = {
         "inputs": {
             "logfile": str(Path(args.logfile).expanduser().resolve()) if args.logfile else None,
             "baseline": str(Path(args.baseline).expanduser().resolve()) if args.baseline else None,
             "config": str(Path(args.config).expanduser().resolve()) if args.config else None,
-            "db": str(db_path.resolve()),
+            "db": str(db_path.resolve()) if db_path is not None else None,
         },
         "state": {
             "epoch_id": epoch_id,
@@ -3963,6 +9926,9 @@ def build_report_data(
         "priority_findings": build_priority_findings(findings_dict),
         "device_summary": summarize_devices(aggregate),
     }
+    if router_sections:
+        report.update(router_sections)
+    return report
 
 
 def render_key_value_lines(items: Sequence[Tuple[str, Any]]) -> List[str]:
@@ -3971,6 +9937,9 @@ def render_key_value_lines(items: Sequence[Tuple[str, Any]]) -> List[str]:
 
 
 def run_persistence_text(report: Dict[str, Any]) -> str:
+    persistence = report.get("persistence")
+    if isinstance(persistence, dict) and not persistence.get("available", True):
+        return f"Unavailable ({persistence.get('reason') or 'not persisted'})"
     reprocessed_run_id = report.get("state", {}).get("reprocessed_run_id")
     if reprocessed_run_id is not None:
         return f"Reprocessed (replaced run {reprocessed_run_id})"
@@ -4411,6 +10380,115 @@ def group_device_summary(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]
     )
 
 
+def has_extended_router_report(report: Dict[str, Any]) -> bool:
+    return report.get("router", {}).get("format") in {FORMAT_TP_LINK_ARCHER, "tp-link-archer"}
+
+
+def unavailable_check_text(report: Dict[str, Any]) -> str:
+    unavailable = [
+        f"{name} ({item['unavailable_reason']})"
+        for name, item in report.get("availability", {}).get("checks", {}).items()
+        if not item.get("available")
+    ]
+    return ", ".join(unavailable) if unavailable else "None"
+
+
+def router_report_summary_items(report: Dict[str, Any]) -> List[Tuple[str, Any]]:
+    router = report["router"]
+    snapshot = report["snapshot"]
+    counts = snapshot["counts"]
+    occurrences = report["occurrences"]
+    activity = report["router_activity"]
+    clock = report["clock"]
+    coverage = report["coverage"]
+    security_severities = [
+        item["severity"].upper() for item in activity.get("security_findings", [])
+    ]
+    checks = report.get("availability", {}).get("checks", {})
+    snapshot_assessment = "unavailable"
+    if snapshot["eligible"]:
+        snapshot_assessment = (
+            "normal" if not snapshot.get("change_findings")
+            else "changed (" + ", ".join(
+                item["severity"].upper() for item in snapshot["change_findings"]
+            ) + ")"
+        )
+    security_value = "unavailable"
+    if checks.get("router_security", {}).get("available"):
+        security_value = (
+            f"{activity['security_finding_count']} ({', '.join(security_severities)})"
+            if security_severities else "0 (normal)"
+        )
+    new_device_value = "unavailable"
+    if checks.get("stable_client_discovery", {}).get("available"):
+        new_device_value = (
+            str(activity["new_device_finding_count"])
+            if activity["new_device_finding_count"] else "0 (normal)"
+        )
+    clock_segments = "; ".join(
+        (
+            f"{segment['segment_id']}: {segment['clock_trust']} "
+            f"(sequence "
+            f"{segment.get('start_sequence') if segment.get('start_sequence') is not None else 'n/a'}-"
+            f"{segment.get('end_sequence') if segment.get('end_sequence') is not None else 'n/a'})"
+        )
+        for segment in clock.get("segments", [])
+    ) or "None"
+    boot_warnings = ", ".join(clock.get("boot_resolution_warnings", [])) or "None"
+    parser_warnings = ", ".join(clock.get("warnings", [])) or "None"
+    items: List[Tuple[str, Any]] = [
+        ("Router", router["label"]),
+        ("Router model", router.get("model") or "unavailable"),
+        ("Hardware", router.get("hardware") or "unavailable"),
+        ("Firmware", router.get("firmware") or "unavailable"),
+        ("Format", router["format"]),
+        ("Export time", router.get("export_time") or "unavailable"),
+        ("Total clients", counts.get("total") if snapshot["eligible"] else "unavailable"),
+        ("Wi-Fi clients", counts.get("wifi") if snapshot["eligible"] else "unavailable"),
+        ("Wired clients", counts.get("wired") if snapshot["eligible"] else "unavailable"),
+        ("Snapshot assessment", snapshot_assessment),
+        ("Snapshot history", snapshot["history_count"]),
+        ("Novel occurrences", occurrences["novel_count"]),
+        ("Repeated occurrences", occurrences["repeated_count"]),
+        ("Report-only occurrences", occurrences["report_only_count"]),
+        ("Router system events", activity["system_event_count"]),
+        ("Router security findings", security_value),
+        ("New device findings", new_device_value),
+        ("Unavailable checks", unavailable_check_text(report)),
+        ("Clock segments", clock_segments),
+        (
+            "Boot resolution",
+            f"{clock['resolved_boot_session_count']} resolved / "
+            f"{clock['boot_candidate_count']} candidate(s)",
+        ),
+        ("Boot warnings", boot_warnings),
+        ("Parser warnings", parser_warnings),
+        (
+            "Coverage records",
+            f"body {coverage.get('body_records', 0)}, "
+            f"trusted {coverage.get('trusted_records', 0)}, "
+            f"untrusted {coverage.get('untrusted_records', 0)}, "
+            f"timing-eligible {coverage.get('timing_eligible_records', 0)}",
+        ),
+        (
+            "Coverage span",
+            f"{coverage.get('run_span_start') or 'unavailable'} to "
+            f"{coverage.get('run_span_end') or 'unavailable'}",
+        ),
+        (
+            "Coverage lines",
+            f"parsed {coverage['parsed_events']}, ignored {coverage['ignored_lines']}, "
+            f"malformed {coverage['malformed_lines']}, "
+            f"export-noise {coverage['export_noise_lines']}",
+        ),
+        ("LAN coverage", json_dumps(coverage.get("lan")) if coverage.get("lan") else "unavailable"),
+        ("WAN coverage", json_dumps(coverage.get("wan")) if coverage.get("wan") else "unavailable"),
+    ]
+    if occurrences["fully_repeated"]:
+        items.append(("Snapshot body", "All body occurrences were already seen"))
+    return items
+
+
 def render_text_report(report: Dict[str, Any]) -> str:
     width = min(max(shutil.get_terminal_size((110, 24)).columns, 80), 120)
     parse_stats = report["parse_stats"]
@@ -4438,6 +10516,9 @@ def render_text_report(report: Dict[str, Any]) -> str:
     if parse_stats.get("malformed_samples"):
         summary_lines.append("Malformed Samples:")
         summary_lines.extend(f"  - {sample}" for sample in parse_stats["malformed_samples"])
+    if has_extended_router_report(report):
+        summary_lines.append("")
+        summary_lines.extend(render_key_value_lines(router_report_summary_items(report)))
 
     lines: List[str] = [
         "Network Analysis Report",
@@ -4551,6 +10632,12 @@ def render_markdown_report(report: Dict[str, Any]) -> str:
         lines.append("### Malformed Samples")
         lines.append("")
         lines.extend(f"- `{sample}`" for sample in report["parse_stats"]["malformed_samples"])
+        lines.append("")
+
+    if has_extended_router_report(report):
+        lines.append("## Router Snapshot")
+        lines.append("")
+        lines.extend(f"- {label}: {value}" for label, value in router_report_summary_items(report))
         lines.append("")
 
     lines.append("## Finding Index")
@@ -4691,6 +10778,16 @@ def render_html_report(report: Dict[str, Any]) -> str:
         f"<li><code>{esc(key)}</code>: {value}</li>"
         for key, value in sorted(report["risk_breakdown"].items())
     ) or "<li>None</li>"
+    router_summary_html = ""
+    if has_extended_router_report(report):
+        router_rows = "".join(
+            f"<dt>{esc(label)}</dt><dd>{esc(value)}</dd>"
+            for label, value in router_report_summary_items(report)
+        )
+        router_summary_html = (
+            "<section><h2>Router Snapshot</h2>"
+            f"<dl>{router_rows}</dl></section>"
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -4750,6 +10847,7 @@ def render_html_report(report: Dict[str, Any]) -> str:
         <dt>Export Noise</dt><dd>{report['parse_stats']['export_noise_lines']}</dd>
       </dl>
     </section>
+    {router_summary_html}
     {render_finding_index()}
     {render_grouped_findings()}
     <section>
@@ -4820,88 +10918,205 @@ def persist_analysis(
     devices_snapshot: Dict[str, Dict[str, Any]],
     is_partial: bool,
     incidents: Optional[Sequence[NetworkIncident]] = None,
+    router_instance_id: Optional[int] = None,
+    format_id: str = FORMAT_NETGEAR,
+    capabilities: Optional[RouterCapabilities] = None,
+    export_timestamp: Optional[str] = None,
+    reserved_run_id: Optional[int] = None,
 ) -> Tuple[bool, Optional[int]]:
-    existing_run = store.get_run_by_hash(run_hash)
-    if existing_run is not None:
-        return True, existing_run["id"]
+    caller_owns_transaction = store.conn.in_transaction
+    savepoint = "persist_analysis_write_set"
+    if caller_owns_transaction:
+        store.conn.execute(f"SAVEPOINT {savepoint}")
+    else:
+        store.conn.execute("BEGIN IMMEDIATE")
+    scope_active = True
+    insert_integrity_error: Optional[sqlite3.IntegrityError] = None
 
-    (
-        device_day_exclusions,
-        device_day_reasons,
-        event_day_exclusions,
-        event_day_reasons,
-        subject_day_exclusions,
-        subject_day_reasons,
-    ) = build_exclusion_maps(
-        aggregate,
-        findings,
-        devices_snapshot,
-        is_partial,
-    )
+    def finish_scope() -> None:
+        nonlocal scope_active
+        if caller_owns_transaction:
+            store.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        else:
+            store.conn.commit()
+        scope_active = False
+
+    def rollback_scope() -> None:
+        nonlocal scope_active
+        if not scope_active:
+            return
+        if caller_owns_transaction:
+            store.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            store.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        elif store.conn.in_transaction:
+            store.conn.rollback()
+        scope_active = False
+
     try:
-        run_id = store.insert_run(
-            epoch_id=epoch_id,
-            policy_profile_id=policy_profile_id,
-            file_hash=run_hash,
-            source_path=logfile_path,
-            parse_stats=parse_stats,
-            observation_start=aggregate["observation_range"]["start"],
-            observation_end=aggregate["observation_range"]["end"],
-            observed_dates=aggregate["observed_dates"],
-            risk_score=score,
-            status=status,
-            is_partial=is_partial,
+        resolved_router_id = (
+            router_instance_id
+            if router_instance_id is not None
+            else store.get_or_create_legacy_netgear_router_instance()
         )
-    except sqlite3.IntegrityError:
-        existing_run = store.get_run_by_hash(run_hash)
-        return True, existing_run["id"] if existing_run is not None else None
+        existing_run = store.get_run_by_hash(resolved_router_id, run_hash)
+        if existing_run is not None and reserved_run_id is None:
+            finish_scope()
+            return True, existing_run["id"]
 
-    for (observed_date, mac), stat in aggregate["device_day_stats"].items():
-        store.upsert_device(
-            mac=mac,
-            name=aggregate["mac_to_name"].get(mac),
-            status=devices_snapshot.get(mac, {}).get("status"),
-            connection_type=devices_snapshot.get(mac, {}).get("connection_type"),
-            source=devices_snapshot.get(mac, {}).get("source") or "observed",
-            seen_at=stat.last_seen.isoformat() if stat.last_seen else utcnow_iso(),
+        (
+            device_day_exclusions,
+            device_day_reasons,
+            event_day_exclusions,
+            event_day_reasons,
+            subject_day_exclusions,
+            subject_day_reasons,
+        ) = build_exclusion_maps(
+            aggregate,
+            findings,
+            devices_snapshot,
+            is_partial,
         )
-        store.insert_device_daily_stat(
-            run_id,
-            epoch_id,
-            stat,
-            included=(observed_date, mac) not in device_day_exclusions,
-            exclusion_reason=device_day_reasons.get((observed_date, mac)),
-        )
+        try:
+            run_id = reserved_run_id
+            if run_id is None:
+                run_id = store.insert_run(
+                    epoch_id=epoch_id,
+                    policy_profile_id=policy_profile_id,
+                    file_hash=run_hash,
+                    source_path=logfile_path,
+                    parse_stats=parse_stats,
+                    observation_start=aggregate["observation_range"]["start"],
+                    observation_end=aggregate["observation_range"]["end"],
+                    observed_dates=aggregate["observed_dates"],
+                    risk_score=score,
+                    status=status,
+                    is_partial=is_partial,
+                    router_instance_id=resolved_router_id,
+                    format_id=format_id,
+                    export_timestamp=export_timestamp,
+                    capabilities=capabilities,
+                )
+            else:
+                final_observation_start = aggregate["observation_range"]["start"]
+                final_observation_end = aggregate["observation_range"]["end"]
+                store.conn.execute(
+                    """
+                    UPDATE runs
+                    SET observation_start = ?, observation_end = ?, observed_dates_json = ?,
+                        parsed_event_count = ?, malformed_line_count = ?,
+                        export_noise_line_count = ?, risk_score = ?, status = ?, is_partial = ?
+                    WHERE id = ? AND router_instance_id = ?
+                    """,
+                    (
+                        final_observation_start,
+                        final_observation_end,
+                        json.dumps(aggregate["observed_dates"]),
+                        parse_stats.parsed_events,
+                        parse_stats.malformed_lines,
+                        parse_stats.export_noise_lines,
+                        score,
+                        status,
+                        1 if is_partial else 0,
+                        run_id,
+                        resolved_router_id,
+                    ),
+                )
+                if format_id == FORMAT_NETGEAR:
+                    store.conn.execute(
+                        """
+                        UPDATE router_metadata_observations
+                        SET observed_at = COALESCE(?, ?, observed_at)
+                        WHERE run_id = ? AND router_instance_id = ?
+                        """,
+                        (
+                            final_observation_end,
+                            final_observation_start,
+                            run_id,
+                            resolved_router_id,
+                        ),
+                    )
+        except sqlite3.IntegrityError as exc:
+            insert_integrity_error = exc
+            raise
 
-    for key, stat in aggregate["event_day_stats"].items():
-        store.insert_device_event_daily_stat(
-            run_id,
-            epoch_id,
-            stat,
-            included=key not in event_day_exclusions,
-            exclusion_reason=event_day_reasons.get(key),
-        )
+        for (observed_date, mac), stat in aggregate["device_day_stats"].items():
+            store.upsert_device(
+                mac=mac,
+                name=aggregate["mac_to_name"].get(mac),
+                status=devices_snapshot.get(mac, {}).get("status"),
+                connection_type=devices_snapshot.get(mac, {}).get("connection_type"),
+                source=devices_snapshot.get(mac, {}).get("source") or "observed",
+                seen_at=stat.last_seen.isoformat() if stat.last_seen else utcnow_iso(),
+            )
+            store.insert_device_daily_stat(
+                run_id,
+                epoch_id,
+                stat,
+                included=(observed_date, mac) not in device_day_exclusions,
+                exclusion_reason=device_day_reasons.get((observed_date, mac)),
+            )
 
-    for (subject_key, subject_type), subject in aggregate.get("behavior_subjects", {}).items():
-        store.upsert_behavior_subject(
-            subject_key=subject_key,
-            subject_type=subject_type,
-            display_name=subject.get("display_name"),
-            attributes=subject.get("attributes"),
-        )
+        for key, stat in aggregate["event_day_stats"].items():
+            store.insert_device_event_daily_stat(
+                run_id,
+                epoch_id,
+                stat,
+                included=key not in event_day_exclusions,
+                exclusion_reason=event_day_reasons.get(key),
+            )
 
-    for key, stat in aggregate.get("subject_behavior_day_stats", {}).items():
-        store.insert_subject_behavior_daily_stat(
-            run_id,
-            epoch_id,
-            stat,
-            included=key not in subject_day_exclusions,
-            exclusion_reason=subject_day_reasons.get(key),
+        for (subject_key, subject_type), subject in aggregate.get("behavior_subjects", {}).items():
+            store.upsert_behavior_subject(
+                subject_key=subject_key,
+                subject_type=subject_type,
+                display_name=subject.get("display_name"),
+                attributes=subject.get("attributes"),
+            )
+
+        for key, stat in aggregate.get("subject_behavior_day_stats", {}).items():
+            store.insert_subject_behavior_daily_stat(
+                run_id,
+                epoch_id,
+                stat,
+                included=key not in subject_day_exclusions,
+                exclusion_reason=subject_day_reasons.get(key),
+            )
+        for incident in incidents or []:
+            store.insert_network_incident(run_id, incident)
+
+        store._validate_v4_data_relationships()
+        if store.conn.execute("PRAGMA foreign_key_check").fetchall():
+            raise RuntimeError("Persisted analysis contains a foreign-key violation")
+        finish_scope()
+        return False, run_id
+    except BaseException as exc:
+        rollback_scope()
+        is_scoped_run_duplicate = (
+            insert_integrity_error is exc
+            and getattr(exc, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE"
+            and str(exc) == (
+                "UNIQUE constraint failed: runs.router_instance_id, runs.file_hash"
+            )
         )
-    for incident in incidents or []:
-        store.insert_network_incident(run_id, incident)
-    store.commit()
-    return False, run_id
+        if is_scoped_run_duplicate:
+            existing_run = store.get_run_by_hash(resolved_router_id, run_hash)
+            if existing_run is not None:
+                existing_run_id = int(existing_run["id"])
+                required_children = store.conn.execute(
+                    """
+                    SELECT
+                      EXISTS(
+                        SELECT 1 FROM router_metadata_observations WHERE run_id = ?
+                      ),
+                      EXISTS(
+                        SELECT 1 FROM router_snapshot_metrics WHERE run_id = ?
+                      )
+                    """,
+                    (existing_run_id, existing_run_id),
+                ).fetchone()
+                if tuple(required_children) == (1, 1):
+                    return True, existing_run_id
+        raise
 
 
 def export_baseline_document(
@@ -5006,8 +11221,15 @@ def handle_management_commands(args: argparse.Namespace, store: StateStore) -> b
         handled = True
 
     if args.import_config:
-        router_config = load_router_security_config(Path(args.import_config).expanduser())
-        imported = store.import_config(Path(args.import_config).expanduser(), router_config)
+        config_path = Path(args.import_config).expanduser()
+        router_config, source_digest = load_router_security_config_snapshot(config_path)
+        if source_digest is None:
+            raise SystemExit(f"Router security config not found: {config_path}")
+        imported = store.import_config(
+            config_path,
+            router_config,
+            source_digest=source_digest,
+        )
         print(f"Imported {imported} config device rows from {args.import_config}")
         handled = True
 
@@ -5026,6 +11248,144 @@ def handle_management_commands(args: argparse.Namespace, store: StateStore) -> b
     return handled
 
 
+def has_management_command(args: argparse.Namespace) -> bool:
+    return any(
+        getattr(args, name, None)
+        for name in (
+            "import_policy", "export_policy", "import_baseline", "export_baseline", "import_config",
+        )
+    )
+
+
+def has_stateful_log_request(args: argparse.Namespace) -> bool:
+    if has_management_command(args) or args.baseline or args.config or args.reprocess:
+        return True
+    inferred_config = infer_config_path(args)
+    return inferred_config is not None and inferred_config.exists()
+
+
+def validate_router_instance_override(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized or any(unicodedata.category(character) == "Cc" for character in normalized):
+        raise SystemExit("--router-instance must be nonempty and contain no control characters.")
+    return normalized
+
+
+def router_instance_override_key(canonical_vendor: str, value: str) -> str:
+    """Return the opaque, vendor-scoped identity for a validated local override."""
+    normalized_value = validate_router_instance_override(value)
+    assert normalized_value is not None
+    normalized_vendor = " ".join(canonical_vendor.strip().split()).casefold()
+    payload = "router-instance-override:v1\0" + normalized_vendor + "\0" + normalized_value
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def tp_link_router_instance_key(lan_mac: str) -> str:
+    normalized_mac = normalize_mac(lan_mac)
+    if not is_identity_grade_mac(normalized_mac):
+        raise ValueError("TP-Link persistent identity requires a valid unicast LAN MAC")
+    return hashlib.sha256(
+        f"router-instance:v1\0tp-link\0{normalized_mac}".encode("utf-8")
+    ).hexdigest()
+
+
+def router_instance_key_for_parse(
+    parsed: ParsedRouterLog,
+    router_instance_override: Optional[str],
+) -> str:
+    if router_instance_override is not None:
+        return router_instance_override_key(
+            parsed.identity.canonical_vendor,
+            router_instance_override,
+        )
+    if parsed.format_id == FORMAT_NETGEAR:
+        return LEGACY_NETGEAR_INSTANCE_KEY
+    if parsed.format_id == FORMAT_TP_LINK_ARCHER and parsed.identity.lan_mac is not None:
+        return tp_link_router_instance_key(parsed.identity.lan_mac)
+    raise ValueError("No stable router identity is available")
+
+
+def default_router_label(parsed: ParsedRouterLog, instance_key: str) -> str:
+    vendor = "TP-Link" if parsed.identity.canonical_vendor == "tp-link" else "NETGEAR"
+    model = " ".join((parsed.model or "Router").split())
+    return f"{vendor} {model} {instance_key[:8]}"
+
+
+def emit_nonpersistent_report(
+    args: argparse.Namespace,
+    parsed: ParsedRouterLog,
+    reason: str = "no_stable_router_identity",
+) -> None:
+    """Report parsed current evidence without opening state for an identity-less adapter."""
+    if args.report or args.report_dir:
+        raise SystemExit("Non-persistent reports do not support --report or --report-dir.")
+    vendor_label = "TP-Link" if parsed.identity.canonical_vendor == "tp-link" else "NETGEAR"
+    router_label = (
+        args.router_label.strip()
+        if args.router_label and args.router_label.strip()
+        else f"{vendor_label} {' '.join((parsed.model or 'Router').split())} (non-persistent)"
+    )
+    aggregate = aggregate_events(parsed.events, {"devices": {}}, {})
+    current_detection_events = [
+        replace(event, occurrence_novel=True, occurrence_repeated=False)
+        for event in parsed.events
+    ]
+    current_findings = detect_router_security_events(
+        current_detection_events,
+        parsed.capabilities,
+        copy.deepcopy(DEFAULT_POLICY),
+    )
+    findings: Dict[str, List[Finding]] = {
+        "critical": [], "anomalies": [], "observations": [], "all": current_findings,
+    }
+    for finding in current_findings:
+        if finding.severity == "critical":
+            findings["critical"].append(finding)
+        elif finding.severity == "low":
+            findings["observations"].append(finding)
+        else:
+            findings["anomalies"].append(finding)
+    score, status, breakdown = compute_risk_score(findings, DEFAULT_POLICY)
+    projected_findings = findings_to_dict(findings, aggregate)
+    router_sections = build_router_report_sections(
+        parsed,
+        router_label,
+        parsed.events,
+        projected_findings,
+        [],
+        0,
+        DEFAULT_POLICY,
+    )
+    report = build_report_data(
+        args=args,
+        db_path=None,
+        parse_stats=parsed.parse_stats,
+        aggregate=aggregate,
+        findings=findings,
+        score=score,
+        status=status,
+        breakdown=breakdown,
+        deduplicated=False,
+        epoch_id=None,
+        policy_profile_id=None,
+        analyzed_event_count=len(parsed.events),
+        router_sections=router_sections,
+    )
+    report.update({
+        "format_id": parsed.format_id,
+        "router_label": router_label,
+        "event_count": len(parsed.events),
+        "persistence": {"available": False, "reason": reason},
+        "warnings": parsed.warnings,
+    })
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print(render_text_report(report))
+
+
 def is_in_windows(timestamp: datetime, windows: Sequence[Dict[str, Any]]) -> bool:
     hour = timestamp.hour + (timestamp.minute / 60.0)
     for window in windows:
@@ -5042,7 +11402,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     explicit_report = bool(args.report)
     runtime_paths = build_runtime_paths()
     db_path = Path(args.db).expanduser() if args.db else runtime_paths.db
+    stateful_log_requested = has_stateful_log_request(args) if args.logfile is not None else False
+    parsed: Optional[ParsedRouterLog] = None
+    logfile_path: Optional[Path] = None
+    raw_bytes: Optional[bytes] = None
+
+    if args.logfile is not None:
+        logfile_path = Path(args.logfile).expanduser()
+        raw_bytes, log_text = load_log_content(logfile_path)
+        parsed = parse_router_log(log_text, source=str(logfile_path), requested_format=args.format)
+        router_instance_override = validate_router_instance_override(args.router_instance)
+        if router_instance_override is not None:
+            # The digest is deliberately the only override representation allowed beyond this scope.
+            router_instance_override_key(parsed.identity.canonical_vendor, router_instance_override)
+        if not parsed.identity.persistence_safe_without_override and router_instance_override is None:
+            if stateful_log_requested:
+                raise SystemExit(
+                    "Cannot combine stateful operations with a log that has no stable router identity. "
+                    "Provide --router-instance or run the non-persistent report separately."
+                )
+            emit_nonpersistent_report(args, parsed)
+            return 0
     store = StateStore(db_path)
+    log_transaction_active = False
     try:
         handled = handle_management_commands(args, store)
         if handled and not args.logfile:
@@ -5053,8 +11435,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         config_path = infer_config_path(args)
         if config_path and config_path.exists():
-            router_config = load_router_security_config(config_path)
-            store.import_config(config_path, router_config)
+            router_config, source_digest = load_router_security_config_snapshot(config_path)
+            if source_digest is None:
+                raise SystemExit(f"Router security config not found: {config_path}")
+            store.import_config(
+                config_path,
+                router_config,
+                source_digest=source_digest,
+            )
 
         epoch = store.get_active_epoch()
         policy, policy_row = store.load_effective_policy()
@@ -5076,28 +11464,235 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
 
         seed_baseline = store.load_seed_baseline(epoch["id"])
-        devices_snapshot = store.load_devices_snapshot()
-        logfile_path = Path(args.logfile).expanduser()
-        raw_bytes, log_text = load_log_content(logfile_path)
+        assert logfile_path is not None
+        assert raw_bytes is not None
+        assert parsed is not None
+        store.conn.execute("BEGIN IMMEDIATE")
+        log_transaction_active = True
+        router_instance_id = store.resolve_router_instance(
+            parsed,
+            router_instance_override=validate_router_instance_override(args.router_instance),
+            router_label=args.router_label,
+        )
         run_hash = sha256_bytes(raw_bytes)
-        events, parse_stats = parse_log_text(log_text, source=str(logfile_path))
+        events, parse_stats = parsed.events, parsed.parse_stats
         reprocessed_run_id: Optional[int] = None
-        existing_run = store.get_run_by_hash(run_hash)
+        reserved_run_id: Optional[int] = None
+        affected_state: Dict[str, Any] = {
+            "router_instance_ids": set(), "device_macs": set(), "subjects": set(),
+        }
+        existing_run = store.get_run_by_hash(router_instance_id, run_hash)
         if args.reprocess and existing_run is not None:
             reprocessed_run_id = int(existing_run["id"])
-            if not store.delete_run(reprocessed_run_id):
+            removed = store.remove_run_owned_evidence(reprocessed_run_id)
+            if removed is None:
                 raise RuntimeError(f"Failed to prepare run {reprocessed_run_id} for reprocessing")
+            affected_state = removed
+            store.promote_surviving_occurrence_learning(affected_state)
+            store.refresh_derived_state(affected_state)
+            existing_run = None
+        devices_snapshot = store.load_devices_snapshot()
+        if existing_run is None:
+            reserved_run_id = store.insert_run(
+                epoch_id=epoch["id"],
+                policy_profile_id=policy_row["id"] if policy_row else None,
+                file_hash=run_hash,
+                source_path=logfile_path,
+                parse_stats=parse_stats,
+                observation_start=None,
+                observation_end=None,
+                observed_dates=[],
+                risk_score=0,
+                status="Clean",
+                is_partial=False,
+                router_instance_id=router_instance_id,
+                format_id=parsed.format_id,
+                export_timestamp=(
+                    parsed.export_timestamp.isoformat()
+                    if parsed.export_timestamp is not None
+                    else None
+                ),
+                capabilities=parsed.capabilities,
+                run_id=reprocessed_run_id,
+            )
+        if parsed.capabilities.snapshot_buffer_semantic_dedup and existing_run is None:
+            assert reserved_run_id is not None
+            store.persist_router_provenance(
+                reserved_run_id,
+                router_instance_id,
+                parsed,
+            )
+            events = parsed.events
+        elif parsed.capabilities.snapshot_buffer_semantic_dedup and existing_run is not None:
+            events = store.collapse_existing_run_events(
+                int(existing_run["id"]),
+                router_instance_id,
+                parsed,
+            )
         aggregate = aggregate_events(events, seed_baseline, devices_snapshot)
-        incidents = detect_network_incidents(events, seed_baseline, devices_snapshot, policy)
-        subject_behavior_day_stats, behavior_subjects = build_subject_behavior_day_stats(aggregate, policy)
+        trusted_temporal_aggregate = aggregate
+        if parsed.format_id != FORMAT_NETGEAR:
+            trusted_temporal_aggregate = aggregate_events(
+                [event for event in events if event.clock_trust == "trusted"],
+                seed_baseline,
+                devices_snapshot,
+            )
+            aggregate["observation_range"] = trusted_temporal_aggregate["observation_range"]
+            aggregate["observed_dates"] = trusted_temporal_aggregate["observed_dates"]
+        if parsed.format_id == FORMAT_NETGEAR:
+            incidents = detect_network_incidents(events, seed_baseline, devices_snapshot, policy)
+        else:
+            coverage_evidence = parsed.coverage_stats
+            confirmed_reset = detector_eligibility(
+                "confirmed_reset", parsed.capabilities, events, coverage_evidence,
+            ).available
+            inferred_reset = detector_eligibility(
+                "inferred_reset", parsed.capabilities, events, coverage_evidence,
+            ).available
+            incidents = (
+                detect_network_incidents(events, seed_baseline, devices_snapshot, policy)
+                if confirmed_reset or inferred_reset
+                else []
+            )
+        if parsed.capabilities.snapshot_buffer_semantic_dedup:
+            incident_novelty = {
+                event.incident_id
+                for event in events
+                if event.incident_id is not None and event.occurrence_novel
+            }
+            incidents = [
+                incident for incident in incidents if incident.incident_id in incident_novelty
+            ]
+        analysis_run_id = reserved_run_id or (
+            int(existing_run["id"]) if existing_run is not None else None
+        )
+        router_subject_key = (
+            store.router_behavior_subject_for_run(analysis_run_id)
+            if parsed.format_id != FORMAT_NETGEAR and analysis_run_id is not None
+            else None
+        )
+        subject_behavior_day_stats, behavior_subjects = build_subject_behavior_day_stats(
+            aggregate, policy, router_subject_key,
+        )
         aggregate["subject_behavior_day_stats"] = subject_behavior_day_stats
         aggregate["behavior_subjects"] = behavior_subjects
 
-        analyzed_events = [event for event in events if event.incident_id is None]
+        analyzed_events = [
+            event
+            for event in events
+            if event.incident_id is None
+            and (
+                not parsed.capabilities.snapshot_buffer_semantic_dedup
+                or bool(event.occurrence_novel)
+            )
+        ]
         analysis_aggregate = aggregate_events(analyzed_events, seed_baseline, devices_snapshot)
-        analysis_subject_stats, analysis_subjects = build_subject_behavior_day_stats(analysis_aggregate, policy)
+        if parsed.format_id != FORMAT_NETGEAR:
+            trusted_analysis_aggregate = aggregate_events(
+                [event for event in analyzed_events if event.clock_trust == "trusted"],
+                seed_baseline,
+                devices_snapshot,
+            )
+            analysis_aggregate["observation_range"] = trusted_analysis_aggregate[
+                "observation_range"
+            ]
+            analysis_aggregate["observed_dates"] = trusted_analysis_aggregate["observed_dates"]
+        analysis_subject_stats, analysis_subjects = build_subject_behavior_day_stats(
+            analysis_aggregate, policy, router_subject_key,
+        )
         analysis_aggregate["subject_behavior_day_stats"] = analysis_subject_stats
         analysis_aggregate["behavior_subjects"] = analysis_subjects
+        additional_findings: List[Finding] = []
+        router_behavior_events = [
+            event for event in analyzed_events
+            if event.actor_scope == "router"
+            and event.clock_trust == "trusted"
+            and not is_explicit_router_security_event(event)
+        ]
+        adapter_firmware_ambiguous = "ambiguous_firmware_profile" in parsed.warnings
+        current_firmware_profile_id: Optional[int] = None
+        previous_firmware_profile_id: Optional[int] = None
+        previous_profile_events: List[Event] = []
+        previous_router_subject_key: Optional[str] = None
+        snapshot_history: List[sqlite3.Row] = []
+        router_behavior_history_count = 0
+        if (
+            parsed.format_id != FORMAT_NETGEAR
+            and existing_run is None
+            and reserved_run_id is not None
+            and parsed.export_timestamp is not None
+        ):
+            cursor = (parsed.export_timestamp.isoformat(), reserved_run_id)
+            metrics = parsed.snapshot_metrics
+            if metrics is not None and metrics.eligible and parsed.capabilities.snapshot_counts:
+                snapshot_history = store.fetch_router_snapshot_history(
+                    router_instance_id,
+                    epoch["id"],
+                    cursor,
+                    reserved_run_id,
+                    7,
+                )
+                additional_findings.extend(
+                    detect_router_snapshot_count_anomaly(metrics, snapshot_history, policy)
+                )
+
+            firmware_profile_id, current_firmware = store.current_router_firmware_context(
+                reserved_run_id, router_instance_id,
+            )
+            current_firmware_profile_id = firmware_profile_id
+            previous_context = store.fetch_previous_known_firmware_context(
+                router_instance_id, cursor, reserved_run_id,
+            )
+            previous_firmware = previous_context[0] if previous_context is not None else None
+            firmware_finding = detect_router_firmware_change(
+                previous_firmware, current_firmware, policy,
+            )
+            if firmware_finding is not None:
+                additional_findings.append(firmware_finding)
+
+            firmware_partition = partition_router_firmware_learning_events(
+                router_behavior_events,
+                previous_context[1] if previous_context is not None else None,
+                firmware_changed=(
+                    previous_firmware not in {None, "unknown-firmware", "unknown-legacy-firmware"}
+                    and current_firmware not in {None, "unknown-firmware", "unknown-legacy-firmware"}
+                    and previous_firmware != current_firmware
+                ),
+            )
+            router_behavior_events = list(firmware_partition.current_profile)
+            previous_profile_events = list(firmware_partition.previous_profile)
+            if previous_context is not None and previous_profile_events:
+                previous_firmware_profile_id = previous_context[2]
+                previous_router_subject_key = store.router_behavior_subject(
+                    router_instance_id, previous_firmware_profile_id,
+                )
+            if firmware_partition.ambiguous:
+                if "ambiguous_firmware_profile" not in parsed.warnings:
+                    parsed.warnings.append("ambiguous_firmware_profile")
+                metadata_row = store.conn.execute(
+                    "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+                    (reserved_run_id,),
+                ).fetchone()
+                metadata = json.loads(metadata_row["metadata_json"] or "{}")
+                metadata["ambiguous_firmware_occurrence_count"] = len(firmware_partition.ambiguous)
+                metadata["previous_profile_occurrence_count"] = len(firmware_partition.previous_profile)
+                store.conn.execute(
+                    "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
+                    (json_dumps(metadata), reserved_run_id),
+                )
+
+            if firmware_profile_id is not None and not adapter_firmware_ambiguous:
+                router_history = store.fetch_router_behavior_history(
+                    router_instance_id,
+                    epoch["id"],
+                    firmware_profile_id,
+                    cursor,
+                    reserved_run_id,
+                )
+                router_behavior_history_count = router_history.eligible_observation_count
+                additional_findings.extend(detect_router_behavior(
+                    router_behavior_events, parsed.capabilities, router_history, policy,
+                ))
         findings = detect_anomalies(
             aggregate=analysis_aggregate,
             seed_baseline=seed_baseline,
@@ -5106,15 +11701,122 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             epoch_id=epoch["id"],
             policy=policy,
             incidents=incidents,
+            format_id=parsed.format_id,
+            capabilities=parsed.capabilities,
+            events=analyzed_events,
+            additional_findings=additional_findings,
         )
+        if router_subject_key is not None:
+            router_day = (
+                parsed.export_timestamp.date().isoformat()
+                if parsed.export_timestamp is not None else None
+            )
+            for finding in findings["all"]:
+                if finding.kind.startswith("router_"):
+                    finding.metadata.setdefault("subject_key", router_subject_key)
+                    finding.metadata.setdefault("subject_type", "router")
+                    if router_day is not None:
+                        finding.metadata.setdefault("day", router_day)
         score, status, breakdown = compute_risk_score(findings, policy)
-        is_partial = detect_partial_run(events, policy)
+        is_partial = detect_partial_run_for_capabilities(
+            events, parsed.capabilities, policy,
+        )
+        persistence_events: List[Event] = []
+        learning_ownership_events: List[Event] = []
+        if parsed.capabilities.snapshot_buffer_semantic_dedup:
+            occurrence_events = [
+                event for event in analyzed_events if event.occurrence_digest is not None
+            ]
+            persistence_events = occurrence_events
+            router_behavior_digests = {
+                event.occurrence_digest for event in router_behavior_events
+                if event.occurrence_digest is not None
+            }
+            previous_behavior_digests = {
+                event.occurrence_digest for event in previous_profile_events
+                if event.occurrence_digest is not None
+            }
+            owned_router_behavior_digests = router_behavior_digests | previous_behavior_digests
+            learning_ownership_events = [
+                event for event in occurrence_events
+                if (
+                    event.actor_scope == "router"
+                    and event.occurrence_digest in owned_router_behavior_digests
+                    and parsed.capabilities.router_system_events
+                    and event.clock_trust == "trusted"
+                    and (
+                        event.event_key in parsed.capabilities.supported_event_keys
+                        or event.event_family in parsed.capabilities.supported_event_families
+                    )
+                )
+                or (
+                    event.actor_scope == "device"
+                    and is_identity_grade_mac(event.stable_client_identity)
+                    and event.clock_trust == "trusted"
+                    and (
+                        (
+                            event.event_family == "DHCP"
+                            and parsed.capabilities.client_dhcp_equivalence
+                        )
+                        or parsed.capabilities.comparable_device_event_coverage
+                    )
+                )
+            ]
+            legacy_persistence_events = [
+                event for event in persistence_events
+                if event.actor_scope != "router" and event.clock_trust == "trusted"
+            ]
+            persistence_aggregate = aggregate_events(
+                legacy_persistence_events,
+                seed_baseline,
+                devices_snapshot,
+            )
+            subject_learning_events = [
+                event for event in persistence_events
+                if event.clock_trust == "trusted"
+                and (
+                    event.actor_scope != "router"
+                    or event.occurrence_digest in router_behavior_digests
+                )
+            ]
+            subject_learning_aggregate = aggregate_events(
+                subject_learning_events,
+                seed_baseline,
+                devices_snapshot,
+            )
+            persistence_subject_stats, persistence_subjects = build_subject_behavior_day_stats(
+                subject_learning_aggregate,
+                policy,
+                router_subject_key,
+            )
+            if previous_router_subject_key is not None and previous_profile_events:
+                previous_subject_aggregate = aggregate_events(
+                    previous_profile_events,
+                    seed_baseline,
+                    devices_snapshot,
+                )
+                previous_subject_stats, previous_subjects = build_subject_behavior_day_stats(
+                    previous_subject_aggregate,
+                    policy,
+                    previous_router_subject_key,
+                )
+                persistence_subject_stats.update(previous_subject_stats)
+                persistence_subjects.update(previous_subjects)
+            persistence_aggregate["subject_behavior_day_stats"] = persistence_subject_stats
+            persistence_aggregate["behavior_subjects"] = persistence_subjects
+            persistence_aggregate["observation_range"] = trusted_temporal_aggregate[
+                "observation_range"
+            ]
+            persistence_aggregate["observed_dates"] = trusted_temporal_aggregate["observed_dates"]
+        else:
+            persistence_aggregate = aggregate
+            learning_ownership_events = persistence_events
         deduplicated, run_id = persist_analysis(
             store=store,
             run_hash=run_hash,
             logfile_path=logfile_path,
             parse_stats=parse_stats,
-            aggregate=aggregate,
+            aggregate=persistence_aggregate,
             findings=findings,
             score=score,
             status=status,
@@ -5123,6 +11825,61 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             devices_snapshot=devices_snapshot,
             is_partial=is_partial,
             incidents=incidents,
+            router_instance_id=router_instance_id,
+            format_id=parsed.format_id,
+            capabilities=parsed.capabilities,
+            export_timestamp=(
+                parsed.export_timestamp.isoformat()
+                if parsed.export_timestamp is not None
+                else None
+            ),
+            reserved_run_id=reserved_run_id,
+        )
+        if (
+            parsed.capabilities.snapshot_buffer_semantic_dedup
+            and not deduplicated
+            and run_id is not None
+        ):
+            occurrence_profiles: Dict[int, Sequence[Event]] = {}
+            if current_firmware_profile_id is not None:
+                occurrence_profiles[current_firmware_profile_id] = router_behavior_events
+            if previous_firmware_profile_id is not None:
+                occurrence_profiles[previous_firmware_profile_id] = previous_profile_events
+            store.set_materialized_occurrence_ownership(
+                run_id,
+                learning_ownership_events,
+                occurrence_profiles=occurrence_profiles,
+            )
+        affected_state["router_instance_ids"].add(router_instance_id)
+        affected_state["device_macs"].update(
+            mac for _observed_date, mac in persistence_aggregate["device_day_stats"]
+        )
+        affected_state["subjects"].update(
+            (subject_key, subject_type)
+            for _observed_date, subject_key, subject_type, _behavior_key
+            in persistence_aggregate.get("subject_behavior_day_stats", {})
+        )
+        store.refresh_derived_state(affected_state)
+        store.prune_orphan_provenance()
+        store._validate_v4_data_relationships()
+        if store.conn.execute("PRAGMA foreign_key_check").fetchall():
+            raise RuntimeError("Reprocessed analysis contains a foreign-key violation")
+        store.commit()
+        log_transaction_active = False
+
+        router_row = store.conn.execute(
+            "SELECT label FROM router_instances WHERE id = ?", (router_instance_id,)
+        ).fetchone()
+        if router_row is None:
+            raise RuntimeError(f"Missing router instance {router_instance_id} for report")
+        router_sections = build_router_report_sections(
+            parsed=parsed,
+            router_label=str(router_row["label"]),
+            events=events,
+            findings=findings_to_dict(findings, aggregate),
+            snapshot_history=snapshot_history,
+            router_behavior_history_count=router_behavior_history_count,
+            policy=policy,
         )
 
         report = build_report_data(
@@ -5140,6 +11897,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             incidents=incidents,
             analyzed_event_count=len(analyzed_events),
             reprocessed_run_id=reprocessed_run_id,
+            router_sections=router_sections,
         )
 
         if args.json and not explicit_report:
@@ -5154,6 +11912,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else:
             print(render_text_report(report))
         return 0
+    except BaseException:
+        if log_transaction_active and store.conn.in_transaction:
+            store.conn.rollback()
+        log_transaction_active = False
+        raise
     finally:
         store.close()
 
