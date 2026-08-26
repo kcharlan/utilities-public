@@ -9340,6 +9340,77 @@ def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
         store.close()
 
 
+def test_predecessor_buffer_event_remains_owned_by_prior_firmware_profile(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "prior-firmware-event.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        epoch_id = seed_epoch(store)
+    finally:
+        store.close()
+    inputs = [
+        (
+            "2042-06-10 12:30:00", "9.99.1 Build 20420101 rel.10001n",
+            ["2042-06-10 12:29:00 service[42]: <6> 2001 Routine health success"],
+        ),
+        (
+            "2042-06-11 12:00:00", "9.99.2 Build 20420102 rel.10002n",
+            [
+                "2042-06-11 11:59:00 service[44]: <6> 3000 Current firmware success",
+                "2042-06-10 12:29:00 service[43]: <6> 2999 Prior firmware success",
+            ],
+        ),
+    ]
+    for index, (export_time, firmware, records) in enumerate(inputs, start=1):
+        log_path = tmp_path / f"synthetic-prior-profile-{index}.log"
+        log_path.write_text(
+            tp_link_synthetic_snapshot(
+                records, export_time=export_time, firmware=firmware,
+            ),
+            encoding="utf-8",
+        )
+        assert analyzer.main([
+            str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+        ]) == 0
+        capsys.readouterr()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        metadata_rows = list(store.conn.execute(
+            "SELECT run_id, router_instance_id, firmware_profile_id, metadata_json "
+            "FROM router_metadata_observations ORDER BY run_id"
+        ))
+        prior_profile_id = int(metadata_rows[0]["firmware_profile_id"])
+        current_profile_id = int(metadata_rows[1]["firmware_profile_id"])
+        second_metadata = json.loads(metadata_rows[1]["metadata_json"])
+        assert second_metadata["learning_owned_occurrence_profiles"][str(prior_profile_id)]
+        router_id = int(metadata_rows[0]["router_instance_id"])
+        prior_subject = store.router_behavior_subject(router_id, prior_profile_id)
+        current_subject = store.router_behavior_subject(router_id, current_profile_id)
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM subject_behavior_daily_stats "
+            "WHERE subject_key = ? AND behavior_key = 'SERVICE_2999_SUCCESS'",
+            (prior_subject,),
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM subject_behavior_daily_stats "
+            "WHERE subject_key = ? AND behavior_key = 'SERVICE_2999_SUCCESS'",
+            (current_subject,),
+        ).fetchone()[0] == 0
+        prior_history = store.fetch_router_behavior_history(
+            router_id, epoch_id, prior_profile_id, ("2042-06-12T12:00:00", 9999), None,
+        )
+        current_history = store.fetch_router_behavior_history(
+            router_id, epoch_id, current_profile_id, ("2042-06-12T12:00:00", 9999), None,
+        )
+        assert "SERVICE_2999_SUCCESS" in prior_history.event_keys
+        assert "SERVICE_2999_SUCCESS" not in current_history.event_keys
+    finally:
+        store.close()
+
+
 def test_high_router_security_finding_quarantines_only_its_router_profile_subject() -> None:
     day = "2042-06-15"
     subject_key = "synthetic-opaque-router-subject"

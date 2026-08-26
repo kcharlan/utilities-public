@@ -4370,26 +4370,34 @@ class StateStore:
         self,
         run_id: int,
         events: Sequence[Event],
+        occurrence_profiles: Optional[Dict[int, Sequence[Event]]] = None,
     ) -> None:
-        digests = sorted({
-            event.occurrence_digest
-            for event in events
-            if event.occurrence_digest is not None
-        })
-        occurrence_ids: List[int] = []
-        for digest in digests:
-            row = self.conn.execute(
-                """
-                SELECT occurrence.id
-                FROM router_event_occurrences AS occurrence
-                JOIN run_event_occurrences AS link ON link.occurrence_id = occurrence.id
-                WHERE link.run_id = ? AND occurrence.occurrence_digest = ?
-                """,
-                (run_id, digest),
-            ).fetchone()
-            if row is None:
-                raise RuntimeError("Materialized learning event has no persisted occurrence link")
-            occurrence_ids.append(int(row["id"]))
+        def occurrence_ids_for(profile_events: Sequence[Event]) -> List[int]:
+            digests = sorted({
+                event.occurrence_digest
+                for event in profile_events
+                if event.occurrence_digest is not None
+            })
+            occurrence_ids: List[int] = []
+            for digest in digests:
+                row = self.conn.execute(
+                    """
+                    SELECT occurrence.id
+                    FROM router_event_occurrences AS occurrence
+                    JOIN run_event_occurrences AS link ON link.occurrence_id = occurrence.id
+                    WHERE link.run_id = ? AND occurrence.occurrence_digest = ?
+                    """,
+                    (run_id, digest),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("Materialized learning event has no persisted occurrence link")
+                occurrence_ids.append(int(row["id"]))
+            return occurrence_ids
+
+        occurrence_ids = occurrence_ids_for(events)
+        profile_owners: Dict[str, List[int]] = {}
+        for profile_id, profile_events in (occurrence_profiles or {}).items():
+            profile_owners[str(profile_id)] = occurrence_ids_for(profile_events)
         metadata_row = self.conn.execute(
             "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
             (run_id,),
@@ -4398,6 +4406,8 @@ class StateStore:
             raise RuntimeError("Materialized occurrence owner has no router metadata observation")
         metadata = json.loads(metadata_row["metadata_json"] or "{}")
         metadata["learning_owned_occurrence_ids"] = sorted(occurrence_ids)
+        if occurrence_profiles is not None:
+            metadata["learning_owned_occurrence_profiles"] = profile_owners
         self.conn.execute(
             "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
             (json_dumps(metadata), run_id),
@@ -5228,11 +5238,10 @@ class StateStore:
     ) -> RouterBehaviorHistory:
         export_timestamp, cursor_run_id = before_cursor
         query = """
-            SELECT run.id, metadata.metadata_json
+            SELECT run.id, metadata.firmware_profile_id, metadata.metadata_json
             FROM runs AS run
             JOIN router_metadata_observations AS metadata ON metadata.run_id = run.id
             WHERE run.router_instance_id = ? AND run.epoch_id = ?
-              AND metadata.firmware_profile_id = ?
               AND COALESCE(run.export_timestamp, metadata.export_timestamp) IS NOT NULL
               AND (
                 COALESCE(run.export_timestamp, metadata.export_timestamp) < ?
@@ -5243,7 +5252,7 @@ class StateStore:
               )
         """
         params: List[Any] = [
-            router_instance_id, epoch_id, firmware_profile_id,
+            router_instance_id, epoch_id,
             export_timestamp, export_timestamp, cursor_run_id,
         ]
         if exclude_run_id is not None:
@@ -5253,7 +5262,13 @@ class StateStore:
         owned_by_run: Dict[int, List[int]] = {}
         for row in self.conn.execute(query, params):
             metadata = json.loads(row["metadata_json"] or "{}")
-            occurrence_ids = metadata.get("learning_owned_occurrence_ids")
+            profile_owners = metadata.get("learning_owned_occurrence_profiles")
+            if isinstance(profile_owners, dict):
+                occurrence_ids = profile_owners.get(str(firmware_profile_id))
+            elif int(row["firmware_profile_id"]) == firmware_profile_id:
+                occurrence_ids = metadata.get("learning_owned_occurrence_ids")
+            else:
+                occurrence_ids = None
             if isinstance(occurrence_ids, list) and occurrence_ids and all(
                 isinstance(occurrence_id, int) for occurrence_id in occurrence_ids
             ):
@@ -5312,16 +5327,34 @@ class StateStore:
     def router_behavior_subject_for_run(self, run_id: int) -> Optional[str]:
         row = self.conn.execute(
             """
-            SELECT router.instance_key, firmware.profile_key
+            SELECT metadata.router_instance_id, metadata.firmware_profile_id
             FROM router_metadata_observations AS metadata
-            JOIN router_instances AS router ON router.id = metadata.router_instance_id
-            JOIN router_firmware_profiles AS firmware ON firmware.id = metadata.firmware_profile_id
             WHERE metadata.run_id = ?
             """,
             (run_id,),
         ).fetchone()
         if row is None:
             return None
+        return self.router_behavior_subject(
+            int(row["router_instance_id"]), int(row["firmware_profile_id"]),
+        )
+
+    def router_behavior_subject(
+        self,
+        router_instance_id: int,
+        firmware_profile_id: int,
+    ) -> str:
+        row = self.conn.execute(
+            """
+            SELECT router.instance_key, firmware.profile_key
+            FROM router_instances AS router
+            JOIN router_firmware_profiles AS firmware ON firmware.id = ?
+            WHERE router.id = ?
+            """,
+            (firmware_profile_id, router_instance_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Router behavior subject inputs disappeared")
         return hashlib.sha256(
             (
                 "router-subject:v1\0" + row["instance_key"] + "\0" + row["profile_key"]
@@ -5344,11 +5377,12 @@ class StateStore:
         router_instance_id: int,
         before_cursor: Tuple[str, int],
         exclude_run_id: Optional[int],
-    ) -> Optional[Tuple[str, datetime]]:
+    ) -> Optional[Tuple[str, datetime, int]]:
         export_timestamp, cursor_run_id = before_cursor
         query = """
             SELECT metadata.firmware_normalized,
-                   COALESCE(run.export_timestamp, metadata.export_timestamp) AS observed_at
+                   COALESCE(run.export_timestamp, metadata.export_timestamp) AS observed_at,
+                   metadata.firmware_profile_id
             FROM router_metadata_observations AS metadata
             JOIN runs AS run ON run.id = metadata.run_id
             WHERE metadata.router_instance_id = ?
@@ -5375,7 +5409,11 @@ class StateStore:
         row = self.conn.execute(query, params).fetchone()
         if row is None:
             return None
-        return row["firmware_normalized"], datetime.fromisoformat(row["observed_at"])
+        return (
+            row["firmware_normalized"],
+            datetime.fromisoformat(row["observed_at"]),
+            int(row["firmware_profile_id"]),
+        )
 
     def fetch_device_metric_history(
         self,
@@ -11088,6 +11126,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if event.actor_scope == "router" and not is_explicit_router_security_event(event)
         ]
         adapter_firmware_ambiguous = "ambiguous_firmware_profile" in parsed.warnings
+        current_firmware_profile_id: Optional[int] = None
+        previous_firmware_profile_id: Optional[int] = None
+        previous_profile_events: List[Event] = []
+        previous_router_subject_key: Optional[str] = None
         if (
             parsed.format_id != FORMAT_NETGEAR
             and existing_run is None
@@ -11111,6 +11153,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             firmware_profile_id, current_firmware = store.current_router_firmware_context(
                 reserved_run_id, router_instance_id,
             )
+            current_firmware_profile_id = firmware_profile_id
             previous_context = store.fetch_previous_known_firmware_context(
                 router_instance_id, cursor, reserved_run_id,
             )
@@ -11131,6 +11174,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 ),
             )
             router_behavior_events = list(firmware_partition.current_profile)
+            previous_profile_events = list(firmware_partition.previous_profile)
+            if previous_context is not None and previous_profile_events:
+                previous_firmware_profile_id = previous_context[2]
+                previous_router_subject_key = store.router_behavior_subject(
+                    router_instance_id, previous_firmware_profile_id,
+                )
             if firmware_partition.ambiguous:
                 if "ambiguous_firmware_profile" not in parsed.warnings:
                     parsed.warnings.append("ambiguous_firmware_profile")
@@ -11196,11 +11245,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 event.occurrence_digest for event in router_behavior_events
                 if event.occurrence_digest is not None
             }
+            previous_behavior_digests = {
+                event.occurrence_digest for event in previous_profile_events
+                if event.occurrence_digest is not None
+            }
+            owned_router_behavior_digests = router_behavior_digests | previous_behavior_digests
             learning_ownership_events = [
                 event for event in occurrence_events
                 if (
                     event.actor_scope == "router"
-                    and event.occurrence_digest in router_behavior_digests
+                    and event.occurrence_digest in owned_router_behavior_digests
                     and parsed.capabilities.router_system_events
                     and (
                         event.clock_trust == "trusted"
@@ -11244,6 +11298,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 policy,
                 router_subject_key,
             )
+            if previous_router_subject_key is not None and previous_profile_events:
+                previous_subject_aggregate = aggregate_events(
+                    previous_profile_events,
+                    seed_baseline,
+                    devices_snapshot,
+                )
+                previous_subject_stats, previous_subjects = build_subject_behavior_day_stats(
+                    previous_subject_aggregate,
+                    policy,
+                    previous_router_subject_key,
+                )
+                persistence_subject_stats.update(previous_subject_stats)
+                persistence_subjects.update(previous_subjects)
             persistence_aggregate["subject_behavior_day_stats"] = persistence_subject_stats
             persistence_aggregate["behavior_subjects"] = persistence_subjects
             persistence_aggregate["observation_range"] = aggregate["observation_range"]
@@ -11280,7 +11347,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             and not deduplicated
             and run_id is not None
         ):
-            store.set_materialized_occurrence_ownership(run_id, learning_ownership_events)
+            occurrence_profiles: Dict[int, Sequence[Event]] = {}
+            if current_firmware_profile_id is not None:
+                occurrence_profiles[current_firmware_profile_id] = router_behavior_events
+            if previous_firmware_profile_id is not None:
+                occurrence_profiles[previous_firmware_profile_id] = previous_profile_events
+            store.set_materialized_occurrence_ownership(
+                run_id,
+                learning_ownership_events,
+                occurrence_profiles=occurrence_profiles,
+            )
         affected_state["router_instance_ids"].add(router_instance_id)
         affected_state["device_macs"].update(
             mac for _observed_date, mac in persistence_aggregate["device_day_stats"]
