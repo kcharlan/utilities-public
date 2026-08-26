@@ -4830,6 +4830,9 @@ def test_tp_link_operational_report_clean_hierarchy_and_history_state(monkeypatc
     assert "Findings\n" not in rendered
     assert rendered.index("Router Snapshot") < rendered.index("Baseline and Change") < rendered.index("Router Activity")
     assert "First comparable client-count snapshot and router-behavior observation." in rendered
+    assert "First comparable snapshot." not in rendered
+    assert "First comparable router behavior." not in rendered
+    assert "comparison was not evaluated" not in rendered
     assert "Risk Breakdown" not in rendered
 
 
@@ -4877,11 +4880,34 @@ def test_tp_link_operational_report_promotes_consequential_tail_outcomes() -> No
 
     activity_text = rendered.split("Router Activity", 1)[1]
     assert "Source records: 44" in activity_text
-    for component in ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"):
+    for component in ("Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf"):
         assert activity_text.count(component) == 1
-    assert "hotel" not in activity_text
+    assert "Hotel" not in activity_text
     assert "Remaining: 2 source record(s) across 1 other component(s)." in activity_text
     assert "Outcomes: failure 10, disconnected 1, timeout 1, success 32" in activity_text
+
+
+def test_tp_link_activity_humanizes_and_tie_sorts_component_names() -> None:
+    report = operational_tp_link_report()
+    activity = report["router_activity"]
+    assert isinstance(activity, dict)
+    activity.update({
+        "source_record_count": 4,
+        "component_counts": [
+            {"component": "wan", "event_count": 2},
+            {"component": "access_control", "event_count": 2},
+        ],
+        "outcome_counts": [{"outcome": "success", "event_count": 4}],
+        "event_type_counts": [
+            {"component": "wan", "outcome": "success", "event_count": 2},
+            {"component": "access_control", "outcome": "success", "event_count": 2},
+        ],
+    })
+
+    activity_text = analyzer.render_text_report(report).split("Router Activity", 1)[1]
+
+    assert "Components: Access Control 2, Wan 2" in activity_text
+    assert "access_control" not in activity_text
 
 
 def test_tp_link_operational_report_handles_zero_events_and_missing_projection() -> None:

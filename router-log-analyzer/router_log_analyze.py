@@ -10683,7 +10683,14 @@ def operational_activity_lines(activity: Dict[str, Any], occurrences: Dict[str, 
         return lines if projection_complete else lines + [
             "Router source/component detail was unavailable; only the semantic total is shown."
         ]
-    ranked = sorted(components, key=lambda item: (-int(item.get("event_count", 0)), str(item["component"])))
+    ranked = sorted(
+        components,
+        key=lambda item: (
+            -int(item.get("event_count", 0)),
+            humanize_event_key(str(item["component"])).casefold(),
+            str(item["component"]),
+        ),
+    )
     component_outcomes: DefaultDict[str, Set[str]] = defaultdict(set)
     for item in activity.get("event_type_counts", []):
         if isinstance(item, dict) and item.get("component") and item.get("outcome"):
@@ -10694,7 +10701,7 @@ def operational_activity_lines(activity: Dict[str, Any], occurrences: Dict[str, 
     shown = top + promoted
     shown_names = {str(item["component"]) for item in shown}
     lines.append("Components: " + ", ".join(
-        f"{item['component']} {item.get('event_count', 0)}" for item in shown
+        f"{humanize_event_key(str(item['component']))} {item.get('event_count', 0)}" for item in shown
     ))
     tail = [item for item in ranked if str(item["component"]) not in shown_names]
     tail_count = sum(int(item.get("event_count", 0)) for item in tail)
@@ -10809,16 +10816,17 @@ def render_operational_text_report(report: Dict[str, Any], width: int, verbose: 
     behavior_first = bool(activity.get("behavior_history_queried") and not activity.get("behavior_history_count", 0))
     if snapshot_first and behavior_first:
         baseline_lines.append("First comparable client-count snapshot and router-behavior observation.")
-    elif snapshot.get("history_queried"):
-        count = snapshot.get("history_count", 0)
-        baseline_lines.append("First comparable snapshot." if not count else f"Compared with {count} prior eligible snapshot(s).")
     else:
-        baseline_lines.append("Snapshot comparison was not evaluated.")
-    if not (snapshot_first and behavior_first) and activity.get("behavior_history_queried"):
-        count = activity.get("behavior_history_count", 0)
-        baseline_lines.append("First comparable router behavior." if not count else f"Compared with {count} prior router behavior observation(s).")
-    else:
-        baseline_lines.append("Router behavior comparison was not evaluated.")
+        if snapshot.get("history_queried"):
+            count = snapshot.get("history_count", 0)
+            baseline_lines.append("First comparable snapshot." if not count else f"Compared with {count} prior eligible snapshot(s).")
+        else:
+            baseline_lines.append("Snapshot comparison was not evaluated.")
+        if activity.get("behavior_history_queried"):
+            count = activity.get("behavior_history_count", 0)
+            baseline_lines.append("First comparable router behavior." if not count else f"Compared with {count} prior router behavior observation(s).")
+        else:
+            baseline_lines.append("Router behavior comparison was not evaluated.")
     if occurrences.get("fully_repeated"):
         baseline_lines.append("All body occurrences were already seen; this is snapshot-buffer context, not zero activity.")
     else:
