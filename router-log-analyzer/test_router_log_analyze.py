@@ -10417,6 +10417,7 @@ def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
     assert "comparison was unavailable because events could not be assigned unambiguously to a firmware profile" in re.sub(
         r"\s+", " ", analyzer.render_text_report(reports[1]),
     )
+    assert "unexpected warning(s)" not in analyzer.render_text_report(reports[1])
     store = analyzer.StateStore(db_path)
     try:
         rows = list(store.conn.execute(

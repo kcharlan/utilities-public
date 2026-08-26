@@ -10741,6 +10741,7 @@ def operational_limitation_lines(report: Dict[str, Any], verbose: bool = False) 
             "Router behavior comparison was unavailable because events could not be assigned "
             "unambiguously to a firmware profile."
         )
+        warnings.discard("ambiguous_firmware_profile")
     if coverage.get("body_records", 0) and not coverage.get("trusted_records", 0):
         lines.append("Body-event calendar and time analysis was unavailable because no trusted timestamps were present.")
     malformed = coverage.get("malformed_lines", 0)
