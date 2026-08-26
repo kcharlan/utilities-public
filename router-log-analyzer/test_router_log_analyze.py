@@ -2844,6 +2844,343 @@ def test_main_reprocess_rolls_back_when_analysis_fails(
         store.close()
 
 
+def test_main_reprocess_excludes_replaced_run_from_knownness_and_preserves_run_id(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "network.db"
+    log_path = tmp_path / "synthetic-self-knownness.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    mac = "02:00:00:00:00:43"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    log_path.write_text(
+        f"[DHCP IP: (192.0.2.43)] to MAC address {mac}, "
+        "Wednesday, July 15, 2037 12:00:00\n",
+        encoding="utf-8",
+    )
+
+    assert analyzer.main([
+        str(log_path), str(baseline_path), "--db", str(db_path), "--json",
+    ]) == 0
+    first_report = json.loads(capsys.readouterr().out)
+    assert any(item["kind"] == "unknown_device" for item in first_report["findings"]["all"])
+
+    store = analyzer.StateStore(db_path)
+    try:
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        target = store.get_run_by_hash(router_id, analyzer.sha256_bytes(log_path.read_bytes()))
+        assert target is not None
+        original_run_id = int(target["id"])
+        store.insert_run(
+            int(store.get_active_epoch()["id"]), None, "synthetic-later-run",
+            tmp_path / "synthetic-later.log", analyzer.ParseStats(), None, None, [],
+            0, "Clean", False, router_instance_id=router_id,
+        )
+        store.commit()
+    finally:
+        store.close()
+
+    assert analyzer.main([
+        str(log_path), "--db", str(db_path), "--json", "--reprocess",
+    ]) == 0
+    replacement_report = json.loads(capsys.readouterr().out)
+    assert replacement_report["state"]["reprocessed_run_id"] == original_run_id
+    assert any(
+        item["kind"] == "unknown_device" for item in replacement_report["findings"]["all"]
+    )
+
+    store = analyzer.StateStore(db_path)
+    try:
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        replacement = store.get_run_by_hash(
+            router_id, analyzer.sha256_bytes(log_path.read_bytes())
+        )
+        assert replacement is not None
+        assert int(replacement["id"]) == original_run_id
+    finally:
+        store.close()
+
+
+def test_remove_run_owned_evidence_refreshes_only_surviving_provenance(tmp_path: Path) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    registered_mac = "02:00:00:00:00:41"
+    observed_mac = "02:00:00:00:00:42"
+    try:
+        epoch_id = seed_epoch(store)
+        store.register_device(
+            registered_mac,
+            "baseline_import",
+            "synthetic-baseline-source",
+            epoch_id,
+            "SYNTHETIC REGISTERED DEVICE",
+            "allowed",
+            None,
+        )
+        parsed = analyzer.parse_router_log(
+            tp_link_synthetic_snapshot([
+                "2042-06-15 11:50:00 system[101]: <5> 1000 System startup",
+                "2042-06-15 11:49:59 clientmon[102]: <5> 7001 client observed",
+            ]),
+            "synthetic-reprocess-old.log",
+            "tp-link-archer",
+        )
+        parsed.events[1] = replace(
+            parsed.events[1],
+            mac=observed_mac,
+            actor_scope="device",
+            stable_client_identity=observed_mac,
+        )
+        router_id = store.resolve_router_instance(parsed)
+        run_id = store.insert_run(
+            epoch_id, None, "synthetic-reprocess-hash", tmp_path / "synthetic.log",
+            parsed.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=parsed.format_id,
+            export_timestamp=parsed.export_timestamp.isoformat(), capabilities=parsed.capabilities,
+        )
+        store.persist_router_provenance(run_id, router_id, parsed)
+        store.commit()
+
+        old_occurrence_ids = {
+            row[0] for row in store.conn.execute(
+                "SELECT occurrence_id FROM run_event_occurrences WHERE run_id = ?", (run_id,)
+            )
+        }
+        old_boot_ids = {
+            row[0] for row in store.conn.execute(
+                "SELECT boot_session_id FROM run_router_boot_sessions WHERE run_id = ?", (run_id,)
+            )
+        }
+        old_profile_id = store.conn.execute(
+            "SELECT firmware_profile_id FROM router_metadata_observations WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()[0]
+
+        store.conn.execute("BEGIN IMMEDIATE")
+        affected = store.remove_run_owned_evidence(run_id)
+        store.refresh_derived_state(affected)
+        assert registered_mac in store.load_devices_snapshot()
+        assert observed_mac not in store.load_devices_snapshot()
+
+        replacement = analyzer.parse_router_log(
+            tp_link_synthetic_snapshot(
+                ["2042-06-16 11:59:58 inet[410]: <5> 3002 Internet connected"],
+                export_time="2042-06-16 12:00:00",
+                firmware="9.99.10 Build 20420202 rel.99999n",
+                counts_line="# Clients connected: 3 ; WI-FI : 2",
+            ),
+            "synthetic-reprocess-new.log",
+            "tp-link-archer",
+        )
+        replacement_id = store.insert_run(
+            epoch_id, None, "synthetic-reprocess-hash", tmp_path / "synthetic.log",
+            replacement.parse_stats, None, None, [], 0, "Clean", False,
+            router_instance_id=router_id, format_id=replacement.format_id,
+            export_timestamp=replacement.export_timestamp.isoformat(),
+            capabilities=replacement.capabilities, run_id=run_id,
+        )
+        assert replacement_id == run_id
+        store.persist_router_provenance(run_id, router_id, replacement)
+        store.refresh_derived_state(affected)
+        store.prune_orphan_provenance()
+        store.commit()
+
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_observations WHERE mac = ?", (observed_mac,)
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_registrations WHERE mac = ?", (registered_mac,)
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM router_snapshot_metrics WHERE run_id = ?", (run_id,)
+        ).fetchone()[0] == 1
+        assert all(store.conn.execute(
+            "SELECT COUNT(*) FROM router_event_occurrences WHERE id = ?", (occurrence_id,)
+        ).fetchone()[0] == 0 for occurrence_id in old_occurrence_ids)
+        assert all(store.conn.execute(
+            "SELECT COUNT(*) FROM router_boot_sessions WHERE id = ?", (boot_id,)
+        ).fetchone()[0] == 0 for boot_id in old_boot_ids)
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM router_firmware_profiles WHERE id = ?", (old_profile_id,)
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_run_owned_removal_preserves_shared_occurrence_and_session_until_orphaned(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    client_mac = "02:00:00:00:00:45"
+    try:
+        epoch_id = seed_epoch(store)
+        run_ids = []
+        router_id = None
+        for index in (1, 2):
+            parsed = analyzer.parse_router_log(
+                tp_link_synthetic_snapshot([
+                    "2042-06-15 11:50:00 system[101]: <5> 1000 System startup",
+                ], export_time=f"2042-06-15 12:0{index}:00"),
+                f"synthetic-shared-{index}.log",
+                "tp-link-archer",
+            )
+            parsed.events = [replace(
+                parsed.events[0], mac=client_mac, actor_scope="device",
+                stable_client_identity=client_mac,
+            )]
+            router_id = store.resolve_router_instance(parsed)
+            run_id = store.insert_run(
+                epoch_id, None, f"synthetic-shared-hash-{index}",
+                tmp_path / f"synthetic-shared-{index}.log", parsed.parse_stats,
+                None, None, [], 0, "Clean", False, router_instance_id=router_id,
+                format_id=parsed.format_id, export_timestamp=parsed.export_timestamp.isoformat(),
+                capabilities=parsed.capabilities,
+            )
+            store.persist_router_provenance(run_id, router_id, parsed)
+            run_ids.append(run_id)
+        store.commit()
+        occurrence_id = store.conn.execute(
+            "SELECT occurrence_id FROM run_event_occurrences WHERE run_id = ?", (run_ids[0],)
+        ).fetchone()[0]
+        boot_id = store.conn.execute(
+            "SELECT boot_session_id FROM run_router_boot_sessions WHERE run_id = ?", (run_ids[0],)
+        ).fetchone()[0]
+
+        store.conn.execute("BEGIN IMMEDIATE")
+        affected = store.remove_run_owned_evidence(run_ids[0])
+        store.refresh_derived_state(affected)
+        store.prune_orphan_provenance()
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM router_event_occurrences WHERE id = ?", (occurrence_id,)
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM router_boot_sessions WHERE id = ?", (boot_id,)
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM run_event_occurrences WHERE occurrence_id = ?", (occurrence_id,)
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_observations WHERE mac = ?", (client_mac,)
+        ).fetchone()[0] == 1
+        assert client_mac in store.load_devices_snapshot()
+
+        store.remove_run_owned_evidence(run_ids[1])
+        store.refresh_derived_state(affected)
+        store.prune_orphan_provenance()
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM router_event_occurrences WHERE id = ?", (occurrence_id,)
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM router_boot_sessions WHERE id = ?", (boot_id,)
+        ).fetchone()[0] == 0
+        store.conn.rollback()
+    finally:
+        store.close()
+
+
+def test_summary_extrema_remain_chronological_when_older_evidence_arrives_later(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    mac = "02:00:00:00:00:44"
+    try:
+        store.upsert_device(mac, None, None, None, "observed", "2042-06-16T12:00:00")
+        store.upsert_device(mac, None, None, None, "observed", "2042-06-15T12:00:00")
+        store.upsert_behavior_subject(
+            "synthetic-router-subject", "router", None, None, "2042-06-16T12:00:00"
+        )
+        store.upsert_behavior_subject(
+            "synthetic-router-subject", "router", None, None, "2042-06-15T12:00:00"
+        )
+
+        device = store.conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+        subject = store.conn.execute(
+            "SELECT * FROM behavior_subjects WHERE subject_key = ? AND subject_type = 'router'",
+            ("synthetic-router-subject",),
+        ).fetchone()
+        assert (device["first_seen"], device["last_seen"]) == (
+            "2042-06-15T12:00:00", "2042-06-16T12:00:00",
+        )
+        assert (subject["first_seen"], subject["last_seen"]) == (
+            "2042-06-15T12:00:00", "2042-06-16T12:00:00",
+        )
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("failure_stage", ["after_deletion", "after_analysis", "during_persistence"])
+def test_reprocess_in_process_failure_restores_exact_logical_database(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+) -> None:
+    db_path = tmp_path / "network.db"
+    log_path = tmp_path / "synthetic-atomic-reprocess.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    log_path.write_text(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 inet[410]: <5> 3002 Internet connected",
+        ]),
+        encoding="utf-8",
+    )
+    args = [
+        str(log_path), str(baseline_path), "--format", "tp-link-archer", "--json",
+        "--db", str(db_path),
+    ]
+    assert analyzer.main(args) == 0
+    capsys.readouterr()
+
+    def database_dump() -> str:
+        connection = sqlite3.connect(db_path)
+        try:
+            return "\n".join(connection.iterdump())
+        finally:
+            connection.close()
+
+    before = database_dump()
+    connection = sqlite3.connect(db_path)
+    try:
+        for table in (
+            "runs", "router_metadata_observations", "router_snapshot_metrics",
+            "router_event_occurrences", "run_event_occurrences", "device_daily_stats",
+            "device_event_daily_stats", "behavior_subjects", "subject_behavior_daily_stats",
+        ):
+            assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] > 0
+    finally:
+        connection.close()
+    if failure_stage == "after_deletion":
+        original = analyzer.StateStore.remove_run_owned_evidence
+
+        def fail_after_deletion(self: analyzer.StateStore, run_id: int) -> object:
+            original(self, run_id)
+            raise RuntimeError("synthetic failure after deletion")
+
+        monkeypatch.setattr(analyzer.StateStore, "remove_run_owned_evidence", fail_after_deletion)
+    elif failure_stage == "after_analysis":
+        original = analyzer.compute_risk_score
+
+        def fail_after_analysis(*args: object, **kwargs: object) -> object:
+            original(*args, **kwargs)
+            raise RuntimeError("synthetic failure after analysis")
+
+        monkeypatch.setattr(analyzer, "compute_risk_score", fail_after_analysis)
+    else:
+        original = analyzer.StateStore.insert_device_daily_stat
+
+        def fail_during_persistence(self: analyzer.StateStore, *args: object, **kwargs: object) -> None:
+            original(self, *args, **kwargs)
+            raise RuntimeError("synthetic failure during persistence")
+
+        monkeypatch.setattr(analyzer.StateStore, "insert_device_daily_stat", fail_during_persistence)
+
+    with pytest.raises(RuntimeError, match=f"synthetic failure {failure_stage.replace('_', ' ')}"):
+        analyzer.main([
+            str(log_path), "--format", "tp-link-archer", "--db", str(db_path), "--reprocess",
+        ])
+    assert database_dump() == before
+
+
 def test_weekday_drift_appears_after_minimum_history(tmp_path: Path) -> None:
     store = analyzer.StateStore(tmp_path / "network.db")
     try:

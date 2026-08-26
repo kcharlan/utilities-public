@@ -3578,11 +3578,15 @@ class StateStore:
               status = COALESCE(?, status),
               connection_type = COALESCE(?, connection_type),
               source = COALESCE(?, source),
-              first_seen = COALESCE(first_seen, ?),
-              last_seen = ?
+              first_seen = CASE
+                WHEN first_seen IS NULL OR ? < first_seen THEN ? ELSE first_seen
+              END,
+              last_seen = CASE
+                WHEN last_seen IS NULL OR ? > last_seen THEN ? ELSE last_seen
+              END
             WHERE mac = ?
             """,
-            (name, status, connection_type, source, seen_at, seen_at, mac),
+            (name, status, connection_type, source, seen_at, seen_at, seen_at, seen_at, mac),
         )
 
     def load_devices_snapshot(self) -> Dict[str, Dict[str, Any]]:
@@ -4300,10 +4304,30 @@ class StateStore:
             (router_instance_id, file_hash),
         ).fetchone()
 
-    def delete_run(self, run_id: int) -> bool:
-        existing = self.conn.execute("SELECT id FROM runs WHERE id = ?", (run_id,)).fetchone()
+    def remove_run_owned_evidence(self, run_id: int) -> Optional[Dict[str, Any]]:
+        existing = self.conn.execute(
+            "SELECT id, router_instance_id FROM runs WHERE id = ?", (run_id,)
+        ).fetchone()
         if existing is None:
-            return False
+            return None
+        affected: Dict[str, Any] = {
+            "router_instance_ids": {int(existing["router_instance_id"])},
+            "device_macs": {
+                row[0] for row in self.conn.execute(
+                    """
+                    SELECT mac FROM device_observations WHERE run_id = ?
+                    UNION SELECT mac FROM device_daily_stats WHERE run_id = ?
+                    """,
+                    (run_id, run_id),
+                )
+            },
+            "subjects": {
+                (row[0], row[1]) for row in self.conn.execute(
+                    "SELECT subject_key, subject_type FROM subject_behavior_daily_stats WHERE run_id = ?",
+                    (run_id,),
+                )
+            },
+        }
         for table in (
             "run_event_occurrences",
             "run_router_boot_sessions",
@@ -4317,7 +4341,149 @@ class StateStore:
         ):
             self.conn.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
         self.conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
-        return True
+        return affected
+
+    def delete_run(self, run_id: int) -> bool:
+        """Compatibility wrapper; transaction ownership remains with the caller."""
+        return self.remove_run_owned_evidence(run_id) is not None
+
+    def refresh_derived_state(self, affected: Dict[str, Any]) -> None:
+        for mac in affected.get("device_macs", set()):
+            registrations = list(self.conn.execute(
+                """
+                SELECT * FROM device_registrations
+                WHERE mac = ? ORDER BY registration_sequence DESC
+                """,
+                (mac,),
+            ))
+            extrema = [
+                value
+                for row in registrations
+                for value in (row["first_seen"], row["last_seen"])
+                if value is not None
+            ]
+            extrema.extend(
+                row[0] for row in self.conn.execute(
+                    "SELECT seen_at FROM device_observations WHERE mac = ?", (mac,)
+                ) if row[0] is not None
+            )
+            extrema.extend(
+                value
+                for row in self.conn.execute(
+                    "SELECT first_seen, last_seen FROM device_daily_stats WHERE mac = ?", (mac,)
+                )
+                for value in row
+                if value is not None
+            )
+            if not registrations and not extrema:
+                self.conn.execute("DELETE FROM devices WHERE mac = ?", (mac,))
+                continue
+
+            def latest_nonnull(column: str) -> Optional[str]:
+                return next((row[column] for row in registrations if row[column] is not None), None)
+
+            existing = self.conn.execute(
+                "SELECT name, status, connection_type FROM devices WHERE mac = ?", (mac,)
+            ).fetchone()
+            self.conn.execute("INSERT OR IGNORE INTO devices(mac) VALUES(?)", (mac,))
+            self.conn.execute(
+                """
+                UPDATE devices
+                SET name = ?, status = ?, connection_type = ?, source = ?,
+                    first_seen = ?, last_seen = ?
+                WHERE mac = ?
+                """,
+                (
+                    latest_nonnull("registered_name") or (existing["name"] if existing else None),
+                    latest_nonnull("registered_status") or (existing["status"] if existing else None),
+                    latest_nonnull("registered_connection_type")
+                    or (existing["connection_type"] if existing else None),
+                    registrations[0]["registration_source"] if registrations else "observed",
+                    min(extrema) if extrema else None,
+                    max(extrema) if extrema else None,
+                    mac,
+                ),
+            )
+
+        for subject_key, subject_type in affected.get("subjects", set()):
+            extrema = self.conn.execute(
+                """
+                SELECT MIN(seen_at), MAX(seen_at)
+                FROM (
+                  SELECT first_seen AS seen_at FROM subject_behavior_daily_stats
+                  WHERE subject_key = ? AND subject_type = ?
+                  UNION ALL
+                  SELECT last_seen AS seen_at FROM subject_behavior_daily_stats
+                  WHERE subject_key = ? AND subject_type = ?
+                ) WHERE seen_at IS NOT NULL
+                """,
+                (subject_key, subject_type, subject_key, subject_type),
+            ).fetchone()
+            if extrema[0] is None and extrema[1] is None:
+                self.conn.execute(
+                    "DELETE FROM behavior_subjects WHERE subject_key = ? AND subject_type = ?",
+                    (subject_key, subject_type),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    UPDATE behavior_subjects SET first_seen = ?, last_seen = ?
+                    WHERE subject_key = ? AND subject_type = ?
+                    """,
+                    (extrema[0], extrema[1], subject_key, subject_type),
+                )
+
+        for router_instance_id in affected.get("router_instance_ids", set()):
+            extrema = self.conn.execute(
+                """
+                SELECT MIN(seen_at), MAX(seen_at)
+                FROM (
+                  SELECT COALESCE(export_timestamp, observation_start, ingested_at) AS seen_at
+                  FROM runs WHERE router_instance_id = ?
+                  UNION ALL
+                  SELECT COALESCE(export_timestamp, observation_end, observation_start, ingested_at)
+                  FROM runs WHERE router_instance_id = ?
+                ) WHERE seen_at IS NOT NULL
+                """,
+                (router_instance_id, router_instance_id),
+            ).fetchone()
+            self.conn.execute(
+                "UPDATE router_instances SET first_seen = ?, last_seen = ? WHERE id = ?",
+                (extrema[0], extrema[1], router_instance_id),
+            )
+
+    def prune_orphan_provenance(self) -> None:
+        self.conn.execute(
+            """
+            DELETE FROM router_event_occurrences
+            WHERE NOT EXISTS (
+              SELECT 1 FROM run_event_occurrences
+              WHERE run_event_occurrences.occurrence_id = router_event_occurrences.id
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            DELETE FROM router_boot_sessions
+            WHERE NOT EXISTS (
+              SELECT 1 FROM run_router_boot_sessions
+              WHERE run_router_boot_sessions.boot_session_id = router_boot_sessions.id
+            ) AND NOT EXISTS (
+              SELECT 1 FROM router_event_occurrences
+              WHERE router_event_occurrences.boot_session_id = router_boot_sessions.id
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            DELETE FROM router_firmware_profiles
+            WHERE profile_key != ? AND NOT EXISTS (
+              SELECT 1 FROM router_metadata_observations
+              WHERE router_metadata_observations.firmware_profile_id = router_firmware_profiles.id
+            )
+            """,
+            (LEGACY_NETGEAR_FIRMWARE_PROFILE_KEY,),
+        )
 
     def insert_run(
         self,
@@ -4339,6 +4505,7 @@ class StateStore:
         body_digest: Optional[str] = None,
         novel_event_count: int = 0,
         repeated_event_count: int = 0,
+        run_id: Optional[int] = None,
     ) -> int:
         resolved_router_id = (
             router_instance_id
@@ -4349,43 +4516,35 @@ class StateStore:
             (capabilities or NetgearLogAdapter.capabilities).to_json()
         )
         ingested_at = utcnow_iso()
-        cursor = self.conn.execute(
-            """
-            INSERT INTO runs(
+        columns = """
               epoch_id, policy_profile_id, router_instance_id, format_id, file_hash,
               source_path, ingested_at, export_timestamp, observation_start,
               observation_end, observed_dates_json, capabilities_json, body_digest,
               novel_event_count, repeated_event_count,
               parsed_event_count, malformed_line_count, export_noise_line_count,
               risk_score, status, is_partial
-            )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                epoch_id,
-                policy_profile_id,
-                resolved_router_id,
-                format_id,
-                file_hash,
-                str(source_path.resolve()),
-                ingested_at,
-                export_timestamp,
-                observation_start,
-                observation_end,
-                json.dumps(observed_dates),
-                capabilities_json,
-                body_digest,
-                novel_event_count,
-                repeated_event_count,
-                parse_stats.parsed_events,
-                parse_stats.malformed_lines,
-                parse_stats.export_noise_lines,
-                risk_score,
-                status,
-                1 if is_partial else 0,
-            ),
+        """
+        placeholders = ", ".join("?" for _ in range(21))
+        values: Tuple[Any, ...] = (
+            epoch_id, policy_profile_id, resolved_router_id, format_id, file_hash,
+            str(source_path.resolve()), ingested_at, export_timestamp, observation_start,
+            observation_end, json.dumps(observed_dates), capabilities_json, body_digest,
+            novel_event_count, repeated_event_count, parse_stats.parsed_events,
+            parse_stats.malformed_lines, parse_stats.export_noise_lines, risk_score,
+            status, 1 if is_partial else 0,
         )
-        run_id = int(cursor.lastrowid)
+        if run_id is not None:
+            columns = "id, " + columns
+            placeholders = "?, " + placeholders
+            values = (run_id, *values)
+        cursor = self.conn.execute(
+            f"""
+            INSERT INTO runs({columns})
+            VALUES({placeholders})
+            """,
+            values,
+        )
+        run_id = int(run_id if run_id is not None else cursor.lastrowid)
         firmware_profile_id: Optional[int] = None
         firmware_normalized: Optional[str] = None
         if format_id == FORMAT_NETGEAR:
@@ -4581,8 +4740,12 @@ class StateStore:
                 WHEN ? IS NOT NULL AND ? != '{}' THEN ?
                 ELSE attributes_json
               END,
-              first_seen = COALESCE(first_seen, ?),
-              last_seen = ?
+              first_seen = CASE
+                WHEN first_seen IS NULL OR ? < first_seen THEN ? ELSE first_seen
+              END,
+              last_seen = CASE
+                WHEN last_seen IS NULL OR ? > last_seen THEN ? ELSE last_seen
+              END
             WHERE subject_key = ? AND subject_type = ?
             """,
             (
@@ -4590,6 +4753,8 @@ class StateStore:
                 attributes_json,
                 attributes_json,
                 attributes_json,
+                seen_at,
+                seen_at,
                 seen_at,
                 seen_at,
                 subject_key,
@@ -9743,6 +9908,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             emit_nonpersistent_report(args, parsed)
             return 0
     store = StateStore(db_path)
+    log_transaction_active = False
     try:
         handled = handle_management_commands(args, store)
         if handled and not args.logfile:
@@ -9782,10 +9948,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
 
         seed_baseline = store.load_seed_baseline(epoch["id"])
-        devices_snapshot = store.load_devices_snapshot()
         assert logfile_path is not None
         assert raw_bytes is not None
         assert parsed is not None
+        store.conn.execute("BEGIN IMMEDIATE")
+        log_transaction_active = True
         router_instance_id = store.resolve_router_instance(
             parsed,
             router_instance_override=validate_router_instance_override(args.router_instance),
@@ -9795,13 +9962,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         events, parse_stats = parsed.events, parsed.parse_stats
         reprocessed_run_id: Optional[int] = None
         reserved_run_id: Optional[int] = None
+        affected_state: Dict[str, Any] = {
+            "router_instance_ids": set(), "device_macs": set(), "subjects": set(),
+        }
         existing_run = store.get_run_by_hash(router_instance_id, run_hash)
         if args.reprocess and existing_run is not None:
             reprocessed_run_id = int(existing_run["id"])
-            if not store.delete_run(reprocessed_run_id):
+            removed = store.remove_run_owned_evidence(reprocessed_run_id)
+            if removed is None:
                 raise RuntimeError(f"Failed to prepare run {reprocessed_run_id} for reprocessing")
+            affected_state = removed
+            store.refresh_derived_state(affected_state)
             existing_run = None
-        if parsed.capabilities.snapshot_buffer_semantic_dedup and existing_run is None:
+        devices_snapshot = store.load_devices_snapshot()
+        if existing_run is None:
             reserved_run_id = store.insert_run(
                 epoch_id=epoch["id"],
                 policy_profile_id=policy_row["id"] if policy_row else None,
@@ -9822,7 +9996,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     else None
                 ),
                 capabilities=parsed.capabilities,
+                run_id=reprocessed_run_id,
             )
+        if parsed.capabilities.snapshot_buffer_semantic_dedup and existing_run is None:
+            assert reserved_run_id is not None
             store.persist_router_provenance(
                 reserved_run_id,
                 router_instance_id,
@@ -9921,7 +10098,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ),
             reserved_run_id=reserved_run_id,
         )
+        store.refresh_derived_state(affected_state)
+        store.prune_orphan_provenance()
+        store._validate_v4_data_relationships()
+        if store.conn.execute("PRAGMA foreign_key_check").fetchall():
+            raise RuntimeError("Reprocessed analysis contains a foreign-key violation")
         store.commit()
+        log_transaction_active = False
 
         report = build_report_data(
             args=args,
@@ -9952,6 +10135,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else:
             print(render_text_report(report))
         return 0
+    except BaseException:
+        if log_transaction_active and store.conn.in_transaction:
+            store.conn.rollback()
+        log_transaction_active = False
+        raise
     finally:
         store.close()
 
