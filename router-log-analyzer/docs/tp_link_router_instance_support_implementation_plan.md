@@ -1,5 +1,7 @@
 # TP-Link Router-Instance Support Implementation Plan
 
+> **Status:** Implemented and validated for router-log-analyzer 0.5.0. The task checkboxes and code-line map below are retained as the pre-implementation execution record, not as a live completion tracker or current API reference. Conditional support for an adapter-supplied unique boot ID was not added because the observed TP-Link format exposes no such identifier; trusted timestamp anchors implement the applicable path.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add TP-Link Archer system-log ingestion, router-instance-scoped health/security and snapshot-count baselines, portable device discovery, and semantic snapshot deduplication without changing existing NETGEAR findings, scores, reports, or management workflows.

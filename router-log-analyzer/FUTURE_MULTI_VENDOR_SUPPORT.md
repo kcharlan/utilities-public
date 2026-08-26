@@ -6,6 +6,8 @@ This document captures a practical shape for evolving `router_log_analyze.py` fr
 
 The real TP-Link snapshot requirement validated the adapter principle while also requiring schema, capability, deduplication, router-instance, and reporting changes that this earlier proposal intentionally deferred.
 
+Format detection and persistent identity are intentionally separate. `--format auto` or an explicit format selects an adapter. TP-Link persistence then requires either a valid LAN MAC in the export or a stable `--router-instance` override. Without either identity source, the analyzer produces a complete current-only report without opening SQLite or updating a baseline. See the README for the current CLI contract.
+
 ## Current State
 
 The analyzer has two distinct logical layers inside the standalone launcher:

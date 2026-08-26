@@ -41,9 +41,9 @@ The launcher runs via [uv](https://docs.astral.sh/uv/) using a PEP 723 inline-me
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`) — manages the Python interpreter and dependencies
 - Network access on first run so uv can resolve `PyMuPDF` and `pypdf`
 
-## Input Formats
+## Input Formats and Router Identity
 
-The parser accepts PDFs with extractable text and UTF-8 plain-text files. `--format auto` detects the supported formats; use `--format netgear` or `--format tp-link-archer` when you want an explicit choice.
+The parser accepts PDFs with extractable text and UTF-8 plain-text files. `--format auto` detects the supported format; use `--format netgear` or `--format tp-link-archer` to select one explicitly. Format selection only chooses the parser. It does not establish router identity or enable persistent learning by itself.
 
 NETGEAR events use a timestamp such as:
 
@@ -63,9 +63,18 @@ TP-Link Archer text snapshots include `# Time`, hardware/software version, LAN/W
 
 TP-Link router-local timestamps are not assumed trustworthy before the clock is synchronized. Reports show clock segments, boot-resolution warnings, parse coverage, and named checks that were unavailable. `unavailable` is different from a measured count of zero.
 
+Persistent TP-Link analysis has a separate identity requirement:
+
+- If the export contains a valid unicast LAN MAC, the analyzer derives a stable opaque router-instance identity automatically.
+- If the LAN MAC is absent or invalid, parsing and `--format auto` still work, but the default result is a non-persistent current report. It does not open SQLite, require a baseline, deduplicate against prior runs, or update learning.
+- Use the same `--router-instance` value for every export from that physical router to enable persistent history, baseline-backed analysis, cross-snapshot deduplication, `--reprocess`, and report files. The raw override is hashed and is not stored or displayed.
+- `--router-label` is presentation-only and cannot replace `--router-instance`.
+
+Identity-less non-persistent reports support the default text output or `--json` on standard output. `--report` and `--report-dir` require persistent identity because generated report files represent a state-aware analysis.
+
 ## Baseline and Router Config
 
-The analyzer requires an active baseline before normal log analysis can run. You can either import one ahead of time or pass a baseline JSON on the first analysis command.
+Persistent analysis requires an active baseline. You can either import one ahead of time or pass a baseline JSON on the first persistent analysis command. An identity-less TP-Link non-persistent report is current-only and therefore neither requires nor updates a baseline.
 
 The router security-config importer is NETGEAR-specific. If a `router-security-config.md` file lives next to a NETGEAR log or baseline file, the script auto-detects and imports it unless you pass `--config` explicitly. TP-Link config import is not implemented.
 
@@ -108,16 +117,23 @@ Analyze a log after a baseline has already been imported:
 router_log_analyze.py router-log.pdf
 ```
 
-Analyze an explicit TP-Link Archer export and give the router a friendly label:
+Analyze a persistent TP-Link Archer export using a stable local identity and a friendly label:
 
 ```zsh
-router_log_analyze.py router-log.txt --format tp-link-archer --router-label "Home router"
+router_log_analyze.py router-log.txt --format tp-link-archer --router-instance home-router --router-label "Home router"
 ```
 
-If an export does not contain a stable router identity, provide a stable local name. Its raw value is hashed and is neither stored nor displayed:
+`--format auto` may be used with the same override; parser detection and router identity are independent:
 
 ```zsh
-router_log_analyze.py router-log.txt --format tp-link-archer --router-instance home-router
+router_log_analyze.py router-log.txt --router-instance home-router
+```
+
+To inspect an identity-less TP-Link export without persistence or a baseline, emit the current report to standard output:
+
+```zsh
+router_log_analyze.py router-log.txt --format tp-link-archer
+router_log_analyze.py router-log.txt --format tp-link-archer --json
 ```
 
 Replace a previously stored analysis of the same file after analyzer logic or policy changes:
@@ -153,6 +169,8 @@ router_log_analyze.py router-log.pdf --report markdown,html,json --report-dir ./
 ```
 
 Generated files are named from the log file, for example `router-log.report.md`. `--report text` prints to standard output; when `text` is combined with another format, it also writes a `.txt` report.
+
+Report files require persistent router identity. An identity-less non-persistent report is emitted only to standard output as text or JSON.
 
 JSON, text, Markdown, and HTML reports identify the router and show snapshot counts, novel/repeated/report-only occurrence totals, capability-based unavailable checks, router/security finding counts and detail, clock/boot warnings, and parse coverage. A snapshot whose body was fully seen before says so explicitly; a fresh header can still contribute current metadata and counts.
 
@@ -194,12 +212,12 @@ Databases created with schema version 3 are migrated locally to schema version 4
 ## Learning Behavior
 
 - Frequent device metrics use a seven-day rolling window; sparse event behavior uses a 28-day window under the default policy.
-- Runs spanning less than 20 hours are treated as partial and excluded from learning by default.
+- For continuous-log formats such as NETGEAR, runs spanning less than 20 hours are treated as partial and excluded from learning by default. TP-Link point snapshots do not use this duration-based rule.
 - Days containing reset-attributed activity, blocked devices, or high/critical findings are quarantined from the affected learned profiles.
 - Stable metric-only DHCP or event-volume changes can still enter future metric calculations so the baseline can adapt.
 - The tool is self-contained and does not import local modules from this repository at runtime.
 - Known-device counts and ordinary router/system details are weak signals. A genuinely new device defaults to `MEDIUM`; explicit policy overrides can suppress it, cap it, or raise it.
-- TP-Link snapshot counts are low-severity diagnostics and only learn from valid, timestamped snapshots. Capability gaps are reported as unavailable rather than treated as zero activity.
+- TP-Link snapshot counts are low-severity diagnostics and only learn from valid, timestamped snapshots. Count scoring starts after three prior eligible snapshots, considers at most the seven most recent eligible snapshots, and has a hard post-policy `LOW` ceiling. Capability gaps are reported as unavailable rather than treated as zero activity.
 
 ## Private Log Handling
 
@@ -241,8 +259,8 @@ Raw reset-day statistics are retained in SQLite for auditability. Rows containin
 
 ```zsh
 cd /path/to/utilities-public/router-log-analyzer
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
+uv venv .venv
+uv pip install --python .venv/bin/python -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
 

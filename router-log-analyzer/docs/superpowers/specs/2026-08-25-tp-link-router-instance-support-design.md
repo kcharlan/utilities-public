@@ -2,13 +2,13 @@
 
 **Date:** 2026-08-25
 
-**Status:** Approved design, amended after adversarial review
+**Status:** Implemented and validated in router-log-analyzer 0.5.0 after adversarial review. This document preserves the binding design rationale; the README is the current user-facing CLI contract.
 
 **Scope:** Add TP-Link Archer system-log ingestion, router-instance-scoped system learning, portable device identity, snapshot client-count learning, and semantic deduplication while preserving existing NETGEAR behavior.
 
 ## Context
 
-The analyzer currently expects NETGEAR timestamps and square-bracketed event labels. A TP-Link Archer system-log export has a different structure:
+Before this work, the analyzer expected NETGEAR timestamps and square-bracketed event labels. A TP-Link Archer system-log export has a different structure:
 
 - A header identifies the model, export time, firmware, router interfaces, and connected-client counts.
 - Body records use ISO-like timestamps, component and process identifiers, syslog severity, numeric vendor event codes, and messages.
@@ -18,7 +18,7 @@ The analyzer currently expects NETGEAR timestamps and square-bracketed event lab
 - The observed format reports WAN DHCP startup negotiation, not LAN-client DHCP renewals.
 - The header reports aggregate client counts but does not identify those clients.
 
-The current parser rejects these body records and produces no normalized events. Whole-file hashing also cannot prevent repeated body events from being learned again when changing header values make each nightly export bytewise unique.
+The prior parser rejected these body records and produced no normalized events. Whole-file hashing also could not prevent repeated body events from being learned again when changing header values made each nightly export bytewise unique.
 
 ## Goals
 
