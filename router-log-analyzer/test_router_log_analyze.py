@@ -3128,6 +3128,7 @@ def test_run_owned_removal_preserves_shared_occurrence_and_session_until_orphane
                 subject_stat.add_occurrence(event.timestamp, event.timestamp, 1, {"members": []})
                 store.upsert_behavior_subject(client_mac, "device", client_mac, {"source": "device"})
                 store.insert_subject_behavior_daily_stat(run_id, epoch_id, subject_stat, True, None)
+                store.set_materialized_occurrence_ownership(run_id, [event])
         store.commit()
         occurrence_id = store.conn.execute(
             "SELECT occurrence_id FROM run_event_occurrences WHERE run_id = ?", (run_ids[0],)
@@ -3219,6 +3220,7 @@ def test_occurrence_promotion_does_not_repromote_repeated_evidence_owned_by_anot
                     store.insert_device_daily_stat(run_id, epoch_id, stat, True, None)
                 for stat in aggregate["event_day_stats"].values():
                     store.insert_device_event_daily_stat(run_id, epoch_id, stat, True, None)
+                store.set_materialized_occurrence_ownership(run_id, novel_events)
             run_ids.append(run_id)
         store.commit()
         assert store.conn.execute(
@@ -3235,6 +3237,75 @@ def test_occurrence_promotion_does_not_repromote_repeated_evidence_owned_by_anot
         assert store.conn.execute(
             "SELECT COUNT(*) FROM device_event_daily_stats WHERE run_id = ?", (run_ids[2],)
         ).fetchone()[0] == 1
+        store.conn.rollback()
+    finally:
+        store.close()
+
+
+def test_occurrence_learning_owner_transfers_across_consecutive_run_removals(
+    tmp_path: Path,
+) -> None:
+    store = analyzer.StateStore(tmp_path / "network.db")
+    client_mac = "02:00:00:00:00:48"
+    record = "2042-06-15 11:50:00 clientmon[101]: <5> 7001 client observed"
+    try:
+        epoch_id = seed_epoch(store)
+        run_ids = []
+        for index in (1, 2, 3):
+            parsed = analyzer.parse_router_log(
+                tp_link_synthetic_snapshot([record], export_time=f"2042-06-15 12:0{index}:00"),
+                f"synthetic-chain-{index}.log",
+                "tp-link-archer",
+            )
+            parsed.events = [replace(
+                parsed.events[0], mac=client_mac, actor_scope="device",
+                stable_client_identity=client_mac,
+            )]
+            router_id = store.resolve_router_instance(parsed)
+            run_id = store.insert_run(
+                epoch_id, None, f"synthetic-chain-hash-{index}",
+                tmp_path / f"synthetic-chain-{index}.log", parsed.parse_stats,
+                None, None, [], 0, "Clean", False, router_instance_id=router_id,
+                format_id=parsed.format_id, export_timestamp=parsed.export_timestamp.isoformat(),
+                capabilities=parsed.capabilities,
+            )
+            store.persist_router_provenance(run_id, router_id, parsed)
+            if index == 1:
+                event = parsed.events[0]
+                aggregate = analyzer.aggregate_events(
+                    [event], {"devices": {}}, store.load_devices_snapshot()
+                )
+                for stat in aggregate["device_day_stats"].values():
+                    store.insert_device_daily_stat(run_id, epoch_id, stat, True, None)
+                for stat in aggregate["event_day_stats"].values():
+                    store.insert_device_event_daily_stat(run_id, epoch_id, stat, True, None)
+                store.set_materialized_occurrence_ownership(run_id, [event])
+            run_ids.append(run_id)
+        store.commit()
+
+        store.conn.execute("BEGIN IMMEDIATE")
+        first_affected = store.remove_run_owned_evidence(run_ids[0])
+        store.promote_surviving_occurrence_learning(first_affected)
+        assert store.conn.execute(
+            "SELECT SUM(count) FROM device_event_daily_stats"
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats WHERE run_id = ?", (run_ids[1],)
+        ).fetchone()[0] == 1
+
+        second_affected = store.remove_run_owned_evidence(run_ids[1])
+        store.promote_surviving_occurrence_learning(second_affected)
+        assert store.conn.execute(
+            "SELECT SUM(count) FROM device_event_daily_stats"
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats WHERE run_id = ?", (run_ids[2],)
+        ).fetchone()[0] == 1
+        c_link = store.conn.execute(
+            "SELECT is_novel, is_repeated FROM run_event_occurrences WHERE run_id = ?",
+            (run_ids[2],),
+        ).fetchone()
+        assert (c_link["is_novel"], c_link["is_repeated"]) == (0, 1)
         store.conn.rollback()
     finally:
         store.close()

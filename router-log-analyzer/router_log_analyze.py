@@ -4286,6 +4286,17 @@ class StateStore:
             """,
             (body_digest, novel_count, repeated_count, run_id),
         )
+        metadata_row = self.conn.execute(
+            "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        metadata = json.loads(metadata_row["metadata_json"] or "{}") if metadata_row else {}
+        # Analysis decides which novel occurrences actually enter learned daily rows.
+        metadata["learning_owned_occurrence_ids"] = []
+        self.conn.execute(
+            "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
+            (json_dumps(metadata), run_id),
+        )
         return {
             "novel_count": novel_count,
             "repeated_count": repeated_count,
@@ -4293,6 +4304,43 @@ class StateStore:
             "boot_session_ids": sorted(set(boot_sessions.values())),
             "events": report_events,
         }
+
+    def set_materialized_occurrence_ownership(
+        self,
+        run_id: int,
+        events: Sequence[Event],
+    ) -> None:
+        digests = sorted({
+            event.occurrence_digest
+            for event in events
+            if event.occurrence_digest is not None
+        })
+        occurrence_ids: List[int] = []
+        for digest in digests:
+            row = self.conn.execute(
+                """
+                SELECT occurrence.id
+                FROM router_event_occurrences AS occurrence
+                JOIN run_event_occurrences AS link ON link.occurrence_id = occurrence.id
+                WHERE link.run_id = ? AND occurrence.occurrence_digest = ?
+                """,
+                (run_id, digest),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Materialized learning event has no persisted occurrence link")
+            occurrence_ids.append(int(row["id"]))
+        metadata_row = self.conn.execute(
+            "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if metadata_row is None:
+            raise RuntimeError("Materialized occurrence owner has no router metadata observation")
+        metadata = json.loads(metadata_row["metadata_json"] or "{}")
+        metadata["learning_owned_occurrence_ids"] = sorted(occurrence_ids)
+        self.conn.execute(
+            "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
+            (json_dumps(metadata), run_id),
+        )
 
     def get_run_by_hash(
         self,
@@ -4310,6 +4358,27 @@ class StateStore:
         ).fetchone()
         if existing is None:
             return None
+        metadata_row = self.conn.execute(
+            "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        metadata = json.loads(metadata_row["metadata_json"] or "{}") if metadata_row else {}
+        recorded_owner_ids = metadata.get("learning_owned_occurrence_ids")
+        if isinstance(recorded_owner_ids, list) and all(
+            isinstance(occurrence_id, int) for occurrence_id in recorded_owner_ids
+        ):
+            owned_occurrence_ids = list(recorded_owner_ids)
+        else:
+            # Compatibility for v4 runs written before materialized ownership was recorded.
+            owned_occurrence_ids = [
+                row[0] for row in self.conn.execute(
+                    """
+                    SELECT occurrence_id FROM run_event_occurrences
+                    WHERE run_id = ? AND is_novel = 1
+                    """,
+                    (run_id,),
+                )
+            ]
         affected: Dict[str, Any] = {
             "router_instance_ids": {int(existing["router_instance_id"])},
             "device_macs": {
@@ -4327,15 +4396,7 @@ class StateStore:
                     (run_id,),
                 )
             },
-            "occurrence_ids": [
-                row[0] for row in self.conn.execute(
-                    """
-                    SELECT occurrence_id FROM run_event_occurrences
-                    WHERE run_id = ? AND is_novel = 1
-                    """,
-                    (run_id,),
-                )
-            ],
+            "occurrence_ids": owned_occurrence_ids,
             "device_learning_rows": [
                 dict(row) for row in self.conn.execute(
                     "SELECT * FROM device_daily_stats WHERE run_id = ?", (run_id,)
@@ -4386,6 +4447,7 @@ class StateStore:
             for row in affected.get("subject_learning_rows", [])
             if row["subject_type"] in {"system", "device"}
         }
+        promoted_owners: DefaultDict[int, List[int]] = defaultdict(list)
         for occurrence_id in affected.get("occurrence_ids", []):
             row = self.conn.execute(
                 """
@@ -4568,6 +4630,27 @@ class StateStore:
                             )), subject_template["exclusion_reason"], existing_subject["id"],
                         ),
                     )
+            promoted_owners[owner_run_id].append(int(occurrence_id))
+
+        for owner_run_id, occurrence_ids in promoted_owners.items():
+            metadata_row = self.conn.execute(
+                "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+                (owner_run_id,),
+            ).fetchone()
+            if metadata_row is None:
+                raise RuntimeError("Promoted occurrence owner has no router metadata observation")
+            metadata = json.loads(metadata_row["metadata_json"] or "{}")
+            prior_ids = metadata.get("learning_owned_occurrence_ids", [])
+            if not isinstance(prior_ids, list):
+                prior_ids = []
+            metadata["learning_owned_occurrence_ids"] = sorted({
+                *(value for value in prior_ids if isinstance(value, int)),
+                *occurrence_ids,
+            })
+            self.conn.execute(
+                "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
+                (json_dumps(metadata), owner_run_id),
+            )
 
     def refresh_derived_state(self, affected: Dict[str, Any]) -> None:
         for mac in affected.get("device_macs", set()):
@@ -10294,6 +10377,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if parsed.capabilities.coverage_mode == "point_snapshot"
             else detect_partial_run(events, policy)
         )
+        persistence_events: List[Event] = []
         if parsed.capabilities.snapshot_buffer_semantic_dedup:
             persistence_events = [
                 event for event in analyzed_events if event.occurrence_digest is not None
@@ -10337,6 +10421,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ),
             reserved_run_id=reserved_run_id,
         )
+        if (
+            parsed.capabilities.snapshot_buffer_semantic_dedup
+            and not deduplicated
+            and run_id is not None
+        ):
+            store.set_materialized_occurrence_ownership(run_id, persistence_events)
         affected_state["router_instance_ids"].add(router_instance_id)
         affected_state["device_macs"].update(
             mac for _observed_date, mac in persistence_aggregate["device_day_stats"]
