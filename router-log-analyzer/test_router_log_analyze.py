@@ -8911,3 +8911,430 @@ def test_byte_identical_netgear_log_rebuilds_report_without_duplicate_learning_r
     finally:
         store.close()
     assert after_snapshot == before_snapshot
+
+
+def test_detector_eligibility_reports_capability_and_evidence_gaps() -> None:
+    capabilities = analyzer.RouterCapabilities(
+        stable_client_identity=True,
+        router_system_events=True,
+        snapshot_counts=True,
+        supported_event_keys={"ROUTER_BOOT"},
+        supported_event_families={"ROUTER_SYSTEM"},
+        coverage_mode="point_snapshot",
+    )
+    trusted_router_event = replace(
+        make_event("2042-06-15T12:00:00", analyzer.SYSTEM_ACTOR, "ROUTER_BOOT", "ROUTER_SYSTEM"),
+        actor_scope="router",
+        clock_trust="trusted",
+        occurrence_novel=True,
+    )
+
+    assert analyzer.detector_eligibility(
+        "stable_client_discovery", capabilities, [trusted_router_event], {}
+    ) == analyzer.DetectorEligibility(True, None)
+    assert analyzer.detector_eligibility(
+        "device_dhcp_metrics", capabilities, [trusted_router_event], {}
+    ) == analyzer.DetectorEligibility(False, "no_client_dhcp_coverage")
+    assert analyzer.detector_eligibility(
+        "cluster_visibility", capabilities, [trusted_router_event], {}
+    ) == analyzer.DetectorEligibility(False, "no_negative_client_coverage")
+    assert analyzer.detector_eligibility(
+        "router_behavior", capabilities, [replace(trusted_router_event, clock_trust="clock_untrusted")], {}
+    ) == analyzer.DetectorEligibility(False, "untrusted_time")
+    assert analyzer.detector_eligibility(
+        "snapshot_counts", capabilities, [trusted_router_event], {"snapshot_counts_valid": False}
+    ) == analyzer.DetectorEligibility(False, "invalid_snapshot_counts")
+
+
+@pytest.mark.parametrize(
+    ("detector", "reason"),
+    [
+        ("current_rejected_client", "no_client_access_decisions"),
+        ("device_event_volume", "incomparable_event_coverage"),
+        ("device_behavior", "no_comparable_device_behavior"),
+        ("confirmed_reset", "no_wan_transition_coverage"),
+        ("inferred_reset", "no_client_recovery_equivalence"),
+        ("router_inventory", "no_router_event_coverage"),
+        ("router_security", "no_router_security_mapping"),
+        ("snapshot_counts", "no_snapshot_counts"),
+    ],
+)
+def test_detector_eligibility_matrix_has_stable_unavailable_reasons(
+    detector: str,
+    reason: str,
+) -> None:
+    assert analyzer.detector_eligibility(
+        detector, analyzer.RouterCapabilities(stable_client_identity=True), [], {}
+    ) == analyzer.DetectorEligibility(False, reason)
+
+
+def test_partial_run_uses_adapter_coverage_mode() -> None:
+    events = [
+        make_event("2042-06-15T12:00:00", analyzer.SYSTEM_ACTOR, "ROUTER_BOOT"),
+        make_event("2042-06-15T12:05:00", analyzer.SYSTEM_ACTOR, "ROUTER_READY"),
+    ]
+    assert analyzer.detect_partial_run_for_capabilities(
+        events, analyzer.NetgearLogAdapter.capabilities, analyzer.DEFAULT_POLICY
+    ) is True
+    assert analyzer.detect_partial_run_for_capabilities(
+        events, analyzer.TpLinkArcherAdapter.capabilities, analyzer.DEFAULT_POLICY
+    ) is False
+
+
+def test_portable_device_discovery_is_medium_policy_controlled_and_known_devices_are_quiet() -> None:
+    new_mac = "02:00:00:00:20:01"
+    known_mac = "02:00:00:00:20:02"
+    events = [
+        replace(
+            make_event("2042-06-15T12:00:00", new_mac, "CLIENT_PRESENT", "CLIENT"),
+            actor_scope="device", stable_client_identity=new_mac, occurrence_novel=True,
+        ),
+        replace(
+            make_event("2042-06-15T12:00:01", known_mac, "CLIENT_PRESENT", "CLIENT"),
+            actor_scope="device", stable_client_identity=known_mac, occurrence_novel=True,
+        ),
+    ]
+    capabilities = analyzer.RouterCapabilities(stable_client_identity=True)
+
+    findings = analyzer.detect_stable_client_discovery(
+        events,
+        {known_mac: {"name": "SYNTHETIC KNOWN CLIENT", "source": "observed"}},
+        capabilities,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    )
+    assert [(finding.kind, finding.mac, finding.severity, finding.event_count) for finding in findings] == [
+        ("new_device", new_mac, "medium", 1),
+    ]
+
+    suppressed_policy = copy.deepcopy(analyzer.DEFAULT_POLICY)
+    suppressed_policy["finding_overrides"]["new_device"] = {"suppress": True}
+    assert analyzer.detect_stable_client_discovery(
+        events, {}, capabilities, suppressed_policy
+    ) == []
+
+    escalated_policy = copy.deepcopy(analyzer.DEFAULT_POLICY)
+    escalated_policy["finding_overrides"]["new_device"] = {"minimum_severity": "high"}
+    assert analyzer.detect_stable_client_discovery(
+        [events[0]], {}, capabilities, escalated_policy
+    )[0].severity == "high"
+
+
+def test_new_rejected_device_is_one_consolidated_high_finding() -> None:
+    mac = "02:00:00:00:20:03"
+    events = [
+        replace(
+            make_event("2042-06-15T12:00:00", mac, "CLIENT_PRESENT", "CLIENT"),
+            actor_scope="device", stable_client_identity=mac, occurrence_novel=True,
+        ),
+        replace(
+            make_event("2042-06-15T12:00:01", mac, "CLIENT_ACCESS_REJECTED", "ACCESS_CONTROL"),
+            actor_scope="device", stable_client_identity=mac, occurrence_novel=True,
+            structured_evidence={"action": "rejected"},
+        ),
+    ]
+    capabilities = analyzer.RouterCapabilities(
+        stable_client_identity=True,
+        client_access_decision_equivalence=True,
+        supported_event_keys={"CLIENT_PRESENT", "CLIENT_ACCESS_REJECTED"},
+    )
+
+    findings = analyzer.detect_stable_client_discovery(
+        events, {}, capabilities, copy.deepcopy(analyzer.DEFAULT_POLICY)
+    )
+    assert [(finding.kind, finding.severity, finding.event_count) for finding in findings] == [
+        ("new_rejected_device", "high", 2),
+    ]
+
+
+def test_known_blocked_device_rejection_uses_existing_actionable_finding_path() -> None:
+    mac = "02:00:00:00:20:04"
+    rejected = replace(
+        make_event("2042-06-15T12:00:01", mac, "CLIENT_ACCESS_REJECTED", "ACCESS_CONTROL"),
+        actor_scope="device", stable_client_identity=mac, occurrence_novel=True,
+        structured_evidence={"action": "rejected"},
+    )
+    capabilities = analyzer.RouterCapabilities(
+        stable_client_identity=True,
+        client_access_decision_equivalence=True,
+    )
+    findings = analyzer.detect_stable_client_discovery(
+        [rejected],
+        {mac: {"name": "SYNTHETIC BLOCKED CLIENT", "status": "blocked"}},
+        capabilities,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    )
+    assert [(finding.kind, finding.severity, finding.mac) for finding in findings] == [
+        ("blocked_device_activity", "critical", mac),
+    ]
+
+
+def test_router_snapshot_history_uses_strict_cursor_and_seven_observation_limit(tmp_path: Path) -> None:
+    store = analyzer.StateStore(tmp_path / "snapshot-history.db")
+    try:
+        epoch_id = seed_epoch(store)
+        router_id = store.get_or_create_legacy_netgear_router_instance()
+        for index in range(9):
+            run_id = store.insert_run(
+                epoch_id=epoch_id,
+                policy_profile_id=None,
+                file_hash=f"synthetic-snapshot-{index}",
+                source_path=tmp_path / f"synthetic-snapshot-{index}.log",
+                parse_stats=analyzer.ParseStats(),
+                observation_start=None,
+                observation_end=None,
+                observed_dates=[],
+                risk_score=0,
+                status="Clean",
+                is_partial=False,
+                router_instance_id=router_id,
+                export_timestamp=f"2042-06-{index + 1:02d}T12:00:00",
+            )
+            store.conn.execute(
+                """
+                UPDATE router_snapshot_metrics
+                SET total_clients = ?, wifi_clients = ?, derived_wired_clients = ?, eligible = 1,
+                    exclusion_reason = NULL
+                WHERE run_id = ?
+                """,
+                (10 + index, 6 + index, 4, run_id),
+            )
+        store.conn.commit()
+
+        rows = store.fetch_router_snapshot_history(
+            router_id, epoch_id, ("2042-06-09T12:00:00", 9999), None, 7
+        )
+        assert [row["total_clients"] for row in rows] == [18, 17, 16, 15, 14, 13, 12]
+        excluded = store.fetch_router_snapshot_history(
+            router_id, epoch_id, ("2042-06-09T12:00:00", 9999), int(rows[0]["run_id"]), 7
+        )
+        assert [row["total_clients"] for row in excluded] == [17, 16, 15, 14, 13, 12, 11]
+    finally:
+        store.close()
+
+
+def test_snapshot_count_anomaly_requires_three_history_rows_and_has_post_policy_low_ceiling() -> None:
+    metrics = analyzer.RouterSnapshotMetrics(
+        raw_total_clients="40", raw_wifi_clients="30",
+        total_clients=40, wifi_clients=30, derived_wired_clients=10, eligible=True,
+    )
+    history = [
+        {"total_clients": 10, "wifi_clients": 7, "derived_wired_clients": 3},
+        {"total_clients": 11, "wifi_clients": 8, "derived_wired_clients": 3},
+        {"total_clients": 9, "wifi_clients": 6, "derived_wired_clients": 3},
+    ]
+    policy = copy.deepcopy(analyzer.DEFAULT_POLICY)
+    policy["finding_overrides"]["router_client_count_anomaly"] = {
+        "minimum_severity": "critical"
+    }
+
+    assert analyzer.detect_router_snapshot_count_anomaly(metrics, history[:2], policy) == []
+    findings = analyzer.detect_router_snapshot_count_anomaly(metrics, history, policy)
+    assert len(findings) == 1
+    assert findings[0].kind == "router_client_count_anomaly"
+    assert findings[0].severity == "low"
+    assert set(findings[0].metadata["metrics"]) == {"total", "wifi", "wired"}
+
+    suppressed = copy.deepcopy(policy)
+    suppressed["finding_overrides"]["router_client_count_anomaly"] = {"suppress": True}
+    assert analyzer.detect_router_snapshot_count_anomaly(metrics, history, suppressed) == []
+
+
+def test_router_security_mapping_is_explicit_and_does_not_trust_syslog_severity_alone() -> None:
+    explicit = replace(
+        make_event("2042-06-15T12:00:00", analyzer.SYSTEM_ACTOR, "FIREWALL_4101_FAILURE", "ROUTER_SYSTEM"),
+        actor_scope="router", component="firewall", vendor_event_code="4101",
+        syslog_severity="0", structured_evidence={"action": "failure"},
+        clock_trust="clock_untrusted", occurrence_novel=True,
+    )
+    severity_only = replace(
+        explicit, event_key="SERVICE_2001_START", component="service", vendor_event_code="2001",
+        structured_evidence={"action": "start"},
+    )
+    capabilities = analyzer.RouterCapabilities(router_system_events=True)
+
+    findings = analyzer.detect_router_security_events(
+        [explicit, severity_only], capabilities, copy.deepcopy(analyzer.DEFAULT_POLICY)
+    )
+    assert [(finding.kind, finding.severity, finding.metadata["event_key"]) for finding in findings] == [
+        ("router_security_event", "high", "FIREWALL_4101_FAILURE"),
+    ]
+    assert analyzer.detect_router_security_events(
+        [replace(explicit, occurrence_novel=False, occurrence_repeated=True)],
+        capabilities,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    ) == []
+
+
+def test_high_router_security_finding_quarantines_only_its_router_profile_subject() -> None:
+    day = "2042-06-15"
+    subject_key = "synthetic-opaque-router-subject"
+    aggregate = {
+        "device_day_stats": {},
+        "event_day_stats": {},
+        "events": [],
+        "subject_behavior_day_stats": {
+            (day, subject_key, "router", "FIREWALL_4101_FAILURE"): object(),
+            (day, "other-router-subject", "router", "FIREWALL_4101_FAILURE"): object(),
+        },
+    }
+    finding = analyzer.Finding(
+        kind="router_security_event", severity="high", mac=None, message="synthetic",
+        metadata={"day": day, "subject_key": subject_key, "subject_type": "router"},
+    )
+    exclusions = analyzer.build_exclusion_maps(
+        aggregate, {"all": [finding]}, {}, False
+    )
+    assert (day, subject_key, "router", "FIREWALL_4101_FAILURE") in exclusions[4]
+    assert (day, "other-router-subject", "router", "FIREWALL_4101_FAILURE") not in exclusions[4]
+
+
+def test_router_behavior_waits_for_three_observations_and_detects_new_type_and_stopped_state() -> None:
+    new_type = replace(
+        make_event("2042-06-15T12:00:00", analyzer.SYSTEM_ACTOR, "SERVICE_2999_START", "ROUTER_SYSTEM"),
+        actor_scope="router", component="service", clock_trust="trusted",
+        occurrence_novel=True, structured_evidence={"action": "start"},
+    )
+    stopped = replace(
+        make_event("2042-06-15T12:00:01", analyzer.SYSTEM_ACTOR, "SERVICE_2001_STOP", "ROUTER_SYSTEM"),
+        actor_scope="router", component="service", clock_trust="trusted",
+        occurrence_novel=True, structured_evidence={"action": "stop"},
+    )
+    capabilities = analyzer.RouterCapabilities(
+        router_system_events=True,
+        supported_event_families={"ROUTER_SYSTEM"},
+    )
+    history = analyzer.RouterBehaviorHistory(
+        eligible_observation_count=3,
+        event_keys=frozenset({"SERVICE_2001_START"}),
+        running_components=frozenset({"service"}),
+    )
+
+    findings = analyzer.detect_router_behavior(
+        [new_type, stopped], capabilities, history, copy.deepcopy(analyzer.DEFAULT_POLICY)
+    )
+    assert [(finding.kind, finding.severity) for finding in findings] == [
+        ("router_new_event_type", "medium"),
+        ("router_state_change", "medium"),
+    ]
+    assert analyzer.detect_router_behavior(
+        [new_type, stopped], capabilities, replace(history, eligible_observation_count=2),
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    ) == []
+
+
+def test_firmware_change_requires_two_known_profiles_and_is_policy_controlled() -> None:
+    policy = copy.deepcopy(analyzer.DEFAULT_POLICY)
+    finding = analyzer.detect_router_firmware_change(
+        "synthetic-firmware-a", "synthetic-firmware-b", policy
+    )
+    assert finding is not None
+    assert (finding.kind, finding.severity) == ("router_firmware_change", "low")
+    assert analyzer.detect_router_firmware_change(
+        "unknown-firmware", "synthetic-firmware-b", policy
+    ) is None
+    policy["finding_overrides"]["router_firmware_change"] = {"suppress": True}
+    assert analyzer.detect_router_firmware_change(
+        "synthetic-firmware-a", "synthetic-firmware-b", policy
+    ) is None
+
+
+def test_missing_firmware_reuses_previous_known_profile_for_same_router(tmp_path: Path) -> None:
+    store = analyzer.StateStore(tmp_path / "firmware-context.db")
+    try:
+        epoch_id = seed_epoch(store)
+        profile_ids = []
+        for index, include_version in enumerate((True, False), start=1):
+            text = tp_link_synthetic_snapshot([
+                f"2042-06-{index:02d} 11:59:00 service[42]: <6> 2001 Routine health success",
+            ], export_time=f"2042-06-{index:02d} 12:00:00")
+            if not include_version:
+                text = "\n".join(
+                    line for line in text.splitlines() if not line.startswith("# H-Ver")
+                )
+            parsed = analyzer.parse_router_log(text, f"synthetic-firmware-{index}.log", "tp-link-archer")
+            router_id = store.resolve_router_instance(parsed)
+            run_id = store.insert_run(
+                epoch_id, None, f"synthetic-firmware-context-{index}",
+                tmp_path / f"synthetic-firmware-{index}.log", parsed.parse_stats,
+                None, None, [], 0, "Clean", False, router_instance_id=router_id,
+                format_id=parsed.format_id, export_timestamp=parsed.export_timestamp.isoformat(),
+                capabilities=parsed.capabilities,
+            )
+            store.persist_router_provenance(run_id, router_id, parsed)
+            profile_ids.append(store.current_router_firmware_context(run_id, router_id))
+        assert profile_ids[0][0] == profile_ids[1][0]
+        assert profile_ids[0][1] == profile_ids[1][1]
+    finally:
+        store.close()
+
+
+def test_tp_link_main_scores_explicit_security_and_fourth_snapshot_count_only_low(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "tp-link-analysis.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+
+    reports = []
+    for index, total in enumerate((10, 10, 10, 40), start=1):
+        record = (
+            f"2042-06-{index:02d} 11:59:00 firewall[41]: <4> 4101 Policy failure"
+            if index == 1
+            else f"2042-06-{index:02d} 11:59:00 service[42]: <6> 2001 Routine health success"
+        )
+        log_path = tmp_path / f"synthetic-tp-link-{index}.log"
+        log_path.write_text(
+            tp_link_synthetic_snapshot(
+                [record],
+                export_time=f"2042-06-{index:02d} 12:00:00",
+                counts_line=f"# Clients connected: {total} ; WI-FI : {max(total - 3, 0)}",
+            ),
+            encoding="utf-8",
+        )
+        assert analyzer.main([
+            str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+        ]) == 0
+        reports.append(json.loads(capsys.readouterr().out))
+
+    assert [finding["kind"] for finding in reports[0]["findings"]["all"]] == [
+        "router_security_event"
+    ]
+    assert all(
+        finding["kind"] != "router_client_count_anomaly"
+        for report in reports[:3]
+        for finding in report["findings"]["all"]
+    )
+    count_finding = next(
+        finding for finding in reports[3]["findings"]["all"]
+        if finding["kind"] == "router_client_count_anomaly"
+    )
+    assert count_finding["severity"] == "low"
+    assert all(
+        finding["kind"] not in {"new_event_type", "rare_event_activity", "event_behavior_anomaly"}
+        for report in reports
+        for finding in report["findings"]["all"]
+    )
+    store = analyzer.StateStore(db_path)
+    try:
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_daily_stats WHERE mac = ?", (analyzer.SYSTEM_ACTOR,)
+        ).fetchone()[0] > 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM subject_behavior_daily_stats WHERE subject_type = 'system'"
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM subject_behavior_daily_stats WHERE subject_type = 'router'"
+        ).fetchone()[0] > 0
+        ownership = [
+            json.loads(row[0]).get("learning_owned_occurrence_ids", [])
+            for row in store.conn.execute(
+                "SELECT metadata_json FROM router_metadata_observations ORDER BY run_id"
+            )
+        ]
+        assert all(owned for owned in ownership), ownership
+    finally:
+        store.close()
