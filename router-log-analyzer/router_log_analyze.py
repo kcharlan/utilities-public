@@ -530,6 +530,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true", help="Emit report as JSON.")
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Include expanded event and diagnostic details in TP-Link text output; NETGEAR text is unchanged.",
+    )
+    parser.add_argument(
         "--report",
         help="Comma-separated report outputs: text, markdown, html, json.",
     )
@@ -9752,6 +9757,45 @@ REPORT_CHECKS = (
 )
 
 
+REPORT_CHECK_LABELS = {
+    "duration_based_partial": "Duration-based partial-run detection",
+    "stable_client_discovery": "Stable client discovery",
+    "current_rejected_client": "Current rejected-client detection",
+    "device_dhcp_metrics": "Device DHCP metrics",
+    "device_event_volume": "Device event-volume comparison",
+    "device_behavior": "Device behavior comparison",
+    "cluster_visibility": "Cluster visibility",
+    "confirmed_reset": "Confirmed internet-reset detection",
+    "inferred_reset": "Inferred internet-reset detection",
+    "router_inventory": "Router inventory",
+    "router_security": "Router-security mapping",
+    "router_behavior": "Router behavior comparison",
+    "snapshot_counts": "Client snapshot counts",
+}
+
+
+REPORT_UNAVAILABLE_REASON_LABELS = {
+    "ambiguous_firmware_profile": "ambiguous firmware profile",
+    "incomparable_event_coverage": "incomparable event coverage",
+    "invalid_snapshot_counts": "invalid snapshot counts",
+    "no_client_access_decisions": "no client access decisions",
+    "no_client_dhcp_coverage": "no client DHCP coverage",
+    "no_client_recovery_equivalence": "no equivalent client recovery evidence",
+    "no_comparable_device_behavior": "no comparable device behavior coverage",
+    "no_negative_client_coverage": "no negative client coverage",
+    "no_router_behavior_coverage": "no router behavior coverage",
+    "no_router_behavior_history": "no router behavior history",
+    "no_router_event_coverage": "no router event coverage",
+    "no_router_security_mapping": "no recognized router-security mapping",
+    "no_snapshot_counts": "no client snapshot counts",
+    "no_stable_client_identity": "no stable client identity",
+    "no_trusted_boot_anchor": "no trusted boot anchor",
+    "no_wan_transition_coverage": "no WAN transition coverage",
+    "point_snapshot_not_continuous": "point snapshot is not a continuous log",
+    "untrusted_time": "router-local timestamps were not trusted",
+}
+
+
 def project_router_activity(events: Sequence[Event]) -> Dict[str, Any]:
     """Summarize router-scoped source records without changing event semantics."""
     component_counts: Counter = Counter()
@@ -10780,6 +10824,152 @@ def operational_limitation_lines(report: Dict[str, Any], verbose: bool = False) 
     return list(dict.fromkeys(lines))
 
 
+def verbose_router_activity_lines(report: Dict[str, Any], width: int) -> List[str]:
+    """Render exhaustive TP-Link router activity with explicit count units."""
+    activity = report.get("router_activity", {})
+    occurrences = report.get("occurrences", {})
+    source_total = activity.get("source_record_count")
+    semantic_total = occurrences.get("body_count", 0)
+    lines: List[str] = []
+    if isinstance(source_total, int):
+        lines.append(f"Source-record total: {source_total}")
+        lines.append(f"Semantic-occurrence total: {semantic_total}")
+        if source_total != semantic_total:
+            lines.append(
+                "Source records describe snapshot rows; semantic occurrences describe "
+                "deduplicated analyzer events."
+            )
+    else:
+        lines.append(f"Semantic-occurrence total: {semantic_total}")
+        lines.append("Source-record/component detail was unavailable in this compatibility report.")
+
+    for title, key, label in (
+        ("Components", "component_counts", "Component"),
+        ("Outcomes", "outcome_counts", "Outcome"),
+    ):
+        items = [item for item in activity.get(key, []) if isinstance(item, dict)]
+        if not items:
+            continue
+        lines.append(title + ":")
+        for item in items:
+            lines.extend(operational_line(
+                "  " + humanize_event_key(str(item.get("component") or item.get("outcome") or "other")),
+                f"{item.get('event_count', 0)} source record(s)",
+                width,
+            ))
+        if isinstance(source_total, int):
+            lines.append(
+                f"{label} reconciliation: {sum(int(item.get('event_count', 0)) for item in items)} source record(s)"
+            )
+
+    event_types = [item for item in activity.get("event_type_counts", []) if isinstance(item, dict)]
+    if event_types:
+        lines.append("Router event types:")
+        for item in event_types:
+            code = item.get("vendor_event_code")
+            event_label = humanize_event_key(str(item.get("event_key") or "other"))
+            if code not in (None, ""):
+                event_label += f" ({code})"
+            row = (
+                f"  {humanize_event_key(str(item.get('component') or 'other'))} | "
+                f"{event_label} | {item.get('outcome') or 'other'}: "
+                f"{item.get('event_count', 0)} source record(s)"
+            )
+            lines.extend(textwrap.wrap(row, width=width, subsequent_indent="    ", break_long_words=True, break_on_hyphens=False) or [row])
+        if isinstance(source_total, int):
+            lines.append(
+                "Event-type reconciliation: "
+                f"{sum(int(item.get('event_count', 0)) for item in event_types)} source record(s)"
+            )
+    return lines
+
+
+def verbose_technical_detail_lines(report: Dict[str, Any], width: int) -> List[str]:
+    """Project exhaustive TP-Link text evidence without changing report semantics."""
+    router = report.get("router", {})
+    snapshot = report.get("snapshot", {})
+    occurrences = report.get("occurrences", {})
+    activity = report.get("router_activity", {})
+    clock = report.get("clock", {})
+    coverage = report.get("coverage", {})
+    lines = verbose_router_activity_lines(report, width)
+
+    lines.append("Availability checks:")
+    for name, item in sorted(report.get("availability", {}).get("checks", {}).items()):
+        if not isinstance(item, dict):
+            continue
+        label = REPORT_CHECK_LABELS.get(name, humanize_event_key(name))
+        if item.get("available"):
+            value = "available"
+        else:
+            reason = str(item.get("unavailable_reason") or "no reason supplied")
+            value = "unavailable — " + REPORT_UNAVAILABLE_REASON_LABELS.get(
+                reason, humanize_event_key(reason).casefold(),
+            )
+        lines.extend(operational_line(f"  {label} ({name})", value, width))
+
+    lines.append("Occurrence evidence:")
+    for label, key in (
+        ("Body semantic occurrences", "body_count"),
+        ("Source records", "source_record_count"),
+        ("Novel occurrences", "novel_count"),
+        ("Repeated occurrences", "repeated_count"),
+        ("Report-only occurrences", "report_only_count"),
+    ):
+        lines.extend(operational_line("  " + label, occurrences.get(key, 0), width))
+    lines.extend(operational_line("  Fully repeated snapshot body", occurrences.get("fully_repeated", False), width))
+
+    lines.append("Clock and boot evidence:")
+    lines.append("  Clock segments:")
+    for segment in clock.get("segments", []):
+        if not isinstance(segment, dict):
+            continue
+        value = (
+            f"{segment.get('clock_trust', 'unknown')} (sequence "
+            f"{segment.get('start_sequence', 'n/a')}-{segment.get('end_sequence', 'n/a')})"
+        )
+        lines.extend(operational_line(f"  Clock segment {segment.get('segment_id', 'unknown')}", value, width))
+    lines.extend(operational_line("  Boot resolution", f"{clock.get('resolved_boot_session_count', 0)} resolved / {clock.get('boot_candidate_count', 0)} candidate(s)", width))
+    lines.extend(operational_line("  Boot warnings", ", ".join(clock.get("boot_resolution_warnings", [])) or "None", width))
+    lines.extend(operational_line("  Parser warnings", ", ".join(clock.get("warnings", [])) or "None", width))
+
+    lines.append("Coverage evidence:")
+    lines.extend(operational_line(
+        "  Coverage records",
+        f"body {coverage.get('body_records', 0)}, trusted {coverage.get('trusted_records', 0)}, "
+        f"untrusted {coverage.get('untrusted_records', 0)}, timing-eligible {coverage.get('timing_eligible_records', 0)}",
+        width,
+    ))
+    lines.extend(operational_line(
+        "  Coverage lines",
+        f"parsed {coverage.get('parsed_events', 0)}, ignored {coverage.get('ignored_lines', 0)}, "
+        f"malformed {coverage.get('malformed_lines', 0)}, export-noise {coverage.get('export_noise_lines', 0)}",
+        width,
+    ))
+    lines.extend(operational_line("  Coverage span", f"{coverage.get('run_span_start') or 'unavailable'} to {coverage.get('run_span_end') or 'unavailable'}", width))
+    lines.extend(operational_line("  LAN coverage", json_dumps(coverage.get("lan")) if coverage.get("lan") else "unavailable", width))
+    lines.extend(operational_line("  WAN coverage", json_dumps(coverage.get("wan")) if coverage.get("wan") else "unavailable", width))
+
+    lines.append("Database and persistence:")
+    lines.extend(operational_line("  Database", report.get("inputs", {}).get("db") or "unavailable", width))
+    lines.extend(operational_line("  Run persistence", run_persistence_text(report), width))
+    lines.extend(operational_line("  Router", router.get("label") or "unavailable", width))
+    lines.extend(operational_line("  Client snapshot history", snapshot.get("history_count", 0), width))
+    lines.extend(operational_line("  Router behavior history", activity.get("behavior_history_count", 0), width))
+
+    device_items = report.get("device_summary", [])
+    if device_items:
+        lines.append("Client identifiers and event types:")
+        for item in sorted(device_items, key=lambda entry: (str(entry.get("name", "")).casefold(), str(entry.get("mac", "")))):
+            event_types = ", ".join(humanize_event_key(str(event_type)) for event_type in item.get("event_types", [])) or "None"
+            lines.extend(operational_line(
+                f"  {item.get('name') or 'Unknown device'} ({item.get('mac') or 'unavailable'})",
+                event_types,
+                width,
+            ))
+    return lines
+
+
 def render_operational_text_report(report: Dict[str, Any], width: int, verbose: bool = False) -> str:
     router = report["router"]
     snapshot = report.get("snapshot", {})
@@ -10869,6 +11059,8 @@ def render_operational_text_report(report: Dict[str, Any], width: int, verbose: 
     limitations = operational_limitation_lines(report, verbose=verbose)
     if limitations:
         lines.extend(operational_section("Attention / Limitations", limitations, width))
+    if verbose:
+        lines.extend(operational_section("Technical Details", verbose_technical_detail_lines(report, width), width))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -11263,13 +11455,15 @@ def emit_report_outputs(
     report_formats: Sequence[str],
     logfile_path: Path,
     report_dir: Optional[Path],
+    verbose: bool = False,
 ) -> None:
     report_paths = build_report_paths(logfile_path, report_formats, report_dir)
     if "text" in report_formats:
-        print(render_text_report(report))
+        text_body = render_text_report(report, verbose=verbose)
+        print(text_body)
         if len(report_formats) > 1:
             report_paths["text"] = (report_dir.expanduser().resolve() if report_dir else Path.cwd()) / f"{logfile_path.stem}.report.txt"
-            report_paths["text"].write_text(render_text_report(report) + "\n", encoding="utf-8")
+            report_paths["text"].write_text(text_body + "\n", encoding="utf-8")
 
     if "markdown" in report_formats:
         report_paths["markdown"].write_text(render_markdown_report(report), encoding="utf-8")
@@ -11777,7 +11971,7 @@ def emit_nonpersistent_report(
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
-        print(render_text_report(report))
+        print(render_text_report(report, verbose=args.verbose))
 
 
 def is_in_windows(timestamp: datetime, windows: Sequence[Dict[str, Any]]) -> bool:
@@ -12314,9 +12508,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 report_formats=report_formats,
                 logfile_path=logfile_path,
                 report_dir=Path(args.report_dir).expanduser() if args.report_dir else None,
+                verbose=args.verbose,
             )
         else:
-            print(render_text_report(report))
+            print(render_text_report(report, verbose=args.verbose))
         return 0
     except BaseException:
         if log_transaction_active and store.conn.in_transaction:

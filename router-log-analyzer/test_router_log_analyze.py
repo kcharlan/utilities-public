@@ -4804,6 +4804,14 @@ def operational_tp_link_report(*, findings: list[dict[str, object]] | None = Non
                             "outcome_counts": [{"outcome": "success", "event_count": 5},
                                                {"outcome": "failure", "event_count": 2},
                                                {"outcome": "disconnected", "event_count": 1}],
+                            "event_type_counts": [
+                                {"component": "firewall", "event_key": "FIREWALL_POLICY_FAILURE",
+                                 "vendor_event_code": "9001", "outcome": "failure", "event_count": 2},
+                                {"component": "service", "event_key": "SERVICE_HEALTH_SUCCESS",
+                                 "vendor_event_code": "2001", "outcome": "success", "event_count": 5},
+                                {"component": "wan", "event_key": "WAN_LINK_DISCONNECTED",
+                                 "vendor_event_code": None, "outcome": "disconnected", "event_count": 1},
+                            ],
                             "security_finding_count": 0, "security_findings": [],
                             "new_device_finding_count": 0, "new_device_findings": [],
                             "change_finding_count": 0, "change_findings": [],
@@ -4814,8 +4822,55 @@ def operational_tp_link_report(*, findings: list[dict[str, object]] | None = Non
                   "boot_resolution_warnings": [], "warnings": []},
         "coverage": {"body_records": 6, "trusted_records": 6, "untrusted_records": 0,
                      "timing_eligible_records": 6, "parsed_events": 6, "ignored_lines": 0,
-                     "malformed_lines": 0, "export_noise_lines": 0, "lan": {}, "wan": {}},
+                     "malformed_lines": 0, "export_noise_lines": 0,
+                     "lan": {"mac": "02:00:00:00:00:01"}, "wan": {"ipv4": "192.0.2.99"}},
     }
+
+
+def test_tp_link_verbose_text_appends_complete_technical_evidence() -> None:
+    report = operational_tp_link_report()
+    report["occurrences"].update({"body_count": 6, "source_record_count": 8})
+    report["clock"].update({
+        "segments": [{"segment_id": "synthetic-clock-1", "clock_trust": "trusted",
+                      "start_sequence": 1, "end_sequence": 6}],
+        "boot_candidate_count": 1, "resolved_boot_session_count": 1,
+        "boot_resolution_warnings": ["synthetic_boot_warning"],
+        "warnings": ["synthetic_parser_warning"],
+    })
+    report["availability"]["checks"].update({
+        "router_behavior": {"available": False, "unavailable_reason": "no_router_behavior_history"},
+        "duration_based_partial": {"available": False, "unavailable_reason": "point_snapshot_not_continuous"},
+    })
+    report["persistence"] = {"available": False, "reason": "no_stable_router_identity"}
+
+    concise = analyzer.render_text_report(report)
+    verbose = analyzer.render_text_report(report, verbose=True)
+
+    assert "Technical Details" not in concise
+    assert verbose.index("Technical Details") > verbose.index("Router Activity")
+    for expected in (
+        "Source-record total: 8", "Semantic-occurrence total: 6",
+        "Component reconciliation: 8 source record(s)",
+        "Outcome reconciliation: 8 source record(s)",
+        "Event-type reconciliation: 8 source record(s)",
+        "Firewall", "Service", "Wan", "Firewall Policy Failure", "9001", "failure",
+        "Router behavior comparison (router_behavior): unavailable — no router behavior history",
+        "Duration-based partial-run detection (duration_based_partial): unavailable — point snapshot is not a",
+        "continuous log",
+        "Novel occurrences: 6", "Clock segments", "synthetic-clock-1", "synthetic_boot_warning",
+        "synthetic_parser_warning", "Coverage records", "LAN coverage", "WAN coverage",
+        "Database: /tmp/synthetic-router.db", "Run persistence: Unavailable",
+    ):
+        assert expected in verbose
+
+
+def test_tp_link_verbose_technical_rows_wrap_at_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:
+    report = operational_tp_link_report()
+    monkeypatch.setattr(analyzer.shutil, "get_terminal_size", lambda _fallback: os.terminal_size((60, 24)))
+
+    rendered = analyzer.render_text_report(report, verbose=True)
+
+    assert all(len(line) <= 60 for line in rendered.splitlines())
 
 
 def test_tp_link_operational_report_clean_hierarchy_and_history_state(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5115,6 +5170,74 @@ def test_tp_link_cli_writes_consistent_markdown_html_and_json_reports(
     assert label in report_paths["markdown"].read_text(encoding="utf-8")
     assert label in report_paths["html"].read_text(encoding="utf-8")
     assert all(str(path) in output for path in report_paths.values())
+
+
+def test_verbose_cli_help_and_text_output_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert analyzer.parse_args(["--verbose"]).verbose is True
+    with pytest.raises(SystemExit):
+        analyzer.parse_args(["--help"])
+    help_text = capsys.readouterr().out
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"-\s+", "-", help_text))
+    assert "expanded event and diagnostic details in TP-Link text output" in normalized_help
+    assert "NETGEAR text is unchanged" in normalized_help
+
+    report = operational_tp_link_report()
+    expected_body = analyzer.render_text_report(report, verbose=True)
+    report_dir = tmp_path / "reports"
+    analyzer.emit_report_outputs(
+        report, ["text", "json"], tmp_path / "synthetic.log", report_dir, verbose=True,
+    )
+    output = capsys.readouterr().out
+    text_path = report_dir / "synthetic.report.txt"
+    json_path = report_dir / "synthetic.report.json"
+    assert output.startswith(expected_body)
+    assert "Generated reports:" in output
+    assert text_path.read_text(encoding="utf-8") == expected_body + "\n"
+    assert json.loads(json_path.read_text(encoding="utf-8"))["occurrences"] == report["occurrences"]
+
+    captured_verbose: list[bool] = []
+    monkeypatch.setattr(
+        analyzer, "render_text_report",
+        lambda _report, verbose=False: captured_verbose.append(verbose) or "synthetic text\n",
+    )
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    db_path = tmp_path / "must-not-exist.db"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+    monkeypatch.setattr(
+        analyzer, "StateStore",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not open SQLite")),
+    )
+    assert analyzer.main([str(log_path), "--format", "tp-link-archer", "--db", str(db_path), "--verbose"]) == 0
+    assert captured_verbose == [True]
+    assert not db_path.exists()
+
+
+def test_verbose_is_ignored_for_json_and_non_text_renderers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = operational_tp_link_report()
+    markdown = analyzer.render_markdown_report(report)
+    html = analyzer.render_html_report(report)
+    install_identityless_test_adapter(monkeypatch)
+    log_path = tmp_path / "synthetic-identityless.log"
+    log_path.write_text("synthetic identityless snapshot", encoding="utf-8")
+    monkeypatch.setattr(
+        analyzer, "StateStore",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not open SQLite")),
+    )
+    assert analyzer.main([str(log_path), "--format", "tp-link-archer", "--json", "--verbose"]) == 0
+
+    output = capsys.readouterr().out
+    assert json.loads(output)["persistence"]["available"] is False
+    assert analyzer.render_markdown_report(report) == markdown
+    assert analyzer.render_html_report(report) == html
 
 
 def test_cli_version_and_help_describe_supported_router_contracts(
