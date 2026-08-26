@@ -4184,6 +4184,7 @@ class StateStore:
                 event.actor_scope == "device"
                 and is_identity_grade_mac(client_identity)
                 and client_identity not in owned_interfaces
+                and event.clock_trust == "trusted"
             ):
                 assert client_identity is not None
                 seen_at = event.timestamp.isoformat(sep=" ")
@@ -11525,7 +11526,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         additional_findings: List[Finding] = []
         router_behavior_events = [
             event for event in analyzed_events
-            if event.actor_scope == "router" and not is_explicit_router_security_event(event)
+            if event.actor_scope == "router"
+            and event.clock_trust == "trusted"
+            and not is_explicit_router_security_event(event)
         ]
         adapter_firmware_ambiguous = "ambiguous_firmware_profile" in parsed.warnings
         current_firmware_profile_id: Optional[int] = None
@@ -11661,10 +11664,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     event.actor_scope == "router"
                     and event.occurrence_digest in owned_router_behavior_digests
                     and parsed.capabilities.router_system_events
-                    and (
-                        event.clock_trust == "trusted"
-                        or event.boot_session_id is not None
-                    )
+                    and event.clock_trust == "trusted"
                     and (
                         event.event_key in parsed.capabilities.supported_event_keys
                         or event.event_family in parsed.capabilities.supported_event_families
@@ -11684,7 +11684,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
             ]
             legacy_persistence_events = [
-                event for event in persistence_events if event.actor_scope != "router"
+                event for event in persistence_events
+                if event.actor_scope != "router" and event.clock_trust == "trusted"
             ]
             persistence_aggregate = aggregate_events(
                 legacy_persistence_events,
@@ -11693,8 +11694,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             subject_learning_events = [
                 event for event in persistence_events
-                if event.actor_scope != "router"
-                or event.occurrence_digest in router_behavior_digests
+                if event.clock_trust == "trusted"
+                and (
+                    event.actor_scope != "router"
+                    or event.occurrence_digest in router_behavior_digests
+                )
             ]
             subject_learning_aggregate = aggregate_events(
                 subject_learning_events,
@@ -11721,8 +11725,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 persistence_subjects.update(previous_subjects)
             persistence_aggregate["subject_behavior_day_stats"] = persistence_subject_stats
             persistence_aggregate["behavior_subjects"] = persistence_subjects
-            persistence_aggregate["observation_range"] = aggregate["observation_range"]
-            persistence_aggregate["observed_dates"] = aggregate["observed_dates"]
+            trusted_temporal_aggregate = aggregate_events(
+                [event for event in events if event.clock_trust == "trusted"],
+                seed_baseline,
+                devices_snapshot,
+            )
+            persistence_aggregate["observation_range"] = trusted_temporal_aggregate[
+                "observation_range"
+            ]
+            persistence_aggregate["observed_dates"] = trusted_temporal_aggregate["observed_dates"]
         else:
             persistence_aggregate = aggregate
             learning_ownership_events = persistence_events

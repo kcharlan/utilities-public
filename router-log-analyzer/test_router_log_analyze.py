@@ -9669,6 +9669,59 @@ def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
         store.close()
 
 
+def test_tp_link_pre_sync_timestamps_do_not_enter_temporal_learning(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "trusted-temporal-learning.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+    emission_order = [
+        "2042-01-01 00:00:00 system[101]: <5> 1000 System startup",
+        "2042-01-01 00:00:01 service[201]: <6> 2001 Starting network services",
+        "2042-06-15 11:59:32 service[201]: <6> 2002 Network services ready",
+        "2042-06-15 11:59:59 inet[401]: <5> 3002 Internet connected",
+    ]
+    log_path = tmp_path / "synthetic-pre-sync-history.log"
+    log_path.write_text(
+        tp_link_synthetic_snapshot(list(reversed(emission_order))),
+        encoding="utf-8",
+    )
+
+    assert analyzer.main([
+        str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+    ]) == 0
+    capsys.readouterr()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        run = store.conn.execute(
+            "SELECT observation_start, observation_end, observed_dates_json FROM runs"
+        ).fetchone()
+        assert (
+            run["observation_start"],
+            run["observation_end"],
+            json.loads(run["observed_dates_json"]),
+        ) == (
+            "2042-06-15T11:59:32",
+            "2042-06-15T11:59:59",
+            ["2042-06-15"],
+        )
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM subject_behavior_daily_stats "
+            "WHERE subject_type = 'router' AND observed_date = '2042-01-01'"
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM subject_behavior_daily_stats "
+            "WHERE subject_type = 'router' AND observed_date = '2042-06-15'"
+        ).fetchone()[0] == 2
+    finally:
+        store.close()
+
+
 def test_predecessor_buffer_event_remains_owned_by_prior_firmware_profile(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
