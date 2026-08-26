@@ -10418,6 +10418,18 @@ def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
         r"\s+", " ", analyzer.render_text_report(reports[1]),
     )
     assert "unexpected warning(s)" not in analyzer.render_text_report(reports[1])
+    duplicate_path = tmp_path / "synthetic-upgrade-2.log"
+    assert analyzer.main([
+        str(duplicate_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+    ]) == 0
+    duplicate = json.loads(capsys.readouterr().out)
+    assert duplicate["state"]["deduplicated"] is True
+    assert duplicate["availability"]["checks"]["router_behavior"] == {
+        "available": False, "unavailable_reason": "ambiguous_firmware_profile",
+    }
+    duplicate_text = analyzer.render_text_report(duplicate)
+    assert "comparison was unavailable because events could not be assigned unambiguously to a firmware profile" in re.sub(r"\s+", " ", duplicate_text)
+    assert "unexpected warning(s)" not in duplicate_text
     store = analyzer.StateStore(db_path)
     try:
         rows = list(store.conn.execute(

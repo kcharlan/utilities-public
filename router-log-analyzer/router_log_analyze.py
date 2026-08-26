@@ -11923,6 +11923,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 router_instance_id,
                 parsed,
             )
+            metadata_row = store.conn.execute(
+                "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+                (int(existing_run["id"]),),
+            ).fetchone()
+            duplicate_metadata = json.loads(metadata_row["metadata_json"] or "{}") if metadata_row else {}
+            if duplicate_metadata.get("ambiguous_firmware_occurrence_count"):
+                parsed.warnings.append("ambiguous_firmware_profile")
         aggregate = aggregate_events(events, seed_baseline, devices_snapshot)
         trusted_temporal_aggregate = aggregate
         if parsed.format_id != FORMAT_NETGEAR:
