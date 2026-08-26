@@ -10527,6 +10527,32 @@ def markdown_table_cell(value: Any) -> str:
     return str(value).replace("\\", "\\\\").replace("|", "\\|")
 
 
+def saved_router_activity_rows(report: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Any]:
+    """Return deterministic saved-report rows without reconstructing router activity."""
+    activity = report.get("router_activity", {})
+    components = [
+        item for item in activity.get("component_counts", [])
+        if isinstance(item, dict) and item.get("component")
+    ]
+    event_types = [
+        item for item in activity.get("event_type_counts", [])
+        if isinstance(item, dict) and item.get("event_key")
+    ]
+    components.sort(key=lambda item: (
+        -int(item.get("event_count", 0)),
+        humanize_event_key(str(item["component"])).casefold(),
+        str(item["component"]),
+    ))
+    event_types.sort(key=lambda item: (
+        -int(item.get("event_count", 0)),
+        str(item.get("component") or ""),
+        str(item.get("event_key") or ""),
+        "" if item.get("vendor_event_code") is None else str(item.get("vendor_event_code")),
+        str(item.get("outcome") or ""),
+    ))
+    return components, event_types, activity.get("source_record_count")
+
+
 def report_entry_lines(entry: Dict[str, Any], width: int) -> List[str]:
     detail_width = max(30, width - 8)
     lines = finding_detail_lines(entry)
@@ -11275,16 +11301,48 @@ def render_markdown_report(report: Dict[str, Any]) -> str:
         lines.append("- None")
     lines.append("")
 
+    extended_router_report = has_extended_router_report(report)
+    device_summary = report["device_summary"]
+    if extended_router_report:
+        device_summary = [item for item in device_summary if item.get("mac") != SYSTEM_ACTOR]
+
     lines.append("## Device Summary")
     lines.append("")
     lines.append("| Name | MAC | DHCP | Events | Reset-Explained | Types |")
     lines.append("| --- | --- | ---: | ---: | ---: | --- |")
-    for item in report["device_summary"]:
+    for item in device_summary:
         lines.append(
             f"| {item['name']} | `{item['mac']}` | {item['dhcp_count']} | {item['total_events']} | "
             f"{item.get('incident_explained_events', 0)} | "
             f"{', '.join(humanize_event_key(event_type) for event_type in item['event_types'])} |"
         )
+    if extended_router_report:
+        components, event_types, source_total = saved_router_activity_rows(report)
+        source_text = source_total if isinstance(source_total, int) else "unavailable"
+        lines.extend(["", "## Router Activity", "", f"- Source-record total: {source_text}", ""])
+        lines.append("| Component | Source Records |")
+        lines.append("| --- | ---: |")
+        if components:
+            lines.extend(
+                f"| {markdown_table_cell(humanize_event_key(str(item['component'])))} | {item.get('event_count', 0)} |"
+                for item in components
+            )
+        else:
+            lines.append("| No component detail available | n/a |")
+        lines.extend(["", "## Router Event Types", "", f"- Source-record total: {source_text}", ""])
+        lines.append("| Event Type | Vendor Code | Component | Outcome | Source Records |")
+        lines.append("| --- | --- | --- | --- | ---: |")
+        if event_types:
+            for item in event_types:
+                vendor_code = item.get("vendor_event_code")
+                lines.append(
+                    f"| {markdown_table_cell(humanize_event_key(str(item['event_key'])))} | "
+                    f"{markdown_table_cell(vendor_code if vendor_code not in (None, "") else "n/a")} | "
+                    f"{markdown_table_cell(humanize_event_key(str(item.get('component') or 'other')))} | "
+                    f"{markdown_table_cell(item.get('outcome') or 'other')} | {item.get('event_count', 0)} |"
+                )
+        else:
+            lines.append("| No event-type detail available | n/a | n/a | n/a | n/a |")
     return "\n".join(lines) + "\n"
 
 
@@ -11349,6 +11407,10 @@ def render_html_report(report: Dict[str, Any]) -> str:
             )
         return f"<section><h2>Findings by Device/Group</h2>{''.join(group_blocks)}</section>"
 
+    extended_router_report = has_extended_router_report(report)
+    device_summary = report["device_summary"]
+    if extended_router_report:
+        device_summary = [item for item in device_summary if item.get("mac") != SYSTEM_ACTOR]
     device_rows = "".join(
         "<tr>"
         f"<td>{esc(item['name'])}</td>"
@@ -11358,14 +11420,15 @@ def render_html_report(report: Dict[str, Any]) -> str:
         f"<td>{item.get('incident_explained_events', 0)}</td>"
         f"<td>{esc(', '.join(humanize_event_key(event_type) for event_type in item['event_types']))}</td>"
         "</tr>"
-        for item in report["device_summary"]
+        for item in device_summary
     )
     risk_rows = "".join(
         f"<li><code>{esc(key)}</code>: {value}</li>"
         for key, value in sorted(report["risk_breakdown"].items())
     ) or "<li>None</li>"
     router_summary_html = ""
-    if has_extended_router_report(report):
+    router_activity_html = ""
+    if extended_router_report:
         router_rows = "".join(
             f"<dt>{esc(label)}</dt><dd>{esc(value)}</dd>"
             for label, value in router_report_summary_items(report)
@@ -11373,6 +11436,36 @@ def render_html_report(report: Dict[str, Any]) -> str:
         router_summary_html = (
             "<section><h2>Router Snapshot</h2>"
             f"<dl>{router_rows}</dl></section>"
+        )
+        components, event_types, source_total = saved_router_activity_rows(report)
+        source_text = esc(source_total) if isinstance(source_total, int) else "unavailable"
+        component_rows = "".join(
+            "<tr>"
+            f"<td>{esc(humanize_event_key(str(item['component'])))}</td>"
+            f"<td>{esc(item.get('event_count', 0))}</td>"
+            "</tr>"
+            for item in components
+        ) or "<tr><td>No component detail available</td><td>n/a</td></tr>"
+        event_type_rows = "".join(
+            "<tr>"
+            f"<td>{esc(humanize_event_key(str(item['event_key'])))}</td>"
+            f"<td>{f'<code>{esc(item["vendor_event_code"])}</code>' if item.get('vendor_event_code') not in (None, '') else 'n/a'}</td>"
+            f"<td>{esc(humanize_event_key(str(item.get('component') or 'other')))}</td>"
+            f"<td>{esc(item.get('outcome') or 'other')}</td>"
+            f"<td>{esc(item.get('event_count', 0))}</td>"
+            "</tr>"
+            for item in event_types
+        ) or "<tr><td>No event-type detail available</td><td>n/a</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>"
+        router_activity_html = (
+            "<section><h2>Router Activity</h2>"
+            f"<p>Source-record total: {source_text}</p>"
+            "<table><thead><tr><th>Component</th><th>Source Records</th></tr></thead>"
+            f"<tbody>{component_rows}</tbody></table></section>"
+            "<section><h2>Router Event Types</h2>"
+            f"<p>Source-record total: {source_text}</p>"
+            "<table><thead><tr><th>Event Type</th><th>Vendor Code</th><th>Component</th>"
+            "<th>Outcome</th><th>Source Records</th></tr></thead>"
+            f"<tbody>{event_type_rows}</tbody></table></section>"
         )
 
     return f"""<!DOCTYPE html>
@@ -11449,6 +11542,7 @@ def render_html_report(report: Dict[str, Any]) -> str:
         <tbody>{device_rows}</tbody>
       </table>
     </section>
+    {router_activity_html}
   </main>
 </body>
 </html>

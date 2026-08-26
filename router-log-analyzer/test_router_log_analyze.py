@@ -4692,6 +4692,9 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
     }
     assert report["router_activity"]["security_finding_count"] == 1
     assert report["router_activity"]["new_device_finding_count"] == 0
+    assert report["router_activity"]["source_record_count"] == 1
+    assert sum(item["event_count"] for item in report["router_activity"]["component_counts"]) == 1
+    assert sum(item["event_count"] for item in report["router_activity"]["event_type_counts"]) == 1
     assert report["coverage"]["body_records"] == 1
     assert report["coverage"]["parsed_events"] == 1
     assert report["coverage"]["malformed_lines"] == 0
@@ -4711,6 +4714,7 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
 
     rendered = {
         "text": analyzer.render_text_report(report),
+        "verbose_text": analyzer.render_text_report(report, verbose=True),
         "markdown": analyzer.render_markdown_report(report),
         "html": analyzer.render_html_report(report),
     }
@@ -4718,9 +4722,15 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
         assert report["router"]["label"] in output
     text_output = rendered["text"]
     assert "Router Snapshot" in text_output
+    assert "Baseline and Change" in text_output
     assert "Router Activity" in text_output
     assert "Attention / Limitations" in text_output
     assert "Security event" in text_output
+    assert "missing_wan_gateway_dns_header" not in text_output
+    verbose_text_output = rendered["verbose_text"]
+    for expected in ("Technical Details", "Clock segments", "Coverage records", "Availability checks",
+                     "missing_wan_gateway_dns_header"):
+        assert expected in verbose_text_output
     for output in (rendered["markdown"], rendered["html"]):
         assert "Total clients" in output
         assert "Novel occurrences" in output
@@ -4732,9 +4742,21 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
         assert "missing_wan_gateway_dns_header" in output
         assert "Coverage records" in output
         assert "Coverage lines" in output
+        assert "Router Activity" in output
+        assert "Router Event Types" in output
+        assert "Source-record total: 1" in output
         for segment in report["clock"]["segments"]:
             assert segment["segment_id"] in output
             assert segment["clock_trust"] in output
+    markdown_device_summary = markdown_section(
+        rendered["markdown"], "## Device Summary", "## Router Activity",
+    )
+    assert "Router/System" not in markdown_device_summary
+    assert "Router/System" not in html_section(rendered["html"], "Device Summary")
+    for item in report["router_activity"]["event_type_counts"]:
+        expected_event = analyzer.humanize_event_key(item["event_key"])
+        assert expected_event in rendered["markdown"]
+        assert expected_event in rendered["html"]
 
 
 def test_tp_link_fully_repeated_snapshot_is_explicit_in_all_renderers(
@@ -4825,6 +4847,68 @@ def operational_tp_link_report(*, findings: list[dict[str, object]] | None = Non
                      "malformed_lines": 0, "export_noise_lines": 0,
                      "lan": {"mac": "02:00:00:00:00:01"}, "wan": {"ipv4": "192.0.2.99"}},
     }
+
+
+def test_tp_link_saved_markdown_report_uses_counted_router_activity_tables() -> None:
+    report = operational_tp_link_report()
+    report["device_summary"] = [
+        {"name": "Router/System", "mac": analyzer.SYSTEM_ACTOR, "total_events": 6,
+         "dhcp_count": 0, "incident_explained_events": 0,
+         "event_types": ["FIREWALL_POLICY_FAILURE", "SERVICE_HEALTH_SUCCESS", "WAN_LINK_DISCONNECTED"]},
+        {"name": "SYNTHETIC CLIENT", "mac": "02:00:00:00:00:09", "total_events": 2,
+         "dhcp_count": 1, "incident_explained_events": 0, "event_types": ["CLIENT_PRESENT"]},
+    ]
+
+    rendered = analyzer.render_markdown_report(report)
+    device_summary = markdown_section(rendered, "## Device Summary", "## Router Activity")
+    activity = markdown_section(rendered, "## Router Activity", "## Router Event Types")
+    event_types = markdown_section(rendered, "## Router Event Types")
+
+    assert "Router/System" not in device_summary
+    assert "SYNTHETIC CLIENT" in device_summary
+    assert "Firewall | 2" in activity
+    assert "Service | 5" in activity
+    assert "Wan | 1" in activity
+    assert "| Firewall Policy Failure | 9001 | Firewall | failure | 2 |" in event_types
+    assert "| Service Health Success | 2001 | Service | success | 5 |" in event_types
+    assert "| Wan Link Disconnected | n/a | Wan | disconnected | 1 |" in event_types
+    assert "Firewall Policy Failure, Service Health Success, Wan Link Disconnected" not in rendered
+    assert sum(item["event_count"] for item in report["router_activity"]["component_counts"]) == 8
+    assert sum(item["event_count"] for item in report["router_activity"]["event_type_counts"]) == 8
+    assert "Router Snapshot" in rendered
+    assert "Finding Index" in rendered
+    assert "Coverage records" in rendered
+
+
+def test_tp_link_saved_html_report_uses_counted_router_activity_tables() -> None:
+    report = operational_tp_link_report()
+    report["device_summary"] = [
+        {"name": "Router/System", "mac": analyzer.SYSTEM_ACTOR, "total_events": 6,
+         "dhcp_count": 0, "incident_explained_events": 0,
+         "event_types": ["FIREWALL_POLICY_FAILURE", "SERVICE_HEALTH_SUCCESS", "WAN_LINK_DISCONNECTED"]},
+        {"name": "SYNTHETIC CLIENT", "mac": "02:00:00:00:00:09", "total_events": 2,
+         "dhcp_count": 1, "incident_explained_events": 0, "event_types": ["CLIENT_PRESENT"]},
+    ]
+
+    rendered = analyzer.render_html_report(report)
+    device_summary = html_section(rendered, "Device Summary")
+    activity = html_section(rendered, "Router Activity")
+    event_types = html_section(rendered, "Router Event Types")
+
+    assert "Router/System" not in device_summary
+    assert "SYNTHETIC CLIENT" in device_summary
+    assert "<td>Firewall</td><td>2</td>" in activity
+    assert "<td>Service</td><td>5</td>" in activity
+    assert "<td>Wan</td><td>1</td>" in activity
+    assert "<td>Firewall Policy Failure</td><td><code>9001</code></td><td>Firewall</td><td>failure</td><td>2</td>" in event_types
+    assert "<td>Service Health Success</td><td><code>2001</code></td><td>Service</td><td>success</td><td>5</td>" in event_types
+    assert "<td>Wan Link Disconnected</td><td>n/a</td><td>Wan</td><td>disconnected</td><td>1</td>" in event_types
+    assert "Firewall Policy Failure, Service Health Success, Wan Link Disconnected" not in rendered
+    assert sum(item["event_count"] for item in report["router_activity"]["component_counts"]) == 8
+    assert sum(item["event_count"] for item in report["router_activity"]["event_type_counts"]) == 8
+    assert "Router Snapshot" in rendered
+    assert "Finding Index" in rendered
+    assert "Coverage records" in rendered
 
 
 def test_tp_link_verbose_text_appends_complete_technical_evidence() -> None:

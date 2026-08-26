@@ -123,6 +123,12 @@ Analyze a persistent TP-Link Archer export using a stable local identity and a f
 router_log_analyze.py router-log.txt --format tp-link-archer --router-instance home-router --router-label "Home router"
 ```
 
+For expanded human-readable TP-Link evidence, including every counted router component and event type:
+
+```zsh
+router_log_analyze.py router-log.txt --router-instance home-router --verbose
+```
+
 `--format auto` may be used with the same override; parser detection and router identity are independent:
 
 ```zsh
@@ -173,6 +179,10 @@ Generated files are named from the log file, for example `router-log.report.md`.
 Report files require persistent router identity. An identity-less non-persistent report is emitted only to standard output as text or JSON.
 
 JSON, text, Markdown, and HTML reports identify the router and show snapshot counts, novel/repeated/report-only occurrence totals, capability-based unavailable checks, router/security finding counts and detail, clock/boot warnings, and parse coverage. A snapshot whose body was fully seen before says so explicitly; a fresh header can still contribute current metadata and counts.
+
+For TP-Link Archer exports, the default text report is an operational briefing: status and findings first, followed by snapshot state, baseline/change context, an activity pulse, and consequential limitations. A `Clean` status means no elevated result from the checks that were available; it does not assume unavailable checks were normal. Use `--verbose` to add exhaustive human-readable router event counts and technical evidence to TP-Link text output. NETGEAR text remains unchanged, and `--verbose` affects TP-Link text only, including the text body from `--report text,...`.
+
+`--json` remains the complete structured record. Router Activity source-record totals describe rows in the current export, while semantic occurrence and novelty totals describe deduplicated analyzer occurrences; those units can differ when persistence collapses duplicate source rows. Saved Markdown and HTML reports remain self-contained and show counted Router Activity and Router Event Types tables rather than a router event wall. The utility remains standalone, local, single-user, and single-process.
 
 Export the active learned baseline:
 
