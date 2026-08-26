@@ -231,6 +231,7 @@ class Event:
     trusted_overlap_identity: Optional[str] = None
     occurrence_novel: Optional[bool] = None
     occurrence_repeated: Optional[bool] = None
+    source_record_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -3957,8 +3958,8 @@ class StateStore:
             if row is not None:
                 boot_sessions[candidate.session_id] = int(row[0])
 
-        collapsed: List[Event] = []
-        seen_occurrences: Set[str] = set()
+        collapsed: Dict[str, Tuple[Event, int]] = {}
+        report_only_events: List[Event] = []
         for event in parsed.events:
             boot_session_id = (
                 boot_sessions.get(event.boot_context_id)
@@ -3970,10 +3971,11 @@ class StateStore:
                 or (event.boot_context_id is None and event.clock_trust == "trusted")
             )
             if not persistable:
-                collapsed.append(replace(
+                report_only_events.append(replace(
                     event,
                     occurrence_novel=False,
                     occurrence_repeated=True,
+                    source_record_count=1,
                 ))
                 continue
             digest = self._occurrence_digest(
@@ -3981,17 +3983,28 @@ class StateStore:
                 event,
                 boot_session_id,
             )
-            if digest in seen_occurrences:
+            source_count = event.source_record_count
+            if not isinstance(source_count, int) or source_count <= 0:
+                source_count = 1
+            if digest in collapsed:
+                representative, accumulated_count = collapsed[digest]
+                collapsed[digest] = (representative, accumulated_count + source_count)
                 continue
-            seen_occurrences.add(digest)
-            collapsed.append(replace(
-                event,
-                boot_session_id=str(boot_session_id) if boot_session_id is not None else None,
-                occurrence_digest=digest,
-                occurrence_novel=False,
-                occurrence_repeated=True,
-            ))
-        return collapsed
+            collapsed[digest] = (
+                replace(
+                    event,
+                    boot_session_id=str(boot_session_id) if boot_session_id is not None else None,
+                    occurrence_digest=digest,
+                    occurrence_novel=False,
+                    occurrence_repeated=True,
+                ),
+                source_count,
+            )
+        persistable_events = [
+            replace(event, source_record_count=max(1, source_count))
+            for event, source_count in collapsed.values()
+        ]
+        return [*persistable_events, *report_only_events]
 
     def persist_router_provenance(
         self,
@@ -4229,8 +4242,12 @@ class StateStore:
                 boot_sessions.get(event.boot_context_id) if event.boot_context_id is not None else None
             )
             if event.boot_context_id is not None and boot_session_id is None:
-                event.occurrence_novel = True
-                event.occurrence_repeated = False
+                event = replace(
+                    event,
+                    occurrence_novel=True,
+                    occurrence_repeated=False,
+                    source_record_count=1,
+                )
                 report_only_events.append(event)
                 report_only_signatures.append(hashlib.sha256(
                     (
@@ -4246,8 +4263,12 @@ class StateStore:
                 ).hexdigest())
                 continue
             if event.boot_context_id is None and event.clock_trust != "trusted":
-                event.occurrence_novel = True
-                event.occurrence_repeated = False
+                event = replace(
+                    event,
+                    occurrence_novel=True,
+                    occurrence_repeated=False,
+                    source_record_count=1,
+                )
                 report_only_events.append(event)
                 report_only_signatures.append(hashlib.sha256(
                     (
@@ -4265,15 +4286,20 @@ class StateStore:
             digest = self._occurrence_digest(router_row["instance_key"], event, boot_session_id)
             event.occurrence_digest = digest
             event.boot_session_id = str(boot_session_id) if boot_session_id is not None else None
+            source_count = event.source_record_count
+            if not isinstance(source_count, int) or source_count <= 0:
+                source_count = 1
             if digest in collapsed:
-                collapsed[digest] = (collapsed[digest][0], collapsed[digest][1] + 1)
+                collapsed[digest] = (collapsed[digest][0], collapsed[digest][1] + source_count)
             else:
-                collapsed[digest] = (event, 1)
+                collapsed[digest] = (event, source_count)
 
         novel_count = 0
         repeated_count = 0
         report_events: List[Event] = []
         for digest, (event, source_count) in collapsed.items():
+            source_count = max(1, source_count)
+            event = replace(event, source_record_count=source_count)
             existing = self.conn.execute(
                 """
                 SELECT occurrence.id,
@@ -9718,6 +9744,59 @@ REPORT_CHECKS = (
 )
 
 
+def project_router_activity(events: Sequence[Event]) -> Dict[str, Any]:
+    """Summarize router-scoped source records without changing event semantics."""
+    component_counts: Counter = Counter()
+    outcome_counts: Counter = Counter()
+    event_type_counts: Counter = Counter()
+    source_record_count = 0
+    for event in events:
+        if event.actor_scope != "router":
+            continue
+        component = " ".join((event.component or "").split()).casefold() or "other"
+        outcome = "other"
+        for key in ("state", "action"):
+            value = event.structured_evidence.get(key)
+            normalized = " ".join(str(value).split()).casefold() if value is not None else ""
+            if normalized:
+                outcome = normalized
+                break
+        source_count = event.source_record_count
+        if not isinstance(source_count, int) or source_count <= 0:
+            source_count = 1
+        source_record_count += source_count
+        component_counts[component] += source_count
+        outcome_counts[outcome] += source_count
+        event_type_counts[(component, event.event_key, event.vendor_event_code, outcome)] += source_count
+
+    return {
+        "source_record_count": source_record_count,
+        "component_counts": [
+            {"component": component, "event_count": event_count}
+            for component, event_count in sorted(component_counts.items())
+        ],
+        "outcome_counts": [
+            {"outcome": outcome, "event_count": event_count}
+            for outcome, event_count in sorted(outcome_counts.items())
+        ],
+        "event_type_counts": [
+            {
+                "component": component,
+                "event_key": event_key,
+                "vendor_event_code": vendor_event_code,
+                "outcome": outcome,
+                "event_count": event_count,
+            }
+            for (component, event_key, vendor_event_code, outcome), event_count in sorted(
+                event_type_counts.items(),
+                key=lambda item: (
+                    item[0][0], item[0][1], item[0][2] or "", item[0][3],
+                ),
+            )
+        ],
+    }
+
+
 def build_router_report_sections(
     parsed: ParsedRouterLog,
     router_label: str,
@@ -9800,6 +9879,12 @@ def build_router_report_sections(
         for candidate in parsed.boot_candidates
         for warning in candidate.warnings
     })
+    occurrence_source_record_count = sum(
+        event.source_record_count
+        if isinstance(event.source_record_count, int) and event.source_record_count > 0
+        else 1
+        for event in events
+    )
     return {
         "router": {
             "label": router_label,
@@ -9835,6 +9920,7 @@ def build_router_report_sections(
         },
         "occurrences": {
             "body_count": len(events),
+            "source_record_count": occurrence_source_record_count,
             "novel_count": novel_count,
             "repeated_count": repeated_count,
             "report_only_count": report_only_count,
@@ -9844,6 +9930,7 @@ def build_router_report_sections(
             ),
         },
         "router_activity": {
+            **project_router_activity(events),
             "system_event_count": sum(event.actor_scope == "router" for event in events),
             "security_finding_count": len(security_findings),
             "security_findings": security_findings,

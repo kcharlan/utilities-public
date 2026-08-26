@@ -4196,6 +4196,7 @@ def test_identityless_log_reports_full_current_evidence_without_opening_state(
     assert report["snapshot"]["counts"] == {"total": 4, "wifi": 3, "wired": 1}
     assert report["occurrences"] == {
         "body_count": 1,
+        "source_record_count": 1,
         "novel_count": 0,
         "repeated_count": 0,
         "report_only_count": 1,
@@ -4683,6 +4684,7 @@ def test_tp_link_report_contract_surfaces_router_snapshot_occurrence_and_coverag
     }
     assert report["occurrences"] == {
         "body_count": 1,
+        "source_record_count": 1,
         "novel_count": 1,
         "repeated_count": 0,
         "report_only_count": 0,
@@ -4885,6 +4887,96 @@ def test_snapshot_report_ranges_use_the_detector_numeric_profiles() -> None:
         assert profile is not None
         expected[label] = [round(profile["range_min"], 2), round(profile["range_max"], 2)]
     assert sections["snapshot"]["learned_ranges"] == expected
+
+
+def test_router_report_projects_reconciled_component_outcome_and_event_type_counts() -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
+        ]),
+        "synthetic-router-activity.log",
+        "tp-link-archer",
+    )
+    representative = parsed.events[0]
+    events = [
+        replace(
+            representative,
+            actor_scope="router",
+            component="synthetic_firewall",
+            event_key="SYNTHETIC_FIREWALL_9001_FAILURE",
+            vendor_event_code="9001",
+            structured_evidence={"action": "failure"},
+            source_record_count=2,
+        ),
+        replace(
+            representative,
+            actor_scope="router",
+            component="synthetic_service",
+            event_key="SYNTHETIC_SERVICE_9002_START",
+            vendor_event_code="9002",
+            structured_evidence={"action": "start"},
+        ),
+        replace(
+            representative,
+            actor_scope="router",
+            component=None,
+            event_key="SYNTHETIC_UNKNOWN_9003_OTHER",
+            vendor_event_code=None,
+            structured_evidence={},
+        ),
+    ]
+
+    sections = analyzer.build_router_report_sections(
+        parsed, "SYNTHETIC ROUTER", events, {"all": []}, [], 0,
+        copy.deepcopy(analyzer.DEFAULT_POLICY),
+    )
+
+    activity = sections["router_activity"]
+    assert {
+        key: activity[key]
+        for key in (
+            "source_record_count", "component_counts", "outcome_counts", "event_type_counts",
+        )
+    } == {
+        "source_record_count": 4,
+        "component_counts": [
+            {"component": "other", "event_count": 1},
+            {"component": "synthetic_firewall", "event_count": 2},
+            {"component": "synthetic_service", "event_count": 1},
+        ],
+        "outcome_counts": [
+            {"outcome": "failure", "event_count": 2},
+            {"outcome": "other", "event_count": 1},
+            {"outcome": "start", "event_count": 1},
+        ],
+        "event_type_counts": [
+            {
+                "component": "other",
+                "event_key": "SYNTHETIC_UNKNOWN_9003_OTHER",
+                "vendor_event_code": None,
+                "outcome": "other",
+                "event_count": 1,
+            },
+            {
+                "component": "synthetic_firewall",
+                "event_key": "SYNTHETIC_FIREWALL_9001_FAILURE",
+                "vendor_event_code": "9001",
+                "outcome": "failure",
+                "event_count": 2,
+            },
+            {
+                "component": "synthetic_service",
+                "event_key": "SYNTHETIC_SERVICE_9002_START",
+                "vendor_event_code": "9002",
+                "outcome": "start",
+                "event_count": 1,
+            },
+        ],
+    }
+    assert sum(item["event_count"] for item in activity["component_counts"]) == 4
+    assert sum(item["event_count"] for item in activity["outcome_counts"]) == 4
+    assert sum(item["event_count"] for item in activity["event_type_counts"]) == 4
+    assert activity["system_event_count"] == 3
 
 
 def test_snapshot_change_detail_excludes_noncount_router_changes() -> None:
@@ -6556,6 +6648,7 @@ def test_anchorless_boot_context_stays_report_only_and_out_of_cross_run_history(
         )
         assert report_sections["occurrences"] == {
             "body_count": 2,
+            "source_record_count": 2,
             "novel_count": 0,
             "repeated_count": 0,
             "report_only_count": 2,
@@ -6838,6 +6931,54 @@ def test_identical_tp_link_reopen_collapses_boot_lines_by_persisted_session(
     )
     assert first_system["total_events"] == 1
     assert repeated_system["total_events"] == 1
+
+
+def test_tp_link_activity_preserves_source_record_multiplicity_on_first_and_duplicate_ingest(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_path = tmp_path / "synthetic-multiplicity.log"
+    baseline_path = tmp_path / "synthetic-baseline.json"
+    db_path = tmp_path / "network.db"
+    baseline_path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+    record = "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected"
+    log_path.write_text(tp_link_synthetic_snapshot([record, record]), encoding="utf-8")
+    first_args = [
+        str(log_path), str(baseline_path), "--format", "tp-link-archer", "--json",
+        "--db", str(db_path),
+    ]
+    duplicate_args = [
+        str(log_path), "--format", "tp-link-archer", "--json", "--db", str(db_path),
+    ]
+
+    assert analyzer.main(first_args) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert analyzer.main(duplicate_args) == 0
+    duplicate = json.loads(capsys.readouterr().out)
+
+    for report, novelty_key in ((first, "novel_count"), (duplicate, "repeated_count")):
+        activity = report["router_activity"]
+        assert report["occurrences"]["body_count"] == 1
+        assert report["occurrences"][novelty_key] == 1
+        assert report["occurrences"]["source_record_count"] == 2
+        assert activity["source_record_count"] == 2
+        assert activity["event_type_counts"] == [
+            {
+                "component": "firewall",
+                "event_key": "FIREWALL_9001_FAILURE",
+                "vendor_event_code": "9001",
+                "outcome": "failure",
+                "event_count": 2,
+            }
+        ]
+
+    store = analyzer.StateStore(db_path)
+    try:
+        assert [row[0] for row in store.conn.execute(
+            "SELECT source_count FROM run_event_occurrences"
+        )] == [2]
+    finally:
+        store.close()
 
 
 def test_cross_router_interface_client_conflict_warns_without_suppressing_client(
