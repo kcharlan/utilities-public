@@ -7030,6 +7030,62 @@ def test_router_activity_event_type_sorting_distinguishes_missing_and_empty_vend
     assert [item["vendor_event_code"] for item in activity["event_type_counts"]] == [None, ""]
 
 
+def test_router_activity_projects_invalid_source_record_counts_as_one_each() -> None:
+    base = replace(
+        make_event("2042-06-15T11:59:00", analyzer.SYSTEM_ACTOR, "SYNTHETIC_EVENT"),
+        actor_scope="router",
+        component="synthetic",
+        structured_evidence={"action": "synthetic-action"},
+    )
+
+    activity = analyzer.project_router_activity([
+        replace(base, source_record_count=0),
+        replace(base, source_record_count=-2),
+        replace(base, source_record_count="synthetic-invalid"),
+    ])
+
+    assert activity["source_record_count"] == 3
+    assert activity["component_counts"] == [{"component": "synthetic", "event_count": 3}]
+    assert activity["outcome_counts"] == [{"outcome": "synthetic-action", "event_count": 3}]
+    assert activity["event_type_counts"] == [{
+        "component": "synthetic",
+        "event_key": "SYNTHETIC_EVENT",
+        "vendor_event_code": None,
+        "outcome": "synthetic-action",
+        "event_count": 3,
+    }]
+    assert all(
+        sum(item["event_count"] for item in activity[key]) == activity["source_record_count"]
+        for key in ("component_counts", "outcome_counts", "event_type_counts")
+    )
+
+
+def test_duplicate_collapse_falls_back_from_invalid_source_record_counts(tmp_path: Path) -> None:
+    parsed = analyzer.parse_router_log(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:58 firewall[777]: <4> 9001 rule rejected",
+        ]),
+        "synthetic-invalid-collapse-count.log",
+        "tp-link-archer",
+    )
+    representative = parsed.events[0]
+    parsed.events = [
+        replace(representative, source_sequence=3, source_record_count=0),
+        replace(representative, source_sequence=2, source_record_count=-2),
+        replace(representative, source_sequence=1, source_record_count="synthetic-invalid"),
+    ]
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        router_id = store.resolve_router_instance(parsed)
+        collapsed = store.collapse_existing_run_events(1, router_id, parsed)
+    finally:
+        store.close()
+
+    assert len(collapsed) == 1
+    assert collapsed[0].source_record_count == 3
+    assert collapsed[0].source_record_count > 0
+
+
 @pytest.mark.parametrize("source_record_count", [0, -2, "synthetic-invalid"])
 def test_router_activity_and_persistence_fall_back_from_invalid_source_record_count(
     tmp_path: Path,
