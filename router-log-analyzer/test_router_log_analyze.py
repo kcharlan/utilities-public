@@ -3377,10 +3377,14 @@ def test_reprocess_in_process_failure_restores_exact_logical_database(
     try:
         for table in (
             "runs", "router_metadata_observations", "router_snapshot_metrics",
-            "router_event_occurrences", "run_event_occurrences", "device_daily_stats",
-            "device_event_daily_stats", "behavior_subjects", "subject_behavior_daily_stats",
+            "router_event_occurrences", "run_event_occurrences", "behavior_subjects",
+            "subject_behavior_daily_stats",
         ):
             assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] > 0
+        assert connection.execute("SELECT COUNT(*) FROM device_daily_stats").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats"
+        ).fetchone()[0] == 0
     finally:
         connection.close()
     if failure_stage == "after_deletion":
@@ -3400,13 +3404,15 @@ def test_reprocess_in_process_failure_restores_exact_logical_database(
 
         monkeypatch.setattr(analyzer, "compute_risk_score", fail_after_analysis)
     else:
-        original = analyzer.StateStore.insert_device_daily_stat
+        original = analyzer.StateStore.insert_subject_behavior_daily_stat
 
         def fail_during_persistence(self: analyzer.StateStore, *args: object, **kwargs: object) -> None:
             original(self, *args, **kwargs)
             raise RuntimeError("synthetic failure during persistence")
 
-        monkeypatch.setattr(analyzer.StateStore, "insert_device_daily_stat", fail_during_persistence)
+        monkeypatch.setattr(
+            analyzer.StateStore, "insert_subject_behavior_daily_stat", fail_during_persistence,
+        )
 
     with pytest.raises(RuntimeError, match=f"synthetic failure {failure_stage.replace('_', ' ')}"):
         analyzer.main([
@@ -9336,6 +9342,14 @@ def test_unresolved_firmware_upgrade_interval_alerts_but_does_not_learn(
             "SELECT COUNT(DISTINCT subject_key) FROM subject_behavior_daily_stats "
             "WHERE subject_type = 'router'"
         ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_daily_stats WHERE mac = ?",
+            (analyzer.SYSTEM_ACTOR,),
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats WHERE mac = ?",
+            (analyzer.SYSTEM_ACTOR,),
+        ).fetchone()[0] == 0
     finally:
         store.close()
 
@@ -9568,7 +9582,11 @@ def test_tp_link_main_scores_explicit_security_and_fourth_snapshot_count_only_lo
     try:
         assert store.conn.execute(
             "SELECT COUNT(*) FROM device_daily_stats WHERE mac = ?", (analyzer.SYSTEM_ACTOR,)
-        ).fetchone()[0] > 0
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats WHERE mac = ?",
+            (analyzer.SYSTEM_ACTOR,),
+        ).fetchone()[0] == 0
         assert store.conn.execute(
             "SELECT COUNT(*) FROM subject_behavior_daily_stats WHERE subject_type = 'system'"
         ).fetchone()[0] == 0
@@ -9583,5 +9601,130 @@ def test_tp_link_main_scores_explicit_security_and_fourth_snapshot_count_only_lo
         ]
         assert ownership[0] == []
         assert all(owned for owned in ownership[1:]), ownership
+    finally:
+        store.close()
+
+
+def test_tp_link_router_events_do_not_contaminate_netgear_system_history(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "mixed-router-history.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+
+    tp_link_log = tmp_path / "synthetic-tp-link.log"
+    tp_link_log.write_text(
+        tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 inet[410]: <5> 3002 Internet connected",
+        ]),
+        encoding="utf-8",
+    )
+    assert analyzer.main([
+        str(tp_link_log), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+    ]) == 0
+    capsys.readouterr()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats "
+            "WHERE mac = ? AND event_key = 'INTERNET_CONNECTED'",
+            (analyzer.SYSTEM_ACTOR,),
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+    netgear_log = tmp_path / "synthetic-netgear.log"
+    netgear_log.write_text(
+        "[Internet connected], Wednesday, July 15, 2043 12:00:00",
+        encoding="utf-8",
+    )
+    assert analyzer.main([
+        str(netgear_log), "--db", str(db_path), "--format", "netgear", "--json",
+    ]) == 0
+    capsys.readouterr()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        rows = list(store.conn.execute(
+            "SELECT run.format_id, daily.count "
+            "FROM device_event_daily_stats AS daily "
+            "JOIN runs AS run ON run.id = daily.run_id "
+            "WHERE daily.mac = ? AND daily.event_key = 'INTERNET_CONNECTED'",
+            (analyzer.SYSTEM_ACTOR,),
+        ))
+        assert [(row["format_id"], row["count"]) for row in rows] == [("netgear", 1)]
+    finally:
+        store.close()
+
+
+def test_tp_link_reprocess_promotes_router_subject_without_global_event_template(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "router-subject-promotion.db"
+    store = analyzer.StateStore(db_path)
+    try:
+        seed_epoch(store)
+    finally:
+        store.close()
+    record = "2042-06-15 11:59:00 inet[410]: <5> 3002 Internet connected"
+    log_paths = []
+    for index, export_time in enumerate(
+        ("2042-06-15 12:00:00", "2042-06-15 12:01:00"), start=1,
+    ):
+        log_path = tmp_path / f"synthetic-router-owner-{index}.log"
+        log_path.write_text(
+            tp_link_synthetic_snapshot([record], export_time=export_time),
+            encoding="utf-8",
+        )
+        log_paths.append(log_path)
+        assert analyzer.main([
+            str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+        ]) == 0
+        capsys.readouterr()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        run_ids = [row[0] for row in store.conn.execute("SELECT id FROM runs ORDER BY id")]
+        assert store.conn.execute(
+            "SELECT run_id FROM subject_behavior_daily_stats "
+            "WHERE subject_type = 'router' AND behavior_key = 'INTERNET_CONNECTED'"
+        ).fetchone()[0] == run_ids[0]
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats WHERE mac = ?",
+            (analyzer.SYSTEM_ACTOR,),
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+    assert analyzer.main([
+        str(log_paths[0]), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+        "--reprocess",
+    ]) == 0
+    capsys.readouterr()
+
+    store = analyzer.StateStore(db_path)
+    try:
+        promoted_row = store.conn.execute(
+            "SELECT run_id, subject_key FROM subject_behavior_daily_stats "
+            "WHERE subject_type = 'router' AND behavior_key = 'INTERNET_CONNECTED'"
+        ).fetchone()
+        assert promoted_row is not None
+        assert promoted_row["run_id"] == run_ids[1]
+        promoted_metadata = json.loads(store.conn.execute(
+            "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+            (run_ids[1],),
+        ).fetchone()[0])
+        assert promoted_metadata["learning_owned_occurrence_ids"]
+        assert any(promoted_metadata["learning_owned_occurrence_profiles"].values())
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM device_event_daily_stats WHERE mac = ?",
+            (analyzer.SYSTEM_ACTOR,),
+        ).fetchone()[0] == 0
     finally:
         store.close()

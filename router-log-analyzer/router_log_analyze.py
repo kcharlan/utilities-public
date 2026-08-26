@@ -4430,7 +4430,8 @@ class StateStore:
         if existing is None:
             return None
         metadata_row = self.conn.execute(
-            "SELECT metadata_json FROM router_metadata_observations WHERE run_id = ?",
+            "SELECT firmware_profile_id, metadata_json "
+            "FROM router_metadata_observations WHERE run_id = ?",
             (run_id,),
         ).fetchone()
         metadata = json.loads(metadata_row["metadata_json"] or "{}") if metadata_row else {}
@@ -4450,6 +4451,20 @@ class StateStore:
                     (run_id,),
                 )
             ]
+        occurrence_profile_ids: Dict[int, int] = {}
+        recorded_profile_owners = metadata.get("learning_owned_occurrence_profiles")
+        if isinstance(recorded_profile_owners, dict):
+            for profile_id, occurrence_ids in recorded_profile_owners.items():
+                if not str(profile_id).isdigit() or not isinstance(occurrence_ids, list):
+                    continue
+                for occurrence_id in occurrence_ids:
+                    if isinstance(occurrence_id, int):
+                        occurrence_profile_ids[occurrence_id] = int(profile_id)
+        elif metadata_row is not None and metadata_row["firmware_profile_id"] is not None:
+            occurrence_profile_ids = {
+                occurrence_id: int(metadata_row["firmware_profile_id"])
+                for occurrence_id in owned_occurrence_ids
+            }
         affected: Dict[str, Any] = {
             "router_instance_ids": {int(existing["router_instance_id"])},
             "device_macs": {
@@ -4468,6 +4483,7 @@ class StateStore:
                 )
             },
             "occurrence_ids": owned_occurrence_ids,
+            "occurrence_profile_ids": occurrence_profile_ids,
             "device_learning_rows": [
                 dict(row) for row in self.conn.execute(
                     "SELECT * FROM device_daily_stats WHERE run_id = ?", (run_id,)
@@ -4516,9 +4532,101 @@ class StateStore:
         subject_templates = {
             (row["observed_date"], row["subject_key"], row["subject_type"], row["behavior_key"]): row
             for row in affected.get("subject_learning_rows", [])
-            if row["subject_type"] in {"system", "device"}
         }
         promoted_owners: DefaultDict[int, List[int]] = defaultdict(list)
+        promoted_profile_owners: DefaultDict[int, DefaultDict[int, List[int]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+
+        def promote_subject_occurrence(
+            owner_run_id: int,
+            owner_epoch_id: int,
+            timestamp: datetime,
+            event_key: str,
+            event_family: str,
+            template: Dict[str, Any],
+            member_mac: str,
+            member_name: str,
+        ) -> None:
+            subject_key = template["subject_key"]
+            subject_type = template["subject_type"]
+            stat = SubjectBehaviorDayAggregate(
+                observed_date=timestamp.date().isoformat(),
+                subject_key=subject_key,
+                subject_type=subject_type,
+                behavior_key=event_key,
+                behavior_family=event_family,
+            )
+            stat.add_occurrence(
+                timestamp,
+                timestamp,
+                1,
+                {"members": [{"mac": member_mac, "name": member_name,
+                              "timestamp": timestamp.isoformat()}]},
+            )
+            existing = self.conn.execute(
+                """
+                SELECT * FROM subject_behavior_daily_stats
+                WHERE run_id = ? AND observed_date = ? AND subject_key = ?
+                  AND subject_type = ? AND behavior_key = ?
+                """,
+                (owner_run_id, stat.observed_date, subject_key, subject_type, event_key),
+            ).fetchone()
+            if existing is None:
+                catalog = self.conn.execute(
+                    "SELECT display_name, attributes_json FROM behavior_subjects "
+                    "WHERE subject_key = ? AND subject_type = ?",
+                    (subject_key, subject_type),
+                ).fetchone()
+                self.upsert_behavior_subject(
+                    subject_key,
+                    subject_type,
+                    catalog["display_name"] if catalog is not None else member_name,
+                    (
+                        json.loads(catalog["attributes_json"] or "{}")
+                        if catalog is not None else {"source": subject_type}
+                    ),
+                    timestamp.isoformat(),
+                )
+                self.insert_subject_behavior_daily_stat(
+                    owner_run_id,
+                    owner_epoch_id,
+                    stat,
+                    bool(template["included_in_learning"]),
+                    template["exclusion_reason"],
+                )
+                return
+            histogram = json.loads(existing["hour_histogram_json"] or "{}")
+            hour_key = str(timestamp.hour)
+            histogram[hour_key] = int(histogram.get(hour_key, 0)) + 1
+            starts = json.loads(existing["occurrence_starts_json"] or "[]")
+            ends = json.loads(existing["occurrence_ends_json"] or "[]")
+            sizes = json.loads(existing["occurrence_sizes_json"] or "[]")
+            contexts = json.loads(existing["context_json"] or "[]")
+            starts.append(timestamp.isoformat())
+            ends.append(timestamp.isoformat())
+            sizes.append(1)
+            contexts.extend(stat.contexts)
+            self.conn.execute(
+                """
+                UPDATE subject_behavior_daily_stats
+                SET count = count + 1, first_seen = MIN(first_seen, ?),
+                    last_seen = MAX(last_seen, ?), hour_histogram_json = ?,
+                    occurrence_starts_json = ?, occurrence_ends_json = ?,
+                    occurrence_sizes_json = ?, context_json = ?,
+                    included_in_learning = ?, exclusion_reason = COALESCE(exclusion_reason, ?)
+                WHERE id = ?
+                """,
+                (
+                    timestamp.isoformat(), timestamp.isoformat(),
+                    json.dumps(histogram, sort_keys=True), json.dumps(starts),
+                    json.dumps(ends), json.dumps(sizes), json.dumps(contexts, sort_keys=True),
+                    int(bool(existing["included_in_learning"]) and bool(
+                        template["included_in_learning"]
+                    )), template["exclusion_reason"], existing["id"],
+                ),
+            )
+
         for occurrence_id in affected.get("occurrence_ids", []):
             row = self.conn.execute(
                 """
@@ -4545,6 +4653,33 @@ class StateStore:
             event_family = row["canonical_event_family"]
             if event_key is None or event_family is None:
                 continue
+            owner_run_id = int(row["owner_run_id"])
+            owner_epoch_id = int(row["owner_epoch_id"])
+            if row["actor_scope"] == "router":
+                profile_id = affected.get("occurrence_profile_ids", {}).get(int(occurrence_id))
+                if profile_id is None:
+                    continue
+                subject_key = self.router_behavior_subject(
+                    int(row["router_instance_id"]), profile_id,
+                )
+                subject_template = subject_templates.get(
+                    (observed_date, subject_key, "router", event_key)
+                )
+                if subject_template is None:
+                    continue
+                promote_subject_occurrence(
+                    owner_run_id,
+                    owner_epoch_id,
+                    timestamp,
+                    event_key,
+                    event_family,
+                    subject_template,
+                    SYSTEM_ACTOR,
+                    SYSTEM_NAME,
+                )
+                promoted_owners[owner_run_id].append(int(occurrence_id))
+                promoted_profile_owners[owner_run_id][profile_id].append(int(occurrence_id))
+                continue
             event_template = event_templates.get((observed_date, mac, event_key))
             if event_template is None:
                 # The removed run did not materialize this occurrence into learned history.
@@ -4554,11 +4689,6 @@ class StateStore:
             subject_template = subject_templates.get(
                 (observed_date, mac, subject_type, event_key)
             )
-            owner_run_id = int(row["owner_run_id"])
-            owner_epoch_id = int(row["owner_epoch_id"])
-            if row["actor_scope"] == "router":
-                promoted_owners[owner_run_id].append(int(occurrence_id))
-                continue
             event = Event(
                 timestamp=timestamp,
                 mac=mac,
@@ -4648,62 +4778,16 @@ class StateStore:
                 )
 
             if subject_template is not None:
-                subject_stat = SubjectBehaviorDayAggregate(
-                    observed_date=observed_date, subject_key=mac, subject_type=subject_type,
-                    behavior_key=event_key, behavior_family=event_family,
+                promote_subject_occurrence(
+                    owner_run_id,
+                    owner_epoch_id,
+                    timestamp,
+                    event_key,
+                    event_family,
+                    subject_template,
+                    mac,
+                    mac,
                 )
-                subject_stat.add_occurrence(
-                    timestamp, timestamp, 1,
-                    {"members": [{"mac": mac, "name": mac, "timestamp": timestamp.isoformat()}]},
-                )
-                existing_subject = self.conn.execute(
-                    """
-                    SELECT * FROM subject_behavior_daily_stats
-                    WHERE run_id = ? AND observed_date = ? AND subject_key = ?
-                      AND subject_type = ? AND behavior_key = ?
-                    """,
-                    (owner_run_id, observed_date, mac, subject_type, event_key),
-                ).fetchone()
-                if existing_subject is None:
-                    self.upsert_behavior_subject(
-                        mac, subject_type, mac, {"source": subject_type}, timestamp.isoformat()
-                    )
-                    self.insert_subject_behavior_daily_stat(
-                        owner_run_id, owner_epoch_id, subject_stat,
-                        bool(subject_template["included_in_learning"]),
-                        subject_template["exclusion_reason"],
-                    )
-                else:
-                    histogram = json.loads(existing_subject["hour_histogram_json"] or "{}")
-                    hour_key = str(timestamp.hour)
-                    histogram[hour_key] = int(histogram.get(hour_key, 0)) + 1
-                    starts = json.loads(existing_subject["occurrence_starts_json"] or "[]")
-                    ends = json.loads(existing_subject["occurrence_ends_json"] or "[]")
-                    sizes = json.loads(existing_subject["occurrence_sizes_json"] or "[]")
-                    contexts = json.loads(existing_subject["context_json"] or "[]")
-                    starts.append(timestamp.isoformat())
-                    ends.append(timestamp.isoformat())
-                    sizes.append(1)
-                    contexts.extend(subject_stat.contexts)
-                    self.conn.execute(
-                        """
-                        UPDATE subject_behavior_daily_stats
-                        SET count = count + 1, first_seen = MIN(first_seen, ?),
-                            last_seen = MAX(last_seen, ?), hour_histogram_json = ?,
-                            occurrence_starts_json = ?, occurrence_ends_json = ?,
-                            occurrence_sizes_json = ?, context_json = ?,
-                            included_in_learning = ?, exclusion_reason = COALESCE(exclusion_reason, ?)
-                        WHERE id = ?
-                        """,
-                        (
-                            timestamp.isoformat(), timestamp.isoformat(),
-                            json.dumps(histogram, sort_keys=True), json.dumps(starts),
-                            json.dumps(ends), json.dumps(sizes), json.dumps(contexts, sort_keys=True),
-                            int(bool(existing_subject["included_in_learning"]) and bool(
-                                subject_template["included_in_learning"]
-                            )), subject_template["exclusion_reason"], existing_subject["id"],
-                        ),
-                    )
             promoted_owners[owner_run_id].append(int(occurrence_id))
 
         for owner_run_id, occurrence_ids in promoted_owners.items():
@@ -4721,6 +4805,18 @@ class StateStore:
                 *(value for value in prior_ids if isinstance(value, int)),
                 *occurrence_ids,
             })
+            profile_owners = metadata.get("learning_owned_occurrence_profiles", {})
+            if not isinstance(profile_owners, dict):
+                profile_owners = {}
+            for profile_id, profile_occurrence_ids in promoted_profile_owners[owner_run_id].items():
+                prior_profile_ids = profile_owners.get(str(profile_id), [])
+                if not isinstance(prior_profile_ids, list):
+                    prior_profile_ids = []
+                profile_owners[str(profile_id)] = sorted({
+                    *(value for value in prior_profile_ids if isinstance(value, int)),
+                    *profile_occurrence_ids,
+                })
+            metadata["learning_owned_occurrence_profiles"] = profile_owners
             self.conn.execute(
                 "UPDATE router_metadata_observations SET metadata_json = ? WHERE run_id = ?",
                 (json_dumps(metadata), owner_run_id),
@@ -11278,8 +11374,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     )
                 )
             ]
+            legacy_persistence_events = [
+                event for event in persistence_events if event.actor_scope != "router"
+            ]
             persistence_aggregate = aggregate_events(
-                persistence_events,
+                legacy_persistence_events,
                 seed_baseline,
                 devices_snapshot,
             )
