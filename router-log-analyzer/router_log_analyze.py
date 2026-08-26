@@ -3634,6 +3634,14 @@ class StateStore:
         router_instance_override: Optional[str] = None,
         router_label: Optional[str] = None,
     ) -> int:
+        if parsed.format_id == FORMAT_NETGEAR and router_instance_override is None:
+            router_id = self.get_or_create_legacy_netgear_router_instance()
+            if router_label is not None and router_label.strip():
+                self.conn.execute(
+                    "UPDATE router_instances SET label = ? WHERE id = ?",
+                    (router_label.strip(), router_id),
+                )
+            return router_id
         instance_key = router_instance_key_for_parse(parsed, router_instance_override)
         row = self.conn.execute(
             "SELECT id, label FROM router_instances WHERE instance_key = ?",
@@ -9885,6 +9893,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             persistence_aggregate["subject_behavior_day_stats"] = persistence_subject_stats
             persistence_aggregate["behavior_subjects"] = persistence_subjects
+            persistence_aggregate["observation_range"] = aggregate["observation_range"]
+            persistence_aggregate["observed_dates"] = aggregate["observed_dates"]
         else:
             persistence_aggregate = aggregate
         deduplicated, run_id = persist_analysis(

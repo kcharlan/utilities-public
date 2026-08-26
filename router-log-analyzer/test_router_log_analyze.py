@@ -5360,6 +5360,28 @@ def test_router_instance_override_takes_precedence_and_distinct_lan_macs_do_not_
     assert analyzer.router_instance_key_for_parse(second, "synthetic-router") == override_key
 
 
+def test_fresh_default_netgear_resolution_uses_legacy_identity_metadata(tmp_path: Path) -> None:
+    parsed = analyzer.parse_router_log(
+        "[Log cleared], Tuesday, July 14, 2037 08:00:00",
+        "synthetic-netgear.log",
+        "netgear",
+    )
+    store = analyzer.StateStore(tmp_path / "network.db")
+    try:
+        router_id = store.resolve_router_instance(parsed)
+        row = store.conn.execute(
+            "SELECT instance_key, identity_source, label FROM router_instances WHERE id = ?",
+            (router_id,),
+        ).fetchone()
+        assert tuple(row) == (
+            analyzer.LEGACY_NETGEAR_INSTANCE_KEY,
+            "legacy_default",
+            "Legacy NETGEAR Router",
+        )
+    finally:
+        store.close()
+
+
 def test_tp_link_occurrences_reuse_boot_session_and_classify_overlap(tmp_path: Path) -> None:
     store = analyzer.StateStore(tmp_path / "network.db")
     try:
@@ -5685,6 +5707,15 @@ def test_repeated_tp_link_security_occurrence_does_not_rescore_changed_header(
         assert [tuple(row) for row in store.conn.execute(
             "SELECT novel_event_count, repeated_event_count FROM runs ORDER BY id"
         )] == [(1, 0), (0, 1)]
+        assert [tuple(row) for row in store.conn.execute(
+            """
+            SELECT observation_start, observation_end, observed_dates_json
+            FROM runs ORDER BY id
+            """
+        )] == [
+            ("2042-06-15T11:59:58", "2042-06-15T11:59:58", '["2042-06-15"]'),
+            ("2042-06-15T11:59:58", "2042-06-15T11:59:58", '["2042-06-15"]'),
+        ]
     finally:
         store.close()
 
