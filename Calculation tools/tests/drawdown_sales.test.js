@@ -12,10 +12,11 @@ const scriptMatch = calculatorHtml.match(/<script>\s*([\s\S]*?)<\/script>/);
 
 assert.ok(scriptMatch, 'drawdown.html must contain an inline script');
 
-function loadDrawdownApi() {
+function loadDrawdownApi(documentOverrides = {}) {
   const context = {
     document: {
       addEventListener() {},
+      ...documentOverrides,
     },
   };
   vm.createContext(context);
@@ -200,6 +201,90 @@ function PARAM_DEFS_FOR_RENDER() {
     { key: 'sale_tax_rate', value: 0.15 },
   ];
 }
+
+test('[aggregate] yearly view sums every sale and tax flow from monthly rows', () => {
+  const { aggregateForView } = loadDrawdownApi();
+  const rows = Array.from({ length: 12 }, (_, index) => ({
+    month: index + 1,
+    date: new Date(2026, index, 1),
+    expense: 100,
+    investment_income: 20,
+    external_income: 10,
+    income_tax_paid: index + 1,
+    sale_tax_paid: (index + 1) * 2,
+    tax_paid: (index + 1) * 3,
+    net_income: 25,
+    delta: -75,
+    buffer: 500 - index,
+    investments: 5000 - index * 100,
+    sold: (index + 1) * 4,
+    net_sale_proceeds: (index + 1) * 5,
+    hitFloor: index === 2,
+    insolvency: false,
+    surplus: false,
+    pinned_at_this_row: null,
+    overrides_applied: null,
+    pre_state: { marker: index },
+    effective_state: { marker: index + 1 },
+  }));
+
+  const [year] = aggregateForView(rows, 'years');
+
+  assert.equal(year.income_tax_paid, 78);
+  assert.equal(year.sale_tax_paid, 156);
+  assert.equal(year.tax_paid, 234);
+  assert.equal(year.sold, 312);
+  assert.equal(year.net_sale_proceeds, 390);
+});
+
+test('[summary] reports summed gross sales and both tax components in five cards', () => {
+  const stats = { innerHTML: '' };
+  const { state, renderStats } = loadDrawdownApi({
+    getElementById(id) {
+      assert.equal(id, 'stats');
+      return stats;
+    },
+  });
+  Object.assign(state.params, {
+    investments_initial: 1000,
+    floor: 100,
+    tax_rate: 0.25,
+    unit: 'months',
+  });
+  const rows = [
+    {
+      buffer: 100,
+      investments: 950,
+      sold: 100,
+      income_tax_paid: 10,
+      sale_tax_paid: 5,
+      tax_paid: 15,
+    },
+    {
+      buffer: 100,
+      investments: 900,
+      sold: 250,
+      income_tax_paid: 20,
+      sale_tax_paid: 15,
+      tax_paid: 35,
+    },
+  ];
+
+  renderStats(rows, { terminatedReason: 'cap' });
+
+  assert.equal((stats.innerHTML.match(/class="stat"/g) || []).length, 5);
+  assert.match(stats.innerHTML, /Total liquidated[\s\S]*?\$350[\s\S]*?gross sales across projection/);
+  assert.doesNotMatch(stats.innerHTML, /% of principal/);
+  assert.match(stats.innerHTML, /Total tax paid[\s\S]*?\$50/);
+  assert.match(stats.innerHTML, /Income tax[^<]*\$30/);
+  assert.match(stats.innerHTML, /Asset sale tax[^<]*\$20/);
+});
+
+test('[Gross sold] table renames only the visible sale heading', () => {
+  assert.match(calculatorHtml, /<th>Gross sold<\/th>/);
+  assert.doesNotMatch(calculatorHtml, /<th>Sold<\/th>/);
+  assert.match(calculatorHtml, /r\.sold > 0 \? fmtMoney\(r\.sold\) : '—'/);
+});
 
 test('[helper] calculateAssetSale returns zeros when no sale can or needs to occur', () => {
   const { calculateAssetSale } = loadDrawdownApi();

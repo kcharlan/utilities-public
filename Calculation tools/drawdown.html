@@ -1079,7 +1079,7 @@
             <th>Δ</th>
             <th>Buffer</th>
             <th>Investments</th>
-            <th>Sold</th>
+            <th>Gross sold</th>
             <th>Notes</th>
           </tr>
         </thead>
@@ -1462,12 +1462,15 @@ function aggregateForView(rows, unit) {
       expense: slice.reduce((s, r) => s + r.expense, 0),
       investment_income: slice.reduce((s, r) => s + r.investment_income, 0),
       external_income: slice.reduce((s, r) => s + r.external_income, 0),
+      income_tax_paid: slice.reduce((s, r) => s + r.income_tax_paid, 0),
+      sale_tax_paid: slice.reduce((s, r) => s + r.sale_tax_paid, 0),
       tax_paid: slice.reduce((s, r) => s + r.tax_paid, 0),
       net_income: slice.reduce((s, r) => s + r.net_income, 0),
       delta: slice.reduce((s, r) => s + r.delta, 0),
       buffer: last.buffer,
       investments: last.investments,
       sold: slice.reduce((s, r) => s + r.sold, 0),
+      net_sale_proceeds: slice.reduce((s, r) => s + r.net_sale_proceeds, 0),
       hitFloor: slice.some(r => r.hitFloor),
       insolvency: slice.some(r => r.insolvency),
       surplus: slice.every(r => r.surplus),
@@ -1491,7 +1494,9 @@ function aggregateForView(rows, unit) {
 function renderStats(rows, result) {
   const p = state.params;
   const lastRow = rows[rows.length - 1];
-  const totalSold = p.investments_initial - lastRow.investments;
+  const totalSold = rows.reduce((s, r) => s + r.sold, 0);
+  const totalIncomeTax = rows.reduce((s, r) => s + r.income_tax_paid, 0);
+  const totalSaleTax = rows.reduce((s, r) => s + r.sale_tax_paid, 0);
   const totalTax = rows.reduce((s, r) => s + r.tax_paid, 0);
   const months = rows.length;
 
@@ -1524,12 +1529,12 @@ function renderStats(rows, result) {
     <div class="stat">
       <div class="stat-label">Total liquidated</div>
       <div class="stat-value">${fmtMoneyCompact(totalSold)}</div>
-      <div class="stat-detail">${p.investments_initial > 0 ? (totalSold / p.investments_initial * 100).toFixed(1) : '0'}% of principal</div>
+      <div class="stat-detail">gross sales across projection</div>
     </div>
     <div class="stat">
       <div class="stat-label">Total tax paid</div>
       <div class="stat-value">${fmtMoneyCompact(totalTax)}</div>
-      <div class="stat-detail">at ${(p.tax_rate * 100).toFixed(1)}% effective</div>
+      <div class="stat-detail">Income tax ${fmtMoneyCompact(totalIncomeTax)} · Asset sale tax ${fmtMoneyCompact(totalSaleTax)}</div>
     </div>
   `;
   document.getElementById('stats').innerHTML = html;
