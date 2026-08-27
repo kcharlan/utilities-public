@@ -485,7 +485,15 @@
   }
 
   /* ============ TABLE ============ */
-  .table-section { position: relative; }
+  .table-section {
+    position: relative;
+    max-width: 100%;
+  }
+  .table-scroll {
+    max-width: 100%;
+    max-height: calc(100vh - 24px);
+    overflow: auto;
+  }
   .table-head {
     display: flex;
     align-items: baseline;
@@ -999,8 +1007,12 @@
     <div class="group">
       <div class="group-label"><span>Tax</span><span class="ordinal">§ 05</span></div>
       <div class="field">
-        <label>Effective rate<span class="hint">applied to total income</span></label>
+        <label>Income effective rate<span class="hint">applied to recurring income</span></label>
         <span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
+      </div>
+      <div class="field">
+        <label>Asset sale effective rate<span class="hint">applied to gross sale proceeds</span></label>
+        <span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
       </div>
     </div>
 
@@ -1063,24 +1075,26 @@
         </div>
       </div>
 
-      <table class="amort">
-        <thead>
-          <tr>
-            <th></th>
-            <th>#</th>
-            <th>Date</th>
-            <th>Expense</th>
-            <th>Inv. Income</th>
-            <th>Net</th>
-            <th>Δ</th>
-            <th>Buffer</th>
-            <th>Investments</th>
-            <th>Sold</th>
-            <th>Notes</th>
-          </tr>
-        </thead>
-        <tbody id="amort-body"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="amort">
+          <thead>
+            <tr>
+              <th></th>
+              <th>#</th>
+              <th>Date</th>
+              <th>Expense</th>
+              <th>Inv. Income</th>
+              <th>Net</th>
+              <th>Δ</th>
+              <th>Buffer</th>
+              <th>Investments</th>
+              <th>Gross sold</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="amort-body"></tbody>
+        </table>
+      </div>
 
       <div class="table-footer" id="table-footer"></div>
     </section>
@@ -1088,13 +1102,17 @@
     <p class="footnote">
       <strong>Method.</strong> Inflation compounds at the user's annual rate, converted to an effective periodic rate (APY).
       <span class="sep">·</span>
-      <strong>Tax.</strong> The effective rate is applied to the sum of investment and external income before expenses are deducted.
+      <strong>Tax.</strong> The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.
       <span class="sep">·</span>
-      <strong>Decay.</strong> Investment income reduction is permanent and cumulative; each sale subtracts <em>(modifier × percent of original principal sold)</em> from a running coefficient. The modifier in force at the time of sale is locked in — later modifier changes never re-evaluate past sales.
+      <strong>Decay.</strong> Gross liquidation—not net proceeds—drives principal reduction and sell-off decay. Investment income reduction is permanent and cumulative; each sale subtracts <em>(modifier × percent of original principal sold)</em> from a running coefficient. The modifier in force at the time of sale is locked in — later modifier changes never re-evaluate past sales.
       <span class="sep">·</span>
       <strong>Pins.</strong> Click the <em>+</em> in the left gutter of any row to attach an override. Pins apply forward from the pinned period; past rows are immutable.
       <span class="sep">·</span>
+      <strong>Export.</strong> CSV <code>tax_paid</code> is combined tax; <code>income_tax_paid</code>, <code>sale_tax_paid</code>, and <code>net_sale_proceeds</code> are appended.
+      <span class="sep">·</span>
       <strong>Termination.</strong> The simulation ends when investments reach zero and the buffer is at or below its floor (or at the period cap, whichever comes first).
+      <span class="sep">·</span>
+      <strong>Scope.</strong> This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.
     </p>
   </main>
 </div>
@@ -1107,6 +1125,8 @@
    ============================================================ */
 const currentDate = new Date();
 const TODAY = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+const DEFAULT_INCOME_TAX_RATE = 0.25;
+const DEFAULT_SALE_TAX_RATE = 0.15;
 
 const PARAM_DEFS = [
   // [key, type, label, isAbsoluteState?]
@@ -1117,8 +1137,9 @@ const PARAM_DEFS = [
   { key: 'floor',           label: 'Floor',               fmt: 'money'                     },
   { key: 'external_income', label: 'External income',    fmt: 'money'                     },
   { key: 'expense',         label: 'Expense (base)',      fmt: 'money'                     },
-  { key: 'inflation',       label: 'Annual inflation',    fmt: 'pct'                       },
-  { key: 'tax_rate',        label: 'Tax rate',            fmt: 'pct'                       },
+  { key: 'inflation',       label: 'Annual inflation',    fmt: 'pct', min: -1, max: 10     },
+  { key: 'tax_rate',        label: 'Tax rate',            fmt: 'pct', min: 0, max: 1       },
+  { key: 'sale_tax_rate',   label: 'Asset sale tax rate', fmt: 'pct', min: 0, max: 1       },
 ];
 
 const state = {
@@ -1131,7 +1152,8 @@ const state = {
     modifier: 1,
     expense: 5000,
     inflation: 0.03,
-    tax_rate: 0.25,
+    tax_rate: DEFAULT_INCOME_TAX_RATE,
+    sale_tax_rate: DEFAULT_SALE_TAX_RATE,
     unit: 'months',
     num_periods: 120,
   },
@@ -1146,6 +1168,48 @@ const MAX_MONTHS = 1200; // 100 years
    The simulation always runs MONTHLY internally. Year-mode is a display aggregation.
    ============================================================ */
 
+function calculateAssetSale(deficit, availableInvestments, saleTaxRate) {
+  if (deficit <= 0 || availableInvestments <= 0) {
+    return {
+      grossSold: 0,
+      saleTaxPaid: 0,
+      netSaleProceeds: 0,
+      unfundedDeficit: Math.max(0, deficit),
+    };
+  }
+
+  if (saleTaxRate >= 1) {
+    return {
+      grossSold: availableInvestments,
+      saleTaxPaid: availableInvestments,
+      netSaleProceeds: 0,
+      unfundedDeficit: deficit,
+    };
+  }
+
+  const netFraction = 1 - saleTaxRate;
+  const maximumNet = availableInvestments * netFraction;
+
+  if (maximumNet >= deficit) {
+    const grossSold = Math.min(availableInvestments, deficit / netFraction);
+    return {
+      grossSold,
+      saleTaxPaid: grossSold - deficit,
+      netSaleProceeds: deficit,
+      unfundedDeficit: 0,
+    };
+  }
+
+  const grossSold = availableInvestments;
+  const netSaleProceeds = grossSold * netFraction;
+  return {
+    grossSold,
+    saleTaxPaid: grossSold - netSaleProceeds,
+    netSaleProceeds,
+    unfundedDeficit: Math.max(0, deficit - netSaleProceeds),
+  };
+}
+
 function simulate() {
   const p = state.params;
   const monthlyInflation = Math.pow(1 + p.inflation, 1 / 12) - 1;
@@ -1159,6 +1223,7 @@ function simulate() {
     current_expense: p.expense,
     current_external: p.external_income,
     current_tax: p.tax_rate,
+    current_sale_tax: p.sale_tax_rate,
     current_modifier: p.modifier,
     current_floor: p.floor,
     current_monthly_inflation: monthlyInflation,
@@ -1205,6 +1270,7 @@ function simulate() {
       if ('floor' in ov) sim.current_floor = ov.floor;
       if ('external_income' in ov) sim.current_external = ov.external_income;
       if ('tax_rate' in ov) sim.current_tax = ov.tax_rate;
+      if ('sale_tax_rate' in ov) sim.current_sale_tax = ov.sale_tax_rate;
       if ('expense' in ov) sim.current_expense = ov.expense;
       if ('inflation' in ov) {
         sim.current_monthly_inflation = Math.pow(1 + ov.inflation, 1 / 12) - 1;
@@ -1230,27 +1296,32 @@ function simulate() {
     const investment_income = sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
     const total_pretax = investment_income + sim.current_external;
     const net_income = total_pretax * (1 - sim.current_tax);
-    const tax_paid = total_pretax * sim.current_tax;
+    const income_tax_paid = total_pretax * sim.current_tax;
     const expense_this_month = sim.current_expense;
     const delta = net_income - expense_this_month;
 
     sim.buffer += delta;
 
     let sold = 0;
+    let sale_tax_paid = 0;
+    let net_sale_proceeds = 0;
     let hitFloor = false;
     let insolvency = false;
 
     if (sim.buffer < sim.current_floor && sim.investments > 0) {
       hitFloor = true;
       const deficit = sim.current_floor - sim.buffer;
-      sold = Math.min(deficit, sim.investments);
+      const sale = calculateAssetSale(deficit, sim.investments, sim.current_sale_tax);
+      sold = sale.grossSold;
+      sale_tax_paid = sale.saleTaxPaid;
+      net_sale_proceeds = sale.netSaleProceeds;
       sim.investments -= sold;
-      sim.buffer += sold;
+      sim.buffer += net_sale_proceeds;
       if (sim.baseline_principal > 0) {
         const pct_of_baseline = sold / sim.baseline_principal;
         sim.cumulative_reduction += sim.current_modifier * pct_of_baseline;
       }
-      if (sold < deficit) insolvency = true;
+      if (sale.unfundedDeficit > 0) insolvency = true;
     } else if (sim.buffer < sim.current_floor) {
       insolvency = true;
     }
@@ -1261,12 +1332,15 @@ function simulate() {
       expense: expense_this_month,
       investment_income,
       external_income: sim.current_external,
-      tax_paid,
+      income_tax_paid,
+      sale_tax_paid,
+      tax_paid: income_tax_paid + sale_tax_paid,
       net_income,
       delta,
       buffer: sim.buffer,
       investments: sim.investments,
       sold,
+      net_sale_proceeds,
       hitFloor,
       insolvency,
       surplus: delta > 0,
@@ -1309,6 +1383,7 @@ function snapshotPreState(sim) {
     expense: sim.current_expense,
     inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
     tax_rate: sim.current_tax,
+    sale_tax_rate: sim.current_sale_tax,
   };
 }
 
@@ -1323,6 +1398,7 @@ function snapshotEffectiveState(sim, expense, income) {
     expense: expense,
     inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
     tax_rate: sim.current_tax,
+    sale_tax_rate: sim.current_sale_tax,
   };
 }
 
@@ -1400,12 +1476,15 @@ function aggregateForView(rows, unit) {
       expense: slice.reduce((s, r) => s + r.expense, 0),
       investment_income: slice.reduce((s, r) => s + r.investment_income, 0),
       external_income: slice.reduce((s, r) => s + r.external_income, 0),
+      income_tax_paid: slice.reduce((s, r) => s + r.income_tax_paid, 0),
+      sale_tax_paid: slice.reduce((s, r) => s + r.sale_tax_paid, 0),
       tax_paid: slice.reduce((s, r) => s + r.tax_paid, 0),
       net_income: slice.reduce((s, r) => s + r.net_income, 0),
       delta: slice.reduce((s, r) => s + r.delta, 0),
       buffer: last.buffer,
       investments: last.investments,
       sold: slice.reduce((s, r) => s + r.sold, 0),
+      net_sale_proceeds: slice.reduce((s, r) => s + r.net_sale_proceeds, 0),
       hitFloor: slice.some(r => r.hitFloor),
       insolvency: slice.some(r => r.insolvency),
       surplus: slice.every(r => r.surplus),
@@ -1429,7 +1508,9 @@ function aggregateForView(rows, unit) {
 function renderStats(rows, result) {
   const p = state.params;
   const lastRow = rows[rows.length - 1];
-  const totalSold = p.investments_initial - lastRow.investments;
+  const totalSold = rows.reduce((s, r) => s + r.sold, 0);
+  const totalIncomeTax = rows.reduce((s, r) => s + r.income_tax_paid, 0);
+  const totalSaleTax = rows.reduce((s, r) => s + r.sale_tax_paid, 0);
   const totalTax = rows.reduce((s, r) => s + r.tax_paid, 0);
   const months = rows.length;
 
@@ -1462,12 +1543,12 @@ function renderStats(rows, result) {
     <div class="stat">
       <div class="stat-label">Total liquidated</div>
       <div class="stat-value">${fmtMoneyCompact(totalSold)}</div>
-      <div class="stat-detail">${p.investments_initial > 0 ? (totalSold / p.investments_initial * 100).toFixed(1) : '0'}% of principal</div>
+      <div class="stat-detail">gross sales across projection</div>
     </div>
     <div class="stat">
       <div class="stat-label">Total tax paid</div>
       <div class="stat-value">${fmtMoneyCompact(totalTax)}</div>
-      <div class="stat-detail">at ${(p.tax_rate * 100).toFixed(1)}% effective</div>
+      <div class="stat-detail">Income tax ${fmtMoneyCompact(totalIncomeTax)} · Asset sale tax ${fmtMoneyCompact(totalSaleTax)}</div>
     </div>
   `;
   document.getElementById('stats').innerHTML = html;
@@ -1709,7 +1790,7 @@ function renderPinEditor(row, baseRows) {
     }
 
     const inputAttrs = def.fmt === 'pct'
-      ? `step="0.1" min="-100" max="1000"`
+      ? `step="0.1" min="${def.min * 100}" max="${def.max * 100}"`
       : def.fmt === 'money'
         ? `step="100"`
         : `step="0.1" min="0"`;
@@ -1818,19 +1899,7 @@ function savePinFromEditor(editorMonth, baseline) {
   // baseline. Untouched fields are never saved, even when their displayed baseline
   // rounds away a fractional value — this is the phantom-override fix.
   const dirty = (state.editing && state.editing.dirty) || new Set();
-  const overrides = {};
-  document.querySelectorAll('.pin-field-input').forEach(inp => {
-    const key = inp.getAttribute('data-key');
-    if (!dirty.has(key)) return;
-    const fieldEl = inp.closest('.pin-editor-field');
-    const fmt = fieldEl.getAttribute('data-fmt');
-    const baseVal = +fieldEl.getAttribute('data-baseline');
-    let value = +inp.value;
-    if (fmt === 'pct') value = value / 100;
-    if (!floatsEqual(value, baseVal)) {
-      overrides[key] = value;
-    }
-  });
+  const overrides = collectPinOverrides(document.querySelectorAll('.pin-field-input'), dirty);
 
   // Remove any existing pin at this month
   state.pins = state.pins.filter(p => p.at_month !== editorMonth);
@@ -1846,6 +1915,47 @@ function savePinFromEditor(editorMonth, baseline) {
 
 function floatsEqual(a, b) {
   return Math.abs(a - b) < 1e-9;
+}
+
+function normalizeTaxPercent(rawValue, fallbackPercent) {
+  const numericFallback = Number(fallbackPercent);
+  const validFallback = Number.isFinite(numericFallback)
+    ? Math.min(100, Math.max(0, numericFallback))
+    : 0;
+  if (rawValue === null || rawValue === undefined) return validFallback;
+  if (typeof rawValue === 'string' && rawValue.trim() === '') return validFallback;
+
+  const numericValue = Number(rawValue);
+  if (!Number.isFinite(numericValue)) return validFallback;
+  return Math.min(100, Math.max(0, numericValue));
+}
+
+function readNormalizedTaxRate(input, fallbackRate) {
+  const percent = normalizeTaxPercent(input.value, fallbackRate * 100);
+  input.value = percent;
+  return percent / 100;
+}
+
+function readPinFieldValue(input, key, fmt, baseline) {
+  if (key === 'tax_rate' || key === 'sale_tax_rate') {
+    return readNormalizedTaxRate(input, baseline);
+  }
+  const value = +input.value;
+  return fmt === 'pct' ? value / 100 : value;
+}
+
+function collectPinOverrides(fieldInputs, dirtyKeys) {
+  const overrides = {};
+  fieldInputs.forEach(input => {
+    const key = input.getAttribute('data-key');
+    if (!dirtyKeys.has(key)) return;
+    const fieldEl = input.closest('.pin-editor-field');
+    const fmt = fieldEl.getAttribute('data-fmt');
+    const baseline = +fieldEl.getAttribute('data-baseline');
+    const value = readPinFieldValue(input, key, fmt, baseline);
+    if (!floatsEqual(value, baseline)) overrides[key] = value;
+  });
+  return overrides;
 }
 
 function togglePinEditor(month) {
@@ -1993,7 +2103,8 @@ function readParams() {
   p.modifier = +document.getElementById('modifier').value;
   p.expense = +document.getElementById('expense').value;
   p.inflation = +document.getElementById('inflation').value / 100;
-  p.tax_rate = +document.getElementById('tax-rate').value / 100;
+  p.tax_rate = readNormalizedTaxRate(document.getElementById('tax-rate'), DEFAULT_INCOME_TAX_RATE);
+  p.sale_tax_rate = readNormalizedTaxRate(document.getElementById('sale-tax-rate'), DEFAULT_SALE_TAX_RATE);
   p.num_periods = +document.getElementById('periods').value;
   // unit is set via toggle handler
 }
@@ -2017,10 +2128,20 @@ function recalc() {
    CSV EXPORT
    ============================================================ */
 
-function exportCsv() {
-  const result = simulate();
-  const viewRows = aggregateForView(result.rows, state.params.unit);
-  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides'];
+function toRoundedCents(value) {
+  return Math.round(value * 100);
+}
+
+function formatCents(cents) {
+  const sign = cents < 0 ? '-' : '';
+  const absoluteCents = Math.abs(cents);
+  const dollars = Math.floor(absoluteCents / 100);
+  const remainder = String(absoluteCents % 100).padStart(2, '0');
+  return `${sign}${dollars}.${remainder}`;
+}
+
+function buildCsvText(viewRows, unit, pins) {
+  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides', 'income_tax_paid', 'sale_tax_paid', 'net_sale_proceeds'];
   const lines = [headers.join(',')];
   for (const r of viewRows) {
     // Aggregate every pin whose month falls within this row's span (a single
@@ -2028,35 +2149,51 @@ function exportCsv() {
     const startM = r.first_month !== undefined ? r.first_month : r.month;
     const endM = r.last_month !== undefined ? r.last_month : r.month;
     const pairs = [];
-    state.pins
+    pins
       .filter(p => p.at_month >= startM && p.at_month <= endM)
       .sort((a, b) => a.at_month - b.at_month)
       .forEach(pin => orderedOverrides(pin.overrides).forEach(({ def, value }) => pairs.push(`${def.key}=${value}`)));
     const overridesField = pairs.length ? `"${pairs.join('; ')}"` : '';
+    const grossSaleCents = toRoundedCents(r.sold);
+    const saleTaxCents = toRoundedCents(r.sale_tax_paid);
+    const netSaleCents = grossSaleCents - saleTaxCents;
+    const incomeTaxCents = toRoundedCents(r.income_tax_paid);
+    const combinedTaxCents = incomeTaxCents + saleTaxCents;
     const row = [
       r.period,
-      `"${state.params.unit === 'years' ? r.label : fmtDate(r.date, 'months')}"`,
+      `"${unit === 'years' ? r.label : fmtDate(r.date, 'months')}"`,
       r.expense.toFixed(2),
       r.investment_income.toFixed(2),
       r.external_income.toFixed(2),
-      r.tax_paid.toFixed(2),
+      formatCents(combinedTaxCents),
       r.net_income.toFixed(2),
       r.delta.toFixed(2),
       r.buffer.toFixed(2),
       r.investments.toFixed(2),
-      r.sold.toFixed(2),
+      formatCents(grossSaleCents),
       r.hitFloor ? 'yes' : '',
       r.insolvency ? 'yes' : '',
       r.pinned_at_this_row ? 'yes' : '',
       overridesField,
+      formatCents(incomeTaxCents),
+      formatCents(saleTaxCents),
+      formatCents(netSaleCents),
     ];
     lines.push(row.join(','));
   }
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  return lines.join('\n');
+}
+
+function exportCsv() {
+  const result = simulate();
+  const unit = state.params.unit;
+  const viewRows = aggregateForView(result.rows, unit);
+  const csvText = buildCsvText(viewRows, unit, state.pins);
+  const blob = new Blob([csvText], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `drawdown-${state.params.unit}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `drawdown-${unit}-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -2070,7 +2207,7 @@ function init() {
   document.getElementById('today-stamp').textContent = TODAY.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   // Input listeners
-  const inputs = ['buffer-initial', 'floor', 'external-income', 'investments-initial', 'investment-income', 'modifier', 'expense', 'inflation', 'tax-rate', 'periods'];
+  const inputs = ['buffer-initial', 'floor', 'external-income', 'investments-initial', 'investment-income', 'modifier', 'expense', 'inflation', 'tax-rate', 'sale-tax-rate', 'periods'];
   inputs.forEach(id => {
     const el = document.getElementById(id);
     let timer;
