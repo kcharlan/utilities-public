@@ -999,8 +999,12 @@
     <div class="group">
       <div class="group-label"><span>Tax</span><span class="ordinal">§ 05</span></div>
       <div class="field">
-        <label>Effective rate<span class="hint">applied to total income</span></label>
+        <label>Income effective rate<span class="hint">applied to recurring income</span></label>
         <span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
+      </div>
+      <div class="field">
+        <label>Asset sale effective rate<span class="hint">applied to gross sale proceeds</span></label>
+        <span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
       </div>
     </div>
 
@@ -1107,6 +1111,8 @@
    ============================================================ */
 const currentDate = new Date();
 const TODAY = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+const DEFAULT_INCOME_TAX_RATE = 0.25;
+const DEFAULT_SALE_TAX_RATE = 0.15;
 
 const PARAM_DEFS = [
   // [key, type, label, isAbsoluteState?]
@@ -1117,8 +1123,9 @@ const PARAM_DEFS = [
   { key: 'floor',           label: 'Floor',               fmt: 'money'                     },
   { key: 'external_income', label: 'External income',    fmt: 'money'                     },
   { key: 'expense',         label: 'Expense (base)',      fmt: 'money'                     },
-  { key: 'inflation',       label: 'Annual inflation',    fmt: 'pct'                       },
-  { key: 'tax_rate',        label: 'Tax rate',            fmt: 'pct'                       },
+  { key: 'inflation',       label: 'Annual inflation',    fmt: 'pct', min: -1, max: 10     },
+  { key: 'tax_rate',        label: 'Tax rate',            fmt: 'pct', min: 0, max: 1       },
+  { key: 'sale_tax_rate',   label: 'Asset sale tax rate', fmt: 'pct', min: 0, max: 1       },
 ];
 
 const state = {
@@ -1131,8 +1138,8 @@ const state = {
     modifier: 1,
     expense: 5000,
     inflation: 0.03,
-    tax_rate: 0.25,
-    sale_tax_rate: 0.15,
+    tax_rate: DEFAULT_INCOME_TAX_RATE,
+    sale_tax_rate: DEFAULT_SALE_TAX_RATE,
     unit: 'months',
     num_periods: 120,
   },
@@ -1764,7 +1771,7 @@ function renderPinEditor(row, baseRows) {
     }
 
     const inputAttrs = def.fmt === 'pct'
-      ? `step="0.1" min="-100" max="1000"`
+      ? `step="0.1" min="${def.min * 100}" max="${def.max * 100}"`
       : def.fmt === 'money'
         ? `step="100"`
         : `step="0.1" min="0"`;
@@ -1873,19 +1880,7 @@ function savePinFromEditor(editorMonth, baseline) {
   // baseline. Untouched fields are never saved, even when their displayed baseline
   // rounds away a fractional value — this is the phantom-override fix.
   const dirty = (state.editing && state.editing.dirty) || new Set();
-  const overrides = {};
-  document.querySelectorAll('.pin-field-input').forEach(inp => {
-    const key = inp.getAttribute('data-key');
-    if (!dirty.has(key)) return;
-    const fieldEl = inp.closest('.pin-editor-field');
-    const fmt = fieldEl.getAttribute('data-fmt');
-    const baseVal = +fieldEl.getAttribute('data-baseline');
-    let value = +inp.value;
-    if (fmt === 'pct') value = value / 100;
-    if (!floatsEqual(value, baseVal)) {
-      overrides[key] = value;
-    }
-  });
+  const overrides = collectPinOverrides(document.querySelectorAll('.pin-field-input'), dirty);
 
   // Remove any existing pin at this month
   state.pins = state.pins.filter(p => p.at_month !== editorMonth);
@@ -1901,6 +1896,47 @@ function savePinFromEditor(editorMonth, baseline) {
 
 function floatsEqual(a, b) {
   return Math.abs(a - b) < 1e-9;
+}
+
+function normalizeTaxPercent(rawValue, fallbackPercent) {
+  const numericFallback = Number(fallbackPercent);
+  const validFallback = Number.isFinite(numericFallback)
+    ? Math.min(100, Math.max(0, numericFallback))
+    : 0;
+  if (rawValue === null || rawValue === undefined) return validFallback;
+  if (typeof rawValue === 'string' && rawValue.trim() === '') return validFallback;
+
+  const numericValue = Number(rawValue);
+  if (!Number.isFinite(numericValue)) return validFallback;
+  return Math.min(100, Math.max(0, numericValue));
+}
+
+function readNormalizedTaxRate(input, fallbackRate) {
+  const percent = normalizeTaxPercent(input.value, fallbackRate * 100);
+  input.value = percent;
+  return percent / 100;
+}
+
+function readPinFieldValue(input, key, fmt, baseline) {
+  if (key === 'tax_rate' || key === 'sale_tax_rate') {
+    return readNormalizedTaxRate(input, baseline);
+  }
+  const value = +input.value;
+  return fmt === 'pct' ? value / 100 : value;
+}
+
+function collectPinOverrides(fieldInputs, dirtyKeys) {
+  const overrides = {};
+  fieldInputs.forEach(input => {
+    const key = input.getAttribute('data-key');
+    if (!dirtyKeys.has(key)) return;
+    const fieldEl = input.closest('.pin-editor-field');
+    const fmt = fieldEl.getAttribute('data-fmt');
+    const baseline = +fieldEl.getAttribute('data-baseline');
+    const value = readPinFieldValue(input, key, fmt, baseline);
+    if (!floatsEqual(value, baseline)) overrides[key] = value;
+  });
+  return overrides;
 }
 
 function togglePinEditor(month) {
@@ -2048,7 +2084,8 @@ function readParams() {
   p.modifier = +document.getElementById('modifier').value;
   p.expense = +document.getElementById('expense').value;
   p.inflation = +document.getElementById('inflation').value / 100;
-  p.tax_rate = +document.getElementById('tax-rate').value / 100;
+  p.tax_rate = readNormalizedTaxRate(document.getElementById('tax-rate'), DEFAULT_INCOME_TAX_RATE);
+  p.sale_tax_rate = readNormalizedTaxRate(document.getElementById('sale-tax-rate'), DEFAULT_SALE_TAX_RATE);
   p.num_periods = +document.getElementById('periods').value;
   // unit is set via toggle handler
 }
@@ -2125,7 +2162,7 @@ function init() {
   document.getElementById('today-stamp').textContent = TODAY.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   // Input listeners
-  const inputs = ['buffer-initial', 'floor', 'external-income', 'investments-initial', 'investment-income', 'modifier', 'expense', 'inflation', 'tax-rate', 'periods'];
+  const inputs = ['buffer-initial', 'floor', 'external-income', 'investments-initial', 'investment-income', 'modifier', 'expense', 'inflation', 'tax-rate', 'sale-tax-rate', 'periods'];
   inputs.forEach(id => {
     const el = document.getElementById(id);
     let timer;

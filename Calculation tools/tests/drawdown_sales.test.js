@@ -28,6 +28,11 @@ globalThis.__drawdownApi = {
   aggregateForView,
   renderStats,
   calculateAssetSale: typeof calculateAssetSale === 'function' ? calculateAssetSale : undefined,
+  normalizeTaxPercent: typeof normalizeTaxPercent === 'function' ? normalizeTaxPercent : undefined,
+  readNormalizedTaxRate: typeof readNormalizedTaxRate === 'function' ? readNormalizedTaxRate : undefined,
+  readPinFieldValue: typeof readPinFieldValue === 'function' ? readPinFieldValue : undefined,
+  collectPinOverrides: typeof collectPinOverrides === 'function' ? collectPinOverrides : undefined,
+  renderPinEditor: typeof renderPinEditor === 'function' ? renderPinEditor : undefined,
 };`,
     context,
   );
@@ -61,6 +66,139 @@ function assertSaleInvariants(result, deficit, availableInvestments) {
   assert.equal(result.grossSold, result.saleTaxPaid + result.netSaleProceeds);
   assert.ok(result.grossSold <= availableInvestments);
   assert.ok(result.netSaleProceeds <= deficit);
+}
+
+test('[ui] tax control labels recurring and asset-sale rates', () => {
+  assert.match(
+    calculatorHtml,
+    /<label>Income effective rate<span class="hint">applied to recurring income<\/span><\/label>\s*<span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0\.5" min="0" max="100">/,
+  );
+  assert.match(
+    calculatorHtml,
+    /<label>Asset sale effective rate<span class="hint">applied to gross sale proceeds<\/span><\/label>\s*<span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0\.5" min="0" max="100">/,
+  );
+  assert.match(calculatorHtml, /const inputs = \[[^\]]*'sale-tax-rate'[^\]]*\];/);
+});
+
+test('[ui] pin field metadata bounds tax rates', () => {
+  const { PARAM_DEFS } = loadDrawdownApi();
+  const inflation = PARAM_DEFS.find(def => def.key === 'inflation');
+  const taxIndex = PARAM_DEFS.findIndex(def => def.key === 'tax_rate');
+  const taxRate = PARAM_DEFS[taxIndex];
+  const saleTaxRate = PARAM_DEFS[taxIndex + 1];
+
+  assert.deepEqual(JSON.parse(JSON.stringify(inflation)), {
+    key: 'inflation', label: 'Annual inflation', fmt: 'pct', min: -1, max: 10,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(taxRate)), {
+    key: 'tax_rate', label: 'Tax rate', fmt: 'pct', min: 0, max: 1,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(saleTaxRate)), {
+    key: 'sale_tax_rate', label: 'Asset sale tax rate', fmt: 'pct', min: 0, max: 1,
+  });
+});
+
+test('[ui] normalization clamps finite rates and falls back', () => {
+  const { normalizeTaxPercent } = loadDrawdownApi();
+  assert.equal(typeof normalizeTaxPercent, 'function');
+
+  assert.equal(normalizeTaxPercent('27.5', 25), 27.5);
+  assert.equal(normalizeTaxPercent('-0.5', 25), 0);
+  assert.equal(normalizeTaxPercent('100.5', 25), 100);
+  assert.equal(normalizeTaxPercent('100', 25), 100);
+  for (const invalid of [null, undefined, '', '   ', 'NaN', 'Infinity', '-Infinity']) {
+    assert.equal(normalizeTaxPercent(invalid, 25), 25, `expected ${String(invalid)} to fall back`);
+  }
+});
+
+test('[ui] normalization reflects decimal rates into inputs', () => {
+  const { readNormalizedTaxRate } = loadDrawdownApi();
+  assert.equal(typeof readNormalizedTaxRate, 'function');
+
+  const incomeInput = { value: '' };
+  const saleInput = { value: '   ' };
+  assert.equal(readNormalizedTaxRate(incomeInput, 0.25), 0.25);
+  assert.equal(incomeInput.value, 25);
+  assert.equal(readNormalizedTaxRate(saleInput, 0.15), 0.15);
+  assert.equal(saleInput.value, 15);
+
+  const below = { value: '-7' };
+  const above = { value: '130' };
+  assert.equal(readNormalizedTaxRate(below, 0.25), 0);
+  assert.equal(below.value, 0);
+  assert.equal(readNormalizedTaxRate(above, 0.15), 1);
+  assert.equal(above.value, 100);
+});
+
+test('[ui] pin field uses tax baseline for invalid input', () => {
+  const { readPinFieldValue } = loadDrawdownApi();
+  assert.equal(typeof readPinFieldValue, 'function');
+
+  const incomeTax = { value: '' };
+  const saleTax = { value: 'Infinity' };
+  assert.equal(readPinFieldValue(incomeTax, 'tax_rate', 'pct', 0.25), 0.25);
+  assert.equal(incomeTax.value, 25);
+  assert.equal(readPinFieldValue(saleTax, 'sale_tax_rate', 'pct', 0.15), 0.15);
+  assert.equal(saleTax.value, 15);
+  assert.equal(readPinFieldValue({ value: '-125' }, 'inflation', 'pct', 0.03), -1.25);
+  assert.equal(readPinFieldValue({ value: '1234.5' }, 'expense', 'money', 5000), 1234.5);
+  assert.equal(readPinFieldValue({ value: '1.75' }, 'modifier', 'num', 1), 1.75);
+});
+
+test('[ui] pin field collector persists only normalized dirty changes', () => {
+  const { collectPinOverrides } = loadDrawdownApi();
+  assert.equal(typeof collectPinOverrides, 'function');
+
+  function fieldInput(key, fmt, baseline, value) {
+    const attrs = { 'data-fmt': fmt, 'data-baseline': String(baseline) };
+    return {
+      value,
+      getAttribute(name) { return name === 'data-key' ? key : null; },
+      closest() { return { getAttribute(name) { return attrs[name]; } }; },
+    };
+  }
+
+  const incomeTax = fieldInput('tax_rate', 'pct', 0.25, '30');
+  const saleTax = fieldInput('sale_tax_rate', 'pct', 0.15, '');
+  const untouchedExpense = fieldInput('expense', 'money', 5000, '6000');
+  const overrides = collectPinOverrides(
+    [incomeTax, saleTax, untouchedExpense],
+    new Set(['tax_rate', 'sale_tax_rate']),
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(overrides)), { tax_rate: 0.3 });
+  assert.equal(saleTax.value, 15);
+});
+
+test('[ui] pin field render normalizes tax bounds without clamping inflation', () => {
+  const { state, renderPinEditor } = loadDrawdownApi();
+  assert.equal(typeof renderPinEditor, 'function');
+  state.params.unit = 'months';
+  state.pins = [];
+  const baseline = Object.fromEntries(PARAM_DEFS_FOR_RENDER().map(def => [def.key, def.value]));
+  const html = renderPinEditor(
+    { month: 1 },
+    [{ month: 1, pre_state: baseline }],
+  );
+
+  assert.match(html, /data-key="tax_rate"[\s\S]*?<input[^>]*data-key="tax_rate"[^>]*min="0" max="100"/);
+  assert.match(html, /data-key="sale_tax_rate"[\s\S]*?<input[^>]*data-key="sale_tax_rate"[^>]*min="0" max="100"/);
+  assert.match(html, /data-key="inflation"[\s\S]*?<input[^>]*data-key="inflation"[^>]*min="-100" max="1000"/);
+});
+
+function PARAM_DEFS_FOR_RENDER() {
+  return [
+    { key: 'buffer', value: 100000 },
+    { key: 'investments', value: 600000 },
+    { key: 'investment_income', value: 6000 },
+    { key: 'modifier', value: 1 },
+    { key: 'floor', value: 100000 },
+    { key: 'external_income', value: 2000 },
+    { key: 'expense', value: 5000 },
+    { key: 'inflation', value: 0.03 },
+    { key: 'tax_rate', value: 0.25 },
+    { key: 'sale_tax_rate', value: 0.15 },
+  ];
 }
 
 test('[helper] calculateAssetSale returns zeros when no sale can or needs to occur', () => {
