@@ -42,6 +42,14 @@ function assertClose(actual, expected, tolerance = 1e-9) {
 }
 
 function assertSaleInvariants(result, deficit, availableInvestments) {
+  const keys = JSON.parse(JSON.stringify(Object.keys(result)));
+  assert.deepEqual(keys, [
+    'grossSold',
+    'saleTaxPaid',
+    'netSaleProceeds',
+    'unfundedDeficit',
+  ]);
+
   for (const field of [
     'grossSold',
     'saleTaxPaid',
@@ -93,6 +101,20 @@ test('[helper] calculateAssetSale grosses up a fully funded sale for 15% tax', (
   assertClose(result.grossSold, 1000 / 0.85);
   assertClose(result.saleTaxPaid, (1000 / 0.85) - 1000);
   assert.equal(result.netSaleProceeds, 1000);
+  assert.equal(result.unfundedDeficit, 0);
+});
+
+test('[helper] calculateAssetSale caps a fully funded exact-capacity sale', () => {
+  const { calculateAssetSale } = loadDrawdownApi();
+  const availableInvestments = 0.01;
+  const saleTaxRate = 0.94;
+  const deficit = availableInvestments * (1 - saleTaxRate);
+  const result = calculateAssetSale(deficit, availableInvestments, saleTaxRate);
+
+  assertSaleInvariants(result, deficit, availableInvestments);
+  assert.equal(result.grossSold, availableInvestments);
+  assert.equal(result.saleTaxPaid, availableInvestments - deficit);
+  assert.equal(result.netSaleProceeds, deficit);
   assert.equal(result.unfundedDeficit, 0);
 });
 

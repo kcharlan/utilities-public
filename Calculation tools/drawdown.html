@@ -1169,7 +1169,7 @@ function calculateAssetSale(deficit, availableInvestments, saleTaxRate) {
   const maximumNet = availableInvestments * netFraction;
 
   if (maximumNet >= deficit) {
-    const grossSold = deficit / netFraction;
+    const grossSold = Math.min(availableInvestments, deficit / netFraction);
     return {
       grossSold,
       saleTaxPaid: grossSold - deficit,
