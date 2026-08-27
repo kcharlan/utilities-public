@@ -301,11 +301,17 @@ test('[methodology] distinguishes income tax, sale tax, and gross liquidation', 
   assert.match(text, /Gross liquidation.*principal reduction.*sell-off decay/i);
 });
 
-test('[layout] amortization table cannot expand the page beyond its section', () => {
+test('[layout] amortization uses a bounded two-axis scroll region for sticky headers', () => {
   assert.match(
     calculatorHtml,
-    /\.table-section\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;[^}]*\}/,
+    /\.table-section\s*\{[^}]*max-width:\s*100%;[^}]*\}/,
   );
+  assert.doesNotMatch(calculatorHtml, /\.table-section\s*\{[^}]*overflow[^}]*\}/);
+  assert.match(
+    calculatorHtml,
+    /\.table-scroll\s*\{[^}]*max-width:\s*100%;[^}]*max-height:\s*calc\(100vh - 24px\);[^}]*overflow:\s*auto;[^}]*\}/,
+  );
+  assert.match(calculatorHtml, /<div class="table-scroll">\s*<table class="amort">[\s\S]*?<\/table>\s*<\/div>/);
 });
 
 test('[CSV] keeps the original schema and appends the asset-sale breakdown', () => {

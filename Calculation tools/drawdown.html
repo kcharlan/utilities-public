@@ -488,7 +488,11 @@
   .table-section {
     position: relative;
     max-width: 100%;
-    overflow-x: auto;
+  }
+  .table-scroll {
+    max-width: 100%;
+    max-height: calc(100vh - 24px);
+    overflow: auto;
   }
   .table-head {
     display: flex;
@@ -1071,24 +1075,26 @@
         </div>
       </div>
 
-      <table class="amort">
-        <thead>
-          <tr>
-            <th></th>
-            <th>#</th>
-            <th>Date</th>
-            <th>Expense</th>
-            <th>Inv. Income</th>
-            <th>Net</th>
-            <th>Δ</th>
-            <th>Buffer</th>
-            <th>Investments</th>
-            <th>Gross sold</th>
-            <th>Notes</th>
-          </tr>
-        </thead>
-        <tbody id="amort-body"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="amort">
+          <thead>
+            <tr>
+              <th></th>
+              <th>#</th>
+              <th>Date</th>
+              <th>Expense</th>
+              <th>Inv. Income</th>
+              <th>Net</th>
+              <th>Δ</th>
+              <th>Buffer</th>
+              <th>Investments</th>
+              <th>Gross sold</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="amort-body"></tbody>
+        </table>
+      </div>
 
       <div class="table-footer" id="table-footer"></div>
     </section>
