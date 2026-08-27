@@ -485,7 +485,11 @@
   }
 
   /* ============ TABLE ============ */
-  .table-section { position: relative; }
+  .table-section {
+    position: relative;
+    max-width: 100%;
+    overflow-x: auto;
+  }
   .table-head {
     display: flex;
     align-items: baseline;
@@ -1092,13 +1096,17 @@
     <p class="footnote">
       <strong>Method.</strong> Inflation compounds at the user's annual rate, converted to an effective periodic rate (APY).
       <span class="sep">·</span>
-      <strong>Tax.</strong> The effective rate is applied to the sum of investment and external income before expenses are deducted.
+      <strong>Tax.</strong> The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.
       <span class="sep">·</span>
-      <strong>Decay.</strong> Investment income reduction is permanent and cumulative; each sale subtracts <em>(modifier × percent of original principal sold)</em> from a running coefficient. The modifier in force at the time of sale is locked in — later modifier changes never re-evaluate past sales.
+      <strong>Decay.</strong> Gross liquidation—not net proceeds—drives principal reduction and sell-off decay. Investment income reduction is permanent and cumulative; each sale subtracts <em>(modifier × percent of original principal sold)</em> from a running coefficient. The modifier in force at the time of sale is locked in — later modifier changes never re-evaluate past sales.
       <span class="sep">·</span>
       <strong>Pins.</strong> Click the <em>+</em> in the left gutter of any row to attach an override. Pins apply forward from the pinned period; past rows are immutable.
       <span class="sep">·</span>
+      <strong>Export.</strong> CSV <code>tax_paid</code> is combined tax; <code>income_tax_paid</code>, <code>sale_tax_paid</code>, and <code>net_sale_proceeds</code> are appended.
+      <span class="sep">·</span>
       <strong>Termination.</strong> The simulation ends when investments reach zero and the buffer is at or below its floor (or at the period cap, whichever comes first).
+      <span class="sep">·</span>
+      <strong>Scope.</strong> This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.
     </p>
   </main>
 </div>

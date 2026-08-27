@@ -289,6 +289,25 @@ test('[Gross sold] table renames only the visible sale heading', () => {
   assert.match(calculatorHtml, /r\.sold > 0 \? fmtMoney\(r\.sold\) : '—'/);
 });
 
+test('[methodology] distinguishes income tax, sale tax, and gross liquidation', () => {
+  const footnote = calculatorHtml.match(/<p class="footnote">([\s\S]*?)<\/p>/)?.[1] ?? '';
+  const text = footnote
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  assert.match(text, /Income effective rate.*recurring investment income and external income/i);
+  assert.match(text, /Asset sale effective rate.*gross asset-sale proceeds/i);
+  assert.match(text, /Gross liquidation.*principal reduction.*sell-off decay/i);
+});
+
+test('[layout] amortization table cannot expand the page beyond its section', () => {
+  assert.match(
+    calculatorHtml,
+    /\.table-section\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;[^}]*\}/,
+  );
+});
+
 test('[CSV] keeps the original schema and appends the asset-sale breakdown', () => {
   const { buildCsvText, toRoundedCents, formatCents } = loadDrawdownApi();
   assert.equal(typeof buildCsvText, 'function');
