@@ -34,6 +34,9 @@ globalThis.__drawdownApi = {
   readPinFieldValue: typeof readPinFieldValue === 'function' ? readPinFieldValue : undefined,
   collectPinOverrides: typeof collectPinOverrides === 'function' ? collectPinOverrides : undefined,
   renderPinEditor: typeof renderPinEditor === 'function' ? renderPinEditor : undefined,
+  toRoundedCents: typeof toRoundedCents === 'function' ? toRoundedCents : undefined,
+  formatCents: typeof formatCents === 'function' ? formatCents : undefined,
+  buildCsvText: typeof buildCsvText === 'function' ? buildCsvText : undefined,
 };`,
     context,
   );
@@ -284,6 +287,119 @@ test('[Gross sold] table renames only the visible sale heading', () => {
   assert.match(calculatorHtml, /<th>Gross sold<\/th>/);
   assert.doesNotMatch(calculatorHtml, /<th>Sold<\/th>/);
   assert.match(calculatorHtml, /r\.sold > 0 \? fmtMoney\(r\.sold\) : '—'/);
+});
+
+test('[CSV] keeps the original schema and appends the asset-sale breakdown', () => {
+  const { buildCsvText, toRoundedCents, formatCents } = loadDrawdownApi();
+  assert.equal(typeof buildCsvText, 'function');
+  assert.equal(typeof toRoundedCents, 'function');
+  assert.equal(typeof formatCents, 'function');
+  assert.equal(toRoundedCents(12.345), 1235);
+  assert.equal(formatCents(1235), '12.35');
+  assert.equal(formatCents(-1), '-0.01');
+
+  const csv = buildCsvText([], 'months', []);
+  assert.deepEqual(csv.split('\n')[0].split(','), [
+    'period',
+    'date',
+    'expense',
+    'investment_income',
+    'external_income',
+    'tax_paid',
+    'net_income',
+    'delta',
+    'buffer',
+    'investments',
+    'sold',
+    'hit_floor',
+    'insolvency',
+    'pinned',
+    'overrides',
+    'income_tax_paid',
+    'sale_tax_paid',
+    'net_sale_proceeds',
+  ]);
+});
+
+test('[CSV] derives combined tax and net proceeds from rounded component cents', () => {
+  const { state, buildCsvText } = loadDrawdownApi();
+  state.pins = [{ at_month: 1, overrides: { buffer: 999999 } }];
+  const rows = [{
+    period: 1,
+    month: 1,
+    date: new Date(2027, 0, 1),
+    label: 'ignored monthly label',
+    expense: 100.1,
+    investment_income: 20,
+    external_income: 10.999,
+    income_tax_paid: 0.006,
+    sale_tax_paid: 0.006,
+    tax_paid: 0.012,
+    net_income: 30.5,
+    delta: -69.5,
+    buffer: 100.004,
+    investments: 999.996,
+    sold: 1.004,
+    net_sale_proceeds: 0.998,
+    hitFloor: true,
+    insolvency: false,
+    pinned_at_this_row: { at_month: 1 },
+  }];
+
+  const csv = buildCsvText(rows, 'months', []);
+  const cells = csv.split('\n')[1].split(',');
+
+  assert.equal(cells[0], '1');
+  assert.equal(cells[1], '"Jan 2027"');
+  for (const index of [2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 17]) {
+    assert.match(cells[index], /^-?\d+\.\d{2}$/, `column ${index} must have two decimals`);
+  }
+  assert.equal(cells[5], '0.02', 'combined tax must sum rounded component cents');
+  assert.equal(cells[10], '1.00');
+  assert.equal(cells[15], '0.01');
+  assert.equal(cells[16], '0.01');
+  assert.equal(cells[17], '0.99', 'net proceeds must subtract rounded sale-tax cents');
+  assert.equal(Number.parseInt(cells[5].replace('.', ''), 10),
+    Number.parseInt(cells[15].replace('.', ''), 10) + Number.parseInt(cells[16].replace('.', ''), 10));
+  assert.equal(Number.parseInt(cells[17].replace('.', ''), 10),
+    Number.parseInt(cells[10].replace('.', ''), 10) - Number.parseInt(cells[16].replace('.', ''), 10));
+  assert.equal(cells[14], '', 'the builder must use the explicitly passed pins');
+});
+
+test('[CSV] preserves yearly labels and deterministic quoted pin overrides', () => {
+  const { buildCsvText } = loadDrawdownApi();
+  const rows = [{
+    period: 1,
+    month: 12,
+    first_month: 1,
+    last_month: 12,
+    date: new Date(2027, 11, 1),
+    label: '2027',
+    expense: 1200,
+    investment_income: 240,
+    external_income: 120,
+    income_tax_paid: 12,
+    sale_tax_paid: 6,
+    tax_paid: 18,
+    net_income: 348,
+    delta: -852,
+    buffer: 100,
+    investments: 900,
+    sold: 100,
+    net_sale_proceeds: 94,
+    hitFloor: false,
+    insolvency: false,
+    pinned_at_this_row: { at_month: 2 },
+  }];
+  const pins = [
+    { at_month: 8, overrides: { tax_rate: 0.3, expense: 1234 } },
+    { at_month: 2, overrides: { sale_tax_rate: 0.2 } },
+  ];
+
+  const cells = buildCsvText(rows, 'years', pins).split('\n')[1].split(',');
+
+  assert.equal(cells[1], '"2027"');
+  assert.equal(cells[14], '"sale_tax_rate=0.2; expense=1234; tax_rate=0.3"');
 });
 
 test('[helper] calculateAssetSale returns zeros when no sale can or needs to occur', () => {

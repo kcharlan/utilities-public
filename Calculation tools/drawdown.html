@@ -2114,10 +2114,20 @@ function recalc() {
    CSV EXPORT
    ============================================================ */
 
-function exportCsv() {
-  const result = simulate();
-  const viewRows = aggregateForView(result.rows, state.params.unit);
-  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides'];
+function toRoundedCents(value) {
+  return Math.round(value * 100);
+}
+
+function formatCents(cents) {
+  const sign = cents < 0 ? '-' : '';
+  const absoluteCents = Math.abs(cents);
+  const dollars = Math.floor(absoluteCents / 100);
+  const remainder = String(absoluteCents % 100).padStart(2, '0');
+  return `${sign}${dollars}.${remainder}`;
+}
+
+function buildCsvText(viewRows, unit, pins) {
+  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides', 'income_tax_paid', 'sale_tax_paid', 'net_sale_proceeds'];
   const lines = [headers.join(',')];
   for (const r of viewRows) {
     // Aggregate every pin whose month falls within this row's span (a single
@@ -2125,35 +2135,51 @@ function exportCsv() {
     const startM = r.first_month !== undefined ? r.first_month : r.month;
     const endM = r.last_month !== undefined ? r.last_month : r.month;
     const pairs = [];
-    state.pins
+    pins
       .filter(p => p.at_month >= startM && p.at_month <= endM)
       .sort((a, b) => a.at_month - b.at_month)
       .forEach(pin => orderedOverrides(pin.overrides).forEach(({ def, value }) => pairs.push(`${def.key}=${value}`)));
     const overridesField = pairs.length ? `"${pairs.join('; ')}"` : '';
+    const grossSaleCents = toRoundedCents(r.sold);
+    const saleTaxCents = toRoundedCents(r.sale_tax_paid);
+    const netSaleCents = grossSaleCents - saleTaxCents;
+    const incomeTaxCents = toRoundedCents(r.income_tax_paid);
+    const combinedTaxCents = incomeTaxCents + saleTaxCents;
     const row = [
       r.period,
-      `"${state.params.unit === 'years' ? r.label : fmtDate(r.date, 'months')}"`,
+      `"${unit === 'years' ? r.label : fmtDate(r.date, 'months')}"`,
       r.expense.toFixed(2),
       r.investment_income.toFixed(2),
       r.external_income.toFixed(2),
-      r.tax_paid.toFixed(2),
+      formatCents(combinedTaxCents),
       r.net_income.toFixed(2),
       r.delta.toFixed(2),
       r.buffer.toFixed(2),
       r.investments.toFixed(2),
-      r.sold.toFixed(2),
+      formatCents(grossSaleCents),
       r.hitFloor ? 'yes' : '',
       r.insolvency ? 'yes' : '',
       r.pinned_at_this_row ? 'yes' : '',
       overridesField,
+      formatCents(incomeTaxCents),
+      formatCents(saleTaxCents),
+      formatCents(netSaleCents),
     ];
     lines.push(row.join(','));
   }
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  return lines.join('\n');
+}
+
+function exportCsv() {
+  const result = simulate();
+  const unit = state.params.unit;
+  const viewRows = aggregateForView(result.rows, unit);
+  const csvText = buildCsvText(viewRows, unit, state.pins);
+  const blob = new Blob([csvText], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `drawdown-${state.params.unit}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `drawdown-${unit}-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
