@@ -1132,6 +1132,7 @@ const state = {
     expense: 5000,
     inflation: 0.03,
     tax_rate: 0.25,
+    sale_tax_rate: 0.15,
     unit: 'months',
     num_periods: 120,
   },
@@ -1201,6 +1202,7 @@ function simulate() {
     current_expense: p.expense,
     current_external: p.external_income,
     current_tax: p.tax_rate,
+    current_sale_tax: p.sale_tax_rate,
     current_modifier: p.modifier,
     current_floor: p.floor,
     current_monthly_inflation: monthlyInflation,
@@ -1247,6 +1249,7 @@ function simulate() {
       if ('floor' in ov) sim.current_floor = ov.floor;
       if ('external_income' in ov) sim.current_external = ov.external_income;
       if ('tax_rate' in ov) sim.current_tax = ov.tax_rate;
+      if ('sale_tax_rate' in ov) sim.current_sale_tax = ov.sale_tax_rate;
       if ('expense' in ov) sim.current_expense = ov.expense;
       if ('inflation' in ov) {
         sim.current_monthly_inflation = Math.pow(1 + ov.inflation, 1 / 12) - 1;
@@ -1272,27 +1275,32 @@ function simulate() {
     const investment_income = sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
     const total_pretax = investment_income + sim.current_external;
     const net_income = total_pretax * (1 - sim.current_tax);
-    const tax_paid = total_pretax * sim.current_tax;
+    const income_tax_paid = total_pretax * sim.current_tax;
     const expense_this_month = sim.current_expense;
     const delta = net_income - expense_this_month;
 
     sim.buffer += delta;
 
     let sold = 0;
+    let sale_tax_paid = 0;
+    let net_sale_proceeds = 0;
     let hitFloor = false;
     let insolvency = false;
 
     if (sim.buffer < sim.current_floor && sim.investments > 0) {
       hitFloor = true;
       const deficit = sim.current_floor - sim.buffer;
-      sold = Math.min(deficit, sim.investments);
+      const sale = calculateAssetSale(deficit, sim.investments, sim.current_sale_tax);
+      sold = sale.grossSold;
+      sale_tax_paid = sale.saleTaxPaid;
+      net_sale_proceeds = sale.netSaleProceeds;
       sim.investments -= sold;
-      sim.buffer += sold;
+      sim.buffer += net_sale_proceeds;
       if (sim.baseline_principal > 0) {
         const pct_of_baseline = sold / sim.baseline_principal;
         sim.cumulative_reduction += sim.current_modifier * pct_of_baseline;
       }
-      if (sold < deficit) insolvency = true;
+      if (sale.unfundedDeficit > 0) insolvency = true;
     } else if (sim.buffer < sim.current_floor) {
       insolvency = true;
     }
@@ -1303,12 +1311,15 @@ function simulate() {
       expense: expense_this_month,
       investment_income,
       external_income: sim.current_external,
-      tax_paid,
+      income_tax_paid,
+      sale_tax_paid,
+      tax_paid: income_tax_paid + sale_tax_paid,
       net_income,
       delta,
       buffer: sim.buffer,
       investments: sim.investments,
       sold,
+      net_sale_proceeds,
       hitFloor,
       insolvency,
       surplus: delta > 0,
@@ -1351,6 +1362,7 @@ function snapshotPreState(sim) {
     expense: sim.current_expense,
     inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
     tax_rate: sim.current_tax,
+    sale_tax_rate: sim.current_sale_tax,
   };
 }
 
@@ -1365,6 +1377,7 @@ function snapshotEffectiveState(sim, expense, income) {
     expense: expense,
     inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
     tax_rate: sim.current_tax,
+    sale_tax_rate: sim.current_sale_tax,
   };
 }
 

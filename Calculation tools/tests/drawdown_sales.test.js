@@ -152,3 +152,199 @@ test('[helper] calculateAssetSale stays finite just below 100% when maximum net 
   assert.equal(result.netSaleProceeds, expectedNet);
   assert.equal(result.unfundedDeficit, 1000 - expectedNet);
 });
+
+test('[simulation] defaults asset-sale tax to 15%', () => {
+  const { state } = loadDrawdownApi();
+
+  assert.equal(state.params.sale_tax_rate, 0.15);
+});
+
+test('[simulation] grosses up a one-month shortfall', () => {
+  const { state, simulate } = loadDrawdownApi();
+  Object.assign(state.params, {
+    buffer_initial: 0,
+    floor: 100,
+    expense: 100,
+    investment_income: 0,
+    external_income: 0,
+    investments_initial: 1000,
+    tax_rate: 0,
+    sale_tax_rate: 0.15,
+    modifier: 1,
+    inflation: 0,
+    unit: 'months',
+    num_periods: 1,
+  });
+  state.pins = [];
+
+  const result = simulate();
+  const row = result.rows[0];
+
+  assertClose(row.sold, 235.2941176471);
+  assertClose(row.sale_tax_paid, 35.2941176471);
+  assert.equal(row.net_sale_proceeds, 200);
+  assert.equal(row.buffer, 100);
+  assertClose(row.investments, 764.7058823529);
+});
+
+test('[simulation] records combined tax without changing recurring flow', () => {
+  const { state, simulate } = loadDrawdownApi();
+  Object.assign(state.params, {
+    buffer_initial: 0,
+    floor: 100,
+    expense: 175,
+    investment_income: 0,
+    external_income: 100,
+    investments_initial: 1000,
+    tax_rate: 0.25,
+    sale_tax_rate: 0.15,
+    modifier: 1,
+    inflation: 0,
+    unit: 'months',
+    num_periods: 1,
+  });
+  state.pins = [];
+
+  const row = simulate().rows[0];
+
+  assert.equal(row.net_income, 75);
+  assert.equal(row.delta, -100);
+  assert.equal(row.income_tax_paid, 25);
+  assertClose(row.sale_tax_paid, 35.2941176471);
+  assertClose(row.tax_paid, 60.2941176471);
+});
+
+test('[simulation] records zero sale flows without a shortfall', () => {
+  const { state, simulate } = loadDrawdownApi();
+  Object.assign(state.params, {
+    buffer_initial: 100,
+    floor: 100,
+    expense: 100,
+    investment_income: 0,
+    external_income: 100,
+    investments_initial: 1000,
+    tax_rate: 0,
+    sale_tax_rate: 0.15,
+    modifier: 1,
+    inflation: 0,
+    unit: 'months',
+    num_periods: 1,
+  });
+  state.pins = [];
+
+  const row = simulate().rows[0];
+
+  assert.equal(row.sold, 0);
+  assert.equal(row.sale_tax_paid, 0);
+  assert.equal(row.net_sale_proceeds, 0);
+});
+
+test('[simulation] depletes insufficient investments after tax', () => {
+  const { state, simulate } = loadDrawdownApi();
+  Object.assign(state.params, {
+    buffer_initial: 0,
+    floor: 100,
+    expense: 100,
+    investment_income: 0,
+    external_income: 0,
+    investments_initial: 100,
+    tax_rate: 0,
+    sale_tax_rate: 0.15,
+    modifier: 1,
+    inflation: 0,
+    unit: 'months',
+    num_periods: 1,
+  });
+  state.pins = [];
+
+  const result = simulate();
+  const row = result.rows[0];
+
+  assert.equal(row.sold, 100);
+  assert.equal(row.sale_tax_paid, 15);
+  assert.equal(row.net_sale_proceeds, 85);
+  assert.equal(row.buffer, -15);
+  assert.equal(row.insolvency, true);
+  assert.equal(result.terminatedReason, 'depleted');
+});
+
+test('[simulation] stays finite at 100% sale tax', () => {
+  const { state, simulate } = loadDrawdownApi();
+  Object.assign(state.params, {
+    buffer_initial: 0,
+    floor: 100,
+    expense: 100,
+    investment_income: 0,
+    external_income: 0,
+    investments_initial: 100,
+    tax_rate: 0,
+    sale_tax_rate: 1,
+    modifier: 1,
+    inflation: 0,
+    unit: 'months',
+    num_periods: 1,
+  });
+  state.pins = [];
+
+  const row = simulate().rows[0];
+
+  for (const field of ['sold', 'sale_tax_paid', 'net_sale_proceeds', 'buffer', 'investments']) {
+    assert.equal(Number.isFinite(row[field]), true, `${field} must be finite`);
+  }
+  assert.equal(row.sold, 100);
+  assert.equal(row.sale_tax_paid, 100);
+  assert.equal(row.net_sale_proceeds, 0);
+  assert.equal(row.insolvency, true);
+});
+
+test('[simulation] decays income from gross sale', () => {
+  const { state, simulate } = loadDrawdownApi();
+  Object.assign(state.params, {
+    buffer_initial: 100,
+    floor: 100,
+    expense: 200,
+    investment_income: 100,
+    external_income: 0,
+    investments_initial: 1000,
+    tax_rate: 0,
+    sale_tax_rate: 0.15,
+    modifier: 1,
+    inflation: 0,
+    unit: 'months',
+    num_periods: 2,
+  });
+  state.pins = [];
+
+  const rows = simulate().rows;
+
+  assertClose(rows[0].sold, 117.6470588235);
+  assertClose(rows[1].investment_income, 88.2352941176);
+});
+
+test('[simulation] applies pinned sale tax prospectively', () => {
+  const { state, simulate } = loadDrawdownApi();
+  Object.assign(state.params, {
+    buffer_initial: 100,
+    floor: 100,
+    expense: 200,
+    investment_income: 100,
+    external_income: 0,
+    investments_initial: 5000,
+    tax_rate: 0,
+    sale_tax_rate: 0,
+    modifier: 0,
+    inflation: 0,
+    unit: 'months',
+    num_periods: 3,
+  });
+  state.pins = [{ at_month: 2, overrides: { sale_tax_rate: 0.25 } }];
+
+  const rows = simulate().rows;
+
+  assert.equal(rows[0].sold, 100);
+  assertClose(rows[1].sold, 133.3333333333);
+  assertClose(rows[2].sold, 133.3333333333);
+  assert.equal(rows[1].pre_state.sale_tax_rate, 0);
+  assert.equal(rows[1].effective_state.sale_tax_rate, 0.25);
+  assert.equal(rows[2].pre_state.sale_tax_rate, 0.25);
+});
