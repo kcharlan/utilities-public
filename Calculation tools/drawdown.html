@@ -1146,6 +1146,48 @@ const MAX_MONTHS = 1200; // 100 years
    The simulation always runs MONTHLY internally. Year-mode is a display aggregation.
    ============================================================ */
 
+function calculateAssetSale(deficit, availableInvestments, saleTaxRate) {
+  if (deficit <= 0 || availableInvestments <= 0) {
+    return {
+      grossSold: 0,
+      saleTaxPaid: 0,
+      netSaleProceeds: 0,
+      unfundedDeficit: Math.max(0, deficit),
+    };
+  }
+
+  if (saleTaxRate >= 1) {
+    return {
+      grossSold: availableInvestments,
+      saleTaxPaid: availableInvestments,
+      netSaleProceeds: 0,
+      unfundedDeficit: deficit,
+    };
+  }
+
+  const netFraction = 1 - saleTaxRate;
+  const maximumNet = availableInvestments * netFraction;
+
+  if (maximumNet >= deficit) {
+    const grossSold = deficit / netFraction;
+    return {
+      grossSold,
+      saleTaxPaid: grossSold - deficit,
+      netSaleProceeds: deficit,
+      unfundedDeficit: 0,
+    };
+  }
+
+  const grossSold = availableInvestments;
+  const netSaleProceeds = grossSold * netFraction;
+  return {
+    grossSold,
+    saleTaxPaid: grossSold - netSaleProceeds,
+    netSaleProceeds,
+    unfundedDeficit: Math.max(0, deficit - netSaleProceeds),
+  };
+}
+
 function simulate() {
   const p = state.params;
   const monthlyInflation = Math.pow(1 + p.inflation, 1 / 12) - 1;
