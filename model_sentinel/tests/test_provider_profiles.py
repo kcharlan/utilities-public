@@ -1,5 +1,6 @@
 from dataclasses import FrozenInstanceError
 from types import MappingProxyType
+from typing import Any
 
 import pytest
 
@@ -9,6 +10,9 @@ from model_sentinel.provider_profiles import (
     OPENROUTER_PROFILE,
     PER_MILLION_TOKENS_TARGET,
     USD_PER_MILLION_TOKENS_GROUP,
+    ConditionalPricingConditionDescriptor,
+    ConditionalPricingConditionSetSemantics,
+    ConditionalPricingPolicySemantics,
     PriceDisplayRule,
     ProviderProfile,
     default_categorize,
@@ -17,6 +21,11 @@ from model_sentinel.provider_profiles import (
     profiles_for,
 )
 from model_sentinel.providers import ProviderFetchError, extract_model_list
+from tests.conditional_pricing_fixtures import (
+    SYNTHETIC_SCHEDULED_RATE_DIMENSIONS,
+    SYNTHETIC_SCHEDULED_RATE_EXPECTED_ACCOUNTING,
+    synthetic_scheduled_rate_models,
+)
 
 
 @pytest.fixture
@@ -293,3 +302,479 @@ def test_with_pricing_preserves_price_rule_contract() -> None:
     assert bound.unmatched_price_rule is OPENROUTER_PROFILE.unmatched_price_rule
     assert bound.primary_price_comparison_group == OPENROUTER_PROFILE.primary_price_comparison_group
     assert (bound.price_multiplier, bound.price_divisor) == (7, 3)
+
+
+def _synthetic_parse(value: Any) -> Any:
+    return value
+
+
+def _synthetic_identity(value: Any) -> Any:
+    return value
+
+
+def _synthetic_format(value: Any) -> str:
+    return f"synthetic:{value}"
+
+
+def _descriptor(
+    field_name: str,
+    family: str,
+    semantic_role: str,
+    *,
+    grouped: bool,
+) -> ConditionalPricingConditionDescriptor:
+    return ConditionalPricingConditionDescriptor(
+        field_name=field_name,
+        family=family,  # type: ignore[arg-type]
+        semantic_role=semantic_role,  # type: ignore[arg-type]
+        parse_value=_synthetic_parse,
+        canonical_identity=_synthetic_identity,
+        format_value=_synthetic_format,
+        participates_in_interval_grouping=grouped,
+    )
+
+
+def _synthetic_condition_set_semantics() -> ConditionalPricingConditionSetSemantics:
+    return ConditionalPricingConditionSetSemantics(
+        missing_weekdays="all_seven",
+        missing_endpoints="all_day",
+        endpoint_pairing="both_or_neither",
+        equal_endpoints="unsupported",
+    )
+
+
+def _synthetic_policy_semantics() -> ConditionalPricingPolicySemantics:
+    return ConditionalPricingPolicySemantics(
+        condition_combination="all_conditions",
+        rule_precedence="later_per_key",
+        omitted_price_behavior="retain_prior_or_base",
+        top_level_price_role="default_base",
+    )
+
+
+def test_conditional_pricing_descriptor_rejects_invalid_contracts() -> None:
+    valid = dict(
+        field_name="synthetic_selector",
+        family="time",
+        semantic_role="utc_start_inclusive",
+        parse_value=_synthetic_parse,
+        canonical_identity=_synthetic_identity,
+        format_value=_synthetic_format,
+        participates_in_interval_grouping=True,
+    )
+
+    with pytest.raises(ValueError):
+        ConditionalPricingConditionDescriptor(**(valid | {"field_name": ""}))
+    with pytest.raises(ValueError):
+        ConditionalPricingConditionDescriptor(**(valid | {"family": "unknown"}))
+    with pytest.raises(ValueError):
+        ConditionalPricingConditionDescriptor(**(valid | {"semantic_role": "unknown"}))
+    with pytest.raises(ValueError):
+        ConditionalPricingConditionDescriptor(
+            **(valid | {"semantic_role": "integer_strictly_greater"})
+        )
+    with pytest.raises(ValueError):
+        ConditionalPricingConditionDescriptor(
+            **(valid | {"parse_value": "not callable"})
+        )
+
+
+@pytest.mark.parametrize("callable_name", ("canonical_identity", "format_value"))
+def test_conditional_pricing_descriptor_rejects_every_noncallable_stage(
+    callable_name: str,
+) -> None:
+    valid = dict(
+        field_name="synthetic_selector",
+        family="time",
+        semantic_role="utc_start_inclusive",
+        parse_value=_synthetic_parse,
+        canonical_identity=_synthetic_identity,
+        format_value=_synthetic_format,
+        participates_in_interval_grouping=True,
+    )
+
+    with pytest.raises(ValueError):
+        ConditionalPricingConditionDescriptor(**(valid | {callable_name: None}))
+
+
+@pytest.mark.parametrize(
+    ("family", "semantic_role", "grouped"),
+    (
+        ("time", "utc_weekdays", False),
+        ("time", "utc_start_inclusive", False),
+        ("time", "utc_end_exclusive", False),
+        ("threshold", "integer_strictly_greater", True),
+        ("time", "utc_start_inclusive", 1),
+    ),
+)
+def test_conditional_pricing_descriptor_rejects_invalid_role_grouping_contracts(
+    family: str,
+    semantic_role: str,
+    grouped: object,
+) -> None:
+    with pytest.raises(ValueError):
+        _descriptor(
+            "synthetic_selector",
+            family,
+            semantic_role,
+            grouped=grouped,  # type: ignore[arg-type]
+        )
+
+
+def test_conditional_pricing_descriptor_raw_pipeline_uses_parsed_then_canonical_values() -> None:
+    start = OPENROUTER_PROFILE.pricing_override_condition_descriptor("utc_start")
+    end = OPENROUTER_PROFILE.pricing_override_condition_descriptor("utc_end")
+    weekdays = OPENROUTER_PROFILE.pricing_override_condition_descriptor("utc_days")
+    threshold = OPENROUTER_PROFILE.pricing_override_condition_descriptor("min_prompt_tokens")
+
+    assert start is not None
+    assert end is not None
+    assert weekdays is not None
+    assert threshold is not None
+    assert start.canonicalize_raw(100) == 60
+    assert start.format_raw(100) == "01:00"
+    assert end.canonicalize_raw(0) == 0
+    assert end.format_raw(0) == "24:00"
+    assert weekdays.canonicalize_raw(["sunday", "monday"]) == ("monday", "sunday")
+    assert weekdays.format_raw(["sunday", "monday"]) == "Mon, Sun"
+    assert threshold.canonicalize_raw(200_000) == 200_000
+    assert threshold.format_raw(200_000) == "Prompt > 200,000 tokens"
+
+
+def test_conditional_pricing_semantics_reject_undeclared_values() -> None:
+    with pytest.raises(ValueError):
+        ConditionalPricingConditionSetSemantics(
+            missing_weekdays="not-all-days",  # type: ignore[arg-type]
+            missing_endpoints="all_day",
+            endpoint_pairing="both_or_neither",
+            equal_endpoints="unsupported",
+        )
+    with pytest.raises(ValueError):
+        ConditionalPricingPolicySemantics(
+            condition_combination="all_conditions",
+            rule_precedence="first-wins",  # type: ignore[arg-type]
+            omitted_price_behavior="retain_prior_or_base",
+            top_level_price_role="default_base",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    (
+        ("missing_weekdays", "none"),
+        ("missing_endpoints", "partial_day"),
+        ("endpoint_pairing", "optional"),
+        ("equal_endpoints", "all_day"),
+    ),
+)
+def test_condition_set_semantics_rejects_every_invalid_field(
+    field_name: str,
+    invalid_value: str,
+) -> None:
+    values = dict(
+        missing_weekdays="all_seven",
+        missing_endpoints="all_day",
+        endpoint_pairing="both_or_neither",
+        equal_endpoints="unsupported",
+    )
+
+    with pytest.raises(ValueError):
+        ConditionalPricingConditionSetSemantics(
+            **(values | {field_name: invalid_value})  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    (
+        ("condition_combination", "any_condition"),
+        ("rule_precedence", "first_per_key"),
+        ("omitted_price_behavior", "reset_to_zero"),
+        ("top_level_price_role", "override_base"),
+    ),
+)
+def test_policy_semantics_rejects_every_invalid_field(
+    field_name: str,
+    invalid_value: str,
+) -> None:
+    values = dict(
+        condition_combination="all_conditions",
+        rule_precedence="later_per_key",
+        omitted_price_behavior="retain_prior_or_base",
+        top_level_price_role="default_base",
+    )
+
+    with pytest.raises(ValueError):
+        ConditionalPricingPolicySemantics(
+            **(values | {field_name: invalid_value})  # type: ignore[arg-type]
+        )
+
+
+def test_conditional_pricing_contract_records_are_frozen() -> None:
+    descriptor = _descriptor("when_utc", "time", "utc_start_inclusive", grouped=True)
+    condition_set = _synthetic_condition_set_semantics()
+    policy = _synthetic_policy_semantics()
+
+    with pytest.raises(FrozenInstanceError):
+        descriptor.field_name = "other"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        condition_set.equal_endpoints = "supported"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        policy.rule_precedence = "first_per_key"  # type: ignore[misc]
+
+
+def test_provider_profile_defensively_copies_and_freezes_conditional_registries() -> None:
+    descriptor = _descriptor("when_utc", "time", "utc_start_inclusive", grouped=True)
+    descriptors = {"when_utc": descriptor}
+    base_paths = {"prompt_rate": "pricing.prompt_rate"}
+    profile = ProviderProfile(
+        kind="synthetic",
+        pricing_override_condition_descriptors=MappingProxyType(descriptors),
+        pricing_override_base_paths=MappingProxyType(base_paths),
+    )
+
+    descriptors["later_utc"] = _descriptor(
+        "later_utc", "time", "utc_end_exclusive", grouped=True
+    )
+    base_paths["completion_rate"] = "pricing.completion_rate"
+
+    assert profile.pricing_override_condition_descriptors == {"when_utc": descriptor}
+    assert profile.pricing_override_base_paths == {"prompt_rate": "pricing.prompt_rate"}
+    with pytest.raises(TypeError):
+        profile.pricing_override_condition_descriptors["other"] = descriptor  # type: ignore[index]
+    with pytest.raises(TypeError):
+        profile.pricing_override_base_paths["other"] = "pricing.other"  # type: ignore[index]
+    with pytest.raises(FrozenInstanceError):
+        profile.pricing_override_base_paths = {}  # type: ignore[misc]
+
+
+def test_with_pricing_preserves_conditional_registry_identity_after_validation() -> None:
+    bound = OPENROUTER_PROFILE.with_pricing(7, 3)
+
+    assert (
+        bound.pricing_override_condition_descriptors
+        is OPENROUTER_PROFILE.pricing_override_condition_descriptors
+    )
+    assert (
+        bound.pricing_override_base_paths
+        is OPENROUTER_PROFILE.pricing_override_base_paths
+    )
+    assert bound.pricing_override_condition_set_semantics is (
+        OPENROUTER_PROFILE.pricing_override_condition_set_semantics
+    )
+    assert bound.pricing_override_policy_semantics is OPENROUTER_PROFILE.pricing_override_policy_semantics
+
+
+def test_provider_profile_rejects_descriptor_registry_key_mismatch() -> None:
+    descriptor = _descriptor("synthetic_selector", "threshold", "integer_strictly_greater", grouped=False)
+
+    with pytest.raises(ValueError, match="key"):
+        ProviderProfile(
+            kind="synthetic",
+            pricing_override_condition_descriptors={"wrong_name": descriptor},
+        )
+
+
+@pytest.mark.parametrize(
+    "descriptors",
+    (
+        {"synthetic_selector": "not a descriptor"},
+        {
+            "first_selector": _descriptor(
+                "first_selector", "time", "utc_start_inclusive", grouped=True
+            ),
+            "second_selector": _descriptor(
+                "second_selector", "time", "utc_start_inclusive", grouped=True
+            ),
+        },
+    ),
+)
+def test_provider_profile_rejects_invalid_descriptor_registries(descriptors: dict) -> None:
+    with pytest.raises(ValueError):
+        ProviderProfile(
+            kind="synthetic",
+            pricing_override_condition_descriptors=descriptors,
+        )
+
+
+@pytest.mark.parametrize(
+    "base_paths",
+    (
+        {"": "pricing.prompt"},
+        {"   ": "pricing.prompt"},
+        {"prompt": ""},
+        {"prompt": "   "},
+        {"prompt": None},
+        {None: "pricing.prompt"},
+    ),
+)
+def test_provider_profile_rejects_invalid_conditional_base_paths(base_paths: dict) -> None:
+    with pytest.raises(ValueError):
+        ProviderProfile(kind="synthetic", pricing_override_base_paths=base_paths)
+
+
+def test_provider_profile_rejects_nonsemantic_conditional_policy_contracts() -> None:
+    with pytest.raises(ValueError):
+        ProviderProfile(
+            kind="synthetic",
+            pricing_override_condition_set_semantics="all-day",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError):
+        ProviderProfile(
+            kind="synthetic",
+            pricing_override_policy_semantics="later-wins",  # type: ignore[arg-type]
+        )
+
+
+def test_rich_descriptor_takes_precedence_over_legacy_selector_identity() -> None:
+    descriptor = _descriptor(
+        "legacy_selector", "threshold", "integer_strictly_greater", grouped=False
+    )
+    profile = ProviderProfile(
+        kind="synthetic",
+        pricing_override_condition_fields=("legacy_selector", "fallback_selector"),
+        pricing_override_condition_descriptors={"legacy_selector": descriptor},
+    )
+
+    assert profile.pricing_override_condition_descriptor("legacy_selector") is descriptor
+    assert profile.pricing_override_condition_descriptor("fallback_selector") is None
+    assert profile.pricing_override_selector_names == ("legacy_selector", "fallback_selector")
+
+
+def test_legacy_only_profile_has_selector_identity_without_rich_policy_authority() -> None:
+    profile = ProviderProfile(
+        kind="legacy-synthetic",
+        pricing_override_condition_fields=("legacy_only",),
+    )
+
+    assert profile.pricing_override_condition_descriptor("legacy_only") is None
+    assert profile.pricing_override_selector_names == ("legacy_only",)
+    assert profile.pricing_override_condition_set_semantics is None
+    assert profile.pricing_override_policy_semantics is None
+    assert profile.pricing_override_base_paths == {}
+
+
+def test_openrouter_registers_complete_conditional_pricing_contract() -> None:
+    descriptors = OPENROUTER_PROFILE.pricing_override_condition_descriptors
+
+    assert tuple(descriptors) == ("min_prompt_tokens", "utc_days", "utc_start", "utc_end")
+    assert {
+        name: (descriptor.family, descriptor.semantic_role, descriptor.participates_in_interval_grouping)
+        for name, descriptor in descriptors.items()
+    } == {
+        "min_prompt_tokens": ("threshold", "integer_strictly_greater", False),
+        "utc_days": ("time", "utc_weekdays", True),
+        "utc_start": ("time", "utc_start_inclusive", True),
+        "utc_end": ("time", "utc_end_exclusive", True),
+    }
+    assert descriptors["min_prompt_tokens"].parse_value(200_000) == 200_000
+    assert descriptors["min_prompt_tokens"].canonical_identity(200_000) == 200_000
+    assert descriptors["min_prompt_tokens"].format_value(200_000) == "Prompt > 200,000 tokens"
+    with pytest.raises(ValueError):
+        descriptors["min_prompt_tokens"].parse_value(True)
+
+    weekdays = descriptors["utc_days"]
+    parsed_weekdays = weekdays.parse_value(["sunday", "monday", "friday"])
+    assert parsed_weekdays == ("monday", "friday", "sunday")
+    assert weekdays.canonical_identity(parsed_weekdays) == ("monday", "friday", "sunday")
+    assert weekdays.format_value(parsed_weekdays) == "Mon, Fri, Sun"
+    for invalid in ([], ["monday", "monday"], ["monday", "funday"], ("monday",)):
+        with pytest.raises(ValueError):
+            weekdays.parse_value(invalid)
+
+    assert descriptors["utc_start"].parse_value(2359) == 1439
+    assert descriptors["utc_start"].format_value(60) == "01:00"
+    assert (
+        descriptors["utc_start"].canonical_identity(
+            descriptors["utc_start"].parse_value(100)
+        )
+        == 60
+    )
+    assert descriptors["utc_end"].parse_value(0) == 0
+    assert descriptors["utc_start"].format_value(0) == "00:00"
+    assert descriptors["utc_end"].format_value(0) == "24:00"
+    assert descriptors["utc_end"].format_value(60) == "01:00"
+    for invalid in (True, -1, 1260, 2400, "0100"):
+        with pytest.raises(ValueError):
+            descriptors["utc_start"].parse_value(invalid)
+
+    assert OPENROUTER_PROFILE.pricing_override_condition_set_semantics == _synthetic_condition_set_semantics()
+    assert OPENROUTER_PROFILE.pricing_override_policy_semantics == _synthetic_policy_semantics()
+    assert OPENROUTER_PROFILE.pricing_override_base_paths == {
+        dimension: f"pricing.{dimension}"
+        for dimension in OPENROUTER_PROFILE.price_leaf_rules
+    }
+
+
+def test_alternate_raw_selector_profile_uses_only_semantic_roles() -> None:
+    profile = ProviderProfile(
+        kind="alternate-synthetic",
+        pricing_override_condition_fields=(),
+        pricing_override_condition_descriptors={
+            "minimum_input_units": _descriptor(
+                "minimum_input_units", "threshold", "integer_strictly_greater", grouped=False
+            ),
+            "days_utc": _descriptor("days_utc", "time", "utc_weekdays", grouped=True),
+            "from_utc": _descriptor("from_utc", "time", "utc_start_inclusive", grouped=True),
+            "until_utc": _descriptor("until_utc", "time", "utc_end_exclusive", grouped=True),
+        },
+        pricing_override_condition_set_semantics=_synthetic_condition_set_semantics(),
+        pricing_override_policy_semantics=_synthetic_policy_semantics(),
+        pricing_override_base_paths={"prompt_rate": "pricing.prompt_rate"},
+    )
+
+    assert {
+        descriptor.semantic_role
+        for descriptor in profile.pricing_override_condition_descriptors.values()
+    } == {
+        "integer_strictly_greater",
+        "utc_weekdays",
+        "utc_start_inclusive",
+        "utc_end_exclusive",
+    }
+    assert "min_prompt_tokens" not in profile.pricing_override_selector_names
+    assert profile.pricing_override_condition_descriptor("from_utc").semantic_role == "utc_start_inclusive"  # type: ignore[union-attr]
+
+
+def test_synthetic_scheduled_rate_fixture_derives_the_two_exact_movements() -> None:
+    old_model, new_model = synthetic_scheduled_rate_models()
+    old_pricing = old_model["pricing"]
+    new_pricing = new_model["pricing"]
+    rules = new_pricing["overrides"]
+
+    assert old_model["id"] == "synthetic/scheduled-rate-demo"
+    assert "overrides" not in old_pricing
+    assert len(rules) == 6
+    assert SYNTHETIC_SCHEDULED_RATE_DIMENSIONS == ("prompt", "completion", "request")
+    assert SYNTHETIC_SCHEDULED_RATE_EXPECTED_ACCOUNTING == {
+        "policies": 1,
+        "source_rules": 6,
+        "dimensions": 3,
+        "effective_bands": 2,
+    }
+    with pytest.raises(TypeError):
+        SYNTHETIC_SCHEDULED_RATE_EXPECTED_ACCOUNTING["policies"] = 2  # type: ignore[index]
+
+    effective_vectors = {
+        tuple(rule.get(dimension, new_pricing[dimension]) for dimension in SYNTHETIC_SCHEDULED_RATE_DIMENSIONS)
+        for rule in rules
+    }
+    assert len(effective_vectors) == 2
+
+    movements_by_dimension = {
+        dimension: {
+            round(
+                (effective_value / old_pricing[dimension] - 1) * 100,
+                1,
+            )
+            for vector in effective_vectors
+            for effective_value in (vector[index],)
+        }
+        for index, dimension in enumerate(SYNTHETIC_SCHEDULED_RATE_DIMENSIONS)
+    }
+    assert movements_by_dimension == {
+        "prompt": {-41.2, 17.6},
+        "completion": {-41.2, 17.6},
+        "request": {-41.2, 17.6},
+    }
+    assert rules[0] == {"utc_days": ["saturday", "sunday"], "prompt": 0.00000066}

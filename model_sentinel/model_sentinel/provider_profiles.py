@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Hashable, Literal
 
 if TYPE_CHECKING:
     from .config import ProviderConfig
@@ -21,9 +21,125 @@ if TYPE_CHECKING:
 PathCandidates = tuple[tuple[str, ...], ...]
 PriceNormalizedTarget = Literal["per_million_tokens"]
 PriceRuleMatchSource = Literal["path", "leaf", "unmatched"]
+ConditionFamily = Literal["time", "threshold"]
+ConditionSemanticRole = Literal[
+    "utc_weekdays",
+    "utc_start_inclusive",
+    "utc_end_exclusive",
+    "integer_strictly_greater",
+]
 
 PER_MILLION_TOKENS_TARGET: PriceNormalizedTarget = "per_million_tokens"
 USD_PER_MILLION_TOKENS_GROUP = "usd_per_million_tokens"
+
+
+@dataclass(frozen=True)
+class ConditionalPricingConditionDescriptor:
+    """Provider-owned parsing and identity semantics for one rule selector.
+
+    The stored callables operate on successive values: ``parse_value`` accepts
+    raw JSON, ``canonical_identity`` accepts the parsed value, and
+    ``format_value`` accepts the canonical value. Raw-boundary consumers must
+    use :meth:`canonicalize_raw` or :meth:`format_raw` rather than invoking a
+    stage callable directly.
+    """
+
+    field_name: str
+    family: ConditionFamily
+    semantic_role: ConditionSemanticRole
+    parse_value: Callable[[Any], Any]
+    canonical_identity: Callable[[Any], Hashable]
+    format_value: Callable[[Any], str]
+    participates_in_interval_grouping: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field_name, str) or not self.field_name.strip():
+            raise ValueError("conditional pricing descriptor field_name must be non-empty")
+        if self.family not in ("time", "threshold"):
+            raise ValueError(f"unsupported conditional pricing family: {self.family!r}")
+        if self.semantic_role not in {
+            "utc_weekdays",
+            "utc_start_inclusive",
+            "utc_end_exclusive",
+            "integer_strictly_greater",
+        }:
+            raise ValueError(
+                f"unsupported conditional pricing semantic role: {self.semantic_role!r}"
+            )
+        role_contract = {
+            "utc_weekdays": ("time", True),
+            "utc_start_inclusive": ("time", True),
+            "utc_end_exclusive": ("time", True),
+            "integer_strictly_greater": ("threshold", False),
+        }[self.semantic_role]
+        if self.family != role_contract[0]:
+            raise ValueError("conditional pricing semantic role is incompatible with its family")
+        for name, value in (
+            ("parse_value", self.parse_value),
+            ("canonical_identity", self.canonical_identity),
+            ("format_value", self.format_value),
+        ):
+            if not callable(value):
+                raise ValueError(f"conditional pricing descriptor {name} must be callable")
+        if not isinstance(self.participates_in_interval_grouping, bool):
+            raise ValueError(
+                "conditional pricing descriptor participates_in_interval_grouping must be bool"
+            )
+        if self.participates_in_interval_grouping != role_contract[1]:
+            raise ValueError(
+                "conditional pricing semantic role is incompatible with interval grouping"
+            )
+
+    def canonicalize_raw(self, raw_value: Any) -> Hashable:
+        """Parse raw JSON and return its canonical selector identity."""
+        parsed_value = self.parse_value(raw_value)
+        return self.canonical_identity(parsed_value)
+
+    def format_raw(self, raw_value: Any) -> str:
+        """Parse and canonicalize raw JSON before formatting it for presentation."""
+        parsed_value = self.parse_value(raw_value)
+        canonical_value = self.canonical_identity(parsed_value)
+        return self.format_value(canonical_value)
+
+
+@dataclass(frozen=True)
+class ConditionalPricingConditionSetSemantics:
+    """Provider-owned rules for absent and paired time selectors."""
+
+    missing_weekdays: Literal["all_seven"]
+    missing_endpoints: Literal["all_day"]
+    endpoint_pairing: Literal["both_or_neither"]
+    equal_endpoints: Literal["unsupported"]
+
+    def __post_init__(self) -> None:
+        if self.missing_weekdays != "all_seven":
+            raise ValueError("unsupported missing_weekdays semantics")
+        if self.missing_endpoints != "all_day":
+            raise ValueError("unsupported missing_endpoints semantics")
+        if self.endpoint_pairing != "both_or_neither":
+            raise ValueError("unsupported endpoint_pairing semantics")
+        if self.equal_endpoints != "unsupported":
+            raise ValueError("unsupported equal_endpoints semantics")
+
+
+@dataclass(frozen=True)
+class ConditionalPricingPolicySemantics:
+    """Provider-owned precedence and inheritance semantics for rule policies."""
+
+    condition_combination: Literal["all_conditions"]
+    rule_precedence: Literal["later_per_key"]
+    omitted_price_behavior: Literal["retain_prior_or_base"]
+    top_level_price_role: Literal["default_base"]
+
+    def __post_init__(self) -> None:
+        if self.condition_combination != "all_conditions":
+            raise ValueError("unsupported condition_combination semantics")
+        if self.rule_precedence != "later_per_key":
+            raise ValueError("unsupported rule_precedence semantics")
+        if self.omitted_price_behavior != "retain_prior_or_base":
+            raise ValueError("unsupported omitted_price_behavior semantics")
+        if self.top_level_price_role != "default_base":
+            raise ValueError("unsupported top_level_price_role semantics")
 
 
 @dataclass(frozen=True)
@@ -160,11 +276,87 @@ class ProviderProfile:
     )
     default_show_fields: tuple[str, ...] = ()
     default_squelch_fields: tuple[str, ...] = ()
+    pricing_override_condition_descriptors: Mapping[
+        str, ConditionalPricingConditionDescriptor
+    ] = field(default_factory=dict)
+    pricing_override_condition_set_semantics: ConditionalPricingConditionSetSemantics | None = None
+    pricing_override_policy_semantics: ConditionalPricingPolicySemantics | None = None
+    pricing_override_base_paths: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("price_path_rules", "price_leaf_rules"):
+        for name in (
+            "price_path_rules",
+            "price_leaf_rules",
+            "pricing_override_condition_descriptors",
+            "pricing_override_base_paths",
+        ):
             registry = getattr(self, name)
             object.__setattr__(self, name, MappingProxyType(dict(registry)))
+
+        descriptor_roles: set[ConditionSemanticRole] = set()
+        for raw_name, descriptor in self.pricing_override_condition_descriptors.items():
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise ValueError("conditional pricing descriptor keys must be non-empty strings")
+            if not isinstance(descriptor, ConditionalPricingConditionDescriptor):
+                raise ValueError("conditional pricing descriptor registry values must be descriptors")
+            if raw_name != descriptor.field_name:
+                raise ValueError("conditional pricing descriptor registry key must match field_name")
+            if descriptor.semantic_role in descriptor_roles:
+                raise ValueError("conditional pricing descriptor semantic roles must be unique")
+            descriptor_roles.add(descriptor.semantic_role)
+
+        for dimension, base_path in self.pricing_override_base_paths.items():
+            if (
+                not isinstance(dimension, str)
+                or not dimension.strip()
+                or dimension != dimension.strip()
+            ):
+                raise ValueError("conditional pricing base-path dimensions must be non-empty strings")
+            if (
+                not isinstance(base_path, str)
+                or not base_path.strip()
+                or base_path != base_path.strip()
+            ):
+                raise ValueError("conditional pricing base paths must be non-empty strings")
+
+        if self.pricing_override_condition_set_semantics is not None and not isinstance(
+            self.pricing_override_condition_set_semantics,
+            ConditionalPricingConditionSetSemantics,
+        ):
+            raise ValueError(
+                "conditional pricing condition-set semantics must be a semantics declaration or None"
+            )
+        if self.pricing_override_policy_semantics is not None and not isinstance(
+            self.pricing_override_policy_semantics,
+            ConditionalPricingPolicySemantics,
+        ):
+            raise ValueError(
+                "conditional pricing policy semantics must be a semantics declaration or None"
+            )
+
+    @property
+    def pricing_override_selector_names(self) -> tuple[str, ...]:
+        """Return selector identities, with rich declarations taking precedence.
+
+        Legacy names remain identity-only compatibility inputs. Consumers that
+        need parsing, ordering, grouping, or comparison semantics must ask for
+        a rich descriptor instead of inferring behavior from this tuple.
+        """
+        return tuple(
+            dict.fromkeys(
+                (
+                    *self.pricing_override_condition_fields,
+                    *self.pricing_override_condition_descriptors,
+                )
+            )
+        )
+
+    def pricing_override_condition_descriptor(
+        self,
+        field_name: str,
+    ) -> ConditionalPricingConditionDescriptor | None:
+        """Return the rich declaration for ``field_name``, if the profile owns one."""
+        return self.pricing_override_condition_descriptors.get(field_name)
 
     def with_pricing(self, multiplier: int, divisor: int) -> ProviderProfile:
         bound = replace(
@@ -177,6 +369,12 @@ class ProviderProfile:
         # immutable registry objects without retaining caller-owned mappings.
         object.__setattr__(bound, "price_path_rules", self.price_path_rules)
         object.__setattr__(bound, "price_leaf_rules", self.price_leaf_rules)
+        object.__setattr__(
+            bound,
+            "pricing_override_condition_descriptors",
+            self.pricing_override_condition_descriptors,
+        )
+        object.__setattr__(bound, "pricing_override_base_paths", self.pricing_override_base_paths)
         return bound
 
 
@@ -412,6 +610,164 @@ _OPENROUTER_UNMATCHED_PRICE_RULE = PriceDisplayRule(
     divisor=1,
 )
 
+_OPENROUTER_WEEKDAYS = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+_OPENROUTER_WEEKDAY_ABBREVIATIONS = {
+    "monday": "Mon",
+    "tuesday": "Tue",
+    "wednesday": "Wed",
+    "thursday": "Thu",
+    "friday": "Fri",
+    "saturday": "Sat",
+    "sunday": "Sun",
+}
+
+
+def _parse_openrouter_integer(value: Any) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError("OpenRouter conditional integer values must be JSON integers")
+    return value
+
+
+def _format_openrouter_min_prompt_tokens(value: Any) -> str:
+    return f"Prompt > {_parse_openrouter_integer(value):,} tokens"
+
+
+def _parse_openrouter_utc_days(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("OpenRouter utc_days must be a non-empty JSON list")
+    if any(not isinstance(day, str) for day in value):
+        raise ValueError("OpenRouter utc_days must contain weekday names")
+    if len(set(value)) != len(value):
+        raise ValueError("OpenRouter utc_days must not contain duplicate weekdays")
+    if any(day not in _OPENROUTER_WEEKDAYS for day in value):
+        raise ValueError("OpenRouter utc_days contains an unknown weekday")
+    return tuple(day for day in _OPENROUTER_WEEKDAYS if day in value)
+
+
+def _format_openrouter_utc_days(value: Any) -> str:
+    days = _parse_openrouter_utc_days(list(value))
+    runs: list[tuple[str, ...]] = []
+    current: list[str] = []
+    previous_index: int | None = None
+    for day in days:
+        index = _OPENROUTER_WEEKDAYS.index(day)
+        if previous_index is not None and index != previous_index + 1:
+            runs.append(tuple(current))
+            current = []
+        current.append(day)
+        previous_index = index
+    if current:
+        runs.append(tuple(current))
+    return ", ".join(
+        _OPENROUTER_WEEKDAY_ABBREVIATIONS[run[0]]
+        if len(run) == 1
+        else (
+            f"{_OPENROUTER_WEEKDAY_ABBREVIATIONS[run[0]]}-"
+            f"{_OPENROUTER_WEEKDAY_ABBREVIATIONS[run[-1]]}"
+        )
+        for run in runs
+    )
+
+
+def _parse_openrouter_utc_hhmm(value: Any) -> int:
+    hhmm = _parse_openrouter_integer(value)
+    hours, minutes = divmod(hhmm, 100)
+    if hhmm < 0 or hours > 23 or minutes > 59:
+        raise ValueError("OpenRouter UTC times must be valid HHMM integers")
+    return hours * 60 + minutes
+
+
+def _format_openrouter_utc_minute(value: Any) -> str:
+    minute = _canonical_openrouter_utc_minute(value)
+    hours, minutes = divmod(minute, 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _format_openrouter_utc_end_minute(value: Any) -> str:
+    minute = _canonical_openrouter_utc_minute(value)
+    if minute == 0:
+        return "24:00"
+    return _format_openrouter_utc_minute(minute)
+
+
+def _canonical_openrouter_utc_minute(value: Any) -> int:
+    minute = _parse_openrouter_integer(value)
+    if not 0 <= minute < 24 * 60:
+        raise ValueError("OpenRouter UTC minute must be within one day")
+    return minute
+
+
+_OPENROUTER_CONDITIONAL_PRICING_DESCRIPTORS: Mapping[
+    str, ConditionalPricingConditionDescriptor
+] = MappingProxyType(
+    {
+        "min_prompt_tokens": ConditionalPricingConditionDescriptor(
+            field_name="min_prompt_tokens",
+            family="threshold",
+            semantic_role="integer_strictly_greater",
+            parse_value=_parse_openrouter_integer,
+            canonical_identity=_parse_openrouter_integer,
+            format_value=_format_openrouter_min_prompt_tokens,
+            participates_in_interval_grouping=False,
+        ),
+        "utc_days": ConditionalPricingConditionDescriptor(
+            field_name="utc_days",
+            family="time",
+            semantic_role="utc_weekdays",
+            parse_value=_parse_openrouter_utc_days,
+            canonical_identity=lambda value: _parse_openrouter_utc_days(list(value)),
+            format_value=_format_openrouter_utc_days,
+            participates_in_interval_grouping=True,
+        ),
+        "utc_start": ConditionalPricingConditionDescriptor(
+            field_name="utc_start",
+            family="time",
+            semantic_role="utc_start_inclusive",
+            parse_value=_parse_openrouter_utc_hhmm,
+            canonical_identity=_canonical_openrouter_utc_minute,
+            format_value=_format_openrouter_utc_minute,
+            participates_in_interval_grouping=True,
+        ),
+        "utc_end": ConditionalPricingConditionDescriptor(
+            field_name="utc_end",
+            family="time",
+            semantic_role="utc_end_exclusive",
+            parse_value=_parse_openrouter_utc_hhmm,
+            canonical_identity=_canonical_openrouter_utc_minute,
+            format_value=_format_openrouter_utc_end_minute,
+            participates_in_interval_grouping=True,
+        ),
+    }
+)
+
+_OPENROUTER_CONDITIONAL_PRICING_CONDITION_SET_SEMANTICS = (
+    ConditionalPricingConditionSetSemantics(
+        missing_weekdays="all_seven",
+        missing_endpoints="all_day",
+        endpoint_pairing="both_or_neither",
+        equal_endpoints="unsupported",
+    )
+)
+
+_OPENROUTER_CONDITIONAL_PRICING_POLICY_SEMANTICS = ConditionalPricingPolicySemantics(
+    condition_combination="all_conditions",
+    rule_precedence="later_per_key",
+    omitted_price_behavior="retain_prior_or_base",
+    top_level_price_role="default_base",
+)
+
+_OPENROUTER_PRICING_OVERRIDE_BASE_PATHS: Mapping[str, str] = MappingProxyType(
+    {dimension: f"pricing.{dimension}" for dimension in _OPENROUTER_PRICE_LEAF_RULES}
+)
+
 _DEFAULT_NORMALIZED_FIELDS: Mapping[str, PathCandidates] = {
     "provider_model_id": (("id",), ("model",), ("name",)),
     "display_name": (("name",), ("display_name",)),
@@ -469,6 +825,12 @@ OPENROUTER_PROFILE = ProviderProfile(
     known_boolean_fields=_OPENROUTER_KNOWN_BOOLEAN_FIELDS,
     default_show_fields=_OPENROUTER_DEFAULT_SHOW_FIELDS,
     default_squelch_fields=_OPENROUTER_DEFAULT_SQUELCH_FIELDS,
+    pricing_override_condition_descriptors=_OPENROUTER_CONDITIONAL_PRICING_DESCRIPTORS,
+    pricing_override_condition_set_semantics=(
+        _OPENROUTER_CONDITIONAL_PRICING_CONDITION_SET_SEMANTICS
+    ),
+    pricing_override_policy_semantics=_OPENROUTER_CONDITIONAL_PRICING_POLICY_SEMANTICS,
+    pricing_override_base_paths=_OPENROUTER_PRICING_OVERRIDE_BASE_PATHS,
 )
 
 PROFILE_REGISTRY: dict[str, ProviderProfile] = {
