@@ -47,7 +47,10 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from typing import Any, Literal
 
 from .models import FieldChange
@@ -340,6 +343,40 @@ class RenderedChange:
         return format_qualified_label(self.label, self.qualifier)
 
 
+@dataclass(frozen=True)
+class ResolvedPriceValue:
+    """One provider price resolved without coupling it to a rendered change.
+
+    Conditional schedules and ordinary scalar rows share this exact boundary:
+    the provider spelling is retained for audit, exact arithmetic consumes the
+    immutable rational value, and display/API compatibility consumes a finite
+    float projection.
+    """
+
+    field_path: str
+    raw_value: Any
+    raw_display: str
+    normalized_value: float
+    normalized_exact_value: Fraction
+    price_rule: ResolvedPriceRule
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field_path, str) or not self.field_path.strip():
+            raise ValueError("resolved price field_path must be non-empty")
+        if isinstance(self.raw_value, bool) or self.raw_value is None:
+            raise ValueError("resolved price raw_value must be numeric and present")
+        if not isinstance(self.raw_display, str):
+            raise TypeError("resolved price raw_display must be a string")
+        if not isinstance(self.normalized_value, float) or not math.isfinite(
+            self.normalized_value
+        ):
+            raise ValueError("resolved price normalized_value must be a finite float")
+        if not isinstance(self.normalized_exact_value, Fraction):
+            raise TypeError("resolved price normalized_exact_value must be a Fraction")
+        if not isinstance(self.price_rule, ResolvedPriceRule):
+            raise TypeError("resolved price value requires a ResolvedPriceRule")
+
+
 # ---------------------------------------------------------------------------
 # Shared primitives, moved verbatim from reporting.py (behavior-preserving).
 # reporting.py re-exports these so existing call sites keep working unchanged.
@@ -350,10 +387,10 @@ def _both_numeric(a: Any, b: Any) -> bool:
     if a is None or b is None:
         return False
     try:
-        float(a)
-        float(b)
-        return True
-    except (TypeError, ValueError):
+        a_numeric = float(a)
+        b_numeric = float(b)
+        return math.isfinite(a_numeric) and math.isfinite(b_numeric)
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
@@ -361,9 +398,10 @@ def _numeric_value(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return numeric if math.isfinite(numeric) else None
 
 
 # ---------------------------------------------------------------------------
@@ -702,6 +740,68 @@ def _normalize_price(raw_value: float, multiplier: int, divisor: int) -> float:
     return (raw_value * multiplier) / divisor
 
 
+PRICE_VALUE_MAX_DECIMAL_DIGITS = 1_000
+PRICE_VALUE_MAX_ABS_DECIMAL_EXPONENT = 10_000
+
+
+def _bounded_decimal_price_value(raw_value: Any) -> Decimal | None:
+    """Parse a finite provider price within fixed exact-arithmetic bounds.
+
+    Provider prices observed by this project need hundreds, not thousands, of
+    decimal places (the exact underflow contract intentionally includes
+    ``1e-400``).  A 1,000-digit Decimal coefficient and an absolute base-10
+    exponent of 10,000 leave orders of magnitude of headroom while bounding a
+    raw rational to roughly 11,000 decimal digits.  The check happens while
+    the value is still a compact Decimal, before ``Fraction`` can expand a
+    spelling such as ``1e-1000000`` into a million-power denominator.
+
+    The digit limit intentionally counts Decimal's stored coefficient digits,
+    including retained trailing zeroes: those zeroes can still make exact
+    rational construction do proportional work even though they do not change
+    the mathematical value.
+    """
+    if raw_value is None or isinstance(raw_value, bool):
+        return None
+    try:
+        decimal_value = Decimal(str(raw_value).strip())
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+    if not decimal_value.is_finite():
+        return None
+    decimal_tuple = decimal_value.as_tuple()
+    exponent = decimal_tuple.exponent
+    if not isinstance(exponent, int):
+        return None
+    if (
+        len(decimal_tuple.digits) > PRICE_VALUE_MAX_DECIMAL_DIGITS
+        or abs(exponent) > PRICE_VALUE_MAX_ABS_DECIMAL_EXPONENT
+    ):
+        return None
+    return decimal_value
+
+
+def _exact_numeric_fraction(raw_value: Any) -> Fraction | None:
+    """Parse one finite provider numeric spelling without a float intermediate."""
+    decimal_value = _bounded_decimal_price_value(raw_value)
+    if decimal_value is None:
+        return None
+    return Fraction(decimal_value)
+
+
+def _finite_fraction_projection(value: Fraction) -> float | None:
+    """Project an exact value to a finite float without erasing nonzero sign."""
+    try:
+        projected = float(value)
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(projected):
+        return None
+    if value != 0 and projected == 0:
+        minimum = math.nextafter(0.0, math.inf)
+        return minimum if value > 0 else -minimum
+    return projected
+
+
 # ---------------------------------------------------------------------------
 # Display helpers used only by classify_change and its per-kind helpers.
 # ---------------------------------------------------------------------------
@@ -737,6 +837,78 @@ ABSENT_TEXT_DISPLAY = "null"
 
 def _raw_value(value: Any) -> str | None:
     return None if value is None else str(value)
+
+
+def resolve_price_value(
+    field_path: str,
+    raw_value: Any,
+    profile: ProviderProfile,
+    *,
+    allow_unmatched: bool = False,
+) -> ResolvedPriceValue | None:
+    """Resolve one finite provider price through the active profile.
+
+    The public default is deliberately strict for composite schedules: an
+    unmatched declaration has no provider-owned unit/comparison identity and
+    therefore cannot enter schedule arithmetic.  Scalar classification passes
+    ``allow_unmatched=True`` to preserve the established safe visible fallback
+    for an otherwise monetary field.
+    """
+    if raw_value is None or isinstance(raw_value, bool):
+        return None
+    exact_value = _exact_numeric_fraction(raw_value)
+    if exact_value is None:
+        return None
+    price_rule = resolve_price_rule(field_path, profile)
+    if price_rule.match_source == "unmatched" and not allow_unmatched:
+        return None
+    normalized_exact = exact_value * Fraction(
+        price_rule.multiplier,
+        price_rule.divisor,
+    )
+    normalized = _finite_fraction_projection(normalized_exact)
+    if normalized is None:
+        return None
+    raw_display = _raw_value(raw_value)
+    if raw_display is None:  # guarded above; keeps the constructor invariant local
+        return None
+    return ResolvedPriceValue(
+        field_path=field_path,
+        raw_value=raw_value,
+        raw_display=raw_display,
+        normalized_value=float(normalized),
+        normalized_exact_value=normalized_exact,
+        price_rule=price_rule,
+    )
+
+
+def _precision_basis_value(value: ResolvedPriceValue | int | float) -> float:
+    numeric = (
+        value.normalized_value
+        if isinstance(value, ResolvedPriceValue)
+        else float(value)
+    )
+    if isinstance(value, bool) or not math.isfinite(numeric):
+        raise ValueError("price precision basis values must be finite numbers")
+    return numeric
+
+
+def format_price_values(
+    values: Iterable[ResolvedPriceValue],
+    *,
+    precision_basis: Iterable[ResolvedPriceValue | int | float],
+) -> tuple[str, ...]:
+    """Format normalized prices through the one scalar precision/sentinel path."""
+    resolved_values = tuple(values)
+    if any(not isinstance(value, ResolvedPriceValue) for value in resolved_values):
+        raise TypeError("values must contain only ResolvedPriceValue instances")
+    basis = tuple(_precision_basis_value(value) for value in precision_basis)
+    if not basis:
+        basis = tuple(value.normalized_value for value in resolved_values)
+    precision = _price_precision(*basis)
+    return tuple(
+        _fmt_money(value.normalized_value, precision) for value in resolved_values
+    )
 
 
 def _scalar_display(value: Any) -> str:
@@ -983,16 +1155,22 @@ def _classify_boolean(
 
 def _classify_price(
     field_change: FieldChange,
+    old_price: ResolvedPriceValue | None,
+    new_price: ResolvedPriceValue | None,
     old_numeric: float | None,
     new_numeric: float | None,
     profile: ProviderProfile,
 ) -> RenderedChange:
     field_path = field_change.field_name
     label, qualifier = resolve_field_label(field_path, profile)
-    old_value, new_value = field_change.old_value, field_change.new_value
-    price_rule = resolve_price_rule(field_path, profile)
+    present_price = old_price if old_price is not None else new_price
+    if present_price is None:
+        raise ValueError("price classification requires at least one resolved value")
+    price_rule = present_price.price_rule
 
-    if old_numeric is not None and new_numeric is not None:
+    if old_price is not None and new_price is not None:
+        if old_numeric is None or new_numeric is None:
+            raise ValueError("two-sided price classification requires raw numerics")
         norm_old = _normalize_price(
             old_numeric,
             price_rule.multiplier,
@@ -1029,8 +1207,8 @@ def _classify_price(
             qualifier=qualifier,
             old_display=_fmt_money(norm_old, precision),
             new_display=_fmt_money(norm_new, precision),
-            old_raw=_raw_value(old_value),
-            new_raw=_raw_value(new_value),
+            old_raw=old_price.raw_display,
+            new_raw=new_price.raw_display,
             unit=price_rule.unit_label,
             price_rule=price_rule,
             delta_display=delta_display,
@@ -1047,9 +1225,11 @@ def _classify_price(
     # difference to print, so it prices itself. The precision is derived and
     # passed EXPLICITLY rather than left to a default, so the only way to
     # format a price is to have named its precision at the call site.
-    if old_numeric is None:
+    if old_price is None:
         one_sided_direction: Literal["added", "removed"] = "added"
         old_display = ABSENT_TEXT_DISPLAY
+        if new_price is None or new_numeric is None:
+            raise ValueError("added price classification requires a new value")
         norm_only = _normalize_price(
             new_numeric,
             price_rule.multiplier,
@@ -1058,6 +1238,8 @@ def _classify_price(
         new_display = _fmt_money(norm_only, _price_precision(norm_only))
     else:
         one_sided_direction = "removed"
+        if old_numeric is None:
+            raise ValueError("removed price classification requires an old value")
         norm_only = _normalize_price(
             old_numeric,
             price_rule.multiplier,
@@ -1073,8 +1255,8 @@ def _classify_price(
         qualifier=qualifier,
         old_display=old_display,
         new_display=new_display,
-        old_raw=_raw_value(old_value),
-        new_raw=_raw_value(new_value),
+        old_raw=None if old_price is None else old_price.raw_display,
+        new_raw=None if new_price is None else new_price.raw_display,
         unit=price_rule.unit_label,
         price_rule=price_rule,
         delta_display=None,
@@ -1293,13 +1475,33 @@ def classify_change(
     # 4. price -- guard preserved exactly from reporting.py's current
     # _render_smart_change_text (permits one-sided None, rejects non-numeric
     # strings).
-    if (
-        profile.is_price_amount_field(field_path)
-        and (old_numeric is not None or new_numeric is not None)
-        and (old_value is None or old_numeric is not None)
-        and (new_value is None or new_numeric is not None)
-    ):
-        return _classify_price(field_change, old_numeric, new_numeric, profile)
+    is_price_amount_field = profile.is_price_amount_field(field_path)
+    if is_price_amount_field:
+        old_price = resolve_price_value(
+            field_path,
+            old_value,
+            profile,
+            allow_unmatched=True,
+        )
+        new_price = resolve_price_value(
+            field_path,
+            new_value,
+            profile,
+            allow_unmatched=True,
+        )
+        if (
+            (old_price is not None or new_price is not None)
+            and (old_value is None or old_price is not None)
+            and (new_value is None or new_price is not None)
+        ):
+            return _classify_price(
+                field_change,
+                old_price,
+                new_price,
+                old_numeric,
+                new_numeric,
+                profile,
+            )
 
     # 5. count -- same numeric-shape guard as price (permits one-sided None,
     # rejects non-numeric strings), with one deliberate difference from
@@ -1326,7 +1528,8 @@ def classify_change(
     # test_change_render.py, which pins the delta/pct fields a renderer needs
     # to reproduce numeric's exact output from a `count` RenderedChange.
     if (
-        profile.is_count_field(field_path)
+        not is_price_amount_field
+        and profile.is_count_field(field_path)
         and (old_numeric is not None or new_numeric is not None)
         and (old_value is None or old_numeric is not None)
         and (new_value is None or new_numeric is not None)
@@ -1336,7 +1539,7 @@ def classify_change(
     # 6. numeric -- both numeric, no category match. Real bool pairs and
     # known-boolean integer-coded pairs no longer reach here: step 3 claims
     # them first.
-    if _both_numeric(old_value, new_value):
+    if not is_price_amount_field and _both_numeric(old_value, new_value):
         return _classify_numeric(field_change, profile)
 
     # 7. scalar fallback

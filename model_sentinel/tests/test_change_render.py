@@ -19,6 +19,7 @@ import dataclasses
 import inspect
 import math
 import re
+from fractions import Fraction
 from unittest.mock import patch
 
 import pytest
@@ -28,10 +29,12 @@ from model_sentinel.change_render import (
     PCT_PRECISION,
     PRICE_MAX_PRECISION,
     PRICE_MIN_PRECISION,
+    ResolvedPriceValue,
     RenderedChange,
     _bool_state,
     _both_numeric,
     _classify_boolean as _classify_boolean_with_profile,
+    _exact_numeric_fraction,
     _fmt_int,
     _fmt_money,
     _is_boolean_change as _is_boolean_change_with_profile,
@@ -47,8 +50,10 @@ from model_sentinel.change_render import (
     _split_field_path,
     classify_change as classify_change_with_profile,
     format_qualified_label,
+    format_price_values,
     pricing_field_sort_key,
     resolve_field_label as resolve_field_label_with_profile,
+    resolve_price_value,
     resolve_price_rule,
 )
 from model_sentinel.models import FieldChange
@@ -526,6 +531,340 @@ def test_one_sided_openrouter_price_carries_the_same_resolved_rule() -> None:
     assert (result.price_rule.multiplier, result.price_rule.divisor) == (1_000, 1)
     assert result.delta_abs is None
     assert result.pct_display is None
+
+
+@pytest.mark.parametrize(
+    ("field_path", "raw_value", "normalized", "raw_display", "unit"),
+    (
+        ("pricing.prompt", "0.000002", 2.0, "0.000002", "/1M tokens"),
+        ("pricing.web_search", "0.014", 14.0, "0.014", "/1K searches"),
+        ("pricing.request", 0.25, 0.25, "0.25", "/request"),
+        ("pricing.image", 0, 0.0, "0", "/image"),
+    ),
+)
+def test_resolve_price_value_preserves_provider_value_and_shared_rule(
+    field_path: str,
+    raw_value: object,
+    normalized: float,
+    raw_display: str,
+    unit: str,
+) -> None:
+    resolved = resolve_price_value(field_path, raw_value, OPENROUTER_PROFILE)
+
+    assert isinstance(resolved, ResolvedPriceValue)
+    assert resolved.field_path == field_path
+    assert resolved.raw_value == raw_value
+    assert resolved.raw_display == raw_display
+    assert resolved.normalized_value == normalized
+    assert resolved.price_rule == resolve_price_rule(field_path, OPENROUTER_PROFILE)
+    assert resolved.price_rule.unit_label == unit
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    (None, True, False, "not-a-number", float("inf"), float("-inf"), float("nan")),
+)
+def test_resolve_price_value_rejects_absent_invalid_and_nonfinite_values(
+    raw_value: object,
+) -> None:
+    assert resolve_price_value("pricing.prompt", raw_value, OPENROUTER_PROFILE) is None
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    (
+        "1e-1000000",
+        "1." + ("2" * 1_000),
+    ),
+)
+def test_exact_price_parser_rejects_resource_amplifying_values_before_fraction(
+    raw_value: str,
+) -> None:
+    with patch(
+        "model_sentinel.change_render.Fraction",
+        side_effect=AssertionError("rejected input reached Fraction construction"),
+    ):
+        assert _exact_numeric_fraction(raw_value) is None
+
+    assert resolve_price_value("pricing.prompt", raw_value, OPENROUTER_PROFILE) is None
+
+
+def test_extreme_price_exponents_degrade_to_nonarithmetic_scalar_fallback() -> None:
+    result = classify_change_with_profile(
+        FieldChange("pricing.prompt", "1e-1000000", "2e-1000000"),
+        profile=OPENROUTER_PROFILE,
+    )
+
+    assert result.kind == "scalar"
+    assert (result.old_display, result.new_display) == (
+        "1e-1000000",
+        "2e-1000000",
+    )
+    assert result.price_rule is None
+    assert result.delta_abs is None
+    assert result.pct_display is None
+    assert result.direction == "none"
+    assert result.semantic == "neutral"
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    (
+        "inf",
+        "-inf",
+        "nan",
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+    ),
+)
+@pytest.mark.parametrize("bad_side", ("old", "new"))
+def test_public_classifier_degrades_nonfinite_prices_without_arithmetic(
+    bad_value: object,
+    bad_side: str,
+) -> None:
+    finite_value = "0.000001"
+    old_value, new_value = (
+        (bad_value, finite_value)
+        if bad_side == "old"
+        else (finite_value, bad_value)
+    )
+
+    result = classify_change_with_profile(
+        FieldChange("pricing.prompt", old_value, new_value),
+        profile=OPENROUTER_PROFILE,
+    )
+
+    assert result.kind == "scalar"
+    assert (result.old_display, result.new_display) == (
+        str(old_value),
+        str(new_value),
+    )
+    assert (result.old_raw, result.new_raw) == (str(old_value), str(new_value))
+    assert result.price_rule is None
+    assert result.delta_abs is None
+    assert result.pct_display is None
+    assert result.direction == "none"
+    assert result.semantic == "neutral"
+
+
+def test_resolve_price_value_rejects_unmatched_schedule_rule() -> None:
+    assert (
+        resolve_price_value(
+            "pricing.synthetic_unknown_price",
+            "0.25",
+            OPENROUTER_PROFILE,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_path", "old", "new"),
+    (
+        ("pricing.prompt", "0", "0.00000000001"),
+        ("pricing.prompt", "0.000001", "0.000002"),
+        ("pricing.web_search", "0.010", "0.014"),
+        ("pricing.request", "0.01", "0.02"),
+        ("pricing.image", "0.25", "0.5"),
+    ),
+)
+def test_shared_price_value_formatting_is_byte_identical_to_scalar_rows(
+    field_path: str,
+    old: str,
+    new: str,
+) -> None:
+    scalar = classify_change_with_profile(
+        FieldChange(field_path, old, new),
+        profile=OPENROUTER_PROFILE,
+    )
+    old_value = resolve_price_value(field_path, old, OPENROUTER_PROFILE)
+    new_value = resolve_price_value(field_path, new, OPENROUTER_PROFILE)
+    assert old_value is not None and new_value is not None
+
+    assert format_price_values(
+        (old_value, new_value),
+        precision_basis=(old_value, new_value),
+    ) == (scalar.old_display, scalar.new_display)
+    assert (old_value.raw_display, new_value.raw_display) == (
+        scalar.old_raw,
+        scalar.new_raw,
+    )
+
+
+def test_shared_price_value_one_sided_formatting_matches_scalar_sentinel() -> None:
+    scalar = classify_change_with_profile(
+        FieldChange("pricing.prompt", None, "0.00000000001"),
+        profile=OPENROUTER_PROFILE,
+    )
+    value = resolve_price_value(
+        "pricing.prompt", "0.00000000001", OPENROUTER_PROFILE
+    )
+    assert value is not None
+
+    assert format_price_values((value,), precision_basis=(value,)) == (
+        scalar.new_display,
+    )
+    assert scalar.old_display == "null"
+
+
+def test_scalar_huge_adjacent_pair_matches_pre_task4_full_contract() -> None:
+    result = classify_change(
+        FieldChange(
+            "pricing.prompt",
+            "1.7976931348623155e308",
+            "1.7976931348623157e308",
+        ),
+        price_multiplier=1,
+        price_divisor=100,
+    )
+
+    legacy_display = (
+        "$1797693134862315633301262629765050630866728936377003738459752501701914801454763796210449641241516314779480883561305033792001456611676070178718250902275612892141556670084334558762242165238180420033094130920939320073544954448635079731752693526288593899415905695239791325170347763968341437224060469123940876288.00"
+    )
+    assert dataclasses.asdict(result) == {
+        "kind": "price",
+        "field_path": "pricing.prompt",
+        "label": "Input",
+        "qualifier": None,
+        "old_display": legacy_display,
+        "new_display": legacy_display,
+        "old_raw": "1.7976931348623155e308",
+        "new_raw": "1.7976931348623157e308",
+        "unit": "/1M",
+        "price_rule": {
+            "unit_label": "/1M",
+            "multiplier": 1,
+            "divisor": 100,
+            "comparison_group": None,
+            "normalized_target": "per_million_tokens",
+            "match_source": "unmatched",
+        },
+        "delta_display": "free",
+        "delta_abs": 0.0,
+        "pct_display": "↑ <0.1%",
+        "pct_basis_zero": False,
+        "direction": "none",
+        "semantic": "cost",
+        "list_added": (),
+        "list_removed": (),
+    }
+
+
+def test_scalar_exact_underflow_pair_matches_pre_task4_full_contract() -> None:
+    result = classify_change(
+        FieldChange("pricing.prompt", "1e-400", "2e-400"),
+        price_multiplier=1,
+        price_divisor=1,
+    )
+
+    assert dataclasses.asdict(result) == {
+        "kind": "price",
+        "field_path": "pricing.prompt",
+        "label": "Input",
+        "qualifier": None,
+        "old_display": "free",
+        "new_display": "free",
+        "old_raw": "1e-400",
+        "new_raw": "2e-400",
+        "unit": "/1M",
+        "price_rule": {
+            "unit_label": "/1M",
+            "multiplier": 1,
+            "divisor": 1,
+            "comparison_group": None,
+            "normalized_target": "per_million_tokens",
+            "match_source": "unmatched",
+        },
+        "delta_display": "free",
+        "delta_abs": 0.0,
+        "pct_display": None,
+        "pct_basis_zero": True,
+        "direction": "none",
+        "semantic": "cost",
+        "list_added": (),
+        "list_removed": (),
+    }
+
+
+def test_resolved_price_value_retains_exact_underflow_and_formats_as_bounded() -> None:
+    profile = dataclasses.replace(
+        OPENROUTER_PROFILE,
+        price_leaf_rules={
+            **OPENROUTER_PROFILE.price_leaf_rules,
+            "prompt": PriceDisplayRule(
+                unit_label="/synthetic exact unit",
+                multiplier=1,
+                divisor=1,
+                comparison_group="usd_per_synthetic_exact_unit",
+            ),
+        },
+    )
+
+    value = resolve_price_value("pricing.prompt", "1e-400", profile)
+
+    assert value is not None
+    assert value.normalized_exact_value == Fraction(1, 10**400)
+    assert math.isfinite(value.normalized_value)
+    assert value.normalized_value > 0
+    assert format_price_values((value,), precision_basis=(value,)) == (
+        "<$0.0001",
+    )
+
+
+def test_exact_normalization_cancels_large_provider_factors_before_float_projection() -> None:
+    factor = 10**200
+    profile = dataclasses.replace(
+        OPENROUTER_PROFILE,
+        price_leaf_rules={
+            **OPENROUTER_PROFILE.price_leaf_rules,
+            "prompt": PriceDisplayRule(
+                unit_label="/synthetic exact unit",
+                multiplier=factor,
+                divisor=factor,
+                comparison_group="usd_per_synthetic_exact_unit",
+            ),
+        },
+    )
+
+    value = resolve_price_value("pricing.prompt", "1e308", profile)
+
+    assert value is not None
+    assert value.normalized_exact_value == Fraction(10**308, 1)
+    assert value.normalized_value == 1e308
+
+
+def test_unrepresentable_exact_normalized_price_is_unresolved() -> None:
+    profile = dataclasses.replace(
+        OPENROUTER_PROFILE,
+        price_leaf_rules={
+            **OPENROUTER_PROFILE.price_leaf_rules,
+            "prompt": PriceDisplayRule(
+                unit_label="/synthetic exact unit",
+                multiplier=10,
+                divisor=1,
+                comparison_group="usd_per_synthetic_exact_unit",
+            ),
+        },
+    )
+
+    assert resolve_price_value("pricing.prompt", "1e308", profile) is None
+
+
+def test_scalar_unmatched_price_keeps_legacy_visible_fallback() -> None:
+    scalar = classify_change_with_profile(
+        FieldChange("pricing.synthetic_unknown_price", "0.25", "0.5"),
+        profile=OPENROUTER_PROFILE,
+    )
+
+    assert scalar.kind == "price"
+    assert (scalar.old_display, scalar.new_display, scalar.unit) == (
+        "$0.25",
+        "$0.50",
+        "/unit unknown",
+    )
+    assert scalar.price_rule is not None
+    assert scalar.price_rule.match_source == "unmatched"
 
 
 def test_price_both_numeric_decrease():

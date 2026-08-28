@@ -1,20 +1,25 @@
 """Format-neutral semantics for provider-declared conditional pricing policies.
 
-Parsing, bounded weekly UTC coverage, effective schedule compilation, and
-policy equality live here.  Price movement, absorption, accounting, storage,
-and human rendering remain later layers.
+Parsing, bounded weekly UTC coverage, effective schedule compilation, policy
+equality, format-neutral movement, sibling absorption decisions, and central
+accounting live here. Storage and human rendering remain later layers.
 """
 
 from __future__ import annotations
 
-import math
 from collections import Counter
 from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from types import MappingProxyType
 from typing import Any, Literal, TypeAlias, TypeVar
 
-from .change_render import resolve_price_rule
+from .change_render import (
+    ResolvedPriceValue,
+    _finite_fraction_projection,
+    resolve_price_rule,
+    resolve_price_value,
+)
 from .models import FieldChange, canonical_json
 from .provider_profiles import ProviderProfile, ResolvedPriceRule
 
@@ -49,11 +54,26 @@ GroupingInhibitionReason: TypeAlias = Literal[
     "overlapping_weekly_coverage",
 ]
 ComparisonInhibitionReason: TypeAlias = Literal[
-    "comparison_deferred",
     "incomplete_base_vector",
     "missing_event_snapshot",
     "missing_price_comparison_group",
     "ordered_rules",
+    "raw_fallback",
+    "partition_mismatch",
+    "incompatible_price_basis",
+    "incomplete_comparison_vector",
+]
+PriceMovementDirection: TypeAlias = Literal[
+    "higher", "lower", "unchanged", "coverage", "unknown"
+]
+BandMovementDirection: TypeAlias = Literal[
+    "higher", "lower", "mixed", "unchanged", "coverage", "unknown"
+]
+ComparisonMode: TypeAlias = Literal[
+    "grouped-vs-default", "same-partition", "exact-regions"
+]
+ModelPriceBucket: TypeAlias = Literal[
+    "higher", "lower", "mixed", "coverage", "conditional", "none"
 ]
 _PARENT_FIELD = "pricing.overrides"
 _ROLE_WEEKDAYS = "utc_weekdays"
@@ -421,6 +441,115 @@ class OccurrenceReferencedChange:
 
 
 @dataclass(frozen=True)
+class DirectPriceMovementFact:
+    """One exact scalar price movement retained independently of rendering."""
+
+    field_path: str
+    old_value: ResolvedPriceValue | None
+    new_value: ResolvedPriceValue | None
+    direction: PriceMovementDirection
+    delta: float | None
+    percentage: float | None
+    unit_label: str
+    comparison_group: str | None
+    source_change: SourceChangeReference | None = None
+
+
+@dataclass(frozen=True)
+class PriceDimensionComparison:
+    """One same-dimension old/new comparison with exact provider values."""
+
+    dimension: str
+    old_value: ResolvedPriceValue | None
+    new_value: ResolvedPriceValue | None
+    direction: PriceMovementDirection
+    delta: float | None
+    percentage: float | None
+    normalized_movement_ratio: Fraction | None
+    unit_label: str | None
+    comparison_group: str | None
+
+
+@dataclass(frozen=True)
+class PriceBandComparison:
+    """Movement over one proven region/band without summing its dimensions."""
+
+    coverage: WeeklyCoverage
+    dimensions: tuple[PriceDimensionComparison, ...]
+    direction: BandMovementDirection
+    percentage: float | None
+    provenance: ComparisonMode
+    is_peak: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "coverage", tuple(self.coverage))
+        object.__setattr__(self, "dimensions", tuple(self.dimensions))
+
+
+@dataclass(frozen=True)
+class ConditionalPricingComparison:
+    """Only the bounded movement facts an exact comparison edge can prove."""
+
+    mode: ComparisonMode
+    bands: tuple[PriceBandComparison, ...]
+    aggregate_direction: BandMovementDirection | None
+    inhibition_reasons: tuple[ComparisonInhibitionReason, ...]
+    peak_band_index: int | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "bands", tuple(self.bands))
+        object.__setattr__(
+            self, "inhibition_reasons", tuple(self.inhibition_reasons)
+        )
+        if self.peak_band_index is not None and not (
+            0 <= self.peak_band_index < len(self.bands)
+        ):
+            raise ValueError("peak_band_index must identify a comparison band")
+
+
+@dataclass(frozen=True)
+class AbsorbedBasePriceChange:
+    """A pure consume-once decision for one proven sibling base-price row."""
+
+    dimension: str
+    source_change: SourceChangeReference
+    movement: DirectPriceMovementFact
+
+
+@dataclass(frozen=True)
+class ModelPricingAccounting:
+    """Disjoint immutable units for one exact changed-model comparison edge."""
+
+    direct_price_facts: tuple[DirectPriceMovementFact, ...]
+    direct_price_field_count: int
+    conditional_policy_count: int
+    source_rule_count: int
+    schedule_dimensions: tuple[str, ...]
+    schedule_dimension_count: int
+    effective_band_count: int
+    model_bucket: ModelPriceBucket
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "direct_price_facts", tuple(self.direct_price_facts))
+        object.__setattr__(self, "schedule_dimensions", tuple(self.schedule_dimensions))
+        if self.direct_price_field_count != len(self.direct_price_facts):
+            raise ValueError("direct price field count must equal retained facts")
+        if self.schedule_dimension_count != len(self.schedule_dimensions):
+            raise ValueError("schedule dimension count must equal the dimension union")
+        for count in (
+            self.direct_price_field_count,
+            self.conditional_policy_count,
+            self.source_rule_count,
+            self.schedule_dimension_count,
+            self.effective_band_count,
+        ):
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ValueError("pricing accounting counts must be nonnegative integers")
+        if self.conditional_policy_count not in (0, 1):
+            raise ValueError("one comparison edge can change at most one conditional policy")
+
+
+@dataclass(frozen=True)
 class ConditionalPricingCondition:
     field_name: str
     family: str
@@ -632,8 +761,8 @@ class ConditionalPricingInterpretation:
     old_compiled_policy: CompiledConditionalPricingPolicy | None
     new_compiled_policy: CompiledConditionalPricingPolicy | None
     absorbed_base_price_changes: tuple[SourceChangeReference, ...]
-    comparison: Any | None
-    accounting: Any | None
+    comparison: ConditionalPricingComparison | None
+    accounting: ModelPricingAccounting | None
     source_changes: tuple[OccurrenceReferencedChange, ...]
     structural_comparison: ConditionalPricingStructuralComparison | None
     canonical_evidence_changed: bool
@@ -727,7 +856,7 @@ def _raw_fallback(
         semantic_change=canonical_evidence_changed,
         fallback_reason=reason,
         grouping_inhibition_reasons=(),
-        comparison_inhibition_reasons=(),
+        comparison_inhibition_reasons=("raw_fallback",),
         transition=transition,
         old_policy=old_policy,
         new_policy=new_policy,
@@ -755,14 +884,81 @@ def _unknown_key_reason(
     return "unknown_rule_key"
 
 
-def _is_valid_numeric_assignment(value: Any) -> bool:
-    if value is None or isinstance(value, bool):
-        return False
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return False
-    return math.isfinite(numeric)
+def resolve_direct_price_movement(
+    field_path: str,
+    old_raw_value: Any,
+    new_raw_value: Any,
+    profile: ProviderProfile,
+    *,
+    source_change: SourceChangeReference | None = None,
+) -> DirectPriceMovementFact | None:
+    """Resolve one matched scalar movement without manufacturing invalid facts."""
+    old_value = resolve_price_value(field_path, old_raw_value, profile)
+    new_value = resolve_price_value(field_path, new_raw_value, profile)
+    if old_raw_value is not None and old_value is None:
+        return None
+    if new_raw_value is not None and new_value is None:
+        return None
+    present = old_value or new_value
+    if present is None:
+        return None
+    if old_value is None or new_value is None:
+        return DirectPriceMovementFact(
+            field_path=field_path,
+            old_value=old_value,
+            new_value=new_value,
+            direction="coverage",
+            delta=None,
+            percentage=None,
+            unit_label=present.price_rule.unit_label,
+            comparison_group=present.price_rule.comparison_group,
+            source_change=source_change,
+        )
+
+    if (
+        old_value.price_rule.unit_label != new_value.price_rule.unit_label
+        or old_value.price_rule.comparison_group is None
+        or old_value.price_rule.comparison_group
+        != new_value.price_rule.comparison_group
+    ):
+        return DirectPriceMovementFact(
+            field_path=field_path,
+            old_value=old_value,
+            new_value=new_value,
+            direction="unknown",
+            delta=None,
+            percentage=None,
+            unit_label=old_value.price_rule.unit_label,
+            comparison_group=None,
+            source_change=source_change,
+        )
+
+    old_exact = old_value.normalized_exact_value
+    new_exact = new_value.normalized_exact_value
+    exact_delta = new_exact - old_exact
+    direction: PriceMovementDirection
+    if exact_delta > 0:
+        direction = "higher"
+    elif exact_delta < 0:
+        direction = "lower"
+    else:
+        direction = "unchanged"
+    ratio = None if old_exact == 0 else exact_delta / abs(old_exact)
+    return DirectPriceMovementFact(
+        field_path=field_path,
+        old_value=old_value,
+        new_value=new_value,
+        direction=direction,
+        delta=_finite_fraction_projection(exact_delta),
+        percentage=(
+            None
+            if ratio is None
+            else _finite_fraction_projection(ratio * 100)
+        ),
+        unit_label=old_value.price_rule.unit_label,
+        comparison_group=old_value.price_rule.comparison_group,
+        source_change=source_change,
+    )
 
 
 def _parse_policy(raw_policy: Any, profile: ProviderProfile) -> ConditionalPricingPolicy:
@@ -794,11 +990,14 @@ def _parse_policy(raw_policy: Any, profile: ProviderProfile) -> ConditionalPrici
                 raise _PolicyDataError("selector_semantics_unavailable")
             if field_name in profile.pricing_override_base_paths:
                 price_path = profile.pricing_override_base_paths[field_name]
-                price_rule = resolve_price_rule(price_path, profile)
+                resolved_price = resolve_price_value(
+                    price_path,
+                    raw_value,
+                    profile,
+                )
                 if (
-                    price_rule.match_source == "unmatched"
-                    or not price_rule.unit_label.strip()
-                    or not _is_valid_numeric_assignment(raw_value)
+                    resolved_price is None
+                    or not resolved_price.price_rule.unit_label.strip()
                 ):
                     raise _PolicyDataError("unresolved_price_dimension")
                 explicit_prices.append(
@@ -806,7 +1005,7 @@ def _parse_policy(raw_policy: Any, profile: ProviderProfile) -> ConditionalPrici
                         field_name,
                         raw_value,
                         source_key_index,
-                        price_rule,
+                        resolved_price.price_rule,
                     )
                 )
                 continue
@@ -952,13 +1151,20 @@ def _structural_compare(
 _MISSING = object()
 
 
-def _exact_metadata_value(metadata: Mapping[str, Any], path: str) -> Any:
+def _exact_metadata_entry(
+    metadata: Mapping[str, Any], path: str
+) -> tuple[bool, Any]:
     value: Any = metadata
     for component in path.split("."):
         if not isinstance(value, Mapping) or component not in value:
-            return _MISSING
+            return False, _MISSING
         value = value[component]
-    return value
+    return True, value
+
+
+def _exact_metadata_value(metadata: Mapping[str, Any], path: str) -> Any:
+    present, value = _exact_metadata_entry(metadata, path)
+    return value if present else _MISSING
 
 
 def _complete_base_vector(
@@ -973,11 +1179,15 @@ def _complete_base_vector(
         if base_path is None:
             return None
         raw_value = _exact_metadata_value(metadata, base_path)
-        if raw_value is _MISSING or not _is_valid_numeric_assignment(raw_value):
+        if raw_value is _MISSING:
             return None
-        price_rule = resolve_price_rule(base_path, profile)
-        if price_rule.match_source == "unmatched" or not price_rule.unit_label.strip():
+        resolved_price = resolve_price_value(base_path, raw_value, profile)
+        if (
+            resolved_price is None
+            or not resolved_price.price_rule.unit_label.strip()
+        ):
             return None
+        price_rule = resolved_price.price_rule
         assignments = (
             assignment
             for rule in policy.rules
@@ -1223,10 +1433,8 @@ def _compile_policy(
         _append_once(comparison_reasons, "missing_event_snapshot")
     if "incomplete_base_vector" in grouping_reasons:
         _append_once(comparison_reasons, "incomplete_base_vector")
-    _append_once(
-        comparison_reasons,
-        "comparison_deferred" if groupable else "ordered_rules",
-    )
+    if not groupable:
+        _append_once(comparison_reasons, "ordered_rules")
     return CompiledConditionalPricingPolicy(
         source_policy=policy,
         policy_present=policy_present,
@@ -1238,6 +1446,500 @@ def _compile_policy(
         effective_partition=effective_partition,
         grouping_inhibition_reasons=tuple(grouping_reasons),
         comparison_inhibition_reasons=tuple(comparison_reasons),
+    )
+
+
+def _comparison_partition(
+    compiled: CompiledConditionalPricingPolicy,
+) -> WeeklyCoverage:
+    coverages = tuple(rule.coverage for rule in compiled.ordered_rules)
+    return partition_weekly_segments(*coverages, compiled.default_coverage)
+
+
+def _vectors_covering_segments(
+    compiled: CompiledConditionalPricingPolicy,
+    segments: WeeklyCoverage,
+) -> tuple[EffectivePriceVector | None, ...]:
+    """Align sorted partition cells with sorted target segments in one sweep."""
+    regions = iter(compiled.effective_partition)
+    region = next(regions, None)
+    vectors: list[EffectivePriceVector | None] = []
+    for segment in segments:
+        while region is not None and (
+            region.segment.weekday_index < segment.weekday_index
+            or (
+                region.segment.weekday_index == segment.weekday_index
+                and region.segment.end_minute <= segment.start_minute
+            )
+        ):
+            region = next(regions, None)
+        if (
+            region is not None
+            and region.segment.weekday_index == segment.weekday_index
+            and region.segment.start_minute <= segment.start_minute
+            and segment.end_minute <= region.segment.end_minute
+        ):
+            vectors.append(region.effective_prices)
+        else:
+            vectors.append(None)
+    return tuple(vectors)
+
+
+def _resolved_effective_value(
+    value: EffectivePriceValue | None,
+    profile: ProviderProfile,
+) -> ResolvedPriceValue | None:
+    if value is None:
+        return None
+    field_path = profile.pricing_override_base_paths.get(value.dimension)
+    if field_path is None:
+        return None
+    resolved = resolve_price_value(field_path, value.raw_value, profile)
+    if resolved is None or resolved.price_rule != value.price_rule:
+        return None
+    return resolved
+
+
+def _normalized_movement_ratio(
+    old_value: ResolvedPriceValue,
+    new_value: ResolvedPriceValue,
+) -> Fraction | None:
+    old_exact = old_value.normalized_exact_value
+    if old_exact == 0:
+        return None
+    return (new_value.normalized_exact_value - old_exact) / abs(old_exact)
+
+
+def _compare_dimension(
+    dimension: str,
+    old_entry: EffectivePriceValue | None,
+    new_entry: EffectivePriceValue | None,
+    profile: ProviderProfile,
+) -> PriceDimensionComparison:
+    old_value = _resolved_effective_value(old_entry, profile)
+    new_value = _resolved_effective_value(new_entry, profile)
+    if old_entry is not None and old_value is None:
+        return PriceDimensionComparison(
+            dimension,
+            None,
+            new_value,
+            "unknown",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    if new_entry is not None and new_value is None:
+        return PriceDimensionComparison(
+            dimension,
+            old_value,
+            None,
+            "unknown",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    present = old_value or new_value
+    if present is None:
+        return PriceDimensionComparison(
+            dimension,
+            None,
+            None,
+            "unknown",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    if old_value is None or new_value is None:
+        return PriceDimensionComparison(
+            dimension=dimension,
+            old_value=old_value,
+            new_value=new_value,
+            direction="coverage",
+            delta=None,
+            percentage=None,
+            normalized_movement_ratio=None,
+            unit_label=present.price_rule.unit_label,
+            comparison_group=present.price_rule.comparison_group,
+        )
+    if (
+        old_value.price_rule.unit_label != new_value.price_rule.unit_label
+        or old_value.price_rule.comparison_group is None
+        or old_value.price_rule.comparison_group
+        != new_value.price_rule.comparison_group
+    ):
+        return PriceDimensionComparison(
+            dimension=dimension,
+            old_value=old_value,
+            new_value=new_value,
+            direction="unknown",
+            delta=None,
+            percentage=None,
+            normalized_movement_ratio=None,
+            unit_label=None,
+            comparison_group=None,
+        )
+    old_exact = old_value.normalized_exact_value
+    new_exact = new_value.normalized_exact_value
+    exact_delta = new_exact - old_exact
+    direction: PriceMovementDirection
+    if exact_delta > 0:
+        direction = "higher"
+    elif exact_delta < 0:
+        direction = "lower"
+    else:
+        direction = "unchanged"
+    ratio = _normalized_movement_ratio(old_value, new_value)
+    return PriceDimensionComparison(
+        dimension=dimension,
+        old_value=old_value,
+        new_value=new_value,
+        direction=direction,
+        delta=_finite_fraction_projection(exact_delta),
+        percentage=(
+            None
+            if ratio is None
+            else _finite_fraction_projection(ratio * 100)
+        ),
+        normalized_movement_ratio=ratio,
+        unit_label=old_value.price_rule.unit_label,
+        comparison_group=old_value.price_rule.comparison_group,
+    )
+
+
+def _movement_direction(
+    directions: tuple[PriceMovementDirection | BandMovementDirection, ...],
+) -> BandMovementDirection:
+    if not directions or "unknown" in directions:
+        return "unknown"
+    has_coverage = "coverage" in directions
+    monetary = {direction for direction in directions if direction != "coverage"}
+    if has_coverage:
+        return "coverage" if monetary <= {"unchanged"} else "unknown"
+    has_higher = "higher" in monetary
+    has_lower = "lower" in monetary
+    if has_higher and has_lower:
+        return "mixed"
+    if has_higher and monetary <= {"higher", "unchanged"}:
+        return "higher"
+    if has_lower and monetary <= {"lower", "unchanged"}:
+        return "lower"
+    return "unchanged"
+
+
+def _common_percentage(
+    dimensions: tuple[PriceDimensionComparison, ...],
+) -> float | None:
+    comparable = tuple(
+        fact
+        for fact in dimensions
+        if fact.direction in {"higher", "lower", "unchanged"}
+    )
+    if not comparable or len(comparable) != len(dimensions):
+        return None
+    if any(
+        fact.unit_label is None or fact.comparison_group is None
+        for fact in comparable
+    ):
+        return None
+    bases = {(fact.unit_label, fact.comparison_group) for fact in comparable}
+    if len(bases) != 1:
+        return None
+    ratios = tuple(fact.normalized_movement_ratio for fact in comparable)
+    if any(value is None for value in ratios):
+        return None
+    first_ratio = ratios[0]
+    if all(value == first_ratio for value in ratios[1:]):
+        return comparable[0].percentage
+    return None
+
+
+def _has_single_comparison_basis(
+    dimensions: tuple[PriceDimensionComparison, ...],
+) -> bool:
+    if not dimensions or any(
+        fact.unit_label is None or fact.comparison_group is None
+        for fact in dimensions
+    ):
+        return False
+    return len(
+        {(fact.unit_label, fact.comparison_group) for fact in dimensions}
+    ) == 1
+
+
+def _compare_vectors(
+    old_vector: EffectivePriceVector | None,
+    new_vector: EffectivePriceVector | None,
+    profile: ProviderProfile,
+) -> tuple[PriceDimensionComparison, ...]:
+    old_entries = (
+        {}
+        if old_vector is None
+        else {entry.dimension: entry for entry in old_vector.entries}
+    )
+    new_entries = (
+        {}
+        if new_vector is None
+        else {entry.dimension: entry for entry in new_vector.entries}
+    )
+    return tuple(
+        _compare_dimension(
+            dimension,
+            old_entries.get(dimension),
+            new_entries.get(dimension),
+            profile,
+        )
+        for dimension in sorted(old_entries.keys() | new_entries.keys())
+    )
+
+
+def _band_comparison(
+    coverage: WeeklyCoverage,
+    old_vector: EffectivePriceVector | None,
+    new_vector: EffectivePriceVector | None,
+    profile: ProviderProfile,
+    provenance: ComparisonMode,
+) -> PriceBandComparison:
+    dimensions = _compare_vectors(old_vector, new_vector, profile)
+    direction = (
+        _movement_direction(tuple(fact.direction for fact in dimensions))
+        if _has_single_comparison_basis(dimensions)
+        else "unknown"
+    )
+    return PriceBandComparison(
+        coverage=_normalize_weekly_segments(coverage),
+        dimensions=dimensions,
+        direction=direction,
+        percentage=(
+            _common_percentage(dimensions)
+            if direction in {"higher", "lower", "unchanged"}
+            else None
+        ),
+        provenance=provenance,
+    )
+
+
+def _dominant_band_identity(
+    compiled: CompiledConditionalPricingPolicy,
+    profile: ProviderProfile,
+) -> PriceVectorIdentity | None:
+    bands = compiled.effective_bands
+    if len(bands) < 2:
+        return None
+
+    dimensions = tuple(
+        entry.dimension for entry in bands[0].effective_prices.entries
+    )
+    if not dimensions:
+        return None
+
+    expected_bases: tuple[tuple[str, str], ...] | None = None
+    normalized_vectors: list[tuple[Fraction, ...]] = []
+    maxima: list[Fraction] | None = None
+    for band in bands:
+        entries = band.effective_prices.entries
+        if tuple(entry.dimension for entry in entries) != dimensions:
+            return None
+
+        resolved_values = tuple(
+            _resolved_effective_value(entry, profile) for entry in entries
+        )
+        if any(value is None for value in resolved_values):
+            return None
+        complete_values = tuple(
+            value for value in resolved_values if value is not None
+        )
+        if any(
+            value.price_rule.unit_label is None
+            or value.price_rule.comparison_group is None
+            for value in complete_values
+        ):
+            return None
+        bases = tuple(
+            (
+                value.price_rule.unit_label,
+                value.price_rule.comparison_group,
+            )
+            for value in complete_values
+        )
+        if expected_bases is None:
+            expected_bases = bases
+        elif bases != expected_bases:
+            return None
+
+        normalized = tuple(
+            value.normalized_exact_value for value in complete_values
+        )
+        normalized_vectors.append(normalized)
+        if maxima is None:
+            maxima = list(normalized)
+        else:
+            for index, value in enumerate(normalized):
+                if value > maxima[index]:
+                    maxima[index] = value
+
+    if maxima is None:
+        return None
+    maximum_vector = tuple(maxima)
+    candidate_indices = tuple(
+        index
+        for index, vector in enumerate(normalized_vectors)
+        if vector == maximum_vector
+    )
+    if len(candidate_indices) != 1:
+        return None
+
+    candidate_index = candidate_indices[0]
+    if not any(
+        any(
+            candidate_value > other_value
+            for candidate_value, other_value in zip(
+                maximum_vector, other_vector, strict=True
+            )
+        )
+        for index, other_vector in enumerate(normalized_vectors)
+        if index != candidate_index
+    ):
+        return None
+    return bands[candidate_index].effective_prices.canonical_identity
+
+
+def _aggregate_band_direction(
+    bands: tuple[PriceBandComparison, ...],
+) -> BandMovementDirection:
+    return _movement_direction(tuple(band.direction for band in bands))
+
+
+def _build_conditional_comparison(
+    transition: PricingTransition,
+    old_compiled: CompiledConditionalPricingPolicy,
+    new_compiled: CompiledConditionalPricingPolicy,
+    profile: ProviderProfile,
+) -> tuple[
+    ConditionalPricingComparison | None,
+    tuple[ComparisonInhibitionReason, ...],
+]:
+    reasons: list[ComparisonInhibitionReason] = []
+    for compiled in (old_compiled, new_compiled):
+        for reason in compiled.comparison_inhibition_reasons:
+            _append_once(reasons, reason)
+    if reasons:
+        return None, tuple(reasons)
+    if old_compiled.base_prices is None or new_compiled.base_prices is None:
+        return None, ("incomplete_comparison_vector",)
+
+    displayed = old_compiled if transition == "removed" else new_compiled
+    peak_identity = _dominant_band_identity(displayed, profile)
+    compared: list[
+        tuple[PriceBandComparison, EffectivePriceVector | None]
+    ] = []
+    mode: ComparisonMode
+    aggregate_allowed = True
+    if old_compiled.policy_present != new_compiled.policy_present:
+        mode = "grouped-vs-default"
+        scheduled = new_compiled if new_compiled.policy_present else old_compiled
+        default = old_compiled if new_compiled.policy_present else new_compiled
+        for band in scheduled.effective_bands:
+            old_vector, new_vector = (
+                (default.base_prices, band.effective_prices)
+                if new_compiled.policy_present
+                else (band.effective_prices, default.base_prices)
+            )
+            compared.append(
+                (
+                    _band_comparison(
+                        band.coverage,
+                        old_vector,
+                        new_vector,
+                        profile,
+                        mode,
+                    ),
+                    band.effective_prices,
+                )
+            )
+    else:
+        old_partition = _comparison_partition(old_compiled)
+        new_partition = _comparison_partition(new_compiled)
+        if old_partition == new_partition:
+            mode = "same-partition"
+            segments = old_partition
+        else:
+            mode = "exact-regions"
+            # A common finite refinement preserves exact old/new vector facts
+            # without pretending the different policy partitions are one
+            # comparable envelope.
+            segments = partition_weekly_segments(old_partition, new_partition)
+            aggregate_allowed = False
+            _append_once(reasons, "partition_mismatch")
+        buckets: dict[
+            tuple[PriceVectorIdentity, PriceVectorIdentity],
+            tuple[EffectivePriceVector, EffectivePriceVector, list[WeeklySegment]],
+        ] = {}
+        old_vectors = _vectors_covering_segments(old_compiled, segments)
+        new_vectors = _vectors_covering_segments(new_compiled, segments)
+        for segment, old_vector, new_vector in zip(
+            segments,
+            old_vectors,
+            new_vectors,
+            strict=True,
+        ):
+            if old_vector is None or new_vector is None:
+                _append_once(reasons, "incomplete_comparison_vector")
+                continue
+            key = (old_vector.canonical_identity, new_vector.canonical_identity)
+            if key not in buckets:
+                buckets[key] = (old_vector, new_vector, [])
+            buckets[key][2].append(segment)
+        for old_vector, new_vector, coverage in buckets.values():
+            compared.append(
+                (
+                    _band_comparison(
+                        tuple(coverage), old_vector, new_vector, profile, mode
+                    ),
+                    old_vector if transition == "removed" else new_vector,
+                )
+            )
+
+    for band, _displayed_vector in compared:
+        if (
+            any(fact.direction == "unknown" for fact in band.dimensions)
+            or not _has_single_comparison_basis(band.dimensions)
+        ):
+            _append_once(reasons, "incompatible_price_basis")
+    peak_matches = tuple(
+        index
+        for index, (_band, displayed_vector) in enumerate(compared)
+        if peak_identity is not None
+        and displayed_vector is not None
+        and displayed_vector.canonical_identity == peak_identity
+    )
+    peak_index = peak_matches[0] if len(peak_matches) == 1 else None
+    peak_match_set = set(peak_matches)
+    bands = tuple(
+        replace(band, is_peak=index in peak_match_set)
+        for index, (band, _displayed_vector) in enumerate(compared)
+    )
+    if not bands:
+        return None, tuple(reasons)
+    aggregate_direction = (
+        _aggregate_band_direction(bands)
+        if aggregate_allowed and "incompatible_price_basis" not in reasons
+        else None
+    )
+    return (
+        ConditionalPricingComparison(
+            mode=mode,
+            bands=bands,
+            aggregate_direction=aggregate_direction,
+            inhibition_reasons=tuple(reasons),
+            peak_band_index=peak_index,
+        ),
+        tuple(reasons),
     )
 
 
@@ -1441,6 +2143,336 @@ def _explicit_only_compiled_policy(
     )
 
 
+def _policy_dimensions(
+    interpretation: ConditionalPricingInterpretation,
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                assignment.dimension
+                for policy in (interpretation.old_policy, interpretation.new_policy)
+                if policy is not None
+                for rule in policy.rules
+                for assignment in rule.explicit_prices
+            }
+        )
+    )
+
+
+def _dimension_column_rule(
+    interpretation: ConditionalPricingInterpretation,
+    dimension: str,
+) -> ResolvedPriceRule | None:
+    rules = tuple(
+        assignment.price_rule
+        for policy in (interpretation.old_policy, interpretation.new_policy)
+        if policy is not None
+        for rule in policy.rules
+        for assignment in rule.explicit_prices
+        if assignment.dimension == dimension
+    )
+    if not rules:
+        return None
+    first = rules[0]
+    if (
+        first.match_source == "unmatched"
+        or first.comparison_group is None
+        or not first.unit_label.strip()
+        or any(
+            rule.unit_label != first.unit_label
+            or rule.comparison_group != first.comparison_group
+            for rule in rules[1:]
+        )
+    ):
+        return None
+    return first
+
+
+def decide_sibling_base_price_absorption(
+    event: PricingComparisonEvent,
+    profile: ProviderProfile,
+    interpretation: ConditionalPricingInterpretation,
+    *,
+    consumed_references: tuple[SourceChangeReference, ...] = (),
+) -> tuple[AbsorbedBasePriceChange, ...]:
+    """Return pure occurrence-aware sibling decisions; never mutate the edge."""
+    if event.identity != interpretation.identity:
+        return ()
+    if (
+        not interpretation.semantic_change
+        or interpretation.state == "raw-fallback"
+        or event.old_model_metadata is None
+        or event.new_model_metadata is None
+        or "missing_event_snapshot" in interpretation.comparison_inhibition_reasons
+    ):
+        return ()
+
+    sources = _source_references(event)
+    consumed = set(consumed_references)
+    decisions: list[AbsorbedBasePriceChange] = []
+    for dimension in _policy_dimensions(interpretation):
+        field_path = profile.pricing_override_base_paths.get(dimension)
+        column_rule = _dimension_column_rule(interpretation, dimension)
+        if field_path is None or column_rule is None:
+            continue
+        sibling_rule = resolve_price_rule(field_path, profile)
+        if (
+            sibling_rule.match_source == "unmatched"
+            or sibling_rule.comparison_group is None
+            or sibling_rule.unit_label != column_rule.unit_label
+            or sibling_rule.comparison_group != column_rule.comparison_group
+        ):
+            continue
+        old_present, expected_old = _exact_metadata_entry(
+            event.old_model_metadata, field_path
+        )
+        new_present, expected_new = _exact_metadata_entry(
+            event.new_model_metadata, field_path
+        )
+        # A sibling row uses ``None`` for an absent side.  A stored JSON null
+        # is present but has no resolvable monetary value, so treating it as
+        # absence would manufacture an absorption decision.
+        if (old_present and expected_old is None) or (
+            new_present and expected_new is None
+        ):
+            continue
+        expected_old_value = expected_old if old_present else None
+        expected_new_value = expected_new if new_present else None
+        expected_old_json = _canonical_json(expected_old_value)
+        expected_new_json = _canonical_json(expected_new_value)
+        matching = tuple(
+            source
+            for source in sources
+            if source.reference.field_name == field_path
+            and source.reference.old_value_canonical_json == expected_old_json
+            and source.reference.new_value_canonical_json == expected_new_json
+        )
+        if not matching:
+            continue
+        # One schedule/base fact justifies one occurrence. If that canonical
+        # occurrence is already consumed, a repeated duplicate is not a second
+        # independent justification and remains ordinary.
+        source = matching[0]
+        if source.reference in consumed:
+            continue
+        movement = resolve_direct_price_movement(
+            field_path,
+            source.old_value,
+            source.new_value,
+            profile,
+            source_change=source.reference,
+        )
+        if (
+            movement is None
+            or movement.unit_label != column_rule.unit_label
+            or movement.comparison_group != column_rule.comparison_group
+        ):
+            continue
+        decisions.append(
+            AbsorbedBasePriceChange(
+                dimension=dimension,
+                source_change=source.reference,
+                movement=movement,
+            )
+        )
+        consumed.add(source.reference)
+    return tuple(decisions)
+
+
+def _displayed_policy(
+    interpretation: ConditionalPricingInterpretation,
+) -> ConditionalPricingPolicy | None:
+    return (
+        interpretation.old_policy
+        if interpretation.transition == "removed"
+        else interpretation.new_policy
+    )
+
+
+def _displayed_compiled_policy(
+    interpretation: ConditionalPricingInterpretation,
+) -> CompiledConditionalPricingPolicy | None:
+    return (
+        interpretation.old_compiled_policy
+        if interpretation.transition == "removed"
+        else interpretation.new_compiled_policy
+    )
+
+
+def _raw_displayed_rule_count(
+    interpretation: ConditionalPricingInterpretation,
+) -> int:
+    if not interpretation.source_changes:
+        return 0
+    source = interpretation.source_changes[0]
+    raw = (
+        source.old_value
+        if interpretation.transition == "removed"
+        else source.new_value
+    )
+    return len(raw) if isinstance(raw, tuple) else 0
+
+
+def _fact_identity(fact: DirectPriceMovementFact) -> tuple[Any, ...]:
+    if fact.source_change is not None:
+        return ("source", fact.source_change.transition_key)
+
+    def resolved_identity(
+        value: ResolvedPriceValue | None,
+    ) -> tuple[Any, ...] | None:
+        if value is None:
+            return None
+        return (
+            value.field_path,
+            _canonical_json(value.raw_value),
+            value.raw_display,
+            value.normalized_value,
+            value.price_rule,
+        )
+
+    return (
+        "value",
+        fact.field_path,
+        resolved_identity(fact.old_value),
+        resolved_identity(fact.new_value),
+        fact.direction,
+        fact.delta,
+        fact.percentage,
+        fact.unit_label,
+        fact.comparison_group,
+    )
+
+
+def _ordinary_model_bucket(
+    facts: tuple[DirectPriceMovementFact, ...],
+) -> ModelPriceBucket:
+    directions = {fact.direction for fact in facts}
+    if "higher" in directions and "lower" in directions:
+        return "mixed"
+    if "higher" in directions:
+        return "higher"
+    if "lower" in directions:
+        return "lower"
+    if "coverage" in directions:
+        return "coverage"
+    return "none"
+
+
+def build_model_pricing_accounting(
+    interpretation: ConditionalPricingInterpretation | None,
+    *,
+    direct_price_facts: tuple[DirectPriceMovementFact, ...] = (),
+) -> ModelPricingAccounting:
+    """Build one immutable pre-filter record, ready for later ordinary facts."""
+    unique_facts: list[DirectPriceMovementFact] = []
+    seen_facts: set[tuple[Any, ...]] = set()
+    existing_facts = (
+        ()
+        if interpretation is None or interpretation.accounting is None
+        else interpretation.accounting.direct_price_facts
+    )
+    for fact in (*existing_facts, *direct_price_facts):
+        if not isinstance(fact, DirectPriceMovementFact):
+            raise TypeError("direct_price_facts must contain DirectPriceMovementFact values")
+        identity = _fact_identity(fact)
+        if identity not in seen_facts:
+            seen_facts.add(identity)
+            unique_facts.append(fact)
+
+    conditional_changed = bool(
+        interpretation is not None and interpretation.semantic_change
+    )
+    policy_count = 1 if conditional_changed else 0
+    if conditional_changed and interpretation is not None:
+        displayed_policy = _displayed_policy(interpretation)
+        source_rule_count = (
+            len(displayed_policy.rules)
+            if displayed_policy is not None
+            else _raw_displayed_rule_count(interpretation)
+        )
+        dimensions = _policy_dimensions(interpretation)
+        if not dimensions and interpretation.accounting is not None:
+            # A finalized raw fallback can retain a safely recognized explicit
+            # dimension union even though selector parsing did not yield a
+            # ConditionalPricingPolicy. Rebuilding with later ordinary facts
+            # must preserve that contribution.
+            dimensions = interpretation.accounting.schedule_dimensions
+        displayed_compiled = _displayed_compiled_policy(interpretation)
+        effective_band_count = (
+            len(displayed_compiled.effective_bands)
+            if displayed_compiled is not None
+            else 0
+        )
+        model_bucket: ModelPriceBucket = "conditional"
+    else:
+        source_rule_count = 0
+        dimensions = ()
+        effective_band_count = 0
+        model_bucket = _ordinary_model_bucket(tuple(unique_facts))
+
+    return ModelPricingAccounting(
+        direct_price_facts=tuple(unique_facts),
+        direct_price_field_count=len(unique_facts),
+        conditional_policy_count=policy_count,
+        source_rule_count=source_rule_count,
+        schedule_dimensions=dimensions,
+        schedule_dimension_count=len(dimensions),
+        effective_band_count=effective_band_count,
+        model_bucket=model_bucket,
+    )
+
+
+def _raw_registered_dimensions(
+    interpretation: ConditionalPricingInterpretation,
+    profile: ProviderProfile,
+) -> tuple[str, ...]:
+    dimensions: set[str] = set()
+    for source in interpretation.source_changes:
+        for raw_policy in (source.old_value, source.new_value):
+            if not isinstance(raw_policy, tuple):
+                continue
+            for raw_rule in raw_policy:
+                if not isinstance(raw_rule, Mapping):
+                    continue
+                dimensions.update(
+                    key
+                    for key in raw_rule
+                    if key in profile.pricing_override_base_paths
+                )
+    return tuple(sorted(dimensions))
+
+
+def _finalize_interpretation(
+    event: PricingComparisonEvent,
+    profile: ProviderProfile,
+    interpretation: ConditionalPricingInterpretation,
+) -> ConditionalPricingInterpretation:
+    decisions = decide_sibling_base_price_absorption(
+        event,
+        profile,
+        interpretation,
+    )
+    accounting = build_model_pricing_accounting(
+        interpretation,
+        direct_price_facts=tuple(decision.movement for decision in decisions),
+    )
+    if interpretation.semantic_change and not accounting.schedule_dimensions:
+        raw_dimensions = _raw_registered_dimensions(interpretation, profile)
+        if raw_dimensions:
+            accounting = replace(
+                accounting,
+                schedule_dimensions=raw_dimensions,
+                schedule_dimension_count=len(raw_dimensions),
+            )
+    return replace(
+        interpretation,
+        absorbed_base_price_changes=tuple(
+            decision.source_change for decision in decisions
+        ),
+        accounting=accounting,
+    )
+
+
 def interpret_conditional_pricing(
     event: PricingComparisonEvent,
     profile: ProviderProfile,
@@ -1460,18 +2492,26 @@ def interpret_conditional_pricing(
     first_parent = parent_changes[0]
     transition = _transition(first_parent.old_value, first_parent.new_value)
     if len(parent_changes) > 1:
-        return _raw_fallback(
+        return _finalize_interpretation(
             event,
-            parent_changes,
-            "multiple_parent_changes",
-            transition=_aggregate_parent_transition(parent_changes),
+            profile,
+            _raw_fallback(
+                event,
+                parent_changes,
+                "multiple_parent_changes",
+                transition=_aggregate_parent_transition(parent_changes),
+            ),
         )
     if first_parent.old_value is None and first_parent.new_value is None:
-        return _raw_fallback(
+        return _finalize_interpretation(
             event,
-            parent_changes,
-            "malformed_parent_transition",
-            transition=transition,
+            profile,
+            _raw_fallback(
+                event,
+                parent_changes,
+                "malformed_parent_transition",
+                transition=transition,
+            ),
         )
     old_policy: ConditionalPricingPolicy | None = None
     new_policy: ConditionalPricingPolicy | None = None
@@ -1492,13 +2532,17 @@ def interpret_conditional_pricing(
             if all(reason == side_errors[0] for reason in side_errors)
             else "multiple_policy_errors"
         )
-        return _raw_fallback(
+        return _finalize_interpretation(
             event,
-            parent_changes,
-            fallback_reason,
-            transition=transition,
-            old_policy=old_policy,
-            new_policy=new_policy,
+            profile,
+            _raw_fallback(
+                event,
+                parent_changes,
+                fallback_reason,
+                transition=transition,
+                old_policy=old_policy,
+                new_policy=new_policy,
+            ),
         )
 
     snapshots_complete = (
@@ -1557,28 +2601,41 @@ def interpret_conditional_pricing(
         new_compiled,
         structural,
     )
+    comparison: ConditionalPricingComparison | None = None
+    if state == "grouped-schedule" and semantic_change:
+        comparison, bounded_reasons = _build_conditional_comparison(
+            transition,
+            old_compiled,
+            new_compiled,
+            profile,
+        )
+        comparison_reasons = list(bounded_reasons)
     if state == "ordered-rules":
         old_compiled = _explicit_only_compiled_policy(old_compiled)
         new_compiled = _explicit_only_compiled_policy(new_compiled)
-    return ConditionalPricingInterpretation(
-        identity=event.identity,
-        state=state,
-        semantic_change=semantic_change,
-        fallback_reason=None,
-        grouping_inhibition_reasons=tuple(grouping_reasons),
-        comparison_inhibition_reasons=tuple(comparison_reasons),
-        transition=transition,
-        old_policy=old_policy,
-        new_policy=new_policy,
-        old_compiled_policy=old_compiled,
-        new_compiled_policy=new_compiled,
-        absorbed_base_price_changes=(),
-        comparison=None,
-        accounting=None,
-        source_changes=parent_changes,
-        structural_comparison=structural,
-        canonical_evidence_changed=(
-            first_parent.reference.old_value_canonical_json
-            != first_parent.reference.new_value_canonical_json
+    return _finalize_interpretation(
+        event,
+        profile,
+        ConditionalPricingInterpretation(
+            identity=event.identity,
+            state=state,
+            semantic_change=semantic_change,
+            fallback_reason=None,
+            grouping_inhibition_reasons=tuple(grouping_reasons),
+            comparison_inhibition_reasons=tuple(comparison_reasons),
+            transition=transition,
+            old_policy=old_policy,
+            new_policy=new_policy,
+            old_compiled_policy=old_compiled,
+            new_compiled_policy=new_compiled,
+            absorbed_base_price_changes=(),
+            comparison=comparison,
+            accounting=None,
+            source_changes=parent_changes,
+            structural_comparison=structural,
+            canonical_evidence_changed=(
+                first_parent.reference.old_value_canonical_json
+                != first_parent.reference.new_value_canonical_json
+            ),
         ),
     )

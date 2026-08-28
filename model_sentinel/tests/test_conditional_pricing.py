@@ -1,25 +1,36 @@
 from __future__ import annotations
 
 import ast
+import math
 from dataclasses import FrozenInstanceError, replace
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, get_args
+from unittest.mock import patch
 
 import pytest
 
 import model_sentinel.conditional_pricing as conditional_pricing
 from model_sentinel.conditional_pricing import (
+    AbsorbedBasePriceChange,
     ComparisonInhibitionReason,
+    ConditionalPricingComparison,
+    DirectPriceMovementFact,
+    EffectivePriceValue,
     EffectivePriceVector,
     FallbackReason,
     GroupingInhibitionReason,
     LiveComparisonIdentity,
+    ModelPricingAccounting,
     PricingComparisonEvent,
     StoredComparisonIdentity,
     WeeklySegment,
+    build_model_pricing_accounting,
     compile_weekly_segments,
+    decide_sibling_base_price_absorption,
     interpret_conditional_pricing,
     partition_weekly_segments,
+    resolve_direct_price_movement,
     weekly_complement,
     weekly_coverage_contains,
     weekly_segments_overlap,
@@ -32,6 +43,10 @@ from model_sentinel.provider_profiles import (
     ConditionalPricingPolicySemantics,
     PriceDisplayRule,
     ProviderProfile,
+)
+from tests.conditional_pricing_fixtures import (
+    SYNTHETIC_SCHEDULED_RATE_EXPECTED_ACCOUNTING,
+    synthetic_scheduled_rate_models,
 )
 
 
@@ -144,8 +159,9 @@ def test_parent_transition_is_classified_with_final_semantic_equality(
     assert result.transition == transition
     assert result.state == "grouped-schedule"
     assert result.semantic_change is True
-    assert result.comparison is None
-    assert result.accounting is None
+    assert isinstance(result.comparison, ConditionalPricingComparison)
+    assert isinstance(result.accounting, ModelPricingAccounting)
+    assert result.accounting.conditional_policy_count == 1
     assert result.absorbed_base_price_changes == ()
 
 
@@ -592,6 +608,65 @@ def _alternate_profile() -> ProviderProfile:
     )
 
 
+def _same_basis_ratio_profile() -> ProviderProfile:
+    """Two synthetic dimensions with one comparable basis and unlike factors."""
+    profile = _alternate_profile()
+    return replace(
+        profile,
+        price_leaf_rules={
+            "prompt_rate": PriceDisplayRule(
+                unit_label="/synthetic comparable unit",
+                multiplier=1,
+                divisor=1,
+                comparison_group="usd_per_synthetic_comparable_unit",
+            ),
+            "completion_rate": PriceDisplayRule(
+                unit_label="/synthetic comparable unit",
+                multiplier=1_000,
+                divisor=1,
+                comparison_group="usd_per_synthetic_comparable_unit",
+            ),
+        },
+        pricing_override_base_paths={
+            "prompt_rate": "pricing.prompt_rate",
+            "completion_rate": "pricing.completion_rate",
+        },
+    )
+
+
+def _exact_price_profile(
+    *, comparison_group: str | None = "synthetic_exact"
+) -> ProviderProfile:
+    return replace(
+        OPENROUTER_PROFILE,
+        price_leaf_rules={
+            **OPENROUTER_PROFILE.price_leaf_rules,
+            "prompt": PriceDisplayRule(
+                unit_label="/synthetic exact unit",
+                multiplier=1,
+                divisor=1,
+                comparison_group=comparison_group,
+            ),
+        },
+    )
+
+
+def _ratio_metadata(
+    overrides: list[dict[str, Any]],
+    *,
+    prompt_rate: str = "1.0",
+    completion_rate: str = "0.0010",
+) -> dict[str, Any]:
+    return {
+        "id": MODEL_ID,
+        "pricing": {
+            "prompt_rate": prompt_rate,
+            "completion_rate": completion_rate,
+            "overrides": overrides,
+        },
+    }
+
+
 def _profile_with_weekday_callbacks(
     *,
     parse_value=_weekdays,
@@ -770,6 +845,58 @@ def test_matched_price_rule_with_nonnumeric_assignment_falls_back() -> None:
     assert result.fallback_reason == "unresolved_price_dimension"
 
 
+@pytest.mark.parametrize(
+    "raw_value",
+    (
+        "1e-1000000",
+        "1." + ("2" * 1_000),
+    ),
+)
+def test_resource_amplifying_price_assignment_falls_back_as_unresolved(
+    raw_value: str,
+) -> None:
+    result = _interpret(
+        None,
+        [{"days_utc": ["monday"], "prompt_rate": raw_value}],
+        profile=_alternate_profile(),
+    )
+
+    assert result is not None
+    assert result.state == "raw-fallback"
+    assert result.fallback_reason == "unresolved_price_dimension"
+    assert result.new_policy is None
+    assert result.comparison is None
+
+
+def test_price_assignment_must_survive_complete_provider_normalization() -> None:
+    policy = [{"utc_days": ["monday"], "prompt": "1e308"}]
+
+    result = _interpret_complete(None, policy)
+
+    assert conditional_pricing.resolve_price_value(
+        "pricing.prompt", "1e308", OPENROUTER_PROFILE
+    ) is None
+    assert result is not None
+    assert result.state == "raw-fallback"
+    assert result.fallback_reason == "unresolved_price_dimension"
+    assert result.new_policy is None
+    assert result.new_compiled_policy is None
+    assert result.comparison is None
+
+
+def test_exact_underflow_assignment_survives_complete_provider_normalization() -> None:
+    policy = [{"utc_days": ["monday"], "prompt": "1e-400"}]
+
+    result = _interpret_complete(None, policy)
+
+    assert result is not None and result.new_policy is not None
+    assert result.state == "grouped-schedule"
+    assignment = result.new_policy.rules[0].explicit_prices[0]
+    assert assignment.raw_value == "1e-400"
+    assert result.new_compiled_policy is not None
+    assert len(result.new_compiled_policy.effective_bands) == 2
+
+
 def test_missing_event_snapshot_inhibits_grouping_and_comparison_but_not_parsing() -> None:
     result = _interpret(
         None,
@@ -910,11 +1037,14 @@ def test_reason_code_types_cover_every_task_two_emission() -> None:
         "overlapping_weekly_coverage",
     }
     assert set(get_args(ComparisonInhibitionReason)) == {
-        "comparison_deferred",
         "incomplete_base_vector",
         "missing_event_snapshot",
         "missing_price_comparison_group",
         "ordered_rules",
+        "raw_fallback",
+        "partition_mismatch",
+        "incompatible_price_basis",
+        "incomplete_comparison_vector",
     }
 
 
@@ -1148,13 +1278,14 @@ def test_fallback_grouping_and_comparison_reasons_are_distinct_channels() -> Non
     assert raw is not None and raw.state == "raw-fallback"
     assert raw.fallback_reason == "unknown_rule_key"
     assert raw.grouping_inhibition_reasons == ()
-    assert raw.comparison_inhibition_reasons == ()
+    assert raw.comparison_inhibition_reasons == ("raw_fallback",)
     assert ordered is not None and ordered.fallback_reason is None
     assert "non_time_condition" in ordered.grouping_inhibition_reasons
     assert "non_time_condition" not in ordered.comparison_inhibition_reasons
     assert grouped is not None and grouped.fallback_reason is None
     assert grouped.grouping_inhibition_reasons == ()
-    assert grouped.comparison_inhibition_reasons == ("comparison_deferred",)
+    assert grouped.comparison_inhibition_reasons == ()
+    assert grouped.comparison is not None
 
 
 def test_grouped_rules_preserve_explicit_and_base_inherited_effective_values() -> None:
@@ -1385,7 +1516,9 @@ def test_disjoint_source_reorder_is_evidence_only_semantic_noise() -> None:
     assert result.canonical_evidence_changed
     assert result.semantic_change is False
     assert result.comparison is None
-    assert result.accounting is None
+    assert result.accounting is not None
+    assert result.accounting.conditional_policy_count == 0
+    assert result.accounting.model_bucket == "none"
     assert result.absorbed_base_price_changes == ()
 
 
@@ -1840,3 +1973,1077 @@ def test_grouped_split_with_one_omitted_key_changes_explicit_assignment_function
         == result.new_compiled_policy.effective_partition
     )
     assert result.semantic_change is True
+
+
+# ---------------------------------------------------------------------------
+# Task 4: bounded movement, sibling absorption, and central accounting
+# ---------------------------------------------------------------------------
+
+
+def _interpret_event(
+    old_policy: Any,
+    new_policy: Any,
+    *,
+    old_metadata: dict[str, Any] | None,
+    new_metadata: dict[str, Any] | None,
+    siblings: tuple[FieldChange, ...] = (),
+    profile: ProviderProfile = OPENROUTER_PROFILE,
+):
+    event = _event(
+        FieldChange("pricing.overrides", old_policy, new_policy),
+        *siblings,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+    return event, interpret_conditional_pricing(event, profile)
+
+
+def test_grouped_schedule_vs_complete_default_emits_exact_band_facts() -> None:
+    old_metadata, new_metadata = synthetic_scheduled_rate_models()
+    new_policy = new_metadata["pricing"]["overrides"]
+
+    _event_value, result = _interpret_event(
+        None,
+        new_policy,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+
+    assert result is not None
+    assert isinstance(result.comparison, ConditionalPricingComparison)
+    assert result.comparison.mode == "grouped-vs-default"
+    assert result.comparison.aggregate_direction is None
+    assert result.comparison.inhibition_reasons == ("incompatible_price_basis",)
+    assert len(result.comparison.bands) == 2
+    by_dimension_direction = {
+        next(iter({fact.direction for fact in band.dimensions})): band
+        for band in result.comparison.bands
+    }
+    assert set(by_dimension_direction) == {"higher", "lower"}
+    for direction, expected_percentage in (
+        ("lower", -41.1764705882),
+        ("higher", 17.6470588235),
+    ):
+        band = by_dimension_direction[direction]
+        assert band.direction == "unknown"
+        assert band.percentage is None
+        assert all(fact.direction == direction for fact in band.dimensions)
+        assert all(
+            fact.percentage == pytest.approx(expected_percentage)
+            for fact in band.dimensions
+        )
+        assert len(
+            {
+                (fact.unit_label, fact.comparison_group)
+                for fact in band.dimensions
+            }
+        ) == 2
+    assert by_dimension_direction["higher"].is_peak is True
+    assert by_dimension_direction["lower"].is_peak is False
+    for band in result.comparison.bands:
+        assert {fact.dimension for fact in band.dimensions} == {
+            "completion",
+            "prompt",
+            "request",
+        }
+        assert all(fact.old_value is not None for fact in band.dimensions)
+        assert all(fact.new_value is not None for fact in band.dimensions)
+        assert all(fact.delta is not None for fact in band.dimensions)
+
+
+def test_same_partition_grouped_schedules_compare_per_dimension() -> None:
+    old = [
+        _window_rule(
+            "monday",
+            0,
+            100,
+            prompt="0.000003",
+            completion="0.000004",
+        )
+    ]
+    new = [
+        _window_rule(
+            "monday",
+            0,
+            100,
+            prompt="0.000004",
+            completion="0.000002",
+        )
+    ]
+    old_metadata = _complete_metadata(old)
+    new_metadata = _complete_metadata(new)
+    old_metadata["pricing"]["completion"] = "0.000004"
+    new_metadata["pricing"]["completion"] = "0.000002"
+
+    _event_value, result = _interpret_event(
+        old,
+        new,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+
+    assert result is not None and result.comparison is not None
+    assert result.comparison.mode == "same-partition"
+    assert result.comparison.inhibition_reasons == ()
+    assert any(
+        {fact.direction for fact in band.dimensions} == {"higher", "lower"}
+        and band.direction == "mixed"
+        for band in result.comparison.bands
+    )
+
+
+def test_partition_mismatch_keeps_only_exact_region_facts_and_no_envelope() -> None:
+    old = [_window_rule("monday", 0, 100, prompt="0.000003")]
+    new = [_window_rule("monday", 0, 200, prompt="0.000004")]
+
+    _event_value, result = _interpret_event(
+        old,
+        new,
+        old_metadata=_complete_metadata(old),
+        new_metadata=_complete_metadata(new),
+    )
+
+    assert result is not None
+    assert "partition_mismatch" in result.comparison_inhibition_reasons
+    assert result.comparison is not None
+    assert result.comparison.mode == "exact-regions"
+    assert result.comparison.aggregate_direction is None
+    assert "partition_mismatch" in result.comparison.inhibition_reasons
+    assert any(
+        segment.weekday_index == 0
+        for band in result.comparison.bands
+        for segment in band.coverage
+    )
+
+
+@pytest.mark.parametrize(
+    ("directions", "expected"),
+    (
+        (("unchanged", "higher"), "higher"),
+        (("unchanged", "lower"), "lower"),
+        (("higher", "lower"), "mixed"),
+        (("coverage", "unchanged"), "coverage"),
+        (("coverage", "higher"), "unknown"),
+        (("unknown", "higher"), "unknown"),
+        (("unchanged", "unchanged"), "unchanged"),
+    ),
+)
+def test_band_direction_contract_is_bounded(
+    directions: tuple[str, ...],
+    expected: str,
+) -> None:
+    assert conditional_pricing._movement_direction(directions) == expected
+
+
+@pytest.mark.parametrize(
+    "new_rule",
+    (
+        replace(
+            OPENROUTER_PROFILE.price_leaf_rules["prompt"],
+            unit_label="/synthetic incompatible unit",
+        ),
+        replace(
+            OPENROUTER_PROFILE.price_leaf_rules["prompt"],
+            comparison_group="synthetic_incompatible_group",
+        ),
+    ),
+)
+def test_dimension_comparison_rejects_mixed_unit_or_group(
+    new_rule: PriceDisplayRule,
+) -> None:
+    old_rule = conditional_pricing.resolve_price_rule(
+        "pricing.prompt", OPENROUTER_PROFILE
+    )
+    effective_new_rule = replace(
+        old_rule,
+        unit_label=new_rule.unit_label,
+        comparison_group=new_rule.comparison_group,
+    )
+    fact = conditional_pricing._compare_dimension(
+        "prompt",
+        EffectivePriceValue("prompt", "0.000001", old_rule),
+        EffectivePriceValue("prompt", "0.000002", effective_new_rule),
+        OPENROUTER_PROFILE,
+    )
+
+    assert fact.direction == "unknown"
+    assert fact.delta is None
+    assert fact.percentage is None
+
+
+@pytest.mark.parametrize(
+    ("old_policy", "new_policy", "metadata_mode", "reason"),
+    (
+        (
+            [{"min_prompt_tokens": 10, "prompt": "0.000003"}],
+            [{"min_prompt_tokens": 10, "prompt": "0.000004"}],
+            "complete",
+            "ordered_rules",
+        ),
+        ([{"unknown_selector": 1, "prompt": "0.000003"}], None, "complete", "raw_fallback"),
+        (None, [_window_rule("monday", 0, 100, prompt="0.000003")], "missing", "missing_event_snapshot"),
+    ),
+)
+def test_unprovable_states_inhibit_comparison_without_inventing_direction(
+    old_policy: Any,
+    new_policy: Any,
+    metadata_mode: str,
+    reason: str,
+) -> None:
+    old_metadata = _complete_metadata(old_policy) if metadata_mode == "complete" else None
+    new_metadata = _complete_metadata(new_policy) if metadata_mode == "complete" else None
+
+    _event_value, result = _interpret_event(
+        old_policy,
+        new_policy,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+
+    assert result is not None
+    assert result.comparison is None
+    assert reason in result.comparison_inhibition_reasons
+
+
+def test_zero_basis_knows_direction_but_never_divides_by_zero() -> None:
+    policy = [_window_rule("monday", 0, 100, prompt="0.000001")]
+    old_metadata = _complete_metadata(None)
+    new_metadata = _complete_metadata(policy)
+    old_metadata["pricing"]["prompt"] = -0.0
+    new_metadata["pricing"]["prompt"] = 0
+
+    _event_value, result = _interpret_event(
+        None,
+        policy,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+
+    assert result is not None and result.comparison is not None
+    higher = next(
+        fact
+        for band in result.comparison.bands
+        for fact in band.dimensions
+        if fact.dimension == "prompt" and fact.direction == "higher"
+    )
+    assert higher.old_value is not None and higher.old_value.raw_display == "-0.0"
+    assert higher.new_value is not None
+    assert higher.percentage is None
+
+
+def test_equal_numeric_int_float_is_unchanged_but_raw_identity_is_preserved() -> None:
+    fact = resolve_direct_price_movement(
+        "pricing.request",
+        1,
+        1.0,
+        OPENROUTER_PROFILE,
+    )
+
+    assert isinstance(fact, DirectPriceMovementFact)
+    assert fact.direction == "unchanged"
+    assert fact.old_value is not None and fact.old_value.raw_display == "1"
+    assert fact.new_value is not None and fact.new_value.raw_display == "1.0"
+    assert fact.delta == 0.0
+    assert fact.percentage == 0.0
+
+
+@pytest.mark.parametrize(
+    ("old_value", "new_value"),
+    ((None, "0.02"), ("0.02", None)),
+)
+def test_direct_one_sided_price_is_coverage_without_arithmetic(
+    old_value: Any,
+    new_value: Any,
+) -> None:
+    fact = resolve_direct_price_movement(
+        "pricing.request", old_value, new_value, OPENROUTER_PROFILE
+    )
+
+    assert fact is not None
+    assert fact.direction == "coverage"
+    assert fact.delta is None
+    assert fact.percentage is None
+
+
+def test_unequal_dimension_percentages_do_not_emit_band_percentage() -> None:
+    old = [_window_rule("monday", 0, 100, prompt="0.000002", completion="0.000004")]
+    new = [_window_rule("monday", 0, 100, prompt="0.000004", completion="0.000006")]
+
+    _event_value, result = _interpret_event(
+        old,
+        new,
+        old_metadata=_complete_metadata(old),
+        new_metadata=_complete_metadata(new),
+    )
+
+    assert result is not None and result.comparison is not None
+    changed_band = next(
+        band
+        for band in result.comparison.bands
+        if {fact.percentage for fact in band.dimensions} == {50.0, 100.0}
+    )
+    assert changed_band.direction == "higher"
+    assert changed_band.percentage is None
+
+
+@pytest.mark.parametrize(
+    ("completion_new", "expected_band_percentage"),
+    (
+        ("0.002000", 100.0),
+        ("0.0020000000000005001", None),
+    ),
+)
+def test_band_percentage_requires_exact_normalized_ratio_identity(
+    completion_new: str,
+    expected_band_percentage: float | None,
+) -> None:
+    profile = _same_basis_ratio_profile()
+    old = [
+        {
+            "days_utc": ["monday"],
+            "prompt_rate": "1.0",
+            "completion_rate": "0.00100",
+        }
+    ]
+    new = [
+        {
+            "days_utc": ["monday"],
+            "prompt_rate": "2.00",
+            "completion_rate": completion_new,
+        }
+    ]
+
+    _event_value, result = _interpret_event(
+        old,
+        new,
+        old_metadata=_ratio_metadata(old),
+        new_metadata=_ratio_metadata(new),
+        profile=profile,
+    )
+
+    assert result is not None and result.comparison is not None
+    changed_band = next(
+        band
+        for band in result.comparison.bands
+        if band.dimensions
+        and all(fact.direction == "higher" for fact in band.dimensions)
+    )
+    assert changed_band.direction == "higher"
+    assert changed_band.percentage == expected_band_percentage
+    facts = {fact.dimension: fact for fact in changed_band.dimensions}
+    assert facts["prompt_rate"].percentage == 100.0
+    if expected_band_percentage is None:
+        assert facts["completion_rate"].percentage == 100.00000000005001
+        assert (
+            facts["completion_rate"].normalized_movement_ratio
+            != facts["prompt_rate"].normalized_movement_ratio
+        )
+    else:
+        assert facts["completion_rate"].percentage == 100.0
+        assert (
+            facts["completion_rate"].normalized_movement_ratio
+            == facts["prompt_rate"].normalized_movement_ratio
+        )
+
+
+@pytest.mark.parametrize(
+    (
+        "old_raw",
+        "new_raw",
+        "expected_ratio",
+        "expected_delta",
+        "expected_percentage",
+    ),
+    (
+        ("1e-400", "2e-400", Fraction(1, 1), "positive", 100.0),
+        (
+            "1e308",
+            "1.0000000000000001e308",
+            Fraction(1, 10**16),
+            "positive",
+            1e-14,
+        ),
+        ("-1e308", "1e308", Fraction(2, 1), None, 200.0),
+    ),
+)
+def test_dimension_comparison_uses_exact_normalized_arithmetic(
+    old_raw: str,
+    new_raw: str,
+    expected_ratio: Fraction,
+    expected_delta: str | None,
+    expected_percentage: float,
+) -> None:
+    profile = _exact_price_profile()
+    rule = conditional_pricing.resolve_price_rule("pricing.prompt", profile)
+
+    fact = conditional_pricing._compare_dimension(
+        "prompt",
+        EffectivePriceValue("prompt", old_raw, rule),
+        EffectivePriceValue("prompt", new_raw, rule),
+        profile,
+    )
+
+    assert fact.direction == "higher"
+    assert fact.normalized_movement_ratio == expected_ratio
+    assert fact.percentage == expected_percentage
+    if expected_delta is None:
+        assert fact.delta is None
+    else:
+        assert fact.delta is not None
+        assert math.isfinite(fact.delta)
+        assert fact.delta > 0
+    assert fact.old_value is not None and fact.new_value is not None
+    assert (
+        fact.old_value.normalized_exact_value
+        < fact.new_value.normalized_exact_value
+    )
+    assert math.isfinite(fact.percentage)
+
+    direct = resolve_direct_price_movement(
+        "pricing.prompt",
+        old_raw,
+        new_raw,
+        profile,
+    )
+    assert direct is not None
+    assert direct.direction == fact.direction
+    assert direct.delta == fact.delta
+    assert direct.percentage == fact.percentage
+
+
+def test_direct_price_without_comparison_group_is_unknown_and_unbucketed() -> None:
+    fact = resolve_direct_price_movement(
+        "pricing.prompt",
+        "1",
+        "2",
+        _exact_price_profile(comparison_group=None),
+    )
+
+    assert fact is not None
+    assert fact.direction == "unknown"
+    assert fact.delta is None
+    assert fact.percentage is None
+    assert fact.comparison_group is None
+    accounting = build_model_pricing_accounting(None, direct_price_facts=(fact,))
+    assert accounting.direct_price_field_count == 1
+    assert accounting.model_bucket == "none"
+
+
+def test_crossing_complete_vectors_never_receive_an_arbitrary_peak() -> None:
+    old_metadata = _complete_metadata(None)
+    new_policy = [
+        _window_rule(
+            "monday",
+            0,
+            100,
+            prompt="0.000004",
+            completion="0.000001",
+        )
+    ]
+    new_metadata = _complete_metadata(new_policy)
+    new_metadata["pricing"].update(prompt="0.000001", completion="0.000004")
+
+    _event_value, result = _interpret_event(
+        None,
+        new_policy,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+
+    assert result is not None and result.comparison is not None
+    assert result.comparison.peak_band_index is None
+    assert all(not band.is_peak for band in result.comparison.bands)
+
+
+def test_dominant_displayed_vector_marks_every_aligned_comparison_row_peak() -> None:
+    old = [_day_rule("monday", 2), _day_rule("tuesday", 3)]
+    new = [_day_rule("monday", 4), _day_rule("tuesday", 4)]
+    old_metadata = _complete_metadata(old)
+    new_metadata = _complete_metadata(new)
+    old_metadata["pricing"]["prompt"] = 1
+    new_metadata["pricing"]["prompt"] = 1
+
+    _event_value, result = _interpret_event(
+        old,
+        new,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+
+    assert result is not None and result.comparison is not None
+    peak_rows = tuple(band for band in result.comparison.bands if band.is_peak)
+    neutral_rows = tuple(band for band in result.comparison.bands if not band.is_peak)
+    assert len(peak_rows) == 2
+    assert {
+        segment.weekday_index
+        for band in peak_rows
+        for segment in band.coverage
+    } == {0, 1}
+    assert all(
+        fact.new_value is not None and fact.new_value.raw_value == 4
+        for band in peak_rows
+        for fact in band.dimensions
+    )
+    assert neutral_rows
+    assert all(
+        fact.direction == "unchanged"
+        for band in neutral_rows
+        for fact in band.dimensions
+    )
+
+
+def test_peak_dominance_resolves_thousands_of_unique_vectors_linearly() -> None:
+    policy = [_day_rule("monday", 2)]
+    _event_value, result = _interpret_event(
+        None,
+        policy,
+        old_metadata=_complete_metadata(None),
+        new_metadata=_complete_metadata(policy),
+    )
+    assert result is not None and result.new_compiled_policy is not None
+    rule = conditional_pricing.resolve_price_rule(
+        "pricing.prompt", OPENROUTER_PROFILE
+    )
+    band_count = 1_000
+    bands = tuple(
+        conditional_pricing.EffectivePriceBand(
+            coverage=(WeeklySegment(0, 0, 1),),
+            effective_prices=EffectivePriceVector(
+                (EffectivePriceValue("prompt", str(index + 1), rule),)
+            ),
+            source_rule_indices=(index,),
+            includes_default=False,
+        )
+        for index in range(band_count)
+    )
+    compiled = replace(result.new_compiled_policy, effective_bands=bands)
+
+    with patch.object(
+        conditional_pricing,
+        "resolve_price_value",
+        wraps=conditional_pricing.resolve_price_value,
+    ) as resolve_spy:
+        peak_identity = conditional_pricing._dominant_band_identity(
+            compiled,
+            OPENROUTER_PROFILE,
+        )
+
+    assert peak_identity == bands[-1].effective_prices.canonical_identity
+    dimension_count = len(bands[0].effective_prices.entries)
+    assert resolve_spy.call_count <= 2 * band_count * dimension_count
+
+
+def test_region_alignment_inspects_partition_cells_linearly() -> None:
+    cell_count = 1_000
+
+    def hhmm(minute_of_day: int) -> int:
+        hour, minute = divmod(minute_of_day, 60)
+        return hour * 100 + minute
+
+    old = [
+        _window_rule(
+            "monday",
+            hhmm(index),
+            hhmm(index + 1),
+            prompt="0.000002" if index % 2 == 0 else "0.000003",
+        )
+        for index in range(cell_count)
+    ]
+    new = [
+        _window_rule(
+            "monday",
+            hhmm(index),
+            hhmm(index + 1),
+            prompt="0.000004" if index % 2 == 0 else "0.000005",
+        )
+        for index in range(cell_count)
+    ]
+    _event_value, result = _interpret_event(
+        old,
+        new,
+        old_metadata=_complete_metadata(old),
+        new_metadata=_complete_metadata(new),
+    )
+    assert result is not None
+    assert result.old_compiled_policy is not None
+    assert result.new_compiled_policy is not None
+
+    class CountingRegions:
+        def __init__(self, values: tuple[Any, ...]) -> None:
+            self.values = values
+            self.visits = 0
+
+        def __len__(self) -> int:
+            return len(self.values)
+
+        def __iter__(self):
+            for value in self.values:
+                self.visits += 1
+                yield value
+
+        def __getitem__(self, index: int):
+            self.visits += 1
+            return self.values[index]
+
+    old_values = result.old_compiled_policy.effective_partition
+    new_values = result.new_compiled_policy.effective_partition
+    counted_old = CountingRegions(old_values)
+    counted_new = CountingRegions(new_values)
+    old_compiled = replace(
+        result.old_compiled_policy,
+        effective_partition=counted_old,  # type: ignore[arg-type]
+    )
+    new_compiled = replace(
+        result.new_compiled_policy,
+        effective_partition=counted_new,  # type: ignore[arg-type]
+    )
+
+    comparison, reasons = conditional_pricing._build_conditional_comparison(
+        result.transition,
+        old_compiled,
+        new_compiled,
+        OPENROUTER_PROFILE,
+    )
+
+    assert comparison is not None
+    assert reasons == ()
+    linear_budget = 6 * (len(old_values) + len(new_values))
+    assert counted_old.visits + counted_new.visits <= linear_budget
+
+
+def test_absorption_uses_exact_path_values_and_one_occurrence_only() -> None:
+    old = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    new = [{"utc_days": ["monday"], "prompt": "0.000004"}]
+    old_metadata = _complete_metadata(old)
+    new_metadata = _complete_metadata(new)
+    new_metadata["pricing"]["prompt"] = "0.000002"
+    sibling = FieldChange("pricing.prompt", "0.000001", "0.000002")
+    nested = FieldChange("nested.pricing.prompt", "0.000001", "0.000002")
+    unrelated = (
+        FieldChange("pricing.request", "0.01", "0.02"),
+        FieldChange("pricing.image", "0.1", "0.2"),
+        FieldChange("pricing.web_search", "0.01", "0.02"),
+    )
+    event, result = _interpret_event(
+        old,
+        new,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+        siblings=(sibling, sibling, nested, *unrelated),
+    )
+
+    assert result is not None
+    assert len(result.absorbed_base_price_changes) == 1
+    reference = result.absorbed_base_price_changes[0]
+    assert reference.field_name == "pricing.prompt"
+    assert reference.occurrence == 0
+    assert tuple(change.field_name for change in event.field_changes) == (
+        "pricing.overrides",
+        "pricing.prompt",
+        "pricing.prompt",
+        "nested.pricing.prompt",
+        "pricing.request",
+        "pricing.image",
+        "pricing.web_search",
+    )
+    assert old == [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    assert new == [{"utc_days": ["monday"], "prompt": "0.000004"}]
+    assert result.accounting is not None
+    assert result.accounting.direct_price_field_count == 1
+    fact = result.accounting.direct_price_facts[0]
+    assert fact.source_change == reference
+    assert fact.old_value is not None and fact.old_value.raw_value == "0.000001"
+    assert fact.new_value is not None and fact.new_value.raw_value == "0.000002"
+    assert fact.direction == "higher"
+
+
+def test_absorption_rejects_metadata_mismatch_and_missing_snapshot() -> None:
+    policy = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    old_metadata = _complete_metadata(policy)
+    new_metadata = _complete_metadata(policy)
+    mismatch = FieldChange("pricing.prompt", "0.000009", "0.000002")
+    event, result = _interpret_event(
+        policy,
+        policy,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+        siblings=(mismatch,),
+    )
+    assert result is not None
+    assert result.absorbed_base_price_changes == ()
+    assert decide_sibling_base_price_absorption(event, OPENROUTER_PROFILE, result) == ()
+
+    missing_event, missing_result = _interpret_event(
+        None,
+        policy,
+        old_metadata=None,
+        new_metadata=None,
+        siblings=(FieldChange("pricing.prompt", None, "0.000001"),),
+    )
+    assert missing_result is not None
+    assert missing_result.absorbed_base_price_changes == ()
+    assert (
+        decide_sibling_base_price_absorption(
+            missing_event, OPENROUTER_PROFILE, missing_result
+        )
+        == ()
+    )
+
+
+def test_absorption_is_identity_bound_and_consume_once() -> None:
+    old = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    new = [{"utc_days": ["monday"], "prompt": "0.000004"}]
+    old_metadata = _complete_metadata(old)
+    new_metadata = _complete_metadata(new)
+    new_metadata["pricing"]["prompt"] = "0.000002"
+    sibling = FieldChange("pricing.prompt", "0.000001", "0.000002")
+    event, result = _interpret_event(
+        old,
+        new,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+        siblings=(sibling, sibling),
+    )
+    assert result is not None
+    decisions = decide_sibling_base_price_absorption(
+        event,
+        OPENROUTER_PROFILE,
+        replace(result, absorbed_base_price_changes=(), accounting=None),
+    )
+    assert len(decisions) == 1
+    assert isinstance(decisions[0], AbsorbedBasePriceChange)
+    assert (
+        decide_sibling_base_price_absorption(
+            event,
+            OPENROUTER_PROFILE,
+            replace(result, absorbed_base_price_changes=(), accounting=None),
+            consumed_references=(decisions[0].source_change,),
+        )
+        == ()
+    )
+
+    other_event = replace(
+        event,
+        identity=LiveComparisonIdentity(PROVIDER_ID, MODEL_ID, 10, 12),
+    )
+    assert (
+        decide_sibling_base_price_absorption(
+            other_event,
+            OPENROUTER_PROFILE,
+            replace(result, absorbed_base_price_changes=(), accounting=None),
+        )
+        == ()
+    )
+
+
+@pytest.mark.parametrize(
+    ("metadata_case", "expected_absorptions"),
+    (
+        ("old-missing", 1),
+        ("old-null", 0),
+        ("new-missing", 1),
+        ("new-null", 0),
+        ("numeric", 1),
+    ),
+)
+def test_absorption_distinguishes_missing_exact_path_from_json_null(
+    metadata_case: str,
+    expected_absorptions: int,
+) -> None:
+    old = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    new = [{"utc_days": ["monday"], "prompt": "0.000004"}]
+    old_metadata = _complete_metadata(old)
+    new_metadata = _complete_metadata(new)
+    old_metadata["pricing"]["prompt"] = "0.000001"
+    new_metadata["pricing"]["prompt"] = "0.000002"
+    old_row: Any = "0.000001"
+    new_row: Any = "0.000002"
+    if metadata_case == "old-missing":
+        old_metadata["pricing"].pop("prompt")
+        old_row = None
+    elif metadata_case == "old-null":
+        old_metadata["pricing"]["prompt"] = None
+        old_row = None
+    elif metadata_case == "new-missing":
+        new_metadata["pricing"].pop("prompt")
+        new_row = None
+    elif metadata_case == "new-null":
+        new_metadata["pricing"]["prompt"] = None
+        new_row = None
+
+    event, result = _interpret_event(
+        old,
+        new,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+        siblings=(FieldChange("pricing.prompt", old_row, new_row),),
+    )
+
+    assert result is not None
+    assert len(result.absorbed_base_price_changes) == expected_absorptions
+    decisions = decide_sibling_base_price_absorption(
+        event,
+        OPENROUTER_PROFILE,
+        replace(result, absorbed_base_price_changes=(), accounting=None),
+    )
+    assert len(decisions) == expected_absorptions
+
+
+@pytest.mark.parametrize(
+    "profile",
+    (
+        replace(
+            OPENROUTER_PROFILE,
+            price_leaf_rules={
+                key: value
+                for key, value in OPENROUTER_PROFILE.price_leaf_rules.items()
+                if key != "prompt"
+            },
+        ),
+        replace(
+            OPENROUTER_PROFILE,
+            price_leaf_rules={
+                **OPENROUTER_PROFILE.price_leaf_rules,
+                "prompt": PriceDisplayRule(
+                    unit_label="/synthetic mismatched unit",
+                    multiplier=1_000_000,
+                    divisor=1,
+                    comparison_group="usd_per_million_tokens",
+                ),
+            },
+        ),
+        replace(
+            OPENROUTER_PROFILE,
+            price_leaf_rules={
+                **OPENROUTER_PROFILE.price_leaf_rules,
+                "prompt": PriceDisplayRule(
+                    unit_label="/1M tokens",
+                    multiplier=1_000_000,
+                    divisor=1,
+                    comparison_group="synthetic_incompatible_group",
+                ),
+            },
+        ),
+    ),
+)
+def test_absorption_rejects_unmatched_unit_and_group_rules(
+    profile: ProviderProfile,
+) -> None:
+    old = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    new = [{"utc_days": ["monday"], "prompt": "0.000004"}]
+    old_metadata = _complete_metadata(old)
+    new_metadata = _complete_metadata(new)
+    new_metadata["pricing"]["prompt"] = "0.000002"
+    event, result = _interpret_event(
+        old,
+        new,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+        siblings=(FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+    )
+    assert result is not None
+
+    assert (
+        decide_sibling_base_price_absorption(
+            event,
+            profile,
+            replace(result, absorbed_base_price_changes=(), accounting=None),
+        )
+        == ()
+    )
+
+
+def test_raw_fallback_absorbs_nothing_but_counts_one_conditional_policy() -> None:
+    raw = [{"unknown_selector": "synthetic", "prompt": "0.000003"}]
+    metadata = _complete_metadata(raw)
+    event, result = _interpret_event(
+        None,
+        raw,
+        old_metadata=_complete_metadata(None),
+        new_metadata=metadata,
+        siblings=(FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+    )
+
+    assert result is not None and result.state == "raw-fallback"
+    assert result.absorbed_base_price_changes == ()
+    assert result.comparison is None
+    assert "raw_fallback" in result.comparison_inhibition_reasons
+    assert isinstance(result.accounting, ModelPricingAccounting)
+    assert result.accounting.conditional_policy_count == 1
+    assert result.accounting.source_rule_count == 1
+    assert result.accounting.schedule_dimensions == ("prompt",)
+    assert result.accounting.model_bucket == "conditional"
+    assert result.accounting.effective_band_count == 0
+    assert decide_sibling_base_price_absorption(event, OPENROUTER_PROFILE, result) == ()
+
+
+def test_synthetic_schedule_accounting_reconciles_disjoint_units() -> None:
+    old_metadata, new_metadata = synthetic_scheduled_rate_models()
+    policy = new_metadata["pricing"]["overrides"]
+    siblings = tuple(
+        FieldChange(
+            f"pricing.{dimension}",
+            old_metadata["pricing"][dimension],
+            new_metadata["pricing"][dimension],
+        )
+        for dimension in ("prompt", "completion", "request")
+    )
+
+    _event_value, result = _interpret_event(
+        None,
+        policy,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+        siblings=siblings,
+    )
+
+    assert result is not None and isinstance(result.accounting, ModelPricingAccounting)
+    accounting = result.accounting
+    assert accounting.conditional_policy_count == SYNTHETIC_SCHEDULED_RATE_EXPECTED_ACCOUNTING["policies"]
+    assert accounting.source_rule_count == SYNTHETIC_SCHEDULED_RATE_EXPECTED_ACCOUNTING["source_rules"]
+    assert accounting.schedule_dimensions == ("completion", "prompt", "request")
+    assert accounting.schedule_dimension_count == SYNTHETIC_SCHEDULED_RATE_EXPECTED_ACCOUNTING["dimensions"]
+    assert accounting.effective_band_count == SYNTHETIC_SCHEDULED_RATE_EXPECTED_ACCOUNTING["effective_bands"]
+    assert accounting.direct_price_field_count == 3
+    assert accounting.model_bucket == "conditional"
+    assert not hasattr(accounting, "total_count")
+    with pytest.raises(FrozenInstanceError):
+        accounting.model_bucket = "mixed"  # type: ignore[misc]
+
+
+def test_removed_policy_uses_old_display_side_and_missing_side_invents_no_bands() -> None:
+    policy = [
+        _window_rule("monday", 0, 100, prompt="0.000003"),
+        _window_rule("tuesday", 0, 100, prompt="0.000004"),
+    ]
+    _event_value, removed = _interpret_event(
+        policy,
+        None,
+        old_metadata=_complete_metadata(policy),
+        new_metadata=_complete_metadata(None),
+    )
+    assert removed is not None and removed.accounting is not None
+    assert removed.accounting.source_rule_count == 2
+    assert removed.accounting.conditional_policy_count == 1
+    assert removed.accounting.model_bucket == "conditional"
+
+    _missing_event, missing = _interpret_event(
+        None,
+        policy,
+        old_metadata=None,
+        new_metadata=None,
+    )
+    assert missing is not None and missing.accounting is not None
+    assert missing.accounting.conditional_policy_count == 1
+    assert missing.accounting.source_rule_count == 2
+    assert missing.accounting.schedule_dimensions == ("prompt",)
+    assert missing.accounting.effective_band_count == 0
+    assert missing.accounting.model_bucket == "conditional"
+
+
+@pytest.mark.parametrize(
+    ("rule_price", "expected_bands"),
+    (("0.000001", 1), ("0.000003", 2)),
+)
+def test_accounting_counts_distinct_effective_vectors_and_uncovered_default(
+    rule_price: str,
+    expected_bands: int,
+) -> None:
+    policy = [_window_rule("monday", 0, 100, prompt=rule_price)]
+
+    _event_value, result = _interpret_event(
+        None,
+        policy,
+        old_metadata=_complete_metadata(None),
+        new_metadata=_complete_metadata(policy),
+    )
+
+    assert result is not None and result.accounting is not None
+    assert result.accounting.effective_band_count == expected_bands
+    assert result.accounting.direct_price_field_count == 0
+
+
+def test_evidence_only_reorder_has_zero_conditional_contribution() -> None:
+    monday = _window_rule("monday", 0, 100, prompt="0.000003")
+    tuesday = _window_rule("tuesday", 0, 100, prompt="0.000004")
+    old = [monday, tuesday]
+    new = [tuesday, monday]
+
+    _event_value, result = _interpret_event(
+        old,
+        new,
+        old_metadata=_complete_metadata(old),
+        new_metadata=_complete_metadata(new),
+    )
+
+    assert result is not None and result.semantic_change is False
+    assert result.accounting is not None
+    assert result.accounting.conditional_policy_count == 0
+    assert result.accounting.source_rule_count == 0
+    assert result.accounting.schedule_dimension_count == 0
+    assert result.accounting.effective_band_count == 0
+    assert result.accounting.model_bucket == "none"
+    assert result.absorbed_base_price_changes == ()
+
+
+def test_accounting_constructor_merges_direct_facts_once_without_cross_unit_math() -> None:
+    up = resolve_direct_price_movement(
+        "pricing.prompt", "0.000001", "0.000002", OPENROUTER_PROFILE
+    )
+    down = resolve_direct_price_movement(
+        "pricing.request", "0.02", "0.01", OPENROUTER_PROFILE
+    )
+    assert up is not None and down is not None
+
+    accounting = build_model_pricing_accounting(
+        None,
+        direct_price_facts=(up, up, down),
+    )
+
+    assert accounting.direct_price_facts == (up, down)
+    assert accounting.direct_price_field_count == 2
+    assert accounting.conditional_policy_count == 0
+    assert accounting.source_rule_count == 0
+    assert accounting.schedule_dimension_count == 0
+    assert accounting.effective_band_count == 0
+    assert accounting.model_bucket == "mixed"
+    assert not hasattr(accounting, "aggregate_delta")
+
+
+def test_accounting_constructor_preserves_absorbed_facts_when_merging_ordinary() -> None:
+    old_metadata, new_metadata = synthetic_scheduled_rate_models()
+    policy = new_metadata["pricing"]["overrides"]
+    siblings = tuple(
+        FieldChange(
+            f"pricing.{dimension}",
+            old_metadata["pricing"][dimension],
+            new_metadata["pricing"][dimension],
+        )
+        for dimension in ("prompt", "completion", "request")
+    )
+    _event_value, result = _interpret_event(
+        None,
+        policy,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+        siblings=siblings,
+    )
+    ordinary = resolve_direct_price_movement(
+        "pricing.image", "0.01", "0.02", OPENROUTER_PROFILE
+    )
+
+    assert result is not None and result.accounting is not None
+    assert len(result.accounting.direct_price_facts) == 3
+    assert ordinary is not None
+    rebuilt = build_model_pricing_accounting(
+        result,
+        direct_price_facts=(result.accounting.direct_price_facts[1], ordinary),
+    )
+
+    assert rebuilt.direct_price_facts == (
+        *result.accounting.direct_price_facts,
+        ordinary,
+    )
+    assert rebuilt.direct_price_field_count == 4
+    assert rebuilt.conditional_policy_count == 1
+    assert rebuilt.model_bucket == "conditional"
