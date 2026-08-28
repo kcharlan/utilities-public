@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 
 import pytest
@@ -1137,17 +1138,24 @@ def test_evidence_only_reorder_is_concise_silent_but_retained_in_all_audit(
 
 
 @pytest.mark.parametrize("detail_mode", ("default", "all"))
-def test_evidence_only_reorder_does_not_create_pre_task8_scan_html_card(
+def test_evidence_only_reorder_is_concise_silent_and_full_audit_unpromoted(
     detail_mode: str,
 ) -> None:
     report = _scan_report(_evidence_only_event(), "html", detail_mode=detail_mode)
 
-    assert "synthetic/model" not in report
-    assert "Conditional pricing evidence" not in report
+    if detail_mode == "default":
+        assert "synthetic/model" not in report
+        assert "CONDITIONAL PRICING EVIDENCE" not in report
+    else:
+        assert "synthetic/model" in report
+        assert "CONDITIONAL PRICING EVIDENCE" in report
+        assert "Canonical stored parent old" in report
+        assert "Canonical stored parent new" in report
+        assert 'id="price-movement"' not in report
 
 
 @pytest.mark.parametrize("detail_mode", ("default", "all"))
-def test_evidence_only_reorder_does_not_create_pre_task8_changes_html_card(
+def test_evidence_only_reorder_changes_html_is_audit_only_in_all(
     detail_mode: str,
 ) -> None:
     event = _evidence_only_event()
@@ -1176,8 +1184,15 @@ def test_evidence_only_reorder_does_not_create_pre_task8_changes_html_card(
         semantic_cores={stored.identity: core},
     )
 
-    assert "synthetic/model" not in report
-    assert "Conditional pricing evidence" not in report
+    if detail_mode == "default":
+        assert "synthetic/model" not in report
+        assert "CONDITIONAL PRICING EVIDENCE" not in report
+    else:
+        assert "synthetic/model" in report
+        assert "CONDITIONAL PRICING EVIDENCE" in report
+        assert "Canonical stored parent old" in report
+        assert "Canonical stored parent new" in report
+        assert 'id="price-movement"' not in report
 
 
 @pytest.mark.parametrize("format_name", ("text", "markdown"))
@@ -1534,3 +1549,1154 @@ def test_conditional_semantics_do_not_change_any_public_json_payload() -> None:
         assert "to_scrape_id" not in payload
         assert "old_model_metadata" not in payload
         assert "new_model_metadata" not in payload
+
+
+def test_scan_html_renders_grouped_schedule_and_exclusive_conditional_bucket() -> None:
+    report = _scan_report(_event(), "html")
+
+    assert report.count('class="conditional-pricing') == 1
+    assert "PRICING SCHEDULE ADDED" in report
+    assert 'class="utc-badge">UTC</span>' in report
+    assert "Mon 01:00-02:00 UTC" in report
+    assert report.index("Input") < report.index("Output")
+    assert "$1.00" in report and "$8.00" in report
+    assert "base down (Input down 50.0%)" in report
+    assert "peak up (Input up 50.0%, Output up 12.5%)" in report
+    assert "provider-advertised catalog rates" in report
+    assert "actual routing and billing can vary" in report
+    assert "Utc start" not in report
+    assert "Utc end" not in report
+
+    movement = report.split('id="price-movement"', 1)[1].split("</section>", 1)[0]
+    assert movement.count("Conditional / variable") == 1
+    assert "Lower only" not in movement
+    assert "conditional pricing changed" in movement
+    assert "1 pricing schedule added" in movement
+    assert "1 rule" in movement
+    assert "2 price dimensions" in movement
+    assert "2 effective rate bands" in movement
+
+    assert report.count('title="pricing.prompt"') == 0
+    assert 'title="status"' in report
+    assert report.count("Pricing schedule added") == 1
+    assert "Utc days" not in report
+
+
+def test_scan_html_all_detail_adds_ordered_audit_without_changing_semantics() -> None:
+    concise = _scan_report(_event(), "html")
+    full = _scan_report(_event(), "html", detail_mode="all")
+
+    for fragment in (
+        "Conditional / variable",
+        "conditional pricing changed",
+        "1 pricing schedule added",
+        "2 price dimensions",
+    ):
+        assert fragment in concise
+        assert fragment in full
+    assert "Source-ordered rules" not in concise
+    assert "Source-ordered rules" in full
+    assert full.count("Rule 1") == 1
+    assert full.count("Canonical stored parent old") == 1
+    assert full.count("Canonical stored parent new") == 1
+    assert full.count("&quot;utc_days&quot;") == 1
+    assert 'id="show-raw" checked' in full
+
+
+def test_scan_html_parent_only_card_survives_and_unrelated_price_stays_ordinary() -> None:
+    base = _event()
+    parent_only = replace(
+        base,
+        field_changes=(base.field_changes[1],),
+    )
+    parent_report = _scan_report(parent_only, "html")
+    assert 'class="model-card"' in parent_report
+    assert 'class="conditional-pricing grouped-schedule"' in parent_report
+    assert 'class="card-table"' not in parent_report
+
+    with_unrelated = replace(
+        base,
+        field_changes=(
+            base.field_changes[0],
+            base.field_changes[1],
+            FieldChange("pricing.request", "1.0", "2.0"),
+        ),
+        old_model_metadata={
+            **reporting._mutable_json(base.old_model_metadata),
+            "pricing": {
+                **reporting._mutable_json(base.old_model_metadata["pricing"]),
+                "request": "1.0",
+            },
+        },
+        new_model_metadata={
+            **reporting._mutable_json(base.new_model_metadata),
+            "pricing": {
+                **reporting._mutable_json(base.new_model_metadata["pricing"]),
+                "request": "2.0",
+            },
+        },
+    )
+    report = _scan_report(with_unrelated, "html")
+    assert report.count('class="conditional-pricing') == 1
+    assert 'title="pricing.request"' in report
+    assert report.index('class="conditional-pricing') < report.index('title="pricing.request"')
+
+
+def test_scan_html_mixed_price_groups_put_units_on_each_column() -> None:
+    rule = {
+        "utc_days": ["monday"],
+        "prompt": "0.00000123",
+        "request": "12.3456",
+    }
+    event = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", None, [rule]),),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.00000123", "request": "12.3456"},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.00000123",
+                "request": "12.3456",
+                "overrides": [rule],
+            },
+        },
+    )
+    report = _scan_report(event, "html")
+    schedule = report.split('class="conditional-pricing', 1)[1].split("</section>", 1)[0]
+    assert "Input" in schedule and "/1M tokens" in schedule
+    assert "Per request" in schedule and "/request" in schedule
+    assert "$1.23" in schedule and "$12.3456" in schedule
+
+
+def test_scan_html_ordinary_verdict_keeps_conditional_suffix_and_exclusive_group() -> None:
+    conditional = _event()
+    ordinary = replace(
+        conditional,
+        identity=LiveComparisonIdentity("openrouter", "synthetic/ordinary", 10, 11),
+        provider_model_id="synthetic/ordinary",
+        display_name="Synthetic Ordinary",
+        field_changes=(FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+        old_model_metadata={"id": "synthetic/ordinary", "pricing": {"prompt": "0.000001"}},
+        new_model_metadata={"id": "synthetic/ordinary", "pricing": {"prompt": "0.000002"}},
+    )
+    cores = {
+        event.identity: reporting.build_model_event_semantic_core(
+            event, OPENROUTER_PROFILE
+        )
+        for event in (conditional, ordinary)
+    }
+    result = replace(
+        _scan_result(conditional),
+        current_count=2,
+        changed=tuple(
+            ModelDelta(
+                "changed",
+                event.provider_model_id,
+                event.display_name,
+                tuple(
+                    FieldChange(
+                        change.field_name,
+                        reporting._mutable_json(change.old_value),
+                        reporting._mutable_json(change.new_value),
+                    )
+                    for change in event.field_changes
+                ),
+            )
+            for event in (conditional, ordinary)
+        ),
+    )
+    report = reporting.render_scan_report(
+        generated_at=conditional.detected_at,
+        command="scan",
+        format_name="html",
+        provider_results=[result],
+        semantic_cores=cores,
+    )
+    movement = report.split('id="price-movement"', 1)[1].split("</section>", 1)[0]
+    assert "higher — 1 up; conditional pricing also changed — 1 model" in movement
+    assert movement.count("Conditional / variable") == 1
+    assert movement.count("Higher only") == 1
+    conditional_group = movement.split("Conditional / variable", 1)[1]
+    assert "synthetic/model" in conditional_group
+    assert "synthetic/ordinary" not in conditional_group
+
+
+def test_model_price_impact_uses_accounting_not_detail_projection(monkeypatch) -> None:
+    event = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    delta = ModelDelta(
+        "changed", event.provider_model_id, event.display_name, event.field_changes
+    )
+    impacts = []
+    for mode in ("default", "all", "squelched"):
+        projection = reporting.project_model_event_semantics(
+            core,
+            reporting.make_report_detail_policy(mode=mode),
+            OPENROUTER_PROFILE,
+        )
+        poisoned = replace(
+            projection.display,
+            visible=(FieldChange("status", "preview", "active"),),
+        )
+        item = reporting._PlannedModelChange(delta, poisoned, core)
+        impacts.append(reporting._model_price_impact(item, profile=OPENROUTER_PROFILE))
+
+    poisoned_item = reporting._PlannedModelChange(
+        delta,
+        replace(
+            reporting.project_model_event_semantics(
+                core,
+                reporting.make_report_detail_policy(),
+                OPENROUTER_PROFILE,
+            ).display,
+            visible=(FieldChange("status", "preview", "active"),),
+        ),
+        core,
+    )
+    monkeypatch.setattr(
+        reporting,
+        "classify_change",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("tiering must not classify display rows")
+        ),
+    )
+    assert reporting._model_price_impact(
+        poisoned_item, profile=OPENROUTER_PROFILE
+    ) == impacts[0]
+    assert impacts[0] is not None
+    assert impacts[0] == impacts[1] == impacts[2]
+    assert impacts[0].primary_delta == 1.0
+
+
+def test_semantic_price_impact_consumes_exact_core_accounting_without_rebuild(
+    monkeypatch,
+) -> None:
+    event = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    projection = reporting.project_model_event_semantics(
+        core, reporting.make_report_detail_policy(), OPENROUTER_PROFILE
+    )
+    item = reporting._PlannedModelChange(
+        ModelDelta(
+            "changed", event.provider_model_id, event.display_name, event.field_changes
+        ),
+        projection.display,
+        core,
+    )
+    seen = []
+    real_rank = reporting._impact_from_accounting
+
+    def capture(accounting, model_id, profile):
+        seen.append(accounting)
+        return real_rank(accounting, model_id, profile)
+
+    monkeypatch.setattr(reporting, "_impact_from_accounting", capture)
+    monkeypatch.setattr(
+        reporting,
+        "build_model_pricing_accounting",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("semantic tiering must not rebuild accounting")
+        ),
+    )
+    monkeypatch.setattr(
+        reporting,
+        "_legacy_tiering_accounting",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("semantic tiering must not enter legacy fallback")
+        ),
+    )
+
+    impact = reporting._model_price_impact(item, profile=OPENROUTER_PROFILE)
+
+    assert impact is not None and impact.primary_delta == 1.0
+    assert seen == [core.accounting]
+    assert seen[0] is core.accounting
+
+
+def test_legacy_price_impact_fallback_is_isolated_to_missing_core(monkeypatch) -> None:
+    delta = ModelDelta(
+        "changed",
+        "synthetic/legacy",
+        "Synthetic Legacy",
+        (FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+    )
+    display = reporting._field_display_plan(
+        delta.field_changes,
+        reporting.make_report_detail_policy(),
+        OPENROUTER_PROFILE,
+    )
+    calls = []
+    real_fallback = reporting._legacy_tiering_accounting
+
+    def capture(item, profile):
+        calls.append(item.delta.provider_model_id)
+        return real_fallback(item, profile)
+
+    monkeypatch.setattr(reporting, "_legacy_tiering_accounting", capture)
+    impact = reporting._model_price_impact(
+        reporting._PlannedModelChange(delta, display, None),
+        profile=OPENROUTER_PROFILE,
+    )
+
+    assert calls == ["synthetic/legacy"]
+    assert impact is not None and impact.primary_delta == 1.0
+
+
+def test_raw_fallback_html_discloses_safe_distinct_reason_labels() -> None:
+    fixtures = (
+        ({"unsupported": "synthetic"}, "Policy value is not a rule list."),
+        ([{"unregistered_price": "7"}], "A price dimension has no registered unit or conversion."),
+    )
+    reports = []
+    for raw_policy, reason_label in fixtures:
+        event = replace(
+            _event(metadata=False),
+            field_changes=(FieldChange("pricing.overrides", None, raw_policy),),
+            old_model_metadata=None,
+            new_model_metadata=None,
+        )
+        report = _scan_report(event, "html")
+        reports.append(report)
+        assert reason_label in report
+        assert "invalid_policy_type" not in report
+        assert "unresolved_price_dimension" not in report
+        assert "Traceback" not in report
+    assert fixtures[0][1] not in reports[1]
+    assert fixtures[1][1] not in reports[0]
+
+
+def test_ordered_rule_units_include_override_only_dimensions() -> None:
+    rules = [
+        {"min_prompt_tokens": 200000, "prompt": "0.000003"},
+        {"min_prompt_tokens": 300000, "request": "12.3456"},
+    ]
+    event = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", None, rules),),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001"},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", "overrides": rules},
+        },
+    )
+    report = _scan_report(event, "html")
+    block = report.split('class="conditional-pricing ordered-rules"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert "Input<span class=\"conditional-unit\">/1M tokens</span>" in block
+    assert "Per request<span class=\"conditional-unit\">/request</span>" in block
+    assert "$12.3456" in block
+
+
+def test_utc_badge_requires_an_actual_time_selector() -> None:
+    threshold_rules = [{"min_prompt_tokens": 200000, "prompt": "0.000003"}]
+    threshold = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", None, threshold_rules),),
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.000001",
+                "completion": "0.000008",
+                "overrides": threshold_rules,
+            },
+        },
+    )
+    assert 'class="utc-badge"' not in _scan_report(threshold, "html")
+
+    time_rules = [
+        {"min_prompt_tokens": 200000, "prompt": "0.000003"},
+        {
+            "utc_days": ["monday"],
+            "utc_start": 100,
+            "utc_end": 200,
+            "completion": "0.000009",
+        },
+    ]
+    with_time = replace(
+        threshold,
+        field_changes=(FieldChange("pricing.overrides", None, time_rules),),
+        new_model_metadata={
+            **reporting._mutable_json(threshold.new_model_metadata),
+            "pricing": {
+                **reporting._mutable_json(threshold.new_model_metadata["pricing"]),
+                "overrides": time_rules,
+            },
+        },
+    )
+    assert 'class="utc-badge">UTC</span>' in _scan_report(with_time, "html")
+
+
+def test_conditionless_grouped_schedule_is_still_a_utc_weekly_schedule() -> None:
+    conditionless = [{"prompt": "0.000002"}]
+    event = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", None, conditionless),),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001"},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", "overrides": conditionless},
+        },
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    assert core.interpretation is not None
+    assert core.interpretation.state == "grouped-schedule"
+
+    report = _scan_report(event, "html")
+    assert "Mon-Sun all day" in report
+    assert 'class="utc-badge">UTC</span>' in report
+
+
+def test_raw_fallback_utc_badge_follows_stored_selector_evidence() -> None:
+    with_utc = [{"utc_days": ["synthetic-invalid-day"], "prompt": "0.000002"}]
+    without_utc = {"unsupported": "synthetic"}
+    reports = []
+    for policy in (with_utc, without_utc):
+        event = replace(
+            _event(metadata=False),
+            field_changes=(FieldChange("pricing.overrides", None, policy),),
+            old_model_metadata=None,
+            new_model_metadata=None,
+        )
+        reports.append(_scan_report(event, "html"))
+    assert 'class="utc-badge">UTC</span>' in reports[0]
+    assert 'class="utc-badge"' not in reports[1]
+
+
+def test_changes_edge_anchors_disambiguate_full_stored_identities() -> None:
+    rules = [{"utc_days": ["monday"], "prompt": "0.000002"}]
+    base = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=rules,
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    events = []
+    for model_id in ("synthetic/a.b", "synthetic/a/b"):
+        identity = StoredComparisonIdentity("openrouter", model_id, 10, 11)
+        events.append(
+            replace(
+                base,
+                identity=identity,
+                display_name=f"Synthetic {model_id[-1]}",
+                source_rows=tuple(
+                    replace(row, provider_model_id=model_id) for row in base.source_rows
+                ),
+                old_model_metadata={"id": model_id, "pricing": {"prompt": "0.000001"}},
+                new_model_metadata={
+                    "id": model_id,
+                    "pricing": {"prompt": "0.000001", "overrides": rules},
+                },
+            )
+        )
+    cores = {
+        event.identity: reporting.build_model_event_semantic_core(
+            reporting.pricing_event_from_stored(event), OPENROUTER_PROFILE
+        )
+        for event in events
+    }
+    aggregate = reporting.build_changes_semantic_core(
+        events, {"openrouter": OPENROUTER_PROFILE}
+    )
+
+    def render() -> str:
+        return reporting.render_changes_report(
+            format_name="html",
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=(),
+            provider_profiles={"openrouter": OPENROUTER_PROFILE},
+            stored_events=events,
+            semantic_cores=cores,
+            changes_semantic_core=aggregate,
+        )
+
+    first = render()
+    second = render()
+    edge_ids = re.findall(r'id="(edge-[^"]+)"', first)
+    edge_hrefs = re.findall(r'href="#(edge-[^"]+)"', first)
+
+    assert first == second
+    assert len(edge_ids) == len(set(edge_ids)) == 2
+    assert set(edge_hrefs) == set(edge_ids)
+    assert all(edge_hrefs.count(anchor) == 2 for anchor in edge_ids)
+    assert edge_ids[1] == f"{edge_ids[0]}-2"
+
+
+def test_changes_edge_anchors_are_owned_only_by_rendered_cards_in_document_order() -> None:
+    first_rule = {"utc_days": ["monday"], "prompt": "0.000002"}
+    second_rule = {"utc_days": ["tuesday"], "prompt": "0.000003"}
+    hidden_base = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=[first_rule, second_rule],
+        new_rules=[second_rule, first_rule],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    hidden_model = "synthetic/a.b"
+    hidden = replace(
+        hidden_base,
+        identity=StoredComparisonIdentity("openrouter", hidden_model, 10, 11),
+        display_name="Synthetic Hidden",
+        source_rows=tuple(
+            replace(row, provider_model_id=hidden_model)
+            for row in hidden_base.source_rows
+        ),
+        old_model_metadata={
+            "id": hidden_model,
+            "pricing": {
+                "prompt": "0.000001",
+                "overrides": [first_rule, second_rule],
+            },
+        },
+        new_model_metadata={
+            "id": hidden_model,
+            "pricing": {
+                "prompt": "0.000001",
+                "overrides": [second_rule, first_rule],
+            },
+        },
+    )
+    visible_model = "synthetic/a/b"
+    visible_base = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=[first_rule],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    visible = replace(
+        visible_base,
+        identity=StoredComparisonIdentity("openrouter", visible_model, 10, 11),
+        display_name="Synthetic Visible",
+        source_rows=tuple(
+            replace(row, provider_model_id=visible_model)
+            for row in visible_base.source_rows
+        ),
+        old_model_metadata={"id": visible_model, "pricing": {"prompt": "0.000001"}},
+        new_model_metadata={
+            "id": visible_model,
+            "pricing": {"prompt": "0.000001", "overrides": [first_rule]},
+        },
+    )
+    events = (hidden, visible)
+    cores = {
+        event.identity: reporting.build_model_event_semantic_core(
+            reporting.pricing_event_from_stored(event), OPENROUTER_PROFILE
+        )
+        for event in events
+    }
+    assert cores[hidden.identity].evidence_only
+    aggregate = reporting.build_changes_semantic_core(
+        events, {"openrouter": OPENROUTER_PROFILE}
+    )
+
+    def render(mode: str) -> str:
+        return reporting.render_changes_report(
+            format_name="html",
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=(),
+            provider_profiles={"openrouter": OPENROUTER_PROFILE},
+            detail_policy=reporting.make_report_detail_policy(mode=mode),
+            stored_events=events,
+            semantic_cores=cores,
+            changes_semantic_core=aggregate,
+        )
+
+    concise = render("default")
+    concise_ids = re.findall(r'id="(edge-[^"]+)"', concise)
+    concise_hrefs = re.findall(r'href="#(edge-[^"]+)"', concise)
+    assert concise_ids == ["edge-m-synthetic-a-b-from-10-to-11"]
+    assert set(concise_hrefs) == set(concise_ids)
+
+    full = render("all")
+    assert full == render("all")
+    full_ids = re.findall(r'id="(edge-[^"]+)"', full)
+    full_hrefs = re.findall(r'href="#(edge-[^"]+)"', full)
+    assert full_ids == [
+        "edge-m-synthetic-a-b-from-10-to-11",
+        "edge-m-synthetic-a-b-from-10-to-11-2",
+    ]
+    assert set(full_hrefs).issubset(set(full_ids))
+
+
+def test_changes_price_movement_tallies_direct_fields_from_unique_model_folds() -> None:
+    conditional = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=[{"utc_days": ["monday"], "prompt": "0.000002"}],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    ordinary = replace(
+        conditional,
+        identity=StoredComparisonIdentity("openrouter", "synthetic/model", 11, 12),
+        field_changes=(FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+        old_model_metadata={"id": "synthetic/model", "pricing": {"prompt": "0.000001"}},
+        new_model_metadata={"id": "synthetic/model", "pricing": {"prompt": "0.000002"}},
+    )
+
+    def movement(events) -> str:
+        cores = {
+            event.identity: reporting.build_model_event_semantic_core(
+                reporting.pricing_event_from_stored(event), OPENROUTER_PROFILE
+            )
+            for event in events
+        }
+        aggregate = reporting.build_changes_semantic_core(
+            events, {"openrouter": OPENROUTER_PROFILE}
+        )
+        report = reporting.render_changes_report(
+            format_name="html",
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=(),
+            provider_profiles={"openrouter": OPENROUTER_PROFILE},
+            stored_events=events,
+            semantic_cores=cores,
+            changes_semantic_core=aggregate,
+        )
+        return report.split('id="price-movement"', 1)[1].split("</section>", 1)[0]
+
+    assert "1 direct price field" in movement((ordinary,))
+    assert "0 direct price fields" in movement((conditional,))
+    mixed = movement((conditional, ordinary))
+    assert "1 direct price field" in mixed
+    assert "2 pricing schedule events" not in mixed
+    assert "1 pricing schedule event" in mixed
+
+
+def test_ordered_rules_canonical_parent_evidence_is_always_one_disclosure() -> None:
+    rules = [{"min_prompt_tokens": 200000, "prompt": "0.000003"}]
+    event = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", None, rules),),
+        old_model_metadata={"id": "synthetic/model", "pricing": {"prompt": "0.000001"}},
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", "overrides": rules},
+        },
+    )
+    concise = _scan_report(event, "html")
+    full = _scan_report(event, "html", detail_mode="all")
+
+    for report in (concise, full):
+        assert report.count('class="conditional-audit"') == 1
+        assert report.count("Canonical stored parent old") == 1
+        assert report.count("Canonical stored parent new") == 1
+        assert "&quot;min_prompt_tokens&quot;" in report
+    assert '<details class="conditional-audit">' in concise
+    assert '<details class="conditional-audit" open>' not in concise
+    assert '<details class="conditional-audit" open>' in full
+
+
+def test_scan_price_tally_reconciles_all_semantic_direct_facts_neutrally() -> None:
+    mixed_event = replace(
+        _event(),
+        field_changes=(
+            FieldChange("pricing.prompt", "0.000001", "0.000002"),
+            FieldChange("pricing.completion", "0.000008", "0.0000080"),
+        ),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+    mixed_core = reporting.build_model_event_semantic_core(
+        mixed_event, OPENROUTER_PROFILE
+    )
+    unknown_fact = replace(
+        mixed_core.accounting.direct_price_facts[0],
+        direction="unknown",
+        delta=None,
+        percentage=None,
+        comparison_group=None,
+    )
+    unknown_core = replace(
+        mixed_core,
+        accounting=reporting.build_model_pricing_accounting(
+            None, direct_price_facts=(unknown_fact,)
+        ),
+    )
+
+    for mode in ("default", "all"):
+        mixed_report = _scan_report(mixed_event, "html", detail_mode=mode)
+        movement = mixed_report.split('id="price-movement"', 1)[1].split(
+            "</section>", 1
+        )[0]
+        assert "2 direct price fields" in movement
+        assert "1 unchanged/unknown" in movement
+
+        unknown_report = reporting.render_scan_report(
+            generated_at=mixed_event.detected_at,
+            command="scan",
+            format_name="html",
+            provider_results=[_scan_result(mixed_event)],
+            detail_policy=reporting.make_report_detail_policy(mode=mode),
+            semantic_cores={unknown_core.identity: unknown_core},
+        )
+        unknown_movement = unknown_report.split('id="price-movement"', 1)[1].split(
+            "</section>", 1
+        )[0]
+        assert "1 direct price field" in unknown_movement
+        assert "1 unchanged/unknown" in unknown_movement
+        assert "Higher only" not in unknown_movement
+        assert "Lower only" not in unknown_movement
+
+
+@pytest.mark.parametrize(
+    ("field_name", "old_value", "new_value", "chip"),
+    (
+        ("pricing.request", None, "1.0", "+1 added"),
+        ("pricing.image", "2.0", None, "−1 removed"),
+    ),
+)
+def test_semantic_coverage_fact_preserves_added_or_removed_chip(
+    field_name, old_value, new_value, chip
+) -> None:
+    rules = [{"utc_days": ["monday"], "prompt": "0.000002"}]
+    event = replace(
+        _event(),
+        field_changes=(
+            FieldChange(field_name, old_value, new_value),
+            FieldChange("pricing.overrides", None, rules),
+        ),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", field_name.removeprefix("pricing."): old_value},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.000001",
+                field_name.removeprefix("pricing."): new_value,
+                "overrides": rules,
+            },
+        },
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    assert core.accounting.direct_price_facts[0].direction == "coverage"
+
+    movement = _scan_report(event, "html").split('id="price-movement"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert "1 direct price field" in movement
+    assert chip in movement
+    assert "unchanged/unknown" not in movement
+
+
+def test_semantic_direct_tally_reconciles_movement_coverage_and_neutral_facts() -> None:
+    rules = [{"utc_days": ["monday"], "prompt": "0.000002"}]
+    event = replace(
+        _event(),
+        field_changes=(
+            FieldChange("pricing.completion", "0.000008", "0.000009"),
+            FieldChange("pricing.request", None, "1.0"),
+            FieldChange("pricing.image", "2.0", None),
+            FieldChange("pricing.input_cache_read", "0.0000040", "0.000004"),
+            FieldChange("pricing.overrides", None, rules),
+        ),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.000001",
+                "completion": "0.000008",
+                "image": "2.0",
+                "input_cache_read": "0.0000040",
+            },
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.000001",
+                "completion": "0.000009",
+                "request": "1.0",
+                "input_cache_read": "0.000004",
+                "overrides": rules,
+            },
+        },
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    assert core.accounting.direct_price_field_count == 4
+    assert [fact.direction for fact in core.accounting.direct_price_facts] == [
+        "higher",
+        "coverage",
+        "coverage",
+        "unchanged",
+    ]
+
+    movement = _scan_report(event, "html").split('id="price-movement"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert "4 direct price fields" in movement
+    assert '<span class="price-tally-chip price-higher">↑ 1</span>' in movement
+    assert '<span class="price-tally-chip price-coverage">+1 added</span>' in movement
+    assert '<span class="price-tally-chip price-coverage">−1 removed</span>' in movement
+    assert '<span class="price-tally-chip price-neutral">1 unchanged/unknown</span>' in movement
+
+
+def test_mixed_band_colors_only_each_comparable_dimension_subfact() -> None:
+    event = _event()
+    mixed_rule = {
+        "utc_days": ["monday"],
+        "utc_start": 100,
+        "utc_end": 200,
+        "prompt": "0.000003",
+        "completion": "0.000004",
+    }
+    event = replace(
+        event,
+        field_changes=(
+            event.field_changes[0],
+            FieldChange("pricing.overrides", None, [mixed_rule]),
+        ),
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.000001",
+                "completion": "0.000008",
+                "overrides": [mixed_rule],
+            },
+        },
+    )
+    report = _scan_report(event, "html")
+
+    assert '<span class="price-higher">Input up 50.0%</span>' in report
+    assert '<span class="price-lower">Output down 50.0%</span>' in report
+    assert 'conditional-movement price-higher">band' not in report
+    assert 'conditional-movement price-lower">band' not in report
+    for neutral in ("UTC", "Mon 01:00-02:00 UTC"):
+        assert f'price-higher">{neutral}' not in report
+        assert f'price-lower">{neutral}' not in report
+
+
+def test_change_summary_uses_utc_band_only_for_time_window_semantics() -> None:
+    threshold_rules = [{"min_prompt_tokens": 200000, "prompt": "0.000003"}]
+    threshold = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", None, threshold_rules),),
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", "overrides": threshold_rules},
+        },
+    )
+    raw = replace(
+        _event(metadata=False),
+        field_changes=(
+            FieldChange(
+                "pricing.overrides",
+                None,
+                [{"utc_days": ["synthetic-invalid-day"], "prompt": "0.000002"}],
+            ),
+        ),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+
+    threshold_report = _scan_report(threshold, "html")
+    raw_report = _scan_report(raw, "html")
+    grouped_report = _scan_report(_event(), "html")
+    assert "effective rate band" in threshold_report
+    assert "UTC rate band" not in threshold_report
+    assert "effective rate band" in raw_report
+    assert "UTC rate band" not in raw_report
+    assert "UTC rate band" in grouped_report
+
+
+def test_changes_neutral_direct_accounting_survives_without_a_model_bucket() -> None:
+    base = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=[],
+        new_rules=[],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+
+    def direct_edge(from_scrape, to_scrape, old_value, new_value):
+        identity = StoredComparisonIdentity(
+            "openrouter", "synthetic/model", from_scrape, to_scrape
+        )
+        return replace(
+            base,
+            identity=identity,
+            source_rows=(
+                replace(
+                    base.source_rows[0],
+                    from_scrape_id=from_scrape,
+                    to_scrape_id=to_scrape,
+                    field_name="pricing.prompt",
+                    old_value=old_value,
+                    new_value=new_value,
+                ),
+            ),
+            field_changes=(FieldChange("pricing.prompt", old_value, new_value),),
+            old_model_metadata={
+                "id": "synthetic/model",
+                "pricing": {"prompt": old_value},
+            },
+            new_model_metadata={
+                "id": "synthetic/model",
+                "pricing": {"prompt": new_value},
+            },
+        )
+
+    unchanged = direct_edge(10, 11, "0.1", "0.10")
+    unchanged_core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(unchanged), OPENROUTER_PROFILE
+    )
+    assert unchanged_core.accounting.model_bucket == "none"
+    aggregate = reporting.build_changes_semantic_core(
+        (unchanged,), {"openrouter": OPENROUTER_PROFILE}
+    )
+    assert aggregate.pricing_models == ()
+    assert aggregate.direct_price_field_count == 1
+    assert aggregate.neutral_direct_price_field_count == 1
+
+    def render(events, cores, semantic, mode="default"):
+        return reporting.render_changes_report(
+            format_name="html",
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=(),
+            provider_profiles={"openrouter": OPENROUTER_PROFILE},
+            detail_policy=reporting.make_report_detail_policy(mode=mode),
+            stored_events=events,
+            semantic_cores=cores,
+            changes_semantic_core=semantic,
+        )
+
+    unchanged_cores = {unchanged.identity: unchanged_core}
+    for mode in ("default", "all"):
+        report = render((unchanged,), unchanged_cores, aggregate, mode)
+        movement = report.split('id="price-movement"', 1)[1].split(
+            "</section>", 1
+        )[0]
+        assert "no normalized rate movement" in movement
+        assert "1 direct price field" in movement
+        assert "1 unchanged/unknown" in movement
+        assert "Higher only" not in movement
+        assert "Conditional / variable" not in movement
+    assert 'id="price-movement"' not in render(
+        (unchanged,), unchanged_cores, aggregate, "squelched"
+    )
+
+    unknown_fact = replace(
+        unchanged_core.accounting.direct_price_facts[0],
+        direction="unknown",
+        delta=None,
+        percentage=None,
+        comparison_group=None,
+    )
+    unknown_core = replace(
+        unchanged_core,
+        accounting=reporting.build_model_pricing_accounting(
+            None, direct_price_facts=(unknown_fact,)
+        ),
+    )
+    unknown_aggregate = replace(
+        aggregate,
+        events=(unknown_core,),
+    )
+    unknown_report = render(
+        (unchanged,), {unchanged.identity: unknown_core}, unknown_aggregate
+    )
+    assert "no normalized rate movement" in unknown_report
+    assert "1 direct price field" in unknown_report
+    assert "1 unchanged/unknown" in unknown_report
+
+    higher = direct_edge(11, 12, "0.1", "0.2")
+    mixed_events = (unchanged, higher)
+    mixed_cores = {
+        event.identity: reporting.build_model_event_semantic_core(
+            reporting.pricing_event_from_stored(event), OPENROUTER_PROFILE
+        )
+        for event in mixed_events
+    }
+    mixed_aggregate = reporting.build_changes_semantic_core(
+        mixed_events, {"openrouter": OPENROUTER_PROFILE}
+    )
+    assert len(mixed_aggregate.pricing_models) == 1
+    assert mixed_aggregate.pricing_models[0].model_bucket == "higher"
+    assert mixed_aggregate.direct_price_field_count == 2
+    assert mixed_aggregate.neutral_direct_price_field_count == 1
+    mixed_report = render(mixed_events, mixed_cores, mixed_aggregate)
+    mixed_movement = mixed_report.split('id="price-movement"', 1)[1].split(
+        "</section>", 1
+    )[0]
+    assert mixed_movement.count("Higher only") == 1
+    assert "2 direct price fields" in mixed_movement
+    assert "1 unchanged/unknown" in mixed_movement
+
+
+def test_composite_price_cells_reuse_raw_value_tooltips() -> None:
+    grouped_rule = {"utc_days": ["monday"], "prompt": "0.0000010"}
+    grouped = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", None, [grouped_rule]),),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001"},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", "overrides": [grouped_rule]},
+        },
+    )
+    grouped_html = _scan_report(grouped, "html")
+    assert 'title="0.0000010 (1.0e-6) × 1,000,000 = $1.00"' in grouped_html
+
+    ordered_rule = {"min_prompt_tokens": 200000, "prompt": "0.0000030"}
+    ordered = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", None, [ordered_rule]),),
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.000001",
+                "completion": "0.000008",
+                "overrides": [ordered_rule],
+            },
+        },
+    )
+    ordered_html = _scan_report(ordered, "html")
+    assert 'title="0.0000030 (3.0e-6) × 1,000,000 = $3.00"' in ordered_html
+
+
+def test_scan_html_ordered_rules_and_raw_fallback_are_self_contained() -> None:
+    base = _event()
+    ordered_rules = [
+        {"min_prompt_tokens": 200000, "prompt": "0.000003"},
+        {
+            "utc_days": ["monday"],
+            "utc_start": 100,
+            "utc_end": 200,
+            "completion": "0.000009",
+        },
+    ]
+    ordered = replace(
+        base,
+        field_changes=(FieldChange("pricing.overrides", None, ordered_rules),),
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.000001",
+                "completion": "0.000008",
+                "overrides": ordered_rules,
+            },
+        },
+    )
+    ordered_html = _scan_report(ordered, "html")
+    assert "CONDITIONAL PRICING ADDED" in ordered_html
+    assert ordered_html.index("Rule 1") < ordered_html.index("Rule 2")
+    assert "Prompt &gt; 200,000 tokens" in ordered_html
+    assert 'class="not-set"' in ordered_html
+    assert "not set by this rule" in ordered_html
+    assert "later matching rules win per price key" in ordered_html
+    assert "inherited from base" not in ordered_html.lower()
+
+    malformed = {"unsupported": "synthetic"}
+    fallback = replace(
+        _event(metadata=False),
+        field_changes=(FieldChange("pricing.overrides", None, malformed),),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+    fallback_html = _scan_report(fallback, "html")
+    assert "CONDITIONAL PRICING CHANGED" in fallback_html
+    assert "No schedule direction was inferred" in fallback_html
+    assert "Canonical stored parent old" in fallback_html
+    assert "Canonical stored parent new" in fallback_html
+    assert "invalid_policy_type" not in fallback_html
+
+
+def test_scan_html_squelched_omits_semantic_panels_and_conditional_colors_are_cost_only() -> None:
+    normal = _scan_report(_event(), "html")
+    squelched = _scan_report(_event(), "html", detail_mode="squelched")
+
+    assert 'class="conditional-pricing' not in squelched
+    assert 'id="price-movement"' not in squelched
+    assert "Conditional / variable" not in squelched
+
+    assert 'class="conditional-movement price-lower"' in normal
+    assert 'class="conditional-movement price-higher"' in normal
+    for neutral in ("UTC", "Mon 01:00-02:00 UTC", "1 rule", "2 price dimensions"):
+        assert f'price-higher">{neutral}' not in normal
+        assert f'price-lower">{neutral}' not in normal
+
+
+def test_changes_html_keeps_repeated_stored_edges_distinct_with_edge_links() -> None:
+    one_rule = [{"utc_days": ["monday"], "prompt": "0.000002"}]
+    two_rules = [
+        *one_rule,
+        {"utc_days": ["tuesday"], "prompt": "0.000003"},
+    ]
+    detected = "2026-08-28T12:00:00+00:00"
+    first = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=one_rule,
+        detected_at=detected,
+    )
+    second = _stored_schedule_event(
+        from_scrape=9,
+        to_scrape=12,
+        old_rules=two_rules,
+        new_rules=None,
+        detected_at=detected,
+    )
+    cores = {
+        event.identity: reporting.build_model_event_semantic_core(
+            reporting.pricing_event_from_stored(event), OPENROUTER_PROFILE
+        )
+        for event in (first, second)
+    }
+    aggregate = reporting.build_changes_semantic_core(
+        (first, second), {"openrouter": OPENROUTER_PROFILE}
+    )
+
+    report = reporting.render_changes_report(
+        format_name="html",
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=(),
+        provider_profiles={"openrouter": OPENROUTER_PROFILE},
+        detail_policy=reporting.make_report_detail_policy(),
+        stored_events=(first, second),
+        semantic_cores=cores,
+        changes_semantic_core=aggregate,
+    )
+
+    assert report.count('class="conditional-pricing') == 2
+    assert report.count("relative to selected baseline") == 2
+    assert report.count('class="edge-timestamps"') == 2
+    assert report.count('class="conditional-summary-row"') == 2
+    assert report.count('class="edge-link"') == 2
+    assert report.count('id="edge-m-synthetic-model-') == 2
+    assert "2 pricing schedule events" in report
+    assert report.count("Pricing schedule added") == 1
+    assert report.count("Pricing schedule removed") == 1
+    assert "from-10-to-11" in report
+    assert "from-9-to-12" in report
+    assert report.count("synthetic/model") >= 4
+    assert "Utc days" not in report
