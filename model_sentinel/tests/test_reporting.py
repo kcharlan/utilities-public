@@ -1,6 +1,8 @@
 import json
+import os
 import re
 import sqlite3
+import time
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -36,6 +38,7 @@ from model_sentinel.reporting import (
 from model_sentinel.provider_profiles import (
     OPENROUTER_PROFILE,
     PER_MILLION_TOKENS_TARGET,
+    ProviderProfile,
     PriceDisplayRule,
 )
 from model_sentinel import cli
@@ -69,6 +72,122 @@ def test_shared_reporting_helper_aliases_and_detail_policy() -> None:
     assert reporting.detail_policy_from_settings(settings, mode="all") == cli._report_detail_policy(
         args=args, loaded=loaded
     )
+
+
+def test_provider_profile_accepts_the_complete_legacy_positional_shape() -> None:
+    """New profile fields must not shift any pre-feature positional argument."""
+    categorize = lambda field: f"category:{field}"
+    is_price = lambda field: field == "pricing.prompt"
+    is_count = lambda field: field == "context_length"
+    path_rule = PriceDisplayRule(unit_label="/synthetic", multiplier=2, divisor=3)
+    leaf_rule = PriceDisplayRule(unit_label="/leaf", multiplier=4, divisor=5)
+
+    profile = ProviderProfile(
+        "synthetic",
+        7,
+        11,
+        {"pricing.prompt": path_rule},
+        {"prompt": leaf_rule},
+        PriceDisplayRule(unit_label="/fallback"),
+        "synthetic-group",
+        ("payload", "items"),
+        {"context": (("context_window",),)},
+        {"pricing.prompt": "Prompt"},
+        {"prompt": "Prompt leaf"},
+        ("pricing.prompt", "pricing.completion"),
+        frozenset({"enabled"}),
+        categorize,
+        is_price,
+        is_count,
+        ("legacy_selector",),
+        ("pricing.*",),
+        ("benchmarks.*",),
+    )
+
+    assert profile.kind == "synthetic"
+    assert profile.price_multiplier == 7
+    assert profile.price_divisor == 11
+    assert dict(profile.price_path_rules) == {"pricing.prompt": path_rule}
+    assert dict(profile.price_leaf_rules) == {"prompt": leaf_rule}
+    assert profile.unmatched_price_rule == PriceDisplayRule(unit_label="/fallback")
+    assert profile.primary_price_comparison_group == "synthetic-group"
+    assert profile.envelope_keys == ("payload", "items")
+    assert profile.normalized_fields == {"context": (("context_window",),)}
+    assert profile.field_path_labels == {"pricing.prompt": "Prompt"}
+    assert profile.field_leaf_labels == {"prompt": "Prompt leaf"}
+    assert profile.pricing_field_order == ("pricing.prompt", "pricing.completion")
+    assert profile.known_boolean_fields == frozenset({"enabled"})
+    assert profile.categorize is categorize
+    assert profile.is_price_amount_field is is_price
+    assert profile.is_count_field is is_count
+    assert profile.pricing_override_condition_fields == ("legacy_selector",)
+    assert profile.default_show_fields == ("pricing.*",)
+    assert profile.default_squelch_fields == ("benchmarks.*",)
+
+
+def test_legacy_report_entry_points_accept_calls_without_semantic_core() -> None:
+    """Existing callers can invoke human planning paths without new arguments."""
+    scan = render_scan_report(
+        generated_at="2026-08-01T00:00:00+00:00",
+        command="scan",
+        format_name="text",
+        provider_results=[
+            _scan_result(
+                (
+                    ModelDelta(
+                        "changed",
+                        "synthetic/model",
+                        "Synthetic Model",
+                        (FieldChange("status", "old", "new"),),
+                    ),
+                )
+            )
+        ],
+    )
+    history = render_history_report_with_profile(
+        provider_id="synthetic",
+        model_id="synthetic/model",
+        format_name="text",
+        first_seen="2026-08-01T00:00:00+00:00",
+        last_seen="2026-08-02T00:00:00+00:00",
+        events=(
+            HistoryEvent(
+                "2026-08-02T00:00:00+00:00",
+                "changed",
+                "status",
+                "old",
+                "new",
+            ),
+        ),
+        profile=OPENROUTER_PROFILE,
+    )
+    changes = render_changes_report_with_profiles(
+        format_name="text",
+        provider_id="synthetic",
+        since=None,
+        until=None,
+        changes=(
+            {
+                "detected_at": "2026-08-02T00:00:00+00:00",
+                "provider_id": "synthetic",
+                "provider_label": "Synthetic Provider",
+                "provider_model_id": "synthetic/model",
+                "display_name": "Synthetic Model",
+                "change_kind": "field_changed",
+                "field_name": "status",
+                "old_value": "old",
+                "new_value": "new",
+            },
+        ),
+        provider_profiles={"synthetic": OPENROUTER_PROFILE},
+    )
+
+    assert "Synthetic Model" in scan
+    assert "changed: 1" in scan
+    assert "status old -> new" in history
+    assert "1 change across 1 date" in changes
+    assert "synthetic/model" in changes
+    assert "Status: old → new" in changes
 
 
 def test_visibility_of_guards_presence_rows() -> None:
@@ -2069,6 +2188,177 @@ def test_history_report_applies_detail_policy() -> None:
     assert "Input" not in report
     assert "benchmarks.design_arena" not in report
     assert "squelched" in report
+
+
+def test_ordinary_history_text_and_markdown_are_byte_stable_per_detail_mode() -> None:
+    """Freeze the legacy history filter, including its field_changed quirk."""
+    events = (
+        HistoryEvent("2026-07-25T09:00:00+00:00", "field_changed", "benchmarks.design_arena", 1, 2),
+        HistoryEvent("2026-07-25T10:00:00+00:00", "changed", "benchmarks.other", "old", "new"),
+        HistoryEvent("2026-07-25T11:00:00+00:00", "changed", "pricing.prompt", "0.1", "0.2"),
+        HistoryEvent("2026-07-25T12:00:00+00:00", "added", None, None, {"id": "synthetic/model"}),
+    )
+    policies = {
+        mode: ReportDetailPolicy(
+            mode=mode,
+            show_fields=DEFAULT_REPORT_SHOW_FIELDS,
+            squelch_fields=("benchmarks", "benchmarks.*"),
+            unclassified_limit=20,
+        )
+        for mode in ("default", "all", "squelched")
+    }
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    try:
+        reports = {
+            mode: {
+                format_name: render_history_report_with_profile(
+                    provider_id="synthprov",
+                    model_id="synth/model",
+                    format_name=format_name,
+                    first_seen="2026-07-01T00:00:00+00:00",
+                    last_seen="2026-07-25T12:00:00+00:00",
+                    events=events,
+                    profile=OPENROUTER_PROFILE,
+                    detail_policy=policy,
+                )
+                for format_name in ("text", "markdown")
+            }
+            for mode, policy in policies.items()
+        }
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
+
+    assert reports["default"]["text"] == (
+        "History for synthprov / synth/model\n"
+        "First seen: 2026-07-01 00:00:00\n"
+        "Last seen: 2026-07-25 12:00:00\n\n"
+        "- 2026-07-25 09:00:00 [field_changed] benchmarks.design_arena 1 -> 2\n"
+        "- 2026-07-25 11:00:00 [changed] pricing.prompt 0.1 -> 0.2\n"
+        "- 2026-07-25 12:00:00 [added]  null -> {\"id\": \"synthetic/model\"}\n"
+        "- [squelched] 1 field change(s) hidden by report detail policy"
+    )
+    assert reports["all"]["text"] == (
+        "History for synthprov / synth/model\n"
+        "First seen: 2026-07-01 00:00:00\n"
+        "Last seen: 2026-07-25 12:00:00\n\n"
+        "- 2026-07-25 09:00:00 [field_changed] benchmarks.design_arena 1 -> 2\n"
+        "- 2026-07-25 10:00:00 [changed] benchmarks.other old -> new\n"
+        "- 2026-07-25 11:00:00 [changed] pricing.prompt 0.1 -> 0.2\n"
+        "- 2026-07-25 12:00:00 [added]  null -> {\"id\": \"synthetic/model\"}"
+    )
+    assert reports["squelched"]["text"] == (
+        "History for synthprov / synth/model\n"
+        "First seen: 2026-07-01 00:00:00\n"
+        "Last seen: 2026-07-25 12:00:00\n\n"
+        "- 2026-07-25 09:00:00 [field_changed] benchmarks.design_arena 1 -> 2\n"
+        "- 2026-07-25 10:00:00 [changed] benchmarks.other old -> new\n"
+        "- 2026-07-25 12:00:00 [added]  null -> {\"id\": \"synthetic/model\"}\n"
+        "- [filtered] 1 non-squelched field change(s) omitted in squelched detail mode"
+    )
+    assert reports["default"]["markdown"] == (
+        "# History: synthprov / synth/model\n\n"
+        "- First seen: 2026-07-01 00:00:00\n"
+        "- Last seen: 2026-07-25 12:00:00\n\n"
+        "| Detected At | Kind | Field | Old | New |\n"
+        "|---|---|---|---|---|\n"
+        "| 2026-07-25 09:00:00 | field_changed | benchmarks.design_arena | 1 | 2 |\n"
+        "| 2026-07-25 11:00:00 | changed | pricing.prompt | 0.1 | 0.2 |\n"
+        "| 2026-07-25 12:00:00 | added |  | null | {\"id\": \"synthetic/model\"} |\n\n"
+        "`1` squelched field change(s) hidden by report detail policy."
+    )
+    assert reports["all"]["markdown"] == (
+        "# History: synthprov / synth/model\n\n"
+        "- First seen: 2026-07-01 00:00:00\n"
+        "- Last seen: 2026-07-25 12:00:00\n\n"
+        "| Detected At | Kind | Field | Old | New |\n"
+        "|---|---|---|---|---|\n"
+        "| 2026-07-25 09:00:00 | field_changed | benchmarks.design_arena | 1 | 2 |\n"
+        "| 2026-07-25 10:00:00 | changed | benchmarks.other | old | new |\n"
+        "| 2026-07-25 11:00:00 | changed | pricing.prompt | 0.1 | 0.2 |\n"
+        "| 2026-07-25 12:00:00 | added |  | null | {\"id\": \"synthetic/model\"} |"
+    )
+    assert reports["squelched"]["markdown"] == (
+        "# History: synthprov / synth/model\n\n"
+        "- First seen: 2026-07-01 00:00:00\n"
+        "- Last seen: 2026-07-25 12:00:00\n\n"
+        "| Detected At | Kind | Field | Old | New |\n"
+        "|---|---|---|---|---|\n"
+        "| 2026-07-25 09:00:00 | field_changed | benchmarks.design_arena | 1 | 2 |\n"
+        "| 2026-07-25 10:00:00 | changed | benchmarks.other | old | new |\n"
+        "| 2026-07-25 12:00:00 | added |  | null | {\"id\": \"synthetic/model\"} |\n\n"
+        "`1` non-squelched field change(s) omitted in squelched detail mode."
+    )
+
+
+def test_legacy_history_json_projection_keeps_keys_values_and_event_order() -> None:
+    events = (
+        HistoryEvent("2026-07-25T09:00:00+00:00", "field_changed", "status", "old", "new"),
+        HistoryEvent("2026-07-25T10:00:00+00:00", "added", None, None, {"id": "synthetic/model"}),
+    )
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    try:
+        payload = json.loads(
+            render_history_report_with_profile(
+                provider_id="synthprov",
+                model_id="synthetic/model",
+                format_name="json",
+                first_seen="2026-07-01T00:00:00+00:00",
+                last_seen="2026-07-25T10:00:00+00:00",
+                events=events,
+                profile=OPENROUTER_PROFILE,
+            )
+        )
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
+
+    assert tuple(payload) == (
+        "events",
+        "first_seen",
+        "last_seen",
+        "latest_model",
+        "model_id",
+        "provider_id",
+    )
+    assert tuple(payload["events"][0]) == (
+        "change_kind",
+        "detected_at",
+        "field_name",
+        "new_value",
+        "old_value",
+    )
+    assert payload["provider_id"] == "synthprov"
+    assert payload["model_id"] == "synthetic/model"
+    assert payload["first_seen"] == "2026-07-01T00:00:00+00:00"
+    assert payload["last_seen"] == "2026-07-25T10:00:00+00:00"
+    assert payload["events"] == [
+        {
+            "change_kind": "field_changed",
+            "detected_at": "2026-07-25T09:00:00+00:00",
+            "field_name": "status",
+            "new_value": "new",
+            "old_value": "old",
+        },
+        {
+            "change_kind": "added",
+            "detected_at": "2026-07-25T10:00:00+00:00",
+            "field_name": None,
+            "new_value": {"id": "synthetic/model"},
+            "old_value": None,
+        },
+    ]
+    assert payload["latest_model"] is None
 
 
 def test_json_output_remains_full_fidelity() -> None:

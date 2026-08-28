@@ -1,7 +1,9 @@
 import json
+import os
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from time import perf_counter
+import time as time_module
 from typing import Any
 
 import pytest
@@ -11,6 +13,8 @@ from model_sentinel.models import FieldChange, ModelDelta, NormalizedModel, cano
 from model_sentinel import storage
 from model_sentinel.storage import Store
 from model_sentinel.time_utils import local_date_for
+from model_sentinel.reporting import render_changes_report, render_history_report
+from model_sentinel.provider_profiles import OPENROUTER_PROFILE
 
 
 def _model(
@@ -476,3 +480,197 @@ def test_load_json_value_is_public_with_private_compatibility_alias() -> None:
     assert storage.load_json_value('{"fake": [1, true]}') == {"fake": [1, True]}
     assert storage.load_json_value(None) is None
     assert storage._load_json_value is storage.load_json_value
+
+
+def _build_legacy_metadata_fixture(tmp_path: Path) -> Store:
+    """Build one valid synthetic edge whose snapshot metadata can be corrupted."""
+    store = Store(tmp_path / "malformed-metadata.db")
+    store.initialize()
+    provider = _provider("synthetic", "Synthetic Provider")
+    store.upsert_provider_configs((provider,), updated_at="2026-08-01T00:00:00+00:00")
+
+    first = store.create_scrape(
+        provider_id="synthetic",
+        started_at="2026-08-01T00:00:00+00:00",
+        completed_at="2026-08-01T00:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=None,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    second = store.create_scrape(
+        provider_id="synthetic",
+        started_at="2026-08-02T00:00:00+00:00",
+        completed_at="2026-08-02T00:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=first,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    store.save_snapshot_models(
+        scrape_id=first,
+        provider_id="synthetic",
+        models=[_model("synthetic/model", provider_id="synthetic", provider_label=provider.label, display_name="Old Name")],
+    )
+    store.save_snapshot_models(
+        scrape_id=second,
+        provider_id="synthetic",
+        models=[_model("synthetic/model", provider_id="synthetic", provider_label=provider.label, display_name="New Name")],
+    )
+    store.record_field_changes(
+        provider_id="synthetic",
+        from_scrape_id=first,
+        to_scrape_id=second,
+        deltas=(
+            ModelDelta(
+                "changed",
+                "synthetic/model",
+                "New Name",
+                (FieldChange("status", "old", "new"),),
+            ),
+        ),
+        detected_at="2026-08-02T00:01:00+00:00",
+    )
+    return store
+
+
+def _legacy_storage_projection(store: Store):
+    """Read every legacy storage value used by history and changes reports."""
+    first_seen, last_seen, history_events = store.history_events(
+        provider_id="synthetic",
+        model_id="synthetic/model",
+        since=None,
+        until=None,
+    )
+    changes = store.recent_changes(provider_id="synthetic")
+    return first_seen, last_seen, history_events, changes
+
+
+def _legacy_json_projection(store: Store, projection) -> tuple[str, str]:
+    first_seen, last_seen, history_events, changes = projection
+    history_json = render_history_report(
+        provider_id="synthetic",
+        model_id="synthetic/model",
+        format_name="json",
+        first_seen=first_seen,
+        last_seen=last_seen,
+        events=history_events,
+        profile=OPENROUTER_PROFILE,
+        latest_model=store.get_latest_model_snapshot(
+            provider_id="synthetic", model_id="synthetic/model"
+        ),
+    )
+    changes_json = render_changes_report(
+        format_name="json",
+        provider_id="synthetic",
+        since=None,
+        until=None,
+        changes=changes,
+    )
+    return history_json, changes_json
+
+
+def _corrupt_snapshot_metadata(store: Store) -> None:
+    """Perform the real SQLite corruption used by both isolation assertions."""
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE snapshot_models SET metadata_json = ?",
+            ("{malformed synthetic metadata",),
+        )
+        connection.commit()
+
+
+def test_legacy_storage_projections_ignore_malformed_snapshot_metadata(tmp_path: Path) -> None:
+    store = _build_legacy_metadata_fixture(tmp_path)
+    before = _legacy_storage_projection(store)
+    _corrupt_snapshot_metadata(store)
+    after = _legacy_storage_projection(store)
+
+    # Every legacy storage value is independent of snapshot metadata.
+    assert after == before
+    first_seen, last_seen, history_events, changes = after
+    assert (first_seen, last_seen) == (
+        "2026-08-01T00:01:00+00:00",
+        "2026-08-02T00:01:00+00:00",
+    )
+    assert history_events == (
+        storage.HistoryEvent("2026-08-02T00:01:00+00:00", "field_changed", "status", "old", "new"),
+    )
+    assert changes == (
+        {
+            "provider_id": "synthetic",
+            "provider_label": "Synthetic Provider",
+            "provider_model_id": "synthetic/model",
+            "display_name": "New Name",
+            "change_kind": "field_changed",
+            "field_name": "status",
+            "old_value": "old",
+            "new_value": "new",
+            "detected_at": "2026-08-02T00:01:00+00:00",
+        },
+    )
+
+
+def test_legacy_json_renderers_are_byte_identical_with_malformed_metadata(tmp_path: Path) -> None:
+    store = _build_legacy_metadata_fixture(tmp_path)
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time_module.tzset()
+    try:
+        before_storage = _legacy_storage_projection(store)
+        before_history_json, before_changes_json = _legacy_json_projection(
+            store, before_storage
+        )
+        _corrupt_snapshot_metadata(store)
+        after_storage = _legacy_storage_projection(store)
+        after_history_json, after_changes_json = _legacy_json_projection(
+            store, after_storage
+        )
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time_module.tzset()
+
+    assert after_storage == before_storage
+    assert after_history_json == before_history_json
+    assert after_changes_json == before_changes_json
+
+    _, _, _, changes = after_storage
+    history_json = json.loads(after_history_json)
+    changes_json = json.loads(after_changes_json)
+    assert history_json == {
+        "events": [
+            {
+                "change_kind": "field_changed",
+                "detected_at": "2026-08-02T00:01:00+00:00",
+                "field_name": "status",
+                "new_value": "new",
+                "old_value": "old",
+            }
+        ],
+        "first_seen": "2026-08-01T00:01:00+00:00",
+        "last_seen": "2026-08-02T00:01:00+00:00",
+        "latest_model": {
+            "cache_read_price": None,
+            "cache_write_price": None,
+            "completed_at": "2026-08-02T00:01:00+00:00",
+            "display_name": "New Name",
+            "input_price": None,
+            "output_price": None,
+            "provider_id": "synthetic",
+        },
+        "model_id": "synthetic/model",
+        "provider_id": "synthetic",
+    }
+    assert changes_json == {
+        "changes": [changes[0]],
+        "provider_id": "synthetic",
+        "since": None,
+        "until": None,
+    }

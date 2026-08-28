@@ -639,6 +639,183 @@ def test_changes_writes_its_html_companion_when_a_model_was_added(
     assert "Design arena" not in summary[1]
 
 
+def test_changes_json_uses_the_latest_snapshot_display_name(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Legacy changes JSON joins names from the current latest snapshot."""
+    from model_sentinel.models import FieldChange, ModelDelta, NormalizedModel, canonical_json
+
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    store = Store(runtime_home / "model_sentinel.db")
+    store.initialize()
+    provider = ProviderConfig(
+        provider_id="openrouter",
+        label="OpenRouter",
+        kind="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        models_path="/models",
+        credential_env_var="OPENROUTER_AI_CREDS",
+        price_multiplier=1000000,
+        price_divisor=1,
+        enabled=True,
+    )
+    store.upsert_provider_configs((provider,), updated_at="2026-08-01T00:00:00+00:00")
+
+    def model(display_name: str) -> NormalizedModel:
+        return NormalizedModel(
+            provider_id="openrouter",
+            provider_label="OpenRouter",
+            provider_model_id="synthetic/model",
+            display_name=display_name,
+            description=None,
+            model_family=None,
+            created_at_provider=None,
+            context_window=None,
+            max_output_tokens=None,
+            input_price=None,
+            output_price=None,
+            cache_read_price=None,
+            cache_write_price=None,
+            reasoning_supported=None,
+            tool_calling_supported=None,
+            vision_supported=None,
+            audio_supported=None,
+            image_supported=None,
+            structured_output_supported=None,
+            deprecated=None,
+            status="active",
+            metadata_json=canonical_json({"id": "synthetic/model", "name": display_name}),
+        )
+
+    first = store.create_scrape(
+        provider_id="openrouter",
+        started_at="2026-08-01T00:00:00+00:00",
+        completed_at="2026-08-01T00:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=None,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    second = store.create_scrape(
+        provider_id="openrouter",
+        started_at="2026-08-02T00:00:00+00:00",
+        completed_at="2026-08-02T00:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=first,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    third = store.create_scrape(
+        provider_id="openrouter",
+        started_at="2026-08-03T00:00:00+00:00",
+        completed_at="2026-08-03T00:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=second,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    store.save_snapshot_models(
+        scrape_id=first,
+        provider_id="openrouter",
+        models=[model("Synthetic Original Name")],
+    )
+    store.save_snapshot_models(
+        scrape_id=second,
+        provider_id="openrouter",
+        models=[model("Synthetic Latest Name")],
+    )
+    store.save_snapshot_models(
+        scrape_id=third,
+        provider_id="openrouter",
+        models=[model("Synthetic Current Name")],
+    )
+    store.record_field_changes(
+        provider_id="openrouter",
+        from_scrape_id=first,
+        to_scrape_id=second,
+        deltas=(
+            ModelDelta(
+                "changed",
+                "synthetic/model",
+                "Synthetic Latest Name",
+                (FieldChange("status", "preview", "active"),),
+            ),
+        ),
+        detected_at="2026-08-02T00:01:00+00:00",
+    )
+
+    assert cli.main(["changes", "--format", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert tuple(payload) == ("changes", "provider_id", "since", "until")
+    assert payload["changes"] == [
+        {
+            "change_kind": "field_changed",
+            "detected_at": "2026-08-02T00:01:00+00:00",
+            "display_name": "Synthetic Current Name",
+            "field_name": "status",
+            "new_value": "active",
+            "old_value": "preview",
+            "provider_id": "openrouter",
+            "provider_label": "OpenRouter",
+            "provider_model_id": "synthetic/model",
+        }
+    ]
+
+
+def test_scan_explicit_output_does_not_generate_managed_companions(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "synthetic-token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    output_path = tmp_path / "explicit-scan.txt"
+    payloads = iter(
+        [
+            [{"id": "synthetic/model", "name": "Synthetic Model"}],
+            [{"id": "synthetic/model", "name": "Synthetic Model", "status": "active"}],
+        ]
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
+
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+    assert cli.main(["scan", "--save", "--output", str(output_path)]) == 0
+    capsys.readouterr()
+
+    assert output_path.exists()
+    assert "changed: 1" in output_path.read_text(encoding="utf-8")
+    assert list((runtime_home / "reports").glob("scan_*.html")) == []
+    assert list((runtime_home / "reports").glob("scan_*_full.html")) == []
+
+
+def test_changes_explicit_output_does_not_generate_managed_companions(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    build_fixture_db(runtime_home / "model_sentinel.db")
+    output_path = tmp_path / "explicit-changes.txt"
+
+    assert cli.main(["changes", "--output", str(output_path)]) == 0
+    capsys.readouterr()
+
+    assert output_path.exists()
+    assert "changes across" in output_path.read_text(encoding="utf-8")
+    assert list((runtime_home / "reports").glob("changes_*.txt")) == []
+    assert list((runtime_home / "reports").glob("changes_*.html")) == []
+
+
 def test_history_model_list_lists_known_models(tmp_path: Path, monkeypatch, capsys) -> None:
     runtime_home = _write_config_files(tmp_path)
     monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
