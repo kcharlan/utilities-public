@@ -1,8 +1,8 @@
-"""Format-neutral parsing for provider-declared conditional pricing policies.
+"""Format-neutral semantics for provider-declared conditional pricing policies.
 
-This module deliberately stops at validated structural evidence.  Weekly
-coverage, precedence equivalence, price movement, absorption, accounting, and
-human rendering are later semantic layers.
+Parsing, bounded weekly UTC coverage, effective schedule compilation, and
+policy equality live here.  Price movement, absorption, accounting, storage,
+and human rendering remain later layers.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from collections import Counter
 from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, TypeVar
 
 from .change_render import resolve_price_rule
 from .models import FieldChange, canonical_json
@@ -41,13 +41,19 @@ FallbackReason: TypeAlias = Literal[
     "multiple_policy_errors",
 ]
 GroupingInhibitionReason: TypeAlias = Literal[
-    "schedule_compilation_deferred",
+    "comparison_requires_ordered_rules",
+    "duplicate_semantic_condition",
+    "incomplete_base_vector",
     "missing_event_snapshot",
+    "non_time_condition",
+    "overlapping_weekly_coverage",
 ]
 ComparisonInhibitionReason: TypeAlias = Literal[
     "comparison_deferred",
+    "incomplete_base_vector",
     "missing_event_snapshot",
     "missing_price_comparison_group",
+    "ordered_rules",
 ]
 _PARENT_FIELD = "pricing.overrides"
 _ROLE_WEEKDAYS = "utc_weekdays"
@@ -63,6 +69,198 @@ _ALL_WEEKDAYS = (
     "saturday",
     "sunday",
 )
+_WEEKDAY_INDEX = MappingProxyType(
+    {weekday: index for index, weekday in enumerate(_ALL_WEEKDAYS)}
+)
+# Exact reorder proof is pairwise.  Above this rule count, conservatively report
+# changed semantics instead of risking an unbounded quadratic scan.
+MAX_EXACT_REORDERED_RULE_COUNT = 256
+
+
+@dataclass(frozen=True, order=True)
+class WeeklySegment:
+    """One immutable half-open segment on a request-instant UTC civil day."""
+
+    weekday_index: int
+    start_minute: int
+    end_minute: int
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.weekday_index, int)
+            or isinstance(self.weekday_index, bool)
+            or not 0 <= self.weekday_index < 7
+        ):
+            raise ValueError("weekday_index must be an integer from 0 through 6")
+        if any(
+            not isinstance(value, int) or isinstance(value, bool)
+            for value in (self.start_minute, self.end_minute)
+        ):
+            raise ValueError("weekly segment minutes must be integers")
+        if not 0 <= self.start_minute < self.end_minute <= 1440:
+            raise ValueError("weekly segments must satisfy 0 <= start < end <= 1440")
+
+    def contains(self, minute: int) -> bool:
+        return self.start_minute <= minute < self.end_minute
+
+
+WeeklyCoverage: TypeAlias = tuple[WeeklySegment, ...]
+
+
+def compile_weekly_segments(
+    utc_weekdays: tuple[str, ...],
+    start_minute: int,
+    end_minute: int,
+) -> WeeklyCoverage:
+    """Compile selected request-instant UTC days into canonical same-day segments."""
+    try:
+        weekday_indices = tuple(_WEEKDAY_INDEX[weekday] for weekday in utc_weekdays)
+    except (KeyError, TypeError):
+        raise ValueError("utc_weekdays must contain registered weekday names") from None
+    if len(set(weekday_indices)) != len(weekday_indices):
+        raise ValueError("utc_weekdays must not contain duplicates")
+    if not weekday_indices:
+        raise ValueError("utc_weekdays must not be empty")
+    if any(
+        not isinstance(value, int) or isinstance(value, bool)
+        for value in (start_minute, end_minute)
+    ):
+        raise ValueError("weekly interval endpoints must be integers")
+    if not (0 <= start_minute < 1440 and 0 <= end_minute <= 1440):
+        raise ValueError("weekly interval endpoints are outside the UTC civil day")
+    if start_minute == end_minute:
+        raise ValueError("equal weekly interval endpoints are unsupported")
+
+    segments: list[WeeklySegment] = []
+    for weekday_index in sorted(weekday_indices):
+        if start_minute < end_minute:
+            segments.append(WeeklySegment(weekday_index, start_minute, end_minute))
+            continue
+        if end_minute > 0:
+            segments.append(WeeklySegment(weekday_index, 0, end_minute))
+        segments.append(WeeklySegment(weekday_index, start_minute, 1440))
+    return tuple(segments)
+
+
+def weekly_coverage_contains(
+    coverage: WeeklyCoverage,
+    weekday_index: int,
+    minute: int,
+) -> bool:
+    """Return whether a UTC civil-day instant belongs to ``coverage``."""
+    if (
+        not isinstance(weekday_index, int)
+        or isinstance(weekday_index, bool)
+        or not 0 <= weekday_index < 7
+    ):
+        return False
+    if not isinstance(minute, int) or isinstance(minute, bool) or not 0 <= minute < 1440:
+        return False
+    return any(
+        segment.weekday_index == weekday_index and segment.contains(minute)
+        for segment in coverage
+    )
+
+
+def weekly_segments_overlap(
+    left: WeeklyCoverage,
+    right: WeeklyCoverage,
+) -> bool:
+    """Detect positive-measure overlap; boundary adjacency is not overlap."""
+    return _canonical_weekly_segments_overlap(
+        tuple(sorted(left)),
+        tuple(sorted(right)),
+    )
+
+
+def _canonical_weekly_segments_overlap(
+    left: WeeklyCoverage,
+    right: WeeklyCoverage,
+) -> bool:
+    """Detect overlap between already-normalized, sorted weekly coverages."""
+    left_index = right_index = 0
+    while left_index < len(left) and right_index < len(right):
+        left_segment = left[left_index]
+        right_segment = right[right_index]
+        if left_segment.weekday_index < right_segment.weekday_index:
+            left_index += 1
+            continue
+        if right_segment.weekday_index < left_segment.weekday_index:
+            right_index += 1
+            continue
+        if max(left_segment.start_minute, right_segment.start_minute) < min(
+            left_segment.end_minute,
+            right_segment.end_minute,
+        ):
+            return True
+        if left_segment.end_minute <= right_segment.end_minute:
+            left_index += 1
+        else:
+            right_index += 1
+    return False
+
+
+def _normalize_weekly_segments(coverage: WeeklyCoverage) -> WeeklyCoverage:
+    normalized: list[WeeklySegment] = []
+    for segment in sorted(coverage):
+        if not isinstance(segment, WeeklySegment):
+            raise TypeError("weekly coverage must contain WeeklySegment values")
+        if (
+            normalized
+            and normalized[-1].weekday_index == segment.weekday_index
+            and segment.start_minute <= normalized[-1].end_minute
+        ):
+            previous = normalized[-1]
+            normalized[-1] = WeeklySegment(
+                previous.weekday_index,
+                previous.start_minute,
+                max(previous.end_minute, segment.end_minute),
+            )
+        else:
+            normalized.append(segment)
+    return tuple(normalized)
+
+
+def weekly_complement(coverage: WeeklyCoverage) -> WeeklyCoverage:
+    """Return the canonical complement inside the bounded seven-day domain."""
+    normalized = _normalize_weekly_segments(coverage)
+    complement: list[WeeklySegment] = []
+    by_day: dict[int, list[WeeklySegment]] = {day: [] for day in range(7)}
+    for segment in normalized:
+        by_day[segment.weekday_index].append(segment)
+    for weekday_index in range(7):
+        cursor = 0
+        for segment in by_day[weekday_index]:
+            if cursor < segment.start_minute:
+                complement.append(
+                    WeeklySegment(weekday_index, cursor, segment.start_minute)
+                )
+            cursor = segment.end_minute
+        if cursor < 1440:
+            complement.append(WeeklySegment(weekday_index, cursor, 1440))
+    return tuple(complement)
+
+
+def partition_weekly_segments(*coverages: WeeklyCoverage) -> WeeklyCoverage:
+    """Partition the whole week at all supplied endpoints without intersections."""
+    endpoints: dict[int, set[int]] = {
+        weekday_index: {0, 1440} for weekday_index in range(7)
+    }
+    for coverage in coverages:
+        for segment in coverage:
+            if not isinstance(segment, WeeklySegment):
+                raise TypeError("weekly coverage must contain WeeklySegment values")
+            endpoints[segment.weekday_index].update(
+                (segment.start_minute, segment.end_minute)
+            )
+    partition: list[WeeklySegment] = []
+    for weekday_index in range(7):
+        day_endpoints = sorted(endpoints[weekday_index])
+        partition.extend(
+            WeeklySegment(weekday_index, start, end)
+            for start, end in zip(day_endpoints, day_endpoints[1:])
+        )
+    return tuple(partition)
 
 
 def _validated_identifier(value: Any, label: str) -> str:
@@ -113,6 +311,7 @@ class StoredComparisonIdentity:
 
 
 ComparisonIdentity: TypeAlias = LiveComparisonIdentity | StoredComparisonIdentity
+_ReasonT = TypeVar("_ReasonT")
 
 
 def _freeze_json(value: Any) -> Any:
@@ -248,6 +447,57 @@ class ConditionalPriceAssignment:
     price_rule: ResolvedPriceRule
 
 
+@dataclass(frozen=True)
+class EffectivePriceValue:
+    """One resolved price dimension retaining its exact provider value."""
+
+    dimension: str
+    raw_value: Any
+    price_rule: ResolvedPriceRule
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.dimension, str) or not self.dimension.strip():
+            raise ValueError("effective price dimension must be non-empty")
+        if not isinstance(self.price_rule, ResolvedPriceRule):
+            raise TypeError("effective price value requires a ResolvedPriceRule")
+        object.__setattr__(self, "raw_value", _freeze_json(self.raw_value))
+
+    @property
+    def canonical_identity(self) -> tuple[str, str, ResolvedPriceRule]:
+        return (self.dimension, _canonical_json(self.raw_value), self.price_rule)
+
+
+@dataclass(frozen=True)
+class EffectivePriceVector:
+    """A complete, deterministic dimension vector for one event side."""
+
+    entries: tuple[EffectivePriceValue, ...]
+
+    def __post_init__(self) -> None:
+        entries = tuple(self.entries)
+        if any(not isinstance(entry, EffectivePriceValue) for entry in entries):
+            raise TypeError("effective price vectors require EffectivePriceValue entries")
+        if tuple(sorted(entry.dimension for entry in entries)) != tuple(
+            entry.dimension for entry in entries
+        ):
+            raise ValueError("effective price vector dimensions must be sorted")
+        if len({entry.dimension for entry in entries}) != len(entries):
+            raise ValueError("effective price vector dimensions must be unique")
+        object.__setattr__(self, "entries", entries)
+
+    @property
+    def canonical_identity(
+        self,
+    ) -> tuple[tuple[str, str, ResolvedPriceRule], ...]:
+        return tuple(entry.canonical_identity for entry in self.entries)
+
+    def value_for(self, dimension: str) -> EffectivePriceValue | None:
+        return next(
+            (entry for entry in self.entries if entry.dimension == dimension),
+            None,
+        )
+
+
 CanonicalConditionIdentity: TypeAlias = tuple[tuple[str, Hashable], ...]
 
 
@@ -285,6 +535,74 @@ class ConditionalPricingPolicy:
 
 
 @dataclass(frozen=True)
+class CompiledPricingRule:
+    """A source-ordered parsed rule plus bounded coverage and proven vector."""
+
+    source_rule: ConditionalPricingRule
+    coverage: WeeklyCoverage
+    effective_prices: EffectivePriceVector | None
+
+
+@dataclass(frozen=True)
+class GroupedScheduleRegion:
+    """One source-linked weekly segment with a proven complete vector."""
+
+    segment: WeeklySegment
+    source_rule_index: int
+    explicit_prices: tuple[ConditionalPriceAssignment, ...]
+    effective_prices: EffectivePriceVector
+
+
+@dataclass(frozen=True)
+class EffectivePriceBand:
+    """Canonical union of all coverage carrying one complete vector."""
+
+    coverage: WeeklyCoverage
+    effective_prices: EffectivePriceVector
+    source_rule_indices: tuple[int, ...]
+    includes_default: bool
+
+
+@dataclass(frozen=True)
+class WeeklyEffectiveRegion:
+    """One canonical effective-function cell for later side comparison."""
+
+    segment: WeeklySegment
+    effective_prices: EffectivePriceVector
+
+
+PriceAssignmentIdentity: TypeAlias = tuple[
+    tuple[str, str, ResolvedPriceRule], ...
+]
+PriceVectorIdentity: TypeAlias = tuple[tuple[str, str, ResolvedPriceRule], ...]
+
+
+@dataclass(frozen=True)
+class WeeklyGroupedSemanticRegion:
+    """One canonical cell of effective prices and explicit policy intent."""
+
+    segment: WeeklySegment
+    effective_price_identity: PriceVectorIdentity
+    explicit_assignment_identity: PriceAssignmentIdentity
+
+
+@dataclass(frozen=True)
+class CompiledConditionalPricingPolicy:
+    """One event-side policy after format-neutral compilation."""
+
+    source_policy: ConditionalPricingPolicy
+    policy_present: bool
+    base_prices: EffectivePriceVector | None
+    ordered_rules: tuple[CompiledPricingRule, ...]
+    grouped_regions: tuple[GroupedScheduleRegion, ...]
+    default_coverage: WeeklyCoverage
+    effective_bands: tuple[EffectivePriceBand, ...]
+    effective_partition: tuple[WeeklyEffectiveRegion, ...]
+    grouping_inhibition_reasons: tuple[GroupingInhibitionReason, ...]
+    comparison_inhibition_reasons: tuple[ComparisonInhibitionReason, ...]
+
+
+@dataclass(frozen=True)
 class ConditionalRuleMatch:
     identity: RuleOccurrenceIdentity
     old_source_index: int
@@ -304,13 +622,15 @@ class ConditionalPricingStructuralComparison:
 class ConditionalPricingInterpretation:
     identity: ComparisonIdentity
     state: InterpretationState
-    semantic_change: bool | None
+    semantic_change: bool
     fallback_reason: FallbackReason | None
     grouping_inhibition_reasons: tuple[GroupingInhibitionReason, ...]
     comparison_inhibition_reasons: tuple[ComparisonInhibitionReason, ...]
     transition: PricingTransition
     old_policy: ConditionalPricingPolicy | None
     new_policy: ConditionalPricingPolicy | None
+    old_compiled_policy: CompiledConditionalPricingPolicy | None
+    new_compiled_policy: CompiledConditionalPricingPolicy | None
     absorbed_base_price_changes: tuple[SourceChangeReference, ...]
     comparison: Any | None
     accounting: Any | None
@@ -396,26 +716,29 @@ def _raw_fallback(
     old_policy: ConditionalPricingPolicy | None = None,
     new_policy: ConditionalPricingPolicy | None = None,
 ) -> ConditionalPricingInterpretation:
+    canonical_evidence_changed = any(
+        source.reference.old_value_canonical_json
+        != source.reference.new_value_canonical_json
+        for source in source_changes
+    )
     return ConditionalPricingInterpretation(
         identity=event.identity,
         state="raw-fallback",
-        semantic_change=None,
+        semantic_change=canonical_evidence_changed,
         fallback_reason=reason,
         grouping_inhibition_reasons=(),
         comparison_inhibition_reasons=(),
         transition=transition,
         old_policy=old_policy,
         new_policy=new_policy,
+        old_compiled_policy=None,
+        new_compiled_policy=None,
         absorbed_base_price_changes=(),
         comparison=None,
         accounting=None,
         source_changes=source_changes,
         structural_comparison=None,
-        canonical_evidence_changed=any(
-            source.reference.old_value_canonical_json
-            != source.reference.new_value_canonical_json
-            for source in source_changes
-        ),
+        canonical_evidence_changed=canonical_evidence_changed,
     )
 
 
@@ -626,11 +949,503 @@ def _structural_compare(
     )
 
 
+_MISSING = object()
+
+
+def _exact_metadata_value(metadata: Mapping[str, Any], path: str) -> Any:
+    value: Any = metadata
+    for component in path.split("."):
+        if not isinstance(value, Mapping) or component not in value:
+            return _MISSING
+        value = value[component]
+    return value
+
+
+def _complete_base_vector(
+    policy: ConditionalPricingPolicy,
+    metadata: Mapping[str, Any],
+    profile: ProviderProfile,
+    dimensions: tuple[str, ...],
+) -> EffectivePriceVector | None:
+    entries: list[EffectivePriceValue] = []
+    for dimension in dimensions:
+        base_path = profile.pricing_override_base_paths.get(dimension)
+        if base_path is None:
+            return None
+        raw_value = _exact_metadata_value(metadata, base_path)
+        if raw_value is _MISSING or not _is_valid_numeric_assignment(raw_value):
+            return None
+        price_rule = resolve_price_rule(base_path, profile)
+        if price_rule.match_source == "unmatched" or not price_rule.unit_label.strip():
+            return None
+        assignments = (
+            assignment
+            for rule in policy.rules
+            for assignment in rule.explicit_prices
+            if assignment.dimension == dimension
+        )
+        if any(assignment.price_rule != price_rule for assignment in assignments):
+            return None
+        entries.append(EffectivePriceValue(dimension, raw_value, price_rule))
+    return EffectivePriceVector(tuple(entries))
+
+
+def _apply_explicit_prices(
+    base_prices: EffectivePriceVector,
+    assignments: tuple[ConditionalPriceAssignment, ...],
+) -> EffectivePriceVector:
+    values = {entry.dimension: entry for entry in base_prices.entries}
+    for assignment in assignments:
+        if assignment.dimension not in values:
+            raise ValueError("explicit price dimension is absent from complete base vector")
+        values[assignment.dimension] = EffectivePriceValue(
+            assignment.dimension,
+            assignment.raw_value,
+            assignment.price_rule,
+        )
+    return EffectivePriceVector(tuple(values[dimension] for dimension in sorted(values)))
+
+
+def _has_non_time_condition(rule: ConditionalPricingRule) -> bool:
+    return any(condition.family != "time" for condition in rule.conditions)
+
+
+def _rule_coverages_overlap(rule_coverages: tuple[WeeklyCoverage, ...]) -> bool:
+    """Detect cross-rule overlap with a bounded interval sweep."""
+    tagged_segments = sorted(
+        (segment, rule_index)
+        for rule_index, coverage in enumerate(rule_coverages)
+        for segment in coverage
+    )
+    active_weekday = -1
+    active_end = -1
+    for segment, _rule_index in tagged_segments:
+        if segment.weekday_index != active_weekday:
+            active_weekday = segment.weekday_index
+            active_end = segment.end_minute
+            continue
+        if segment.start_minute < active_end:
+            return True
+        active_end = max(active_end, segment.end_minute)
+    return False
+
+
+def _append_once(values: list[_ReasonT], value: _ReasonT) -> None:
+    if value not in values:
+        values.append(value)
+
+
+def _build_effective_bands(
+    regions: tuple[GroupedScheduleRegion, ...],
+    default_coverage: WeeklyCoverage,
+    base_prices: EffectivePriceVector,
+) -> tuple[EffectivePriceBand, ...]:
+    buckets: dict[
+        tuple[tuple[str, str, ResolvedPriceRule], ...],
+        tuple[EffectivePriceVector, list[WeeklySegment], set[int], bool],
+    ] = {}
+    for region in regions:
+        identity = region.effective_prices.canonical_identity
+        if identity not in buckets:
+            buckets[identity] = (region.effective_prices, [], set(), False)
+        vector, coverage, source_indices, includes_default = buckets[identity]
+        coverage.append(region.segment)
+        source_indices.add(region.source_rule_index)
+        buckets[identity] = (vector, coverage, source_indices, includes_default)
+
+    if default_coverage:
+        identity = base_prices.canonical_identity
+        if identity not in buckets:
+            buckets[identity] = (base_prices, [], set(), False)
+        vector, coverage, source_indices, _includes_default = buckets[identity]
+        coverage.extend(default_coverage)
+        buckets[identity] = (vector, coverage, source_indices, True)
+
+    bands = [
+        EffectivePriceBand(
+            coverage=_normalize_weekly_segments(tuple(coverage)),
+            effective_prices=vector,
+            source_rule_indices=tuple(sorted(source_indices)),
+            includes_default=includes_default,
+        )
+        for vector, coverage, source_indices, includes_default in buckets.values()
+    ]
+    bands.sort(
+        key=lambda band: (
+            band.coverage[0] if band.coverage else WeeklySegment(6, 1439, 1440),
+            tuple(
+                (
+                    entry.dimension,
+                    _canonical_json(entry.raw_value),
+                    entry.price_rule.unit_label,
+                    entry.price_rule.multiplier,
+                    entry.price_rule.divisor,
+                    entry.price_rule.comparison_group or "",
+                    entry.price_rule.normalized_target or "",
+                    entry.price_rule.match_source,
+                )
+                for entry in band.effective_prices.entries
+            ),
+        )
+    )
+    return tuple(bands)
+
+
+def _build_effective_partition(
+    regions: tuple[GroupedScheduleRegion, ...],
+    default_coverage: WeeklyCoverage,
+    base_prices: EffectivePriceVector,
+) -> tuple[WeeklyEffectiveRegion, ...]:
+    cells = [
+        WeeklyEffectiveRegion(region.segment, region.effective_prices)
+        for region in regions
+    ]
+    cells.extend(
+        WeeklyEffectiveRegion(segment, base_prices) for segment in default_coverage
+    )
+    cells.sort(key=lambda cell: cell.segment)
+    partition: list[WeeklyEffectiveRegion] = []
+    for cell in cells:
+        if (
+            partition
+            and partition[-1].effective_prices.canonical_identity
+            == cell.effective_prices.canonical_identity
+            and partition[-1].segment.weekday_index == cell.segment.weekday_index
+            and partition[-1].segment.end_minute == cell.segment.start_minute
+        ):
+            previous = partition[-1]
+            partition[-1] = WeeklyEffectiveRegion(
+                WeeklySegment(
+                    previous.segment.weekday_index,
+                    previous.segment.start_minute,
+                    cell.segment.end_minute,
+                ),
+                cell.effective_prices,
+            )
+        else:
+            partition.append(cell)
+    return tuple(partition)
+
+
+def _compile_policy(
+    policy: ConditionalPricingPolicy,
+    metadata: Mapping[str, Any] | None,
+    profile: ProviderProfile,
+    dimensions: tuple[str, ...],
+    *,
+    policy_present: bool,
+    snapshots_complete: bool,
+) -> CompiledConditionalPricingPolicy:
+    rule_coverages = tuple(
+        compile_weekly_segments(
+            rule.utc_weekdays,
+            rule.start_minute,
+            rule.end_minute,
+        )
+        for rule in policy.rules
+    )
+    grouping_reasons: list[GroupingInhibitionReason] = []
+    if any(_has_non_time_condition(rule) for rule in policy.rules):
+        _append_once(grouping_reasons, "non_time_condition")
+    condition_counts = Counter(
+        rule.canonical_condition_identity for rule in policy.rules
+    )
+    if any(count > 1 for count in condition_counts.values()):
+        _append_once(grouping_reasons, "duplicate_semantic_condition")
+    if _rule_coverages_overlap(rule_coverages):
+        _append_once(grouping_reasons, "overlapping_weekly_coverage")
+
+    base_prices: EffectivePriceVector | None = None
+    if not snapshots_complete or metadata is None:
+        _append_once(grouping_reasons, "missing_event_snapshot")
+    else:
+        base_prices = _complete_base_vector(policy, metadata, profile, dimensions)
+        if base_prices is None:
+            _append_once(grouping_reasons, "incomplete_base_vector")
+
+    groupable = not grouping_reasons
+    ordered_rules = tuple(
+        CompiledPricingRule(
+            source_rule=rule,
+            coverage=coverage,
+            effective_prices=(
+                _apply_explicit_prices(base_prices, rule.explicit_prices)
+                if groupable and base_prices is not None
+                else None
+            ),
+        )
+        for rule, coverage in zip(policy.rules, rule_coverages, strict=True)
+    )
+
+    grouped_regions: tuple[GroupedScheduleRegion, ...] = ()
+    default_coverage: WeeklyCoverage = ()
+    effective_bands: tuple[EffectivePriceBand, ...] = ()
+    effective_partition: tuple[WeeklyEffectiveRegion, ...] = ()
+    if groupable and base_prices is not None:
+        grouped_regions = tuple(
+            sorted(
+                (
+                    GroupedScheduleRegion(
+                        segment=segment,
+                        source_rule_index=compiled.source_rule.source_index,
+                        explicit_prices=compiled.source_rule.explicit_prices,
+                        effective_prices=compiled.effective_prices,
+                    )
+                    for compiled in ordered_rules
+                    for segment in compiled.coverage
+                    if compiled.effective_prices is not None
+                ),
+                key=lambda region: (region.segment, region.source_rule_index),
+            )
+        )
+        default_coverage = weekly_complement(
+            tuple(region.segment for region in grouped_regions)
+        )
+        effective_bands = _build_effective_bands(
+            grouped_regions,
+            default_coverage,
+            base_prices,
+        )
+        effective_partition = _build_effective_partition(
+            grouped_regions,
+            default_coverage,
+            base_prices,
+        )
+
+    comparison_reasons: list[ComparisonInhibitionReason] = []
+    if any(
+        assignment.price_rule.comparison_group is None
+        for rule in policy.rules
+        for assignment in rule.explicit_prices
+    ):
+        _append_once(comparison_reasons, "missing_price_comparison_group")
+    if "missing_event_snapshot" in grouping_reasons:
+        _append_once(comparison_reasons, "missing_event_snapshot")
+    if "incomplete_base_vector" in grouping_reasons:
+        _append_once(comparison_reasons, "incomplete_base_vector")
+    _append_once(
+        comparison_reasons,
+        "comparison_deferred" if groupable else "ordered_rules",
+    )
+    return CompiledConditionalPricingPolicy(
+        source_policy=policy,
+        policy_present=policy_present,
+        base_prices=base_prices,
+        ordered_rules=ordered_rules,
+        grouped_regions=grouped_regions,
+        default_coverage=default_coverage,
+        effective_bands=effective_bands,
+        effective_partition=effective_partition,
+        grouping_inhibition_reasons=tuple(grouping_reasons),
+        comparison_inhibition_reasons=tuple(comparison_reasons),
+    )
+
+
+def _explicit_assignment_identity(
+    rule: ConditionalPricingRule,
+) -> PriceAssignmentIdentity:
+    return _price_assignments_identity(rule.explicit_prices)
+
+
+def _price_assignments_identity(
+    assignments: tuple[ConditionalPriceAssignment, ...],
+) -> PriceAssignmentIdentity:
+    return tuple(
+        sorted(
+            (
+                assignment.dimension,
+                _canonical_json(assignment.raw_value),
+                assignment.price_rule,
+            )
+            for assignment in assignments
+        )
+    )
+
+
+def _grouped_semantic_signature(
+    compiled: CompiledConditionalPricingPolicy,
+) -> tuple[WeeklyGroupedSemanticRegion, ...]:
+    """Partition one grouped side by effective value and explicit assignment."""
+    if compiled.base_prices is None:
+        return ()
+
+    cells = [
+        WeeklyGroupedSemanticRegion(
+            segment=region.segment,
+            effective_price_identity=region.effective_prices.canonical_identity,
+            explicit_assignment_identity=_price_assignments_identity(
+                region.explicit_prices
+            ),
+        )
+        for region in compiled.grouped_regions
+    ]
+    cells.extend(
+        WeeklyGroupedSemanticRegion(
+            segment=segment,
+            effective_price_identity=compiled.base_prices.canonical_identity,
+            explicit_assignment_identity=(),
+        )
+        for segment in compiled.default_coverage
+    )
+    cells.sort(key=lambda cell: cell.segment)
+
+    signature: list[WeeklyGroupedSemanticRegion] = []
+    for cell in cells:
+        if (
+            signature
+            and signature[-1].effective_price_identity
+            == cell.effective_price_identity
+            and signature[-1].explicit_assignment_identity
+            == cell.explicit_assignment_identity
+            and signature[-1].segment.weekday_index
+            == cell.segment.weekday_index
+            and signature[-1].segment.end_minute == cell.segment.start_minute
+        ):
+            previous = signature[-1]
+            signature[-1] = WeeklyGroupedSemanticRegion(
+                segment=WeeklySegment(
+                    previous.segment.weekday_index,
+                    previous.segment.start_minute,
+                    cell.segment.end_minute,
+                ),
+                effective_price_identity=cell.effective_price_identity,
+                explicit_assignment_identity=cell.explicit_assignment_identity,
+            )
+        else:
+            signature.append(cell)
+    return tuple(signature)
+
+
+def _assignments_commute(
+    left: ConditionalPricingRule,
+    right: ConditionalPricingRule,
+) -> bool:
+    left_assignments = {
+        assignment.dimension: assignment for assignment in left.explicit_prices
+    }
+    right_assignments = {
+        assignment.dimension: assignment for assignment in right.explicit_prices
+    }
+    for dimension in left_assignments.keys() & right_assignments.keys():
+        left_assignment = left_assignments[dimension]
+        right_assignment = right_assignments[dimension]
+        if (
+            _canonical_json(left_assignment.raw_value)
+            != _canonical_json(right_assignment.raw_value)
+            or left_assignment.price_rule != right_assignment.price_rule
+        ):
+            return False
+    return True
+
+
+def _semantic_rule_sequence(
+    policy: ConditionalPricingPolicy,
+) -> tuple[tuple[tuple[Any, ...], ConditionalPricingRule], ...]:
+    """Match duplicate conditions by assignments without changing provenance IDs."""
+    occurrences: Counter[tuple[Any, ...]] = Counter()
+    sequence: list[tuple[tuple[Any, ...], ConditionalPricingRule]] = []
+    for rule in policy.rules:
+        semantic_key = (
+            rule.canonical_condition_identity,
+            _explicit_assignment_identity(rule),
+        )
+        occurrence = occurrences[semantic_key]
+        occurrences[semantic_key] += 1
+        sequence.append(((semantic_key, occurrence), rule))
+    return tuple(sequence)
+
+
+def _semantic_change(
+    transition: PricingTransition,
+    old_policy: ConditionalPricingPolicy | None,
+    new_policy: ConditionalPricingPolicy | None,
+    old_compiled: CompiledConditionalPricingPolicy | None,
+    new_compiled: CompiledConditionalPricingPolicy | None,
+    structural: ConditionalPricingStructuralComparison | None,
+) -> bool:
+    if transition != "changed":
+        return True
+    if (
+        old_policy is None
+        or new_policy is None
+        or old_compiled is None
+        or new_compiled is None
+        or structural is None
+    ):
+        return True
+
+    if (
+        not old_compiled.grouping_inhibition_reasons
+        and not new_compiled.grouping_inhibition_reasons
+    ):
+        return _grouped_semantic_signature(
+            old_compiled
+        ) != _grouped_semantic_signature(new_compiled)
+
+    if structural.old_only or structural.new_only:
+        return True
+
+    old_sequence = _semantic_rule_sequence(old_policy)
+    new_sequence = _semantic_rule_sequence(new_policy)
+    old_tokens = tuple(token for token, _rule in old_sequence)
+    new_tokens = tuple(token for token, _rule in new_sequence)
+    if set(old_tokens) != set(new_tokens):
+        return True
+    if old_tokens == new_tokens:
+        return False
+    if max(len(old_tokens), len(new_tokens)) > MAX_EXACT_REORDERED_RULE_COUNT:
+        return True
+
+    old_positions = {token: index for index, token in enumerate(old_tokens)}
+    new_positions = {token: index for index, token in enumerate(new_tokens)}
+    old_rules = {token: rule for token, rule in old_sequence}
+    coverage_by_source_index = {
+        compiled.source_rule.source_index: compiled.coverage
+        for compiled in old_compiled.ordered_rules
+    }
+    for left_index, left_token in enumerate(old_tokens):
+        for right_token in old_tokens[left_index + 1 :]:
+            order_reversed = (
+                old_positions[left_token] < old_positions[right_token]
+            ) != (new_positions[left_token] < new_positions[right_token])
+            if not order_reversed:
+                continue
+            left_rule = old_rules[left_token]
+            right_rule = old_rules[right_token]
+            if _canonical_weekly_segments_overlap(
+                coverage_by_source_index[left_rule.source_index],
+                coverage_by_source_index[right_rule.source_index],
+            ) and not _assignments_commute(left_rule, right_rule):
+                return True
+    return False
+
+
+def _explicit_only_compiled_policy(
+    compiled: CompiledConditionalPricingPolicy,
+) -> CompiledConditionalPricingPolicy:
+    """Suppress inherited/effective claims for an overall ordered comparison."""
+    grouping_reasons = compiled.grouping_inhibition_reasons
+    if not grouping_reasons:
+        grouping_reasons = ("comparison_requires_ordered_rules",)
+    return replace(
+        compiled,
+        base_prices=None,
+        ordered_rules=tuple(
+            replace(rule, effective_prices=None) for rule in compiled.ordered_rules
+        ),
+        grouped_regions=(),
+        default_coverage=(),
+        effective_bands=(),
+        effective_partition=(),
+        grouping_inhibition_reasons=grouping_reasons,
+    )
+
+
 def interpret_conditional_pricing(
     event: PricingComparisonEvent,
     profile: ProviderProfile,
 ) -> ConditionalPricingInterpretation | None:
-    """Parse one exact comparison edge without deciding schedule semantics."""
+    """Interpret one exact comparison edge through bounded schedule semantics."""
     if not isinstance(event, PricingComparisonEvent):
         raise TypeError("event must be a PricingComparisonEvent")
     if not isinstance(profile, ProviderProfile):
@@ -686,32 +1501,77 @@ def interpret_conditional_pricing(
             new_policy=new_policy,
         )
 
-    grouping_reasons: list[GroupingInhibitionReason] = [
-        "schedule_compilation_deferred"
-    ]
-    comparison_reasons: list[ComparisonInhibitionReason] = ["comparison_deferred"]
-    if any(
-        assignment.price_rule.comparison_group is None
-        for policy in (old_policy, new_policy)
-        if policy is not None
-        for rule in policy.rules
-        for assignment in rule.explicit_prices
-    ):
-        comparison_reasons.append("missing_price_comparison_group")
-    if event.old_model_metadata is None or event.new_model_metadata is None:
-        grouping_reasons.append("missing_event_snapshot")
-        comparison_reasons.append("missing_event_snapshot")
+    snapshots_complete = (
+        event.old_model_metadata is not None and event.new_model_metadata is not None
+    )
+    dimensions = tuple(
+        sorted(
+            {
+                assignment.dimension
+                for policy in (old_policy, new_policy)
+                if policy is not None
+                for rule in policy.rules
+                for assignment in rule.explicit_prices
+            }
+        )
+    )
+    old_compiled = _compile_policy(
+        old_policy if old_policy is not None else ConditionalPricingPolicy((), ()),
+        event.old_model_metadata,
+        profile,
+        dimensions,
+        policy_present=old_policy is not None,
+        snapshots_complete=snapshots_complete,
+    )
+    new_compiled = _compile_policy(
+        new_policy if new_policy is not None else ConditionalPricingPolicy((), ()),
+        event.new_model_metadata,
+        profile,
+        dimensions,
+        policy_present=new_policy is not None,
+        snapshots_complete=snapshots_complete,
+    )
+    grouping_reasons: list[GroupingInhibitionReason] = []
+    comparison_reasons: list[ComparisonInhibitionReason] = []
+    for compiled in (old_compiled, new_compiled):
+        if compiled is None:
+            continue
+        for reason in compiled.grouping_inhibition_reasons:
+            _append_once(grouping_reasons, reason)
+        for reason in compiled.comparison_inhibition_reasons:
+            _append_once(comparison_reasons, reason)
+    state: InterpretationState = (
+        "ordered-rules" if grouping_reasons else "grouped-schedule"
+    )
+    if state == "ordered-rules":
+        comparison_reasons = [
+            reason for reason in comparison_reasons if reason != "comparison_deferred"
+        ]
+        _append_once(comparison_reasons, "ordered_rules")
     structural = _structural_compare(old_policy, new_policy)
+    semantic_change = _semantic_change(
+        transition,
+        old_policy,
+        new_policy,
+        old_compiled,
+        new_compiled,
+        structural,
+    )
+    if state == "ordered-rules":
+        old_compiled = _explicit_only_compiled_policy(old_compiled)
+        new_compiled = _explicit_only_compiled_policy(new_compiled)
     return ConditionalPricingInterpretation(
         identity=event.identity,
-        state="ordered-rules",
-        semantic_change=None,
+        state=state,
+        semantic_change=semantic_change,
         fallback_reason=None,
         grouping_inhibition_reasons=tuple(grouping_reasons),
         comparison_inhibition_reasons=tuple(comparison_reasons),
         transition=transition,
         old_policy=old_policy,
         new_policy=new_policy,
+        old_compiled_policy=old_compiled,
+        new_compiled_policy=new_compiled,
         absorbed_base_price_changes=(),
         comparison=None,
         accounting=None,

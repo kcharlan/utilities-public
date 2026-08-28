@@ -7,14 +7,22 @@ from typing import Any, get_args
 
 import pytest
 
+import model_sentinel.conditional_pricing as conditional_pricing
 from model_sentinel.conditional_pricing import (
     ComparisonInhibitionReason,
+    EffectivePriceVector,
     FallbackReason,
     GroupingInhibitionReason,
     LiveComparisonIdentity,
     PricingComparisonEvent,
     StoredComparisonIdentity,
+    WeeklySegment,
+    compile_weekly_segments,
     interpret_conditional_pricing,
+    partition_weekly_segments,
+    weekly_complement,
+    weekly_coverage_contains,
+    weekly_segments_overlap,
 )
 from model_sentinel.models import FieldChange
 from model_sentinel.provider_profiles import (
@@ -87,6 +95,27 @@ def _complete_metadata(overrides: list[dict[str, Any]] | None) -> dict[str, Any]
     return {"id": MODEL_ID, "pricing": pricing}
 
 
+def _interpret_complete(
+    old_value: Any,
+    new_value: Any,
+    *,
+    profile: ProviderProfile = OPENROUTER_PROFILE,
+    old_metadata: dict[str, Any] | None = None,
+    new_metadata: dict[str, Any] | None = None,
+):
+    return _interpret(
+        old_value,
+        new_value,
+        profile=profile,
+        old_metadata=(
+            _complete_metadata(old_value) if old_metadata is None else old_metadata
+        ),
+        new_metadata=(
+            _complete_metadata(new_value) if new_metadata is None else new_metadata
+        ),
+    )
+
+
 def test_parent_absence_is_the_only_none_result() -> None:
     event = _event(FieldChange("pricing.prompt", "0.1", "0.2"))
 
@@ -101,22 +130,20 @@ def test_parent_absence_is_the_only_none_result() -> None:
         ([], [{"prompt": "0.000001"}], "changed"),
     ),
 )
-def test_parent_transition_is_classified_without_deciding_semantic_equality(
+def test_parent_transition_is_classified_with_final_semantic_equality(
     old_value: Any,
     new_value: Any,
     transition: str,
 ) -> None:
-    result = _interpret(
+    result = _interpret_complete(
         old_value,
         new_value,
-        old_metadata=_complete_metadata(old_value),
-        new_metadata=_complete_metadata(new_value),
     )
 
     assert result is not None
     assert result.transition == transition
-    assert result.state == "ordered-rules"
-    assert result.semantic_change is None
+    assert result.state == "grouped-schedule"
+    assert result.semantic_change is True
     assert result.comparison is None
     assert result.accounting is None
     assert result.absorbed_base_price_changes == ()
@@ -875,11 +902,941 @@ def test_reason_code_types_cover_every_task_two_emission() -> None:
         "multiple_policy_errors",
     }
     assert set(get_args(GroupingInhibitionReason)) == {
-        "schedule_compilation_deferred",
+        "comparison_requires_ordered_rules",
+        "duplicate_semantic_condition",
+        "incomplete_base_vector",
         "missing_event_snapshot",
+        "non_time_condition",
+        "overlapping_weekly_coverage",
     }
     assert set(get_args(ComparisonInhibitionReason)) == {
         "comparison_deferred",
+        "incomplete_base_vector",
         "missing_event_snapshot",
         "missing_price_comparison_group",
+        "ordered_rules",
     }
+
+
+def _vector_raw_values(vector: EffectivePriceVector | None) -> dict[str, Any] | None:
+    if vector is None:
+        return None
+    return {entry.dimension: entry.raw_value for entry in vector.entries}
+
+
+def _window_rule(
+    day: str,
+    start: int,
+    end: int,
+    **prices: Any,
+) -> dict[str, Any]:
+    return {
+        "utc_days": [day],
+        "utc_start": start,
+        "utc_end": end,
+        **prices,
+    }
+
+
+def test_weekly_segments_are_half_open_and_wrap_on_the_same_selected_day() -> None:
+    coverage = compile_weekly_segments(("friday",), 1320, 120)
+
+    assert coverage == (
+        WeeklySegment(4, 0, 120),
+        WeeklySegment(4, 1320, 1440),
+    )
+    assert weekly_coverage_contains(coverage, 4, 0)
+    assert weekly_coverage_contains(coverage, 4, 119)
+    assert not weekly_coverage_contains(coverage, 4, 120)
+    assert not weekly_coverage_contains(coverage, 4, 1319)
+    assert weekly_coverage_contains(coverage, 4, 1320)
+    assert weekly_coverage_contains(coverage, 4, 1439)
+    assert not weekly_coverage_contains(coverage, 5, 60)
+
+
+def test_each_selected_day_receives_its_own_wrapping_segments() -> None:
+    coverage = compile_weekly_segments(("friday", "saturday"), 1320, 120)
+
+    assert coverage == (
+        WeeklySegment(4, 0, 120),
+        WeeklySegment(4, 1320, 1440),
+        WeeklySegment(5, 0, 120),
+        WeeklySegment(5, 1320, 1440),
+    )
+    assert weekly_coverage_contains(coverage, 5, 60)
+
+
+def test_weekly_segments_cover_sunday_all_days_and_selected_all_day() -> None:
+    assert compile_weekly_segments(("sunday",), 60, 120) == (
+        WeeklySegment(6, 60, 120),
+    )
+    assert compile_weekly_segments(ALL_WEEKDAYS, 0, 1440) == tuple(
+        WeeklySegment(day, 0, 1440) for day in range(7)
+    )
+    assert compile_weekly_segments(("wednesday",), 0, 1440) == (
+        WeeklySegment(2, 0, 1440),
+    )
+
+
+def test_weekly_overlap_excludes_adjacency_and_detects_positive_measure() -> None:
+    first = (WeeklySegment(0, 0, 60),)
+    adjacent = (WeeklySegment(0, 60, 240),)
+    overlapping = (WeeklySegment(0, 59, 120),)
+    other_day = (WeeklySegment(1, 30, 90),)
+
+    assert not weekly_segments_overlap(first, adjacent)
+    assert weekly_segments_overlap(first, overlapping)
+    assert not weekly_segments_overlap(first, other_day)
+
+
+def test_weekly_complement_is_complete_and_deterministic() -> None:
+    covered = (
+        WeeklySegment(0, 0, 60),
+        WeeklySegment(0, 120, 1440),
+        WeeklySegment(6, 0, 1440),
+    )
+
+    complement = weekly_complement(covered)
+
+    assert complement == (
+        WeeklySegment(0, 60, 120),
+        *(WeeklySegment(day, 0, 1440) for day in range(1, 6)),
+    )
+    assert weekly_complement((*covered, *complement)) == ()
+
+
+def test_weekly_partition_is_bounded_by_the_finite_minute_domain() -> None:
+    coverage_sets = tuple(
+        (WeeklySegment(day, minute, minute + 1),)
+        for day in range(7)
+        for minute in range(0, 1440, 3)
+    )
+
+    partition = partition_weekly_segments(*coverage_sets)
+
+    assert partition == tuple(sorted(partition))
+    assert len(partition) <= 7 * 1440
+
+
+def test_weekly_partition_uses_exact_sorted_endpoints_and_is_contiguous() -> None:
+    partition = partition_weekly_segments(
+        (WeeklySegment(0, 60, 180),),
+        (WeeklySegment(0, 120, 240), WeeklySegment(2, 600, 720)),
+    )
+
+    assert partition == (
+        WeeklySegment(0, 0, 60),
+        WeeklySegment(0, 60, 120),
+        WeeklySegment(0, 120, 180),
+        WeeklySegment(0, 180, 240),
+        WeeklySegment(0, 240, 1440),
+        WeeklySegment(1, 0, 1440),
+        WeeklySegment(2, 0, 600),
+        WeeklySegment(2, 600, 720),
+        WeeklySegment(2, 720, 1440),
+        *(WeeklySegment(day, 0, 1440) for day in range(3, 7)),
+    )
+    for left, right in zip(partition, partition[1:]):
+        if left.weekday_index == right.weekday_index:
+            assert left.end_minute == right.start_minute
+
+
+def test_disjoint_complete_time_policy_compiles_grouped_schedule() -> None:
+    new = [
+        _window_rule("monday", 0, 100, prompt="0.000003"),
+        _window_rule("monday", 100, 200, prompt="0.000004"),
+    ]
+
+    result = _interpret_complete(None, new)
+
+    assert result is not None
+    assert result.state == "grouped-schedule"
+    assert result.fallback_reason is None
+    assert result.grouping_inhibition_reasons == ()
+    assert result.new_compiled_policy is not None
+    compiled = result.new_compiled_policy
+    assert [region.segment for region in compiled.grouped_regions] == [
+        WeeklySegment(0, 0, 60),
+        WeeklySegment(0, 60, 120),
+    ]
+    assert compiled.default_coverage[0] == WeeklySegment(0, 120, 1440)
+    assert compiled.default_coverage[-1] == WeeklySegment(6, 0, 1440)
+
+
+@pytest.mark.parametrize(
+    ("rules", "reason"),
+    (
+        (
+            [
+                _window_rule("monday", 0, 200, prompt=3),
+                _window_rule("monday", 100, 300, prompt=4),
+            ],
+            "overlapping_weekly_coverage",
+        ),
+        (
+            [
+                {"utc_days": ["monday"], "prompt": 3},
+                {"utc_days": ["monday"], "prompt": 4},
+            ],
+            "duplicate_semantic_condition",
+        ),
+        ([{"min_prompt_tokens": 10, "prompt": 3}], "non_time_condition"),
+        (
+            [
+                {
+                    "utc_days": ["monday"],
+                    "min_prompt_tokens": 10,
+                    "prompt": 3,
+                }
+            ],
+            "non_time_condition",
+        ),
+    ),
+)
+def test_understood_noncollapsible_policies_are_ordered_rules(
+    rules: list[dict[str, Any]],
+    reason: str,
+) -> None:
+    result = _interpret_complete(None, rules)
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert result.fallback_reason is None
+    assert reason in result.grouping_inhibition_reasons
+    assert "ordered_rules" in result.comparison_inhibition_reasons
+    assert result.new_compiled_policy is not None
+    assert [
+        compiled.source_rule.source_index
+        for compiled in result.new_compiled_policy.ordered_rules
+    ] == list(range(len(rules)))
+    assert all(
+        compiled.effective_prices is None
+        for compiled in result.new_compiled_policy.ordered_rules
+    )
+    assert result.new_compiled_policy.grouped_regions == ()
+
+
+def test_missing_snapshot_is_ordered_without_any_effective_vectors() -> None:
+    new = [_window_rule("monday", 0, 100, prompt=3)]
+    result = _interpret(
+        None,
+        new,
+        old_metadata=None,
+        new_metadata=_complete_metadata(new),
+    )
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert result.fallback_reason is None
+    assert result.grouping_inhibition_reasons == ("missing_event_snapshot",)
+    assert "missing_event_snapshot" in result.comparison_inhibition_reasons
+    assert result.new_compiled_policy is not None
+    assert result.new_compiled_policy.base_prices is None
+    assert result.new_compiled_policy.effective_bands == ()
+    assert result.new_compiled_policy.effective_partition == ()
+    assert result.absorbed_base_price_changes == ()
+
+
+def test_fallback_grouping_and_comparison_reasons_are_distinct_channels() -> None:
+    raw = _interpret_complete(None, [{"synthetic_note": {"value": 3}, "prompt": 4}])
+    ordered = _interpret_complete(None, [{"min_prompt_tokens": 10, "prompt": 4}])
+    grouped = _interpret_complete(
+        None,
+        [_window_rule("monday", 0, 100, prompt=4)],
+    )
+
+    assert raw is not None and raw.state == "raw-fallback"
+    assert raw.fallback_reason == "unknown_rule_key"
+    assert raw.grouping_inhibition_reasons == ()
+    assert raw.comparison_inhibition_reasons == ()
+    assert ordered is not None and ordered.fallback_reason is None
+    assert "non_time_condition" in ordered.grouping_inhibition_reasons
+    assert "non_time_condition" not in ordered.comparison_inhibition_reasons
+    assert grouped is not None and grouped.fallback_reason is None
+    assert grouped.grouping_inhibition_reasons == ()
+    assert grouped.comparison_inhibition_reasons == ("comparison_deferred",)
+
+
+def test_grouped_rules_preserve_explicit_and_base_inherited_effective_values() -> None:
+    new = [
+        _window_rule("monday", 0, 100, prompt="0.000003"),
+        _window_rule("monday", 100, 200, completion="0.000004"),
+    ]
+
+    result = _interpret_complete(None, new)
+
+    assert result is not None and result.new_compiled_policy is not None
+    compiled = result.new_compiled_policy
+    assert _vector_raw_values(compiled.base_prices) == {
+        "completion": "0.000002",
+        "prompt": "0.000001",
+    }
+    first, second = compiled.ordered_rules
+    assert [assignment.dimension for assignment in first.source_rule.explicit_prices] == [
+        "prompt"
+    ]
+    assert _vector_raw_values(first.effective_prices) == {
+        "completion": "0.000002",
+        "prompt": "0.000003",
+    }
+    assert _vector_raw_values(second.effective_prices) == {
+        "completion": "0.000004",
+        "prompt": "0.000001",
+    }
+
+
+def test_equal_effective_vectors_keep_regions_separate_but_share_one_band() -> None:
+    new = [
+        _window_rule("monday", 0, 100, prompt="0.000003"),
+        _window_rule("tuesday", 0, 100, prompt="0.000003"),
+    ]
+
+    result = _interpret_complete(None, new)
+
+    assert result is not None and result.new_compiled_policy is not None
+    compiled = result.new_compiled_policy
+    assert len(compiled.grouped_regions) == 2
+    assert compiled.grouped_regions[0].effective_prices == compiled.grouped_regions[1].effective_prices
+    rule_bands = [band for band in compiled.effective_bands if not band.includes_default]
+    assert len(rule_bands) == 1
+    assert rule_bands[0].coverage == (
+        WeeklySegment(0, 0, 60),
+        WeeklySegment(1, 0, 60),
+    )
+
+
+@pytest.mark.parametrize(
+    ("left_value", "right_value", "canonically_distinct"),
+    (
+        (1, 1.0, True),
+        (0.0, -0.0, True),
+        (1.0, 1.0, False),
+    ),
+)
+def test_effective_partition_bands_and_signature_use_canonical_numeric_identity(
+    left_value: int | float,
+    right_value: int | float,
+    canonically_distinct: bool,
+) -> None:
+    old = [
+        _window_rule("monday", 0, 100, prompt=left_value),
+        _window_rule("monday", 100, 200, prompt=left_value),
+    ]
+    new = [
+        _window_rule("monday", 0, 100, prompt=left_value),
+        _window_rule("monday", 100, 200, prompt=right_value),
+    ]
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None and result.new_compiled_policy is not None
+    compiled = result.new_compiled_policy
+    monday_rule_cells = tuple(
+        region
+        for region in compiled.effective_partition
+        if region.segment.weekday_index == 0 and region.segment.start_minute < 120
+    )
+    rule_bands = tuple(
+        band for band in compiled.effective_bands if not band.includes_default
+    )
+    if canonically_distinct:
+        assert tuple(cell.segment for cell in monday_rule_cells) == (
+            WeeklySegment(0, 0, 60),
+            WeeklySegment(0, 60, 120),
+        )
+        assert len(rule_bands) == 2
+    else:
+        assert tuple(cell.segment for cell in monday_rule_cells) == (
+            WeeklySegment(0, 0, 120),
+        )
+        assert len(rule_bands) == 1
+    assert result.semantic_change is canonically_distinct
+
+
+def test_uncovered_default_counts_only_when_its_vector_is_distinct() -> None:
+    distinct = _interpret_complete(
+        None,
+        [_window_rule("monday", 0, 100, prompt="0.000003")],
+    )
+    identical = _interpret_complete(
+        None,
+        [_window_rule("monday", 0, 100, prompt="0.000001")],
+    )
+    fully_covered = _interpret_complete(None, [{"prompt": "0.000003"}])
+
+    assert distinct is not None and distinct.new_compiled_policy is not None
+    assert len(distinct.new_compiled_policy.effective_bands) == 2
+    assert identical is not None and identical.new_compiled_policy is not None
+    assert len(identical.new_compiled_policy.effective_bands) == 1
+    assert identical.new_compiled_policy.effective_bands[0].includes_default
+    assert fully_covered is not None and fully_covered.new_compiled_policy is not None
+    assert fully_covered.new_compiled_policy.default_coverage == ()
+    assert len(fully_covered.new_compiled_policy.effective_bands) == 1
+
+
+@pytest.mark.parametrize(
+    "base_value",
+    (None, True, False, "not-numeric", float("inf"), float("nan")),
+)
+def test_incomplete_or_invalid_exact_base_value_inhibits_grouping(
+    base_value: Any,
+) -> None:
+    new = [_window_rule("monday", 0, 100, prompt=3)]
+    pricing = {"completion": "0.000002", "overrides": new}
+    if base_value is not None:
+        pricing["prompt"] = base_value
+    metadata = {"id": MODEL_ID, "pricing": pricing}
+
+    result = _interpret_complete(None, new, new_metadata=metadata)
+
+    assert result is not None and result.new_compiled_policy is not None
+    assert result.state == "ordered-rules"
+    assert result.fallback_reason is None
+    assert result.grouping_inhibition_reasons == ("incomplete_base_vector",)
+    assert "incomplete_base_vector" in result.comparison_inhibition_reasons
+    assert result.new_compiled_policy.base_prices is None
+    assert result.new_compiled_policy.effective_bands == ()
+
+
+def test_empty_policy_compiles_a_full_week_empty_default_vector() -> None:
+    result = _interpret_complete(None, [])
+
+    assert result is not None and result.new_compiled_policy is not None
+    compiled = result.new_compiled_policy
+    assert result.state == "grouped-schedule"
+    assert compiled.base_prices == EffectivePriceVector(())
+    assert compiled.default_coverage == tuple(
+        WeeklySegment(day, 0, 1440) for day in range(7)
+    )
+    assert len(compiled.effective_bands) == 1
+
+
+def test_compiled_vector_keeps_each_dimension_unit_identity() -> None:
+    profile = replace(
+        _alternate_profile(),
+        price_leaf_rules={
+            "prompt_rate": PriceDisplayRule(
+                unit_label="/synthetic input unit",
+                multiplier=1,
+                divisor=1,
+                comparison_group="usd_per_synthetic_input_unit",
+            ),
+            "completion_rate": PriceDisplayRule(
+                unit_label="/synthetic output unit",
+                multiplier=1,
+                divisor=1,
+                comparison_group="usd_per_synthetic_output_unit",
+            ),
+        },
+        pricing_override_base_paths={
+            "prompt_rate": "pricing.prompt_rate",
+            "completion_rate": "pricing.completion_rate",
+        },
+    )
+    new = [
+        {
+            "days_utc": ["monday"],
+            "prompt_rate": "0.000003",
+            "completion_rate": "0.000004",
+        }
+    ]
+    metadata = {
+        "id": MODEL_ID,
+        "pricing": {
+            "prompt_rate": "0.000001",
+            "completion_rate": "0.000002",
+            "overrides": new,
+        },
+    }
+
+    result = _interpret_complete(
+        None,
+        new,
+        profile=profile,
+        old_metadata={
+            "id": MODEL_ID,
+            "pricing": {
+                "prompt_rate": "0.000001",
+                "completion_rate": "0.000002",
+            },
+        },
+        new_metadata=metadata,
+    )
+
+    assert result is not None and result.new_compiled_policy is not None
+    assert [
+        (entry.dimension, entry.price_rule.unit_label)
+        for entry in result.new_compiled_policy.base_prices.entries  # type: ignore[union-attr]
+    ] == [
+        ("completion_rate", "/synthetic output unit"),
+        ("prompt_rate", "/synthetic input unit"),
+    ]
+
+
+def test_disjoint_source_reorder_is_evidence_only_semantic_noise() -> None:
+    old = [_day_rule("monday", 3), _day_rule("tuesday", 4)]
+    new = [_day_rule("tuesday", 4), _day_rule("monday", 3)]
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None and result.structural_comparison is not None
+    assert result.state == "grouped-schedule"
+    assert result.structural_comparison.source_order_changed
+    assert result.canonical_evidence_changed
+    assert result.semantic_change is False
+    assert result.comparison is None
+    assert result.accounting is None
+    assert result.absorbed_base_price_changes == ()
+
+
+@pytest.mark.parametrize(
+    "rules",
+    (
+        (
+            _window_rule("monday", 0, 200, prompt=3),
+            _window_rule("monday", 100, 300, completion=4),
+        ),
+        (
+            _window_rule("monday", 0, 200, prompt=3),
+            _window_rule("monday", 100, 300, prompt=3),
+        ),
+    ),
+)
+def test_commuting_overlap_reorder_is_evidence_only_semantic_noise(
+    rules: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    old = list(rules)
+    new = list(reversed(rules))
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert result.canonical_evidence_changed
+    assert result.semantic_change is False
+
+
+@pytest.mark.parametrize(
+    "rules",
+    (
+        (
+            _window_rule("monday", 0, 200, prompt=3),
+            _window_rule("monday", 100, 300, prompt=4),
+        ),
+        (
+            _window_rule("monday", 0, 200, prompt=3, completion=5),
+            _window_rule("monday", 100, 300, prompt=3, completion=6),
+        ),
+    ),
+)
+def test_noncommuting_overlap_reorder_is_semantic(
+    rules: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    result = _interpret_complete(list(rules), list(reversed(rules)))
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert result.semantic_change is True
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    (
+        ([_day_rule("monday", 3)], [_day_rule("monday", 3), _day_rule("tuesday", 3)]),
+        ([_day_rule("monday", 3), _day_rule("tuesday", 3)], [_day_rule("monday", 3)]),
+        ([_day_rule("monday", 3)], [_day_rule("tuesday", 3)]),
+        ([_day_rule("monday", 3)], [_day_rule("monday", 4)]),
+    ),
+)
+def test_policy_insert_delete_condition_replace_and_value_change_are_semantic(
+    old: list[dict[str, Any]],
+    new: list[dict[str, Any]],
+) -> None:
+    result = _interpret_complete(old, new)
+
+    assert result is not None
+    assert result.semantic_change is True
+
+
+def test_weekday_list_order_noise_preserves_parent_evidence_only() -> None:
+    old = [{"utc_days": ["tuesday", "monday"], "prompt": 3}]
+    new = [{"utc_days": ["monday", "tuesday"], "prompt": 3}]
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None
+    assert result.canonical_evidence_changed
+    assert result.semantic_change is False
+
+
+def test_raw_fallback_semantics_use_canonical_parent_evidence_change() -> None:
+    changed = _interpret(
+        [{"synthetic_unknown": 3}],
+        [{"synthetic_unknown": 4}],
+    )
+    unchanged = _interpret(
+        [{"synthetic_unknown": 3}],
+        [{"synthetic_unknown": 3}],
+    )
+
+    assert changed is not None and changed.state == "raw-fallback"
+    assert changed.semantic_change is True
+    assert unchanged is not None and unchanged.state == "raw-fallback"
+    assert unchanged.semantic_change is False
+
+
+def test_base_vectors_use_union_dimensions_across_both_policy_sides() -> None:
+    old = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    new = [
+        {
+            "utc_days": ["monday"],
+            "prompt": "0.000003",
+            "completion": "0.000005",
+        }
+    ]
+    old_metadata = {
+        "id": MODEL_ID,
+        "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000002",
+            "overrides": old,
+        },
+    }
+    new_metadata = {
+        "id": MODEL_ID,
+        "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000004",
+            "overrides": new,
+        },
+    }
+
+    result = _interpret_complete(
+        old,
+        new,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+
+    assert result is not None
+    assert result.state == "grouped-schedule"
+    assert result.old_compiled_policy is not None
+    assert result.new_compiled_policy is not None
+    assert _vector_raw_values(result.old_compiled_policy.base_prices) == {
+        "completion": "0.000002",
+        "prompt": "0.000001",
+    }
+    assert _vector_raw_values(
+        result.old_compiled_policy.ordered_rules[0].effective_prices
+    ) == {
+        "completion": "0.000002",
+        "prompt": "0.000003",
+    }
+    assert _vector_raw_values(result.new_compiled_policy.base_prices) == {
+        "completion": "0.000004",
+        "prompt": "0.000001",
+    }
+
+
+def test_missing_base_for_cross_side_union_dimension_inhibits_both_sides() -> None:
+    old = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    new = [
+        {
+            "utc_days": ["monday"],
+            "prompt": "0.000003",
+            "completion": "0.000005",
+        }
+    ]
+    old_metadata = {
+        "id": MODEL_ID,
+        "pricing": {"prompt": "0.000001", "overrides": old},
+    }
+
+    result = _interpret_complete(old, new, old_metadata=old_metadata)
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert "incomplete_base_vector" in result.grouping_inhibition_reasons
+    for compiled in (result.old_compiled_policy, result.new_compiled_policy):
+        assert compiled is not None
+        assert compiled.base_prices is None
+        assert compiled.grouped_regions == ()
+        assert compiled.default_coverage == ()
+        assert compiled.effective_bands == ()
+        assert compiled.effective_partition == ()
+        assert all(rule.effective_prices is None for rule in compiled.ordered_rules)
+
+
+@pytest.mark.parametrize("transition", ("added", "removed"))
+def test_absent_policy_side_compiles_complete_default_over_union_dimensions(
+    transition: str,
+) -> None:
+    policy = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    old, new = (None, policy) if transition == "added" else (policy, None)
+    old_metadata = {
+        "id": MODEL_ID,
+        "pricing": {"prompt": "0.000001", **({} if old is None else {"overrides": old})},
+    }
+    new_metadata = {
+        "id": MODEL_ID,
+        "pricing": {"prompt": "0.000002", **({} if new is None else {"overrides": new})},
+    }
+
+    result = _interpret_complete(
+        old,
+        new,
+        old_metadata=old_metadata,
+        new_metadata=new_metadata,
+    )
+
+    assert result is not None
+    assert result.state == "grouped-schedule"
+    absent = (
+        result.old_compiled_policy
+        if transition == "added"
+        else result.new_compiled_policy
+    )
+    present = (
+        result.new_compiled_policy
+        if transition == "added"
+        else result.old_compiled_policy
+    )
+    assert absent is not None and absent.policy_present is False
+    assert present is not None and present.policy_present is True
+    assert absent.ordered_rules == ()
+    assert _vector_raw_values(absent.base_prices) == {
+        "prompt": "0.000001" if transition == "added" else "0.000002"
+    }
+    assert absent.default_coverage == tuple(
+        WeeklySegment(day, 0, 1440) for day in range(7)
+    )
+    assert len(absent.effective_partition) == 7
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "semantic_change"),
+    (
+        (
+            {"utc_days": ["monday"], "prompt": 3},
+            {"utc_days": ["monday"], "completion": 4},
+            False,
+        ),
+        (
+            {"utc_days": ["monday"], "prompt": 3},
+            {"utc_days": ["monday"], "prompt": 3, "completion": 4},
+            False,
+        ),
+        (
+            {"utc_days": ["monday"], "prompt": 3},
+            {"utc_days": ["monday"], "prompt": 4},
+            True,
+        ),
+    ),
+)
+def test_duplicate_condition_reorder_matches_assignment_permutations_before_commutativity(
+    first: dict[str, Any],
+    second: dict[str, Any],
+    semantic_change: bool,
+) -> None:
+    result = _interpret_complete([first, second], [second, first])
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert result.canonical_evidence_changed
+    assert result.semantic_change is semantic_change
+    assert result.old_policy is not None and result.new_policy is not None
+    assert [rule.condition_occurrence for rule in result.old_policy.rules] == [0, 1]
+    assert [rule.condition_occurrence for rule in result.new_policy.rules] == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("old_prices", "new_order", "semantic_change"),
+    (
+        (
+            ({"prompt": 3}, {"prompt": 3}, {"completion": 4}),
+            (1, 2, 0),
+            False,
+        ),
+        (
+            (
+                {"prompt": 3},
+                {"completion": 4},
+                {"prompt": 3, "completion": 4},
+            ),
+            (1, 2, 0),
+            False,
+        ),
+        (
+            ({"prompt": 3}, {"completion": 4}, {"prompt": 5}),
+            (1, 2, 0),
+            True,
+        ),
+    ),
+)
+def test_three_rule_duplicate_condition_permutations(
+    old_prices: tuple[dict[str, int], ...],
+    new_order: tuple[int, ...],
+    semantic_change: bool,
+) -> None:
+    old = [{"utc_days": ["monday"], **prices} for prices in old_prices]
+    new = [old[index] for index in new_order]
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert result.canonical_evidence_changed
+    assert result.semantic_change is semantic_change
+
+
+def test_large_commuting_reorder_is_conservatively_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exact_overlap_queries = 0
+
+    def unexpected_exact_overlap_query(*_args: Any, **_kwargs: Any) -> bool:
+        nonlocal exact_overlap_queries
+        exact_overlap_queries += 1
+        raise AssertionError("large reorder must not enter pairwise overlap proof")
+
+    monkeypatch.setattr(
+        conditional_pricing,
+        "weekly_segments_overlap",
+        unexpected_exact_overlap_query,
+    )
+    monkeypatch.setattr(
+        conditional_pricing,
+        "_canonical_weekly_segments_overlap",
+        unexpected_exact_overlap_query,
+        raising=False,
+    )
+    rule_count = conditional_pricing.MAX_EXACT_REORDERED_RULE_COUNT + 1
+    old = [
+        {"min_prompt_tokens": threshold, "prompt": 3}
+        for threshold in range(rule_count)
+    ]
+    new = list(reversed(old))
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert result.semantic_change is True
+    assert exact_overlap_queries == 0
+
+
+@pytest.mark.parametrize("ordered_side", ("old", "new"))
+def test_overall_ordered_state_suppresses_grouped_evidence_on_both_sides(
+    ordered_side: str,
+) -> None:
+    grouped_policy = [
+        _window_rule("monday", 0, 100, prompt=3),
+        _window_rule("monday", 100, 200, prompt=4),
+    ]
+    overlapping_policy = [
+        _window_rule("monday", 0, 200, prompt=3),
+        _window_rule("monday", 100, 300, prompt=4),
+    ]
+    old, new = (
+        (overlapping_policy, grouped_policy)
+        if ordered_side == "old"
+        else (grouped_policy, overlapping_policy)
+    )
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None
+    assert result.state == "ordered-rules"
+    assert "overlapping_weekly_coverage" in result.grouping_inhibition_reasons
+    compiled_by_side = {
+        "old": result.old_compiled_policy,
+        "new": result.new_compiled_policy,
+    }
+    for side, compiled in compiled_by_side.items():
+        assert compiled is not None
+        assert compiled.base_prices is None
+        assert compiled.grouping_inhibition_reasons
+        if side == ordered_side:
+            assert "overlapping_weekly_coverage" in (
+                compiled.grouping_inhibition_reasons
+            )
+        else:
+            assert compiled.grouping_inhibition_reasons == (
+                "comparison_requires_ordered_rules",
+            )
+        assert compiled.grouped_regions == ()
+        assert compiled.default_coverage == ()
+        assert compiled.effective_bands == ()
+        assert compiled.effective_partition == ()
+        assert all(rule.effective_prices is None for rule in compiled.ordered_rules)
+
+
+@pytest.mark.parametrize("transition", ("split", "merge"))
+def test_grouped_adjacent_split_merge_with_identical_explicit_maps_is_noise(
+    transition: str,
+) -> None:
+    whole = [{"utc_days": ["monday"], "prompt": "0.000003"}]
+    split = [
+        _window_rule("monday", 0, 1200, prompt="0.000003"),
+        _window_rule("monday", 1200, 0, prompt="0.000003"),
+    ]
+    old, new = (whole, split) if transition == "split" else (split, whole)
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None
+    assert result.state == "grouped-schedule"
+    assert result.canonical_evidence_changed
+    assert result.structural_comparison is not None
+    assert result.structural_comparison.old_only
+    assert result.structural_comparison.new_only
+    assert result.semantic_change is False
+
+
+@pytest.mark.parametrize("transition", ("added", "removed"))
+def test_grouped_explicit_equal_to_base_differs_from_default_omission(
+    transition: str,
+) -> None:
+    omitted: list[dict[str, Any]] = []
+    explicit = [{"prompt": "0.000001"}]
+    old, new = (omitted, explicit) if transition == "added" else (explicit, omitted)
+
+    result = _interpret_complete(old, new)
+
+    assert result is not None
+    assert result.state == "grouped-schedule"
+    assert result.semantic_change is True
+
+
+def test_grouped_split_with_one_omitted_key_changes_explicit_assignment_function() -> None:
+    whole = [
+        {
+            "utc_days": ["monday"],
+            "prompt": "0.000001",
+            "completion": "0.000004",
+        }
+    ]
+    split = [
+        _window_rule(
+            "monday",
+            0,
+            1200,
+            prompt="0.000001",
+            completion="0.000004",
+        ),
+        _window_rule("monday", 1200, 0, completion="0.000004"),
+    ]
+
+    result = _interpret_complete(whole, split)
+
+    assert result is not None
+    assert result.state == "grouped-schedule"
+    assert (
+        result.old_compiled_policy is not None
+        and result.new_compiled_policy is not None
+    )
+    assert (
+        result.old_compiled_policy.effective_partition
+        == result.new_compiled_policy.effective_partition
+    )
+    assert result.semantic_change is True
