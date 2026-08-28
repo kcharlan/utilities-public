@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -11,7 +12,13 @@ from model_sentinel.conditional_pricing import (
     PricingComparisonEvent,
     StoredComparisonIdentity,
 )
-from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
+from model_sentinel.models import (
+    BaselineInfo,
+    FieldChange,
+    HistoryEvent,
+    ModelDelta,
+    ProviderScanResult,
+)
 from model_sentinel.provider_profiles import OPENROUTER_PROFILE
 from model_sentinel.storage import StoredChangeRecord, StoredComparisonEvent
 
@@ -52,6 +59,83 @@ def _event(*, metadata: bool = True) -> PricingComparisonEvent:
         ),
         old_model_metadata=old if metadata else None,
         new_model_metadata=new if metadata else None,
+    )
+
+
+def _scan_result(event: PricingComparisonEvent) -> ProviderScanResult:
+    return ProviderScanResult(
+        provider_id=event.provider_id,
+        provider_label="OpenRouter",
+        status="success",
+        current_count=1,
+        saved=False,
+        baseline=BaselineInfo(10, "2026-08-27T12:00:00+00:00"),
+        baseline_message=None,
+        scrape_id=11,
+        added=(),
+        removed=(),
+        changed=(
+            ModelDelta(
+                "changed",
+                event.provider_model_id,
+                event.display_name,
+                tuple(
+                    FieldChange(
+                        change.field_name,
+                        reporting._mutable_json(change.old_value),
+                        reporting._mutable_json(change.new_value),
+                    )
+                    for change in event.field_changes
+                ),
+            ),
+        ),
+        profile=OPENROUTER_PROFILE,
+    )
+
+
+def _scan_report(
+    event: PricingComparisonEvent,
+    format_name: str,
+    *,
+    detail_mode: str = "default",
+) -> str:
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    return reporting.render_scan_report(
+        generated_at="2026-08-28T12:00:00+00:00",
+        command="scan",
+        format_name=format_name,
+        provider_results=[_scan_result(event)],
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+        semantic_cores={core.identity: core},
+    )
+
+
+def _evidence_only_event() -> PricingComparisonEvent:
+    first = {
+        "utc_days": ["monday"],
+        "utc_start": 100,
+        "utc_end": 200,
+        "prompt": "0.000003",
+    }
+    second = {
+        "utc_days": ["tuesday"],
+        "utc_start": 300,
+        "utc_end": 400,
+        "prompt": "0.000004",
+    }
+    old_rules = [first, second]
+    new_rules = [second, first]
+    return replace(
+        _event(),
+        field_changes=(FieldChange("pricing.overrides", old_rules, new_rules),),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", "overrides": old_rules},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", "overrides": new_rules},
+        },
     )
 
 
@@ -892,3 +976,561 @@ def test_legacy_changes_planner_without_semantic_sources_still_renders() -> None
     assert plan.entries[0].display.visible == (
         FieldChange("status", "preview", "active"),
     )
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_scan_grouped_schedule_is_one_compact_utc_block_in_provider_price_order(
+    format_name: str,
+) -> None:
+    report = _scan_report(_event(), format_name)
+
+    assert report.count("Pricing schedule added") == 1
+    assert "UTC" in report
+    assert "Mon 01:00-02:00 UTC" in report
+    assert report.index("Input $1.00") < report.index("Output $8.00")
+    assert (
+        "Movement: base down (Input down 50.0%); peak up "
+        "(Input up 50.0%, Output up 12.5%) versus the prior advertised rates"
+        in report
+    )
+    assert "actual routing and billing can vary" in report.lower()
+    assert '"utc_days"' not in report
+    assert "Utc start" not in report
+
+
+def test_movement_base_label_follows_base_vector_when_scheduled_band_sorts_first() -> None:
+    base = _event()
+    new_rules = [
+        {
+            "utc_days": ["monday"],
+            "utc_start": 0,
+            "utc_end": 100,
+            "prompt": "0.000003",
+            "completion": "0.000009",
+        }
+    ]
+    event = replace(
+        base,
+        field_changes=(
+            base.field_changes[0],
+            FieldChange("pricing.overrides", None, new_rules),
+        ),
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {
+                "prompt": "0.000001",
+                "completion": "0.000008",
+                "overrides": new_rules,
+            },
+        },
+    )
+
+    report = _scan_report(event, "text")
+
+    assert (
+        "Movement: peak up (Input up 50.0%, Output up 12.5%); "
+        "base down (Input down 50.0%) versus the prior advertised rates"
+        in report
+    )
+
+
+def test_full_coverage_base_vector_band_is_rendered_as_base_windows_once() -> None:
+    weekday_rule = {
+        "utc_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "prompt": "0.0000010",
+    }
+    weekend_rule = {
+        "utc_days": ["saturday", "sunday"],
+        "prompt": "0.0000010",
+    }
+    rules = [weekday_rule, weekend_rule]
+    base = _event()
+    event = replace(
+        base,
+        field_changes=(FieldChange("pricing.overrides", None, rules),),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001"},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"prompt": "0.000001", "overrides": rules},
+        },
+    )
+
+    report = _scan_report(event, "text")
+
+    assert report.count("Base/default: Input $1.00 /1M tokens") == 1
+    assert "Base-rate windows: Mon-Sun all day" in report
+    assert "Scheduled band" not in report
+    assert "Rates:" not in report
+
+
+def test_mixed_price_groups_do_not_share_precision_basis() -> None:
+    def event_for(rules: list[dict], pricing: dict) -> PricingComparisonEvent:
+        base = _event()
+        old_pricing = {
+            key: value for key, value in pricing.items() if key != "overrides"
+        }
+        return replace(
+            base,
+            field_changes=(FieldChange("pricing.overrides", None, rules),),
+            old_model_metadata={"id": "synthetic/model", "pricing": old_pricing},
+            new_model_metadata={
+                "id": "synthetic/model",
+                "pricing": {**pricing, "overrides": rules},
+            },
+        )
+
+    prompt_rule = {
+        "utc_days": ["monday"],
+        "prompt": "0.00000123",
+    }
+    prompt_only = _scan_report(
+        event_for([prompt_rule], {"prompt": "0.00000123"}), "text"
+    )
+    mixed_rule = {**prompt_rule, "request": "12.3456"}
+    mixed = _scan_report(
+        event_for(
+            [mixed_rule],
+            {"prompt": "0.00000123", "request": "12.3456"},
+        ),
+        "text",
+    )
+
+    assert "Input $1.23 /1M tokens" in prompt_only
+    assert "Input $1.23 /1M tokens; Per request $12.3456 /request" in mixed
+    assert "$1.2300" not in mixed
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_scan_all_detail_includes_source_rules_and_parent_evidence_exactly_once(
+    format_name: str,
+) -> None:
+    report = _scan_report(_event(), format_name, detail_mode="all")
+
+    assert "Source-ordered rules" in report
+    assert "Rule 1:" in report
+    assert "Input $3.00 /1M tokens" in report
+    assert "Output $9.00 /1M tokens" in report
+    assert report.count("Canonical stored parent old:") == 1
+    assert report.count("Canonical stored parent new:") == 1
+    assert report.count('"utc_days"') == 1
+    if format_name == "markdown":
+        assert "Canonical stored parent old: ` null `" in report
+        assert "Canonical stored parent new: ` [" in report
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_evidence_only_reorder_is_concise_silent_but_retained_in_all_audit(
+    format_name: str,
+) -> None:
+    event = _evidence_only_event()
+
+    concise = _scan_report(event, format_name)
+    all_detail = _scan_report(event, format_name, detail_mode="all")
+
+    assert "Pricing schedule" not in concise
+    assert "Conditional pricing evidence (semantically unchanged)" in all_detail
+    assert all_detail.count("Canonical stored parent old:") == 1
+    assert all_detail.count("Canonical stored parent new:") == 1
+
+
+@pytest.mark.parametrize("detail_mode", ("default", "all"))
+def test_evidence_only_reorder_does_not_create_pre_task8_scan_html_card(
+    detail_mode: str,
+) -> None:
+    report = _scan_report(_evidence_only_event(), "html", detail_mode=detail_mode)
+
+    assert "synthetic/model" not in report
+    assert "Conditional pricing evidence" not in report
+
+
+@pytest.mark.parametrize("detail_mode", ("default", "all"))
+def test_evidence_only_reorder_does_not_create_pre_task8_changes_html_card(
+    detail_mode: str,
+) -> None:
+    event = _evidence_only_event()
+    old_rules = reporting._mutable_json(event.field_changes[0].old_value)
+    new_rules = reporting._mutable_json(event.field_changes[0].new_value)
+    stored = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=old_rules,
+        new_rules=new_rules,
+        detected_at=event.detected_at,
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(stored), OPENROUTER_PROFILE
+    )
+
+    report = reporting.render_changes_report(
+        format_name="html",
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=(),
+        provider_profiles={"openrouter": OPENROUTER_PROFILE},
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+        stored_events=(stored,),
+        semantic_cores={stored.identity: core},
+    )
+
+    assert "synthetic/model" not in report
+    assert "Conditional pricing evidence" not in report
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_ordered_rules_show_explicit_and_not_set_cells(format_name: str) -> None:
+    base = _event()
+    new_rules = [
+        {"min_prompt_tokens": 200000, "prompt": "0.000003"},
+        {"utc_days": ["monday"], "utc_start": 100, "utc_end": 200, "completion": "0.000009"},
+    ]
+    new_metadata = {
+        "id": "synthetic/model",
+        "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000008",
+            "overrides": new_rules,
+        },
+    }
+    event = replace(
+        base,
+        field_changes=(FieldChange("pricing.overrides", None, new_rules),),
+        new_model_metadata=new_metadata,
+    )
+
+    report = _scan_report(event, format_name)
+
+    assert "Conditional pricing added" in report
+    assert "Rules are evaluated in source order" in report
+    assert "Prompt > 200,000 tokens" in report
+    assert "not set by this rule" in report
+    assert "inherited from base" not in report.lower()
+    assert report.index("Input") < report.index("Output")
+
+    all_detail = _scan_report(event, format_name, detail_mode="all")
+    assert all_detail.count("Rule 1:") == 1
+    assert all_detail.count("Rule 2:") == 1
+    assert all_detail.count("Canonical stored parent old:") == 1
+    assert all_detail.count("Canonical stored parent new:") == 1
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_raw_fallback_is_self_contained_without_internal_exception_text(
+    format_name: str,
+) -> None:
+    base = _event(metadata=False)
+    malformed = {"unsupported": "synthetic"}
+    event = replace(
+        base,
+        field_changes=(FieldChange("pricing.overrides", None, malformed),),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+
+    report = _scan_report(event, format_name)
+
+    assert "Conditional pricing changed (stored conditions retained)" in report
+    assert "No schedule direction was inferred" in report
+    if format_name == "markdown":
+        assert "Canonical stored parent old: ` null `" in report
+        assert 'Canonical stored parent new: ` {"unsupported":"synthetic"} `' in report
+    else:
+        assert "Canonical stored parent old: null" in report
+        assert 'Canonical stored parent new: {"unsupported":"synthetic"}' in report
+    assert "invalid_policy_type" not in report
+
+
+def test_markdown_canonical_json_is_literal_with_html_pipes_and_backtick_runs() -> None:
+    hostile = {
+        "payload": "</code><script>synthetic()</script>|`````",
+    }
+    event = replace(
+        _event(metadata=False),
+        field_changes=(FieldChange("pricing.overrides", None, hostile),),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+    canonical = '{"payload":"</code><script>synthetic()</script>|`````"}'
+    literal = f"`````` {canonical} ``````"
+
+    scan_markdown = _scan_report(event, "markdown")
+    scan_text = _scan_report(event, "text")
+
+    stored = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=hostile,
+        detected_at=event.detected_at,
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(stored), OPENROUTER_PROFILE
+    )
+    history_markdown = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name="markdown",
+        first_seen=None,
+        last_seen=None,
+        events=(HistoryEvent(event.detected_at, "changed", "pricing.overrides", None, hostile),),
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(mode="all"),
+        stored_events=(stored,),
+        semantic_cores={stored.identity: core},
+    )
+
+    for markdown in (scan_markdown, history_markdown):
+        assert f"Canonical stored parent new: {literal}" in markdown
+        assert f"Canonical stored parent new: {canonical}" not in markdown
+    assert f"Canonical stored parent new: {canonical}" in scan_text
+    assert literal not in scan_text
+
+
+def test_history_and_changes_text_render_each_exact_edge_with_edge_timestamps() -> None:
+    rules = [
+        {
+            "utc_days": ["monday"],
+            "utc_start": 100,
+            "utc_end": 200,
+            "prompt": "0.000002",
+        }
+    ]
+    added = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=rules,
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    removed = _stored_schedule_event(
+        from_scrape=11,
+        to_scrape=12,
+        old_rules=rules,
+        new_rules=None,
+        detected_at="2026-08-28T13:00:00+00:00",
+    )
+    stored = (added, removed)
+    cores = reporting.build_changes_semantic_core(
+        stored, {"openrouter": OPENROUTER_PROFILE}
+    )
+    legacy_history = tuple(
+        HistoryEvent(
+            event.detected_at,
+            "changed",
+            "pricing.overrides",
+            event.field_changes[0].old_value,
+            event.field_changes[0].new_value,
+        )
+        for event in stored
+    )
+
+    history = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name="text",
+        first_seen="2026-08-01T00:00:00+00:00",
+        last_seen="2026-08-28T13:00:00+00:00",
+        events=legacy_history,
+        profile=OPENROUTER_PROFILE,
+        stored_events=stored,
+        semantic_cores=cores.by_identity,
+    )
+    changes = reporting.render_changes_report(
+        format_name="text",
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=(),
+        provider_profiles={"openrouter": OPENROUTER_PROFILE},
+        stored_events=stored,
+        semantic_cores=cores.by_identity,
+        changes_semantic_core=cores,
+    )
+
+    for report in (history, changes):
+        assert report.count("relative to selected baseline") == 2
+        assert f"Source: {reporting.to_local_human(added.from_completed_at)}" in report
+        assert f"Target: {reporting.to_local_human(added.to_completed_at)}" in report
+        assert f"Source: {reporting.to_local_human(removed.from_completed_at)}" in report
+        assert f"Target: {reporting.to_local_human(removed.to_completed_at)}" in report
+        assert report.count("Pricing schedule added") == 1
+        assert report.count("Pricing schedule removed") == 1
+        assert "first appeared" not in report.lower()
+
+
+def test_history_markdown_uses_the_same_exact_edge_conditional_block() -> None:
+    rules = [
+        {
+            "utc_days": ["monday"],
+            "utc_start": 100,
+            "utc_end": 200,
+            "prompt": "0.000002",
+        }
+    ]
+    event = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=rules,
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(event), OPENROUTER_PROFILE
+    )
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name="markdown",
+        first_seen=None,
+        last_seen=None,
+        events=(HistoryEvent(event.detected_at, "changed", "pricing.overrides", None, rules),),
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(mode="all"),
+        stored_events=(event,),
+        semantic_cores={event.identity: core},
+    )
+
+    assert "Pricing schedule added relative to selected baseline" in report
+    assert "Mon 01:00-02:00 UTC" in report
+    assert "Source:" in report and "Target:" in report
+    assert "Canonical stored parent old: ` null `" in report
+    assert "Canonical stored parent new: ` [" in report
+
+
+def test_history_rich_event_keeps_initial_presence_record_visible() -> None:
+    initial = replace(
+        _stored_schedule_event(
+            from_scrape=10,
+            to_scrape=11,
+            old_rules=None,
+            new_rules=[],
+            detected_at="2026-08-28T12:00:00+00:00",
+        ),
+        identity=StoredComparisonIdentity("openrouter", "synthetic/model", None, 11),
+        source_rows=(
+            replace(
+                _stored_schedule_event(
+                    from_scrape=10,
+                    to_scrape=11,
+                    old_rules=None,
+                    new_rules=[],
+                    detected_at="2026-08-28T12:00:00+00:00",
+                ).source_rows[0],
+                from_scrape_id=None,
+                change_kind="added",
+                field_name=None,
+                old_value=None,
+                new_value=None,
+            ),
+        ),
+        field_changes=(),
+        old_model_metadata=None,
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(initial), OPENROUTER_PROFILE
+    )
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name="text",
+        first_seen=initial.detected_at,
+        last_seen=initial.detected_at,
+        events=(HistoryEvent(initial.detected_at, "added", None, None, None),),
+        profile=OPENROUTER_PROFILE,
+        stored_events=(initial,),
+        semantic_cores={initial.identity: core},
+    )
+
+    assert "+ synthetic/model (Synthetic Model)" in report
+
+
+def test_conditional_semantics_do_not_change_any_public_json_payload() -> None:
+    result = _scan_result(_event())
+    event = _event()
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    scan_without = reporting.render_scan_report(
+        generated_at=event.detected_at,
+        command="scan",
+        format_name="json",
+        provider_results=[result],
+    )
+    scan_with = reporting.render_scan_report(
+        generated_at=event.detected_at,
+        command="scan",
+        format_name="json",
+        provider_results=[result],
+        semantic_cores={core.identity: core},
+    )
+
+    stored = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=event.field_changes[1].new_value,
+        detected_at=event.detected_at,
+    )
+    history_events = (
+        HistoryEvent(
+            event.detected_at,
+            "changed",
+            "pricing.overrides",
+            None,
+            reporting._mutable_json(event.field_changes[1].new_value),
+        ),
+    )
+    history_without = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name="json",
+        first_seen=None,
+        last_seen=None,
+        events=history_events,
+        profile=OPENROUTER_PROFILE,
+    )
+    history_with = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name="json",
+        first_seen=None,
+        last_seen=None,
+        events=history_events,
+        profile=OPENROUTER_PROFILE,
+        stored_events=(stored,),
+        semantic_cores={stored.identity: reporting.build_model_event_semantic_core(reporting.pricing_event_from_stored(stored), OPENROUTER_PROFILE)},
+    )
+    legacy_change = ({
+        "provider_id": "openrouter",
+        "provider_label": "OpenRouter",
+        "provider_model_id": "synthetic/model",
+        "display_name": "Synthetic Model",
+        "change_kind": "field_changed",
+        "field_name": "pricing.overrides",
+        "old_value": None,
+        "new_value": reporting._mutable_json(event.field_changes[1].new_value),
+        "detected_at": event.detected_at,
+    },)
+    changes_without = reporting.render_changes_report(
+        format_name="json", provider_id=None, since=None, until=None, changes=legacy_change
+    )
+    changes_with = reporting.render_changes_report(
+        format_name="json",
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=legacy_change,
+        stored_events=(stored,),
+        semantic_cores={stored.identity: reporting.build_model_event_semantic_core(reporting.pricing_event_from_stored(stored), OPENROUTER_PROFILE)},
+    )
+
+    assert json.loads(scan_with) == json.loads(scan_without)
+    assert json.loads(history_with) == json.loads(history_without)
+    assert json.loads(changes_with) == json.loads(changes_without)
+    for payload in (scan_with, history_with, changes_with):
+        assert "from_scrape_id" not in payload
+        assert "to_scrape_id" not in payload
+        assert "old_model_metadata" not in payload
+        assert "new_model_metadata" not in payload

@@ -8,6 +8,7 @@ from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from typing import Any, Literal
 
 # Renderers in this module are pure formatters over `RenderedChange`: they call
@@ -48,22 +49,32 @@ from .change_render import (
     ABSENT_TEXT_DISPLAY,
     PricingFieldSortKey,
     RenderedChange,
+    ResolvedPriceValue,
     _list_diff_members,
     _numeric_value,
     _scalar_display,
     classify_change,
+    format_price_values,
     pricing_field_sort_key,
+    resolve_price_value,
     signed_pct_change,
 )
 from .conditional_pricing import (
+    CompiledConditionalPricingPolicy,
     ComparisonIdentity,
+    ConditionalPricingRule,
     ConditionalPricingInterpretation,
+    EffectivePriceVector,
     LiveComparisonIdentity,
     ModelPricingAccounting,
     PricingComparisonEvent,
+    PriceBandComparison,
+    PricingTransition,
     SourceChangeReference,
     StoredComparisonIdentity,
+    WeeklySegment,
     build_model_pricing_accounting,
+    compile_weekly_segments,
     interpret_conditional_pricing,
     resolve_direct_price_movement,
 )
@@ -561,6 +572,7 @@ def project_model_event_semantics(
     profile: ProviderProfile,
     *,
     unclassified_remaining: int | None = None,
+    include_evidence_only: bool = False,
 ) -> ModelEventPresentationPlan:
     """Apply one artifact's detail policy without changing semantic truth."""
     display = _field_display_plan(
@@ -572,7 +584,17 @@ def project_model_event_semantics(
     return ModelEventPresentationPlan(
         core=core,
         display=display,
-        show_conditional_panel=(policy.mode != "squelched" and core.has_semantic_composite),
+        show_conditional_panel=(
+            policy.mode != "squelched"
+            and (
+                core.has_semantic_composite
+                or (
+                    include_evidence_only
+                    and policy.mode == "all"
+                    and core.evidence_only
+                )
+            )
+        ),
     )
 
 
@@ -654,6 +676,7 @@ def plan_stored_comparison_events(
     *,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
     budget_scope: Literal["history", "changes"] = "changes",
+    include_evidence_only: bool = False,
 ) -> tuple[StoredEventPresentationPlan, ...]:
     """Project exact stored edges without merging equal model/date identities."""
     events = tuple(stored_events)
@@ -682,6 +705,7 @@ def plan_stored_comparison_events(
             policy,
             profiles.get(event.provider_id, GENERIC_PROFILE),
             unclassified_remaining=remaining,
+            include_evidence_only=include_evidence_only,
         )
         remaining_by_scope[scope] = max(
             0,
@@ -1093,6 +1117,7 @@ def _plan_provider_changes(
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
     *,
     provider_id: str | None = None,
+    include_evidence_only: bool = False,
 ) -> _ProviderChangePlan:
     planned: list[_PlannedModelChange] = []
     unclassified_remaining = policy.unclassified_limit
@@ -1115,6 +1140,7 @@ def _plan_provider_changes(
                 policy,
                 profile,
                 unclassified_remaining=unclassified_remaining,
+                include_evidence_only=include_evidence_only,
             ).display
         unclassified_remaining = max(0, unclassified_remaining - display.unclassified_used)
         planned.append(_PlannedModelChange(delta, display, core))
@@ -1124,7 +1150,16 @@ def _plan_provider_changes(
     )
 
     if policy.mode != "default":
-        return _ProviderChangePlan(tuple(planned), _prune_empty_items(planned), rollups)
+        return _ProviderChangePlan(
+            tuple(planned),
+            _prune_empty_items(
+                planned,
+                include_evidence_only=(
+                    include_evidence_only and policy.mode == "all"
+                ),
+            ),
+            rollups,
+        )
 
     by_signature: dict[
         tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
@@ -1209,6 +1244,8 @@ def _renders_anything(
 
 def _prune_empty_items(
     items: Sequence[_PlannedModelChange | _BulkChangeGroup],
+    *,
+    include_evidence_only: bool = False,
 ) -> tuple[_PlannedModelChange | _BulkChangeGroup, ...]:
     """Drop planned models that would render an empty card.
 
@@ -1222,7 +1259,14 @@ def _prune_empty_items(
         for item in items
         if isinstance(item, _BulkChangeGroup)
         or (
-            _renders_anything(item.display, item.semantic_core)
+            (
+                _renders_anything(item.display, item.semantic_core)
+                or (
+                    include_evidence_only
+                    and item.semantic_core is not None
+                    and item.semantic_core.evidence_only
+                )
+            )
             and (
                 item.semantic_core is not None
                 and item.semantic_core.has_semantic_composite
@@ -1515,6 +1559,7 @@ def plan_changes_provider(
     ] | None = None,
     *,
     artifact_semantics: _StoredSemanticArtifactIndex | None = None,
+    include_evidence_only: bool = False,
 ) -> _ChangesProviderPlan:
     """Plan one provider block of the `changes` report, for text and HTML alike.
 
@@ -1606,10 +1651,16 @@ def plan_changes_provider(
                 policy,
                 profile,
                 unclassified_remaining=unclassified_remaining,
+                include_evidence_only=include_evidence_only,
             ).display
         unclassified_remaining = max(0, unclassified_remaining - plan.unclassified_used)
         planned_displays.append((rendered_model_id, plan))
-        if not _renders_anything(plan, semantic_core):
+        if not _renders_anything(plan, semantic_core) and not (
+            include_evidence_only
+            and policy.mode == "all"
+            and semantic_core is not None
+            and semantic_core.evidence_only
+        ):
             continue
         entries.append(
             _PlannedChangeEntry(
@@ -1884,6 +1935,502 @@ def render_scan_report(
     )
 
 
+_UTC_DAY_ABBREVIATIONS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _utc_clock(minute: int) -> str:
+    return "24:00" if minute == 1440 else f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def _compact_day_names(day_indices: tuple[int, ...]) -> str:
+    if day_indices == tuple(range(7)):
+        return "Mon-Sun"
+    runs: list[tuple[int, int]] = []
+    for day in day_indices:
+        if runs and day == runs[-1][1] + 1:
+            runs[-1] = (runs[-1][0], day)
+        else:
+            runs.append((day, day))
+    return ",".join(
+        _UTC_DAY_ABBREVIATIONS[start]
+        if start == end
+        else f"{_UTC_DAY_ABBREVIATIONS[start]}-{_UTC_DAY_ABBREVIATIONS[end]}"
+        for start, end in runs
+    )
+
+
+def _format_utc_coverage(coverage: Iterable[WeeklySegment]) -> str:
+    """Format canonical request-instant weekly segments without local conversion."""
+    by_interval: OrderedDict[tuple[int, int], list[int]] = OrderedDict()
+    for segment in coverage:
+        by_interval.setdefault(
+            (segment.start_minute, segment.end_minute), []
+        ).append(segment.weekday_index)
+    parts = []
+    for (start, end), days in by_interval.items():
+        day_text = _compact_day_names(tuple(days))
+        interval = (
+            "all day"
+            if start == 0 and end == 1440
+            else f"{_utc_clock(start)}-{_utc_clock(end)} UTC"
+        )
+        parts.append(f"{day_text} {interval}")
+    return "; ".join(parts) or "no covered UTC windows"
+
+
+def _conditional_display_policy(
+    interpretation: ConditionalPricingInterpretation,
+) -> CompiledConditionalPricingPolicy | None:
+    return (
+        interpretation.old_compiled_policy
+        if interpretation.transition == "removed"
+        else interpretation.new_compiled_policy
+    )
+
+
+def _ordered_schedule_dimensions(
+    interpretation: ConditionalPricingInterpretation,
+    profile: ProviderProfile,
+) -> tuple[str, ...]:
+    dimensions = (
+        interpretation.accounting.schedule_dimensions
+        if interpretation.accounting is not None
+        else ()
+    )
+    return tuple(
+        sorted(
+            dimensions,
+            key=lambda dimension: pricing_field_sort_key(
+                profile.pricing_override_base_paths.get(
+                    dimension, f"pricing.{dimension}"
+                ),
+                profile,
+            ),
+        )
+    )
+
+
+def _dimension_label(dimension: str, profile: ProviderProfile) -> str:
+    path = profile.pricing_override_base_paths.get(dimension, f"pricing.{dimension}")
+    return classify_change(FieldChange(path, None, None), profile=profile).display_label
+
+
+def _format_effective_vector(
+    vector: EffectivePriceVector,
+    dimensions: tuple[str, ...],
+    profile: ProviderProfile,
+) -> str:
+    resolved_by_dimension = {}
+    for entry in vector.entries:
+        path = profile.pricing_override_base_paths.get(
+            entry.dimension, f"pricing.{entry.dimension}"
+        )
+        resolved = resolve_price_value(path, entry.raw_value, profile)
+        if resolved is not None:
+            resolved_by_dimension[entry.dimension] = resolved
+    compatible_groups: OrderedDict[
+        tuple[str, str | None], list[tuple[str, ResolvedPriceValue]]
+    ] = OrderedDict()
+    for dimension in dimensions:
+        resolved = resolved_by_dimension.get(dimension)
+        if resolved is None:
+            continue
+        key = (
+            resolved.price_rule.unit_label,
+            resolved.price_rule.comparison_group,
+        )
+        compatible_groups.setdefault(key, []).append((dimension, resolved))
+    by_dimension: dict[str, str] = {}
+    for grouped in compatible_groups.values():
+        grouped_values = tuple(resolved for _dimension, resolved in grouped)
+        formatted = format_price_values(
+            grouped_values,
+            precision_basis=grouped_values,
+        )
+        by_dimension.update(
+            (dimension, display)
+            for (dimension, _resolved), display in zip(
+                grouped, formatted, strict=True
+            )
+        )
+    parts = []
+    for dimension in dimensions:
+        resolved = resolved_by_dimension.get(dimension)
+        if resolved is None:
+            continue
+        parts.append(
+            f"{_dimension_label(dimension, profile)} {by_dimension[dimension]} "
+            f"{resolved.price_rule.unit_label}"
+        )
+    return "; ".join(parts)
+
+
+def _format_explicit_assignments(
+    rule: ConditionalPricingRule,
+    dimensions: tuple[str, ...],
+    profile: ProviderProfile,
+) -> str:
+    explicit = {assignment.dimension: assignment for assignment in rule.explicit_prices}
+    cells = []
+    for dimension in dimensions:
+        assignment = explicit.get(dimension)
+        if assignment is None:
+            cells.append(f"{_dimension_label(dimension, profile)} not set by this rule")
+            continue
+        resolved = resolve_price_value(
+            profile.pricing_override_base_paths.get(
+                dimension, f"pricing.{dimension}"
+            ),
+            assignment.raw_value,
+            profile,
+        )
+        if resolved is None:
+            cells.append(
+                f"{_dimension_label(dimension, profile)} "
+                f"{_scalar_display(assignment.raw_value)}"
+            )
+        else:
+            rendered = format_price_values(
+                (resolved,), precision_basis=(resolved,)
+            )[0]
+            cells.append(
+                f"{_dimension_label(dimension, profile)} {rendered} "
+                f"{resolved.price_rule.unit_label}"
+            )
+    return " | ".join(cells)
+
+
+def _rule_predicate_text(rule: ConditionalPricingRule) -> str:
+    threshold_conditions = tuple(
+        condition.display_value
+        for condition in rule.conditions
+        if condition.semantic_role == "integer_strictly_greater"
+    )
+    time_conditions = tuple(
+        condition
+        for condition in rule.conditions
+        if condition.semantic_role
+        in {"utc_weekdays", "utc_start_inclusive", "utc_end_exclusive"}
+    )
+    parts = list(threshold_conditions)
+    if time_conditions:
+        parts.append(
+            _format_utc_coverage(_rule_coverage(rule))
+        )
+    return " and ".join(parts) or "all requests"
+
+
+def _rule_coverage(rule: ConditionalPricingRule) -> tuple[WeeklySegment, ...]:
+    """Return a parsed rule's already-validated UTC coverage for presentation."""
+    return compile_weekly_segments(
+        rule.utc_weekdays,
+        rule.start_minute,
+        rule.end_minute,
+    )
+
+
+def _canonical_parent_values(core: ModelEventSemanticCore) -> tuple[str, str]:
+    parents = tuple(
+        change
+        for change in core.event.field_changes
+        if change.field_name == "pricing.overrides"
+    )
+    if len(parents) != 1:
+        # Raw fallback can represent duplicate parents. Preserve every parent
+        # transition in one canonical array rather than selecting one.
+        old_value = [change.old_value for change in parents]
+        new_value = [change.new_value for change in parents]
+    else:
+        old_value = parents[0].old_value
+        new_value = parents[0].new_value
+    return (
+        canonical_json(_mutable_json(old_value)),
+        canonical_json(_mutable_json(new_value)),
+    )
+
+
+def _markdown_code_span(value: str) -> str:
+    """Wrap arbitrary one-line provider text in a non-interpreting code span."""
+    longest_run = max(
+        (len(match.group(0)) for match in re.finditer(r"`+", value)),
+        default=0,
+    )
+    delimiter = "`" * (longest_run + 1)
+    return f"{delimiter} {value} {delimiter}"
+
+
+def _canonical_evidence_line(label: str, value: str, *, markdown: bool) -> str:
+    rendered = _markdown_code_span(value) if markdown else value
+    return f"{label}: {rendered}"
+
+
+def _resolved_effective_vector_identity(
+    vector: EffectivePriceVector | None,
+    profile: ProviderProfile,
+) -> tuple[tuple[str, Fraction, str, str | None], ...] | None:
+    """Resolve a complete vector into an exact monetary comparison identity."""
+    if vector is None:
+        return None
+    identity = []
+    for entry in vector.entries:
+        path = profile.pricing_override_base_paths.get(
+            entry.dimension, f"pricing.{entry.dimension}"
+        )
+        resolved = resolve_price_value(path, entry.raw_value, profile)
+        if resolved is None:
+            return None
+        identity.append(
+            (
+                entry.dimension,
+                resolved.normalized_exact_value,
+                resolved.price_rule.unit_label,
+                resolved.price_rule.comparison_group,
+            )
+        )
+    return tuple(sorted(identity))
+
+
+def _comparison_band_matches_vector(
+    band: PriceBandComparison,
+    vector: EffectivePriceVector | None,
+    transition: PricingTransition,
+    profile: ProviderProfile,
+) -> bool:
+    """Match the displayed side of a comparison band to one exact vector."""
+    vector_identity = _resolved_effective_vector_identity(vector, profile)
+    if vector_identity is None:
+        return False
+    identity = []
+    for dimension in band.dimensions:
+        value = dimension.old_value if transition == "removed" else dimension.new_value
+        if value is None:
+            return False
+        identity.append(
+            (
+                dimension.dimension,
+                value.normalized_exact_value,
+                value.price_rule.unit_label,
+                value.price_rule.comparison_group,
+            )
+        )
+    return tuple(sorted(identity)) == vector_identity
+
+
+def _movement_summary(
+    interpretation: ConditionalPricingInterpretation,
+    profile: ProviderProfile,
+) -> str | None:
+    comparison = interpretation.comparison
+    if comparison is None or not comparison.bands:
+        return None
+    ordered_dimensions = _ordered_schedule_dimensions(interpretation, profile)
+    dimension_rank = {
+        dimension: index for index, dimension in enumerate(ordered_dimensions)
+    }
+    facts = []
+    displayed_policy = _conditional_display_policy(interpretation)
+    base_vector = displayed_policy.base_prices if displayed_policy is not None else None
+    other_band_number = 0
+    for band in comparison.bands:
+        is_base = _comparison_band_matches_vector(
+            band,
+            base_vector,
+            interpretation.transition,
+            profile,
+        )
+        if is_base:
+            label = "base"
+        elif band.is_peak:
+            label = "peak"
+        else:
+            other_band_number += 1
+            label = f"band {other_band_number}"
+        direction = {"higher": "up", "lower": "down"}.get(
+            band.direction, band.direction
+        )
+        if band.percentage is not None:
+            facts.append(f"{label} {direction} {abs(band.percentage):.1f}%")
+            continue
+        dimension_facts = []
+        for dimension in sorted(
+            band.dimensions,
+            key=lambda fact: (
+                dimension_rank.get(fact.dimension, len(dimension_rank)),
+                pricing_field_sort_key(
+                    profile.pricing_override_base_paths.get(
+                        fact.dimension, f"pricing.{fact.dimension}"
+                    ),
+                    profile,
+                ),
+            ),
+        ):
+            if (
+                dimension.direction not in {"higher", "lower"}
+                or dimension.percentage is None
+            ):
+                continue
+            dimension_direction = {
+                "higher": "up",
+                "lower": "down",
+            }[dimension.direction]
+            dimension_facts.append(
+                f"{_dimension_label(dimension.dimension, profile)} "
+                f"{dimension_direction} {abs(dimension.percentage):.1f}%"
+            )
+        facts.append(
+            f"{label} {direction}"
+            + (f" ({', '.join(dimension_facts)})" if dimension_facts else "")
+        )
+    return "; ".join(facts)
+
+
+def _conditional_pricing_lines(
+    projection: ModelEventPresentationPlan,
+    profile: ProviderProfile,
+    *,
+    comparison_label: str | None = None,
+    include_audit: bool = False,
+    markdown: bool = False,
+) -> list[str]:
+    """Render one self-contained composite block for non-HTML artifacts."""
+    if not projection.show_conditional_panel:
+        return []
+    core = projection.core
+    interpretation = core.interpretation
+    if interpretation is None:
+        return []
+    transition = interpretation.transition
+    suffix = f" {comparison_label}" if comparison_label else ""
+    lines: list[str] = []
+    if core.evidence_only:
+        if include_audit:
+            lines.append("Conditional pricing evidence (semantically unchanged)")
+            lines.extend(
+                _conditional_audit_lines(
+                    projection,
+                    profile,
+                    markdown=markdown,
+                )
+            )
+        return lines
+    if interpretation.state == "raw-fallback":
+        lines.append(f"Conditional pricing changed (stored conditions retained){suffix}")
+        lines.append(
+            "The provider supplied an unsupported or ambiguous condition. "
+            "No schedule direction was inferred."
+        )
+        old_parent, new_parent = _canonical_parent_values(core)
+        lines.append(
+            _canonical_evidence_line(
+                "Canonical stored parent old", old_parent, markdown=markdown
+            )
+        )
+        lines.append(
+            _canonical_evidence_line(
+                "Canonical stored parent new", new_parent, markdown=markdown
+            )
+        )
+        return lines
+
+    policy = _conditional_display_policy(interpretation)
+    if policy is None:
+        return []
+    dimensions = _ordered_schedule_dimensions(interpretation, profile)
+    if interpretation.state == "grouped-schedule":
+        lines.append(f"Pricing schedule {transition}{suffix} - UTC")
+        if policy.base_prices is not None:
+            lines.append(
+                f"Base/default: {_format_effective_vector(policy.base_prices, dimensions, profile)}"
+            )
+        base_vector_identity = _resolved_effective_vector_identity(
+            policy.base_prices, profile
+        )
+        for index, band in enumerate(policy.effective_bands):
+            band_vector_identity = _resolved_effective_vector_identity(
+                band.effective_prices, profile
+            )
+            is_base_band = (
+                band_vector_identity is not None
+                and band_vector_identity == base_vector_identity
+            )
+            label = "Base-rate windows" if is_base_band else (
+                "Peak windows"
+                if interpretation.comparison is not None
+                and index == interpretation.comparison.peak_band_index
+                else f"Scheduled band {index + 1} windows"
+            )
+            lines.append(f"{label}: {_format_utc_coverage(band.coverage)}")
+            if not is_base_band:
+                lines.append(
+                    f"Rates: {_format_effective_vector(band.effective_prices, dimensions, profile)}"
+                )
+    else:
+        lines.append(f"Conditional pricing {transition}{suffix} - UTC")
+        if policy.base_prices is not None:
+            lines.append(
+                f"Base/default: {_format_effective_vector(policy.base_prices, dimensions, profile)}"
+            )
+        for compiled_rule in policy.ordered_rules:
+            rule = compiled_rule.source_rule
+            lines.append(
+                f"Rule {rule.source_index + 1}: {_rule_predicate_text(rule)} | "
+                + _format_explicit_assignments(rule, dimensions, profile)
+            )
+        lines.append("Rules are evaluated in source order; later matching rules win per price key.")
+
+    movement = _movement_summary(interpretation, profile)
+    if movement:
+        lines.append(f"Movement: {movement} versus the prior advertised rates")
+    lines.append(
+        "These are provider-advertised catalog rates; actual routing and billing can vary."
+    )
+
+    if include_audit:
+        lines.extend(
+            _conditional_audit_lines(
+                projection,
+                profile,
+                include_rules=interpretation.state != "ordered-rules",
+                markdown=markdown,
+            )
+        )
+    return lines
+
+
+def _conditional_audit_lines(
+    projection: ModelEventPresentationPlan,
+    profile: ProviderProfile,
+    *,
+    include_rules: bool = True,
+    markdown: bool = False,
+) -> list[str]:
+    interpretation = projection.core.interpretation
+    if interpretation is None or interpretation.state == "raw-fallback":
+        return []
+    policy = _conditional_display_policy(interpretation)
+    dimensions = _ordered_schedule_dimensions(interpretation, profile)
+    lines = ["Source-ordered rules:"] if include_rules else []
+    if include_rules and policy is not None:
+        for compiled_rule in policy.ordered_rules:
+            rule = compiled_rule.source_rule
+            lines.append(
+                f"Rule {rule.source_index + 1}: {_rule_predicate_text(rule)} | "
+                f"{_format_explicit_assignments(rule, dimensions, profile)}"
+            )
+    old_parent, new_parent = _canonical_parent_values(projection.core)
+    lines.append(
+        _canonical_evidence_line(
+            "Canonical stored parent old", old_parent, markdown=markdown
+        )
+    )
+    lines.append(
+        _canonical_evidence_line(
+            "Canonical stored parent new", new_parent, markdown=markdown
+        )
+    )
+    return lines
+
+
 def render_history_report(
     *,
     provider_id: str,
@@ -1921,6 +2468,7 @@ def render_history_report(
     stored_projections: dict[
         ComparisonIdentity, ModelEventPresentationPlan
     ] = {}
+    stored_plans: tuple[StoredEventPresentationPlan, ...] = ()
     if stored_events:
         stored_plans = plan_stored_comparison_events(
             stored_events,
@@ -1928,7 +2476,11 @@ def render_history_report(
             detail_policy,
             semantic_cores=semantic_cores,
             budget_scope="history",
+            include_evidence_only=True,
         )
+        stored_projections = {
+            plan.identity: plan.projection for plan in stored_plans
+        }
     if format_name == "markdown":
         lines = [
             f"# History: {provider_id} / {model_id}",
@@ -1943,9 +2495,44 @@ def render_history_report(
             if cache_summary:
                 lines.append(f"- Latest cache pricing: {cache_summary}")
         lines.append("")
-        if not events:
+        if not events and not stored_plans:
             lines.append("No saved change events matched the requested range.")
             return "\n".join(lines)
+        if stored_plans:
+            for plan in stored_plans:
+                event = plan.projection.core.event
+                lines.extend(
+                    [
+                        f"## Comparison detected {to_local_human(event.detected_at)}",
+                        "",
+                        f"- Source: {to_local_human(event.source_timestamp)}",
+                        f"- Target: {to_local_human(event.target_timestamp)}",
+                        "",
+                    ]
+                )
+                lines.extend(
+                    f"- {line}"
+                    for line in _conditional_pricing_lines(
+                        plan.projection,
+                        profile,
+                        comparison_label=plan.comparison_label,
+                        include_audit=detail_policy.mode == "all",
+                        markdown=True,
+                    )
+                )
+                for source_row in plan.stored_event.source_rows:
+                    if source_row.change_kind in {"added", "removed"}:
+                        marker = "+" if source_row.change_kind == "added" else "-"
+                        lines.append(
+                            f"- {marker} `{event.provider_model_id}` ({event.display_name})"
+                        )
+                for change in plan.projection.display.visible:
+                    lines.append(
+                        f"- `{change.field_name}`: {_scalar_display(change.old_value)} → "
+                        f"{_scalar_display(change.new_value)}"
+                    )
+                lines.append("")
+            return "\n".join(lines).rstrip()
         lines.append("| Detected At | Kind | Field | Old | New |")
         lines.append("|---|---|---|---|---|")
         for event in _visible_history_events(events, detail_policy):
@@ -1967,9 +2554,41 @@ def render_history_report(
         if cache_summary:
             lines.append(f"Latest cache pricing: {cache_summary}")
     lines.append("")
-    if not events:
+    if not events and not stored_plans:
         lines.append("No saved change events matched the requested range.")
         return "\n".join(lines)
+    if stored_plans:
+        for plan in stored_plans:
+            event = plan.projection.core.event
+            lines.extend(
+                [
+                    f"Comparison detected {to_local_human(event.detected_at)}",
+                    f"  Source: {to_local_human(event.source_timestamp)}",
+                    f"  Target: {to_local_human(event.target_timestamp)}",
+                ]
+            )
+            lines.extend(
+                f"  {line}"
+                for line in _conditional_pricing_lines(
+                    plan.projection,
+                    profile,
+                    comparison_label=plan.comparison_label,
+                    include_audit=detail_policy.mode == "all",
+                )
+            )
+            for source_row in plan.stored_event.source_rows:
+                if source_row.change_kind in {"added", "removed"}:
+                    marker = "+" if source_row.change_kind == "added" else "-"
+                    lines.append(
+                        f"  {marker} {event.provider_model_id} ({event.display_name})"
+                    )
+            for change in plan.projection.display.visible:
+                lines.append(
+                    f"  {change.field_name}: {_scalar_display(change.old_value)} -> "
+                    f"{_scalar_display(change.new_value)}"
+                )
+            lines.append("")
+        return "\n".join(lines).rstrip()
     for event in _visible_history_events(events, detail_policy):
         lines.append(
             f"- {to_local_human(event.detected_at)} [{event.change_kind}] "
@@ -2196,6 +2815,7 @@ def render_changes_report(
             detail_policy,
             semantic_cores=semantic_cores,
             budget_scope="changes",
+            include_evidence_only=format_name != "html",
         )
         stored_projections = {
             plan.identity: plan.projection for plan in stored_plans
@@ -2283,6 +2903,7 @@ def render_changes_report(
                 detail_policy,
                 profile,
                 artifact_semantics=artifact_semantics,
+                include_evidence_only=True,
             )
             if plan.renders_nothing:
                 continue
@@ -2299,6 +2920,35 @@ def render_changes_report(
                     continue
                 assert entry.display is not None  # `changed` entries always carry a plan
                 date_lines.append(f"      * {entry.model_id} ({entry.display_name})")
+                if entry.semantic_core is not None:
+                    event = entry.semantic_core.event
+                    date_lines.append(
+                        f"          Source: {to_local_human(event.source_timestamp)}"
+                    )
+                    date_lines.append(
+                        f"          Target: {to_local_human(event.target_timestamp)}"
+                    )
+                    projection = ModelEventPresentationPlan(
+                        entry.semantic_core,
+                        entry.display,
+                        detail_policy.mode != "squelched"
+                        and (
+                            entry.semantic_core.has_semantic_composite
+                            or (
+                                detail_policy.mode == "all"
+                                and entry.semantic_core.evidence_only
+                            )
+                        ),
+                    )
+                    date_lines.extend(
+                        f"          {line}"
+                        for line in _conditional_pricing_lines(
+                            projection,
+                            profile,
+                            comparison_label="relative to selected baseline",
+                            include_audit=detail_policy.mode == "all",
+                        )
+                    )
                 grouped = _group_field_changes_for_detail(
                     entry.display.visible,
                     detail_policy,
@@ -2874,6 +3524,7 @@ def _render_scan_text(
             result.profile,
             semantic_cores,
             provider_id=result.provider_id,
+            include_evidence_only=True,
         )
         for item in provider_plan.items:
             if isinstance(item, _BulkChangeGroup):
@@ -2888,6 +3539,27 @@ def _render_scan_text(
                 continue
             delta, plan = item.delta, item.display
             lines.append(f"    * {delta.provider_model_id} ({delta.display_name})")
+            if item.semantic_core is not None:
+                projection = ModelEventPresentationPlan(
+                    item.semantic_core,
+                    plan,
+                    detail_policy.mode != "squelched"
+                    and (
+                        item.semantic_core.has_semantic_composite
+                        or (
+                            detail_policy.mode == "all"
+                            and item.semantic_core.evidence_only
+                        )
+                    ),
+                )
+                lines.extend(
+                    f"      {line}"
+                    for line in _conditional_pricing_lines(
+                        projection,
+                        result.profile,
+                        include_audit=detail_policy.mode == "all",
+                    )
+                )
             if not plan.visible:
                 lines.extend(_hidden_change_summary_lines(plan, indent="      ", model_ids=(delta.provider_model_id,)))
                 continue
@@ -2998,6 +3670,7 @@ def _render_scan_markdown(
                 result.profile,
                 semantic_cores,
                 provider_id=result.provider_id,
+                include_evidence_only=True,
             )
             for item in provider_plan.items:
                 if isinstance(item, _BulkChangeGroup):
@@ -3011,6 +3684,28 @@ def _render_scan_markdown(
                     continue
                 delta, plan = item.delta, item.display
                 changed_lines.append(f"- `{delta.provider_model_id}` - {delta.display_name}")
+                if item.semantic_core is not None:
+                    projection = ModelEventPresentationPlan(
+                        item.semantic_core,
+                        plan,
+                        detail_policy.mode != "squelched"
+                        and (
+                            item.semantic_core.has_semantic_composite
+                            or (
+                                detail_policy.mode == "all"
+                                and item.semantic_core.evidence_only
+                            )
+                        ),
+                    )
+                    changed_lines.extend(
+                        f"  - {line}"
+                        for line in _conditional_pricing_lines(
+                            projection,
+                            result.profile,
+                            include_audit=detail_policy.mode == "all",
+                            markdown=True,
+                        )
+                    )
                 for field_change in _field_changes_with_pricing_order(
                     plan.visible,
                     detail_policy,
