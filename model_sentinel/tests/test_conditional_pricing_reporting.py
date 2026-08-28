@@ -1,0 +1,894 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+import model_sentinel.reporting as reporting
+import model_sentinel.conditional_pricing as pricing_semantics
+from model_sentinel.conditional_pricing import (
+    LiveComparisonIdentity,
+    PricingComparisonEvent,
+    StoredComparisonIdentity,
+)
+from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
+from model_sentinel.provider_profiles import OPENROUTER_PROFILE
+from model_sentinel.storage import StoredChangeRecord, StoredComparisonEvent
+
+
+def _event(*, metadata: bool = True) -> PricingComparisonEvent:
+    old = {
+        "id": "synthetic/model",
+        "pricing": {"prompt": "0.000002", "completion": "0.000008"},
+    }
+    new = {
+        "id": "synthetic/model",
+        "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000008",
+            "overrides": [
+                {
+                    "utc_days": ["monday"],
+                    "utc_start": 100,
+                    "utc_end": 200,
+                    "prompt": "0.000003",
+                    "completion": "0.000009",
+                }
+            ],
+        },
+    }
+    return PricingComparisonEvent(
+        identity=LiveComparisonIdentity("openrouter", "synthetic/model", 10, 11),
+        provider_id="openrouter",
+        provider_model_id="synthetic/model",
+        display_name="Synthetic Model",
+        detected_at="2026-08-28T12:00:00+00:00",
+        source_timestamp="2026-08-27T12:00:00+00:00",
+        target_timestamp="2026-08-28T12:00:00+00:00",
+        field_changes=(
+            FieldChange("pricing.prompt", "0.000002", "0.000001"),
+            FieldChange("pricing.overrides", None, new["pricing"]["overrides"]),
+            FieldChange("status", "preview", "active"),
+        ),
+        old_model_metadata=old if metadata else None,
+        new_model_metadata=new if metadata else None,
+    )
+
+
+def test_semantic_core_precedes_detail_projection_and_accounts_absorbed_rows() -> None:
+    core = reporting.build_model_event_semantic_core(_event(), OPENROUTER_PROFILE)
+
+    assert core.interpretation is not None
+    assert core.has_semantic_composite is True
+    assert [change.field_name for change in core.remaining_field_changes] == ["status"]
+    assert core.accounting.direct_price_field_count == 1
+    assert core.accounting.model_bucket == "conditional"
+
+    default = reporting.project_model_event_semantics(
+        core, reporting.make_report_detail_policy(), OPENROUTER_PROFILE
+    )
+    all_detail = reporting.project_model_event_semantics(
+        core, reporting.make_report_detail_policy(mode="all"), OPENROUTER_PROFILE
+    )
+    squelched = reporting.project_model_event_semantics(
+        core, reporting.make_report_detail_policy(mode="squelched"), OPENROUTER_PROFILE
+    )
+
+    assert default is not all_detail
+    assert default.core is all_detail.core is squelched.core is core
+    assert default.accounting is all_detail.accounting is squelched.accounting
+    assert default.show_conditional_panel is True
+    assert all_detail.show_conditional_panel is True
+    assert squelched.show_conditional_panel is False
+
+
+def test_missing_side_raw_fallback_absorbs_nothing() -> None:
+    core = reporting.build_model_event_semantic_core(_event(metadata=False), OPENROUTER_PROFILE)
+
+    assert core.interpretation is not None
+    assert core.interpretation.state in {"ordered-rules", "raw-fallback"}
+    assert {change.field_name for change in core.remaining_field_changes} == {
+        "pricing.prompt",
+        "status",
+    }
+
+
+def test_nonconditional_event_still_has_universal_pricing_accounting() -> None:
+    event = replace(
+        _event(),
+        field_changes=(FieldChange("pricing.prompt", "0.000002", "0.000001"),),
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+
+    assert core.interpretation is None
+    assert core.accounting.direct_price_field_count == 1
+    assert core.accounting.model_bucket == "lower"
+    assert core.remaining_field_changes == event.field_changes
+
+
+def test_semantic_builders_run_once_per_core_not_once_per_projection(
+    monkeypatch,
+) -> None:
+    calls = {
+        "interpreter": 0,
+        "equality": 0,
+        "absorption": 0,
+        "interpreter_accounting": 0,
+        "final_accounting": 0,
+    }
+    real_interpreter = reporting.interpret_conditional_pricing
+    real_equality = pricing_semantics._semantic_change
+    real_absorption = pricing_semantics.decide_sibling_base_price_absorption
+    real_interpreter_accounting = pricing_semantics.build_model_pricing_accounting
+    real_final_accounting = reporting.build_model_pricing_accounting
+
+    def count_interpreter(*args, **kwargs):
+        calls["interpreter"] += 1
+        return real_interpreter(*args, **kwargs)
+
+    def count_equality(*args, **kwargs):
+        calls["equality"] += 1
+        return real_equality(*args, **kwargs)
+
+    def count_absorption(*args, **kwargs):
+        calls["absorption"] += 1
+        return real_absorption(*args, **kwargs)
+
+    def count_interpreter_accounting(*args, **kwargs):
+        calls["interpreter_accounting"] += 1
+        return real_interpreter_accounting(*args, **kwargs)
+
+    def count_final_accounting(*args, **kwargs):
+        calls["final_accounting"] += 1
+        return real_final_accounting(*args, **kwargs)
+
+    monkeypatch.setattr(reporting, "interpret_conditional_pricing", count_interpreter)
+    monkeypatch.setattr(pricing_semantics, "_semantic_change", count_equality)
+    monkeypatch.setattr(
+        pricing_semantics,
+        "decide_sibling_base_price_absorption",
+        count_absorption,
+    )
+    monkeypatch.setattr(
+        pricing_semantics,
+        "build_model_pricing_accounting",
+        count_interpreter_accounting,
+    )
+    monkeypatch.setattr(
+        reporting,
+        "build_model_pricing_accounting",
+        count_final_accounting,
+    )
+
+    core = reporting.build_model_event_semantic_core(_event(), OPENROUTER_PROFILE)
+    for mode in ("default", "all", "squelched"):
+        reporting.project_model_event_semantics(
+            core,
+            reporting.make_report_detail_policy(mode=mode),
+            OPENROUTER_PROFILE,
+        )
+
+    assert calls == {
+        "interpreter": 1,
+        "equality": 1,
+        "absorption": 1,
+        "interpreter_accounting": 1,
+        "final_accounting": 1,
+    }
+
+
+def test_semantic_composite_keeps_card_and_prevents_bulk_grouping() -> None:
+    event = replace(
+        _event(),
+        field_changes=(
+            _event().field_changes[0],
+            _event().field_changes[1],
+            FieldChange("supported_parameters", ["tools"], ["tools", "audio"]),
+        ),
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    projection = reporting.project_model_event_semantics(
+        core, reporting.make_report_detail_policy(), OPENROUTER_PROFILE
+    )
+
+    assert reporting._renders_anything(projection.display, core)
+    assert [change.field_name for change in projection.display.visible] == [
+        "supported_parameters"
+    ]
+    assert reporting._bulk_change_signature(projection.display, core) is None
+
+    parent_only = replace(event, field_changes=event.field_changes[:2])
+    absorbed = reporting.build_model_event_semantic_core(
+        parent_only, OPENROUTER_PROFILE
+    )
+    absorbed_projection = reporting.project_model_event_semantics(
+        absorbed, reporting.make_report_detail_policy(), OPENROUTER_PROFILE
+    )
+    assert absorbed_projection.display.visible == ()
+    assert reporting._renders_anything(absorbed_projection.display, absorbed)
+
+
+def test_evidence_only_reorder_neither_keeps_nor_promotes_card(monkeypatch) -> None:
+    core = reporting.build_model_event_semantic_core(_event(), OPENROUTER_PROFILE)
+    evidence = replace(
+        core,
+        interpretation=replace(
+            core.interpretation,
+            semantic_change=False,
+            canonical_evidence_changed=True,
+        ),
+        remaining_field_changes=(
+            FieldChange("supported_parameters", ["tools"], ["tools", "audio"]),
+        ),
+        has_semantic_composite=False,
+        evidence_only=True,
+    )
+    visible_list = reporting._FieldDisplayPlan(
+        evidence.remaining_field_changes, (), (), (), 0
+    )
+    empty = reporting._FieldDisplayPlan((), (), (), (), 0)
+
+    assert reporting._renders_anything(empty, evidence) is False
+    assert reporting._bulk_change_signature(visible_list, evidence) == (
+        ("supported_parameters", ("audio",), ()),
+    )
+
+
+def test_projection_orders_only_final_pricing_rows() -> None:
+    event = replace(
+        _event(),
+        field_changes=(
+            FieldChange("status", "preview", "active"),
+            FieldChange("pricing.completion", "0.1", "0.2"),
+            FieldChange("pricing.prompt", "0.1", "0.2"),
+        ),
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    projection = reporting.project_model_event_semantics(
+        core, reporting.make_report_detail_policy(mode="all"), OPENROUTER_PROFILE
+    )
+
+    ordered = reporting._field_changes_with_pricing_order(
+        projection.display.visible,
+        reporting.make_report_detail_policy(mode="all"),
+        OPENROUTER_PROFILE,
+    )
+    assert [change.field_name for change in ordered] == [
+        "status",
+        "pricing.prompt",
+        "pricing.completion",
+    ]
+
+
+def _stored_schedule_event(
+    *,
+    from_scrape: int,
+    to_scrape: int,
+    old_rules,
+    new_rules,
+    detected_at: str,
+) -> StoredComparisonEvent:
+    identity = StoredComparisonIdentity(
+        "openrouter", "synthetic/model", from_scrape, to_scrape
+    )
+    record = StoredChangeRecord(
+        change_id=to_scrape,
+        provider_id="openrouter",
+        provider_model_id="synthetic/model",
+        from_scrape_id=from_scrape,
+        to_scrape_id=to_scrape,
+        change_kind="field_changed",
+        field_name="pricing.overrides",
+        old_value=old_rules,
+        new_value=new_rules,
+        detected_at=detected_at,
+    )
+    old_metadata = {
+        "id": "synthetic/model",
+        "pricing": {"prompt": "0.000001", "overrides": old_rules},
+    }
+    new_metadata = {
+        "id": "synthetic/model",
+        "pricing": {"prompt": "0.000001", "overrides": new_rules},
+    }
+    return StoredComparisonEvent(
+        identity=identity,
+        provider_label="OpenRouter",
+        display_name="Synthetic Model",
+        detected_at=detected_at,
+        from_completed_at=f"2026-08-{from_scrape:02d}T10:00:00+00:00",
+        to_completed_at=f"2026-08-{to_scrape:02d}T10:00:00+00:00",
+        source_rows=(record,),
+        field_changes=(FieldChange("pricing.overrides", old_rules, new_rules),),
+        old_model_metadata=old_metadata,
+        new_model_metadata=new_metadata,
+    )
+
+
+def test_stored_same_day_edges_remain_distinct_and_use_displayed_policy_side() -> None:
+    one_rule = [
+        {
+            "utc_days": ["monday"],
+            "utc_start": 100,
+            "utc_end": 200,
+            "prompt": "0.000002",
+        }
+    ]
+    two_rules = [
+        *one_rule,
+        {
+            "utc_days": ["tuesday"],
+            "utc_start": 300,
+            "utc_end": 400,
+            "prompt": "0.000003",
+        },
+    ]
+    detected = "2026-08-28T12:00:00+00:00"
+    added = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=one_rule,
+        detected_at=detected,
+    )
+    removed = _stored_schedule_event(
+        from_scrape=9,
+        to_scrape=12,
+        old_rules=two_rules,
+        new_rules=None,
+        detected_at=detected,
+    )
+
+    plans = reporting.plan_stored_comparison_events(
+        (added, removed),
+        {"openrouter": OPENROUTER_PROFILE},
+        reporting.make_report_detail_policy(),
+    )
+
+    assert [plan.identity for plan in plans] == [added.identity, removed.identity]
+    assert len({plan.identity for plan in plans}) == 2
+    assert [plan.projection.accounting.source_rule_count for plan in plans] == [1, 2]
+    assert all(plan.projection.accounting.model_bucket == "conditional" for plan in plans)
+    assert [plan.projection.core.event.source_timestamp for plan in plans] == [
+        added.from_completed_at,
+        removed.from_completed_at,
+    ]
+    assert not hasattr(plans[0].projection.core, "anchor")
+    assert [plan.comparison_label for plan in plans] == [
+        "relative to selected baseline",
+        "relative to selected baseline",
+    ]
+    assert [plan.anchor_identity for plan in plans] == [added.identity, removed.identity]
+
+    aggregate = reporting.build_changes_semantic_core(
+        (added, removed),
+        {"openrouter": OPENROUTER_PROFILE},
+    )
+    assert len(aggregate.pricing_models) == 1
+    folded = aggregate.pricing_models[0]
+    assert folded.model_bucket == "conditional"
+    assert folded.conditional_policy_count == 2
+    assert aggregate.conditional_event_count == 2
+    assert aggregate.change_summary_identities == (added.identity, removed.identity)
+    assert folded.event_identities == (added.identity, removed.identity)
+
+
+def test_changes_unclassified_budget_is_owned_by_local_date_and_provider() -> None:
+    events = tuple(
+        replace(
+            _stored_schedule_event(
+                from_scrape=20 + index,
+                to_scrape=30 + index,
+                old_rules=[],
+                new_rules=[],
+                detected_at="2026-08-28T12:00:00+00:00",
+            ),
+            field_changes=(FieldChange(f"synthetic.unknown_{index}", 1, 2),),
+        )
+        for index in range(2)
+    )
+    plans = reporting.plan_stored_comparison_events(
+        events,
+        {"openrouter": OPENROUTER_PROFILE},
+        reporting.make_report_detail_policy(unclassified_limit=1),
+    )
+
+    assert len(plans[0].projection.display.visible) == 1
+    assert len(plans[1].projection.display.hidden_unclassified) == 1
+
+
+def test_scan_unclassified_budget_remains_provider_owned_across_event_cores() -> None:
+    first_event = replace(
+        _event(),
+        field_changes=(FieldChange("synthetic.first", 1, 2),),
+    )
+    second_event = replace(
+        _event(),
+        identity=LiveComparisonIdentity("openrouter", "synthetic/other", 10, 11),
+        provider_model_id="synthetic/other",
+        display_name="Synthetic Other",
+        field_changes=(FieldChange("synthetic.second", 1, 2),),
+    )
+    cores = {
+        event.identity: reporting.build_model_event_semantic_core(
+            event, OPENROUTER_PROFILE
+        )
+        for event in (first_event, second_event)
+    }
+    changed = tuple(
+        ModelDelta(
+            "changed",
+            event.provider_model_id,
+            event.display_name,
+            event.field_changes,
+        )
+        for event in (first_event, second_event)
+    )
+
+    plan = reporting._plan_provider_changes(
+        changed,
+        reporting.make_report_detail_policy(unclassified_limit=1),
+        OPENROUTER_PROFILE,
+        cores,
+        provider_id="openrouter",
+    )
+
+    assert len(plan.planned[0].display.visible) == 1
+    assert len(plan.planned[1].display.hidden_unclassified) == 1
+
+
+def test_html_artifacts_build_renderer_local_anchor_registries(monkeypatch) -> None:
+    core = reporting.build_model_event_semantic_core(_event(), OPENROUTER_PROFILE)
+    delta = ModelDelta(
+        "changed",
+        core.event.provider_model_id,
+        core.event.display_name,
+        core.event.field_changes,
+    )
+    result = ProviderScanResult(
+        provider_id="openrouter",
+        provider_label="OpenRouter",
+        status="success",
+        current_count=1,
+        saved=False,
+        baseline=None,
+        baseline_message=None,
+        scrape_id=11,
+        added=(),
+        removed=(),
+        changed=(delta,),
+        profile=OPENROUTER_PROFILE,
+    )
+    real_registry = reporting._CardAnchors
+    registries = []
+
+    class CountingRegistry(real_registry):
+        def __init__(self):
+            super().__init__()
+            registries.append(self)
+
+    monkeypatch.setattr(reporting, "_CardAnchors", CountingRegistry)
+    cores = {core.identity: core}
+    for mode in ("default", "all"):
+        reporting.render_scan_report(
+            generated_at="2026-08-28T12:00:00+00:00",
+            command="scan",
+            format_name="html",
+            provider_results=[result],
+            detail_policy=reporting.make_report_detail_policy(mode=mode),
+            semantic_cores=cores,
+        )
+
+    assert len(registries) == 2
+    assert registries[0] is not registries[1]
+
+
+def test_repeated_nonconditional_edges_fold_directions_by_unique_model() -> None:
+    base = _stored_schedule_event(
+        from_scrape=40,
+        to_scrape=41,
+        old_rules=[],
+        new_rules=[],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    higher = replace(
+        base,
+        field_changes=(FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+    )
+    lower = replace(
+        base,
+        identity=StoredComparisonIdentity(
+            "openrouter", "synthetic/model", 41, 42
+        ),
+        field_changes=(FieldChange("pricing.prompt", "0.000002", "0.000001"),),
+    )
+
+    aggregate = reporting.build_changes_semantic_core(
+        (higher, lower),
+        {"openrouter": OPENROUTER_PROFILE},
+    )
+
+    assert len(aggregate.pricing_models) == 1
+    assert aggregate.pricing_models[0].model_bucket == "mixed"
+    assert aggregate.pricing_models[0].direct_price_field_count == 2
+    assert aggregate.pricing_models[0].event_identities == (
+        higher.identity,
+        lower.identity,
+    )
+
+
+def test_internal_none_accounting_does_not_create_price_movement_membership() -> None:
+    base = _stored_schedule_event(
+        from_scrape=50,
+        to_scrape=51,
+        old_rules=[],
+        new_rules=[],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    unchanged = replace(
+        base,
+        field_changes=(FieldChange("pricing.prompt", "0.1", "0.10"),),
+    )
+
+    aggregate = reporting.build_changes_semantic_core(
+        (unchanged,),
+        {"openrouter": OPENROUTER_PROFILE},
+    )
+
+    assert len(aggregate.events) == 1
+    assert aggregate.events[0].accounting.direct_price_field_count == 1
+    assert aggregate.events[0].accounting.model_bucket == "none"
+    assert aggregate.pricing_models == ()
+
+
+def test_internal_none_edge_retains_accounting_but_folds_with_higher_as_higher() -> None:
+    base = _stored_schedule_event(
+        from_scrape=60,
+        to_scrape=61,
+        old_rules=[],
+        new_rules=[],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    unchanged = replace(
+        base,
+        field_changes=(FieldChange("pricing.prompt", "0.1", "0.10"),),
+    )
+    higher = replace(
+        base,
+        identity=StoredComparisonIdentity(
+            "openrouter", "synthetic/model", 61, 62
+        ),
+        field_changes=(FieldChange("pricing.prompt", "0.1", "0.2"),),
+    )
+
+    aggregate = reporting.build_changes_semantic_core(
+        (unchanged, higher),
+        {"openrouter": OPENROUTER_PROFILE},
+    )
+
+    assert [event.accounting.direct_price_field_count for event in aggregate.events] == [
+        1,
+        1,
+    ]
+    assert len(aggregate.pricing_models) == 1
+    assert aggregate.pricing_models[0].model_bucket == "higher"
+    assert aggregate.pricing_models[0].direct_price_field_count == 2
+    assert aggregate.pricing_models[0].event_identities == (
+        unchanged.identity,
+        higher.identity,
+    )
+
+
+def test_duplicate_stored_identity_is_rejected_before_any_interpretation(
+    monkeypatch,
+) -> None:
+    event = _stored_schedule_event(
+        from_scrape=70,
+        to_scrape=71,
+        old_rules=[],
+        new_rules=[],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    calls = []
+    real_builder = reporting.build_model_event_semantic_core
+
+    def count_builder(*args, **kwargs):
+        calls.append(args[0].identity)
+        return real_builder(*args, **kwargs)
+
+    monkeypatch.setattr(reporting, "build_model_event_semantic_core", count_builder)
+
+    with pytest.raises(ValueError, match="duplicate stored comparison identity"):
+        reporting.build_changes_semantic_core(
+            (event, event),
+            {"openrouter": OPENROUTER_PROFILE},
+        )
+
+    assert calls == []
+
+
+def test_explicit_incomplete_stored_core_mapping_never_rebuilds(monkeypatch) -> None:
+    first = _stored_schedule_event(
+        from_scrape=80,
+        to_scrape=81,
+        old_rules=[],
+        new_rules=[],
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    second = _stored_schedule_event(
+        from_scrape=81,
+        to_scrape=82,
+        old_rules=[],
+        new_rules=[],
+        detected_at="2026-08-28T13:00:00+00:00",
+    )
+
+    def reject_rebuild(*args, **kwargs):
+        raise AssertionError("explicit semantic-core mapping triggered interpretation")
+
+    monkeypatch.setattr(reporting, "build_semantic_core_index", reject_rebuild)
+
+    with pytest.raises(ValueError, match="has no semantic core"):
+        reporting.plan_stored_comparison_events(
+            (first,),
+            {"openrouter": OPENROUTER_PROFILE},
+            reporting.make_report_detail_policy(),
+            semantic_cores={},
+        )
+
+    first_core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(first),
+        OPENROUTER_PROFILE,
+    )
+    with pytest.raises(ValueError, match="has no semantic core"):
+        reporting.plan_stored_comparison_events(
+            (first, second),
+            {"openrouter": OPENROUTER_PROFILE},
+            reporting.make_report_detail_policy(),
+            semantic_cores={first.identity: first_core},
+        )
+
+
+def test_stored_plan_indexes_supplied_edge_maps_once() -> None:
+    class CountingMap(dict):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.items_calls = 0
+
+        def items(self):
+            self.items_calls += 1
+            return super().items()
+
+    cores = {}
+    projections = {}
+    models = {}
+    policy = reporting.make_report_detail_policy(mode="all")
+    for index in range(200):
+        model_id = f"synthetic/model-{index}"
+        identity = StoredComparisonIdentity(
+            "openrouter", model_id, 1000 + index, 2000 + index
+        )
+        event = PricingComparisonEvent(
+            identity=identity,
+            provider_id="openrouter",
+            provider_model_id=model_id,
+            display_name=f"Synthetic Model {index}",
+            detected_at="2026-08-28T12:00:00+00:00",
+            source_timestamp="2026-08-27T12:00:00+00:00",
+            target_timestamp="2026-08-28T12:00:00+00:00",
+            field_changes=(FieldChange("status", "preview", "active"),),
+            old_model_metadata={"id": model_id, "status": "preview"},
+            new_model_metadata={"id": model_id, "status": "active"},
+        )
+        core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+        cores[identity] = core
+        projections[identity] = reporting.project_model_event_semantics(
+            core, policy, OPENROUTER_PROFILE
+        )
+        edge_key = (
+            identity.provider_id,
+            identity.provider_model_id,
+            identity.from_scrape_id,
+            identity.to_scrape_id,
+        )
+        models[edge_key] = [
+            {
+                "provider_model_id": model_id,
+                "display_name": event.display_name,
+                "change_kind": "field_changed",
+                "field_name": "status",
+                "old_value": "preview",
+                "new_value": "active",
+                "_comparison_edge": edge_key,
+            }
+        ]
+    counted_cores = CountingMap(cores)
+    counted_projections = CountingMap(projections)
+
+    plan = reporting.plan_changes_provider(
+        models,
+        policy,
+        OPENROUTER_PROFILE,
+        counted_cores,
+        counted_projections,
+    )
+
+    assert len(plan.entries) == 200
+    assert counted_cores.items_calls == 1
+    assert counted_projections.items_calls == 1
+
+
+@pytest.mark.parametrize("format_name", ("text", "html"))
+def test_changes_artifact_indexes_global_edge_maps_once_across_blocks(
+    format_name: str,
+    monkeypatch,
+) -> None:
+    class CountingMap(dict):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.items_calls = 0
+
+        def items(self):
+            self.items_calls += 1
+            return super().items()
+
+    events = []
+    scrape_id = 3000
+    for day_index, day in enumerate(("27", "28")):
+        for provider_index, provider_id in enumerate(
+            ("synthetic-provider-a", "synthetic-provider-b")
+        ):
+            model_id = f"synthetic/model-{day_index}-{provider_index}"
+            identity = StoredComparisonIdentity(
+                provider_id,
+                model_id,
+                scrape_id,
+                scrape_id + 1,
+            )
+            record = StoredChangeRecord(
+                change_id=scrape_id,
+                provider_id=provider_id,
+                provider_model_id=model_id,
+                from_scrape_id=scrape_id,
+                to_scrape_id=scrape_id + 1,
+                change_kind="field_changed",
+                field_name="status",
+                old_value="preview",
+                new_value="active",
+                detected_at=f"2026-08-{day}T12:00:00+00:00",
+            )
+            events.append(
+                StoredComparisonEvent(
+                    identity=identity,
+                    provider_label=f"Synthetic Provider {provider_index}",
+                    display_name=f"Synthetic Model {day_index}-{provider_index}",
+                    detected_at=record.detected_at,
+                    from_completed_at=f"2026-08-{day}T11:00:00+00:00",
+                    to_completed_at=record.detected_at,
+                    source_rows=(record,),
+                    field_changes=(
+                        FieldChange("status", "preview", "active"),
+                    ),
+                    old_model_metadata={"id": model_id, "status": "preview"},
+                    new_model_metadata={"id": model_id, "status": "active"},
+                )
+            )
+            scrape_id += 2
+    profiles = {
+        "synthetic-provider-a": OPENROUTER_PROFILE,
+        "synthetic-provider-b": OPENROUTER_PROFILE,
+    }
+    semantic = reporting.build_changes_semantic_core(events, profiles)
+    counted_cores = CountingMap(semantic.by_identity)
+    projection_index_calls = []
+    real_projection_index = reporting._index_stored_semantic_projections
+
+    def count_projection_index(source):
+        projection_index_calls.append(len(source or ()))
+        return real_projection_index(source)
+
+    monkeypatch.setattr(
+        reporting,
+        "_index_stored_semantic_projections",
+        count_projection_index,
+    )
+
+    report = reporting.render_changes_report(
+        format_name=format_name,
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=(),
+        provider_profiles=profiles,
+        stored_events=tuple(events),
+        semantic_cores=counted_cores,
+        changes_semantic_core=semantic,
+    )
+
+    assert "Synthetic Provider" in report
+    assert counted_cores.items_calls == 1
+    assert projection_index_calls == [4]
+
+
+def test_artifact_semantics_requires_exact_edge_resolution() -> None:
+    requested_edge = ("openrouter", "synthetic/missing", 9000, 9001)
+    models = {
+        requested_edge: [
+            {
+                "provider_model_id": "synthetic/missing",
+                "display_name": "Synthetic Missing",
+                "change_kind": "field_changed",
+                "field_name": "status",
+                "old_value": "preview",
+                "new_value": "active",
+                "_comparison_edge": requested_edge,
+            }
+        ]
+    }
+    empty_artifact = reporting._build_stored_semantic_artifact_index({}, {})
+
+    with pytest.raises(ValueError, match="no exact semantic edge"):
+        reporting.plan_changes_provider(
+            models,
+            reporting.make_report_detail_policy(),
+            OPENROUTER_PROFILE,
+            artifact_semantics=empty_artifact,
+        )
+
+    other_identity = StoredComparisonIdentity(
+        "openrouter", "synthetic/other", 9100, 9101
+    )
+    other_event = PricingComparisonEvent(
+        identity=other_identity,
+        provider_id="openrouter",
+        provider_model_id="synthetic/other",
+        display_name="Synthetic Other",
+        detected_at="2026-08-28T12:00:00+00:00",
+        source_timestamp="2026-08-27T12:00:00+00:00",
+        target_timestamp="2026-08-28T12:00:00+00:00",
+        field_changes=(FieldChange("status", "preview", "active"),),
+        old_model_metadata={"id": "synthetic/other", "status": "preview"},
+        new_model_metadata={"id": "synthetic/other", "status": "active"},
+    )
+    other_core = reporting.build_model_event_semantic_core(
+        other_event, OPENROUTER_PROFILE
+    )
+    incomplete_artifact = reporting._build_stored_semantic_artifact_index(
+        {other_identity: other_core},
+        {},
+    )
+
+    with pytest.raises(ValueError, match="no exact semantic edge"):
+        reporting.plan_changes_provider(
+            models,
+            reporting.make_report_detail_policy(),
+            OPENROUTER_PROFILE,
+            artifact_semantics=incomplete_artifact,
+        )
+
+
+def test_legacy_changes_planner_without_semantic_sources_still_renders() -> None:
+    models = {
+        "synthetic/model": [
+            {
+                "provider_model_id": "synthetic/model",
+                "display_name": "Synthetic Model",
+                "change_kind": "field_changed",
+                "field_name": "status",
+                "old_value": "preview",
+                "new_value": "active",
+            }
+        ]
+    }
+
+    plan = reporting.plan_changes_provider(
+        models,
+        reporting.make_report_detail_policy(),
+        OPENROUTER_PROFILE,
+    )
+
+    assert len(plan.entries) == 1
+    assert plan.entries[0].semantic_core is None
+    assert plan.entries[0].display.visible == (
+        FieldChange("status", "preview", "active"),
+    )

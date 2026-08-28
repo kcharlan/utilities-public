@@ -4,7 +4,7 @@ import fnmatch
 import html as html_module
 import json
 import re
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
@@ -55,7 +55,26 @@ from .change_render import (
     pricing_field_sort_key,
     signed_pct_change,
 )
-from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
+from .conditional_pricing import (
+    ComparisonIdentity,
+    ConditionalPricingInterpretation,
+    LiveComparisonIdentity,
+    ModelPricingAccounting,
+    PricingComparisonEvent,
+    SourceChangeReference,
+    StoredComparisonIdentity,
+    build_model_pricing_accounting,
+    interpret_conditional_pricing,
+    resolve_direct_price_movement,
+)
+from .models import (
+    FieldChange,
+    HistoryEvent,
+    ModelDelta,
+    NormalizedModel,
+    ProviderScanResult,
+    canonical_json,
+)
 from .provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
@@ -101,9 +120,105 @@ class _FieldDisplayPlan:
 
 
 @dataclass(frozen=True)
+class ModelEventSemanticCore:
+    """Format-neutral truth for one exact model comparison edge.
+
+    The core is deliberately independent of report detail policy and renderer
+    anchors.  Every artifact projection for an edge retains this exact object.
+    """
+
+    event: PricingComparisonEvent
+    interpretation: ConditionalPricingInterpretation | None
+    accounting: ModelPricingAccounting
+    remaining_field_changes: tuple[FieldChange, ...]
+    has_semantic_composite: bool
+    evidence_only: bool
+
+    @property
+    def identity(self) -> ComparisonIdentity:
+        return self.event.identity
+
+
+@dataclass(frozen=True)
+class ModelEventPresentationPlan:
+    """One artifact's visibility projection over a shared semantic core."""
+
+    core: ModelEventSemanticCore
+    display: _FieldDisplayPlan
+    show_conditional_panel: bool
+
+    @property
+    def accounting(self) -> ModelPricingAccounting:
+        return self.core.accounting
+
+
+@dataclass(frozen=True)
+class StoredEventPresentationPlan:
+    """One exact stored edge plus its artifact projection.
+
+    Presence rows remain source-ordered on the envelope and are never folded
+    into a field-change edge merely because the date/model happen to match.
+    """
+
+    stored_event: Any
+    projection: ModelEventPresentationPlan
+
+    @property
+    def identity(self) -> StoredComparisonIdentity:
+        return self.stored_event.identity
+
+    @property
+    def comparison_label(self) -> str:
+        """Stored edges are selected-baseline comparisons, never first-seen claims."""
+        return "relative to selected baseline"
+
+    @property
+    def anchor_identity(self) -> StoredComparisonIdentity:
+        """Stable renderer input; the HTML id itself is artifact-local."""
+        return self.identity
+
+
+@dataclass(frozen=True)
+class UniqueModelPricingFold:
+    """Selected-range Price Movement facts folded by provider/model only."""
+
+    provider_id: str
+    provider_model_id: str
+    event_identities: tuple[StoredComparisonIdentity, ...]
+    model_bucket: Literal[
+        "higher", "lower", "mixed", "coverage", "conditional", "none"
+    ]
+    direct_price_field_count: int
+    conditional_policy_count: int
+    source_rule_count: int
+    schedule_dimension_count: int
+    effective_band_count: int
+
+
+@dataclass(frozen=True)
+class ChangesSemanticCore:
+    """Exact stored event cores plus the binding unique-model fold."""
+
+    events: tuple[ModelEventSemanticCore, ...]
+    pricing_models: tuple[UniqueModelPricingFold, ...]
+    change_summary_identities: tuple[StoredComparisonIdentity, ...]
+
+    @property
+    def by_identity(self) -> dict[ComparisonIdentity, ModelEventSemanticCore]:
+        return {event.identity: event for event in self.events}
+
+    @property
+    def conditional_event_count(self) -> int:
+        return sum(
+            event.accounting.conditional_policy_count for event in self.events
+        )
+
+
+@dataclass(frozen=True)
 class _PlannedModelChange:
     delta: ModelDelta
     display: _FieldDisplayPlan
+    semantic_core: ModelEventSemanticCore | None = None
 
 
 @dataclass(frozen=True)
@@ -348,6 +463,326 @@ def filter_field_changes_for_detail(
         else:
             unclassified.append(fc)
     return FilteredFieldChanges(tuple(shown), tuple(squelched), tuple(unclassified))
+
+
+def _event_source_references(
+    event: PricingComparisonEvent,
+) -> tuple[SourceChangeReference, ...]:
+    """Mirror the interpreter's occurrence identity without exposing internals."""
+    occurrences: Counter[tuple[str, str, str]] = Counter()
+    references: list[SourceChangeReference] = []
+    for source_index, change in enumerate(event.field_changes):
+        old_json = canonical_json(_mutable_json(change.old_value))
+        new_json = canonical_json(_mutable_json(change.new_value))
+        key = (change.field_name, old_json, new_json)
+        occurrence = occurrences[key]
+        occurrences[key] += 1
+        references.append(
+            SourceChangeReference(
+                field_name=change.field_name,
+                old_value_canonical_json=old_json,
+                new_value_canonical_json=new_json,
+                occurrence=occurrence,
+                source_index=source_index,
+            )
+        )
+    return tuple(references)
+
+
+def _mutable_json(value: Any) -> Any:
+    if isinstance(value, dict) or hasattr(value, "items"):
+        return {key: _mutable_json(child) for key, child in value.items()}
+    if isinstance(value, tuple):
+        return [_mutable_json(child) for child in value]
+    return value
+
+
+def build_model_event_semantic_core(
+    event: PricingComparisonEvent,
+    profile: ProviderProfile,
+) -> ModelEventSemanticCore:
+    """Interpret and account for one edge before any artifact filtering."""
+    interpretation = interpret_conditional_pricing(event, profile)
+    references = _event_source_references(event)
+    direct_facts = tuple(
+        fact
+        for change, reference in zip(event.field_changes, references, strict=True)
+        if (
+            fact := resolve_direct_price_movement(
+                change.field_name,
+                change.old_value,
+                change.new_value,
+                profile,
+                source_change=reference,
+            )
+        )
+        is not None
+    )
+    accounting = build_model_pricing_accounting(
+        interpretation,
+        direct_price_facts=direct_facts,
+    )
+
+    consumed = (
+        set(interpretation.absorbed_base_price_changes)
+        if interpretation is not None
+        else set()
+    )
+    remaining = tuple(
+        change
+        for change, reference in zip(event.field_changes, references, strict=True)
+        if reference not in consumed
+        and not (
+            interpretation is not None
+            and change.field_name == "pricing.overrides"
+        )
+    )
+    semantic_composite = bool(
+        interpretation is not None and interpretation.semantic_change
+    )
+    evidence_only = bool(
+        interpretation is not None
+        and not interpretation.semantic_change
+        and interpretation.canonical_evidence_changed
+    )
+    return ModelEventSemanticCore(
+        event=event,
+        interpretation=interpretation,
+        accounting=accounting,
+        remaining_field_changes=remaining,
+        has_semantic_composite=semantic_composite,
+        evidence_only=evidence_only,
+    )
+
+
+def project_model_event_semantics(
+    core: ModelEventSemanticCore,
+    policy: ReportDetailPolicy,
+    profile: ProviderProfile,
+    *,
+    unclassified_remaining: int | None = None,
+) -> ModelEventPresentationPlan:
+    """Apply one artifact's detail policy without changing semantic truth."""
+    display = _field_display_plan(
+        core.remaining_field_changes,
+        policy,
+        profile,
+        unclassified_remaining=unclassified_remaining,
+    )
+    return ModelEventPresentationPlan(
+        core=core,
+        display=display,
+        show_conditional_panel=(policy.mode != "squelched" and core.has_semantic_composite),
+    )
+
+
+def build_live_comparison_events(
+    *,
+    provider_id: str,
+    baseline_scrape_id: int | None,
+    attempt_scrape_id: int,
+    detected_at: str,
+    source_timestamp: str | None,
+    target_timestamp: str | None,
+    changed: tuple[ModelDelta, ...],
+    baseline_models: dict[str, NormalizedModel],
+    current_models: dict[str, NormalizedModel],
+) -> tuple[PricingComparisonEvent, ...]:
+    """Create occurrence-preserving live envelopes outside ProviderScanResult."""
+    events: list[PricingComparisonEvent] = []
+    for delta in changed:
+        old_model = baseline_models.get(delta.provider_model_id)
+        new_model = current_models.get(delta.provider_model_id)
+        events.append(
+            PricingComparisonEvent(
+                identity=LiveComparisonIdentity(
+                    provider_id,
+                    delta.provider_model_id,
+                    baseline_scrape_id,
+                    attempt_scrape_id,
+                ),
+                provider_id=provider_id,
+                provider_model_id=delta.provider_model_id,
+                display_name=delta.display_name,
+                detected_at=detected_at,
+                source_timestamp=source_timestamp,
+                target_timestamp=target_timestamp,
+                field_changes=delta.field_changes,
+                old_model_metadata=(old_model.metadata() if old_model is not None else None),
+                new_model_metadata=(new_model.metadata() if new_model is not None else None),
+            )
+        )
+    return tuple(events)
+
+
+def pricing_event_from_stored(stored_event: Any) -> PricingComparisonEvent:
+    """Project Store's rich internal envelope onto the shared semantic input."""
+    return PricingComparisonEvent(
+        identity=stored_event.identity,
+        provider_id=stored_event.provider_id,
+        provider_model_id=stored_event.provider_model_id,
+        display_name=stored_event.display_name,
+        detected_at=stored_event.detected_at,
+        source_timestamp=stored_event.from_completed_at,
+        target_timestamp=stored_event.to_completed_at,
+        field_changes=stored_event.field_changes,
+        old_model_metadata=stored_event.old_model_metadata,
+        new_model_metadata=stored_event.new_model_metadata,
+    )
+
+
+def build_semantic_core_index(
+    events: Iterable[PricingComparisonEvent],
+    profiles: dict[str, ProviderProfile],
+) -> dict[ComparisonIdentity, ModelEventSemanticCore]:
+    """Build exactly one reusable semantic core for every distinct edge."""
+    cores: dict[ComparisonIdentity, ModelEventSemanticCore] = {}
+    for event in events:
+        if event.identity in cores:
+            raise ValueError("duplicate comparison identity in semantic core index")
+        cores[event.identity] = build_model_event_semantic_core(
+            event,
+            profiles.get(event.provider_id, GENERIC_PROFILE),
+        )
+    return cores
+
+
+def plan_stored_comparison_events(
+    stored_events: Iterable[Any],
+    profiles: dict[str, ProviderProfile],
+    policy: ReportDetailPolicy,
+    *,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    budget_scope: Literal["history", "changes"] = "changes",
+) -> tuple[StoredEventPresentationPlan, ...]:
+    """Project exact stored edges without merging equal model/date identities."""
+    events = tuple(stored_events)
+    cores = (
+        build_semantic_core_index(
+            (pricing_event_from_stored(event) for event in events),
+            profiles,
+        )
+        if semantic_cores is None
+        else semantic_cores
+    )
+    remaining_by_scope: dict[tuple[str, ...], int] = {}
+    plans: list[StoredEventPresentationPlan] = []
+    for event in events:
+        core = cores.get(event.identity)
+        if core is None:
+            raise ValueError("stored comparison edge has no semantic core")
+        if budget_scope == "changes":
+            date_key = to_local_human(event.detected_at).split(" ")[0]
+            scope = (date_key, event.provider_id)
+        else:
+            scope = (event.provider_id, event.provider_model_id)
+        remaining = remaining_by_scope.setdefault(scope, policy.unclassified_limit)
+        projection = project_model_event_semantics(
+            core,
+            policy,
+            profiles.get(event.provider_id, GENERIC_PROFILE),
+            unclassified_remaining=remaining,
+        )
+        remaining_by_scope[scope] = max(
+            0,
+            remaining - projection.display.unclassified_used,
+        )
+        plans.append(StoredEventPresentationPlan(event, projection))
+    return tuple(plans)
+
+
+def build_changes_semantic_core(
+    stored_events: Iterable[Any],
+    profiles: dict[str, ProviderProfile],
+) -> ChangesSemanticCore:
+    """Build exact edge cores and the selected-range unique-model accounting."""
+    events = tuple(stored_events)
+    seen_identities: set[StoredComparisonIdentity] = set()
+    for event in events:
+        identity = event.identity
+        if not isinstance(identity, StoredComparisonIdentity):
+            raise TypeError("changes semantic core requires stored comparison identities")
+        if identity in seen_identities:
+            raise ValueError("duplicate stored comparison identity in changes semantic core")
+        seen_identities.add(identity)
+    cores = tuple(
+        build_model_event_semantic_core(
+            pricing_event_from_stored(event),
+            profiles.get(event.provider_id, GENERIC_PROFILE),
+        )
+        for event in events
+    )
+    grouped: OrderedDict[
+        tuple[str, str], list[ModelEventSemanticCore]
+    ] = OrderedDict()
+    for core in cores:
+        accounting = core.accounting
+        if (
+            accounting.direct_price_field_count == 0
+            and accounting.conditional_policy_count == 0
+        ):
+            continue
+        grouped.setdefault(
+            (core.event.provider_id, core.event.provider_model_id), []
+        ).append(core)
+
+    folds: list[UniqueModelPricingFold] = []
+    for (provider_id, model_id), model_events in grouped.items():
+        buckets = {event.accounting.model_bucket for event in model_events}
+        if "conditional" in buckets:
+            bucket = "conditional"
+        elif "mixed" in buckets or ({"higher", "lower"} <= buckets):
+            bucket = "mixed"
+        elif "higher" in buckets:
+            bucket = "higher"
+        elif "lower" in buckets:
+            bucket = "lower"
+        elif "coverage" in buckets:
+            bucket = "coverage"
+        else:
+            bucket = "none"
+        if bucket == "none":
+            continue
+        folds.append(
+            UniqueModelPricingFold(
+                provider_id=provider_id,
+                provider_model_id=model_id,
+                event_identities=tuple(
+                    event.identity
+                    for event in model_events
+                    if isinstance(event.identity, StoredComparisonIdentity)
+                ),
+                model_bucket=bucket,
+                direct_price_field_count=sum(
+                    event.accounting.direct_price_field_count
+                    for event in model_events
+                ),
+                conditional_policy_count=sum(
+                    event.accounting.conditional_policy_count
+                    for event in model_events
+                ),
+                source_rule_count=sum(
+                    event.accounting.source_rule_count for event in model_events
+                ),
+                schedule_dimension_count=sum(
+                    event.accounting.schedule_dimension_count
+                    for event in model_events
+                ),
+                effective_band_count=sum(
+                    event.accounting.effective_band_count for event in model_events
+                ),
+            )
+        )
+    return ChangesSemanticCore(
+        events=cores,
+        pricing_models=tuple(folds),
+        change_summary_identities=tuple(
+            core.identity
+            for core in cores
+            if core.event.field_changes
+            and isinstance(core.identity, StoredComparisonIdentity)
+        ),
+    )
 
 
 def _matches_any(field_name: str, patterns: tuple[str, ...]) -> bool:
@@ -631,7 +1066,10 @@ def _list_change_signature(field_change: FieldChange) -> tuple[str, tuple[str, .
     return (field_change.field_name, added, removed)
 
 
-def _bulk_change_signature(plan: _FieldDisplayPlan) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] | None:
+def _bulk_change_signature(
+    plan: _FieldDisplayPlan,
+    semantic_core: ModelEventSemanticCore | None = None,
+) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] | None:
     """Return a safe bulk-grouping signature for repetitive list changes.
 
     Scalar values remain model-specific so pricing, limits, cutoffs, and other
@@ -639,6 +1077,8 @@ def _bulk_change_signature(plan: _FieldDisplayPlan) -> tuple[tuple[str, tuple[st
     is intentionally excluded: adding the same parameter is the same semantic
     change whether a model's list grows from 9 to 10 or from 19 to 20.
     """
+    if semantic_core is not None and semantic_core.has_semantic_composite:
+        return None
     if not plan.visible or plan.hidden_unclassified or plan.hidden_non_squelched:
         return None
     if not all(isinstance(fc.old_value, list) and isinstance(fc.new_value, list) for fc in plan.visible):
@@ -650,18 +1090,34 @@ def _plan_provider_changes(
     changed: tuple[ModelDelta, ...],
     policy: ReportDetailPolicy,
     profile: ProviderProfile,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    *,
+    provider_id: str | None = None,
 ) -> _ProviderChangePlan:
     planned: list[_PlannedModelChange] = []
     unclassified_remaining = policy.unclassified_limit
     for delta in changed:
-        display = _field_display_plan(
-            delta.field_changes,
-            policy,
-            profile,
-            unclassified_remaining=unclassified_remaining,
+        core = _semantic_core_for_model(
+            semantic_cores,
+            provider_id,
+            delta.provider_model_id,
         )
+        if core is None:
+            display = _field_display_plan(
+                delta.field_changes,
+                policy,
+                profile,
+                unclassified_remaining=unclassified_remaining,
+            )
+        else:
+            display = project_model_event_semantics(
+                core,
+                policy,
+                profile,
+                unclassified_remaining=unclassified_remaining,
+            ).display
         unclassified_remaining = max(0, unclassified_remaining - display.unclassified_used)
-        planned.append(_PlannedModelChange(delta, display))
+        planned.append(_PlannedModelChange(delta, display, core))
 
     rollups = _collect_hidden_rollups(
         (item.delta.provider_model_id, item.display) for item in planned
@@ -676,7 +1132,7 @@ def _plan_provider_changes(
     ] = defaultdict(list)
     signatures: dict[str, tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]] = {}
     for item in planned:
-        signature = _bulk_change_signature(item.display)
+        signature = _bulk_change_signature(item.display, item.semantic_core)
         if signature is None:
             continue
         by_signature[signature].append(item)
@@ -700,11 +1156,32 @@ def _plan_provider_changes(
     return _ProviderChangePlan(tuple(planned), _prune_empty_items(items), rollups)
 
 
+def _semantic_core_for_model(
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None,
+    provider_id: str | None,
+    provider_model_id: str,
+) -> ModelEventSemanticCore | None:
+    if not semantic_cores:
+        return None
+    matches = tuple(
+        core
+        for identity, core in semantic_cores.items()
+        if (provider_id is None or identity.provider_id == provider_id)
+        and identity.provider_model_id == provider_model_id
+    )
+    if len(matches) > 1:
+        raise ValueError("scan semantic plan contains multiple edges for one model")
+    return matches[0] if matches else None
+
+
 def _has_hidden_details(plan: _FieldDisplayPlan) -> bool:
     return bool(plan.squelched or plan.hidden_unclassified or plan.hidden_non_squelched)
 
 
-def _renders_anything(plan: _FieldDisplayPlan) -> bool:
+def _renders_anything(
+    plan: _FieldDisplayPlan,
+    semantic_core: ModelEventSemanticCore | None = None,
+) -> bool:
     """THE "does this model still say something?" rule.
 
     A model earns a card when it has a visible row, or a hidden-detail rollup
@@ -723,7 +1200,11 @@ def _renders_anything(plan: _FieldDisplayPlan) -> bool:
     pre-existing and preserved here, which is why the extra rule composes at
     the call site instead of being folded into this predicate.
     """
-    return bool(plan.visible or _has_hidden_details(plan))
+    return bool(
+        plan.visible
+        or _has_hidden_details(plan)
+        or (semantic_core is not None and semantic_core.has_semantic_composite)
+    )
 
 
 def _prune_empty_items(
@@ -740,7 +1221,14 @@ def _prune_empty_items(
         item
         for item in items
         if isinstance(item, _BulkChangeGroup)
-        or (_renders_anything(item.display) and not _is_squelched_only(item.display))
+        or (
+            _renders_anything(item.display, item.semantic_core)
+            and (
+                item.semantic_core is not None
+                and item.semantic_core.has_semantic_composite
+                or not _is_squelched_only(item.display)
+            )
+        )
     )
 
 
@@ -951,6 +1439,7 @@ class _PlannedChangeEntry:
     display_name: str
     kind: str
     display: _FieldDisplayPlan | None  # None for added/removed models
+    semantic_core: ModelEventSemanticCore | None = None
 
 
 @dataclass(frozen=True)
@@ -970,7 +1459,7 @@ def group_planned_entries_by_bulk(
     for entry in entries:
         if entry.kind != "changed" or entry.display is None:
             continue
-        signature = _bulk_change_signature(entry.display)
+        signature = _bulk_change_signature(entry.display, entry.semantic_core)
         if signature is not None:
             signatures[id(entry)] = signature
             by_signature[signature].append(entry)
@@ -1004,10 +1493,28 @@ class _ChangesProviderPlan:
         return not self.entries and not self.rollups.any_hidden
 
 
+@dataclass(frozen=True)
+class _StoredSemanticArtifactIndex:
+    """One validated exact-edge index shared by every block in one artifact."""
+
+    cores_by_edge: dict[
+        tuple[str, str, int | None, int], ModelEventSemanticCore
+    ]
+    projections_by_edge: dict[
+        tuple[str, str, int | None, int], ModelEventPresentationPlan
+    ]
+
+
 def plan_changes_provider(
     models: dict[str, list[dict[str, Any]]],
     policy: ReportDetailPolicy,
     profile: ProviderProfile,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    semantic_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] | None = None,
+    *,
+    artifact_semantics: _StoredSemanticArtifactIndex | None = None,
 ) -> _ChangesProviderPlan:
     """Plan one provider block of the `changes` report, for text and HTML alike.
 
@@ -1023,8 +1530,40 @@ def plan_changes_provider(
     """
     entries: list[_PlannedChangeEntry] = []
     planned_displays: list[tuple[str, _FieldDisplayPlan]] = []
+    semantic_source_supplied = bool(
+        artifact_semantics is not None
+        or semantic_cores is not None
+        or semantic_projections is not None
+    )
+    if artifact_semantics is not None:
+        if semantic_cores is not None or semantic_projections is not None:
+            raise ValueError(
+                "artifact semantic index cannot be combined with raw semantic maps"
+            )
+        semantic_index = artifact_semantics
+    else:
+        semantic_index = _build_stored_semantic_artifact_index(
+            semantic_cores,
+            semantic_projections,
+        )
+    cores_by_edge = semantic_index.cores_by_edge
+    projections_by_edge = semantic_index.projections_by_edge
     unclassified_remaining = policy.unclassified_limit
     for model_id, model_changes in models.items():
+        rendered_model_id = model_changes[0].get("provider_model_id", model_id)
+        edge_key = model_changes[0].get("_comparison_edge")
+        semantic_projection = projections_by_edge.get(edge_key)
+        semantic_core = (
+            semantic_projection.core
+            if semantic_projection is not None
+            else cores_by_edge.get(edge_key)
+        )
+        if (
+            edge_key is not None
+            and semantic_source_supplied
+            and semantic_core is None
+        ):
+            raise ValueError("human stored row has no exact semantic edge")
         display_name = model_changes[0].get("display_name", model_id)
         # One model can hold several records inside one date bucket -- more than
         # one scan a day is routine. Reading `model_changes[0]["change_kind"]`
@@ -1040,25 +1579,122 @@ def plan_changes_provider(
         # Within them, recorded order is kept: added-then-removed is not the
         # same story as removed-then-added.
         for row in presence_rows:
-            entries.append(_PlannedChangeEntry(model_id, display_name, row["change_kind"], None))
+            entries.append(
+                _PlannedChangeEntry(
+                    rendered_model_id,
+                    display_name,
+                    row["change_kind"],
+                    None,
+                    None,
+                )
+            )
         field_changes = _field_changes_from_change_rows(field_rows)
         if not field_changes:
             continue
-        plan = _field_display_plan(
-            field_changes,
-            policy,
-            profile,
-            unclassified_remaining=unclassified_remaining,
-        )
+        if semantic_projection is not None:
+            plan = semantic_projection.display
+        elif semantic_core is None:
+            plan = _field_display_plan(
+                field_changes,
+                policy,
+                profile,
+                unclassified_remaining=unclassified_remaining,
+            )
+        else:
+            plan = project_model_event_semantics(
+                semantic_core,
+                policy,
+                profile,
+                unclassified_remaining=unclassified_remaining,
+            ).display
         unclassified_remaining = max(0, unclassified_remaining - plan.unclassified_used)
-        planned_displays.append((model_id, plan))
-        if not _renders_anything(plan):
+        planned_displays.append((rendered_model_id, plan))
+        if not _renders_anything(plan, semantic_core):
             continue
-        entries.append(_PlannedChangeEntry(model_id, display_name, "changed", plan))
+        entries.append(
+            _PlannedChangeEntry(
+                rendered_model_id,
+                display_name,
+                "changed",
+                plan,
+                semantic_core,
+            )
+        )
     return _ChangesProviderPlan(tuple(entries), _collect_hidden_rollups(planned_displays))
 
 
 _plan_changes_report_provider = plan_changes_provider
+
+
+def _stored_edge_key(identity: StoredComparisonIdentity) -> tuple[str, str, int | None, int]:
+    return (
+        identity.provider_id,
+        identity.provider_model_id,
+        identity.from_scrape_id,
+        identity.to_scrape_id,
+    )
+
+
+def _build_stored_semantic_artifact_index(
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None,
+    semantic_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] | None,
+) -> _StoredSemanticArtifactIndex:
+    cores_by_edge = _index_stored_semantic_cores(semantic_cores)
+    projections_by_edge = _index_stored_semantic_projections(
+        semantic_projections
+    )
+    for edge_key in cores_by_edge.keys() & projections_by_edge.keys():
+        if projections_by_edge[edge_key].core is not cores_by_edge[edge_key]:
+            raise ValueError(
+                "stored semantic projection does not share its indexed core"
+            )
+    return _StoredSemanticArtifactIndex(cores_by_edge, projections_by_edge)
+
+
+def _index_stored_semantic_cores(
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None,
+) -> dict[tuple[str, str, int | None, int], ModelEventSemanticCore]:
+    if semantic_cores is None:
+        return {}
+    indexed: dict[
+        tuple[str, str, int | None, int], ModelEventSemanticCore
+    ] = {}
+    for identity, core in semantic_cores.items():
+        if not isinstance(identity, StoredComparisonIdentity):
+            raise TypeError("stored semantic core index requires stored identities")
+        if core.identity != identity:
+            raise ValueError("stored semantic core mapping has conflicting identity")
+        edge_key = _stored_edge_key(identity)
+        if edge_key in indexed:
+            raise ValueError("duplicate exact stored semantic core edge")
+        indexed[edge_key] = core
+    return indexed
+
+
+def _index_stored_semantic_projections(
+    semantic_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] | None,
+) -> dict[tuple[str, str, int | None, int], ModelEventPresentationPlan]:
+    if semantic_projections is None:
+        return {}
+    indexed: dict[
+        tuple[str, str, int | None, int], ModelEventPresentationPlan
+    ] = {}
+    for identity, projection in semantic_projections.items():
+        if not isinstance(identity, StoredComparisonIdentity):
+            raise TypeError("stored semantic projection index requires stored identities")
+        if projection.core.identity != identity:
+            raise ValueError(
+                "stored semantic projection mapping has conflicting identity"
+            )
+        edge_key = _stored_edge_key(identity)
+        if edge_key in indexed:
+            raise ValueError("duplicate exact stored semantic projection edge")
+        indexed[edge_key] = projection
+    return indexed
 
 
 def _visible_history_events(
@@ -1210,6 +1846,7 @@ def render_scan_report(
     format_name: str,
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy | None = None,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     detail_policy = detail_policy or make_report_detail_policy()
     if format_name == "json":
@@ -1228,6 +1865,7 @@ def render_scan_report(
             command=command,
             provider_results=provider_results,
             detail_policy=detail_policy,
+            semantic_cores=semantic_cores,
         )
     if format_name == "html":
         return _render_scan_html(
@@ -1235,12 +1873,14 @@ def render_scan_report(
             command=command,
             provider_results=provider_results,
             detail_policy=detail_policy,
+            semantic_cores=semantic_cores,
         )
     return _render_scan_text(
         generated_at=generated_at,
         command=command,
         provider_results=provider_results,
         detail_policy=detail_policy,
+        semantic_cores=semantic_cores,
     )
 
 
@@ -1255,6 +1895,8 @@ def render_history_report(
     profile: ProviderProfile,
     latest_model: dict[str, Any] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
+    stored_events: tuple[Any, ...] = (),
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     detail_policy = detail_policy or make_report_detail_policy()
     if format_name == "json":
@@ -1275,6 +1917,17 @@ def render_history_report(
             },
             indent=2,
             sort_keys=True,
+        )
+    stored_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] = {}
+    if stored_events:
+        stored_plans = plan_stored_comparison_events(
+            stored_events,
+            {stored_events[0].provider_id: profile},
+            detail_policy,
+            semantic_cores=semantic_cores,
+            budget_scope="history",
         )
     if format_name == "markdown":
         lines = [
@@ -1476,6 +2129,37 @@ def _changes_provider_display_labels(changes: tuple[dict[str, Any], ...]) -> dic
     }
 
 
+def _human_changes_from_stored_events(
+    stored_events: tuple[Any, ...],
+) -> tuple[dict[str, Any], ...]:
+    """Project rich edges into legacy-shaped human rows with a private edge key."""
+    rows: list[dict[str, Any]] = []
+    for event in stored_events:
+        identity = event.identity
+        edge_key = (
+            identity.provider_id,
+            identity.provider_model_id,
+            identity.from_scrape_id,
+            identity.to_scrape_id,
+        )
+        for source in event.source_rows:
+            rows.append(
+                {
+                    "provider_id": source.provider_id,
+                    "provider_label": event.provider_label,
+                    "provider_model_id": source.provider_model_id,
+                    "display_name": event.display_name or source.provider_model_id,
+                    "change_kind": source.change_kind,
+                    "field_name": source.field_name,
+                    "old_value": source.old_value,
+                    "new_value": source.new_value,
+                    "detected_at": source.detected_at,
+                    "_comparison_edge": edge_key,
+                }
+            )
+    return tuple(rows)
+
+
 def render_changes_report(
     *,
     format_name: str,
@@ -1485,6 +2169,9 @@ def render_changes_report(
     changes: tuple[dict[str, Any], ...],
     provider_profiles: dict[str, ProviderProfile] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
+    stored_events: tuple[Any, ...] = (),
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    changes_semantic_core: ChangesSemanticCore | None = None,
 ) -> str:
     detail_policy = detail_policy or make_report_detail_policy()
     if format_name == "json":
@@ -1498,6 +2185,22 @@ def render_changes_report(
             indent=2,
             sort_keys=True,
         )
+
+    stored_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] = {}
+    if stored_events:
+        stored_plans = plan_stored_comparison_events(
+            stored_events,
+            provider_profiles or {},
+            detail_policy,
+            semantic_cores=semantic_cores,
+            budget_scope="changes",
+        )
+        stored_projections = {
+            plan.identity: plan.projection for plan in stored_plans
+        }
+        changes = _human_changes_from_stored_events(stored_events)
 
     if not changes:
         period_parts = []
@@ -1527,10 +2230,14 @@ def render_changes_report(
     for change in changes:
         date_str = to_local_human(change["detected_at"]).split(" ")[0] if change["detected_at"] else "unknown"
         provider = change.get("provider_id", "")
-        model = change["provider_model_id"]
+        model = change.get("_comparison_edge", change["provider_model_id"])
         by_date.setdefault(date_str, OrderedDict()).setdefault(provider, OrderedDict()).setdefault(model, []).append(change)
 
     display_labels = _changes_provider_display_labels(changes)
+    artifact_semantics = _build_stored_semantic_artifact_index(
+        semantic_cores,
+        stored_projections,
+    )
 
     if format_name == "html":
         return _render_changes_html(
@@ -1542,6 +2249,7 @@ def render_changes_report(
             total_changes=len(changes),
             provider_profiles=provider_profiles,
             detail_policy=detail_policy,
+            artifact_semantics=artifact_semantics,
         )
 
     lines = ["Model Sentinel \u2014 Change Log", ""]
@@ -1574,6 +2282,7 @@ def render_changes_report(
                 models,
                 detail_policy,
                 profile,
+                artifact_semantics=artifact_semantics,
             )
             if plan.renders_nothing:
                 continue
@@ -2129,6 +2838,7 @@ def _render_scan_text(
     command: str,
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     lines = [
         "Model Sentinel report",
@@ -2162,6 +2872,8 @@ def _render_scan_text(
             result.changed,
             detail_policy,
             result.profile,
+            semantic_cores,
+            provider_id=result.provider_id,
         )
         for item in provider_plan.items:
             if isinstance(item, _BulkChangeGroup):
@@ -2235,6 +2947,7 @@ def _render_scan_markdown(
     command: str,
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     lines = [
         "# Model Sentinel Report",
@@ -2283,6 +2996,8 @@ def _render_scan_markdown(
                 result.changed,
                 detail_policy,
                 result.profile,
+                semantic_cores,
+                provider_id=result.provider_id,
             )
             for item in provider_plan.items:
                 if isinstance(item, _BulkChangeGroup):
@@ -4683,6 +5398,7 @@ def _render_scan_html(
     command: str,
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     h = html_module.escape
     timestamp = h(to_local_human(generated_at))
@@ -4693,6 +5409,8 @@ def _render_scan_html(
                 result.changed,
                 detail_policy,
                 result.profile,
+                semantic_cores,
+                provider_id=result.provider_id,
             ),
         )
         for result in provider_results
@@ -4840,6 +5558,7 @@ def _render_changes_html(
     total_changes: int,
     provider_profiles: dict[str, ProviderProfile] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
+    artifact_semantics: _StoredSemanticArtifactIndex | None = None,
 ) -> str:
     h = html_module.escape
     detail_policy = detail_policy or make_report_detail_policy()
@@ -4869,6 +5588,7 @@ def _render_changes_html(
                 models,
                 detail_policy,
                 profile,
+                artifact_semantics=artifact_semantics,
             )
             if provider_plan.renders_nothing:
                 continue
