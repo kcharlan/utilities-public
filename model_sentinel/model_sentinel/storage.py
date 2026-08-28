@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
+from .conditional_pricing import StoredComparisonIdentity
 from .config import ProviderConfig
-from .models import BaselineInfo, HistoryEvent, ModelDelta, NormalizedModel
+from .models import BaselineInfo, FieldChange, HistoryEvent, ModelDelta, NormalizedModel
 from .time_utils import local_date_for, to_storage_timestamp
 
 
@@ -82,6 +84,62 @@ SCHEMA = (
     )
     """,
 )
+
+
+@dataclass(frozen=True)
+class StoredChangeRecord:
+    """One exact persisted field-change row in source ``change_id`` order."""
+
+    change_id: int
+    provider_id: str
+    provider_model_id: str
+    from_scrape_id: int | None
+    to_scrape_id: int
+    change_kind: str
+    field_name: str | None
+    old_value: Any
+    new_value: Any
+    detected_at: str
+
+
+@dataclass(frozen=True)
+class StoredComparisonEvent:
+    """Exact source/target snapshot envelope for one persisted comparison edge."""
+
+    identity: StoredComparisonIdentity
+    provider_label: str
+    display_name: str
+    detected_at: str
+    from_completed_at: str | None
+    to_completed_at: str | None
+    source_rows: tuple[StoredChangeRecord, ...]
+    field_changes: tuple[FieldChange, ...]
+    old_model_metadata: dict[str, Any] | None
+    new_model_metadata: dict[str, Any] | None
+
+    @property
+    def provider_id(self) -> str:
+        return self.identity.provider_id
+
+    @property
+    def provider_model_id(self) -> str:
+        return self.identity.provider_model_id
+
+
+@dataclass(frozen=True)
+class _StoredEdgeEnvelope:
+    identity: StoredComparisonIdentity
+    provider_label: str
+    display_name: str
+    detected_at: str
+    from_completed_at: str | None
+    to_completed_at: str | None
+    old_model_metadata: dict[str, Any] | None
+    new_model_metadata: dict[str, Any] | None
+
+
+class StoredComparisonDataError(RuntimeError):
+    """Exact-side persisted data cannot form a deterministic comparison event."""
 
 
 class Store:
@@ -441,6 +499,35 @@ class Store:
             )
         return first_seen, last_seen, tuple(events)
 
+    def history_comparison_events(
+        self,
+        *,
+        provider_id: str,
+        model_id: str,
+        since: date | None,
+        until: date | None,
+    ) -> tuple[StoredComparisonEvent, ...]:
+        """Load exact persisted comparison edges for a model's human history."""
+        with self._connect() as connection:
+            envelopes = _comparison_event_envelopes(
+                connection,
+                provider_id=provider_id,
+                model_id=model_id,
+                since=since,
+                until=until,
+                exclude_initial=False,
+            )
+            rows = _selected_comparison_change_rows(
+                connection,
+                tuple(envelope.identity for envelope in envelopes),
+                provider_id=provider_id,
+                model_id=model_id,
+                since=since,
+                until=until,
+                exclude_initial=False,
+            )
+        return _build_comparison_events(envelopes, rows)
+
     def list_known_models(
         self,
         *,
@@ -539,6 +626,34 @@ class Store:
             )
         return tuple({key: value for key, value in row.items() if key != "change_id"} for row in rows)
 
+    def recent_comparison_events(
+        self,
+        *,
+        provider_id: str | None = None,
+        since: date | None = None,
+        until: date | None = None,
+    ) -> tuple[StoredComparisonEvent, ...]:
+        """Load exact non-initial comparison edges for human changes reports."""
+        with self._connect() as connection:
+            envelopes = _comparison_event_envelopes(
+                connection,
+                provider_id=provider_id,
+                model_id=None,
+                since=since,
+                until=until,
+                exclude_initial=True,
+            )
+            rows = _selected_comparison_change_rows(
+                connection,
+                tuple(envelope.identity for envelope in envelopes),
+                provider_id=provider_id,
+                model_id=None,
+                since=since,
+                until=until,
+                exclude_initial=True,
+            )
+        return _build_comparison_events(envelopes, rows)
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
@@ -555,6 +670,602 @@ def _from_db_bool(value: int | None) -> bool | None:
     if value is None:
         return None
     return bool(value)
+
+
+def _coarse_comparison_filter(
+    *,
+    alias: str,
+    provider_id: str | None,
+    model_id: str | None,
+    since: date | None,
+    until: date | None,
+    exclude_initial: bool,
+) -> tuple[str, list[str]]:
+    """Build the shared conservative UTC envelope used by both rich queries."""
+    predicates: list[str] = []
+    parameters: list[str] = []
+    if provider_id is not None:
+        predicates.append(f"{alias}.provider_id = ?")
+        parameters.append(provider_id)
+    if model_id is not None:
+        predicates.append(f"{alias}.provider_model_id = ?")
+        parameters.append(model_id)
+    if exclude_initial:
+        predicates.append(f"{alias}.from_scrape_id IS NOT NULL")
+    if since is not None:
+        lower_bound = (datetime.combine(since, time.min) - timedelta(days=1)).isoformat()
+        predicates.append(
+            f"({alias}.detected_at >= ? OR {alias}.detected_at IS NULL "
+            f"OR datetime({alias}.detected_at) IS NULL)"
+        )
+        parameters.append(lower_bound)
+    if until is not None:
+        upper_bound = (datetime.combine(until, time.max) + timedelta(days=1)).isoformat()
+        predicates.append(
+            f"({alias}.detected_at <= ? OR {alias}.detected_at IS NULL "
+            f"OR datetime({alias}.detected_at) IS NULL)"
+        )
+        parameters.append(upper_bound)
+    if not predicates:
+        return "", parameters
+    return "WHERE " + " AND ".join(predicates), parameters
+
+
+def _comparison_event_envelopes(
+    connection: sqlite3.Connection,
+    *,
+    provider_id: str | None,
+    model_id: str | None,
+    since: date | None,
+    until: date | None,
+    exclude_initial: bool,
+) -> tuple[_StoredEdgeEnvelope, ...]:
+    """Load one exact-side envelope per loosely date-bounded edge."""
+    where_clause, parameters = _coarse_comparison_filter(
+        alias="bounded",
+        provider_id=provider_id,
+        model_id=model_id,
+        since=since,
+        until=until,
+        exclude_initial=exclude_initial,
+    )
+
+    rows = connection.execute(
+        f"""
+        WITH bounded_edges AS (
+            SELECT DISTINCT
+                   bounded.provider_id,
+                   bounded.provider_model_id,
+                   bounded.from_scrape_id,
+                   bounded.to_scrape_id
+            FROM field_changes bounded
+            {where_clause}
+        ),
+        candidate_edges AS (
+            SELECT
+                fc.provider_id,
+                fc.provider_model_id,
+                fc.from_scrape_id,
+                fc.to_scrape_id,
+                MIN(fc.change_id) AS first_change_id,
+                MIN(fc.detected_at) AS detected_at,
+                COUNT(*) AS row_count,
+                COUNT(fc.detected_at) AS nonnull_detected_at_count,
+                COUNT(DISTINCT fc.detected_at) AS distinct_detected_at_count,
+                SUM(CASE WHEN fc.change_kind IN ('added', 'removed') THEN 1 ELSE 0 END)
+                    AS presence_row_count,
+                SUM(CASE WHEN fc.change_kind = 'field_changed' THEN 1 ELSE 0 END)
+                    AS changed_row_count,
+                SUM(CASE
+                    WHEN fc.change_kind IN ('added', 'removed', 'field_changed') THEN 0
+                    ELSE 1
+                END) AS invalid_kind_count,
+                SUM(CASE
+                    WHEN fc.change_kind IN ('added', 'removed')
+                     AND (fc.field_name IS NOT NULL
+                          OR fc.old_value_json IS NOT NULL
+                          OR fc.new_value_json IS NOT NULL)
+                    THEN 1 ELSE 0
+                END) AS invalid_presence_payload_count
+            FROM bounded_edges bounded
+            JOIN field_changes fc
+              ON fc.provider_id IS bounded.provider_id
+             AND fc.provider_model_id IS bounded.provider_model_id
+             AND fc.from_scrape_id IS bounded.from_scrape_id
+             AND fc.to_scrape_id IS bounded.to_scrape_id
+            GROUP BY fc.provider_id, fc.provider_model_id,
+                     fc.from_scrape_id, fc.to_scrape_id
+        )
+        SELECT
+            candidate.*,
+            provider.label AS provider_label,
+            source_scrape.completed_at AS from_completed_at,
+            target_scrape.completed_at AS to_completed_at,
+            CASE WHEN source_model.rowid IS NULL THEN 0 ELSE 1 END AS source_model_count,
+            CASE WHEN target_model.rowid IS NULL THEN 0 ELSE 1 END AS target_model_count,
+            source_model.display_name AS source_display_name,
+            target_model.display_name AS target_display_name,
+            source_model.metadata_json AS source_metadata_json,
+            target_model.metadata_json AS target_metadata_json
+        FROM candidate_edges candidate
+        LEFT JOIN providers provider
+          ON provider.provider_id = candidate.provider_id
+        LEFT JOIN scrapes source_scrape
+          ON source_scrape.scrape_id = candidate.from_scrape_id
+         AND source_scrape.provider_id = candidate.provider_id
+        LEFT JOIN scrapes target_scrape
+          ON target_scrape.scrape_id = candidate.to_scrape_id
+         AND target_scrape.provider_id = candidate.provider_id
+        LEFT JOIN snapshot_models source_model
+          ON source_model.scrape_id = candidate.from_scrape_id
+         AND source_model.provider_id = candidate.provider_id
+         AND source_model.provider_model_id = candidate.provider_model_id
+        LEFT JOIN snapshot_models target_model
+          ON target_model.scrape_id = candidate.to_scrape_id
+         AND target_model.provider_id = candidate.provider_id
+         AND target_model.provider_model_id = candidate.provider_model_id
+        ORDER BY candidate.detected_at ASC,
+                 candidate.provider_id ASC,
+                 candidate.provider_model_id ASC,
+                 candidate.first_change_id ASC
+        """,
+        parameters,
+    ).fetchall()
+
+    envelopes: list[_StoredEdgeEnvelope] = []
+    seen_identities: set[StoredComparisonIdentity] = set()
+    for row in rows:
+        identity = _identity_from_values(
+            row["provider_id"],
+            row["provider_model_id"],
+            row["from_scrape_id"],
+            row["to_scrape_id"],
+        )
+        if identity in seen_identities:
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(identity)} has duplicate exact-side snapshot rows"
+            )
+        seen_identities.add(identity)
+        if (
+            row["row_count"] != row["nonnull_detected_at_count"]
+            or row["distinct_detected_at_count"] != 1
+        ):
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(identity)} has inconsistent detected_at values"
+            )
+        detected_at = _validated_detected_at(row["detected_at"], identity=identity)
+        detected_date = _local_date_for_edge(detected_at, identity=identity)
+        if since is not None and detected_date < since:
+            continue
+        if until is not None and detected_date > until:
+            continue
+
+        _validate_stored_edge_shape(row, identity=identity)
+        from_completed_at = _validated_optional_completed_at(
+            row["from_completed_at"],
+            identity=identity,
+            field_name="from_completed_at",
+        )
+        to_completed_at = _validated_optional_completed_at(
+            row["to_completed_at"],
+            identity=identity,
+            field_name="to_completed_at",
+        )
+
+        old_metadata = _exact_side_metadata(
+            count=row["source_model_count"],
+            value=row["source_metadata_json"],
+            identity=identity,
+            side="source",
+        )
+        new_metadata = _exact_side_metadata(
+            count=row["target_model_count"],
+            value=row["target_metadata_json"],
+            identity=identity,
+            side="target",
+        )
+        envelopes.append(
+            _StoredEdgeEnvelope(
+                identity=identity,
+                provider_label=row["provider_label"] or identity.provider_id,
+                display_name=(
+                    row["target_display_name"]
+                    or row["source_display_name"]
+                    or identity.provider_model_id
+                ),
+                detected_at=detected_at,
+                from_completed_at=from_completed_at,
+                to_completed_at=to_completed_at,
+                old_model_metadata=old_metadata,
+                new_model_metadata=new_metadata,
+            )
+        )
+    return tuple(envelopes)
+
+
+def _selected_comparison_change_rows(
+    connection: sqlite3.Connection,
+    identities: tuple[StoredComparisonIdentity, ...],
+    *,
+    provider_id: str | None,
+    model_id: str | None,
+    since: date | None,
+    until: date | None,
+    exclude_initial: bool,
+) -> tuple[tuple[int, sqlite3.Row], ...]:
+    """Refetch possible bounded rows and select exact identities in linear time."""
+    where_clause, parameters = _coarse_comparison_filter(
+        alias="possible",
+        provider_id=provider_id,
+        model_id=model_id,
+        since=since,
+        until=until,
+        exclude_initial=exclude_initial,
+    )
+    rows = connection.execute(
+        f"""
+        SELECT
+            possible.change_id,
+            possible.provider_id,
+            possible.provider_model_id,
+            possible.from_scrape_id,
+            possible.to_scrape_id,
+            possible.change_kind,
+            possible.field_name,
+            possible.old_value_json,
+            possible.new_value_json,
+            possible.detected_at
+        FROM field_changes possible
+        {where_clause}
+        ORDER BY possible.detected_at ASC,
+                 possible.provider_id ASC,
+                 possible.provider_model_id ASC,
+                 possible.change_id ASC
+        """,
+        parameters,
+    ).fetchall()
+    selected_orders = {
+        (
+            identity.provider_id,
+            identity.provider_model_id,
+            identity.from_scrape_id,
+            identity.to_scrape_id,
+        ): edge_order
+        for edge_order, identity in enumerate(identities)
+    }
+    selected_rows: list[tuple[int, sqlite3.Row]] = []
+    for row in rows:
+        edge_order = _selected_identity_order(row, selected_orders)
+        if edge_order is not None:
+            selected_rows.append((edge_order, row))
+    return tuple(selected_rows)
+
+
+def _selected_identity_order(
+    row: sqlite3.Row,
+    selected_orders: dict[tuple[str, str, int | None, int], int],
+) -> int | None:
+    return selected_orders.get(
+        (
+            row["provider_id"],
+            row["provider_model_id"],
+            row["from_scrape_id"],
+            row["to_scrape_id"],
+        )
+    )
+
+
+def _build_comparison_events(
+    envelopes: tuple[_StoredEdgeEnvelope, ...],
+    rows: tuple[tuple[int, sqlite3.Row], ...],
+) -> tuple[StoredComparisonEvent, ...]:
+    grouped_rows: list[list[sqlite3.Row]] = [[] for _ in envelopes]
+    for edge_order, row in rows:
+        if not isinstance(edge_order, int) or not 0 <= edge_order < len(envelopes):
+            raise StoredComparisonDataError(
+                "stored comparison result has invalid selected-edge row ordering"
+            )
+        grouped_rows[edge_order].append(row)
+
+    events: list[StoredComparisonEvent] = []
+    for envelope, edge_rows in zip(envelopes, grouped_rows, strict=True):
+        if not edge_rows:
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(envelope.identity)} has no source rows"
+            )
+        source_rows = tuple(
+            _stored_change_record(row, identity=envelope.identity) for row in edge_rows
+        )
+        if any(row.detected_at != envelope.detected_at for row in source_rows):
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(envelope.identity)} has inconsistent detected_at values"
+            )
+        events.append(
+            StoredComparisonEvent(
+                identity=envelope.identity,
+                provider_label=envelope.provider_label,
+                display_name=envelope.display_name,
+                detected_at=envelope.detected_at,
+                from_completed_at=envelope.from_completed_at,
+                to_completed_at=envelope.to_completed_at,
+                source_rows=source_rows,
+                field_changes=tuple(
+                    FieldChange(row.field_name, row.old_value, row.new_value)
+                    for row in source_rows
+                    if row.change_kind == "field_changed"
+                ),
+                old_model_metadata=envelope.old_model_metadata,
+                new_model_metadata=envelope.new_model_metadata,
+            )
+        )
+    return tuple(events)
+
+
+def _stored_change_record(
+    row: sqlite3.Row,
+    *,
+    identity: StoredComparisonIdentity,
+) -> StoredChangeRecord:
+    row_identity = _identity_from_values(
+        row["provider_id"],
+        row["provider_model_id"],
+        row["from_scrape_id"],
+        row["to_scrape_id"],
+    )
+    if row_identity != identity:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has a mismatched source-row identity"
+        )
+    change_id = row["change_id"]
+    if not isinstance(change_id, int) or isinstance(change_id, bool) or change_id <= 0:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has an invalid change_id"
+        )
+    change_kind = row["change_kind"]
+    if change_kind not in {"added", "removed", "field_changed"}:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has an invalid change_kind"
+        )
+    field_name = row["field_name"]
+    if change_kind == "field_changed":
+        if not isinstance(field_name, str) or not field_name:
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(identity)} has an invalid field_name"
+            )
+        if row["old_value_json"] is None or row["new_value_json"] is None:
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(identity)} has missing change JSON "
+                f"at change_id {change_id}"
+            )
+    elif field_name is not None:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has an invalid field_name"
+        )
+    detected_at = _validated_detected_at(row["detected_at"], identity=identity)
+    _local_date_for_edge(detected_at, identity=identity)
+    return StoredChangeRecord(
+        change_id=change_id,
+        provider_id=identity.provider_id,
+        provider_model_id=identity.provider_model_id,
+        from_scrape_id=identity.from_scrape_id,
+        to_scrape_id=identity.to_scrape_id,
+        change_kind=change_kind,
+        field_name=field_name,
+        old_value=_load_stored_change_value(
+            row["old_value_json"], identity=identity, change_id=change_id
+        ),
+        new_value=_load_stored_change_value(
+            row["new_value_json"], identity=identity, change_id=change_id
+        ),
+        detected_at=detected_at,
+    )
+
+
+def _load_stored_change_value(
+    value: str | None,
+    *,
+    identity: StoredComparisonIdentity,
+    change_id: int,
+) -> Any:
+    try:
+        return load_json_value(value)
+    except (json.JSONDecodeError, TypeError):
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has malformed change JSON "
+            f"at change_id {change_id}"
+        ) from None
+
+
+def load_model_metadata(
+    value: str | None,
+    *,
+    identity: StoredComparisonIdentity,
+    side: str,
+) -> dict[str, Any] | None:
+    """Decode one exact side without exposing persisted metadata on failure."""
+    if value is None:
+        return None
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has malformed {side} metadata"
+        ) from None
+    if not isinstance(decoded, dict):
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has non-object {side} metadata"
+        )
+    return decoded
+
+
+def _exact_side_metadata(
+    *,
+    count: Any,
+    value: str | None,
+    identity: StoredComparisonIdentity,
+    side: str,
+) -> dict[str, Any] | None:
+    if count == 0:
+        return None
+    if count != 1:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has duplicate {side} snapshot rows"
+        )
+    if value is None:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has present {side} snapshot with NULL metadata"
+        )
+    return load_model_metadata(value, identity=identity, side=side)
+
+
+def _identity_from_values(
+    provider_id: Any,
+    provider_model_id: Any,
+    from_scrape_id: Any,
+    to_scrape_id: Any,
+) -> StoredComparisonIdentity:
+    raw_description = _raw_edge_description(
+        provider_id, provider_model_id, from_scrape_id, to_scrape_id
+    )
+    try:
+        if (
+            not isinstance(provider_id, str)
+            or not provider_id
+            or not isinstance(provider_model_id, str)
+            or not provider_model_id
+        ):
+            raise ValueError
+        if from_scrape_id is not None and (
+            not isinstance(from_scrape_id, int)
+            or isinstance(from_scrape_id, bool)
+            or from_scrape_id <= 0
+        ):
+            raise ValueError
+        if (
+            not isinstance(to_scrape_id, int)
+            or isinstance(to_scrape_id, bool)
+            or to_scrape_id <= 0
+        ):
+            raise ValueError
+        return StoredComparisonIdentity(
+            provider_id=provider_id,
+            provider_model_id=provider_model_id,
+            from_scrape_id=from_scrape_id,
+            to_scrape_id=to_scrape_id,
+        )
+    except (TypeError, ValueError):
+        raise StoredComparisonDataError(
+            f"stored comparison edge {raw_description} has an invalid identity"
+        ) from None
+
+
+def _validated_detected_at(
+    value: Any,
+    *,
+    identity: StoredComparisonIdentity,
+) -> str:
+    if not isinstance(value, str) or not value:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has an invalid detected_at"
+        )
+    return value
+
+
+def _validate_stored_edge_shape(
+    row: sqlite3.Row,
+    *,
+    identity: StoredComparisonIdentity,
+) -> None:
+    row_count = row["row_count"]
+    presence_count = row["presence_row_count"]
+    changed_count = row["changed_row_count"]
+    if row["invalid_kind_count"]:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has an invalid change_kind"
+        )
+    if presence_count:
+        if changed_count:
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(identity)} has mixed change kinds"
+            )
+        if presence_count != 1 or row_count != 1:
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(identity)} must contain exactly one presence row"
+            )
+        if row["invalid_presence_payload_count"]:
+            raise StoredComparisonDataError(
+                f"stored comparison edge {_edge_description(identity)} has a non-NULL presence payload"
+            )
+        return
+    if changed_count != row_count:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has invalid changed-row shape"
+        )
+
+
+def _validated_optional_completed_at(
+    value: Any,
+    *,
+    identity: StoredComparisonIdentity,
+    field_name: str,
+) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has an invalid {field_name}"
+        )
+    try:
+        local_date_for(value)
+    except (TypeError, ValueError, OverflowError):
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has an invalid {field_name}"
+        ) from None
+    return value
+
+
+def _local_date_for_edge(value: str, *, identity: StoredComparisonIdentity) -> date:
+    try:
+        return local_date_for(value)
+    except (TypeError, ValueError, OverflowError):
+        raise StoredComparisonDataError(
+            f"stored comparison edge {_edge_description(identity)} has an invalid detected_at"
+        ) from None
+
+
+def _raw_edge_description(
+    provider_id: Any,
+    provider_model_id: Any,
+    from_scrape_id: Any,
+    to_scrape_id: Any,
+) -> str:
+    safe_provider = provider_id if isinstance(provider_id, str) and provider_id else "<invalid-provider-id>"
+    safe_model = (
+        provider_model_id
+        if isinstance(provider_model_id, str) and provider_model_id
+        else "<invalid-model-id>"
+    )
+    safe_from = (
+        from_scrape_id
+        if from_scrape_id is None
+        or (isinstance(from_scrape_id, int) and not isinstance(from_scrape_id, bool) and from_scrape_id > 0)
+        else "<invalid-from-scrape-id>"
+    )
+    safe_to = (
+        to_scrape_id
+        if isinstance(to_scrape_id, int)
+        and not isinstance(to_scrape_id, bool)
+        and to_scrape_id > 0
+        else "<invalid-to-scrape-id>"
+    )
+    return f"({safe_provider}, {safe_model}, {safe_from}, {safe_to})"
+
+
+def _edge_description(identity: StoredComparisonIdentity) -> str:
+    return (
+        f"({identity.provider_id}, {identity.provider_model_id}, "
+        f"{identity.from_scrape_id}, {identity.to_scrape_id})"
+    )
 
 
 def recent_change_rows(

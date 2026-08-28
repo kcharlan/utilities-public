@@ -1,5 +1,6 @@
 import json
 import os
+from dataclasses import FrozenInstanceError
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -23,6 +24,7 @@ def _model(
     provider_id: str = "openrouter",
     provider_label: str = "OpenRouter",
     display_name: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> NormalizedModel:
     return NormalizedModel(
         provider_id=provider_id,
@@ -46,7 +48,7 @@ def _model(
         structured_output_supported=None,
         deprecated=None,
         status=None,
-        metadata_json=canonical_json({"id": model_id}),
+        metadata_json=canonical_json(metadata if metadata is not None else {"id": model_id}),
     )
 
 
@@ -674,3 +676,922 @@ def test_legacy_json_renderers_are_byte_identical_with_malformed_metadata(tmp_pa
         "since": None,
         "until": None,
     }
+
+
+def _insert_synthetic_change_row(
+    store: Store,
+    *,
+    provider_id: str,
+    model_id: str,
+    from_scrape_id: int | None,
+    to_scrape_id: int,
+    detected_at: str,
+    field_name: str | None,
+    old_value: Any,
+    new_value: Any,
+    change_kind: str = "field_changed",
+) -> None:
+    with store._connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO field_changes (
+                provider_id, from_scrape_id, to_scrape_id, provider_model_id,
+                change_kind, field_name, old_value_json, new_value_json, detected_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                provider_id,
+                from_scrape_id,
+                to_scrape_id,
+                model_id,
+                change_kind,
+                field_name,
+                None if field_name is None else canonical_json(old_value),
+                None if field_name is None else canonical_json(new_value),
+                detected_at,
+            ),
+        )
+        connection.commit()
+
+
+def _build_comparison_event_store(tmp_path: Path) -> tuple[Store, dict[str, Any]]:
+    """Build conspicuously synthetic exact edges, including a non-adjacent baseline."""
+    store = Store(tmp_path / "comparison-events.db")
+    store.initialize()
+    provider = _provider("synthetic", "Synthetic Provider")
+    store.upsert_provider_configs((provider,), updated_at="2026-08-20T00:00:00+00:00")
+
+    local_zone = datetime.now().astimezone().tzinfo
+    assert local_zone is not None
+    selected_date = date(2026, 8, 20)
+    scrape_ids: list[int] = []
+    for hour, baseline_id in ((9, None), (11, 1), (15, 2), (17, 3)):
+        completed = datetime.combine(selected_date, time(hour, 0), local_zone)
+        scrape_ids.append(
+            store.create_scrape(
+                provider_id="synthetic",
+                started_at=(completed - timedelta(minutes=1)).isoformat(),
+                completed_at=completed.isoformat(),
+                status="success",
+                baseline_mode="previous",
+                baseline_scrape_id=baseline_id,
+                saved_snapshot=True,
+                model_count=2,
+                error_message=None,
+            )
+        )
+    first, second, third, fourth = scrape_ids
+    snapshots = (
+        (first, "Source Exact", "source-exact"),
+        (second, "Intermediate Name", "intermediate"),
+        (third, "Target Exact", "target-exact"),
+        (fourth, "Later Renamed Name", "later-rename"),
+    )
+    for scrape_id, display_name, marker in snapshots:
+        models = [
+            _model(
+                "synthetic/model",
+                provider_id="synthetic",
+                provider_label=provider.label,
+                display_name=display_name,
+                metadata={"id": "synthetic/model", "marker": marker},
+            )
+        ]
+        if scrape_id in {first, third, fourth}:
+            models.append(
+                _model(
+                    "synthetic/missing-source",
+                    provider_id="synthetic",
+                    provider_label=provider.label,
+                    display_name=f"Missing Source {marker}",
+                    metadata={"id": "synthetic/missing-source", "marker": marker},
+                )
+            )
+        store.save_snapshot_models(
+            scrape_id=scrape_id,
+            provider_id="synthetic",
+            models=models,
+        )
+
+    timestamps = {
+        "initial": datetime.combine(selected_date - timedelta(days=1), time(23, 59), local_zone).isoformat(),
+        "edge_one": datetime.combine(selected_date, time(11, 30), local_zone).isoformat(),
+        "edge_two": datetime.combine(selected_date, time(15, 30), local_zone).isoformat(),
+        "missing": datetime.combine(selected_date, time(16, 0), local_zone).isoformat(),
+    }
+    _insert_synthetic_change_row(
+        store,
+        provider_id="synthetic",
+        model_id="synthetic/model",
+        from_scrape_id=None,
+        to_scrape_id=first,
+        detected_at=timestamps["initial"],
+        field_name=None,
+        old_value=None,
+        new_value=None,
+        change_kind="added",
+    )
+    for field_name, old_value, new_value in (
+        ("pricing.prompt", "0.000001", "0.000002"),
+        ("pricing.prompt", "0.000001", "0.000002"),
+    ):
+        _insert_synthetic_change_row(
+            store,
+            provider_id="synthetic",
+            model_id="synthetic/model",
+            from_scrape_id=first,
+            to_scrape_id=second,
+            detected_at=timestamps["edge_one"],
+            field_name=field_name,
+            old_value=old_value,
+            new_value=new_value,
+        )
+    for field_name, old_value, new_value in (
+        ("status", None, "available"),
+        ("pricing.overrides", [], [{"utc_start": 900}]),
+    ):
+        _insert_synthetic_change_row(
+            store,
+            provider_id="synthetic",
+            model_id="synthetic/model",
+            from_scrape_id=first,
+            to_scrape_id=third,
+            detected_at=timestamps["edge_two"],
+            field_name=field_name,
+            old_value=old_value,
+            new_value=new_value,
+        )
+    _insert_synthetic_change_row(
+        store,
+        provider_id="synthetic",
+        model_id="synthetic/missing-source",
+        from_scrape_id=second,
+        to_scrape_id=third,
+        detected_at=timestamps["missing"],
+        field_name="status",
+        old_value="hidden",
+        new_value="available",
+    )
+    return store, {
+        "date": selected_date,
+        "scrapes": (first, second, third, fourth),
+        "timestamps": timestamps,
+    }
+
+
+def test_history_comparison_events_load_exact_whole_edges(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, third, _ = fixture["scrapes"]
+
+    events = store.history_comparison_events(
+        provider_id="synthetic",
+        model_id="synthetic/model",
+        since=fixture["date"],
+        until=fixture["date"],
+    )
+
+    assert tuple(event.identity for event in events) == (
+        storage.StoredComparisonIdentity("synthetic", "synthetic/model", first, second),
+        storage.StoredComparisonIdentity("synthetic", "synthetic/model", first, third),
+    )
+    assert tuple(len(event.source_rows) for event in events) == (2, 2)
+    assert all(
+        tuple(row.change_id for row in event.source_rows)
+        == tuple(sorted(row.change_id for row in event.source_rows))
+        for event in events
+    )
+    assert events[0].field_changes == (
+        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+        FieldChange("pricing.prompt", "0.000001", "0.000002"),
+    )
+    # The second edge deliberately compares the first scrape to the third, not
+    # the adjacent second scrape.
+    assert events[1].old_model_metadata == {
+        "id": "synthetic/model",
+        "marker": "source-exact",
+    }
+    assert events[1].new_model_metadata == {
+        "id": "synthetic/model",
+        "marker": "target-exact",
+    }
+    assert events[1].display_name == "Target Exact"
+    assert events[1].provider_label == "Synthetic Provider"
+    assert events[1].field_changes[0] == FieldChange("status", None, "available")
+    assert events[0].from_completed_at is not None
+    assert events[0].to_completed_at is not None
+
+
+def test_history_comparison_events_include_initial_edge_but_recent_excludes_it(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, _, _, _ = fixture["scrapes"]
+    initial_date = fixture["date"] - timedelta(days=1)
+
+    history = store.history_comparison_events(
+        provider_id="synthetic",
+        model_id="synthetic/model",
+        since=initial_date,
+        until=initial_date,
+    )
+    recent = store.recent_comparison_events(
+        provider_id="synthetic",
+        since=initial_date,
+        until=fixture["date"],
+    )
+
+    assert len(history) == 1
+    assert history[0].identity == storage.StoredComparisonIdentity(
+        "synthetic", "synthetic/model", None, first
+    )
+    assert history[0].old_model_metadata is None
+    assert all(event.identity.from_scrape_id is not None for event in recent)
+
+
+def test_recent_comparison_events_keep_edges_separate_and_use_exact_names(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, third, _ = fixture["scrapes"]
+
+    events = store.recent_comparison_events(
+        provider_id="synthetic",
+        since=fixture["date"],
+        until=fixture["date"],
+    )
+
+    identities = tuple(event.identity for event in events)
+    assert storage.StoredComparisonIdentity("synthetic", "synthetic/model", first, second) in identities
+    assert storage.StoredComparisonIdentity("synthetic", "synthetic/model", first, third) in identities
+    assert len([event for event in events if event.provider_model_id == "synthetic/model"]) == 2
+    first_edge = next(event for event in events if event.identity.to_scrape_id == second)
+    second_edge = next(
+        event
+        for event in events
+        if event.provider_model_id == "synthetic/model" and event.identity.to_scrape_id == third
+    )
+    assert first_edge.display_name == "Intermediate Name"
+    assert second_edge.display_name == "Target Exact"
+    # Legacy changes intentionally retain their latest-snapshot name.
+    assert {
+        row["display_name"]
+        for row in store.recent_changes(provider_id="synthetic")
+        if row["provider_model_id"] == "synthetic/model"
+    } == {"Later Renamed Name"}
+
+
+def test_comparison_events_never_substitute_an_adjacent_snapshot(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    event = next(
+        event
+        for event in store.recent_comparison_events(
+            provider_id="synthetic",
+            since=fixture["date"],
+            until=fixture["date"],
+        )
+        if event.provider_model_id == "synthetic/missing-source"
+    )
+
+    assert event.old_model_metadata is None
+    assert event.new_model_metadata == {
+        "id": "synthetic/missing-source",
+        "marker": "target-exact",
+    }
+    assert event.display_name == "Missing Source target-exact"
+
+
+def test_comparison_event_display_name_falls_back_from_target_to_source_to_id(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, _, _ = fixture["scrapes"]
+    store.save_snapshot_models(
+        scrape_id=first,
+        provider_id="synthetic",
+        models=[
+            _model(
+                "synthetic/source-only",
+                provider_id="synthetic",
+                provider_label="Synthetic Provider",
+                display_name="Exact Source Name",
+                metadata={"marker": "source-only"},
+            )
+        ],
+    )
+    for model_id in ("synthetic/source-only", "synthetic/no-sides"):
+        _insert_synthetic_change_row(
+            store,
+            provider_id="synthetic",
+            model_id=model_id,
+            from_scrape_id=first,
+            to_scrape_id=second,
+            detected_at=fixture["timestamps"]["edge_one"],
+            field_name="status",
+            old_value="listed",
+            new_value="removed",
+        )
+
+    events = {
+        event.provider_model_id: event
+        for event in store.recent_comparison_events(provider_id="synthetic")
+    }
+
+    assert events["synthetic/source-only"].display_name == "Exact Source Name"
+    assert events["synthetic/source-only"].old_model_metadata == {"marker": "source-only"}
+    assert events["synthetic/source-only"].new_model_metadata is None
+    assert events["synthetic/no-sides"].display_name == "synthetic/no-sides"
+    assert events["synthetic/no-sides"].old_model_metadata is None
+    assert events["synthetic/no-sides"].new_model_metadata is None
+
+
+def test_comparison_event_records_are_frozen_and_history_contract_stays_five_fields(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    event = store.recent_comparison_events(provider_id="synthetic")[0]
+
+    with pytest.raises(FrozenInstanceError):
+        event.display_name = "Mutated"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        event.source_rows[0].field_name = "mutated"  # type: ignore[misc]
+    assert tuple(storage.HistoryEvent.__dataclass_fields__) == (
+        "detected_at",
+        "change_kind",
+        "field_name",
+        "old_value",
+        "new_value",
+    )
+
+
+def test_rich_metadata_corruption_is_selected_edge_scoped_and_safe(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, _, _, _ = fixture["scrapes"]
+    secret_like_payload = "{synthetic-sensitive-marker-never-echo"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE snapshot_models SET metadata_json = ? WHERE scrape_id = ? AND provider_model_id = ?",
+            (secret_like_payload, first, "synthetic/model"),
+        )
+        connection.commit()
+
+    # The later missing-source edge does not decode the corrupted, unselected row.
+    assert store.history_comparison_events(
+        provider_id="synthetic",
+        model_id="synthetic/missing-source",
+        since=fixture["date"],
+        until=fixture["date"],
+    )
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.history_comparison_events(
+            provider_id="synthetic",
+            model_id="synthetic/model",
+            since=fixture["date"],
+            until=fixture["date"],
+        )
+    message = str(exc_info.value)
+    assert "synthetic/model" in message
+    assert str(first) in message
+    assert "metadata" in message
+    assert secret_like_payload not in message
+    # Independent legacy projections never decode exact-side metadata.
+    assert store.history_events(
+        provider_id="synthetic", model_id="synthetic/model", since=None, until=None
+    )[2]
+    assert store.recent_changes(provider_id="synthetic")
+
+
+def test_comparison_event_rejects_inconsistent_edge_timestamps(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, _, _ = fixture["scrapes"]
+    _insert_synthetic_change_row(
+        store,
+        provider_id="synthetic",
+        model_id="synthetic/model",
+        from_scrape_id=first,
+        to_scrape_id=second,
+        detected_at=datetime.combine(
+            fixture["date"], time(12, 0), datetime.now().astimezone().tzinfo
+        ).isoformat(),
+        field_name="status",
+        old_value="one",
+        new_value="two",
+    )
+
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.recent_comparison_events(provider_id="synthetic")
+    assert "detected_at" in str(exc_info.value)
+    assert f"{first}" in str(exc_info.value)
+    assert f"{second}" in str(exc_info.value)
+
+
+def test_comparison_event_rejects_malformed_change_json_without_echoing_it(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, _, _ = fixture["scrapes"]
+    malformed_value = "{synthetic-private-marker-never-echo"
+    with store._connect() as connection:
+        connection.execute(
+            """
+            UPDATE field_changes
+            SET old_value_json = ?
+            WHERE provider_id = 'synthetic'
+              AND provider_model_id = 'synthetic/model'
+              AND from_scrape_id = ?
+              AND to_scrape_id = ?
+            """,
+            (malformed_value, first, second),
+        )
+        connection.commit()
+
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.recent_comparison_events(provider_id="synthetic")
+    message = str(exc_info.value)
+    assert "change JSON" in message
+    assert str(first) in message
+    assert str(second) in message
+    assert malformed_value not in message
+
+
+def _build_bounded_comparison_store(tmp_path: Path, row_count: int) -> Store:
+    store = Store(tmp_path / f"bounded-{row_count}.db")
+    store.initialize()
+    provider = _provider("bounded", "Bounded Synthetic")
+    store.upsert_provider_configs((provider,), updated_at="2026-08-20T00:00:00+00:00")
+    scrape_ids = []
+    for hour in (1, 2):
+        scrape_ids.append(
+            store.create_scrape(
+                provider_id="bounded",
+                started_at=f"2026-08-20T0{hour}:00:00+00:00",
+                completed_at=f"2026-08-20T0{hour}:01:00+00:00",
+                status="success",
+                baseline_mode="previous",
+                baseline_scrape_id=None,
+                saved_snapshot=True,
+                model_count=1,
+                error_message=None,
+            )
+        )
+    for scrape_id, marker in zip(scrape_ids, ("old", "new"), strict=True):
+        store.save_snapshot_models(
+            scrape_id=scrape_id,
+            provider_id="bounded",
+            models=[
+                _model(
+                    "bounded/model",
+                    provider_id="bounded",
+                    provider_label=provider.label,
+                    metadata={"marker": marker, "large": "x" * 10_000},
+                )
+            ],
+        )
+    with store._connect() as connection:
+        connection.executemany(
+            """
+            INSERT INTO field_changes (
+                provider_id, from_scrape_id, to_scrape_id, provider_model_id,
+                change_kind, field_name, old_value_json, new_value_json, detected_at
+            ) VALUES ('bounded', ?, ?, 'bounded/model', 'field_changed', 'status', 'null', 'null',
+                      '2026-08-20T02:01:00+00:00')
+            """,
+            ((scrape_ids[0], scrape_ids[1]) for _ in range(row_count)),
+        )
+        connection.commit()
+    return store
+
+
+@pytest.mark.parametrize("row_count", (100, 1_000))
+def test_comparison_events_use_constant_queries_and_decode_each_side_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, row_count: int
+) -> None:
+    store = _build_bounded_comparison_store(tmp_path, row_count)
+    statements: list[str] = []
+    original_connect = store._connect
+
+    def traced_connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    decode_calls: list[tuple[str, int | None]] = []
+    original_decode = storage.load_model_metadata
+
+    def counted_decode(value, *, identity, side):
+        decode_calls.append((side, identity.from_scrape_id if side == "source" else identity.to_scrape_id))
+        return original_decode(value, identity=identity, side=side)
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+    monkeypatch.setattr(storage, "load_model_metadata", counted_decode)
+
+    events = store.recent_comparison_events(provider_id="bounded")
+
+    assert len(events) == 1
+    assert len(events[0].source_rows) == row_count
+    read_statements = [statement for statement in statements if statement.lstrip().upper().startswith(("SELECT", "WITH"))]
+    assert len(read_statements) == 2
+    assert "metadata_json" in read_statements[0]
+    assert "metadata_json" not in read_statements[1]
+    assert decode_calls == [("source", events[0].identity.from_scrape_id), ("target", events[0].identity.to_scrape_id)]
+
+
+def test_date_bounded_envelopes_do_not_fetch_out_of_range_field_rows(tmp_path: Path) -> None:
+    store = _build_bounded_comparison_store(tmp_path, 10)
+    third = store.create_scrape(
+        provider_id="bounded",
+        started_at="2026-07-01T03:00:00+00:00",
+        completed_at="2026-07-01T03:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=2,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    store.save_snapshot_models(
+        scrape_id=third,
+        provider_id="bounded",
+        models=[
+            _model(
+                "bounded/model",
+                provider_id="bounded",
+                provider_label="Bounded Synthetic",
+                metadata={"marker": "far-out-of-range", "large": "z" * 10_000},
+            )
+        ],
+    )
+    with store._connect() as connection:
+        connection.executemany(
+            """
+            INSERT INTO field_changes (
+                provider_id, from_scrape_id, to_scrape_id, provider_model_id,
+                change_kind, field_name, old_value_json, new_value_json, detected_at
+            ) VALUES ('bounded', 2, ?, 'bounded/model', 'field_changed', 'status',
+                      'null', 'null', '2026-07-01T03:01:00+00:00')
+            """,
+            ((third,) for _ in range(1_000)),
+        )
+        connection.commit()
+
+    with store._connect() as connection:
+        selected_date = local_date_for("2026-08-20T02:01:00+00:00")
+        envelopes = storage._comparison_event_envelopes(
+            connection,
+            provider_id="bounded",
+            model_id=None,
+            since=selected_date,
+            until=selected_date,
+            exclude_initial=True,
+        )
+        selected_rows = storage._selected_comparison_change_rows(
+            connection,
+            tuple(envelope.identity for envelope in envelopes),
+            provider_id="bounded",
+            model_id=None,
+            since=selected_date,
+            until=selected_date,
+            exclude_initial=True,
+        )
+
+    assert len(envelopes) == 1
+    assert len(selected_rows) == 10
+    assert envelopes[0].old_model_metadata["marker"] == "old"
+    assert envelopes[0].new_model_metadata["marker"] == "new"
+
+
+def _build_many_distinct_edge_store(tmp_path: Path, edge_count: int) -> Store:
+    store = Store(tmp_path / f"distinct-edges-{edge_count}.db")
+    store.initialize()
+    provider = _provider("edge-scale", "Edge Scale Synthetic")
+    store.upsert_provider_configs((provider,), updated_at="2026-08-20T00:00:00+00:00")
+    scrape_ids = []
+    for hour in (1, 2):
+        scrape_ids.append(
+            store.create_scrape(
+                provider_id="edge-scale",
+                started_at=f"2026-08-20T0{hour}:00:00+00:00",
+                completed_at=f"2026-08-20T0{hour}:01:00+00:00",
+                status="success",
+                baseline_mode="previous",
+                baseline_scrape_id=scrape_ids[-1] if scrape_ids else None,
+                saved_snapshot=True,
+                model_count=edge_count,
+                error_message=None,
+            )
+        )
+    for scrape_id, marker in zip(scrape_ids, ("source", "target"), strict=True):
+        store.save_snapshot_models(
+            scrape_id=scrape_id,
+            provider_id="edge-scale",
+            models=[
+                _model(
+                    f"edge-scale/model-{index:04d}",
+                    provider_id="edge-scale",
+                    provider_label=provider.label,
+                    metadata={"marker": marker, "index": index},
+                )
+                for index in range(edge_count)
+            ],
+        )
+    with store._connect() as connection:
+        connection.executemany(
+            """
+            INSERT INTO field_changes (
+                provider_id, from_scrape_id, to_scrape_id, provider_model_id,
+                change_kind, field_name, old_value_json, new_value_json, detected_at
+            ) VALUES ('edge-scale', ?, ?, ?, 'field_changed', 'status',
+                      '"old"', '"new"', '2026-08-20T12:00:00.123456+00:00')
+            """,
+            (
+                (scrape_ids[0], scrape_ids[1], f"edge-scale/model-{index:04d}")
+                for index in range(edge_count)
+            ),
+        )
+        connection.commit()
+    return store
+
+
+@pytest.mark.parametrize("edge_count", (500, 1_000, 2_000))
+def test_selected_edge_fetch_is_portable_and_linear_in_possible_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    edge_count: int,
+) -> None:
+    store = _build_many_distinct_edge_store(tmp_path, edge_count)
+    statements: list[str] = []
+    selection_calls = 0
+    original_connect = store._connect
+    original_order = storage._selected_identity_order
+
+    def traced_connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    def counted_order(row, selected_orders):
+        nonlocal selection_calls
+        selection_calls += 1
+        return original_order(row, selected_orders)
+
+    monkeypatch.setattr(store, "_connect", traced_connect)
+    monkeypatch.setattr(storage, "_selected_identity_order", counted_order)
+
+    events = store.recent_comparison_events(
+        provider_id="edge-scale",
+        since=date(2026, 8, 20),
+        until=date(2026, 8, 20),
+    )
+
+    assert len(events) == edge_count
+    assert selection_calls == edge_count
+    read_statements = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith(("SELECT", "WITH"))
+    ]
+    assert len(read_statements) == 2
+    assert all("json_each" not in statement.lower() for statement in read_statements)
+    assert all("json_tree" not in statement.lower() for statement in read_statements)
+    assert "metadata_json" not in read_statements[1]
+    with original_connect() as connection:
+        query_plan = connection.execute(
+            "EXPLAIN QUERY PLAN " + read_statements[1]
+        ).fetchall()
+    assert all("VIRTUAL TABLE" not in str(row).upper() for row in query_plan)
+
+
+def _make_snapshot_metadata_nullable(store: Store) -> None:
+    """Emulate a corrupted/legacy SQLite file that lacks the current NOT NULL guard."""
+    with store._connect() as connection:
+        connection.execute("CREATE TABLE snapshot_models_corrupt AS SELECT * FROM snapshot_models")
+        connection.execute("DROP TABLE snapshot_models")
+        connection.execute("ALTER TABLE snapshot_models_corrupt RENAME TO snapshot_models")
+        connection.commit()
+
+
+@pytest.mark.parametrize(("side", "scrape_index"), (("source", 0), ("target", 1)))
+def test_present_snapshot_with_null_metadata_is_corruption_not_missing_side(
+    tmp_path: Path, side: str, scrape_index: int
+) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, _, _ = fixture["scrapes"]
+    _make_snapshot_metadata_nullable(store)
+    with store._connect() as connection:
+        connection.execute(
+            """
+            UPDATE snapshot_models
+            SET metadata_json = NULL
+            WHERE scrape_id = ? AND provider_model_id = 'synthetic/model'
+            """,
+            ((first, second)[scrape_index],),
+        )
+        connection.commit()
+
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.recent_comparison_events(
+            provider_id="synthetic",
+            since=fixture["date"],
+            until=fixture["date"],
+        )
+    message = str(exc_info.value)
+    assert side in message
+    assert "NULL metadata" in message
+    assert "synthetic/model" in message
+    assert store.recent_changes(provider_id="synthetic")
+
+
+@pytest.mark.parametrize(("column", "scrape_index"), (("from_completed_at", 0), ("to_completed_at", 1)))
+def test_invalid_exact_side_scrape_timestamp_raises_safe_typed_error(
+    tmp_path: Path, column: str, scrape_index: int
+) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, _, _ = fixture["scrapes"]
+    corrupt_timestamp = "synthetic-corrupt-completed-at-never-echo"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE scrapes SET completed_at = ? WHERE scrape_id = ?",
+            (corrupt_timestamp, (first, second)[scrape_index]),
+        )
+        connection.commit()
+
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.recent_comparison_events(
+            provider_id="synthetic",
+            since=fixture["date"],
+            until=fixture["date"],
+        )
+    message = str(exc_info.value)
+    assert column in message
+    assert corrupt_timestamp not in message
+
+
+def test_changed_edge_rejects_mixed_change_kinds(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, _, _ = fixture["scrapes"]
+    with store._connect() as connection:
+        connection.execute(
+            """
+            UPDATE field_changes
+            SET change_kind = 'added', field_name = NULL,
+                old_value_json = NULL, new_value_json = NULL
+            WHERE change_id = (
+                SELECT MIN(change_id) FROM field_changes
+                WHERE provider_id = 'synthetic'
+                  AND provider_model_id = 'synthetic/model'
+                  AND from_scrape_id = ? AND to_scrape_id = ?
+            )
+            """,
+            (first, second),
+        )
+        connection.commit()
+
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.recent_comparison_events(provider_id="synthetic")
+    assert "mixed change kinds" in str(exc_info.value)
+
+
+def test_presence_edge_rejects_duplicate_rows(tmp_path: Path) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, _, _ = fixture["scrapes"]
+    for _ in range(2):
+        _insert_synthetic_change_row(
+            store,
+            provider_id="synthetic",
+            model_id="synthetic/duplicate-presence",
+            from_scrape_id=first,
+            to_scrape_id=second,
+            detected_at=fixture["timestamps"]["edge_one"],
+            field_name=None,
+            old_value=None,
+            new_value=None,
+            change_kind="removed",
+        )
+
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.recent_comparison_events(provider_id="synthetic")
+    assert "presence row" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("payload_column", ("field_name", "old_value_json", "new_value_json"))
+def test_presence_edge_rejects_non_null_payload_columns(
+    tmp_path: Path, payload_column: str
+) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, _, _, _ = fixture["scrapes"]
+    corrupt_payload = "synthetic-presence-payload-never-echo"
+    with store._connect() as connection:
+        connection.execute(
+            f"""
+            UPDATE field_changes
+            SET {payload_column} = ?
+            WHERE provider_id = 'synthetic'
+              AND provider_model_id = 'synthetic/model'
+              AND from_scrape_id IS NULL
+              AND to_scrape_id = ?
+            """,
+            (corrupt_payload, first),
+        )
+        connection.commit()
+
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.history_comparison_events(
+            provider_id="synthetic",
+            model_id="synthetic/model",
+            since=fixture["date"] - timedelta(days=1),
+            until=fixture["date"] - timedelta(days=1),
+        )
+    message = str(exc_info.value)
+    assert "presence payload" in message
+    assert corrupt_payload not in message
+
+
+@pytest.mark.parametrize(
+    ("column", "corrupt_value", "invariant"),
+    (
+        ("to_scrape_id", "not-a-scrape-id", "identity"),
+        ("detected_at", "not-a-timestamp", "detected_at"),
+        ("change_kind", "", "change_kind"),
+        ("field_name", None, "field_name"),
+        ("field_name", "", "field_name"),
+    ),
+)
+def test_malformed_comparison_row_shape_raises_safe_typed_error(
+    tmp_path: Path,
+    column: str,
+    corrupt_value: Any,
+    invariant: str,
+) -> None:
+    store, fixture = _build_comparison_event_store(tmp_path)
+    first, second, _, _ = fixture["scrapes"]
+    with store._connect() as connection:
+        connection.execute(
+            f"""
+            UPDATE field_changes
+            SET {column} = ?
+            WHERE change_id = (
+                SELECT MIN(change_id)
+                FROM field_changes
+                WHERE provider_id = 'synthetic'
+                  AND provider_model_id = 'synthetic/model'
+                  AND from_scrape_id = ?
+                  AND to_scrape_id = ?
+            )
+            """,
+            (corrupt_value, first, second),
+        )
+        connection.commit()
+
+    with pytest.raises(storage.StoredComparisonDataError) as exc_info:
+        store.recent_comparison_events(provider_id="synthetic")
+    message = str(exc_info.value)
+    assert invariant in message
+    assert "not-a-scrape-id" not in message
+    assert "not-a-timestamp" not in message
+
+
+def test_comparison_events_preserve_subsecond_chronology(tmp_path: Path) -> None:
+    store = Store(tmp_path / "subsecond-comparison-events.db")
+    store.initialize()
+    provider = _provider("subsecond", "Subsecond Synthetic")
+    store.upsert_provider_configs((provider,), updated_at="2026-08-20T00:00:00+00:00")
+    scrape_ids = []
+    for minute in (1, 2, 3):
+        scrape_id = store.create_scrape(
+            provider_id="subsecond",
+            started_at=f"2026-08-20T00:0{minute}:00+00:00",
+            completed_at=f"2026-08-20T00:0{minute}:30+00:00",
+            status="success",
+            baseline_mode="previous",
+            baseline_scrape_id=scrape_ids[-1] if scrape_ids else None,
+            saved_snapshot=True,
+            model_count=1,
+            error_message=None,
+        )
+        scrape_ids.append(scrape_id)
+        store.save_snapshot_models(
+            scrape_id=scrape_id,
+            provider_id="subsecond",
+            models=[
+                _model(
+                    "subsecond/model",
+                    provider_id="subsecond",
+                    provider_label=provider.label,
+                    metadata={"scrape": minute},
+                )
+            ],
+        )
+
+    # Insert the later edge first so a truncated timestamp sort would be wrong.
+    for from_id, to_id, detected_at in (
+        (scrape_ids[1], scrape_ids[2], "2026-08-20T12:00:00.900000+00:00"),
+        (scrape_ids[0], scrape_ids[1], "2026-08-20T12:00:00.100000+00:00"),
+    ):
+        _insert_synthetic_change_row(
+            store,
+            provider_id="subsecond",
+            model_id="subsecond/model",
+            from_scrape_id=from_id,
+            to_scrape_id=to_id,
+            detected_at=detected_at,
+            field_name="status",
+            old_value="old",
+            new_value="new",
+        )
+
+    events = store.recent_comparison_events(provider_id="subsecond")
+
+    assert tuple(event.detected_at for event in events) == (
+        "2026-08-20T12:00:00.100000+00:00",
+        "2026-08-20T12:00:00.900000+00:00",
+    )
