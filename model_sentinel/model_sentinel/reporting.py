@@ -574,6 +574,7 @@ def build_model_event_semantic_core(
         change
         for change, reference in zip(event.field_changes, references, strict=True)
         if reference not in consumed
+        and not profile.is_pricing_override_selector_path(change.field_name)
         and not (
             interpretation is not None
             and change.field_name == "pricing.overrides"
@@ -1196,6 +1197,7 @@ def _plan_provider_changes(
                 include_evidence_only=(
                     include_evidence_only and policy.mode == "all"
                 ),
+                include_semantic_composite=policy.mode != "squelched",
             ),
             rollups,
         )
@@ -1255,6 +1257,8 @@ def _has_hidden_details(plan: _FieldDisplayPlan) -> bool:
 def _renders_anything(
     plan: _FieldDisplayPlan,
     semantic_core: ModelEventSemanticCore | None = None,
+    *,
+    include_semantic_composite: bool = True,
 ) -> bool:
     """THE "does this model still say something?" rule.
 
@@ -1277,7 +1281,11 @@ def _renders_anything(
     return bool(
         plan.visible
         or _has_hidden_details(plan)
-        or (semantic_core is not None and semantic_core.has_semantic_composite)
+        or (
+            include_semantic_composite
+            and semantic_core is not None
+            and semantic_core.has_semantic_composite
+        )
     )
 
 
@@ -1285,6 +1293,7 @@ def _prune_empty_items(
     items: Sequence[_PlannedModelChange | _BulkChangeGroup],
     *,
     include_evidence_only: bool = False,
+    include_semantic_composite: bool = True,
 ) -> tuple[_PlannedModelChange | _BulkChangeGroup, ...]:
     """Drop planned models that would render an empty card.
 
@@ -1299,7 +1308,11 @@ def _prune_empty_items(
         if isinstance(item, _BulkChangeGroup)
         or (
             (
-                _renders_anything(item.display, item.semantic_core)
+                _renders_anything(
+                    item.display,
+                    item.semantic_core,
+                    include_semantic_composite=include_semantic_composite,
+                )
                 or (
                     include_evidence_only
                     and item.semantic_core is not None
@@ -1694,7 +1707,11 @@ def plan_changes_provider(
             ).display
         unclassified_remaining = max(0, unclassified_remaining - plan.unclassified_used)
         planned_displays.append((rendered_model_id, plan))
-        if not _renders_anything(plan, semantic_core) and not (
+        if not _renders_anything(
+            plan,
+            semantic_core,
+            include_semantic_composite=policy.mode != "squelched",
+        ) and not (
             include_evidence_only
             and policy.mode == "all"
             and semantic_core is not None
@@ -1908,9 +1925,16 @@ def _history_event_from_stored_row(source_row: Any) -> HistoryEvent:
     )
 
 
-def _history_plan_is_conditional(plan: StoredEventPresentationPlan) -> bool:
-    """Use composite history rendering only for an actual conditional edge."""
-    return plan.projection.core.interpretation is not None
+def _history_plan_uses_semantic_projection(
+    plan: StoredEventPresentationPlan,
+    profile: ProviderProfile,
+) -> bool:
+    """Keep conditional and orphan selector evidence off the legacy row path."""
+    core = plan.projection.core
+    return core.interpretation is not None or any(
+        profile.is_pricing_override_selector_path(change.field_name)
+        for change in core.event.field_changes
+    )
 
 
 def _field_category_for_detail(
@@ -2584,13 +2608,15 @@ def render_history_report(
         stored_projections = {
             plan.identity: plan.projection for plan in stored_plans
         }
-    conditional_stored_plans = tuple(
-        plan for plan in stored_plans if _history_plan_is_conditional(plan)
+    semantic_stored_plans = tuple(
+        plan
+        for plan in stored_plans
+        if _history_plan_uses_semantic_projection(plan, profile)
     )
     # Rich storage is an input enhancement, not a wholesale history format
-    # replacement.  If no edge contains conditional pricing, stay on the
-    # byte-characterized five-field legacy renderer in its entirety.
-    if stored_plans and not conditional_stored_plans:
+    # replacement. If no edge needs conditional/selector semantic handling,
+    # stay on the byte-characterized five-field legacy renderer in full.
+    if stored_plans and not semantic_stored_plans:
         stored_plans = ()
     ordinary_by_identity = {
         plan.identity: tuple(
@@ -2598,7 +2624,7 @@ def render_history_report(
             for row in plan.stored_event.source_rows
         )
         for plan in stored_plans
-        if not _history_plan_is_conditional(plan)
+        if not _history_plan_uses_semantic_projection(plan, profile)
     }
     ordinary_stored_events = tuple(
         event
@@ -2631,7 +2657,7 @@ def render_history_report(
         if stored_plans:
             table_open = False
             for plan in stored_plans:
-                if not _history_plan_is_conditional(plan):
+                if not _history_plan_uses_semantic_projection(plan, profile):
                     visible = tuple(
                         event
                         for event in ordinary_by_identity[plan.identity]
@@ -2729,7 +2755,7 @@ def render_history_report(
         return "\n".join(lines)
     if stored_plans:
         for plan in stored_plans:
-            if not _history_plan_is_conditional(plan):
+            if not _history_plan_uses_semantic_projection(plan, profile):
                 for event in ordinary_by_identity[plan.identity]:
                     if id(event) not in visible_ordinary_ids:
                         continue

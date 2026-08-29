@@ -2298,6 +2298,317 @@ def test_selector_rows_never_pollute_direct_accounting_even_with_raw_fallback(
     assert rendered.kind != "price"
 
 
+def _stored_event_with_selector_row(
+    event: StoredComparisonEvent,
+    *,
+    selector_path: str,
+    old_value=100,
+    new_value=200,
+) -> StoredComparisonEvent:
+    selector = StoredChangeRecord(
+        change_id=event.source_rows[-1].change_id + 100,
+        provider_id=event.identity.provider_id,
+        provider_model_id=event.identity.provider_model_id,
+        from_scrape_id=event.identity.from_scrape_id,
+        to_scrape_id=event.identity.to_scrape_id,
+        change_kind="field_changed",
+        field_name=selector_path,
+        old_value=old_value,
+        new_value=new_value,
+        detected_at=event.detected_at,
+    )
+    return replace(
+        event,
+        source_rows=(*event.source_rows, selector),
+        field_changes=(
+            *event.field_changes,
+            FieldChange(selector_path, old_value, new_value),
+        ),
+    )
+
+
+def _selector_render_cases():
+    start = replace(
+        OPENROUTER_PROFILE.pricing_override_condition_descriptors["utc_start"],
+        field_name="start_utc",
+    )
+    end = replace(
+        OPENROUTER_PROFILE.pricing_override_condition_descriptors["utc_end"],
+        field_name="end_utc",
+    )
+    rich_descriptors = dict(
+        OPENROUTER_PROFILE.pricing_override_condition_descriptors
+    )
+    rich_descriptors.pop("utc_start")
+    rich_descriptors.pop("utc_end")
+    rich_descriptors.update(start_utc=start, end_utc=end)
+    rich = replace(
+        OPENROUTER_PROFILE,
+        pricing_override_condition_fields=(),
+        pricing_override_condition_descriptors=rich_descriptors,
+    )
+    legacy = replace(
+        OPENROUTER_PROFILE,
+        pricing_override_condition_fields=("legacy_start",),
+        pricing_override_condition_descriptors={},
+    )
+    return (
+        (
+            OPENROUTER_PROFILE,
+            "pricing.overrides[0].utc_start",
+            "Utc start",
+            [{
+                "utc_days": ["monday"],
+                "utc_start": 100,
+                "utc_end": 200,
+                "prompt": "0.000002",
+            }],
+        ),
+        (
+            rich,
+            "pricing.overrides[0].start_utc",
+            "Start utc",
+            [{
+                "utc_days": ["monday"],
+                "start_utc": 100,
+                "end_utc": 200,
+                "prompt": "0.000002",
+            }],
+        ),
+        (
+            legacy,
+            "pricing.overrides[0].legacy_start",
+            "Legacy start",
+            [{"legacy_start": 100, "prompt": "0.000002"}],
+        ),
+    )
+
+
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+@pytest.mark.parametrize("format_name", ("text", "markdown", "html"))
+@pytest.mark.parametrize("with_parent", (False, True), ids=("orphan", "parent"))
+@pytest.mark.parametrize(
+    ("profile", "selector_path", "selector_label", "rules"),
+    _selector_render_cases(),
+    ids=("openrouter", "rich-alternate", "legacy-alternate"),
+)
+def test_scan_selector_evidence_is_kept_inside_policy_and_never_detached(
+    detail_mode: str,
+    format_name: str,
+    with_parent: bool,
+    profile: ProviderProfile,
+    selector_path: str,
+    selector_label: str,
+    rules,
+) -> None:
+    changes = [FieldChange(selector_path, 100, 200)]
+    if with_parent:
+        changes.insert(0, FieldChange("pricing.overrides", None, rules))
+    event = replace(
+        _event(metadata=False),
+        field_changes=tuple(changes),
+        old_model_metadata=(
+            {"id": "synthetic/model", "pricing": {"prompt": "0.000001"}}
+            if with_parent
+            else None
+        ),
+        new_model_metadata=(
+            {
+                "id": "synthetic/model",
+                "pricing": {"prompt": "0.000001", "overrides": rules},
+            }
+            if with_parent
+            else None
+        ),
+    )
+    core = reporting.build_model_event_semantic_core(event, profile)
+
+    assert tuple(change.field_name for change in core.remaining_field_changes) == ()
+    assert event.field_changes[-1].field_name == selector_path
+    report = _scan_report(
+        event, format_name, detail_mode=detail_mode, profile=profile
+    )
+    assert selector_label not in report
+    assert selector_path not in report
+    if format_name == "html" and (
+        not with_parent or detail_mode == "squelched"
+    ):
+        assert '<div class="model-card"' not in report
+    if with_parent and detail_mode != "squelched":
+        assert "pricing" in report.casefold()
+
+
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+@pytest.mark.parametrize("with_parent", (False, True), ids=("orphan", "parent"))
+@pytest.mark.parametrize(
+    ("profile", "selector_path", "selector_label", "rules"),
+    _selector_render_cases(),
+    ids=("openrouter", "rich-alternate", "legacy-alternate"),
+)
+def test_history_selector_evidence_is_not_a_detached_legacy_row(
+    detail_mode: str,
+    format_name: str,
+    with_parent: bool,
+    profile: ProviderProfile,
+    selector_path: str,
+    selector_label: str,
+    rules,
+) -> None:
+    base = (
+        _stored_schedule_event(
+            from_scrape=10,
+            to_scrape=11,
+            old_rules=None,
+            new_rules=rules,
+            detected_at="2026-08-28T12:00:00+00:00",
+        )
+        if with_parent
+        else _stored_ordinary_event(
+            from_scrape=10,
+            to_scrape=11,
+            detected_at="2026-08-28T12:00:00+00:00",
+            field_name=selector_path,
+            old_value=100,
+            new_value=200,
+        )
+    )
+    event = (
+        _stored_event_with_selector_row(
+            base, selector_path=selector_path
+        )
+        if with_parent
+        else base
+    )
+    history_events = tuple(
+        HistoryEvent(
+            row.detected_at,
+            row.change_kind,
+            row.field_name,
+            row.old_value,
+            row.new_value,
+        )
+        for row in event.source_rows
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(event), profile
+    )
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen=event.detected_at,
+        last_seen=event.detected_at,
+        events=history_events,
+        profile=profile,
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+        stored_events=(event,),
+        semantic_cores={event.identity: core},
+    )
+
+    assert selector_path not in report
+    assert selector_label not in report
+    assert "100 -> 200" not in report
+
+
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+@pytest.mark.parametrize("format_name", ("text", "html"))
+@pytest.mark.parametrize("with_parent", (False, True), ids=("orphan", "parent"))
+@pytest.mark.parametrize(
+    ("profile", "selector_path", "selector_label", "rules"),
+    _selector_render_cases(),
+    ids=("openrouter", "rich-alternate", "legacy-alternate"),
+)
+def test_changes_selector_evidence_never_creates_a_detached_row_or_empty_card(
+    detail_mode: str,
+    format_name: str,
+    with_parent: bool,
+    profile: ProviderProfile,
+    selector_path: str,
+    selector_label: str,
+    rules,
+) -> None:
+    base = (
+        _stored_schedule_event(
+            from_scrape=10,
+            to_scrape=11,
+            old_rules=None,
+            new_rules=rules,
+            detected_at="2026-08-28T12:00:00+00:00",
+        )
+        if with_parent
+        else _stored_ordinary_event(
+            from_scrape=10,
+            to_scrape=11,
+            detected_at="2026-08-28T12:00:00+00:00",
+            field_name=selector_path,
+            old_value=100,
+            new_value=200,
+        )
+    )
+    event = (
+        _stored_event_with_selector_row(
+            base, selector_path=selector_path
+        )
+        if with_parent
+        else base
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(event), profile
+    )
+    aggregate = reporting.build_changes_semantic_core(
+        (event,), {"openrouter": profile}
+    )
+    report = reporting.render_changes_report(
+        format_name=format_name,
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=(),
+        provider_profiles={"openrouter": profile},
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+        stored_events=(event,),
+        semantic_cores={event.identity: core},
+        changes_semantic_core=aggregate,
+    )
+
+    assert selector_label not in report
+    assert selector_path not in report
+    assert "100 → 200" not in report
+    if format_name == "html" and (
+        not with_parent or detail_mode == "squelched"
+    ):
+        assert '<div class="model-card"' not in report
+
+
+def test_selector_suppression_is_human_only_and_outside_lookalike_stays_ordinary() -> None:
+    selector = FieldChange("pricing.overrides[0].utc_start", 100, 200)
+    outside = FieldChange("pricing.metadata.utc_start", 100, 200)
+    event = replace(
+        _event(metadata=False),
+        field_changes=(selector, outside),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+
+    assert tuple(change.field_name for change in core.remaining_field_changes) == (
+        "pricing.metadata.utc_start",
+    )
+    human = _scan_report(event, "text", detail_mode="all")
+    payload = json.loads(_scan_report(event, "json", detail_mode="all"))
+    assert "Utc start" in human
+    assert "pricing.overrides[0].utc_start" not in human
+    assert [
+        change["field_name"]
+        for change in payload["providers"][0]["changed"][0]["field_changes"]
+    ] == [
+        "pricing.overrides[0].utc_start",
+        "pricing.metadata.utc_start",
+    ]
+
+
 def test_generic_reporting_has_no_provider_raw_utc_selector_constants() -> None:
     source = (
         Path(__file__).parents[1] / "model_sentinel" / "reporting.py"
