@@ -909,10 +909,18 @@ def _field_display_plan(
     # policy. The filter sits above the `mode == "all"` early return on
     # purpose: E1 is a correctness fix, not a verbosity setting, so the
     # full-detail audit view drops them too.
-    field_changes, noop = _drop_noop_changes(
-        _expand_structured_field_changes(field_changes, profile),
-        profile,
+    expanded = _expand_structured_field_changes(field_changes, profile)
+    # Conditional selectors are policy evidence, never independent facts. A
+    # compatibility caller may not have a semantic core to consume them, so
+    # enforce the same provider-owned boundary here after structured parents
+    # have produced their leaf paths and before any display classification.
+    # This is presentation-only: source deltas and JSON remain untouched.
+    expanded = tuple(
+        change
+        for change in expanded
+        if not profile.is_pricing_override_selector_path(change.field_name)
     )
+    field_changes, noop = _drop_noop_changes(expanded, profile)
     if policy.mode == "all":
         return _FieldDisplayPlan(field_changes, (), (), (), 0, noop)
 
@@ -1861,6 +1869,21 @@ def _visible_history_events(
     return tuple(visible)
 
 
+def _legacy_human_history_events(
+    events: tuple[HistoryEvent, ...],
+    profile: ProviderProfile,
+) -> tuple[HistoryEvent, ...]:
+    """Remove policy-selector leaves from the legacy human projection only."""
+    return tuple(
+        event
+        for event in events
+        if not (
+            event.field_name
+            and profile.is_pricing_override_selector_path(event.field_name)
+        )
+    )
+
+
 def _history_hidden_counts(
     events: tuple[HistoryEvent, ...],
     policy: ReportDetailPolicy,
@@ -2592,6 +2615,7 @@ def render_history_report(
             indent=2,
             sort_keys=True,
         )
+    legacy_human_events = _legacy_human_history_events(events, profile)
     stored_projections: dict[
         ComparisonIdentity, ModelEventPresentationPlan
     ] = {}
@@ -2651,7 +2675,7 @@ def render_history_report(
             if cache_summary:
                 lines.append(f"- Latest cache pricing: {cache_summary}")
         lines.append("")
-        if not events and not stored_plans:
+        if not legacy_human_events and not stored_plans:
             lines.append("No saved change events matched the requested range.")
             return "\n".join(lines)
         if stored_plans:
@@ -2731,12 +2755,12 @@ def render_history_report(
             return "\n".join(lines).rstrip()
         lines.append("| Detected At | Kind | Field | Old | New |")
         lines.append("|---|---|---|---|---|")
-        for event in _visible_history_events(events, detail_policy):
+        for event in _visible_history_events(legacy_human_events, detail_policy):
             lines.append(
                 f"| {to_local_human(event.detected_at)} | {event.change_kind} | {event.field_name or ''} | "
                 f"{_scalar_display(event.old_value)} | {_scalar_display(event.new_value)} |"
             )
-        lines.extend(_history_summary_markdown(events, detail_policy))
+        lines.extend(_history_summary_markdown(legacy_human_events, detail_policy))
         return "\n".join(lines)
     lines = [
         f"History for {provider_id} / {model_id}",
@@ -2750,7 +2774,7 @@ def render_history_report(
         if cache_summary:
             lines.append(f"Latest cache pricing: {cache_summary}")
     lines.append("")
-    if not events and not stored_plans:
+    if not legacy_human_events and not stored_plans:
         lines.append("No saved change events matched the requested range.")
         return "\n".join(lines)
     if stored_plans:
@@ -2809,12 +2833,12 @@ def render_history_report(
             _history_summary_text(ordinary_stored_events, detail_policy)
         )
         return "\n".join(lines).rstrip()
-    for event in _visible_history_events(events, detail_policy):
+    for event in _visible_history_events(legacy_human_events, detail_policy):
         lines.append(
             f"- {to_local_human(event.detected_at)} [{event.change_kind}] "
             f"{event.field_name or ''} {_scalar_display(event.old_value)} -> {_scalar_display(event.new_value)}"
         )
-    lines.extend(_history_summary_text(events, detail_policy))
+    lines.extend(_history_summary_text(legacy_human_events, detail_policy))
     return "\n".join(lines)
 
 

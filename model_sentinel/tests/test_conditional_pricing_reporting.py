@@ -2609,6 +2609,275 @@ def test_selector_suppression_is_human_only_and_outside_lookalike_stays_ordinary
     ]
 
 
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+@pytest.mark.parametrize("format_name", ("text", "markdown", "html"))
+@pytest.mark.parametrize(
+    ("profile", "selector_path", "selector_label", "_rules"),
+    _selector_render_cases(),
+    ids=("openrouter", "rich-alternate", "legacy-alternate"),
+)
+def test_no_core_scan_human_plan_filters_exact_selector_without_empty_card(
+    detail_mode: str,
+    format_name: str,
+    profile: ProviderProfile,
+    selector_path: str,
+    selector_label: str,
+    _rules,
+) -> None:
+    selector = FieldChange(selector_path, 100, 200)
+    event = replace(
+        _event(metadata=False),
+        field_changes=(selector,),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+    result = _scan_result(event, profile)
+
+    report = reporting.render_scan_report(
+        generated_at=event.detected_at,
+        command="scan",
+        format_name=format_name,
+        provider_results=[result],
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+    )
+
+    assert selector_path not in report
+    assert selector_label not in report
+    assert result.changed[0].field_changes == (selector,)
+    if format_name == "html":
+        assert '<div class="model-card"' not in report
+
+
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+@pytest.mark.parametrize("format_name", ("text", "html"))
+@pytest.mark.parametrize(
+    ("profile", "selector_path", "selector_label", "_rules"),
+    _selector_render_cases(),
+    ids=("openrouter", "rich-alternate", "legacy-alternate"),
+)
+def test_legacy_changes_human_plan_filters_selector_without_empty_card(
+    detail_mode: str,
+    format_name: str,
+    profile: ProviderProfile,
+    selector_path: str,
+    selector_label: str,
+    _rules,
+) -> None:
+    changes = (
+        {
+            "detected_at": "2026-08-28T12:00:00+00:00",
+            "provider_id": "openrouter",
+            "provider_model_id": "synthetic/model",
+            "display_name": "Synthetic Model",
+            "change_kind": "field_changed",
+            "field_name": selector_path,
+            "old_value": 100,
+            "new_value": 200,
+        },
+    )
+
+    report = reporting.render_changes_report(
+        format_name=format_name,
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=changes,
+        provider_profiles={"openrouter": profile},
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+    )
+
+    assert selector_path not in report
+    assert selector_label not in report
+    assert changes[0]["field_name"] == selector_path
+    if format_name == "html":
+        assert '<div class="model-card"' not in report
+
+
+@pytest.mark.parametrize("format_name", ("text", "html"))
+def test_legacy_changes_keeps_similarly_named_field_outside_override_namespace(
+    format_name: str,
+) -> None:
+    outside_path = "pricing.metadata.utc_start"
+    changes = (
+        {
+            "detected_at": "2026-08-28T12:00:00+00:00",
+            "provider_id": "openrouter",
+            "provider_model_id": "synthetic/model",
+            "display_name": "Synthetic Model",
+            "change_kind": "field_changed",
+            "field_name": outside_path,
+            "old_value": 100,
+            "new_value": 200,
+        },
+    )
+
+    report = reporting.render_changes_report(
+        format_name=format_name,
+        provider_id=None,
+        since=None,
+        until=None,
+        changes=changes,
+        provider_profiles={"openrouter": OPENROUTER_PROFILE},
+        detail_policy=reporting.make_report_detail_policy(),
+    )
+
+    assert "Utc start" in report
+
+
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+@pytest.mark.parametrize(
+    ("profile", "selector_path", "selector_label", "_rules"),
+    _selector_render_cases(),
+    ids=("openrouter", "rich-alternate", "legacy-alternate"),
+)
+def test_legacy_history_human_plan_filters_selector_only_input(
+    detail_mode: str,
+    format_name: str,
+    profile: ProviderProfile,
+    selector_path: str,
+    selector_label: str,
+    _rules,
+) -> None:
+    selector = HistoryEvent(
+        "2026-08-28T12:00:00+00:00",
+        "field_changed",
+        selector_path,
+        100,
+        200,
+    )
+    events = (selector,)
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen=selector.detected_at,
+        last_seen=selector.detected_at,
+        events=events,
+        profile=profile,
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+    )
+
+    assert selector_path not in report
+    assert "No saved change events matched" in report
+    assert events == (selector,)
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_legacy_history_keeps_similarly_named_field_outside_override_namespace(
+    format_name: str,
+) -> None:
+    outside_path = "pricing.metadata.utc_start"
+    outside = HistoryEvent(
+        "2026-08-28T12:00:00+00:00",
+        "field_changed",
+        outside_path,
+        100,
+        200,
+    )
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen=outside.detected_at,
+        last_seen=outside.detected_at,
+        events=(outside,),
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(mode="all"),
+    )
+
+    assert outside_path in report
+
+
+@pytest.mark.parametrize(
+    ("profile", "selector_path", "_selector_label", "_rules"),
+    _selector_render_cases(),
+    ids=("openrouter", "rich-alternate", "legacy-alternate"),
+)
+def test_no_core_structured_selector_expansion_is_filtered_after_expansion(
+    profile: ProviderProfile,
+    selector_path: str,
+    _selector_label: str,
+    _rules,
+) -> None:
+    selector_name = selector_path.rsplit(".", 1)[-1]
+    source = (
+        FieldChange(
+            "pricing.overrides",
+            None,
+            [{selector_name: 200}],
+        ),
+    )
+
+    plan = reporting._field_display_plan(
+        source,
+        reporting.make_report_detail_policy(mode="all"),
+        profile,
+    )
+
+    assert plan.visible == ()
+    assert source[0].new_value == [{selector_name: 200}]
+
+
+def test_legacy_json_selector_projections_remain_unchanged() -> None:
+    selector_path = "pricing.overrides[0].utc_start"
+    event = replace(
+        _event(metadata=False),
+        field_changes=(FieldChange(selector_path, 100, 200),),
+    )
+    history_events = (
+        HistoryEvent(event.detected_at, "field_changed", selector_path, 100, 200),
+    )
+    change_rows = (
+        {
+            "detected_at": event.detected_at,
+            "provider_id": "openrouter",
+            "provider_model_id": event.provider_model_id,
+            "display_name": event.display_name,
+            "change_kind": "field_changed",
+            "field_name": selector_path,
+            "old_value": 100,
+            "new_value": 200,
+        },
+    )
+
+    scan = json.loads(
+        reporting.render_scan_report(
+            generated_at=event.detected_at,
+            command="scan",
+            format_name="json",
+            provider_results=[_scan_result(event)],
+        )
+    )
+    history = json.loads(
+        reporting.render_history_report(
+            provider_id="openrouter",
+            model_id=event.provider_model_id,
+            format_name="json",
+            first_seen=event.detected_at,
+            last_seen=event.detected_at,
+            events=history_events,
+            profile=OPENROUTER_PROFILE,
+        )
+    )
+    changes = json.loads(
+        reporting.render_changes_report(
+            format_name="json",
+            provider_id=None,
+            since=None,
+            until=None,
+            changes=change_rows,
+            provider_profiles={"openrouter": OPENROUTER_PROFILE},
+        )
+    )
+
+    assert scan["providers"][0]["changed"][0]["field_changes"][0]["field_name"] == selector_path
+    assert history["events"][0]["field_name"] == selector_path
+    assert changes["changes"][0]["field_name"] == selector_path
+
+
 def test_generic_reporting_has_no_provider_raw_utc_selector_constants() -> None:
     source = (
         Path(__file__).parents[1] / "model_sentinel" / "reporting.py"

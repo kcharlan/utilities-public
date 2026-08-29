@@ -3370,7 +3370,7 @@ def test_new_structured_values_expand_to_leaf_changes_in_human_reports_only() ->
     # an ordinal rather than as a stray value in a row full of values.
     assert "Output (#0): null \u2192 0.0000225 ($22.50 /1M tokens)" in text_report
     assert "Cache read (#0): null \u2192 0.0000006 ($0.60 /1M tokens)" in text_report
-    assert "Min prompt tokens (#0): null \u2192 200,000" in text_report
+    assert "Min prompt tokens (#0)" not in text_report
     assert "$200" not in text_report
     # The qualifier is required here too. A bare `assert "Input" in html_report`
     # passes whether or not the HTML renderer qualified the row, which makes it
@@ -3467,7 +3467,7 @@ def test_existing_pricing_override_tiers_render_only_changed_leaves() -> None:
     assert field_name not in json_report
 
 
-def test_pricing_override_tier_addition_and_removal_render_as_semantic_tiers() -> None:
+def test_pricing_override_tier_addition_and_removal_hide_detached_selectors() -> None:
     changed = (
         ModelDelta(
             "changed",
@@ -3490,12 +3490,12 @@ def test_pricing_override_tier_addition_and_removal_render_as_semantic_tiers() -
         provider_results=[_scan_result(changed)],
     )
 
-    # Both tiers carry the same two leaves, so the tier condition is the ONLY
-    # thing separating the removed tier's rows from the added tier's.
+    # Compatibility rendering keeps the changed price leaves auditable, while
+    # the binding selector remains policy evidence rather than a detached row.
     assert "Input (min_prompt_tokens=200000): 0.000004 ($4.00 /1M tokens) \u2192 null" in report
     assert "Input (min_prompt_tokens=300000): null \u2192 0.000005 ($5.00 /1M tokens)" in report
-    assert "Min prompt tokens (min_prompt_tokens=200000): 200,000 \u2192 null" in report
-    assert "Min prompt tokens (min_prompt_tokens=300000): null \u2192 300,000" in report
+    assert "Min prompt tokens (min_prompt_tokens=200000)" not in report
+    assert "Min prompt tokens (min_prompt_tokens=300000)" not in report
 
 
 # ---------------------------------------------------------------------------
