@@ -22,7 +22,11 @@ from model_sentinel.models import (
     ModelDelta,
     ProviderScanResult,
 )
-from model_sentinel.provider_profiles import OPENROUTER_PROFILE, ProviderProfile
+from model_sentinel.provider_profiles import (
+    GENERIC_PROFILE,
+    OPENROUTER_PROFILE,
+    ProviderProfile,
+)
 from model_sentinel.storage import StoredChangeRecord, StoredComparisonEvent
 
 
@@ -394,6 +398,133 @@ def _stored_schedule_event(
         old_model_metadata=old_metadata,
         new_model_metadata=new_metadata,
     )
+
+
+def _stored_ordinary_event(
+    *,
+    from_scrape: int,
+    to_scrape: int,
+    detected_at: str,
+    field_name: str,
+    old_value,
+    new_value,
+) -> StoredComparisonEvent:
+    identity = StoredComparisonIdentity(
+        "openrouter", "synthetic/model", from_scrape, to_scrape
+    )
+    row = StoredChangeRecord(
+        change_id=to_scrape,
+        provider_id="openrouter",
+        provider_model_id="synthetic/model",
+        from_scrape_id=from_scrape,
+        to_scrape_id=to_scrape,
+        change_kind="field_changed",
+        field_name=field_name,
+        old_value=old_value,
+        new_value=new_value,
+        detected_at=detected_at,
+    )
+    return StoredComparisonEvent(
+        identity=identity,
+        provider_label="OpenRouter",
+        display_name="Synthetic Model",
+        detected_at=detected_at,
+        from_completed_at=detected_at,
+        to_completed_at=detected_at,
+        source_rows=(row,),
+        field_changes=(FieldChange(field_name, old_value, new_value),),
+        old_model_metadata={"id": "synthetic/model", field_name: old_value},
+        new_model_metadata={"id": "synthetic/model", field_name: new_value},
+    )
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+def test_mixed_history_interleaves_legacy_rows_and_only_composites_conditional_edges(
+    format_name: str,
+    detail_mode: str,
+) -> None:
+    first = _stored_ordinary_event(
+        from_scrape=7,
+        to_scrape=8,
+        detected_at="2026-08-08T08:00:00+00:00",
+        field_name="status",
+        old_value="preview",
+        new_value="active",
+    )
+    rules = [
+        {
+            "utc_days": ["monday"],
+            "utc_start": 100,
+            "utc_end": 200,
+            "prompt": "0.000002",
+        }
+    ]
+    conditional = _stored_schedule_event(
+        from_scrape=8,
+        to_scrape=9,
+        old_rules=None,
+        new_rules=rules,
+        detected_at="2026-08-09T09:00:00+00:00",
+    )
+    last = _stored_ordinary_event(
+        from_scrape=9,
+        to_scrape=10,
+        detected_at="2026-08-10T10:00:00+00:00",
+        field_name="benchmarks.synthetic_score",
+        old_value=1,
+        new_value=2,
+    )
+    stored = (first, conditional, last)
+    events = tuple(
+        HistoryEvent(
+            row.detected_at,
+            row.change_kind,
+            row.field_name,
+            row.old_value,
+            row.new_value,
+        )
+        for event in stored
+        for row in event.source_rows
+    )
+    cores = {
+        event.identity: reporting.build_model_event_semantic_core(
+            reporting.pricing_event_from_stored(event), OPENROUTER_PROFILE
+        )
+        for event in stored
+    }
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen="2026-08-08T08:00:00+00:00",
+        last_seen="2026-08-10T10:00:00+00:00",
+        events=events,
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+        stored_events=stored,
+        semantic_cores=cores,
+    )
+
+    status = "status preview -> active" if format_name == "text" else "| status | preview | active |"
+    benchmark = (
+        "benchmarks.synthetic_score 1 -> 2"
+        if format_name == "text"
+        else "| benchmarks.synthetic_score | 1 | 2 |"
+    )
+    assert status in report
+    assert benchmark in report
+    assert report.index(status) < report.index(benchmark)
+    assert "Comparison detected" not in report.replace(
+        "Comparison detected 2026-08-09", ""
+    )
+    if detail_mode == "squelched":
+        assert "Comparison detected 2026-08-09" not in report
+    else:
+        conditional_heading = "Comparison detected 2026-08-09"
+        assert conditional_heading in report
+        assert report.index(status) < report.index(conditional_heading) < report.index(benchmark)
 
 
 def test_stored_same_day_edges_remain_distinct_and_use_displayed_policy_side() -> None:
@@ -1421,7 +1552,7 @@ def test_history_markdown_uses_the_same_exact_edge_conditional_block() -> None:
     assert "Canonical stored parent new: ` [" in report
 
 
-def test_history_rich_event_keeps_initial_presence_record_visible() -> None:
+def test_history_initial_presence_without_conditional_parent_keeps_legacy_shape() -> None:
     initial = replace(
         _stored_schedule_event(
             from_scrape=10,
@@ -1466,7 +1597,9 @@ def test_history_rich_event_keeps_initial_presence_record_visible() -> None:
         semantic_cores={initial.identity: core},
     )
 
-    assert "+ synthetic/model (Synthetic Model)" in report
+    assert "[added]  null -> null" in report
+    assert "+ synthetic/model (Synthetic Model)" not in report
+    assert "Comparison detected" not in report
 
 
 def test_conditional_semantics_do_not_change_any_public_json_payload() -> None:
@@ -1944,6 +2077,14 @@ def test_utc_badge_requires_an_actual_time_selector() -> None:
     )
     assert 'class="utc-badge">UTC</span>' in _scan_report(with_time, "html")
 
+    for format_name in ("text", "markdown"):
+        assert "Conditional pricing added - UTC" not in _scan_report(
+            threshold, format_name
+        )
+        assert "Conditional pricing added - UTC" in _scan_report(
+            with_time, format_name
+        )
+
 
 def test_conditionless_grouped_schedule_is_still_a_utc_weekly_schedule() -> None:
     conditionless = [{"prompt": "0.000002"}]
@@ -2009,6 +2150,10 @@ def test_raw_fallback_utc_badge_uses_active_profile_semantic_roles() -> None:
     assert 'class="utc-badge">UTC</span>' in _scan_report(
         event, "html", profile=profile
     )
+    for format_name in ("text", "markdown"):
+        assert "Conditional pricing changed (stored conditions retained) - UTC" in _scan_report(
+            event, format_name, profile=profile
+        )
 
 
 def test_unregistered_utc_lookalike_does_not_invent_badge_semantics() -> None:
@@ -2021,6 +2166,74 @@ def test_unregistered_utc_lookalike_does_not_invent_badge_semantics() -> None:
     )
 
     assert 'class="utc-badge"' not in _scan_report(event, "html")
+    for format_name in ("text", "markdown"):
+        assert "stored conditions retained) - UTC" not in _scan_report(
+            event, format_name
+        )
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown", "html"))
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+@pytest.mark.parametrize(
+    ("profile", "field_name", "display_label"),
+    (
+        (
+            OPENROUTER_PROFILE,
+            "pricing.synthetic_unregistered",
+            "Synthetic unregistered",
+        ),
+        (
+            GENERIC_PROFILE.with_pricing(7, 3),
+            "pricing.synthetic_rate",
+            "Synthetic rate",
+        ),
+    ),
+)
+def test_unmatched_ordinary_prices_stay_visible_and_are_neutral_accounting(
+    format_name: str,
+    detail_mode: str,
+    profile: ProviderProfile,
+    field_name: str,
+    display_label: str,
+) -> None:
+    event = replace(
+        _event(metadata=False),
+        field_changes=(
+            FieldChange(field_name, "1", "2"),
+        ),
+        old_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"synthetic_unregistered": "1"},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "pricing": {"synthetic_unregistered": "2"},
+        },
+    )
+    core = reporting.build_model_event_semantic_core(event, profile)
+
+    assert core.interpretation is None
+    assert core.accounting.direct_price_field_count == 1
+    assert core.accounting.model_bucket == "none"
+    assert core.accounting.direct_price_facts[0].direction == "unknown"
+    report = _scan_report(
+        event, format_name, detail_mode=detail_mode, profile=profile
+    )
+    if detail_mode == "squelched":
+        assert display_label not in report
+        assert 'id="price-movement"' not in report
+    else:
+        assert display_label in report
+        if format_name == "html":
+            movement = report.split('id="price-movement"', 1)[1].split(
+                "</section>", 1
+            )[0]
+            assert "no normalized rate movement" in movement
+            assert "1 direct price field" in movement
+            assert "1 unchanged/unknown" in movement
+            assert "Higher only" not in movement
+            assert "Lower only" not in movement
+    assert "Conditional pricing" not in report
 
 
 def test_generic_reporting_has_no_provider_raw_utc_selector_constants() -> None:

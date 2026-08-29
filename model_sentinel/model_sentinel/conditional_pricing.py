@@ -892,9 +892,21 @@ def resolve_direct_price_movement(
     *,
     source_change: SourceChangeReference | None = None,
 ) -> DirectPriceMovementFact | None:
-    """Resolve one matched scalar movement without manufacturing invalid facts."""
-    old_value = resolve_price_value(field_path, old_raw_value, profile)
-    new_value = resolve_price_value(field_path, new_raw_value, profile)
+    """Account for one ordinary monetary field without borrowing semantics.
+
+    Schedule compilation remains strict through ``resolve_price_value``'s
+    default.  This direct-only boundary admits the scalar renderer's unmatched
+    monetary fallback, but an unmatched rule has no comparison group and is
+    therefore necessarily neutral for a two-sided change.
+    """
+    if not profile.is_price_amount_field(field_path):
+        return None
+    old_value = resolve_price_value(
+        field_path, old_raw_value, profile, allow_unmatched=True
+    )
+    new_value = resolve_price_value(
+        field_path, new_raw_value, profile, allow_unmatched=True
+    )
     if old_raw_value is not None and old_value is None:
         return None
     if new_raw_value is not None and new_value is None:

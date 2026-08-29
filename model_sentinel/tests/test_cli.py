@@ -20,8 +20,17 @@ from model_sentinel.__init__ import __version__
 from model_sentinel.browse import server as browse_server_module
 from model_sentinel.build_info import format_build_info
 from model_sentinel.config import ProviderConfig
-from model_sentinel.models import BaselineInfo, FieldChange, ModelDelta, NormalizedModel, canonical_json
-from model_sentinel.storage import Store
+from model_sentinel.provider_profiles import resolve_profile
+from model_sentinel.models import (
+    BaselineInfo,
+    FieldChange,
+    HistoryEvent,
+    ModelDelta,
+    NormalizedModel,
+    canonical_json,
+)
+from model_sentinel.storage import Store, StoredChangeRecord, StoredComparisonEvent
+from model_sentinel.conditional_pricing import StoredComparisonIdentity
 from model_sentinel.time_utils import to_local_human
 from tests.browse_fixtures import build_fixture_db
 
@@ -1550,6 +1559,190 @@ def test_history_specific_model_includes_latest_prices(tmp_path: Path, monkeypat
     assert exit_code == 0
     assert "Latest price in/out: 2 / 8" in captured.out
     assert "Latest cache pricing: 1 / 3" in captured.out
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+@pytest.mark.parametrize("detail", ("default", "all", "squelched"))
+@pytest.mark.parametrize("mixed", (False, True), ids=("ordinary", "mixed"))
+def test_run_history_preserves_exact_ordinary_contract_when_rich_edges_are_loaded(
+    monkeypatch,
+    format_name: str,
+    detail: str,
+    mixed: bool,
+) -> None:
+    provider = ProviderConfig(
+        provider_id="openrouter",
+        label="OpenRouter",
+        kind="openrouter",
+        base_url="https://synthetic.invalid",
+        models_path="/models",
+        credential_env_var="SYNTHETIC_CREDS",
+        price_multiplier=1_000_000,
+        price_divisor=1,
+        enabled=True,
+    )
+
+    def edge(
+        from_scrape: int,
+        to_scrape: int,
+        detected_at: str,
+        field_name: str,
+        old_value,
+        new_value,
+        old_metadata,
+        new_metadata,
+    ) -> StoredComparisonEvent:
+        identity = StoredComparisonIdentity(
+            "openrouter", "synthetic/model", from_scrape, to_scrape
+        )
+        row = StoredChangeRecord(
+            change_id=to_scrape,
+            provider_id="openrouter",
+            provider_model_id="synthetic/model",
+            from_scrape_id=from_scrape,
+            to_scrape_id=to_scrape,
+            change_kind="field_changed",
+            field_name=field_name,
+            old_value=old_value,
+            new_value=new_value,
+            detected_at=detected_at,
+        )
+        return StoredComparisonEvent(
+            identity=identity,
+            provider_label="OpenRouter",
+            display_name="Synthetic Model",
+            detected_at=detected_at,
+            from_completed_at=detected_at,
+            to_completed_at=detected_at,
+            source_rows=(row,),
+            field_changes=(FieldChange(field_name, old_value, new_value),),
+            old_model_metadata=old_metadata,
+            new_model_metadata=new_metadata,
+        )
+
+    ordinary = edge(
+        10,
+        11,
+        "2026-08-10T10:00:00+00:00",
+        "benchmarks.synthetic_score",
+        1,
+        2,
+        {"id": "synthetic/model", "benchmarks": {"synthetic_score": 1}},
+        {"id": "synthetic/model", "benchmarks": {"synthetic_score": 2}},
+    )
+    stored = (ordinary,)
+    if mixed:
+        rules = [
+            {
+                "utc_days": ["monday"],
+                "utc_start": 100,
+                "utc_end": 200,
+                "prompt": "0.000002",
+            }
+        ]
+        conditional = edge(
+            11,
+            12,
+            "2026-08-11T11:00:00+00:00",
+            "pricing.overrides",
+            None,
+            rules,
+            {"id": "synthetic/model", "pricing": {"prompt": "0.000001"}},
+            {
+                "id": "synthetic/model",
+                "pricing": {"prompt": "0.000001", "overrides": rules},
+            },
+        )
+        stored = (*stored, conditional)
+    events = tuple(
+        HistoryEvent(
+            row.detected_at,
+            row.change_kind,
+            row.field_name,
+            row.old_value,
+            row.new_value,
+        )
+        for item in stored
+        for row in item.source_rows
+    )
+
+    class FakeStore:
+        def history_events(self, **kwargs):
+            return (
+                "2026-08-10T10:00:00+00:00",
+                stored[-1].detected_at,
+                events,
+            )
+
+        def history_comparison_events(self, **kwargs):
+            return stored
+
+        def get_latest_model_snapshot(self, **kwargs):
+            return None
+
+    loaded = Namespace(
+        providers=(provider,),
+        settings=Namespace(
+            report_detail="default",
+            report_show_fields=reporting.DEFAULT_REPORT_SHOW_FIELDS,
+            report_squelch_fields=reporting.DEFAULT_REPORT_SQUELCH_FIELDS,
+            report_unclassified_limit=20,
+        ),
+    )
+    args = Namespace(
+        provider="openrouter",
+        model="synthetic/model",
+        since=None,
+        until=None,
+        pattern=None,
+        format=format_name,
+        detail=detail,
+        output=None,
+    )
+    emitted = []
+    monkeypatch.setattr(
+        cli, "_emit_output", lambda report, output_path: emitted.append(report)
+    )
+
+    assert cli.run_history(args=args, loaded=loaded, store=FakeStore()) == 0
+    profile = resolve_profile(
+        provider.kind,
+        price_multiplier=provider.price_multiplier,
+        price_divisor=provider.price_divisor,
+    )
+    cores = {
+        item.identity: reporting.build_model_event_semantic_core(
+            reporting.pricing_event_from_stored(item), profile
+        )
+        for item in stored
+    }
+    expected = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen="2026-08-10T10:00:00+00:00",
+        last_seen=stored[-1].detected_at,
+        events=events,
+        latest_model=None,
+        profile=profile,
+        detail_policy=reporting.make_report_detail_policy(mode=detail),
+        stored_events=stored,
+        semantic_cores=cores,
+    )
+    assert emitted == [expected]
+    if not mixed:
+        legacy = reporting.render_history_report(
+            provider_id="openrouter",
+            model_id="synthetic/model",
+            format_name=format_name,
+            first_seen="2026-08-10T10:00:00+00:00",
+            last_seen=stored[-1].detected_at,
+            events=events,
+            latest_model=None,
+            profile=profile,
+            detail_policy=reporting.make_report_detail_policy(mode=detail),
+        )
+        assert emitted[0] == legacy
 
 
 def test_history_with_unknown_provider_exits_cleanly(tmp_path: Path, monkeypatch, capsys) -> None:

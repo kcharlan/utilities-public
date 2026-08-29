@@ -43,7 +43,12 @@ from model_sentinel.provider_profiles import (
 )
 from model_sentinel import cli
 from model_sentinel.provider_profiles import profiles_for
-from model_sentinel.storage import recent_change_rows
+from model_sentinel.storage import (
+    StoredChangeRecord,
+    StoredComparisonEvent,
+    recent_change_rows,
+)
+from model_sentinel.conditional_pricing import StoredComparisonIdentity
 
 
 _INHERITED_PRICE_PROFILE = replace(
@@ -2294,6 +2299,91 @@ def test_ordinary_history_text_and_markdown_are_byte_stable_per_detail_mode() ->
         "| 2026-07-25 12:00:00 | added |  | null | {\"id\": \"synthetic/model\"} |\n\n"
         "`1` non-squelched field change(s) omitted in squelched detail mode."
     )
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+@pytest.mark.parametrize("mode", ("default", "all", "squelched"))
+def test_rich_ordinary_history_keeps_exact_legacy_projection(
+    format_name: str,
+    mode: str,
+) -> None:
+    events = (
+        HistoryEvent(
+            "2026-07-25T09:00:00+00:00",
+            "field_changed",
+            "benchmarks.design_arena",
+            1,
+            2,
+        ),
+        HistoryEvent(
+            "2026-07-25T10:00:00+00:00",
+            "field_changed",
+            "pricing.prompt",
+            "0.1",
+            "0.2",
+        ),
+    )
+    stored = tuple(
+        StoredComparisonEvent(
+            identity=StoredComparisonIdentity("openrouter", "synth/model", i, i + 1),
+            provider_label="OpenRouter",
+            display_name="Synthetic Model",
+            detected_at=event.detected_at,
+            from_completed_at=event.detected_at,
+            to_completed_at=event.detected_at,
+            source_rows=(
+                StoredChangeRecord(
+                    change_id=i,
+                    provider_id="openrouter",
+                    provider_model_id="synth/model",
+                    from_scrape_id=i,
+                    to_scrape_id=i + 1,
+                    change_kind=event.change_kind,
+                    field_name=event.field_name,
+                    old_value=event.old_value,
+                    new_value=event.new_value,
+                    detected_at=event.detected_at,
+                ),
+            ),
+            field_changes=(
+                FieldChange(event.field_name or "", event.old_value, event.new_value),
+            ),
+            old_model_metadata={"id": "synth/model"},
+            new_model_metadata={"id": "synth/model"},
+        )
+        for i, event in enumerate(events, start=10)
+    )
+    policy = ReportDetailPolicy(
+        mode=mode,
+        show_fields=DEFAULT_REPORT_SHOW_FIELDS,
+        squelch_fields=("benchmarks", "benchmarks.*"),
+        unclassified_limit=20,
+    )
+    kwargs = dict(
+        provider_id="openrouter",
+        model_id="synth/model",
+        format_name=format_name,
+        first_seen="2026-07-01T00:00:00+00:00",
+        last_seen="2026-07-25T10:00:00+00:00",
+        events=events,
+        profile=OPENROUTER_PROFILE,
+        detail_policy=policy,
+    )
+
+    expected = render_history_report_with_profile(**kwargs)
+    cores = {
+        item.identity: reporting.build_model_event_semantic_core(
+            reporting.pricing_event_from_stored(item), OPENROUTER_PROFILE
+        )
+        for item in stored
+    }
+    actual = render_history_report_with_profile(
+        **kwargs,
+        stored_events=stored,
+        semantic_cores=cores,
+    )
+
+    assert actual == expected
 
 
 def test_legacy_history_json_projection_keeps_keys_values_and_event_order() -> None:

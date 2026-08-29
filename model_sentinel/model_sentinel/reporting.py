@@ -1897,6 +1897,22 @@ def _history_summary_markdown(events: tuple[HistoryEvent, ...], policy: ReportDe
     return lines
 
 
+def _history_event_from_stored_row(source_row: Any) -> HistoryEvent:
+    """Project one rich row back to the exact five-field history contract."""
+    return HistoryEvent(
+        source_row.detected_at,
+        source_row.change_kind,
+        source_row.field_name,
+        source_row.old_value,
+        source_row.new_value,
+    )
+
+
+def _history_plan_is_conditional(plan: StoredEventPresentationPlan) -> bool:
+    """Use composite history rendering only for an actual conditional edge."""
+    return plan.projection.core.interpretation is not None
+
+
 def _field_category_for_detail(
     field_change: FieldChange,
     policy: ReportDetailPolicy,
@@ -2385,7 +2401,16 @@ def _conditional_pricing_lines(
             )
         return lines
     if interpretation.state == "raw-fallback":
-        lines.append(f"Conditional pricing changed (stored conditions retained){suffix}")
+        utc_suffix = (
+            " - UTC"
+            if _conditional_interpretation_uses_utc(
+                interpretation, None, profile
+            )
+            else ""
+        )
+        lines.append(
+            f"Conditional pricing changed (stored conditions retained){suffix}{utc_suffix}"
+        )
         lines.append(
             "The provider supplied an unsupported or ambiguous condition. "
             "No schedule direction was inferred."
@@ -2436,7 +2461,14 @@ def _conditional_pricing_lines(
                     f"Rates: {_format_effective_vector(band.effective_prices, dimensions, profile)}"
                 )
     else:
-        lines.append(f"Conditional pricing {transition}{suffix} - UTC")
+        utc_suffix = (
+            " - UTC"
+            if _conditional_interpretation_uses_utc(
+                interpretation, policy, profile
+            )
+            else ""
+        )
+        lines.append(f"Conditional pricing {transition}{suffix}{utc_suffix}")
         if policy.base_prices is not None:
             lines.append(
                 f"Base/default: {_format_effective_vector(policy.base_prices, dimensions, profile)}"
@@ -2552,6 +2584,33 @@ def render_history_report(
         stored_projections = {
             plan.identity: plan.projection for plan in stored_plans
         }
+    conditional_stored_plans = tuple(
+        plan for plan in stored_plans if _history_plan_is_conditional(plan)
+    )
+    # Rich storage is an input enhancement, not a wholesale history format
+    # replacement.  If no edge contains conditional pricing, stay on the
+    # byte-characterized five-field legacy renderer in its entirety.
+    if stored_plans and not conditional_stored_plans:
+        stored_plans = ()
+    ordinary_by_identity = {
+        plan.identity: tuple(
+            _history_event_from_stored_row(row)
+            for row in plan.stored_event.source_rows
+        )
+        for plan in stored_plans
+        if not _history_plan_is_conditional(plan)
+    }
+    ordinary_stored_events = tuple(
+        event
+        for plan in stored_plans
+        for event in ordinary_by_identity.get(plan.identity, ())
+    )
+    visible_ordinary_ids = {
+        id(event)
+        for event in _visible_history_events(
+            ordinary_stored_events, detail_policy
+        )
+    }
     if format_name == "markdown":
         lines = [
             f"# History: {provider_id} / {model_id}",
@@ -2570,8 +2629,50 @@ def render_history_report(
             lines.append("No saved change events matched the requested range.")
             return "\n".join(lines)
         if stored_plans:
+            table_open = False
             for plan in stored_plans:
+                if not _history_plan_is_conditional(plan):
+                    visible = tuple(
+                        event
+                        for event in ordinary_by_identity[plan.identity]
+                        if id(event) in visible_ordinary_ids
+                    )
+                    if visible and not table_open:
+                        lines.extend(
+                            [
+                                "| Detected At | Kind | Field | Old | New |",
+                                "|---|---|---|---|---|",
+                            ]
+                        )
+                        table_open = True
+                    for event in visible:
+                        lines.append(
+                            f"| {to_local_human(event.detected_at)} | {event.change_kind} | {event.field_name or ''} | "
+                            f"{_scalar_display(event.old_value)} | {_scalar_display(event.new_value)} |"
+                        )
+                    continue
+                table_open = False
                 event = plan.projection.core.event
+                conditional_lines = _conditional_pricing_lines(
+                    plan.projection,
+                    profile,
+                    comparison_label=plan.comparison_label,
+                    include_audit=detail_policy.mode == "all",
+                    markdown=True,
+                )
+                presence_rows = tuple(
+                    row
+                    for row in plan.stored_event.source_rows
+                    if row.change_kind in {"added", "removed"}
+                )
+                if (
+                    not conditional_lines
+                    and not presence_rows
+                    and not plan.projection.display.visible
+                ):
+                    continue
+                if lines and lines[-1] != "":
+                    lines.append("")
                 lines.extend(
                     [
                         f"## Comparison detected {to_local_human(event.detected_at)}",
@@ -2583,26 +2684,24 @@ def render_history_report(
                 )
                 lines.extend(
                     f"- {line}"
-                    for line in _conditional_pricing_lines(
-                        plan.projection,
-                        profile,
-                        comparison_label=plan.comparison_label,
-                        include_audit=detail_policy.mode == "all",
-                        markdown=True,
-                    )
+                    for line in conditional_lines
                 )
-                for source_row in plan.stored_event.source_rows:
-                    if source_row.change_kind in {"added", "removed"}:
-                        marker = "+" if source_row.change_kind == "added" else "-"
-                        lines.append(
-                            f"- {marker} `{event.provider_model_id}` ({event.display_name})"
-                        )
+                for source_row in presence_rows:
+                    marker = "+" if source_row.change_kind == "added" else "-"
+                    lines.append(
+                        f"- {marker} `{event.provider_model_id}` ({event.display_name})"
+                    )
                 for change in plan.projection.display.visible:
                     lines.append(
                         f"- `{change.field_name}`: {_scalar_display(change.old_value)} → "
                         f"{_scalar_display(change.new_value)}"
                     )
                 lines.append("")
+            lines.extend(
+                _history_summary_markdown(
+                    ordinary_stored_events, detail_policy
+                )
+            )
             return "\n".join(lines).rstrip()
         lines.append("| Detected At | Kind | Field | Old | New |")
         lines.append("|---|---|---|---|---|")
@@ -2630,7 +2729,34 @@ def render_history_report(
         return "\n".join(lines)
     if stored_plans:
         for plan in stored_plans:
+            if not _history_plan_is_conditional(plan):
+                for event in ordinary_by_identity[plan.identity]:
+                    if id(event) not in visible_ordinary_ids:
+                        continue
+                    lines.append(
+                        f"- {to_local_human(event.detected_at)} [{event.change_kind}] "
+                        f"{event.field_name or ''} {_scalar_display(event.old_value)} -> "
+                        f"{_scalar_display(event.new_value)}"
+                    )
+                continue
             event = plan.projection.core.event
+            conditional_lines = _conditional_pricing_lines(
+                plan.projection,
+                profile,
+                comparison_label=plan.comparison_label,
+                include_audit=detail_policy.mode == "all",
+            )
+            presence_rows = tuple(
+                row
+                for row in plan.stored_event.source_rows
+                if row.change_kind in {"added", "removed"}
+            )
+            if (
+                not conditional_lines
+                and not presence_rows
+                and not plan.projection.display.visible
+            ):
+                continue
             lines.extend(
                 [
                     f"Comparison detected {to_local_human(event.detected_at)}",
@@ -2640,25 +2766,22 @@ def render_history_report(
             )
             lines.extend(
                 f"  {line}"
-                for line in _conditional_pricing_lines(
-                    plan.projection,
-                    profile,
-                    comparison_label=plan.comparison_label,
-                    include_audit=detail_policy.mode == "all",
-                )
+                for line in conditional_lines
             )
-            for source_row in plan.stored_event.source_rows:
-                if source_row.change_kind in {"added", "removed"}:
-                    marker = "+" if source_row.change_kind == "added" else "-"
-                    lines.append(
-                        f"  {marker} {event.provider_model_id} ({event.display_name})"
-                    )
+            for source_row in presence_rows:
+                marker = "+" if source_row.change_kind == "added" else "-"
+                lines.append(
+                    f"  {marker} {event.provider_model_id} ({event.display_name})"
+                )
             for change in plan.projection.display.visible:
                 lines.append(
                     f"  {change.field_name}: {_scalar_display(change.old_value)} -> "
                     f"{_scalar_display(change.new_value)}"
                 )
             lines.append("")
+        lines.extend(
+            _history_summary_text(ordinary_stored_events, detail_policy)
+        )
         return "\n".join(lines).rstrip()
     for event in _visible_history_events(events, detail_policy):
         lines.append(
@@ -3440,7 +3563,14 @@ def _impact_from_accounting(
     field than the dollar figure ranked above it.
     """
     if accounting.model_bucket == "none":
-        return None
+        # A neutral ordinary monetary field still belongs in the pricing tier,
+        # but has no defensible impact score.  Price Movement continues to omit
+        # it from directional model buckets through ``model_bucket == none``.
+        return (
+            _ModelImpact(None, 0.0, 0, model_id)
+            if accounting.direct_price_field_count
+            else None
+        )
     if accounting.conditional_policy_count:
         return _ModelImpact(None, 0.0, 0, model_id)
 

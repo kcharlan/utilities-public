@@ -37,6 +37,7 @@ from model_sentinel.conditional_pricing import (
 )
 from model_sentinel.models import FieldChange
 from model_sentinel.provider_profiles import (
+    GENERIC_PROFILE,
     OPENROUTER_PROFILE,
     ConditionalPricingConditionDescriptor,
     ConditionalPricingConditionSetSemantics,
@@ -2427,6 +2428,42 @@ def test_direct_price_without_comparison_group_is_unknown_and_unbucketed() -> No
     accounting = build_model_pricing_accounting(None, direct_price_facts=(fact,))
     assert accounting.direct_price_field_count == 1
     assert accounting.model_bucket == "none"
+
+
+@pytest.mark.parametrize(
+    ("profile", "field_path"),
+    (
+        (GENERIC_PROFILE.with_pricing(7, 3), "pricing.synthetic_rate"),
+        (OPENROUTER_PROFILE, "pricing.synthetic_unregistered"),
+    ),
+)
+def test_unmatched_ordinary_price_is_accounted_but_never_compared_or_absorbed(
+    profile: ProviderProfile,
+    field_path: str,
+) -> None:
+    fact = resolve_direct_price_movement(field_path, "1", "2", profile)
+
+    assert fact is not None
+    assert fact.direction == "unknown"
+    assert fact.delta is None
+    assert fact.percentage is None
+    assert fact.comparison_group is None
+    assert fact.old_value is not None
+    assert fact.new_value is not None
+    assert fact.old_value.price_rule.match_source == "unmatched"
+    accounting = build_model_pricing_accounting(None, direct_price_facts=(fact,))
+    assert accounting.direct_price_field_count == 1
+    assert accounting.model_bucket == "none"
+
+
+def test_unmatched_ordinary_one_sided_price_is_safe_coverage() -> None:
+    fact = resolve_direct_price_movement(
+        "pricing.synthetic_unregistered", None, "2", OPENROUTER_PROFILE
+    )
+
+    assert fact is not None
+    assert fact.direction == "coverage"
+    assert fact.comparison_group is None
 
 
 def test_crossing_complete_vectors_never_receive_an_arbitrary_peak() -> None:
