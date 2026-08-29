@@ -351,6 +351,44 @@ class ProviderProfile:
             )
         )
 
+    def is_pricing_override_selector_path(self, field_path: str) -> bool:
+        """Return whether ``field_path`` is one exact override selector leaf.
+
+        Selector identity is provider-owned, while the namespace shape is the
+        canonical report path: ``pricing.overrides[<rule>].<leaf>``.  The
+        bracket qualifier may contain dots, so split only outside brackets.
+        A malformed/unbalanced path is never granted selector identity.
+        """
+        if not isinstance(field_path, str) or not field_path:
+            return False
+        segments: list[str] = []
+        current: list[str] = []
+        depth = 0
+        for character in field_path:
+            if character == "[":
+                depth += 1
+            elif character == "]":
+                depth -= 1
+                if depth < 0:
+                    return False
+            if character == "." and depth == 0:
+                segments.append("".join(current))
+                current = []
+            else:
+                current.append(character)
+        if depth != 0:
+            return False
+        segments.append("".join(current))
+        if len(segments) != 3 or segments[0] != "pricing":
+            return False
+        override_segment = segments[1]
+        if override_segment != "overrides" and not (
+            override_segment.startswith("overrides[")
+            and override_segment.endswith("]")
+        ):
+            return False
+        return segments[2] in self.pricing_override_selector_names
+
     def pricing_override_condition_descriptor(
         self,
         field_name: str,

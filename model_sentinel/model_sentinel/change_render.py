@@ -1475,7 +1475,10 @@ def classify_change(
     # 4. price -- guard preserved exactly from reporting.py's current
     # _render_smart_change_text (permits one-sided None, rejects non-numeric
     # strings).
-    is_price_amount_field = profile.is_price_amount_field(field_path)
+    is_price_amount_field = (
+        profile.is_price_amount_field(field_path)
+        and not profile.is_pricing_override_selector_path(field_path)
+    )
     if is_price_amount_field:
         old_price = resolve_price_value(
             field_path,

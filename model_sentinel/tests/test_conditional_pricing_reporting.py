@@ -2236,6 +2236,68 @@ def test_unmatched_ordinary_prices_stay_visible_and_are_neutral_accounting(
     assert "Conditional pricing" not in report
 
 
+@pytest.mark.parametrize("include_raw_parent", (False, True))
+@pytest.mark.parametrize(("old_value", "new_value"), ((100, 200), (None, 100)))
+@pytest.mark.parametrize(
+    ("profile", "selector_path"),
+    (
+        (OPENROUTER_PROFILE, "pricing.overrides[0].utc_start"),
+        (
+            replace(
+                OPENROUTER_PROFILE,
+                pricing_override_condition_fields=("start_utc",),
+                pricing_override_condition_descriptors={},
+            ),
+            "pricing.overrides[0].start_utc",
+        ),
+        (
+            ProviderProfile(
+                kind="legacy-selector-synthetic",
+                pricing_override_condition_fields=("legacy_selector",),
+            ),
+            "pricing.overrides[0].legacy_selector",
+        ),
+    ),
+)
+def test_selector_rows_never_pollute_direct_accounting_even_with_raw_fallback(
+    profile: ProviderProfile,
+    selector_path: str,
+    old_value: int | None,
+    new_value: int,
+    include_raw_parent: bool,
+) -> None:
+    changes = [FieldChange(selector_path, old_value, new_value)]
+    if include_raw_parent:
+        changes.insert(
+            0,
+            FieldChange(
+                "pricing.overrides",
+                None,
+                {"synthetic-malformed": True},
+            ),
+        )
+    event = replace(
+        _event(metadata=False),
+        field_changes=tuple(changes),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+
+    core = reporting.build_model_event_semantic_core(event, profile)
+
+    assert core.accounting.direct_price_field_count == 0
+    assert core.accounting.direct_price_facts == ()
+    if include_raw_parent:
+        assert core.interpretation is not None
+        assert core.interpretation.state == "raw-fallback"
+    else:
+        assert core.interpretation is None
+    rendered = reporting.classify_change(
+        FieldChange(selector_path, old_value, new_value), profile=profile
+    )
+    assert rendered.kind != "price"
+
+
 def test_generic_reporting_has_no_provider_raw_utc_selector_constants() -> None:
     source = (
         Path(__file__).parents[1] / "model_sentinel" / "reporting.py"

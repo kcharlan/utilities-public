@@ -2466,6 +2466,36 @@ def test_unmatched_ordinary_one_sided_price_is_safe_coverage() -> None:
     assert fact.comparison_group is None
 
 
+@pytest.mark.parametrize(
+    ("profile", "selector_path"),
+    (
+        (OPENROUTER_PROFILE, "pricing.overrides[0].utc_start"),
+        (OPENROUTER_PROFILE, "pricing.overrides[0].utc_end"),
+        (OPENROUTER_PROFILE, "pricing.overrides[0].min_prompt_tokens"),
+        (
+            ProviderProfile(
+                kind="legacy-selector-synthetic",
+                pricing_override_condition_fields=("legacy_selector",),
+            ),
+            "pricing.overrides[0].legacy_selector",
+        ),
+    ),
+)
+@pytest.mark.parametrize(("old_value", "new_value"), ((100, 200), (None, 100)))
+def test_override_selector_leaves_never_create_direct_price_facts(
+    profile: ProviderProfile,
+    selector_path: str,
+    old_value: int | None,
+    new_value: int,
+) -> None:
+    assert (
+        resolve_direct_price_movement(
+            selector_path, old_value, new_value, profile
+        )
+        is None
+    )
+
+
 def test_crossing_complete_vectors_never_receive_an_arbitrary_peak() -> None:
     old_metadata = _complete_metadata(None)
     new_policy = [

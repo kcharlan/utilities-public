@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from types import MappingProxyType
 from typing import Any
 
@@ -652,6 +652,49 @@ def test_legacy_only_profile_has_selector_identity_without_rich_policy_authority
     assert profile.pricing_override_condition_set_semantics is None
     assert profile.pricing_override_policy_semantics is None
     assert profile.pricing_override_base_paths == {}
+
+
+def test_selector_paths_require_exact_override_rule_namespace_and_active_names() -> None:
+    alternate = replace(
+        OPENROUTER_PROFILE.pricing_override_condition_descriptors["utc_start"],
+        field_name="start_utc",
+    )
+    rich = replace(
+        OPENROUTER_PROFILE,
+        pricing_override_condition_fields=(),
+        pricing_override_condition_descriptors={"start_utc": alternate},
+    )
+    legacy = ProviderProfile(
+        kind="legacy-selector-synthetic",
+        pricing_override_condition_fields=("legacy_selector",),
+    )
+
+    assert rich.is_pricing_override_selector_path(
+        "pricing.overrides[0].start_utc"
+    )
+    assert rich.is_pricing_override_selector_path(
+        "pricing.overrides[start_utc=100].start_utc"
+    )
+    assert rich.is_pricing_override_selector_path("pricing.overrides.start_utc")
+    assert not rich.is_pricing_override_selector_path("pricing.start_utc")
+    assert not rich.is_pricing_override_selector_path(
+        "other.pricing.overrides[0].start_utc"
+    )
+    assert not rich.is_pricing_override_selector_path(
+        "pricing.overrides_backup[0].start_utc"
+    )
+    assert not rich.is_pricing_override_selector_path(
+        "pricing.overrides[0].nested.start_utc"
+    )
+    assert not rich.is_pricing_override_selector_path(
+        "pricing.overrides[0].utc_start"
+    )
+    assert legacy.is_pricing_override_selector_path(
+        "pricing.overrides[2].legacy_selector"
+    )
+    assert OPENROUTER_PROFILE.is_pricing_override_selector_path(
+        "pricing.overrides[0].min_prompt_tokens"
+    )
 
 
 def test_openrouter_registers_complete_conditional_pricing_contract() -> None:

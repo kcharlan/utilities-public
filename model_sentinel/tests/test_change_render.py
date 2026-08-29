@@ -919,6 +919,41 @@ def test_price_amount_field_excludes_token_thresholds():
     assert _is_price_amount_field("pricing.max_prompt_tokens") is False
 
 
+@pytest.mark.parametrize(
+    ("profile", "selector_path"),
+    (
+        (OPENROUTER_PROFILE, "pricing.overrides[0].utc_start"),
+        (OPENROUTER_PROFILE, "pricing.overrides[0].utc_end"),
+        (OPENROUTER_PROFILE, "pricing.overrides[0].min_prompt_tokens"),
+        (
+            dataclasses.replace(
+                OPENROUTER_PROFILE,
+                pricing_override_condition_fields=("start_utc",),
+                pricing_override_condition_descriptors={},
+            ),
+            "pricing.overrides[0].start_utc",
+        ),
+    ),
+)
+def test_override_selector_leaves_never_use_scalar_monetary_classification(
+    profile: ProviderProfile,
+    selector_path: str,
+) -> None:
+    two_sided = classify_change_with_profile(
+        FieldChange(selector_path, 100, 200), profile=profile
+    )
+    one_sided = classify_change_with_profile(
+        FieldChange(selector_path, None, 100), profile=profile
+    )
+    outside = classify_change_with_profile(
+        FieldChange("pricing.metadata.utc_start", 100, 200), profile=profile
+    )
+
+    assert two_sided.kind != "price"
+    assert one_sided.kind != "price"
+    assert outside.kind == "price"
+
+
 # ---------------------------------------------------------------------------
 # 3a. Price precision (Task 6)
 #

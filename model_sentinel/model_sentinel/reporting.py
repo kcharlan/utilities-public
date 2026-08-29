@@ -3219,7 +3219,10 @@ def _price_movement_kind(
     field_change: FieldChange,
     profile: ProviderProfile,
 ) -> Literal["higher", "lower", "added", "removed"] | None:
-    if not profile.is_price_amount_field(field_change.field_name):
+    if (
+        not profile.is_price_amount_field(field_change.field_name)
+        or profile.is_pricing_override_selector_path(field_change.field_name)
+    ):
         return None
 
     old_numeric = _numeric_value(field_change.old_value)
@@ -3482,7 +3485,11 @@ def _legacy_tiering_direct_price_fact(
         change.new_value,
         profile,
     )
-    if fact is not None or not profile.is_price_amount_field(change.field_name):
+    if (
+        fact is not None
+        or not profile.is_price_amount_field(change.field_name)
+        or profile.is_pricing_override_selector_path(change.field_name)
+    ):
         return fact
     old_value = resolve_price_value(
         change.field_name, change.old_value, profile, allow_unmatched=True

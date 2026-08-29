@@ -899,7 +899,10 @@ def resolve_direct_price_movement(
     monetary fallback, but an unmatched rule has no comparison group and is
     therefore necessarily neutral for a two-sided change.
     """
-    if not profile.is_price_amount_field(field_path):
+    if (
+        not profile.is_price_amount_field(field_path)
+        or profile.is_pricing_override_selector_path(field_path)
+    ):
         return None
     old_value = resolve_price_value(
         field_path, old_raw_value, profile, allow_unmatched=True
