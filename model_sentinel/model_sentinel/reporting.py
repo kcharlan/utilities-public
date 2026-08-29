@@ -4576,6 +4576,7 @@ td.sem-neutral { color: var(--text-dim); }
   margin-top: 2.5rem;
   border-top: 1px solid var(--border);
   padding-top: 1.5rem;
+  overflow-x: auto;
 }
 .secondary-changes .summary-section {
   margin-top: 1.5rem;

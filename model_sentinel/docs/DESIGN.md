@@ -210,6 +210,33 @@ Conditional pricing override lists receive identity-aware comparison when
 their profile can match tiers safely. This expansion is presentation-only;
 stored changes and JSON output preserve the source values.
 
+### Conditional-pricing interpretation
+
+Human reports interpret conditional pricing once per exact model comparison
+event. The event-scoped semantic core contains the provider ID and model ID,
+the complete set of field changes, and canonical metadata from both compared
+snapshot sides. Live scans use their in-memory baseline and target models;
+stored `history` and `changes` reports load the exact recorded
+`from_scrape_id`/`to_scrape_id` edge. A missing side stays missing rather than
+being replaced by an adjacent scrape.
+
+Provider profiles own condition descriptors, validation, conjunction,
+precedence, omitted-price behavior, top-level base meaning, and exact base
+paths. The provider-neutral interpreter parses those declarations into exactly
+one of three exclusive states: a proven grouped UTC schedule, source-ordered
+rules, or a selector-safe raw fallback. OpenRouter's rich declarations are
+grounded in its
+[official generated model schema](https://github.com/OpenRouterTeam/terraform-provider-openrouter/blob/main/docs/data-sources/model.md).
+Providers without equivalent declarations do not inherit OpenRouter semantics.
+
+The interpreter absorbs a sibling top-level price change only when exact edge,
+dimension, unit, comparison group, value, and occurrence provenance all match.
+One immutable accounting record is then shared by text, Markdown, concise and
+all-detail HTML, `history`, and `changes`; render-time filtering never
+rediscovers price movement. Canonical snapshot metadata, `field_changes`, JSON
+projections, and override-list order remain unchanged, and this feature needs
+no SQLite schema migration or history rewrite.
+
 ## SQLite Model
 
 SQLite is the system of record at `~/.model_sentinel/model_sentinel.db` (or the
@@ -289,6 +316,10 @@ Human field-level reports use `fnmatch` patterns over raw dotted paths:
 The policy affects presentation only. JSON remains full fidelity, including
 records human reports classify as no-ops.
 
+Conditional-pricing blocks follow the same policy boundary: default and all
+detail share the same semantic core, all detail opens the source evidence, and
+squelched mode omits both the conditional block and Price Movement panel.
+
 Default scan reports may consolidate at least three models with the same
 complete visible list-membership change. Any visible scalar change keeps a
 model individual. Bulk grouping is disabled in all-detail and JSON output.
@@ -314,6 +345,13 @@ The HTML triage layout, cost-only color vocabulary, price-movement model,
 sorting, navigation, raw-value behavior, and implementation amendments are
 specified in
 [report_readability_redesign_design.md](./report_readability_redesign_design.md).
+
+Price Movement uses five fixed, mutually exclusive model buckets: higher only,
+lower only, both directions, added/removed price coverage only, and
+conditional/variable pricing. Conditional events therefore remain visible
+without being forced into an ordinary directional verdict. Policy, source-rule,
+dimension, effective-band, base-field, and direct-price-field counts all come
+from the same pre-filter accounting record.
 
 ## Notifications and Managed Reports
 

@@ -13,6 +13,9 @@ constant.
 
 DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
 
+* 2026-08-28: browser QA at a 390px viewport found the changes summary table
+  widening the whole document. The shared summary section now contains wide
+  tables with local horizontal scrolling; report content is unchanged.
 * 2026-08-15: provider-owned price rules changed contracted OpenRouter token
   labels from `/1M` (including the old spaced spelling) to `/1M tokens`, made
   the global mover label explicitly token-rate-only, and widened/wrapped the
@@ -1275,6 +1278,7 @@ td.sem-neutral { color: var(--text-dim); }
   margin-top: 2.5rem;
   border-top: 1px solid var(--border);
   padding-top: 1.5rem;
+  overflow-x: auto;
 }
 .secondary-changes .summary-section {
   margin-top: 1.5rem;

@@ -261,6 +261,17 @@ saved dates when no exact match exists.
 
 Human-readable scan reports use `--detail default` unless overridden by `MODEL_SENTINEL_REPORT_DETAIL` in `settings.env`. Default detail mode renders configured important fields and unclassified new fields, while summarizing configured noisy fields such as benchmarks. Use `--detail all` to render every field-level change, or `--detail squelched` to inspect only fields matched by the squelch patterns. JSON output remains full fidelity.
 
+Conditional-pricing policies follow the same detail modes. In `default`, a
+grouped schedule stays compact, ordered rules already retain their source order,
+and HTML keeps their canonical audit evidence in a collapsed disclosure. For
+grouped and ordered states, `all` adds source rules to grouped schedules and
+opens or expands available canonical audit evidence without changing the
+interpretation. Raw fallback is self-contained and identical in `default` and
+`all`, including its canonical evidence and disclosure state. `squelched`
+omits the conditional-pricing and Price Movement panels. This is
+presentation-only: stored field paths and values, override-list order, SQLite
+schema, and JSON reports are unchanged.
+
 When a scan run auto-generates an HTML report because changes were detected, it also writes a full-detail companion report named like `scan_<timestamp>_full.html`. Notifications continue to target the concise report.
 
 ### Query History
@@ -384,6 +395,17 @@ Built-in help is intended to be complete:
 
 ## Report Formatting
 
+Format support is command-specific. HTML is an internally generated companion,
+not a `--format` value:
+
+| Command | Text | JSON | Markdown | Internal HTML |
+|---|---:|---:|---:|---:|
+| `scan` | yes | yes | yes | yes |
+| `history` / model list | yes | yes | yes | no |
+| `changes` | yes | yes | no | yes |
+| `providers` | yes | yes | yes | no |
+| `healthcheck` | yes | yes | yes | no |
+
 Scan reports use smart, field-type-aware formatting:
 
 - **Fields classified as monetary prices** are presented as a normalized
@@ -401,6 +423,50 @@ Scan reports use smart, field-type-aware formatting:
 - **Repetitive list changes** affecting at least three models are consolidated into one bulk-change entry in default reports. List-size differences are ignored when the actual additions/removals match.
 - **Scalar and mixed changes remain model-specific**, so pricing, limits, cutoffs, and models with any additional visible change retain individual entries.
 - Bulk entries aggregate their squelched changes and expose expandable model lists in HTML. The HTML Change Summary uses the same bulk entries plus one provider-level squelched rollup.
+
+### Conditional Pricing Policies
+
+When a provider publishes `pricing.overrides`, human reports interpret the
+parent list as one pricing policy instead of flattening selectors into apparent
+money fields. The report chooses one conservative presentation:
+
+- **Grouped schedule:** proven, non-overlapping UTC regions with complete
+  effective rate vectors are collapsed into base/default, scheduled, and peak
+  bands.
+- **Ordered rules:** understood conditions remain in provider source order.
+  Every cell distinguishes an explicit price from `not set by this rule`, and
+  the report notes that later matching rules win per price key.
+- **Raw fallback:** an unsupported or ambiguous selector, price, unit, or
+  precedence relationship keeps the canonical stored parent evidence visible
+  and makes no schedule-direction claim.
+
+OpenRouter time predicates are evaluated against the request instant's UTC
+civil weekday and clock. Windows are half-open (start inclusive, end
+exclusive); a window whose start is later than its end covers the two portions
+of each selected UTC day, not a locally converted schedule. A threshold such
+as `Prompt > 200,000 tokens` is strictly greater than the stated count.
+
+The displayed base, scheduled, and peak figures are provider-advertised catalog
+rates. They do not predict which endpoint OpenRouter will route an actual
+request to or the amount that will ultimately be billed; actual routing and
+billing can vary.
+
+Every model with bucketed directional, coverage, or conditional movement gets
+exactly one of five fixed Price Movement buckets: Higher only, Lower only,
+Both directions, Added/removed only, or `Conditional / variable`. A model with
+a conditional policy stays in that exclusive bucket even when the event also
+contains an ordinary price fact. Reports with ordinary directional models keep
+the ordinary higher/lower/mixed verdict and append
+`conditional pricing also changed`; a conditional-only population instead
+leads with `conditional pricing changed`.
+
+The panel's accounting comes from the same event record as the policy block.
+It distinguishes changed conditional policies (or schedule events in a range),
+source rules, price dimensions, and effective rate bands from direct price
+fields. A matched top-level base-price change absorbed into the policy is still
+counted once as a direct/base price fact, not repeated as a scalar row.
+Semantically unchanged or unresolved direct prices appear only in the neutral
+`unchanged/unknown` field tally: they do not create a sixth model bucket.
 
 ### Color Semantics
 
@@ -421,7 +487,16 @@ Markdown report. An explicit `--output` writes only that requested format.
 
 The HTML report uses a dark industrial theme and has no external dependencies and no JavaScript — all CSS is inlined, and every interactive affordance is built from native `<details>`, `:target` and `:has()`.
 
-**The Price Movement card comes first and is denominated in dollars.** It opens with a verdict over the affected *models* — `higher — 5 up` when every model that moved moved up, `mostly higher — 4 up, 1 down` when the population is merely lopsided, and `mixed` when no direction leads. The qualifier is dropped on a unanimous result rather than hedging it. Beneath the verdict sit the biggest increase and the biggest decrease, each naming its model, field, old and new price, dollar delta and percentage; then two tallies that keep affected-model counts and changed-price-field counts visibly separate; then a collapsed list of every affected model, grouped by direction. Zero-count categories are omitted so only observed movements compete for attention.
+**The Price Movement card comes first.** Its ordinary directional verdict is
+derived from affected models, with conditional movement reported alone or as a
+suffix when present. Eligible absolute headlines name the largest comparable
+increase and decrease. Separate tallies reconcile model-bucket totals,
+direct/base price fields, and conditional structure (policy or event, rules,
+dimensions, and effective bands). Bucketed affected models are grouped by the
+five fixed movement buckets—higher, lower, both, coverage, and
+conditional/variable—and zero-count groups are omitted. Neutral-only
+unchanged or unresolved direct-price models contribute field tallies without
+model-bucket membership.
 
 **Each model card is a single aligned table.** One row per field, with fixed columns for category, field name, old value, new value, unit, delta and percentage, so values line up down the card and can be compared by eye instead of read as prose. The category name appears as a dim chip on the first row of each group.
 

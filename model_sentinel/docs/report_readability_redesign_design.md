@@ -244,18 +244,39 @@ Order of elements:
 
 1. **Header** — "PRICE MOVEMENT" and the verdict.
 2. **Two headline movers**, side by side: biggest increase and biggest decrease. Each shows model ID, the field label, `old → new /1M`, absolute delta at the largest type size in the card, and percent.
-3. **Tally chips**, two labeled groups.
-4. **Collapsed affected-model list**, grouped into four buckets.
+3. **Tally chips**, separated into model membership, direct price fields, and
+   conditional-policy structure as applicable.
+4. **Collapsed affected-model list**, grouped into five fixed, mutually
+   exclusive buckets.
 
 ### Verdict (D3)
 
-Derived from **model** buckets, matching the tally directly beneath it:
+Derived from five **model** buckets, matching the tally directly beneath it:
+Higher only, Lower only, Both directions, Added/removed only, and
+`Conditional / variable` (Amendments 7 and 12). Membership is exclusive;
+conditional membership takes precedence over an ordinary directional or
+coverage classification for the same model event.
 
-- One bucket strictly largest → "higher" / "lower", qualified by "mostly" **only when some model falls outside the leading bucket** (amended — see Amendment 3).
-- Otherwise → "mixed".
-- **Fourth outcome (amended — see Amendment 7):** when no model moved in either direction and every price change is a field appearing or disappearing, the verdict is `price fields added/removed`, not "mixed".
+- When an ordinary directional bucket is populated, one strictly largest
+  directional bucket yields "higher" or "lower"; otherwise the verdict is
+  "mixed". The qualifier "mostly" appears only when another directional bucket
+  is nonempty (Amendment 3).
+- When conditional models accompany ordinary directional models, the ordinary
+  verdict remains and appends `conditional pricing also changed — N models`.
+- With conditional models but no ordinary directional model, the verdict is
+  `conditional pricing changed — N models`.
+- With coverage models but neither directional nor conditional models, the
+  verdict is `price fields added/removed`, not "mixed".
+- Semantically unchanged or unresolved direct-price facts contribute to the
+  neutral field tally but no model bucket; there is no sixth bucket.
 
-The qualifier is dropped on a unanimous population: five models up and none down reads `higher — 5 up`, not `mostly higher — 5 up`. As originally written the rule hedged a result that had nothing to hedge — "mostly" invites the reader to look for the exception, and there is none. Unanimity is tested by summing every non-leading bucket rather than by checking the runner-up alone, so the check does not lean on the sort order to imply the third bucket is empty too.
+The qualifier is dropped on a unanimous directional population: five models
+up and none down reads `higher — 5 up`, not `mostly higher — 5 up`. As
+originally written the rule hedged a result that had nothing to hedge —
+"mostly" invites the reader to look for the exception, and there is none.
+Unanimity is tested across the other directional buckets rather than inferred
+from sort order. Coverage and conditional models retain their own exclusive
+groups and do not rewrite the ordinary directional verdict.
 
 The verdict string appends the bucket counts: `mixed — 4 up, 4 down, 3 both`.
 Before the redesign, the verdict was derived from *field* counts while the
@@ -273,16 +294,31 @@ counts.
 
 ### Tallies
 
-Two labeled chip groups, both stated in explicit units so they cannot be confused:
+The card uses explicit units so model membership, direct/base price facts, and
+conditional-policy structure cannot be confused:
 
-- `N MODELS` — `↑ n higher`, `↓ n lower`, `↕ n both`, and `± n added/removed only` (amended — see Amendment 7)
-- `N PRICE FIELDS` — `↓ n`, `↑ n`, `+n added`, `−n removed`
+- `N MODELS` — `↑ n higher`, `↓ n lower`, `↕ n both`,
+  `± n added/removed only`, and `n conditional / variable` (Amendments 7 and
+  12).
+- `N DIRECT PRICE FIELDS` — `↓ n`, `↑ n`, `+n added`, `−n removed`, plus a
+  neutral `n unchanged/unknown` chip when applicable. An exact sibling
+  top-level base-price change absorbed into a conditional block remains counted
+  once here as a direct/base price fact; it is not rediscovered from rendered
+  rows.
+- Conditional accounting — changed policies (or schedule events across a
+  stored range), source rules, provider-owned price dimensions, and compiled
+  effective rate bands. All counts come from the central pre-filter accounting
+  record used by every renderer.
 
 Bucket labels are short. The current sentence-form labels ("4 with increases and no decreases") are replaced. Zero-count buckets stay omitted.
 
 ### Affected-model list
 
-~~Three columns~~ **Four (amended — see Amendment 7):** `↑ Higher only`, `↓ Lower only`, `↕ Both directions`, `± Added/removed only`. Model IDs only. Per E5, the provider label is omitted when exactly one provider has price changes; when more than one does, it is retained.
+~~Three columns~~ ~~Four (Amendment 7)~~ **Five (amended — see Amendment
+12):** `↑ Higher only`, `↓ Lower only`, `↕ Both directions`,
+`± Added/removed only`, and `Conditional / variable`. Model IDs only. Per E5,
+the provider label is omitted when exactly one provider has price changes;
+when more than one does, it is retained.
 
 Each entry links to its card (see N1).
 
@@ -470,6 +506,9 @@ The badge would also have been the fourth place the higher/lower/both trichotomy
 
 ### 7. A fourth price-movement bucket, and a fourth verdict outcome
 
+**Historical amendment; the current five-bucket contract is in Amendment 12
+and the normative Price Movement section above.**
+
 **Design said (D3, Tallies, Affected-model list):** three model buckets — `↑ Higher only`, `↓ Lower only`, `↕ Both directions` — and three verdict outcomes — "higher", "lower", "mixed".
 
 **Reality:** a model whose only price change is a price field *appearing* or *disappearing* belongs to none of the three. It has no direction: B1 already rules that painting an added price red would claim a rise that was never measured, and the same reasoning denies it a directional bucket.
@@ -477,6 +516,10 @@ The badge would also have been the fourth place the higher/lower/both trichotomy
 Left in the three-bucket shape, such a model was still counted in the `N MODELS` tally and still had a card, but appeared in no column of the affected-model list directly beneath that tally — so the total did not match the rows under it, which is exactly the class of internal disagreement D3 exists to remove. And a report in which *every* price change is a coverage change produced the verdict "mixed", asserting a mixture of directions where not one direction had been observed.
 
 **Resolution:** a fourth bucket `± Added/removed only` (`coverage`), carried in the same `_PRICE_MOVEMENT_BUCKETS` table as the other three so the column label, the chip label and the colour stay one decision; and a fourth verdict string `price fields added/removed`, returned when no directional bucket holds a model. The `± ` glyph and the `price-coverage` blue are deliberately not any of the three directional pairs.
+
+Amendment 12 later adds the fifth `Conditional / variable` bucket without
+weakening this coverage distinction; both remain separate, neutral,
+non-directional groups.
 
 ### 8. B1 and A1 reach the `changes` table and the Change Summary; text and markdown do not move
 
@@ -546,3 +589,30 @@ only OpenRouter's declared primary token comparison group. F2 scores that same
 primary group; non-primary-only and coverage-only monetary models remain tier
 one, follow scored token movers, and sort by model ID. The wider unit column
 wraps long unit labels at narrow widths.
+
+### 12. Conditional pricing is one semantic policy, not indexed scalar rows
+
+**Amended 2026-08-28.**
+
+The earlier structured-field expansion rule is superseded for a recognized
+`pricing.overrides` parent. Flattening a schedule by list index can detach a
+rate from its selector and can misclassify clock values as money. Human reports
+now build one event-scoped conditional-pricing interpretation before applying
+detail visibility.
+
+Proven disjoint UTC policies render as grouped effective bands. Understood but
+not safely groupable policies render source-ordered rules with explicit values
+distinguished from `not set by this rule`. Unsupported or ambiguous policies
+render canonical stored parent evidence and no directional claim. Default and
+all-detail reports share the semantic result; all detail opens its audit
+evidence, while squelched mode omits the conditional block and Price Movement
+panel. JSON, chronological history storage, raw paths, and override-list order
+do not change.
+
+The Price Movement list gains a fifth exclusive bucket,
+`Conditional / variable`, alongside higher, lower, both, and coverage. Its
+membership and every policy/rule/dimension/band/base-field tally come from one
+central pre-filter accounting record. Red and green remain reserved for proven
+cost direction inside schedule comparisons; policy status, selectors, and
+coverage stay neutral. Stored history and changes interpretation uses the exact
+recorded scrape edge, never a neighboring snapshot.

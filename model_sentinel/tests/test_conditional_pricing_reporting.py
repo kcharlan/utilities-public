@@ -2643,6 +2643,15 @@ def test_scan_html_squelched_omits_semantic_panels_and_conditional_colors_are_co
         assert f'price-lower">{neutral}' not in normal
 
 
+def test_html_change_summary_contains_wide_tables_at_narrow_widths() -> None:
+    """A wide changes summary scrolls locally instead of widening the page."""
+    report = _scan_report(_event(), "html")
+    css = report.split("<style>", 1)[1].split("</style>", 1)[0]
+    summary_rule = css.split(".summary-section {", 1)[1].split("}", 1)[0]
+
+    assert "overflow-x: auto;" in summary_rule
+
+
 def test_changes_html_keeps_repeated_stored_edges_distinct_with_edge_links() -> None:
     one_rule = [{"utc_days": ["monday"], "prompt": "0.000002"}]
     two_rules = [
