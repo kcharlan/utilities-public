@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +22,7 @@ from model_sentinel.models import (
     ModelDelta,
     ProviderScanResult,
 )
-from model_sentinel.provider_profiles import OPENROUTER_PROFILE
+from model_sentinel.provider_profiles import OPENROUTER_PROFILE, ProviderProfile
 from model_sentinel.storage import StoredChangeRecord, StoredComparisonEvent
 
 
@@ -63,7 +65,10 @@ def _event(*, metadata: bool = True) -> PricingComparisonEvent:
     )
 
 
-def _scan_result(event: PricingComparisonEvent) -> ProviderScanResult:
+def _scan_result(
+    event: PricingComparisonEvent,
+    profile: ProviderProfile = OPENROUTER_PROFILE,
+) -> ProviderScanResult:
     return ProviderScanResult(
         provider_id=event.provider_id,
         provider_label="OpenRouter",
@@ -90,7 +95,7 @@ def _scan_result(event: PricingComparisonEvent) -> ProviderScanResult:
                 ),
             ),
         ),
-        profile=OPENROUTER_PROFILE,
+        profile=profile,
     )
 
 
@@ -99,13 +104,14 @@ def _scan_report(
     format_name: str,
     *,
     detail_mode: str = "default",
+    profile: ProviderProfile = OPENROUTER_PROFILE,
 ) -> str:
-    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    core = reporting.build_model_event_semantic_core(event, profile)
     return reporting.render_scan_report(
         generated_at="2026-08-28T12:00:00+00:00",
         command="scan",
         format_name=format_name,
-        provider_results=[_scan_result(event)],
+        provider_results=[_scan_result(event, profile)],
         detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
         semantic_cores={core.identity: core},
     )
@@ -1976,6 +1982,58 @@ def test_raw_fallback_utc_badge_follows_stored_selector_evidence() -> None:
         reports.append(_scan_report(event, "html"))
     assert 'class="utc-badge">UTC</span>' in reports[0]
     assert 'class="utc-badge"' not in reports[1]
+
+
+def test_raw_fallback_utc_badge_uses_active_profile_semantic_roles() -> None:
+    alternate_weekdays = replace(
+        OPENROUTER_PROFILE.pricing_override_condition_descriptors["utc_days"],
+        field_name="days_utc",
+    )
+    profile = replace(
+        OPENROUTER_PROFILE,
+        kind="alternate-synthetic",
+        pricing_override_condition_descriptors={"days_utc": alternate_weekdays},
+    )
+    rules = [{"days_utc": ["synthetic-invalid-day"], "prompt": "0.000002"}]
+    event = replace(
+        _event(metadata=False),
+        field_changes=(FieldChange("pricing.overrides", None, rules),),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+
+    core = reporting.build_model_event_semantic_core(event, profile)
+    assert core.interpretation is not None
+    assert core.interpretation.state == "raw-fallback"
+    assert core.interpretation.fallback_reason == "invalid_selector_value"
+    assert 'class="utc-badge">UTC</span>' in _scan_report(
+        event, "html", profile=profile
+    )
+
+
+def test_unregistered_utc_lookalike_does_not_invent_badge_semantics() -> None:
+    rules = [{"days_utc": ["monday"], "prompt": "0.000002"}]
+    event = replace(
+        _event(metadata=False),
+        field_changes=(FieldChange("pricing.overrides", None, rules),),
+        old_model_metadata=None,
+        new_model_metadata=None,
+    )
+
+    assert 'class="utc-badge"' not in _scan_report(event, "html")
+
+
+def test_generic_reporting_has_no_provider_raw_utc_selector_constants() -> None:
+    source = (
+        Path(__file__).parents[1] / "model_sentinel" / "reporting.py"
+    ).read_text()
+    string_constants = {
+        node.value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+
+    assert string_constants.isdisjoint({"utc_days", "utc_start", "utc_end"})
 
 
 def test_changes_edge_anchors_disambiguate_full_stored_identities() -> None:

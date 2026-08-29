@@ -5259,35 +5259,49 @@ def _policy_has_utc_time_semantics(
         return False
     return any(
         condition.semantic_role
-        in {"utc_weekdays", "utc_start_inclusive", "utc_end_exclusive"}
+        in _UTC_TIME_SEMANTIC_ROLES
         for compiled in policy.ordered_rules
         for condition in compiled.source_rule.conditions
     )
 
 
-_UTC_SELECTOR_KEYS = frozenset({"utc_days", "utc_start", "utc_end"})
+_UTC_TIME_SEMANTIC_ROLES = frozenset(
+    {"utc_weekdays", "utc_start_inclusive", "utc_end_exclusive"}
+)
 
 
-def _raw_value_has_utc_selector(value: Any) -> bool:
+def _raw_value_has_utc_selector(value: Any, profile: ProviderProfile) -> bool:
     if isinstance(value, dict) or hasattr(value, "items"):
-        return bool(_UTC_SELECTOR_KEYS.intersection(value)) or any(
-            _raw_value_has_utc_selector(child) for child in value.values()
-        )
+        for field_name, child in value.items():
+            descriptor = (
+                profile.pricing_override_condition_descriptor(field_name)
+                if isinstance(field_name, str)
+                else None
+            )
+            if (
+                descriptor is not None
+                and descriptor.semantic_role in _UTC_TIME_SEMANTIC_ROLES
+            ):
+                return True
+            if _raw_value_has_utc_selector(child, profile):
+                return True
+        return False
     if isinstance(value, (list, tuple)):
-        return any(_raw_value_has_utc_selector(child) for child in value)
+        return any(_raw_value_has_utc_selector(child, profile) for child in value)
     return False
 
 
 def _conditional_interpretation_uses_utc(
     interpretation: ConditionalPricingInterpretation,
     displayed_policy: CompiledConditionalPricingPolicy | None,
+    profile: ProviderProfile,
 ) -> bool:
     if interpretation.state == "grouped-schedule":
         return True
     if interpretation.state == "ordered-rules":
         return _policy_has_utc_time_semantics(displayed_policy)
     return any(
-        _raw_value_has_utc_selector(value)
+        _raw_value_has_utc_selector(value, profile)
         for change in interpretation.source_changes
         for value in (change.old_value, change.new_value)
     )
@@ -5438,7 +5452,9 @@ def _render_html_conditional_pricing(
     displayed_policy = _conditional_display_policy(interpretation)
     utc_badge = (
         '<span class="utc-badge">UTC</span>'
-        if _conditional_interpretation_uses_utc(interpretation, displayed_policy)
+        if _conditional_interpretation_uses_utc(
+            interpretation, displayed_policy, profile
+        )
         else ""
     )
     title = (
