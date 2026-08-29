@@ -358,6 +358,48 @@ def test_changes_characterization_json_is_a_passthrough() -> None:
     assert "—" not in render("json")
 
 
+def test_legacy_changes_json_projection_keeps_keys_values_and_row_order() -> None:
+    payload = json.loads(render("json"))
+
+    assert tuple(payload) == ("changes", "provider_id", "since", "until")
+    assert tuple(payload["changes"][0]) == (
+        "change_kind",
+        "detected_at",
+        "display_name",
+        "field_name",
+        "new_value",
+        "old_value",
+        "provider_id",
+        "provider_label",
+        "provider_model_id",
+    )
+    assert payload["provider_id"] is None
+    assert payload["since"] == SINCE
+    assert payload["until"] is None
+    assert [
+        (row["change_kind"], row["provider_model_id"], row["field_name"])
+        for row in payload["changes"]
+    ] == [
+        ("field_changed", "synth/model-changes", "pricing.prompt"),
+        ("field_changed", "synth/model-changes", "pricing.input_cache_read"),
+        (
+            "field_changed",
+            "synth/model-changes",
+            "pricing.overrides[min_prompt_tokens=200000].completion",
+        ),
+        ("field_changed", "synth/model-changes", "top_provider.max_completion_tokens"),
+        ("field_changed", "synth/model-changes", "top_provider.context_length"),
+        ("field_changed", "synth/model-changes", "top_provider.is_moderated"),
+        ("field_changed", "synth/model-changes", "expiration_date"),
+        ("field_changed", "synth/model-changes", "supported_parameters"),
+        ("field_changed", "synth/model-changes", "benchmarks.design_arena"),
+        ("added", "synth/model-arrived", None),
+        ("removed", "synth/model-departed", None),
+    ]
+    assert payload["changes"][0]["old_value"] == "0.000001"
+    assert payload["changes"][0]["new_value"] == "0.000002"
+
+
 # ---------------------------------------------------------------------------
 # Targeted behavioral guards around the goldens
 # ---------------------------------------------------------------------------

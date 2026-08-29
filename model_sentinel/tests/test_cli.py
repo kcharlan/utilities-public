@@ -5,22 +5,223 @@ from datetime import date
 import http.server
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
 import urllib.request
+import logging
 
 import pytest
 
 import model_sentinel.cli as cli
+import model_sentinel.reporting as reporting
 from model_sentinel.__init__ import __version__
 from model_sentinel.browse import server as browse_server_module
 from model_sentinel.build_info import format_build_info
 from model_sentinel.config import ProviderConfig
-from model_sentinel.models import BaselineInfo
-from model_sentinel.storage import Store
+from model_sentinel.provider_profiles import resolve_profile
+from model_sentinel.models import (
+    BaselineInfo,
+    FieldChange,
+    HistoryEvent,
+    ModelDelta,
+    NormalizedModel,
+    canonical_json,
+)
+from model_sentinel.storage import Store, StoredChangeRecord, StoredComparisonEvent
+from model_sentinel.conditional_pricing import StoredComparisonIdentity
 from model_sentinel.time_utils import to_local_human
 from tests.browse_fixtures import build_fixture_db
+
+
+def _synthetic_normalized_model(*, prompt: str, overrides=None) -> NormalizedModel:
+    metadata = {
+        "id": "synthetic/model",
+        "name": "Synthetic Model",
+        "pricing": {"prompt": prompt, "completion": "0.000008"},
+    }
+    if overrides is not None:
+        metadata["pricing"]["overrides"] = overrides
+    return NormalizedModel(
+        provider_id="openrouter",
+        provider_label="OpenRouter",
+        provider_model_id="synthetic/model",
+        display_name="Synthetic Model",
+        description=None,
+        model_family=None,
+        created_at_provider=None,
+        context_window=None,
+        max_output_tokens=None,
+        input_price=float(prompt),
+        output_price=0.000008,
+        cache_read_price=None,
+        cache_write_price=None,
+        reasoning_supported=None,
+        tool_calling_supported=None,
+        vision_supported=None,
+        audio_supported=None,
+        image_supported=None,
+        structured_output_supported=None,
+        deprecated=None,
+        status=None,
+        metadata_json=canonical_json(metadata),
+    )
+
+
+@pytest.mark.parametrize("save", (False, True))
+def test_run_scan_builds_exact_live_edge_outside_provider_result(
+    tmp_path: Path,
+    monkeypatch,
+    save: bool,
+) -> None:
+    provider = ProviderConfig(
+        provider_id="openrouter",
+        label="OpenRouter",
+        kind="openrouter",
+        base_url="https://synthetic.invalid",
+        models_path="/models",
+        credential_env_var="SYNTHETIC_CREDS",
+        price_multiplier=1000000,
+        price_divisor=1,
+        enabled=True,
+    )
+    old_model = _synthetic_normalized_model(prompt="0.000002")
+    overrides = [
+        {
+            "utc_days": ["monday"],
+            "utc_start": 100,
+            "utc_end": 200,
+            "prompt": "0.000003",
+        }
+    ]
+    new_model = _synthetic_normalized_model(prompt="0.000001", overrides=overrides)
+    delta = ModelDelta(
+        "changed",
+        "synthetic/model",
+        "Synthetic Model",
+        (
+            FieldChange("pricing.prompt", "0.000002", "0.000001"),
+            FieldChange("pricing.overrides", None, overrides),
+        ),
+    )
+
+    class FakeStore:
+        saved = False
+        recorded = False
+
+        def load_saved_models(self, scrape_id):
+            assert scrape_id == 10
+            return {"synthetic/model": old_model}
+
+        def create_scrape(self, **kwargs):
+            assert kwargs["saved_snapshot"] is save
+            return 11
+
+        def save_snapshot_models(self, **kwargs):
+            self.saved = True
+
+        def record_field_changes(self, **kwargs):
+            self.recorded = True
+
+    store = FakeStore()
+    loaded = type(
+        "Loaded",
+        (),
+        {
+            "providers": (provider,),
+            "settings": type(
+                "Settings",
+                (),
+                {
+                    "notify_default": False,
+                    "notify_on": "never",
+                    "report_retention_days": 30,
+                },
+            )(),
+            "runtime_paths": type("Paths", (), {"report_dir": tmp_path})(),
+        },
+    )()
+    args = Namespace(
+        provider=None,
+        save=save,
+        baseline="previous",
+        baseline_date=None,
+        format="text",
+        output=None,
+        detail=None,
+        notify=False,
+        no_notify=True,
+    )
+    monkeypatch.setenv("SYNTHETIC_CREDS", "conspicuously-synthetic")
+    monkeypatch.setattr(cli, "validate_selected_providers", lambda *a, **k: (provider,))
+    monkeypatch.setattr(
+        cli,
+        "_resolve_baseline",
+        lambda *a, **k: BaselineInfo(10, "2026-08-27T12:00:00+00:00"),
+    )
+    monkeypatch.setattr(cli, "fetch_raw_models", lambda *a, **k: [{}])
+    monkeypatch.setattr(cli, "normalize_models", lambda *a, **k: (new_model,))
+    monkeypatch.setattr(cli, "compare_models", lambda **kwargs: ((), (), (delta,)))
+    monkeypatch.setattr(
+        cli,
+        "_determine_report_path",
+        lambda **kwargs: tmp_path / "synthetic-scan.txt",
+    )
+    monkeypatch.setattr(cli, "_emit_output", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_maybe_notify", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "_cleanup_old_reports", lambda *a, **k: None)
+    captured = {}
+    core_indexes = []
+    core_builder_calls = []
+    real_core_builder = cli.build_model_event_semantic_core
+
+    def count_core_builder(event, profile):
+        core_builder_calls.append(event.identity)
+        return real_core_builder(event, profile)
+
+    monkeypatch.setattr(cli, "build_model_event_semantic_core", count_core_builder)
+
+    def capture_report(**kwargs):
+        captured.update(kwargs)
+        core_indexes.append(kwargs["semantic_cores"])
+        return "synthetic report"
+
+    monkeypatch.setattr(cli, "render_scan_report", capture_report)
+
+    assert cli.run_scan(
+        args=args,
+        loaded=loaded,
+        store=store,
+        logger=logging.getLogger("synthetic-test"),
+    ) == 0
+
+    result = captured["provider_results"][0]
+    assert "metadata" not in result.__dataclass_fields__
+    cores = captured["semantic_cores"]
+    assert len(cores) == 1
+    core = next(iter(cores.values()))
+    assert core.event.identity.baseline_scrape_id == 10
+    assert core.event.identity.attempt_scrape_id == 11
+    assert [
+        (
+            change.field_name,
+            reporting._mutable_json(change.old_value),
+            reporting._mutable_json(change.new_value),
+        )
+        for change in core.event.field_changes
+    ] == [
+        (change.field_name, change.old_value, change.new_value)
+        for change in delta.field_changes
+    ]
+    assert reporting._mutable_json(core.event.old_model_metadata) == old_model.metadata()
+    assert reporting._mutable_json(core.event.new_model_metadata) == new_model.metadata()
+    assert store.saved is save
+    assert store.recorded is save
+    assert len(core_builder_calls) == 1
+    assert len(core_indexes) == 3
+    assert core_indexes[0] is core_indexes[1] is core_indexes[2]
+    assert next(iter(core_indexes[0].values())) is next(iter(core_indexes[2].values()))
 
 
 @pytest.mark.parametrize(
@@ -622,8 +823,29 @@ def test_changes_writes_its_html_companion_when_a_model_was_added(
     assert cli.main(["scan", "--save"]) == 0
     capsys.readouterr()
 
+    built_identities = []
+    rendered_core_indexes = []
+    real_builder = reporting.build_model_event_semantic_core
+    real_renderer = cli.render_changes_report
+
+    def count_builder(event, profile):
+        built_identities.append(event.identity)
+        return real_builder(event, profile)
+
+    def capture_renderer(**kwargs):
+        rendered_core_indexes.append(kwargs["semantic_cores"])
+        return real_renderer(**kwargs)
+
+    monkeypatch.setattr(reporting, "build_model_event_semantic_core", count_builder)
+    monkeypatch.setattr(cli, "render_changes_report", capture_renderer)
+
     assert cli.main(["changes"]) == 0
     capsys.readouterr()
+
+    assert len(built_identities) == len(set(built_identities))
+    assert len(rendered_core_indexes) == 2
+    assert rendered_core_indexes[0] is rendered_core_indexes[1]
+    assert set(rendered_core_indexes[0]) == set(built_identities)
 
     html_reports = sorted((runtime_home / "reports").glob("changes_*.html"))
     assert html_reports, "changes wrote no HTML companion report"
@@ -637,6 +859,341 @@ def test_changes_writes_its_html_companion_when_a_model_was_added(
     assert "<code>gamma</code>" in summary[1]
     # Squelched rows account for the hidden change instead of printing it.
     assert "Design arena" not in summary[1]
+
+
+def test_changes_json_uses_the_latest_snapshot_display_name(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Legacy changes JSON joins names from the current latest snapshot."""
+    from model_sentinel.models import FieldChange, ModelDelta, NormalizedModel, canonical_json
+
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    store = Store(runtime_home / "model_sentinel.db")
+    store.initialize()
+    provider = ProviderConfig(
+        provider_id="openrouter",
+        label="OpenRouter",
+        kind="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        models_path="/models",
+        credential_env_var="OPENROUTER_AI_CREDS",
+        price_multiplier=1000000,
+        price_divisor=1,
+        enabled=True,
+    )
+    store.upsert_provider_configs((provider,), updated_at="2026-08-01T00:00:00+00:00")
+
+    def model(display_name: str) -> NormalizedModel:
+        return NormalizedModel(
+            provider_id="openrouter",
+            provider_label="OpenRouter",
+            provider_model_id="synthetic/model",
+            display_name=display_name,
+            description=None,
+            model_family=None,
+            created_at_provider=None,
+            context_window=None,
+            max_output_tokens=None,
+            input_price=None,
+            output_price=None,
+            cache_read_price=None,
+            cache_write_price=None,
+            reasoning_supported=None,
+            tool_calling_supported=None,
+            vision_supported=None,
+            audio_supported=None,
+            image_supported=None,
+            structured_output_supported=None,
+            deprecated=None,
+            status="active",
+            metadata_json=canonical_json({"id": "synthetic/model", "name": display_name}),
+        )
+
+    first = store.create_scrape(
+        provider_id="openrouter",
+        started_at="2026-08-01T00:00:00+00:00",
+        completed_at="2026-08-01T00:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=None,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    second = store.create_scrape(
+        provider_id="openrouter",
+        started_at="2026-08-02T00:00:00+00:00",
+        completed_at="2026-08-02T00:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=first,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    third = store.create_scrape(
+        provider_id="openrouter",
+        started_at="2026-08-03T00:00:00+00:00",
+        completed_at="2026-08-03T00:01:00+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=second,
+        saved_snapshot=True,
+        model_count=1,
+        error_message=None,
+    )
+    store.save_snapshot_models(
+        scrape_id=first,
+        provider_id="openrouter",
+        models=[model("Synthetic Original Name")],
+    )
+    store.save_snapshot_models(
+        scrape_id=second,
+        provider_id="openrouter",
+        models=[model("Synthetic Latest Name")],
+    )
+    store.save_snapshot_models(
+        scrape_id=third,
+        provider_id="openrouter",
+        models=[model("Synthetic Current Name")],
+    )
+    store.record_field_changes(
+        provider_id="openrouter",
+        from_scrape_id=first,
+        to_scrape_id=second,
+        deltas=(
+            ModelDelta(
+                "changed",
+                "synthetic/model",
+                "Synthetic Latest Name",
+                (FieldChange("status", "preview", "active"),),
+            ),
+        ),
+        detected_at="2026-08-02T00:01:00+00:00",
+    )
+
+    def reject_rich_query(*args, **kwargs):
+        raise AssertionError("changes JSON queried internal comparison envelopes")
+
+    monkeypatch.setattr(Store, "recent_comparison_events", reject_rich_query)
+
+    assert cli.main(["changes", "--format", "json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert tuple(payload) == ("changes", "provider_id", "since", "until")
+    assert payload["changes"] == [
+        {
+            "change_kind": "field_changed",
+            "detected_at": "2026-08-02T00:01:00+00:00",
+            "display_name": "Synthetic Current Name",
+            "field_name": "status",
+            "new_value": "active",
+            "old_value": "preview",
+            "provider_id": "openrouter",
+            "provider_label": "OpenRouter",
+            "provider_model_id": "synthetic/model",
+        }
+    ]
+
+
+def test_scan_explicit_output_does_not_generate_managed_companions(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "synthetic-token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    output_path = tmp_path / "explicit-scan.txt"
+    payloads = iter(
+        [
+            [{"id": "synthetic/model", "name": "Synthetic Model"}],
+            [{"id": "synthetic/model", "name": "Synthetic Model", "status": "active"}],
+        ]
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
+
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+    assert cli.main(["scan", "--save", "--output", str(output_path)]) == 0
+    capsys.readouterr()
+
+    assert output_path.exists()
+    assert "changed: 1" in output_path.read_text(encoding="utf-8")
+    assert list((runtime_home / "reports").glob("scan_*.html")) == []
+    assert list((runtime_home / "reports").glob("scan_*_full.html")) == []
+
+
+def test_explicit_scan_json_without_companions_never_builds_semantics(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "conspicuously-synthetic")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    output_path = tmp_path / "explicit-scan.json"
+    payloads = iter(
+        [
+            [{"id": "synthetic/model", "name": "Synthetic Model"}],
+            [
+                {
+                    "id": "synthetic/model",
+                    "name": "Synthetic Model",
+                    "status": "active",
+                }
+            ],
+        ]
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
+
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+
+    def reject_semantics(*args, **kwargs):
+        raise AssertionError("explicit JSON scan built human semantic state")
+
+    monkeypatch.setattr(cli, "build_live_comparison_events", reject_semantics)
+    monkeypatch.setattr(cli, "build_model_event_semantic_core", reject_semantics)
+
+    assert cli.main(
+        ["scan", "--format", "json", "--output", str(output_path)]
+    ) == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["providers"][0]["changed"][0]["provider_model_id"] == (
+        "synthetic/model"
+    )
+
+
+def test_scan_planning_error_after_save_does_not_create_error_scrape(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "conspicuously-synthetic")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    payloads = iter(
+        [
+            [{"id": "synthetic/model", "name": "Synthetic Model"}],
+            [
+                {
+                    "id": "synthetic/model",
+                    "name": "Synthetic Model",
+                    "status": "active",
+                }
+            ],
+        ]
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
+
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+
+    def fail_planning(*args, **kwargs):
+        raise ValueError("synthetic planning invariant")
+
+    monkeypatch.setattr(cli, "build_model_event_semantic_core", fail_planning)
+
+    with pytest.raises(ValueError, match="synthetic planning invariant"):
+        cli.main(["scan", "--save"])
+
+    database_path = runtime_home / "model_sentinel.db"
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT status, saved_snapshot FROM scrapes ORDER BY scrape_id"
+        ).fetchall()
+        change_count = connection.execute(
+            "SELECT COUNT(*) FROM field_changes"
+        ).fetchone()[0]
+    assert rows == [("success", 1), ("success", 1)]
+    # One initial presence record plus exactly one saved field-change row. A
+    # duplicate result/error path would add another scrape and/or delta rows.
+    assert change_count == 2
+
+
+def test_managed_scan_json_builds_semantics_after_json_once_for_companions(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    settings_path = runtime_home / "settings.env"
+    settings_path.write_text(
+        settings_path.read_text(encoding="utf-8")
+        .replace("MODEL_SENTINEL_NOTIFY_DEFAULT=0", "MODEL_SENTINEL_NOTIFY_DEFAULT=1")
+        .replace("MODEL_SENTINEL_NOTIFY_ON=never", "MODEL_SENTINEL_NOTIFY_ON=changes"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "conspicuously-synthetic")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setattr(cli, "send_notification", lambda **kwargs: None)
+    payloads = iter(
+        [
+            [{"id": "synthetic/model", "name": "Synthetic Model"}],
+            [
+                {
+                    "id": "synthetic/model",
+                    "name": "Synthetic Model",
+                    "status": "active",
+                }
+            ],
+        ]
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
+
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+
+    lifecycle = []
+    render_calls = []
+    real_builder = cli.build_model_event_semantic_core
+    real_renderer = cli.render_scan_report
+
+    def count_builder(*args, **kwargs):
+        lifecycle.append("build")
+        return real_builder(*args, **kwargs)
+
+    def capture_renderer(**kwargs):
+        lifecycle.append(f"render:{kwargs['format_name']}")
+        render_calls.append((kwargs["format_name"], kwargs["semantic_cores"]))
+        return real_renderer(**kwargs)
+
+    monkeypatch.setattr(cli, "build_model_event_semantic_core", count_builder)
+    monkeypatch.setattr(cli, "render_scan_report", capture_renderer)
+
+    assert cli.main(["scan", "--save", "--format", "json"]) == 0
+    capsys.readouterr()
+
+    assert lifecycle == ["render:json", "build", "render:html", "render:html"]
+    assert render_calls[0] == ("json", {})
+    assert len(render_calls[1][1]) == 1
+    assert render_calls[1][1] is render_calls[2][1]
+
+
+def test_changes_explicit_output_does_not_generate_managed_companions(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    build_fixture_db(runtime_home / "model_sentinel.db")
+    output_path = tmp_path / "explicit-changes.txt"
+
+    assert cli.main(["changes", "--output", str(output_path)]) == 0
+    capsys.readouterr()
+
+    assert output_path.exists()
+    assert "changes across" in output_path.read_text(encoding="utf-8")
+    assert list((runtime_home / "reports").glob("changes_*.txt")) == []
+    assert list((runtime_home / "reports").glob("changes_*.html")) == []
 
 
 def test_history_model_list_lists_known_models(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1002,6 +1559,190 @@ def test_history_specific_model_includes_latest_prices(tmp_path: Path, monkeypat
     assert exit_code == 0
     assert "Latest price in/out: 2 / 8" in captured.out
     assert "Latest cache pricing: 1 / 3" in captured.out
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+@pytest.mark.parametrize("detail", ("default", "all", "squelched"))
+@pytest.mark.parametrize("mixed", (False, True), ids=("ordinary", "mixed"))
+def test_run_history_preserves_exact_ordinary_contract_when_rich_edges_are_loaded(
+    monkeypatch,
+    format_name: str,
+    detail: str,
+    mixed: bool,
+) -> None:
+    provider = ProviderConfig(
+        provider_id="openrouter",
+        label="OpenRouter",
+        kind="openrouter",
+        base_url="https://synthetic.invalid",
+        models_path="/models",
+        credential_env_var="SYNTHETIC_CREDS",
+        price_multiplier=1_000_000,
+        price_divisor=1,
+        enabled=True,
+    )
+
+    def edge(
+        from_scrape: int,
+        to_scrape: int,
+        detected_at: str,
+        field_name: str,
+        old_value,
+        new_value,
+        old_metadata,
+        new_metadata,
+    ) -> StoredComparisonEvent:
+        identity = StoredComparisonIdentity(
+            "openrouter", "synthetic/model", from_scrape, to_scrape
+        )
+        row = StoredChangeRecord(
+            change_id=to_scrape,
+            provider_id="openrouter",
+            provider_model_id="synthetic/model",
+            from_scrape_id=from_scrape,
+            to_scrape_id=to_scrape,
+            change_kind="field_changed",
+            field_name=field_name,
+            old_value=old_value,
+            new_value=new_value,
+            detected_at=detected_at,
+        )
+        return StoredComparisonEvent(
+            identity=identity,
+            provider_label="OpenRouter",
+            display_name="Synthetic Model",
+            detected_at=detected_at,
+            from_completed_at=detected_at,
+            to_completed_at=detected_at,
+            source_rows=(row,),
+            field_changes=(FieldChange(field_name, old_value, new_value),),
+            old_model_metadata=old_metadata,
+            new_model_metadata=new_metadata,
+        )
+
+    ordinary = edge(
+        10,
+        11,
+        "2026-08-10T10:00:00+00:00",
+        "benchmarks.synthetic_score",
+        1,
+        2,
+        {"id": "synthetic/model", "benchmarks": {"synthetic_score": 1}},
+        {"id": "synthetic/model", "benchmarks": {"synthetic_score": 2}},
+    )
+    stored = (ordinary,)
+    if mixed:
+        rules = [
+            {
+                "utc_days": ["monday"],
+                "utc_start": 100,
+                "utc_end": 200,
+                "prompt": "0.000002",
+            }
+        ]
+        conditional = edge(
+            11,
+            12,
+            "2026-08-11T11:00:00+00:00",
+            "pricing.overrides",
+            None,
+            rules,
+            {"id": "synthetic/model", "pricing": {"prompt": "0.000001"}},
+            {
+                "id": "synthetic/model",
+                "pricing": {"prompt": "0.000001", "overrides": rules},
+            },
+        )
+        stored = (*stored, conditional)
+    events = tuple(
+        HistoryEvent(
+            row.detected_at,
+            row.change_kind,
+            row.field_name,
+            row.old_value,
+            row.new_value,
+        )
+        for item in stored
+        for row in item.source_rows
+    )
+
+    class FakeStore:
+        def history_events(self, **kwargs):
+            return (
+                "2026-08-10T10:00:00+00:00",
+                stored[-1].detected_at,
+                events,
+            )
+
+        def history_comparison_events(self, **kwargs):
+            return stored
+
+        def get_latest_model_snapshot(self, **kwargs):
+            return None
+
+    loaded = Namespace(
+        providers=(provider,),
+        settings=Namespace(
+            report_detail="default",
+            report_show_fields=reporting.DEFAULT_REPORT_SHOW_FIELDS,
+            report_squelch_fields=reporting.DEFAULT_REPORT_SQUELCH_FIELDS,
+            report_unclassified_limit=20,
+        ),
+    )
+    args = Namespace(
+        provider="openrouter",
+        model="synthetic/model",
+        since=None,
+        until=None,
+        pattern=None,
+        format=format_name,
+        detail=detail,
+        output=None,
+    )
+    emitted = []
+    monkeypatch.setattr(
+        cli, "_emit_output", lambda report, output_path: emitted.append(report)
+    )
+
+    assert cli.run_history(args=args, loaded=loaded, store=FakeStore()) == 0
+    profile = resolve_profile(
+        provider.kind,
+        price_multiplier=provider.price_multiplier,
+        price_divisor=provider.price_divisor,
+    )
+    cores = {
+        item.identity: reporting.build_model_event_semantic_core(
+            reporting.pricing_event_from_stored(item), profile
+        )
+        for item in stored
+    }
+    expected = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen="2026-08-10T10:00:00+00:00",
+        last_seen=stored[-1].detected_at,
+        events=events,
+        latest_model=None,
+        profile=profile,
+        detail_policy=reporting.make_report_detail_policy(mode=detail),
+        stored_events=stored,
+        semantic_cores=cores,
+    )
+    assert emitted == [expected]
+    if not mixed:
+        legacy = reporting.render_history_report(
+            provider_id="openrouter",
+            model_id="synthetic/model",
+            format_name=format_name,
+            first_seen="2026-08-10T10:00:00+00:00",
+            last_seen=stored[-1].detected_at,
+            events=events,
+            latest_model=None,
+            profile=profile,
+            detail_policy=reporting.make_report_detail_policy(mode=detail),
+        )
+        assert emitted[0] == legacy
 
 
 def test_history_with_unknown_provider_exits_cleanly(tmp_path: Path, monkeypatch, capsys) -> None:

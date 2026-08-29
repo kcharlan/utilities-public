@@ -4,10 +4,11 @@ import fnmatch
 import html as html_module
 import json
 import re
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from typing import Any, Literal
 
 # Renderers in this module are pure formatters over `RenderedChange`: they call
@@ -48,18 +49,49 @@ from .change_render import (
     ABSENT_TEXT_DISPLAY,
     PricingFieldSortKey,
     RenderedChange,
+    ResolvedPriceValue,
     _list_diff_members,
     _numeric_value,
     _scalar_display,
     classify_change,
+    format_price_values,
     pricing_field_sort_key,
-    signed_pct_change,
+    resolve_price_value,
+    resolve_price_rule,
 )
-from .models import FieldChange, HistoryEvent, ModelDelta, ProviderScanResult
+from .conditional_pricing import (
+    CompiledConditionalPricingPolicy,
+    ComparisonIdentity,
+    ConditionalPricingRule,
+    ConditionalPricingInterpretation,
+    DirectPriceMovementFact,
+    EffectivePriceVector,
+    LiveComparisonIdentity,
+    ModelPricingAccounting,
+    PricingComparisonEvent,
+    PriceBandComparison,
+    PricingTransition,
+    SourceChangeReference,
+    StoredComparisonIdentity,
+    WeeklySegment,
+    build_model_pricing_accounting,
+    compile_weekly_segments,
+    interpret_conditional_pricing,
+    resolve_direct_price_movement,
+)
+from .models import (
+    FieldChange,
+    HistoryEvent,
+    ModelDelta,
+    NormalizedModel,
+    ProviderScanResult,
+    canonical_json,
+)
 from .provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
     ProviderProfile,
+    ResolvedPriceRule,
     USD_PER_MILLION_TOKENS_GROUP,
 )
 from .time_utils import to_local_human, to_local_iso
@@ -101,9 +133,107 @@ class _FieldDisplayPlan:
 
 
 @dataclass(frozen=True)
+class ModelEventSemanticCore:
+    """Format-neutral truth for one exact model comparison edge.
+
+    The core is deliberately independent of report detail policy and renderer
+    anchors.  Every artifact projection for an edge retains this exact object.
+    """
+
+    event: PricingComparisonEvent
+    interpretation: ConditionalPricingInterpretation | None
+    accounting: ModelPricingAccounting
+    remaining_field_changes: tuple[FieldChange, ...]
+    has_semantic_composite: bool
+    evidence_only: bool
+
+    @property
+    def identity(self) -> ComparisonIdentity:
+        return self.event.identity
+
+
+@dataclass(frozen=True)
+class ModelEventPresentationPlan:
+    """One artifact's visibility projection over a shared semantic core."""
+
+    core: ModelEventSemanticCore
+    display: _FieldDisplayPlan
+    show_conditional_panel: bool
+
+    @property
+    def accounting(self) -> ModelPricingAccounting:
+        return self.core.accounting
+
+
+@dataclass(frozen=True)
+class StoredEventPresentationPlan:
+    """One exact stored edge plus its artifact projection.
+
+    Presence rows remain source-ordered on the envelope and are never folded
+    into a field-change edge merely because the date/model happen to match.
+    """
+
+    stored_event: Any
+    projection: ModelEventPresentationPlan
+
+    @property
+    def identity(self) -> StoredComparisonIdentity:
+        return self.stored_event.identity
+
+    @property
+    def comparison_label(self) -> str:
+        """Stored edges are selected-baseline comparisons, never first-seen claims."""
+        return "relative to selected baseline"
+
+    @property
+    def anchor_identity(self) -> StoredComparisonIdentity:
+        """Stable renderer input; the HTML id itself is artifact-local."""
+        return self.identity
+
+
+@dataclass(frozen=True)
+class UniqueModelPricingFold:
+    """Selected-range Price Movement facts folded by provider/model only."""
+
+    provider_id: str
+    provider_model_id: str
+    event_identities: tuple[StoredComparisonIdentity, ...]
+    model_bucket: Literal[
+        "higher", "lower", "mixed", "coverage", "conditional", "none"
+    ]
+    direct_price_field_count: int
+    conditional_policy_count: int
+    source_rule_count: int
+    schedule_dimension_count: int
+    effective_band_count: int
+
+
+@dataclass(frozen=True)
+class ChangesSemanticCore:
+    """Exact stored event cores plus the binding unique-model fold."""
+
+    events: tuple[ModelEventSemanticCore, ...]
+    pricing_models: tuple[UniqueModelPricingFold, ...]
+    change_summary_identities: tuple[StoredComparisonIdentity, ...]
+    direct_price_field_count: int
+    neutral_direct_price_field_count: int
+
+    @property
+    def by_identity(self) -> dict[ComparisonIdentity, ModelEventSemanticCore]:
+        return {event.identity: event for event in self.events}
+
+    @property
+    def conditional_event_count(self) -> int:
+        return sum(
+            event.accounting.conditional_policy_count for event in self.events
+        )
+
+
+@dataclass(frozen=True)
 class _PlannedModelChange:
     delta: ModelDelta
     display: _FieldDisplayPlan
+    semantic_core: ModelEventSemanticCore | None = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +304,7 @@ class _SummaryEntry:
     # reliably navigable. Defaulted so the `changes` report's constructors need
     # not mention it and its output cannot move.
     anchor: str = ""
+    row_class: str = ""
 
 
 @dataclass(frozen=True)
@@ -185,6 +316,11 @@ class _PriceMovementModel:
     lower: int
     added: int
     removed: int
+    conditional_policies: int = 0
+    source_rules: int = 0
+    schedule_dimensions: int = 0
+    effective_bands: int = 0
+    conditional_transition: PricingTransition | None = None
     # D1: the price field that moved this model FURTHEST in each direction, as
     # the classified change itself rather than a magnitude beside it. The
     # magnitude is `delta_abs` on that change, so it is read back through
@@ -200,7 +336,9 @@ class _PriceMovementModel:
     top_decrease: RenderedChange | None = None
 
     @property
-    def bucket(self) -> Literal["higher", "lower", "mixed", "coverage"]:
+    def bucket(self) -> Literal["higher", "lower", "mixed", "coverage", "conditional"]:
+        if self.conditional_policies:
+            return "conditional"
         if self.higher and self.lower:
             return "mixed"
         if self.higher:
@@ -222,8 +360,11 @@ class _PriceMovementModel:
 @dataclass(frozen=True)
 class _PriceMovementSummary:
     models: tuple[_PriceMovementModel, ...]
+    direct_price_field_count: int = 0
+    neutral_direct_price_field_count: int = 0
+    uses_semantic_accounting: bool = False
 
-    def models_in(self, bucket: Literal["higher", "lower", "mixed", "coverage"]) -> tuple[_PriceMovementModel, ...]:
+    def models_in(self, bucket: Literal["higher", "lower", "mixed", "coverage", "conditional"]) -> tuple[_PriceMovementModel, ...]:
         return tuple(model for model in self.models if model.bucket == bucket)
 
     def _headline(
@@ -280,6 +421,22 @@ class _PriceMovementSummary:
     @property
     def field_total(self) -> int:
         return self.higher_fields + self.lower_fields + self.added_fields + self.removed_fields
+
+    @property
+    def conditional_policy_total(self) -> int:
+        return sum(model.conditional_policies for model in self.models)
+
+    @property
+    def source_rule_total(self) -> int:
+        return sum(model.source_rules for model in self.models)
+
+    @property
+    def schedule_dimension_total(self) -> int:
+        return sum(model.schedule_dimensions for model in self.models)
+
+    @property
+    def effective_band_total(self) -> int:
+        return sum(model.effective_bands for model in self.models)
 
 
 def make_report_detail_policy(
@@ -350,6 +507,366 @@ def filter_field_changes_for_detail(
     return FilteredFieldChanges(tuple(shown), tuple(squelched), tuple(unclassified))
 
 
+def _event_source_references(
+    event: PricingComparisonEvent,
+) -> tuple[SourceChangeReference, ...]:
+    """Mirror the interpreter's occurrence identity without exposing internals."""
+    occurrences: Counter[tuple[str, str, str]] = Counter()
+    references: list[SourceChangeReference] = []
+    for source_index, change in enumerate(event.field_changes):
+        old_json = canonical_json(_mutable_json(change.old_value))
+        new_json = canonical_json(_mutable_json(change.new_value))
+        key = (change.field_name, old_json, new_json)
+        occurrence = occurrences[key]
+        occurrences[key] += 1
+        references.append(
+            SourceChangeReference(
+                field_name=change.field_name,
+                old_value_canonical_json=old_json,
+                new_value_canonical_json=new_json,
+                occurrence=occurrence,
+                source_index=source_index,
+            )
+        )
+    return tuple(references)
+
+
+def _mutable_json(value: Any) -> Any:
+    if isinstance(value, dict) or hasattr(value, "items"):
+        return {key: _mutable_json(child) for key, child in value.items()}
+    if isinstance(value, tuple):
+        return [_mutable_json(child) for child in value]
+    return value
+
+
+def _remaining_event_source_changes(
+    event: PricingComparisonEvent,
+    interpretation: ConditionalPricingInterpretation | None,
+    profile: ProviderProfile,
+    references: tuple[SourceChangeReference, ...],
+) -> tuple[tuple[FieldChange, SourceChangeReference], ...]:
+    """Return unconsumed ordinary changes with occurrence identity intact."""
+    consumed = (
+        set(interpretation.absorbed_base_price_changes)
+        if interpretation is not None
+        else set()
+    )
+    return tuple(
+        (change, reference)
+        for change, reference in zip(event.field_changes, references, strict=True)
+        if reference not in consumed
+        and not profile.is_pricing_override_selector_path(change.field_name)
+        and not (
+            interpretation is not None
+            and change.field_name == "pricing.overrides"
+        )
+    )
+
+
+def build_model_event_semantic_core(
+    event: PricingComparisonEvent,
+    profile: ProviderProfile,
+) -> ModelEventSemanticCore:
+    """Interpret and account for one edge before any artifact filtering."""
+    interpretation = interpret_conditional_pricing(event, profile)
+    references = _event_source_references(event)
+    direct_facts = tuple(
+        fact
+        for change, reference in zip(event.field_changes, references, strict=True)
+        if (
+            fact := resolve_direct_price_movement(
+                change.field_name,
+                change.old_value,
+                change.new_value,
+                profile,
+                source_change=reference,
+            )
+        )
+        is not None
+    )
+    accounting = build_model_pricing_accounting(
+        interpretation,
+        direct_price_facts=direct_facts,
+    )
+
+    remaining = tuple(
+        change
+        for change, _reference in _remaining_event_source_changes(
+            event,
+            interpretation,
+            profile,
+            references,
+        )
+    )
+    semantic_composite = bool(
+        interpretation is not None and interpretation.semantic_change
+    )
+    evidence_only = bool(
+        interpretation is not None
+        and not interpretation.semantic_change
+        and interpretation.canonical_evidence_changed
+    )
+    return ModelEventSemanticCore(
+        event=event,
+        interpretation=interpretation,
+        accounting=accounting,
+        remaining_field_changes=remaining,
+        has_semantic_composite=semantic_composite,
+        evidence_only=evidence_only,
+    )
+
+
+def project_model_event_semantics(
+    core: ModelEventSemanticCore,
+    policy: ReportDetailPolicy,
+    profile: ProviderProfile,
+    *,
+    unclassified_remaining: int | None = None,
+    include_evidence_only: bool = False,
+) -> ModelEventPresentationPlan:
+    """Apply one artifact's detail policy without changing semantic truth."""
+    display = _field_display_plan(
+        core.remaining_field_changes,
+        policy,
+        profile,
+        unclassified_remaining=unclassified_remaining,
+    )
+    return ModelEventPresentationPlan(
+        core=core,
+        display=display,
+        show_conditional_panel=(
+            policy.mode != "squelched"
+            and (
+                core.has_semantic_composite
+                or (
+                    include_evidence_only
+                    and policy.mode == "all"
+                    and core.evidence_only
+                )
+            )
+        ),
+    )
+
+
+def build_live_comparison_events(
+    *,
+    provider_id: str,
+    baseline_scrape_id: int | None,
+    attempt_scrape_id: int,
+    detected_at: str,
+    source_timestamp: str | None,
+    target_timestamp: str | None,
+    changed: tuple[ModelDelta, ...],
+    baseline_models: dict[str, NormalizedModel],
+    current_models: dict[str, NormalizedModel],
+) -> tuple[PricingComparisonEvent, ...]:
+    """Create occurrence-preserving live envelopes outside ProviderScanResult."""
+    events: list[PricingComparisonEvent] = []
+    for delta in changed:
+        old_model = baseline_models.get(delta.provider_model_id)
+        new_model = current_models.get(delta.provider_model_id)
+        events.append(
+            PricingComparisonEvent(
+                identity=LiveComparisonIdentity(
+                    provider_id,
+                    delta.provider_model_id,
+                    baseline_scrape_id,
+                    attempt_scrape_id,
+                ),
+                provider_id=provider_id,
+                provider_model_id=delta.provider_model_id,
+                display_name=delta.display_name,
+                detected_at=detected_at,
+                source_timestamp=source_timestamp,
+                target_timestamp=target_timestamp,
+                field_changes=delta.field_changes,
+                old_model_metadata=(old_model.metadata() if old_model is not None else None),
+                new_model_metadata=(new_model.metadata() if new_model is not None else None),
+            )
+        )
+    return tuple(events)
+
+
+def pricing_event_from_stored(stored_event: Any) -> PricingComparisonEvent:
+    """Project Store's rich internal envelope onto the shared semantic input."""
+    return PricingComparisonEvent(
+        identity=stored_event.identity,
+        provider_id=stored_event.provider_id,
+        provider_model_id=stored_event.provider_model_id,
+        display_name=stored_event.display_name,
+        detected_at=stored_event.detected_at,
+        source_timestamp=stored_event.from_completed_at,
+        target_timestamp=stored_event.to_completed_at,
+        field_changes=stored_event.field_changes,
+        old_model_metadata=stored_event.old_model_metadata,
+        new_model_metadata=stored_event.new_model_metadata,
+    )
+
+
+def build_semantic_core_index(
+    events: Iterable[PricingComparisonEvent],
+    profiles: dict[str, ProviderProfile],
+) -> dict[ComparisonIdentity, ModelEventSemanticCore]:
+    """Build exactly one reusable semantic core for every distinct edge."""
+    cores: dict[ComparisonIdentity, ModelEventSemanticCore] = {}
+    for event in events:
+        if event.identity in cores:
+            raise ValueError("duplicate comparison identity in semantic core index")
+        cores[event.identity] = build_model_event_semantic_core(
+            event,
+            profiles.get(event.provider_id, GENERIC_PROFILE),
+        )
+    return cores
+
+
+def plan_stored_comparison_events(
+    stored_events: Iterable[Any],
+    profiles: dict[str, ProviderProfile],
+    policy: ReportDetailPolicy,
+    *,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    budget_scope: Literal["history", "changes"] = "changes",
+    include_evidence_only: bool = False,
+) -> tuple[StoredEventPresentationPlan, ...]:
+    """Project exact stored edges without merging equal model/date identities."""
+    events = tuple(stored_events)
+    cores = (
+        build_semantic_core_index(
+            (pricing_event_from_stored(event) for event in events),
+            profiles,
+        )
+        if semantic_cores is None
+        else semantic_cores
+    )
+    remaining_by_scope: dict[tuple[str, ...], int] = {}
+    plans: list[StoredEventPresentationPlan] = []
+    for event in events:
+        core = cores.get(event.identity)
+        if core is None:
+            raise ValueError("stored comparison edge has no semantic core")
+        if budget_scope == "changes":
+            date_key = to_local_human(event.detected_at).split(" ")[0]
+            scope = (date_key, event.provider_id)
+        else:
+            scope = (event.provider_id, event.provider_model_id)
+        remaining = remaining_by_scope.setdefault(scope, policy.unclassified_limit)
+        projection = project_model_event_semantics(
+            core,
+            policy,
+            profiles.get(event.provider_id, GENERIC_PROFILE),
+            unclassified_remaining=remaining,
+            include_evidence_only=include_evidence_only,
+        )
+        remaining_by_scope[scope] = max(
+            0,
+            remaining - projection.display.unclassified_used,
+        )
+        plans.append(StoredEventPresentationPlan(event, projection))
+    return tuple(plans)
+
+
+def build_changes_semantic_core(
+    stored_events: Iterable[Any],
+    profiles: dict[str, ProviderProfile],
+) -> ChangesSemanticCore:
+    """Build exact edge cores and the selected-range unique-model accounting."""
+    events = tuple(stored_events)
+    seen_identities: set[StoredComparisonIdentity] = set()
+    for event in events:
+        identity = event.identity
+        if not isinstance(identity, StoredComparisonIdentity):
+            raise TypeError("changes semantic core requires stored comparison identities")
+        if identity in seen_identities:
+            raise ValueError("duplicate stored comparison identity in changes semantic core")
+        seen_identities.add(identity)
+    cores = tuple(
+        build_model_event_semantic_core(
+            pricing_event_from_stored(event),
+            profiles.get(event.provider_id, GENERIC_PROFILE),
+        )
+        for event in events
+    )
+    grouped: OrderedDict[
+        tuple[str, str], list[ModelEventSemanticCore]
+    ] = OrderedDict()
+    for core in cores:
+        accounting = core.accounting
+        if (
+            accounting.direct_price_field_count == 0
+            and accounting.conditional_policy_count == 0
+        ):
+            continue
+        grouped.setdefault(
+            (core.event.provider_id, core.event.provider_model_id), []
+        ).append(core)
+
+    folds: list[UniqueModelPricingFold] = []
+    for (provider_id, model_id), model_events in grouped.items():
+        buckets = {event.accounting.model_bucket for event in model_events}
+        if "conditional" in buckets:
+            bucket = "conditional"
+        elif "mixed" in buckets or ({"higher", "lower"} <= buckets):
+            bucket = "mixed"
+        elif "higher" in buckets:
+            bucket = "higher"
+        elif "lower" in buckets:
+            bucket = "lower"
+        elif "coverage" in buckets:
+            bucket = "coverage"
+        else:
+            bucket = "none"
+        if bucket == "none":
+            continue
+        folds.append(
+            UniqueModelPricingFold(
+                provider_id=provider_id,
+                provider_model_id=model_id,
+                event_identities=tuple(
+                    event.identity
+                    for event in model_events
+                    if isinstance(event.identity, StoredComparisonIdentity)
+                ),
+                model_bucket=bucket,
+                direct_price_field_count=sum(
+                    event.accounting.direct_price_field_count
+                    for event in model_events
+                ),
+                conditional_policy_count=sum(
+                    event.accounting.conditional_policy_count
+                    for event in model_events
+                ),
+                source_rule_count=sum(
+                    event.accounting.source_rule_count for event in model_events
+                ),
+                schedule_dimension_count=sum(
+                    event.accounting.schedule_dimension_count
+                    for event in model_events
+                ),
+                effective_band_count=sum(
+                    event.accounting.effective_band_count for event in model_events
+                ),
+            )
+        )
+    return ChangesSemanticCore(
+        events=cores,
+        pricing_models=tuple(folds),
+        change_summary_identities=tuple(
+            core.identity
+            for core in cores
+            if core.event.field_changes
+            and isinstance(core.identity, StoredComparisonIdentity)
+        ),
+        direct_price_field_count=sum(
+            core.accounting.direct_price_field_count for core in cores
+        ),
+        neutral_direct_price_field_count=sum(
+            fact.direction in {"unchanged", "unknown"}
+            for core in cores
+            for fact in core.accounting.direct_price_facts
+        ),
+    )
+
+
 def _matches_any(field_name: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatchcase(field_name, pattern) for pattern in patterns)
 
@@ -410,10 +927,18 @@ def _field_display_plan(
     # policy. The filter sits above the `mode == "all"` early return on
     # purpose: E1 is a correctness fix, not a verbosity setting, so the
     # full-detail audit view drops them too.
-    field_changes, noop = _drop_noop_changes(
-        _expand_structured_field_changes(field_changes, profile),
-        profile,
+    expanded = _expand_structured_field_changes(field_changes, profile)
+    # Conditional selectors are policy evidence, never independent facts. A
+    # compatibility caller may not have a semantic core to consume them, so
+    # enforce the same provider-owned boundary here after structured parents
+    # have produced their leaf paths and before any display classification.
+    # This is presentation-only: source deltas and JSON remain untouched.
+    expanded = tuple(
+        change
+        for change in expanded
+        if not profile.is_pricing_override_selector_path(change.field_name)
     )
+    field_changes, noop = _drop_noop_changes(expanded, profile)
     if policy.mode == "all":
         return _FieldDisplayPlan(field_changes, (), (), (), 0, noop)
 
@@ -631,7 +1156,10 @@ def _list_change_signature(field_change: FieldChange) -> tuple[str, tuple[str, .
     return (field_change.field_name, added, removed)
 
 
-def _bulk_change_signature(plan: _FieldDisplayPlan) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] | None:
+def _bulk_change_signature(
+    plan: _FieldDisplayPlan,
+    semantic_core: ModelEventSemanticCore | None = None,
+) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] | None:
     """Return a safe bulk-grouping signature for repetitive list changes.
 
     Scalar values remain model-specific so pricing, limits, cutoffs, and other
@@ -639,6 +1167,8 @@ def _bulk_change_signature(plan: _FieldDisplayPlan) -> tuple[tuple[str, tuple[st
     is intentionally excluded: adding the same parameter is the same semantic
     change whether a model's list grows from 9 to 10 or from 19 to 20.
     """
+    if semantic_core is not None and semantic_core.has_semantic_composite:
+        return None
     if not plan.visible or plan.hidden_unclassified or plan.hidden_non_squelched:
         return None
     if not all(isinstance(fc.old_value, list) and isinstance(fc.new_value, list) for fc in plan.visible):
@@ -650,25 +1180,53 @@ def _plan_provider_changes(
     changed: tuple[ModelDelta, ...],
     policy: ReportDetailPolicy,
     profile: ProviderProfile,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    *,
+    provider_id: str | None = None,
+    include_evidence_only: bool = False,
 ) -> _ProviderChangePlan:
     planned: list[_PlannedModelChange] = []
     unclassified_remaining = policy.unclassified_limit
     for delta in changed:
-        display = _field_display_plan(
-            delta.field_changes,
-            policy,
-            profile,
-            unclassified_remaining=unclassified_remaining,
+        core = _semantic_core_for_model(
+            semantic_cores,
+            provider_id,
+            delta.provider_model_id,
         )
+        if core is None:
+            display = _field_display_plan(
+                delta.field_changes,
+                policy,
+                profile,
+                unclassified_remaining=unclassified_remaining,
+            )
+        else:
+            display = project_model_event_semantics(
+                core,
+                policy,
+                profile,
+                unclassified_remaining=unclassified_remaining,
+                include_evidence_only=include_evidence_only,
+            ).display
         unclassified_remaining = max(0, unclassified_remaining - display.unclassified_used)
-        planned.append(_PlannedModelChange(delta, display))
+        planned.append(_PlannedModelChange(delta, display, core))
 
     rollups = _collect_hidden_rollups(
         (item.delta.provider_model_id, item.display) for item in planned
     )
 
     if policy.mode != "default":
-        return _ProviderChangePlan(tuple(planned), _prune_empty_items(planned), rollups)
+        return _ProviderChangePlan(
+            tuple(planned),
+            _prune_empty_items(
+                planned,
+                include_evidence_only=(
+                    include_evidence_only and policy.mode == "all"
+                ),
+                include_semantic_composite=policy.mode != "squelched",
+            ),
+            rollups,
+        )
 
     by_signature: dict[
         tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
@@ -676,7 +1234,7 @@ def _plan_provider_changes(
     ] = defaultdict(list)
     signatures: dict[str, tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]] = {}
     for item in planned:
-        signature = _bulk_change_signature(item.display)
+        signature = _bulk_change_signature(item.display, item.semantic_core)
         if signature is None:
             continue
         by_signature[signature].append(item)
@@ -700,11 +1258,34 @@ def _plan_provider_changes(
     return _ProviderChangePlan(tuple(planned), _prune_empty_items(items), rollups)
 
 
+def _semantic_core_for_model(
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None,
+    provider_id: str | None,
+    provider_model_id: str,
+) -> ModelEventSemanticCore | None:
+    if not semantic_cores:
+        return None
+    matches = tuple(
+        core
+        for identity, core in semantic_cores.items()
+        if (provider_id is None or identity.provider_id == provider_id)
+        and identity.provider_model_id == provider_model_id
+    )
+    if len(matches) > 1:
+        raise ValueError("scan semantic plan contains multiple edges for one model")
+    return matches[0] if matches else None
+
+
 def _has_hidden_details(plan: _FieldDisplayPlan) -> bool:
     return bool(plan.squelched or plan.hidden_unclassified or plan.hidden_non_squelched)
 
 
-def _renders_anything(plan: _FieldDisplayPlan) -> bool:
+def _renders_anything(
+    plan: _FieldDisplayPlan,
+    semantic_core: ModelEventSemanticCore | None = None,
+    *,
+    include_semantic_composite: bool = True,
+) -> bool:
     """THE "does this model still say something?" rule.
 
     A model earns a card when it has a visible row, or a hidden-detail rollup
@@ -723,11 +1304,22 @@ def _renders_anything(plan: _FieldDisplayPlan) -> bool:
     pre-existing and preserved here, which is why the extra rule composes at
     the call site instead of being folded into this predicate.
     """
-    return bool(plan.visible or _has_hidden_details(plan))
+    return bool(
+        plan.visible
+        or _has_hidden_details(plan)
+        or (
+            include_semantic_composite
+            and semantic_core is not None
+            and semantic_core.has_semantic_composite
+        )
+    )
 
 
 def _prune_empty_items(
     items: Sequence[_PlannedModelChange | _BulkChangeGroup],
+    *,
+    include_evidence_only: bool = False,
+    include_semantic_composite: bool = True,
 ) -> tuple[_PlannedModelChange | _BulkChangeGroup, ...]:
     """Drop planned models that would render an empty card.
 
@@ -740,7 +1332,25 @@ def _prune_empty_items(
         item
         for item in items
         if isinstance(item, _BulkChangeGroup)
-        or (_renders_anything(item.display) and not _is_squelched_only(item.display))
+        or (
+            (
+                _renders_anything(
+                    item.display,
+                    item.semantic_core,
+                    include_semantic_composite=include_semantic_composite,
+                )
+                or (
+                    include_evidence_only
+                    and item.semantic_core is not None
+                    and item.semantic_core.evidence_only
+                )
+            )
+            and (
+                item.semantic_core is not None
+                and item.semantic_core.has_semantic_composite
+                or not _is_squelched_only(item.display)
+            )
+        )
     )
 
 
@@ -951,6 +1561,7 @@ class _PlannedChangeEntry:
     display_name: str
     kind: str
     display: _FieldDisplayPlan | None  # None for added/removed models
+    semantic_core: ModelEventSemanticCore | None = None
 
 
 @dataclass(frozen=True)
@@ -970,7 +1581,7 @@ def group_planned_entries_by_bulk(
     for entry in entries:
         if entry.kind != "changed" or entry.display is None:
             continue
-        signature = _bulk_change_signature(entry.display)
+        signature = _bulk_change_signature(entry.display, entry.semantic_core)
         if signature is not None:
             signatures[id(entry)] = signature
             by_signature[signature].append(entry)
@@ -1004,10 +1615,29 @@ class _ChangesProviderPlan:
         return not self.entries and not self.rollups.any_hidden
 
 
+@dataclass(frozen=True)
+class _StoredSemanticArtifactIndex:
+    """One validated exact-edge index shared by every block in one artifact."""
+
+    cores_by_edge: dict[
+        tuple[str, str, int | None, int], ModelEventSemanticCore
+    ]
+    projections_by_edge: dict[
+        tuple[str, str, int | None, int], ModelEventPresentationPlan
+    ]
+
+
 def plan_changes_provider(
     models: dict[str, list[dict[str, Any]]],
     policy: ReportDetailPolicy,
     profile: ProviderProfile,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    semantic_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] | None = None,
+    *,
+    artifact_semantics: _StoredSemanticArtifactIndex | None = None,
+    include_evidence_only: bool = False,
 ) -> _ChangesProviderPlan:
     """Plan one provider block of the `changes` report, for text and HTML alike.
 
@@ -1023,8 +1653,40 @@ def plan_changes_provider(
     """
     entries: list[_PlannedChangeEntry] = []
     planned_displays: list[tuple[str, _FieldDisplayPlan]] = []
+    semantic_source_supplied = bool(
+        artifact_semantics is not None
+        or semantic_cores is not None
+        or semantic_projections is not None
+    )
+    if artifact_semantics is not None:
+        if semantic_cores is not None or semantic_projections is not None:
+            raise ValueError(
+                "artifact semantic index cannot be combined with raw semantic maps"
+            )
+        semantic_index = artifact_semantics
+    else:
+        semantic_index = _build_stored_semantic_artifact_index(
+            semantic_cores,
+            semantic_projections,
+        )
+    cores_by_edge = semantic_index.cores_by_edge
+    projections_by_edge = semantic_index.projections_by_edge
     unclassified_remaining = policy.unclassified_limit
     for model_id, model_changes in models.items():
+        rendered_model_id = model_changes[0].get("provider_model_id", model_id)
+        edge_key = model_changes[0].get("_comparison_edge")
+        semantic_projection = projections_by_edge.get(edge_key)
+        semantic_core = (
+            semantic_projection.core
+            if semantic_projection is not None
+            else cores_by_edge.get(edge_key)
+        )
+        if (
+            edge_key is not None
+            and semantic_source_supplied
+            and semantic_core is None
+        ):
+            raise ValueError("human stored row has no exact semantic edge")
         display_name = model_changes[0].get("display_name", model_id)
         # One model can hold several records inside one date bucket -- more than
         # one scan a day is routine. Reading `model_changes[0]["change_kind"]`
@@ -1040,25 +1702,164 @@ def plan_changes_provider(
         # Within them, recorded order is kept: added-then-removed is not the
         # same story as removed-then-added.
         for row in presence_rows:
-            entries.append(_PlannedChangeEntry(model_id, display_name, row["change_kind"], None))
+            entries.append(
+                _PlannedChangeEntry(
+                    rendered_model_id,
+                    display_name,
+                    row["change_kind"],
+                    None,
+                    None,
+                )
+            )
         field_changes = _field_changes_from_change_rows(field_rows)
         if not field_changes:
             continue
-        plan = _field_display_plan(
-            field_changes,
-            policy,
-            profile,
-            unclassified_remaining=unclassified_remaining,
-        )
+        if semantic_projection is not None:
+            plan = semantic_projection.display
+        elif semantic_core is None:
+            plan = _field_display_plan(
+                field_changes,
+                policy,
+                profile,
+                unclassified_remaining=unclassified_remaining,
+            )
+        else:
+            plan = project_model_event_semantics(
+                semantic_core,
+                policy,
+                profile,
+                unclassified_remaining=unclassified_remaining,
+                include_evidence_only=include_evidence_only,
+            ).display
         unclassified_remaining = max(0, unclassified_remaining - plan.unclassified_used)
-        planned_displays.append((model_id, plan))
-        if not _renders_anything(plan):
+        planned_displays.append((rendered_model_id, plan))
+        if not _renders_anything(
+            plan,
+            semantic_core,
+            include_semantic_composite=policy.mode != "squelched",
+        ) and not (
+            include_evidence_only
+            and policy.mode == "all"
+            and semantic_core is not None
+            and semantic_core.evidence_only
+        ):
             continue
-        entries.append(_PlannedChangeEntry(model_id, display_name, "changed", plan))
+        entries.append(
+            _PlannedChangeEntry(
+                rendered_model_id,
+                display_name,
+                "changed",
+                plan,
+                semantic_core,
+            )
+        )
     return _ChangesProviderPlan(tuple(entries), _collect_hidden_rollups(planned_displays))
 
 
 _plan_changes_report_provider = plan_changes_provider
+
+
+def _stored_edge_key(identity: StoredComparisonIdentity) -> tuple[str, str, int | None, int]:
+    return (
+        identity.provider_id,
+        identity.provider_model_id,
+        identity.from_scrape_id,
+        identity.to_scrape_id,
+    )
+
+
+def _stored_edge_anchor(identity: StoredComparisonIdentity) -> str:
+    return (
+        f"edge-{_model_anchor_base(identity.provider_model_id)}-"
+        f"from-{identity.from_scrape_id}-to-{identity.to_scrape_id}"
+    )
+
+
+class _StoredEdgeAnchors:
+    """Artifact-local exact-edge anchors with deterministic collision suffixes."""
+
+    def __init__(self) -> None:
+        self._assigned: dict[StoredComparisonIdentity, str] = {}
+        self._used: set[str] = set()
+
+    def assign(self, identity: StoredComparisonIdentity) -> str:
+        existing = self._assigned.get(identity)
+        if existing is not None:
+            return existing
+        base = _stored_edge_anchor(identity)
+        anchor = base
+        occurrence = 1
+        while anchor in self._used:
+            occurrence += 1
+            anchor = f"{base}-{occurrence}"
+        self._used.add(anchor)
+        self._assigned[identity] = anchor
+        return anchor
+
+    def link(self, identity: StoredComparisonIdentity) -> str:
+        return self._assigned.get(identity, "")
+
+
+def _build_stored_semantic_artifact_index(
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None,
+    semantic_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] | None,
+) -> _StoredSemanticArtifactIndex:
+    cores_by_edge = _index_stored_semantic_cores(semantic_cores)
+    projections_by_edge = _index_stored_semantic_projections(
+        semantic_projections
+    )
+    for edge_key in cores_by_edge.keys() & projections_by_edge.keys():
+        if projections_by_edge[edge_key].core is not cores_by_edge[edge_key]:
+            raise ValueError(
+                "stored semantic projection does not share its indexed core"
+            )
+    return _StoredSemanticArtifactIndex(cores_by_edge, projections_by_edge)
+
+
+def _index_stored_semantic_cores(
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None,
+) -> dict[tuple[str, str, int | None, int], ModelEventSemanticCore]:
+    if semantic_cores is None:
+        return {}
+    indexed: dict[
+        tuple[str, str, int | None, int], ModelEventSemanticCore
+    ] = {}
+    for identity, core in semantic_cores.items():
+        if not isinstance(identity, StoredComparisonIdentity):
+            raise TypeError("stored semantic core index requires stored identities")
+        if core.identity != identity:
+            raise ValueError("stored semantic core mapping has conflicting identity")
+        edge_key = _stored_edge_key(identity)
+        if edge_key in indexed:
+            raise ValueError("duplicate exact stored semantic core edge")
+        indexed[edge_key] = core
+    return indexed
+
+
+def _index_stored_semantic_projections(
+    semantic_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] | None,
+) -> dict[tuple[str, str, int | None, int], ModelEventPresentationPlan]:
+    if semantic_projections is None:
+        return {}
+    indexed: dict[
+        tuple[str, str, int | None, int], ModelEventPresentationPlan
+    ] = {}
+    for identity, projection in semantic_projections.items():
+        if not isinstance(identity, StoredComparisonIdentity):
+            raise TypeError("stored semantic projection index requires stored identities")
+        if projection.core.identity != identity:
+            raise ValueError(
+                "stored semantic projection mapping has conflicting identity"
+            )
+        edge_key = _stored_edge_key(identity)
+        if edge_key in indexed:
+            raise ValueError("duplicate exact stored semantic projection edge")
+        indexed[edge_key] = projection
+    return indexed
 
 
 def _visible_history_events(
@@ -1084,6 +1885,21 @@ def _visible_history_events(
             visible.append(event)
             unclassified_remaining -= 1
     return tuple(visible)
+
+
+def _legacy_human_history_events(
+    events: tuple[HistoryEvent, ...],
+    profile: ProviderProfile,
+) -> tuple[HistoryEvent, ...]:
+    """Remove policy-selector leaves from the legacy human projection only."""
+    return tuple(
+        event
+        for event in events
+        if not (
+            event.field_name
+            and profile.is_pricing_override_selector_path(event.field_name)
+        )
+    )
 
 
 def _history_hidden_counts(
@@ -1137,6 +1953,104 @@ def _history_summary_markdown(events: tuple[HistoryEvent, ...], policy: ReportDe
     if hidden_non_squelched:
         lines.append(f"`{hidden_non_squelched}` non-squelched field change(s) omitted in squelched detail mode.")
     return lines
+
+
+def _history_event_from_stored_row(source_row: Any) -> HistoryEvent:
+    """Project one rich row back to the exact five-field history contract."""
+    return HistoryEvent(
+        source_row.detected_at,
+        source_row.change_kind,
+        source_row.field_name,
+        source_row.old_value,
+        source_row.new_value,
+    )
+
+
+def _history_plan_uses_semantic_projection(
+    plan: StoredEventPresentationPlan,
+    profile: ProviderProfile,
+) -> bool:
+    """Keep conditional and orphan selector evidence off the legacy row path."""
+    core = plan.projection.core
+    return core.interpretation is not None or any(
+        profile.is_pricing_override_selector_path(change.field_name)
+        for change in core.event.field_changes
+    )
+
+
+def _semantic_history_ordinary_occurrences(
+    plan: StoredEventPresentationPlan,
+    profile: ProviderProfile,
+) -> tuple[tuple[int, HistoryEvent], ...]:
+    """Project unconsumed rich rows through their legacy occurrence contract."""
+    core = plan.projection.core
+    field_rows = tuple(
+        row
+        for row in plan.stored_event.source_rows
+        if row.change_kind == "field_changed"
+    )
+    if len(field_rows) != len(core.event.field_changes):
+        raise ValueError("stored field rows do not match semantic event occurrences")
+    remaining = _remaining_event_source_changes(
+        core.event,
+        core.interpretation,
+        profile,
+        _event_source_references(core.event),
+    )
+    return tuple(
+        (
+            reference.source_index,
+            _history_event_from_stored_row(field_rows[reference.source_index]),
+        )
+        for _change, reference in remaining
+    )
+
+
+def _semantic_history_composite_source_index(
+    plan: StoredEventPresentationPlan,
+) -> int:
+    """Return the first source occurrence represented by the composite block."""
+    interpretation = plan.projection.core.interpretation
+    if interpretation is None or not interpretation.source_changes:
+        return 0
+    return min(
+        source.reference.source_index
+        for source in interpretation.source_changes
+    )
+
+
+def _append_legacy_history_markdown_rows(
+    lines: list[str],
+    events: tuple[HistoryEvent, ...],
+    *,
+    table_open: bool,
+) -> bool:
+    if events and not table_open:
+        lines.extend(
+            [
+                "| Detected At | Kind | Field | Old | New |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        table_open = True
+    for event in events:
+        lines.append(
+            f"| {to_local_human(event.detected_at)} | {event.change_kind} | {event.field_name or ''} | "
+            f"{_scalar_display(event.old_value)} | {_scalar_display(event.new_value)} |"
+        )
+    return table_open
+
+
+def _append_legacy_history_text_rows(
+    lines: list[str],
+    events: tuple[HistoryEvent, ...],
+) -> None:
+    for event in events:
+        lines.append(
+            f"- {to_local_human(event.detected_at)} [{event.change_kind}] "
+            f"{event.field_name or ''} {_scalar_display(event.old_value)} -> "
+            f"{_scalar_display(event.new_value)}"
+        )
 
 
 def _field_category_for_detail(
@@ -1210,6 +2124,7 @@ def render_scan_report(
     format_name: str,
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy | None = None,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     detail_policy = detail_policy or make_report_detail_policy()
     if format_name == "json":
@@ -1228,6 +2143,7 @@ def render_scan_report(
             command=command,
             provider_results=provider_results,
             detail_policy=detail_policy,
+            semantic_cores=semantic_cores,
         )
     if format_name == "html":
         return _render_scan_html(
@@ -1235,13 +2151,527 @@ def render_scan_report(
             command=command,
             provider_results=provider_results,
             detail_policy=detail_policy,
+            semantic_cores=semantic_cores,
         )
     return _render_scan_text(
         generated_at=generated_at,
         command=command,
         provider_results=provider_results,
         detail_policy=detail_policy,
+        semantic_cores=semantic_cores,
     )
+
+
+_UTC_DAY_ABBREVIATIONS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _utc_clock(minute: int) -> str:
+    return "24:00" if minute == 1440 else f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def _compact_day_names(day_indices: tuple[int, ...]) -> str:
+    if day_indices == tuple(range(7)):
+        return "Mon-Sun"
+    runs: list[tuple[int, int]] = []
+    for day in day_indices:
+        if runs and day == runs[-1][1] + 1:
+            runs[-1] = (runs[-1][0], day)
+        else:
+            runs.append((day, day))
+    return ",".join(
+        _UTC_DAY_ABBREVIATIONS[start]
+        if start == end
+        else f"{_UTC_DAY_ABBREVIATIONS[start]}-{_UTC_DAY_ABBREVIATIONS[end]}"
+        for start, end in runs
+    )
+
+
+def _format_utc_coverage(coverage: Iterable[WeeklySegment]) -> str:
+    """Format canonical request-instant weekly segments without local conversion."""
+    by_interval: OrderedDict[tuple[int, int], list[int]] = OrderedDict()
+    for segment in coverage:
+        by_interval.setdefault(
+            (segment.start_minute, segment.end_minute), []
+        ).append(segment.weekday_index)
+    parts = []
+    for (start, end), days in by_interval.items():
+        day_text = _compact_day_names(tuple(days))
+        interval = (
+            "all day"
+            if start == 0 and end == 1440
+            else f"{_utc_clock(start)}-{_utc_clock(end)} UTC"
+        )
+        parts.append(f"{day_text} {interval}")
+    return "; ".join(parts) or "no covered UTC windows"
+
+
+def _conditional_display_policy(
+    interpretation: ConditionalPricingInterpretation,
+) -> CompiledConditionalPricingPolicy | None:
+    return (
+        interpretation.old_compiled_policy
+        if interpretation.transition == "removed"
+        else interpretation.new_compiled_policy
+    )
+
+
+def _ordered_schedule_dimensions(
+    interpretation: ConditionalPricingInterpretation,
+    profile: ProviderProfile,
+) -> tuple[str, ...]:
+    dimensions = (
+        interpretation.accounting.schedule_dimensions
+        if interpretation.accounting is not None
+        else ()
+    )
+    return tuple(
+        sorted(
+            dimensions,
+            key=lambda dimension: pricing_field_sort_key(
+                profile.pricing_override_base_paths.get(
+                    dimension, f"pricing.{dimension}"
+                ),
+                profile,
+            ),
+        )
+    )
+
+
+def _dimension_label(dimension: str, profile: ProviderProfile) -> str:
+    path = profile.pricing_override_base_paths.get(dimension, f"pricing.{dimension}")
+    return classify_change(FieldChange(path, None, None), profile=profile).display_label
+
+
+def _format_effective_vector(
+    vector: EffectivePriceVector,
+    dimensions: tuple[str, ...],
+    profile: ProviderProfile,
+) -> str:
+    resolved_by_dimension = {}
+    for entry in vector.entries:
+        path = profile.pricing_override_base_paths.get(
+            entry.dimension, f"pricing.{entry.dimension}"
+        )
+        resolved = resolve_price_value(path, entry.raw_value, profile)
+        if resolved is not None:
+            resolved_by_dimension[entry.dimension] = resolved
+    compatible_groups: OrderedDict[
+        tuple[str, str | None], list[tuple[str, ResolvedPriceValue]]
+    ] = OrderedDict()
+    for dimension in dimensions:
+        resolved = resolved_by_dimension.get(dimension)
+        if resolved is None:
+            continue
+        key = (
+            resolved.price_rule.unit_label,
+            resolved.price_rule.comparison_group,
+        )
+        compatible_groups.setdefault(key, []).append((dimension, resolved))
+    by_dimension: dict[str, str] = {}
+    for grouped in compatible_groups.values():
+        grouped_values = tuple(resolved for _dimension, resolved in grouped)
+        formatted = format_price_values(
+            grouped_values,
+            precision_basis=grouped_values,
+        )
+        by_dimension.update(
+            (dimension, display)
+            for (dimension, _resolved), display in zip(
+                grouped, formatted, strict=True
+            )
+        )
+    parts = []
+    for dimension in dimensions:
+        resolved = resolved_by_dimension.get(dimension)
+        if resolved is None:
+            continue
+        parts.append(
+            f"{_dimension_label(dimension, profile)} {by_dimension[dimension]} "
+            f"{resolved.price_rule.unit_label}"
+        )
+    return "; ".join(parts)
+
+
+def _format_explicit_assignments(
+    rule: ConditionalPricingRule,
+    dimensions: tuple[str, ...],
+    profile: ProviderProfile,
+) -> str:
+    explicit = {assignment.dimension: assignment for assignment in rule.explicit_prices}
+    cells = []
+    for dimension in dimensions:
+        assignment = explicit.get(dimension)
+        if assignment is None:
+            cells.append(f"{_dimension_label(dimension, profile)} not set by this rule")
+            continue
+        resolved = resolve_price_value(
+            profile.pricing_override_base_paths.get(
+                dimension, f"pricing.{dimension}"
+            ),
+            assignment.raw_value,
+            profile,
+        )
+        if resolved is None:
+            cells.append(
+                f"{_dimension_label(dimension, profile)} "
+                f"{_scalar_display(assignment.raw_value)}"
+            )
+        else:
+            rendered = format_price_values(
+                (resolved,), precision_basis=(resolved,)
+            )[0]
+            cells.append(
+                f"{_dimension_label(dimension, profile)} {rendered} "
+                f"{resolved.price_rule.unit_label}"
+            )
+    return " | ".join(cells)
+
+
+def _rule_predicate_text(rule: ConditionalPricingRule) -> str:
+    threshold_conditions = tuple(
+        condition.display_value
+        for condition in rule.conditions
+        if condition.semantic_role == "integer_strictly_greater"
+    )
+    time_conditions = tuple(
+        condition
+        for condition in rule.conditions
+        if condition.semantic_role
+        in {"utc_weekdays", "utc_start_inclusive", "utc_end_exclusive"}
+    )
+    parts = list(threshold_conditions)
+    if time_conditions:
+        parts.append(
+            _format_utc_coverage(_rule_coverage(rule))
+        )
+    return " and ".join(parts) or "all requests"
+
+
+def _rule_coverage(rule: ConditionalPricingRule) -> tuple[WeeklySegment, ...]:
+    """Return a parsed rule's already-validated UTC coverage for presentation."""
+    return compile_weekly_segments(
+        rule.utc_weekdays,
+        rule.start_minute,
+        rule.end_minute,
+    )
+
+
+def _canonical_parent_values(core: ModelEventSemanticCore) -> tuple[str, str]:
+    parents = tuple(
+        change
+        for change in core.event.field_changes
+        if change.field_name == "pricing.overrides"
+    )
+    if len(parents) != 1:
+        # Raw fallback can represent duplicate parents. Preserve every parent
+        # transition in one canonical array rather than selecting one.
+        old_value = [change.old_value for change in parents]
+        new_value = [change.new_value for change in parents]
+    else:
+        old_value = parents[0].old_value
+        new_value = parents[0].new_value
+    return (
+        canonical_json(_mutable_json(old_value)),
+        canonical_json(_mutable_json(new_value)),
+    )
+
+
+def _markdown_code_span(value: str) -> str:
+    """Wrap arbitrary one-line provider text in a non-interpreting code span."""
+    longest_run = max(
+        (len(match.group(0)) for match in re.finditer(r"`+", value)),
+        default=0,
+    )
+    delimiter = "`" * (longest_run + 1)
+    return f"{delimiter} {value} {delimiter}"
+
+
+def _canonical_evidence_line(label: str, value: str, *, markdown: bool) -> str:
+    rendered = _markdown_code_span(value) if markdown else value
+    return f"{label}: {rendered}"
+
+
+def _resolved_effective_vector_identity(
+    vector: EffectivePriceVector | None,
+    profile: ProviderProfile,
+) -> tuple[tuple[str, Fraction, str, str | None], ...] | None:
+    """Resolve a complete vector into an exact monetary comparison identity."""
+    if vector is None:
+        return None
+    identity = []
+    for entry in vector.entries:
+        path = profile.pricing_override_base_paths.get(
+            entry.dimension, f"pricing.{entry.dimension}"
+        )
+        resolved = resolve_price_value(path, entry.raw_value, profile)
+        if resolved is None:
+            return None
+        identity.append(
+            (
+                entry.dimension,
+                resolved.normalized_exact_value,
+                resolved.price_rule.unit_label,
+                resolved.price_rule.comparison_group,
+            )
+        )
+    return tuple(sorted(identity))
+
+
+def _comparison_band_matches_vector(
+    band: PriceBandComparison,
+    vector: EffectivePriceVector | None,
+    transition: PricingTransition,
+    profile: ProviderProfile,
+) -> bool:
+    """Match the displayed side of a comparison band to one exact vector."""
+    vector_identity = _resolved_effective_vector_identity(vector, profile)
+    if vector_identity is None:
+        return False
+    identity = []
+    for dimension in band.dimensions:
+        value = dimension.old_value if transition == "removed" else dimension.new_value
+        if value is None:
+            return False
+        identity.append(
+            (
+                dimension.dimension,
+                value.normalized_exact_value,
+                value.price_rule.unit_label,
+                value.price_rule.comparison_group,
+            )
+        )
+    return tuple(sorted(identity)) == vector_identity
+
+
+def _movement_summary(
+    interpretation: ConditionalPricingInterpretation,
+    profile: ProviderProfile,
+) -> str | None:
+    comparison = interpretation.comparison
+    if comparison is None or not comparison.bands:
+        return None
+    ordered_dimensions = _ordered_schedule_dimensions(interpretation, profile)
+    dimension_rank = {
+        dimension: index for index, dimension in enumerate(ordered_dimensions)
+    }
+    facts = []
+    displayed_policy = _conditional_display_policy(interpretation)
+    base_vector = displayed_policy.base_prices if displayed_policy is not None else None
+    other_band_number = 0
+    for band in comparison.bands:
+        is_base = _comparison_band_matches_vector(
+            band,
+            base_vector,
+            interpretation.transition,
+            profile,
+        )
+        if is_base:
+            label = "base"
+        elif band.is_peak:
+            label = "peak"
+        else:
+            other_band_number += 1
+            label = f"band {other_band_number}"
+        direction = {"higher": "up", "lower": "down"}.get(
+            band.direction, band.direction
+        )
+        if band.percentage is not None:
+            facts.append(f"{label} {direction} {abs(band.percentage):.1f}%")
+            continue
+        dimension_facts = []
+        for dimension in sorted(
+            band.dimensions,
+            key=lambda fact: (
+                dimension_rank.get(fact.dimension, len(dimension_rank)),
+                pricing_field_sort_key(
+                    profile.pricing_override_base_paths.get(
+                        fact.dimension, f"pricing.{fact.dimension}"
+                    ),
+                    profile,
+                ),
+            ),
+        ):
+            if (
+                dimension.direction not in {"higher", "lower"}
+                or dimension.percentage is None
+            ):
+                continue
+            dimension_direction = {
+                "higher": "up",
+                "lower": "down",
+            }[dimension.direction]
+            dimension_facts.append(
+                f"{_dimension_label(dimension.dimension, profile)} "
+                f"{dimension_direction} {abs(dimension.percentage):.1f}%"
+            )
+        facts.append(
+            f"{label} {direction}"
+            + (f" ({', '.join(dimension_facts)})" if dimension_facts else "")
+        )
+    return "; ".join(facts)
+
+
+def _conditional_pricing_lines(
+    projection: ModelEventPresentationPlan,
+    profile: ProviderProfile,
+    *,
+    comparison_label: str | None = None,
+    include_audit: bool = False,
+    markdown: bool = False,
+) -> list[str]:
+    """Render one self-contained composite block for non-HTML artifacts."""
+    if not projection.show_conditional_panel:
+        return []
+    core = projection.core
+    interpretation = core.interpretation
+    if interpretation is None:
+        return []
+    transition = interpretation.transition
+    suffix = f" {comparison_label}" if comparison_label else ""
+    lines: list[str] = []
+    if core.evidence_only:
+        if include_audit:
+            lines.append("Conditional pricing evidence (semantically unchanged)")
+            lines.extend(
+                _conditional_audit_lines(
+                    projection,
+                    profile,
+                    markdown=markdown,
+                )
+            )
+        return lines
+    if interpretation.state == "raw-fallback":
+        utc_suffix = (
+            " - UTC"
+            if _conditional_interpretation_uses_utc(
+                interpretation, None, profile
+            )
+            else ""
+        )
+        lines.append(
+            f"Conditional pricing changed (stored conditions retained){suffix}{utc_suffix}"
+        )
+        lines.append(
+            "The provider supplied an unsupported or ambiguous condition. "
+            "No schedule direction was inferred."
+        )
+        old_parent, new_parent = _canonical_parent_values(core)
+        lines.append(
+            _canonical_evidence_line(
+                "Canonical stored parent old", old_parent, markdown=markdown
+            )
+        )
+        lines.append(
+            _canonical_evidence_line(
+                "Canonical stored parent new", new_parent, markdown=markdown
+            )
+        )
+        return lines
+
+    policy = _conditional_display_policy(interpretation)
+    if policy is None:
+        return []
+    dimensions = _ordered_schedule_dimensions(interpretation, profile)
+    if interpretation.state == "grouped-schedule":
+        lines.append(f"Pricing schedule {transition}{suffix} - UTC")
+        if policy.base_prices is not None:
+            lines.append(
+                f"Base/default: {_format_effective_vector(policy.base_prices, dimensions, profile)}"
+            )
+        base_vector_identity = _resolved_effective_vector_identity(
+            policy.base_prices, profile
+        )
+        for index, band in enumerate(policy.effective_bands):
+            band_vector_identity = _resolved_effective_vector_identity(
+                band.effective_prices, profile
+            )
+            is_base_band = (
+                band_vector_identity is not None
+                and band_vector_identity == base_vector_identity
+            )
+            label = "Base-rate windows" if is_base_band else (
+                "Peak windows"
+                if interpretation.comparison is not None
+                and index == interpretation.comparison.peak_band_index
+                else f"Scheduled band {index + 1} windows"
+            )
+            lines.append(f"{label}: {_format_utc_coverage(band.coverage)}")
+            if not is_base_band:
+                lines.append(
+                    f"Rates: {_format_effective_vector(band.effective_prices, dimensions, profile)}"
+                )
+    else:
+        utc_suffix = (
+            " - UTC"
+            if _conditional_interpretation_uses_utc(
+                interpretation, policy, profile
+            )
+            else ""
+        )
+        lines.append(f"Conditional pricing {transition}{suffix}{utc_suffix}")
+        if policy.base_prices is not None:
+            lines.append(
+                f"Base/default: {_format_effective_vector(policy.base_prices, dimensions, profile)}"
+            )
+        for compiled_rule in policy.ordered_rules:
+            rule = compiled_rule.source_rule
+            lines.append(
+                f"Rule {rule.source_index + 1}: {_rule_predicate_text(rule)} | "
+                + _format_explicit_assignments(rule, dimensions, profile)
+            )
+        lines.append("Rules are evaluated in source order; later matching rules win per price key.")
+
+    movement = _movement_summary(interpretation, profile)
+    if movement:
+        lines.append(f"Movement: {movement} versus the prior advertised rates")
+    lines.append(
+        "These are provider-advertised catalog rates; actual routing and billing can vary."
+    )
+
+    if include_audit:
+        lines.extend(
+            _conditional_audit_lines(
+                projection,
+                profile,
+                include_rules=interpretation.state != "ordered-rules",
+                markdown=markdown,
+            )
+        )
+    return lines
+
+
+def _conditional_audit_lines(
+    projection: ModelEventPresentationPlan,
+    profile: ProviderProfile,
+    *,
+    include_rules: bool = True,
+    markdown: bool = False,
+) -> list[str]:
+    interpretation = projection.core.interpretation
+    if interpretation is None or interpretation.state == "raw-fallback":
+        return []
+    policy = _conditional_display_policy(interpretation)
+    dimensions = _ordered_schedule_dimensions(interpretation, profile)
+    lines = ["Source-ordered rules:"] if include_rules else []
+    if include_rules and policy is not None:
+        for compiled_rule in policy.ordered_rules:
+            rule = compiled_rule.source_rule
+            lines.append(
+                f"Rule {rule.source_index + 1}: {_rule_predicate_text(rule)} | "
+                f"{_format_explicit_assignments(rule, dimensions, profile)}"
+            )
+    old_parent, new_parent = _canonical_parent_values(projection.core)
+    lines.append(
+        _canonical_evidence_line(
+            "Canonical stored parent old", old_parent, markdown=markdown
+        )
+    )
+    lines.append(
+        _canonical_evidence_line(
+            "Canonical stored parent new", new_parent, markdown=markdown
+        )
+    )
+    return lines
 
 
 def render_history_report(
@@ -1255,6 +2685,8 @@ def render_history_report(
     profile: ProviderProfile,
     latest_model: dict[str, Any] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
+    stored_events: tuple[Any, ...] = (),
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     detail_policy = detail_policy or make_report_detail_policy()
     if format_name == "json":
@@ -1276,6 +2708,59 @@ def render_history_report(
             indent=2,
             sort_keys=True,
         )
+    legacy_human_events = _legacy_human_history_events(events, profile)
+    stored_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] = {}
+    stored_plans: tuple[StoredEventPresentationPlan, ...] = ()
+    if stored_events:
+        stored_plans = plan_stored_comparison_events(
+            stored_events,
+            {stored_events[0].provider_id: profile},
+            detail_policy,
+            semantic_cores=semantic_cores,
+            budget_scope="history",
+            include_evidence_only=True,
+        )
+        stored_projections = {
+            plan.identity: plan.projection for plan in stored_plans
+        }
+    semantic_stored_plans = tuple(
+        plan
+        for plan in stored_plans
+        if _history_plan_uses_semantic_projection(plan, profile)
+    )
+    # Rich storage is an input enhancement, not a wholesale history format
+    # replacement. If no edge needs conditional/selector semantic handling,
+    # stay on the byte-characterized five-field legacy renderer in full.
+    if stored_plans and not semantic_stored_plans:
+        stored_plans = ()
+    ordinary_occurrences_by_identity = {
+        plan.identity: (
+            _semantic_history_ordinary_occurrences(plan, profile)
+            if _history_plan_uses_semantic_projection(plan, profile)
+            else tuple(
+                (source_index, _history_event_from_stored_row(row))
+                for source_index, row in enumerate(plan.stored_event.source_rows)
+            )
+        )
+        for plan in stored_plans
+    }
+    ordinary_by_identity = {
+        identity: tuple(event for _source_index, event in occurrences)
+        for identity, occurrences in ordinary_occurrences_by_identity.items()
+    }
+    ordinary_stored_events = tuple(
+        event
+        for plan in stored_plans
+        for event in ordinary_by_identity.get(plan.identity, ())
+    )
+    visible_ordinary_ids = {
+        id(event)
+        for event in _visible_history_events(
+            ordinary_stored_events, detail_policy
+        )
+    }
     if format_name == "markdown":
         lines = [
             f"# History: {provider_id} / {model_id}",
@@ -1290,17 +2775,116 @@ def render_history_report(
             if cache_summary:
                 lines.append(f"- Latest cache pricing: {cache_summary}")
         lines.append("")
-        if not events:
+        if not legacy_human_events and not stored_plans:
             lines.append("No saved change events matched the requested range.")
             return "\n".join(lines)
+        if stored_plans:
+            table_open = False
+            for plan in stored_plans:
+                if not _history_plan_uses_semantic_projection(plan, profile):
+                    visible = tuple(
+                        event
+                        for event in ordinary_by_identity[plan.identity]
+                        if id(event) in visible_ordinary_ids
+                    )
+                    if visible and not table_open:
+                        lines.extend(
+                            [
+                                "| Detected At | Kind | Field | Old | New |",
+                                "|---|---|---|---|---|",
+                            ]
+                        )
+                        table_open = True
+                    for event in visible:
+                        lines.append(
+                            f"| {to_local_human(event.detected_at)} | {event.change_kind} | {event.field_name or ''} | "
+                            f"{_scalar_display(event.old_value)} | {_scalar_display(event.new_value)} |"
+                        )
+                    continue
+                event = plan.projection.core.event
+                conditional_lines = _conditional_pricing_lines(
+                    plan.projection,
+                    profile,
+                    comparison_label=plan.comparison_label,
+                    include_audit=detail_policy.mode == "all",
+                    markdown=True,
+                )
+                presence_rows = tuple(
+                    row
+                    for row in plan.stored_event.source_rows
+                    if row.change_kind in {"added", "removed"}
+                )
+                visible_occurrences = tuple(
+                    (source_index, ordinary)
+                    for source_index, ordinary in ordinary_occurrences_by_identity[
+                        plan.identity
+                    ]
+                    if id(ordinary) in visible_ordinary_ids
+                )
+                composite_index = _semantic_history_composite_source_index(plan)
+                before_composite = tuple(
+                    ordinary
+                    for source_index, ordinary in visible_occurrences
+                    if source_index < composite_index
+                )
+                after_composite = tuple(
+                    ordinary
+                    for source_index, ordinary in visible_occurrences
+                    if source_index >= composite_index
+                )
+                if (
+                    not conditional_lines
+                    and not presence_rows
+                    and not visible_occurrences
+                ):
+                    continue
+                table_open = _append_legacy_history_markdown_rows(
+                    lines,
+                    before_composite,
+                    table_open=table_open,
+                )
+                if conditional_lines or presence_rows:
+                    if lines and lines[-1] != "":
+                        lines.append("")
+                    lines.extend(
+                        [
+                            f"## Comparison detected {to_local_human(event.detected_at)}",
+                            "",
+                            f"- Source: {to_local_human(event.source_timestamp)}",
+                            f"- Target: {to_local_human(event.target_timestamp)}",
+                            "",
+                        ]
+                    )
+                    lines.extend(
+                        f"- {line}"
+                        for line in conditional_lines
+                    )
+                    for source_row in presence_rows:
+                        marker = "+" if source_row.change_kind == "added" else "-"
+                        lines.append(
+                            f"- {marker} `{event.provider_model_id}` ({event.display_name})"
+                        )
+                    lines.append("")
+                    table_open = False
+                table_open = _append_legacy_history_markdown_rows(
+                    lines,
+                    after_composite,
+                    table_open=table_open,
+                )
+            lines.extend(
+                _history_summary_markdown(
+                    ordinary_stored_events, detail_policy
+                )
+            )
+            return "\n".join(lines).rstrip()
         lines.append("| Detected At | Kind | Field | Old | New |")
         lines.append("|---|---|---|---|---|")
-        for event in _visible_history_events(events, detail_policy):
+        for event in _visible_history_events(legacy_human_events, detail_policy):
             lines.append(
                 f"| {to_local_human(event.detected_at)} | {event.change_kind} | {event.field_name or ''} | "
                 f"{_scalar_display(event.old_value)} | {_scalar_display(event.new_value)} |"
             )
-        lines.extend(_history_summary_markdown(events, detail_policy))
+        lines.extend(_history_summary_markdown(legacy_human_events, detail_policy))
         return "\n".join(lines)
     lines = [
         f"History for {provider_id} / {model_id}",
@@ -1314,15 +2898,87 @@ def render_history_report(
         if cache_summary:
             lines.append(f"Latest cache pricing: {cache_summary}")
     lines.append("")
-    if not events:
+    if not legacy_human_events and not stored_plans:
         lines.append("No saved change events matched the requested range.")
         return "\n".join(lines)
-    for event in _visible_history_events(events, detail_policy):
+    if stored_plans:
+        for plan in stored_plans:
+            if not _history_plan_uses_semantic_projection(plan, profile):
+                for event in ordinary_by_identity[plan.identity]:
+                    if id(event) not in visible_ordinary_ids:
+                        continue
+                    lines.append(
+                        f"- {to_local_human(event.detected_at)} [{event.change_kind}] "
+                        f"{event.field_name or ''} {_scalar_display(event.old_value)} -> "
+                        f"{_scalar_display(event.new_value)}"
+                    )
+                continue
+            event = plan.projection.core.event
+            conditional_lines = _conditional_pricing_lines(
+                plan.projection,
+                profile,
+                comparison_label=plan.comparison_label,
+                include_audit=detail_policy.mode == "all",
+            )
+            presence_rows = tuple(
+                row
+                for row in plan.stored_event.source_rows
+                if row.change_kind in {"added", "removed"}
+            )
+            visible_occurrences = tuple(
+                (source_index, ordinary)
+                for source_index, ordinary in ordinary_occurrences_by_identity[
+                    plan.identity
+                ]
+                if id(ordinary) in visible_ordinary_ids
+            )
+            composite_index = _semantic_history_composite_source_index(plan)
+            before_composite = tuple(
+                ordinary
+                for source_index, ordinary in visible_occurrences
+                if source_index < composite_index
+            )
+            after_composite = tuple(
+                ordinary
+                for source_index, ordinary in visible_occurrences
+                if source_index >= composite_index
+            )
+            if (
+                not conditional_lines
+                and not presence_rows
+                and not visible_occurrences
+            ):
+                continue
+            _append_legacy_history_text_rows(lines, before_composite)
+            if conditional_lines or presence_rows:
+                lines.extend(
+                    [
+                        f"Comparison detected {to_local_human(event.detected_at)}",
+                        f"  Source: {to_local_human(event.source_timestamp)}",
+                        f"  Target: {to_local_human(event.target_timestamp)}",
+                    ]
+                )
+                lines.extend(
+                    f"  {line}"
+                    for line in conditional_lines
+                )
+                for source_row in presence_rows:
+                    marker = "+" if source_row.change_kind == "added" else "-"
+                    lines.append(
+                        f"  {marker} {event.provider_model_id} ({event.display_name})"
+                    )
+                lines.append("")
+            _append_legacy_history_text_rows(lines, after_composite)
+        lines.extend(
+            _history_summary_text(ordinary_stored_events, detail_policy)
+        )
+        return "\n".join(lines).rstrip()
+    for event in _visible_history_events(legacy_human_events, detail_policy):
         lines.append(
             f"- {to_local_human(event.detected_at)} [{event.change_kind}] "
             f"{event.field_name or ''} {_scalar_display(event.old_value)} -> {_scalar_display(event.new_value)}"
         )
-    lines.extend(_history_summary_text(events, detail_policy))
+    lines.extend(_history_summary_text(legacy_human_events, detail_policy))
     return "\n".join(lines)
 
 
@@ -1476,6 +3132,37 @@ def _changes_provider_display_labels(changes: tuple[dict[str, Any], ...]) -> dic
     }
 
 
+def _human_changes_from_stored_events(
+    stored_events: tuple[Any, ...],
+) -> tuple[dict[str, Any], ...]:
+    """Project rich edges into legacy-shaped human rows with a private edge key."""
+    rows: list[dict[str, Any]] = []
+    for event in stored_events:
+        identity = event.identity
+        edge_key = (
+            identity.provider_id,
+            identity.provider_model_id,
+            identity.from_scrape_id,
+            identity.to_scrape_id,
+        )
+        for source in event.source_rows:
+            rows.append(
+                {
+                    "provider_id": source.provider_id,
+                    "provider_label": event.provider_label,
+                    "provider_model_id": source.provider_model_id,
+                    "display_name": event.display_name or source.provider_model_id,
+                    "change_kind": source.change_kind,
+                    "field_name": source.field_name,
+                    "old_value": source.old_value,
+                    "new_value": source.new_value,
+                    "detected_at": source.detected_at,
+                    "_comparison_edge": edge_key,
+                }
+            )
+    return tuple(rows)
+
+
 def render_changes_report(
     *,
     format_name: str,
@@ -1485,6 +3172,9 @@ def render_changes_report(
     changes: tuple[dict[str, Any], ...],
     provider_profiles: dict[str, ProviderProfile] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
+    stored_events: tuple[Any, ...] = (),
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    changes_semantic_core: ChangesSemanticCore | None = None,
 ) -> str:
     detail_policy = detail_policy or make_report_detail_policy()
     if format_name == "json":
@@ -1498,6 +3188,23 @@ def render_changes_report(
             indent=2,
             sort_keys=True,
         )
+
+    stored_projections: dict[
+        ComparisonIdentity, ModelEventPresentationPlan
+    ] = {}
+    if stored_events:
+        stored_plans = plan_stored_comparison_events(
+            stored_events,
+            provider_profiles or {},
+            detail_policy,
+            semantic_cores=semantic_cores,
+            budget_scope="changes",
+            include_evidence_only=format_name != "html",
+        )
+        stored_projections = {
+            plan.identity: plan.projection for plan in stored_plans
+        }
+        changes = _human_changes_from_stored_events(stored_events)
 
     if not changes:
         period_parts = []
@@ -1527,10 +3234,14 @@ def render_changes_report(
     for change in changes:
         date_str = to_local_human(change["detected_at"]).split(" ")[0] if change["detected_at"] else "unknown"
         provider = change.get("provider_id", "")
-        model = change["provider_model_id"]
+        model = change.get("_comparison_edge", change["provider_model_id"])
         by_date.setdefault(date_str, OrderedDict()).setdefault(provider, OrderedDict()).setdefault(model, []).append(change)
 
     display_labels = _changes_provider_display_labels(changes)
+    artifact_semantics = _build_stored_semantic_artifact_index(
+        semantic_cores,
+        stored_projections,
+    )
 
     if format_name == "html":
         return _render_changes_html(
@@ -1542,6 +3253,8 @@ def render_changes_report(
             total_changes=len(changes),
             provider_profiles=provider_profiles,
             detail_policy=detail_policy,
+            artifact_semantics=artifact_semantics,
+            changes_semantic_core=changes_semantic_core,
         )
 
     lines = ["Model Sentinel \u2014 Change Log", ""]
@@ -1574,6 +3287,8 @@ def render_changes_report(
                 models,
                 detail_policy,
                 profile,
+                artifact_semantics=artifact_semantics,
+                include_evidence_only=True,
             )
             if plan.renders_nothing:
                 continue
@@ -1590,6 +3305,35 @@ def render_changes_report(
                     continue
                 assert entry.display is not None  # `changed` entries always carry a plan
                 date_lines.append(f"      * {entry.model_id} ({entry.display_name})")
+                if entry.semantic_core is not None:
+                    event = entry.semantic_core.event
+                    date_lines.append(
+                        f"          Source: {to_local_human(event.source_timestamp)}"
+                    )
+                    date_lines.append(
+                        f"          Target: {to_local_human(event.target_timestamp)}"
+                    )
+                    projection = ModelEventPresentationPlan(
+                        entry.semantic_core,
+                        entry.display,
+                        detail_policy.mode != "squelched"
+                        and (
+                            entry.semantic_core.has_semantic_composite
+                            or (
+                                detail_policy.mode == "all"
+                                and entry.semantic_core.evidence_only
+                            )
+                        ),
+                    )
+                    date_lines.extend(
+                        f"          {line}"
+                        for line in _conditional_pricing_lines(
+                            projection,
+                            profile,
+                            comparison_label="relative to selected baseline",
+                            include_audit=detail_policy.mode == "all",
+                        )
+                    )
                 grouped = _group_field_changes_for_detail(
                     entry.display.visible,
                     detail_policy,
@@ -1665,7 +3409,10 @@ def _price_movement_kind(
     field_change: FieldChange,
     profile: ProviderProfile,
 ) -> Literal["higher", "lower", "added", "removed"] | None:
-    if not profile.is_price_amount_field(field_change.field_name):
+    if (
+        not profile.is_price_amount_field(field_change.field_name)
+        or profile.is_pricing_override_selector_path(field_change.field_name)
+    ):
         return None
 
     old_numeric = _numeric_value(field_change.old_value)
@@ -1683,6 +3430,20 @@ def _price_movement_kind(
     return None
 
 
+def _direct_price_fact_tally_bucket(
+    fact: DirectPriceMovementFact,
+) -> Literal["higher", "lower", "added", "removed", "neutral"]:
+    if fact.direction in {"higher", "lower"}:
+        return fact.direction
+    if fact.direction == "coverage":
+        if fact.old_value is None and fact.new_value is not None:
+            return "added"
+        if fact.old_value is not None and fact.new_value is None:
+            return "removed"
+        raise ValueError("coverage price fact must have exactly one present side")
+    return "neutral"
+
+
 # Which `_PriceMovementModel` slot a classified change competes for. Only the
 # two-sided directions appear: `added`/`removed`/`none` carry no `delta_abs` and
 # so can never be a headline mover.
@@ -1692,16 +3453,32 @@ _PRICE_MOVEMENT_SLOTS = {"up": "top_increase", "down": "top_decrease"}
 def _collect_price_movement_summary(
     planned_results: list[tuple[ProviderScanResult, _ProviderChangePlan]],
 ) -> _PriceMovementSummary:
-    counts: dict[tuple[str, str], dict[str, int]] = {}
+    counts: dict[tuple[str, str], dict[str, Any]] = {}
     identities: dict[tuple[str, str], tuple[str, str, str]] = {}
     movers: dict[tuple[str, str], dict[str, RenderedChange]] = {}
+    direct_price_field_count = 0
+    neutral_direct_price_field_count = 0
+    uses_semantic_accounting = False
 
     for result, provider_plan in planned_results:
         for item in provider_plan.planned:
             key = (result.provider_id, item.delta.provider_model_id)
-            for field_change in item.display.visible:
-                movement = _price_movement_kind(field_change, result.profile)
-                if movement is None:
+            accounting = (
+                item.semantic_core.accounting
+                if item.semantic_core is not None
+                else None
+            )
+            if accounting is not None:
+                uses_semantic_accounting = True
+                direct_price_field_count += accounting.direct_price_field_count
+                fact_buckets = tuple(
+                    _direct_price_fact_tally_bucket(fact)
+                    for fact in accounting.direct_price_facts
+                )
+                neutral_direct_price_field_count += sum(
+                    bucket == "neutral" for bucket in fact_buckets
+                )
+                if accounting.model_bucket == "none":
                     continue
                 identities[key] = (
                     result.provider_id,
@@ -1710,9 +3487,65 @@ def _collect_price_movement_summary(
                 )
                 model_counts = counts.setdefault(
                     key,
-                    {"higher": 0, "lower": 0, "added": 0, "removed": 0},
+                    {
+                        "higher": 0,
+                        "lower": 0,
+                        "added": 0,
+                        "removed": 0,
+                        "conditional_policies": 0,
+                        "source_rules": 0,
+                        "schedule_dimensions": 0,
+                        "effective_bands": 0,
+                        "conditional_transition": None,
+                    },
                 )
-                model_counts[movement] += 1
+                for bucket in fact_buckets:
+                    if bucket != "neutral":
+                        model_counts[bucket] += 1
+                model_counts["conditional_policies"] = accounting.conditional_policy_count
+                model_counts["source_rules"] = accounting.source_rule_count
+                model_counts["schedule_dimensions"] = accounting.schedule_dimension_count
+                model_counts["effective_bands"] = accounting.effective_band_count
+                if (
+                    accounting.conditional_policy_count
+                    and item.semantic_core is not None
+                    and item.semantic_core.interpretation is not None
+                ):
+                    model_counts["conditional_transition"] = (
+                        item.semantic_core.interpretation.transition
+                    )
+
+            # Headline candidates retain the established scalar renderer. The
+            # membership/count source above is the pre-filter semantic record;
+            # conditional models are exclusive and never compete here.
+            if accounting is not None and accounting.conditional_policy_count:
+                continue
+            for field_change in item.display.visible:
+                movement = _price_movement_kind(field_change, result.profile)
+                if movement is None:
+                    continue
+                if accounting is None:
+                    direct_price_field_count += 1
+                    identities[key] = (
+                        result.provider_id,
+                        result.provider_label,
+                        item.delta.provider_model_id,
+                    )
+                    model_counts = counts.setdefault(
+                        key,
+                        {
+                            "higher": 0,
+                            "lower": 0,
+                            "added": 0,
+                            "removed": 0,
+                            "conditional_policies": 0,
+                            "source_rules": 0,
+                            "schedule_dimensions": 0,
+                            "effective_bands": 0,
+                            "conditional_transition": None,
+                        },
+                    )
+                    model_counts[movement] += 1
                 # D1's magnitudes, tracked in the pass that was already here.
                 # `_price_movement_kind` stays THE gate for the counts above --
                 # it is what `test_change_render.py` pins and what decides which
@@ -1754,6 +3587,11 @@ def _collect_price_movement_summary(
                 lower=model_counts["lower"],
                 added=model_counts["added"],
                 removed=model_counts["removed"],
+                conditional_policies=model_counts["conditional_policies"],
+                source_rules=model_counts["source_rules"],
+                schedule_dimensions=model_counts["schedule_dimensions"],
+                effective_bands=model_counts["effective_bands"],
+                conditional_transition=model_counts["conditional_transition"],
                 top_increase=model_movers.get("top_increase"),
                 top_decrease=model_movers.get("top_decrease"),
             )
@@ -1765,7 +3603,12 @@ def _collect_price_movement_summary(
             model.provider_model_id.casefold(),
         )
     )
-    return _PriceMovementSummary(tuple(models))
+    return _PriceMovementSummary(
+        tuple(models),
+        direct_price_field_count,
+        neutral_direct_price_field_count,
+        uses_semantic_accounting,
+    )
 
 
 # F2's primary key is rounded to CENTS before comparison, and that rounding is
@@ -1822,18 +3665,88 @@ class _ModelImpact:
         )
 
 
-def _model_price_impact(
+def _legacy_tiering_direct_price_fact(
+    change: FieldChange,
+    profile: ProviderProfile,
+) -> DirectPriceMovementFact | None:
+    fact = resolve_direct_price_movement(
+        change.field_name,
+        change.old_value,
+        change.new_value,
+        profile,
+    )
+    if (
+        fact is not None
+        or not profile.is_price_amount_field(change.field_name)
+        or profile.is_pricing_override_selector_path(change.field_name)
+    ):
+        return fact
+    old_value = resolve_price_value(
+        change.field_name, change.old_value, profile, allow_unmatched=True
+    )
+    new_value = resolve_price_value(
+        change.field_name, change.new_value, profile, allow_unmatched=True
+    )
+    if (change.old_value is not None and old_value is None) or (
+        change.new_value is not None and new_value is None
+    ):
+        return None
+    present = old_value or new_value
+    if present is None:
+        return None
+    if old_value is None or new_value is None:
+        direction = "coverage"
+        delta = percentage = None
+    else:
+        exact_delta = (
+            new_value.normalized_exact_value - old_value.normalized_exact_value
+        )
+        direction = (
+            "higher" if exact_delta > 0 else "lower" if exact_delta < 0 else "unchanged"
+        )
+        delta = float(exact_delta)
+        percentage = (
+            None
+            if old_value.normalized_exact_value == 0
+            else float(
+                exact_delta / abs(old_value.normalized_exact_value) * 100
+            )
+        )
+    return DirectPriceMovementFact(
+        field_path=change.field_name,
+        old_value=old_value,
+        new_value=new_value,
+        direction=direction,
+        delta=delta,
+        percentage=percentage,
+        unit_label=present.price_rule.unit_label,
+        comparison_group=present.price_rule.comparison_group,
+    )
+
+
+def _legacy_tiering_accounting(
     item: _PlannedModelChange,
-    *,
+    profile: ProviderProfile,
+) -> ModelPricingAccounting:
+    """Build accounting only for pre-semantic-core compatibility callers."""
+    if item.semantic_core is not None:
+        raise ValueError("legacy tiering fallback requires a missing semantic core")
+    return build_model_pricing_accounting(
+        None,
+        direct_price_facts=tuple(
+            fact
+            for change in item.delta.field_changes
+            if (fact := _legacy_tiering_direct_price_fact(change, profile)) is not None
+        ),
+    )
+
+
+def _impact_from_accounting(
+    accounting: ModelPricingAccounting,
+    model_id: str,
     profile: ProviderProfile,
 ) -> _ModelImpact | None:
-    """F2's sort key for one planned model, or `None` if it has no price move.
-
-    The gate is `_price_movement_kind`, the SAME predicate the Price Movement
-    card counts with, so the set of cards promoted to tier 1 is exactly the set
-    of models that card names. Deciding it here on
-    `profile.is_price_amount_field` alone would promote a model whose price
-    field was rewritten without moving.
+    """Derive F2's sort key from the central semantic accounting object.
 
     A one-sided addition or removal carries no `delta_abs` (there is no second
     operand to subtract), so it contributes to `coverage` but never creates a
@@ -1846,49 +3759,58 @@ def _model_price_impact(
     anywhere on the card would report a percentage that belongs to a different
     field than the dollar figure ranked above it.
     """
+    if accounting.model_bucket == "none":
+        # A neutral ordinary monetary field still belongs in the pricing tier,
+        # but has no defensible impact score.  Price Movement continues to omit
+        # it from directional model buckets through ``model_bucket == none``.
+        return (
+            _ModelImpact(None, 0.0, 0, model_id)
+            if accounting.direct_price_field_count
+            else None
+        )
+    if accounting.conditional_policy_count:
+        return _ModelImpact(None, 0.0, 0, model_id)
+
     best: tuple[float, float] | None = None
     coverage = 0
-    moved = False
-    for field_change in item.display.visible:
-        movement = _price_movement_kind(field_change, profile)
-        if movement is None:
-            continue
-        moved = True
-        if movement in ("added", "removed"):
+    for fact in accounting.direct_price_facts:
+        if fact.direction == "coverage":
             coverage += 1
             continue
-        rendered = classify_change(
-            field_change,
-            profile=profile,
-        )
-        rule = rendered.price_rule
         primary_group = profile.primary_price_comparison_group
         if (
-            rule is None
-            or primary_group is None
-            or rule.comparison_group != primary_group
+            primary_group is None
+            or fact.comparison_group != primary_group
         ):
             continue
-        # `_price_movement_kind` returned a two-sided direction, so both
-        # operands are numeric and `signed_pct_change` can only be `None`
-        # for a zero basis -- which is a real "no relative reading", ranked as
-        # 0.0 rather than allowed to crash the sort.
-        percent = signed_pct_change(
-            _numeric_value(field_change.old_value),
-            _numeric_value(field_change.new_value),
-        )
         candidate = (
-            round(abs(rendered.delta_abs or 0.0), _IMPACT_DELTA_PLACES),
-            abs(percent or 0.0),
+            round(abs(fact.delta or 0.0), _IMPACT_DELTA_PLACES),
+            abs(fact.percentage or 0.0),
         )
         best = candidate if best is None else max(best, candidate)
-    if not moved:
-        return None
     return _ModelImpact(
         None if best is None else best[0],
         0.0 if best is None else best[1],
         coverage,
+        model_id,
+    )
+
+
+def _model_price_impact(
+    item: _PlannedModelChange,
+    *,
+    profile: ProviderProfile,
+) -> _ModelImpact | None:
+    """Return the tiering impact without rebuilding semantic accounting."""
+    accounting = (
+        item.semantic_core.accounting
+        if item.semantic_core is not None
+        else _legacy_tiering_accounting(item, profile)
+    )
+    return _impact_from_accounting(
+        accounting,
         item.delta.provider_model_id,
+        profile,
     )
 
 
@@ -2129,6 +4051,7 @@ def _render_scan_text(
     command: str,
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     lines = [
         "Model Sentinel report",
@@ -2162,6 +4085,9 @@ def _render_scan_text(
             result.changed,
             detail_policy,
             result.profile,
+            semantic_cores,
+            provider_id=result.provider_id,
+            include_evidence_only=True,
         )
         for item in provider_plan.items:
             if isinstance(item, _BulkChangeGroup):
@@ -2176,6 +4102,27 @@ def _render_scan_text(
                 continue
             delta, plan = item.delta, item.display
             lines.append(f"    * {delta.provider_model_id} ({delta.display_name})")
+            if item.semantic_core is not None and detail_policy.mode != "squelched":
+                projection = ModelEventPresentationPlan(
+                    item.semantic_core,
+                    plan,
+                    detail_policy.mode != "squelched"
+                    and (
+                        item.semantic_core.has_semantic_composite
+                        or (
+                            detail_policy.mode == "all"
+                            and item.semantic_core.evidence_only
+                        )
+                    ),
+                )
+                lines.extend(
+                    f"      {line}"
+                    for line in _conditional_pricing_lines(
+                        projection,
+                        result.profile,
+                        include_audit=detail_policy.mode == "all",
+                    )
+                )
             if not plan.visible:
                 lines.extend(_hidden_change_summary_lines(plan, indent="      ", model_ids=(delta.provider_model_id,)))
                 continue
@@ -2235,6 +4182,7 @@ def _render_scan_markdown(
     command: str,
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     lines = [
         "# Model Sentinel Report",
@@ -2283,6 +4231,9 @@ def _render_scan_markdown(
                 result.changed,
                 detail_policy,
                 result.profile,
+                semantic_cores,
+                provider_id=result.provider_id,
+                include_evidence_only=True,
             )
             for item in provider_plan.items:
                 if isinstance(item, _BulkChangeGroup):
@@ -2296,6 +4247,28 @@ def _render_scan_markdown(
                     continue
                 delta, plan = item.delta, item.display
                 changed_lines.append(f"- `{delta.provider_model_id}` - {delta.display_name}")
+                if item.semantic_core is not None:
+                    projection = ModelEventPresentationPlan(
+                        item.semantic_core,
+                        plan,
+                        detail_policy.mode != "squelched"
+                        and (
+                            item.semantic_core.has_semantic_composite
+                            or (
+                                detail_policy.mode == "all"
+                                and item.semantic_core.evidence_only
+                            )
+                        ),
+                    )
+                    changed_lines.extend(
+                        f"  - {line}"
+                        for line in _conditional_pricing_lines(
+                            projection,
+                            result.profile,
+                            include_audit=detail_policy.mode == "all",
+                            markdown=True,
+                        )
+                    )
                 for field_change in _field_changes_with_pricing_order(
                     plan.visible,
                     detail_policy,
@@ -2930,6 +4903,7 @@ td.sem-neutral { color: var(--text-dim); }
   margin-top: 2.5rem;
   border-top: 1px solid var(--border);
   padding-top: 1.5rem;
+  overflow-x: auto;
 }
 .secondary-changes .summary-section {
   margin-top: 1.5rem;
@@ -2994,6 +4968,72 @@ footer {
   font-family: var(--font-mono);
 }"""
 
+_CONDITIONAL_HTML_CSS = """\
+.price-conditional { color: var(--accent-blue); }
+.conditional-pricing {
+  margin: 0.75rem 1rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border-accent);
+  border-radius: 6px;
+  background: var(--bg-table-row);
+  overflow-x: auto;
+}
+.conditional-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-mono);
+  color: var(--text-bright);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.utc-badge {
+  color: var(--accent-blue);
+  border: 1px solid var(--accent-blue);
+  border-radius: 999px;
+  padding: 0.08rem 0.45rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+.conditional-table {
+  width: 100%;
+  margin-top: 0.65rem;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.conditional-table th,
+.conditional-table td {
+  padding: 0.42rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+.conditional-table th { color: var(--text-dim); font-weight: 600; }
+.conditional-table td.schedule-price { text-align: right; white-space: nowrap; }
+.conditional-unit { display: block; font-size: 0.65rem; font-weight: 400; }
+.not-set { color: var(--text-dim); font-style: italic; }
+.explicit-price { color: var(--text-bright); }
+.conditional-base,
+.conditional-movement-summary,
+.precedence-note,
+.conditional-caveat,
+.edge-timestamps,
+.fallback-reason,
+.conditional-audit {
+  margin-top: 0.6rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+}
+.conditional-movement-summary .conditional-movement { margin-right: 0.15rem; }
+.conditional-audit code { user-select: text; overflow-wrap: anywhere; }
+.conditional-audit ol { margin: 0.4rem 0 0.4rem 1.5rem; }
+.edge-links { margin-left: auto; font-family: var(--font-mono); font-size: 0.72rem; }
+.edge-link { color: var(--accent-blue); }
+"""
+
 
 def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html: str) -> str:
     """The page shell. `tail_html` is whatever sits between the body and the footer.
@@ -3005,6 +5045,13 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
     read as a bug at both call sites.
     """
     h = html_module.escape
+    conditional_css = (
+        "\n" + _CONDITIONAL_HTML_CSS
+        if 'class="conditional-pricing' in body_html
+        or 'conditional-summary-row' in tail_html
+        or 'price-conditional' in body_html
+        else ""
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3012,7 +5059,7 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{h(title)}</title>
 <style>
-{_HTML_CSS}
+{_HTML_CSS}{conditional_css}
 </style>
 </head>
 <body>
@@ -3218,7 +5265,12 @@ def _build_html_summary_table(
             cells.append(f'<td>{h(entry.field)}</td><td>{h(entry.detail)}</td>')
         else:
             cells.append(f'<td colspan="2">{h(entry.detail)}</td>')
-        row_class = ' class="row-alt"' if concise and data_row_index % 2 else ""
+        classes = []
+        if concise and data_row_index % 2:
+            classes.append("row-alt")
+        if entry.row_class:
+            classes.append(entry.row_class)
+        row_class = f' class="{" ".join(classes)}"' if classes else ""
         data_row_index += 1
         rows.append(f"<tr{row_class}>" + "".join(cells) + "</tr>")
 
@@ -3442,6 +5494,504 @@ def _build_summary_entries_from_fc(
     return entries
 
 
+def _formatted_vector_cells(
+    vector: EffectivePriceVector,
+    dimensions: tuple[str, ...],
+    profile: ProviderProfile,
+) -> tuple[tuple[str, str, str, ResolvedPriceValue | None], ...]:
+    """Provider-ordered cells retaining the shared resolved raw-value boundary."""
+    resolved_by_dimension: dict[str, ResolvedPriceValue] = {}
+    for entry in vector.entries:
+        resolved = resolve_price_value(
+            profile.pricing_override_base_paths.get(
+                entry.dimension, f"pricing.{entry.dimension}"
+            ),
+            entry.raw_value,
+            profile,
+        )
+        if resolved is not None:
+            resolved_by_dimension[entry.dimension] = resolved
+    grouped: OrderedDict[tuple[str, str | None], list[str]] = OrderedDict()
+    for dimension in dimensions:
+        resolved = resolved_by_dimension.get(dimension)
+        if resolved is not None:
+            grouped.setdefault(
+                (resolved.price_rule.unit_label, resolved.price_rule.comparison_group),
+                [],
+            ).append(dimension)
+    displays: dict[str, str] = {}
+    for grouped_dimensions in grouped.values():
+        values = tuple(resolved_by_dimension[dimension] for dimension in grouped_dimensions)
+        displays.update(
+            zip(
+                grouped_dimensions,
+                format_price_values(values, precision_basis=values),
+                strict=True,
+            )
+        )
+    return tuple(
+        (
+            dimension,
+            displays.get(dimension, ABSENT_DISPLAY),
+            (
+                resolved_by_dimension[dimension].price_rule.unit_label
+                if dimension in resolved_by_dimension
+                else ""
+            ),
+            resolved_by_dimension.get(dimension),
+        )
+        for dimension in dimensions
+    )
+
+
+def _comparison_for_vector(
+    interpretation: ConditionalPricingInterpretation,
+    vector: EffectivePriceVector,
+    profile: ProviderProfile,
+) -> PriceBandComparison | None:
+    comparison = interpretation.comparison
+    if comparison is None:
+        return None
+    return next(
+        (
+            band
+            for band in comparison.bands
+            if _comparison_band_matches_vector(
+                band, vector, interpretation.transition, profile
+            )
+        ),
+        None,
+    )
+
+
+def _conditional_dimension_units(
+    dimensions: tuple[str, ...],
+    profile: ProviderProfile,
+) -> dict[str, str]:
+    return {
+        dimension: resolve_price_rule(
+            profile.pricing_override_base_paths.get(
+                dimension, f"pricing.{dimension}"
+            ),
+            profile,
+        ).unit_label
+        for dimension in dimensions
+    }
+
+
+def _policy_has_utc_time_semantics(
+    policy: CompiledConditionalPricingPolicy | None,
+) -> bool:
+    if policy is None:
+        return False
+    return any(
+        condition.semantic_role
+        in _UTC_TIME_SEMANTIC_ROLES
+        for compiled in policy.ordered_rules
+        for condition in compiled.source_rule.conditions
+    )
+
+
+_UTC_TIME_SEMANTIC_ROLES = frozenset(
+    {"utc_weekdays", "utc_start_inclusive", "utc_end_exclusive"}
+)
+
+
+def _raw_value_has_utc_selector(value: Any, profile: ProviderProfile) -> bool:
+    if isinstance(value, dict) or hasattr(value, "items"):
+        for field_name, child in value.items():
+            descriptor = (
+                profile.pricing_override_condition_descriptor(field_name)
+                if isinstance(field_name, str)
+                else None
+            )
+            if (
+                descriptor is not None
+                and descriptor.semantic_role in _UTC_TIME_SEMANTIC_ROLES
+            ):
+                return True
+            if _raw_value_has_utc_selector(child, profile):
+                return True
+        return False
+    if isinstance(value, (list, tuple)):
+        return any(_raw_value_has_utc_selector(child, profile) for child in value)
+    return False
+
+
+def _conditional_interpretation_uses_utc(
+    interpretation: ConditionalPricingInterpretation,
+    displayed_policy: CompiledConditionalPricingPolicy | None,
+    profile: ProviderProfile,
+) -> bool:
+    if interpretation.state == "grouped-schedule":
+        return True
+    if interpretation.state == "ordered-rules":
+        return _policy_has_utc_time_semantics(displayed_policy)
+    return any(
+        _raw_value_has_utc_selector(value, profile)
+        for change in interpretation.source_changes
+        for value in (change.old_value, change.new_value)
+    )
+
+
+def _conditional_movement_fact_html(
+    label: str,
+    band: PriceBandComparison | None,
+    profile: ProviderProfile,
+) -> str:
+    if band is None:
+        return '<span class="conditional-movement">not comparable</span>'
+    direction = {"higher": "up", "lower": "down"}.get(
+        band.direction, band.direction
+    )
+    css_class = {
+        "higher": "price-higher",
+        "lower": "price-lower",
+    }.get(band.direction, "")
+    if band.percentage is not None:
+        body_html = html_module.escape(
+            f"{label} {direction} {abs(band.percentage):.1f}%"
+        )
+    else:
+        details: list[str] = []
+        for dimension in band.dimensions:
+            if dimension.direction not in {"higher", "lower"}:
+                continue
+            fact = {
+                "higher": "up",
+                "lower": "down",
+            }[dimension.direction]
+            suffix = (
+                f" {abs(dimension.percentage):.1f}%"
+                if dimension.percentage is not None
+                else ""
+            )
+            detail = html_module.escape(
+                f"{_dimension_label(dimension.dimension, profile)} {fact}{suffix}"
+            )
+            if band.direction == "mixed":
+                detail = f'<span class="price-{dimension.direction}">{detail}</span>'
+            details.append(detail)
+        body_html = html_module.escape(f"{label} {direction}")
+        if details:
+            body_html += f" ({', '.join(details)})"
+    classes = "conditional-movement" + (f" {css_class}" if css_class else "")
+    return f'<span class="{classes}">{body_html}</span>'
+
+
+def _conditional_audit_html(
+    projection: ModelEventPresentationPlan,
+    profile: ProviderProfile,
+    *,
+    include_rules: bool,
+    open_by_default: bool = False,
+) -> str:
+    h = html_module.escape
+    interpretation = projection.core.interpretation
+    rule_html = ""
+    if include_rules and interpretation is not None:
+        policy = _conditional_display_policy(interpretation)
+        dimensions = _ordered_schedule_dimensions(interpretation, profile)
+        if policy is not None:
+            rules = "".join(
+                f'<li><strong>Rule {compiled.source_rule.source_index + 1}</strong>: '
+                f'{h(_rule_predicate_text(compiled.source_rule))} | '
+                f'{h(_format_explicit_assignments(compiled.source_rule, dimensions, profile))}</li>'
+                for compiled in policy.ordered_rules
+            )
+            rule_html = f'<h5>Source-ordered rules</h5><ol>{rules}</ol>'
+    old_parent, new_parent = _canonical_parent_values(projection.core)
+    return (
+        f'<details class="conditional-audit"{" open" if open_by_default else ""}>'
+        '<summary>Canonical stored provider values</summary>'
+        f'{rule_html}<div>Canonical stored parent old: <code>{h(old_parent)}</code></div>'
+        f'<div>Canonical stored parent new: <code>{h(new_parent)}</code></div>'
+        '</details>'
+    )
+
+
+_FALLBACK_REASON_LABELS = {
+    "multiple_parent_changes": "Multiple stored parent changes prevent one unambiguous policy comparison.",
+    "malformed_parent_transition": "The stored parent transition is malformed.",
+    "invalid_policy_type": "Policy value is not a rule list.",
+    "missing_policy_semantics": "This provider has no registered conditional-pricing policy semantics.",
+    "missing_condition_set_semantics": "This provider has no registered condition-set semantics.",
+    "malformed_rule": "At least one conditional-pricing rule is malformed.",
+    "empty_rule": "At least one conditional-pricing rule is empty.",
+    "selector_semantics_unavailable": "A condition selector has no registered interpretation.",
+    "unresolved_price_dimension": "A price dimension has no registered unit or conversion.",
+    "unknown_rule_key": "A rule contains an unrecognized condition or price key.",
+    "missing_price_assignment": "A rule has conditions but no price assignment.",
+    "invalid_selector_value": "A condition selector contains an invalid value.",
+    "missing_endpoint_pair": "A UTC time window is missing its start or end endpoint.",
+    "equal_endpoints_unsupported": "A UTC time window has equal endpoints and cannot be interpreted safely.",
+    "multiple_policy_errors": "The policy contains multiple independent interpretation errors.",
+}
+
+
+def _fallback_reason_label(
+    interpretation: ConditionalPricingInterpretation,
+) -> str:
+    reason = interpretation.fallback_reason
+    if reason is None:
+        return "The provider policy cannot be interpreted safely."
+    return _FALLBACK_REASON_LABELS[reason]
+
+
+def _render_html_conditional_pricing(
+    projection: ModelEventPresentationPlan,
+    profile: ProviderProfile,
+    *,
+    comparison_label: str | None = None,
+    include_audit: bool = False,
+) -> str:
+    """Render one semantic artifact projection; selector leaves never enter here."""
+    if not projection.show_conditional_panel:
+        return ""
+    interpretation = projection.core.interpretation
+    if interpretation is None:
+        return ""
+    h = html_module.escape
+    suffix = f" {comparison_label}" if comparison_label else ""
+    if projection.core.evidence_only:
+        return (
+            '<section class="conditional-pricing evidence-only">'
+            '<div class="conditional-title">CONDITIONAL PRICING EVIDENCE '
+            '(SEMANTICALLY UNCHANGED)</div>'
+            + _conditional_audit_html(
+                projection,
+                profile,
+                include_rules=True,
+                open_by_default=True,
+            )
+            + '</section>'
+        ) if include_audit else ""
+
+    transition = interpretation.transition
+    title_prefix = (
+        "PRICING SCHEDULE"
+        if interpretation.state == "grouped-schedule"
+        else "CONDITIONAL PRICING"
+    )
+    title_transition = (
+        "changed" if interpretation.state == "raw-fallback" else transition
+    )
+    displayed_policy = _conditional_display_policy(interpretation)
+    utc_badge = (
+        '<span class="utc-badge">UTC</span>'
+        if _conditional_interpretation_uses_utc(
+            interpretation, displayed_policy, profile
+        )
+        else ""
+    )
+    title = (
+        '<div class="conditional-title">'
+        f'{title_prefix} {title_transition.upper()}{h(suffix)} {utc_badge}</div>'
+    )
+    caveat = (
+        '<p class="conditional-caveat">These are provider-advertised catalog rates; '
+        'actual routing and billing can vary.</p>'
+    )
+
+    if interpretation.state == "raw-fallback":
+        fallback_label = _fallback_reason_label(interpretation)
+        return (
+            '<section class="conditional-pricing raw-fallback">'
+            + title
+            + '<p>The provider supplied an unsupported or ambiguous condition. '
+            'No schedule direction was inferred.</p>'
+            + '<details class="fallback-reason"><summary>Why this could not be grouped</summary>'
+            + h(fallback_label)
+            + '</details>'
+            + _conditional_audit_html(projection, profile, include_rules=False)
+            + caveat
+            + '</section>'
+        )
+
+    policy = displayed_policy
+    if policy is None:
+        return ""
+    dimensions = _ordered_schedule_dimensions(interpretation, profile)
+    units = _conditional_dimension_units(dimensions, profile)
+
+    if interpretation.state == "grouped-schedule":
+        headings = "".join(
+            f'<th>{h(_dimension_label(dimension, profile))}'
+            f'<span class="conditional-unit">{h(units.get(dimension, ""))}</span></th>'
+            for dimension in dimensions
+        )
+        rows = []
+        movement_facts = []
+        base_identity = _resolved_effective_vector_identity(policy.base_prices, profile)
+        for index, band in enumerate(policy.effective_bands):
+            cells = _formatted_vector_cells(band.effective_prices, dimensions, profile)
+            cell_map = {
+                dimension: (value, resolved)
+                for dimension, value, _unit, resolved in cells
+            }
+            comparison = _comparison_for_vector(interpretation, band.effective_prices, profile)
+            is_base = (
+                base_identity is not None
+                and _resolved_effective_vector_identity(band.effective_prices, profile)
+                == base_identity
+            )
+            fact_label = "base" if is_base else (
+                "peak" if comparison is not None and comparison.is_peak else f"band {index + 1}"
+            )
+            movement_html = _conditional_movement_fact_html(
+                fact_label, comparison, profile
+            )
+            movement_facts.append(movement_html)
+            rows.append(
+                '<tr>'
+                f'<td class="schedule-window">{h(_format_utc_coverage(band.coverage))}</td>'
+                + "".join(
+                    (
+                        f'<td class="schedule-price"'
+                        f'{_raw_price_title(resolved.raw_display, value, resolved.price_rule) if resolved is not None else ""}>'
+                        f'{h(value)}</td>'
+                    )
+                    for dimension in dimensions
+                    for value, resolved in (
+                        cell_map.get(dimension, (ABSENT_DISPLAY, None)),
+                    )
+                )
+                + f'<td>{movement_html}</td></tr>'
+            )
+        block = (
+            '<table class="conditional-table grouped-schedule"><thead><tr>'
+            f'<th>Effective windows</th>{headings}<th>vs prior</th>'
+            '</tr></thead><tbody>' + "".join(rows) + '</tbody></table>'
+            '<div class="conditional-movement-summary">Movement: '
+            + '; '.join(movement_facts)
+            + ' versus the prior advertised rates</div>'
+        )
+    else:
+        headings = "".join(
+            f'<th>{h(_dimension_label(dimension, profile))}'
+            f'<span class="conditional-unit">{h(units.get(dimension, ""))}</span></th>'
+            for dimension in dimensions
+        )
+        rows = []
+        for compiled in policy.ordered_rules:
+            rule = compiled.source_rule
+            explicit = {assignment.dimension: assignment for assignment in rule.explicit_prices}
+            cells = []
+            for dimension in dimensions:
+                assignment = explicit.get(dimension)
+                if assignment is None:
+                    cells.append('<td class="not-set">not set by this rule</td>')
+                    continue
+                resolved = resolve_price_value(
+                    profile.pricing_override_base_paths.get(
+                        dimension, f"pricing.{dimension}"
+                    ),
+                    assignment.raw_value,
+                    profile,
+                )
+                value = (
+                    format_price_values((resolved,), precision_basis=(resolved,))[0]
+                    if resolved is not None
+                    else _scalar_display(assignment.raw_value)
+                )
+                cell_title = (
+                    _raw_price_title(
+                        resolved.raw_display,
+                        value,
+                        resolved.price_rule,
+                    )
+                    if resolved is not None
+                    else ""
+                )
+                cells.append(
+                    f'<td class="explicit-price"{cell_title}>{h(value)}</td>'
+                )
+            rows.append(
+                f'<tr><td>Rule {rule.source_index + 1}</td>'
+                f'<td>{h(_rule_predicate_text(rule))}</td>{"".join(cells)}</tr>'
+            )
+        base_text = (
+            f'<div class="conditional-base">Base/default: '
+            f'{h(_format_effective_vector(policy.base_prices, dimensions, profile))}</div>'
+            if policy.base_prices is not None
+            else ""
+        )
+        block = (
+            base_text
+            + '<table class="conditional-table ordered-rules"><thead><tr>'
+            f'<th>#</th><th>Applies when</th>{headings}</tr></thead><tbody>'
+            + "".join(rows)
+            + '</tbody></table><p class="precedence-note">Rules are evaluated in source order; '
+            'later matching rules win per price key.</p>'
+        )
+
+    if interpretation.state == "ordered-rules":
+        audit = _conditional_audit_html(
+            projection,
+            profile,
+            include_rules=False,
+            open_by_default=include_audit,
+        )
+    elif include_audit:
+        audit = _conditional_audit_html(
+            projection,
+            profile,
+            include_rules=interpretation.state == "grouped-schedule",
+            open_by_default=True,
+        )
+    else:
+        audit = ""
+    return (
+        f'<section class="conditional-pricing {h(interpretation.state)}">'
+        + title + block + caveat + audit + '</section>'
+    )
+
+
+def _conditional_summary_entry(
+    core: ModelEventSemanticCore,
+    provider_label: str,
+    profile: ProviderProfile,
+    *,
+    anchor: str = "",
+) -> _SummaryEntry | None:
+    interpretation = core.interpretation
+    if interpretation is None or not core.has_semantic_composite:
+        return None
+    accounting = core.accounting
+    transition = interpretation.transition
+    movement = _movement_summary(interpretation, profile)
+    displayed_policy = _conditional_display_policy(interpretation)
+    has_compiled_time_window = (
+        interpretation.state == "grouped-schedule"
+        or interpretation.state == "ordered-rules"
+        and _policy_has_utc_time_semantics(displayed_policy)
+    )
+    band_label = (
+        "UTC rate band" if has_compiled_time_window else "effective rate band"
+    )
+    detail = (
+        f"Pricing schedule {transition} - {accounting.source_rule_count} rule"
+        f'{"" if accounting.source_rule_count == 1 else "s"}, '
+        f"{accounting.schedule_dimension_count} price dimension"
+        f'{"" if accounting.schedule_dimension_count == 1 else "s"}, '
+        f"{accounting.effective_band_count} {band_label}"
+        f'{"" if accounting.effective_band_count == 1 else "s"}'
+    )
+    if movement:
+        detail += f"; {movement}"
+    detail += "; provider catalog metadata, actual routing/billing may vary"
+    return _SummaryEntry(
+        category="Pricing",
+        provider=provider_label,
+        model_id=core.event.provider_model_id,
+        field="Conditional pricing",
+        detail=detail,
+        pricing_sort_key=(0, 0, "pricing.overrides", ""),
+        anchor=anchor,
+        row_class="conditional-summary-row",
+    )
+
+
 def _render_html_model_changes(
     delta: ModelDelta,
     profile: ProviderProfile,
@@ -3450,6 +6000,7 @@ def _render_html_model_changes(
     display_plan: _FieldDisplayPlan | None = None,
     anchor: str = "",
     back_link: bool = False,
+    semantic_core: ModelEventSemanticCore | None = None,
 ) -> tuple[str, _FieldDisplayPlan]:
     """One model's card. `anchor` is its N1 id; `back_link` adds the `↑`.
 
@@ -3483,6 +6034,24 @@ def _render_html_model_changes(
         f'<span class="display-name">{h(delta.display_name)}</span>'
         f'{_html_hidden_chip(plan)}{back}</div>',
     ]
+
+    if semantic_core is not None:
+        projection = ModelEventPresentationPlan(
+            semantic_core,
+            plan,
+            policy.mode != "squelched"
+            and (
+                semantic_core.has_semantic_composite
+                or (policy.mode == "all" and semantic_core.evidence_only)
+            ),
+        )
+        conditional_html = _render_html_conditional_pricing(
+            projection,
+            profile,
+            include_audit=policy.mode == "all",
+        )
+        if conditional_html:
+            parts.append(conditional_html)
 
     # C1: ONE table for the whole card, not one per category. Per-category
     # tables size their columns independently, which is why a card's decimal
@@ -3853,20 +6422,38 @@ def _scientific_notation(raw: str) -> str | None:
     return f"{'-' if sign else ''}{mantissa}e{adjusted}"
 
 
+def _price_rule_conversion_factor(price_rule: ResolvedPriceRule | None) -> str:
+    if price_rule is None:
+        return ""
+    parts = []
+    if price_rule.multiplier != 1:
+        parts.append(f"× {price_rule.multiplier:,}")
+    if price_rule.divisor != 1:
+        parts.append(f"÷ {price_rule.divisor:,}")
+    return " ".join(parts)
+
+
 def _price_conversion_factor(rendered: RenderedChange) -> str:
     """The resolved price rule's factor clause, or `""` for identity scale.
 
     Thousands-separated because the whole point of R1 is that the reader should
     not have to count zeros -- including the zeros in the factor.
     """
-    if rendered.price_rule is None:
+    return _price_rule_conversion_factor(rendered.price_rule)
+
+
+def _raw_price_title(
+    raw: str | None,
+    display: str,
+    price_rule: ResolvedPriceRule | None,
+) -> str:
+    if raw is None:
         return ""
-    parts = []
-    if rendered.price_rule.multiplier != 1:
-        parts.append(f"× {rendered.price_rule.multiplier:,}")
-    if rendered.price_rule.divisor != 1:
-        parts.append(f"÷ {rendered.price_rule.divisor:,}")
-    return " ".join(parts)
+    scientific = _scientific_notation(raw)
+    lead = f"{raw} ({scientific})" if scientific is not None else raw
+    factor = _price_rule_conversion_factor(price_rule)
+    derivation = f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
+    return f' title="{html_module.escape(derivation)}"'
 
 
 def _card_raw_title(
@@ -3897,11 +6484,7 @@ def _card_raw_title(
     """
     if rendered.kind != "price" or raw is None:
         return ""
-    scientific = _scientific_notation(raw)
-    lead = f"{raw} ({scientific})" if scientific is not None else raw
-    factor = _price_conversion_factor(rendered)
-    derivation = f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
-    return f' title="{html_module.escape(derivation)}"'
+    return _raw_price_title(raw, display, rendered.price_rule)
 
 
 def _render_html_card_table(
@@ -4084,6 +6667,7 @@ _PRICE_MOVEMENT_BUCKETS = (
     ("lower", "\u2193 Lower only", "\u2193 {count} lower", "price-lower"),
     ("mixed", "\u2195 Both directions", "\u2195 {count} both", "price-mixed"),
     ("coverage", "\u00b1 Added/removed only", "\u00b1 {count} added/removed only", "price-coverage"),
+    ("conditional", "Conditional / variable", "{count} conditional / variable", "price-conditional"),
 )
 
 # The price-FIELD tally, in the design's fixed order. Fixed, not sorted by
@@ -4096,6 +6680,29 @@ _PRICE_MOVEMENT_FIELD_CHIPS = (
     ("added_fields", "+{count} added", "price-coverage"),
     ("removed_fields", "\u2212{count} removed", "price-coverage"),
 )
+
+
+def _direct_price_field_tally_html(
+    direct_price_field_count: int,
+    neutral_direct_price_field_count: int,
+    *,
+    movement_chips: Iterable[str] = (),
+    semantic_label: bool = True,
+) -> str:
+    suffix = "" if direct_price_field_count == 1 else "s"
+    field_kind = "direct price field" if semantic_label else "price field"
+    chips = list(movement_chips)
+    if neutral_direct_price_field_count:
+        chips.append(
+            '<span class="price-tally-chip price-neutral">'
+            f'{neutral_direct_price_field_count} unchanged/unknown</span>'
+        )
+    classes = "price-tally-group direct-price-tally" if semantic_label else "price-tally-group"
+    return (
+        f'<div class="{classes}">'
+        f'<span class="price-tally-label">{direct_price_field_count} '
+        f'{field_kind}{suffix}</span>{"".join(chips)}</div>'
+    )
 
 
 def _price_movement_outcome(summary: _PriceMovementSummary) -> tuple[str, str]:
@@ -4125,13 +6732,31 @@ def _price_movement_outcome(summary: _PriceMovementSummary) -> tuple[str, str]:
     deliberate amendment to the approved design (design Amendment 3), as is the
     coverage-only verdict above (design Amendment 7).
     """
+    if not summary.models and summary.direct_price_field_count:
+        return "no normalized rate movement", "price-neutral"
+    return _price_movement_outcome_from_bucket_counts(
+        Counter(model.bucket for model in summary.models)
+    )
+
+
+def _price_movement_outcome_from_bucket_counts(
+    bucket_counts: Counter[str],
+) -> tuple[str, str]:
+    """The one verdict function for live models and stored unique-model folds."""
     buckets = [
-        ("up", len(summary.models_in("higher")), "price-higher"),
-        ("down", len(summary.models_in("lower")), "price-lower"),
-        ("both", len(summary.models_in("mixed")), "price-mixed"),
+        ("up", bucket_counts["higher"], "price-higher"),
+        ("down", bucket_counts["lower"], "price-lower"),
+        ("both", bucket_counts["mixed"], "price-mixed"),
     ]
     counts = ", ".join(f"{count} {name}" for name, count, _ in buckets if count)
+    conditional_count = bucket_counts["conditional"]
     if not counts:
+        if conditional_count:
+            suffix = "model" if conditional_count == 1 else "models"
+            return (
+                f"conditional pricing changed \u2014 {conditional_count} {suffix}",
+                "price-conditional",
+            )
         return "price fields added/removed", "price-coverage"
 
     ranked = sorted(buckets, key=lambda bucket: -bucket[1])
@@ -4144,10 +6769,15 @@ def _price_movement_outcome(summary: _PriceMovementSummary) -> tuple[str, str]:
     # Unanimity implies `strictly_largest`: a non-empty leader beats a zero.
     qualifier = "" if sum(count for _, count, _ in ranked[1:]) == 0 else "mostly "
     if strictly_largest and leader_name == "up":
-        return f"{qualifier}higher \u2014 {counts}", leader_class
-    if strictly_largest and leader_name == "down":
-        return f"{qualifier}lower \u2014 {counts}", leader_class
-    return f"mixed \u2014 {counts}", "price-mixed"
+        outcome, css_class = f"{qualifier}higher \u2014 {counts}", leader_class
+    elif strictly_largest and leader_name == "down":
+        outcome, css_class = f"{qualifier}lower \u2014 {counts}", leader_class
+    else:
+        outcome, css_class = f"mixed \u2014 {counts}", "price-mixed"
+    if conditional_count:
+        suffix = "model" if conditional_count == 1 else "models"
+        outcome += f"; conditional pricing also changed \u2014 {conditional_count} {suffix}"
+    return outcome, css_class
 
 
 def _render_price_movement_headline(
@@ -4205,7 +6835,7 @@ def _render_html_price_movement_summary(
     tier-2 or unknown model and makes the entry plain text. If the two ever
     disagree, this card loses a link; it cannot gain a broken one.
     """
-    if not summary.models:
+    if not summary.models and not summary.direct_price_field_count:
         return ""
 
     h = html_module.escape
@@ -4281,10 +6911,51 @@ def _render_html_price_movement_summary(
         for attribute, chip_label, css_class in _PRICE_MOVEMENT_FIELD_CHIPS
         if (count := getattr(summary, attribute))
     ]
+    conditional_tally = ""
+    conditional_notice = ""
+    if summary.conditional_policy_total:
+        policies = summary.conditional_policy_total
+        rules = summary.source_rule_total
+        dimensions = summary.schedule_dimension_total
+        bands = summary.effective_band_total
+        transitions = {
+            model.conditional_transition
+            for model in summary.models
+            if model.conditional_transition is not None
+        }
+        transition = next(iter(transitions)) if len(transitions) == 1 else "changed"
+        conditional_tally = (
+            '<div class="price-tally-group conditional-tally">'
+            f'<span class="price-tally-label">{policies} pricing schedule'
+            f'{"" if policies == 1 else "s"} {transition}</span>'
+            f'<span class="price-tally-chip price-conditional">{rules} rule'
+            f'{"" if rules == 1 else "s"}</span>'
+            f'<span class="price-tally-chip price-conditional">{dimensions} price dimension'
+            f'{"" if dimensions == 1 else "s"}</span>'
+            f'<span class="price-tally-chip price-conditional">{bands} effective rate band'
+            f'{"" if bands == 1 else "s"}</span></div>'
+        )
+        conditional_notice = (
+            '<div class="conditional-caveat">Schedule tallies describe provider '
+            'catalog metadata; actual routing and billing can vary.</div>'
+        )
 
     model_suffix = "" if len(summary.models) == 1 else "s"
-    field_suffix = "" if summary.field_total == 1 else "s"
     outcome, outcome_class = _price_movement_outcome(summary)
+    model_tally = (
+        '<div class="price-tally-group">'
+        f'<span class="price-tally-label">{len(summary.models)} model{model_suffix}</span>'
+        f'{"".join(model_chip_parts)}</div>'
+        if summary.models
+        else ""
+    )
+    affected_models = (
+        f'<details class="price-movement-models"><summary>View {len(summary.models)} affected model{model_suffix}</summary>'
+        f'<div class="price-movement-model-groups">{"".join(group_parts)}</div>'
+        '</details>'
+        if summary.models
+        else ""
+    )
     return (
         f'<section class="price-movement-summary" id="{PRICE_MOVEMENT_ANCHOR}">'
         f'<div class="price-movement-title">PRICE MOVEMENT '
@@ -4299,15 +6970,10 @@ def _render_html_price_movement_summary(
         # sizes, which put two counts of two different things beside each
         # other and left the reader to work out which was which.
         + f'<div class="price-movement-tallies">'
-        f'<div class="price-tally-group">'
-        f'<span class="price-tally-label">{len(summary.models)} model{model_suffix}</span>'
-        f'{"".join(model_chip_parts)}</div>'
-        f'<div class="price-tally-group">'
-        f'<span class="price-tally-label">{summary.field_total} price field{field_suffix}</span>'
-        f'{"".join(field_chip_parts)}</div></div>'
-        f'<details class="price-movement-models"><summary>View {len(summary.models)} affected model{model_suffix}</summary>'
-        f'<div class="price-movement-model-groups">{"".join(group_parts)}</div>'
-        '</details></section>'
+        f'{model_tally}'
+        f'{_direct_price_field_tally_html(summary.direct_price_field_count, summary.neutral_direct_price_field_count, movement_chips=field_chip_parts, semantic_label=summary.uses_semantic_accounting)}'
+        f'{conditional_tally}</div>{conditional_notice}'
+        f'{affected_models}</section>'
     )
 
 
@@ -4471,6 +7137,7 @@ def _model_card_html(
         display_plan=item.display,
         anchor=anchor,
         back_link=back_link,
+        semantic_core=item.semantic_core,
     )
     return card
 
@@ -4683,6 +7350,7 @@ def _render_scan_html(
     command: str,
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
+    semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
 ) -> str:
     h = html_module.escape
     timestamp = h(to_local_human(generated_at))
@@ -4693,6 +7361,9 @@ def _render_scan_html(
                 result.changed,
                 detail_policy,
                 result.profile,
+                semantic_cores,
+                provider_id=result.provider_id,
+                include_evidence_only=True,
             ),
         )
         for result in provider_results
@@ -4735,7 +7406,11 @@ def _render_scan_html(
     # cards get a back-link; the tiers are built second because that is where
     # ids are assigned; the card itself is rendered last, once there are ids
     # for it to link to.
-    movement = _collect_price_movement_summary(planned_results)
+    movement = (
+        _PriceMovementSummary(())
+        if detail_policy.mode == "squelched"
+        else _collect_price_movement_summary(planned_results)
+    )
     anchors = _CardAnchors()
     tiers = _build_scan_change_tiers(
         planned_results,
@@ -4758,6 +7433,17 @@ def _render_scan_html(
                 ))
                 continue
             delta, plan = item.delta, item.display
+            if item.semantic_core is not None and detail_policy.mode != "squelched":
+                conditional_entry = _conditional_summary_entry(
+                    item.semantic_core,
+                    prov,
+                    result.profile,
+                    anchor=anchors.link(
+                        result.provider_id, delta.provider_model_id
+                    ),
+                )
+                if conditional_entry is not None:
+                    summary_entries.append(conditional_entry)
             summary_entries.extend(_build_summary_entries_from_fc(
                 provider_label=prov, model_id=delta.provider_model_id,
                 display_name=delta.display_name, field_changes=list(plan.visible),
@@ -4830,6 +7516,102 @@ def _render_scan_html(
 # ---------------------------------------------------------------------------
 
 
+def _render_changes_price_movement_summary(
+    semantic: ChangesSemanticCore | None,
+    display_labels: dict[str, str],
+    edge_anchors: _StoredEdgeAnchors,
+) -> str:
+    """Selected-range unique-model fold with links to every exact edge card."""
+    if semantic is None or not (
+        semantic.pricing_models
+        or semantic.direct_price_field_count
+        or semantic.conditional_event_count
+    ):
+        return ""
+    h = html_module.escape
+    cores = {
+        core.identity: core
+        for core in semantic.events
+        if isinstance(core.identity, StoredComparisonIdentity)
+    }
+    bucket_counts = Counter(fold.model_bucket for fold in semantic.pricing_models)
+    conditional_count = sum(
+        fold.model_bucket == "conditional" for fold in semantic.pricing_models
+    )
+    if not semantic.pricing_models and semantic.direct_price_field_count:
+        verdict, verdict_class = "no normalized rate movement", "price-neutral"
+    else:
+        verdict, verdict_class = _price_movement_outcome_from_bucket_counts(
+            bucket_counts
+        )
+
+    groups = []
+    for bucket, group_label, _chip_label, css_class in _PRICE_MOVEMENT_BUCKETS:
+        folds = tuple(
+            fold for fold in semantic.pricing_models if fold.model_bucket == bucket
+        )
+        if not folds:
+            continue
+        model_rows = []
+        for fold in folds:
+            links = []
+            for identity in fold.event_identities:
+                core = cores.get(identity)
+                if core is None:
+                    raise ValueError("changes price fold references an unknown exact edge")
+                edge_anchor = edge_anchors.link(identity)
+                if not edge_anchor:
+                    continue
+                event_label = to_local_human(core.event.target_timestamp)
+                links.append(
+                    f'<a class="edge-link" href="#{h(edge_anchor)}" '
+                    f'title="scrape {identity.from_scrape_id} to {identity.to_scrape_id}">'
+                    f'{h(event_label)}</a>'
+                )
+            provider = display_labels.get(fold.provider_id, fold.provider_id)
+            model_rows.append(
+                '<div class="price-movement-model">'
+                f'<span class="price-movement-provider">{h(provider)}</span>'
+                f'<code>{h(fold.provider_model_id)}</code>'
+                f'<span class="edge-links">{" · ".join(links)}</span></div>'
+            )
+        groups.append(
+            '<div class="price-movement-group">'
+            f'<div class="price-movement-group-label {css_class}">'
+            f'{h(group_label)} — {len(folds)}</div>{"".join(model_rows)}</div>'
+        )
+
+    conditional_tally = ""
+    if conditional_count:
+        conditional_tally = (
+            '<div class="price-tally-group conditional-tally">'
+            f'<span class="price-tally-label">{semantic.conditional_event_count} pricing schedule events</span>'
+            f'<span class="price-tally-chip price-conditional">'
+            f'{sum(fold.source_rule_count for fold in semantic.pricing_models)} rules</span>'
+            f'<span class="price-tally-chip price-conditional">'
+            f'{sum(fold.schedule_dimension_count for fold in semantic.pricing_models)} price dimensions</span>'
+            f'<span class="price-tally-chip price-conditional">'
+            f'{sum(fold.effective_band_count for fold in semantic.pricing_models)} effective rate bands</span>'
+            '</div>'
+        )
+        conditional_tally += (
+            '<div class="conditional-caveat">Schedule tallies describe provider '
+            'catalog metadata; actual routing and billing can vary.</div>'
+        )
+    direct_tally = _direct_price_field_tally_html(
+        semantic.direct_price_field_count,
+        semantic.neutral_direct_price_field_count,
+    )
+    return (
+        f'<section class="price-movement-summary changes-price-movement" id="{PRICE_MOVEMENT_ANCHOR}">'
+        '<div class="price-movement-title">PRICE MOVEMENT '
+        f'<span class="outcome {verdict_class}">{h(verdict)}</span></div>'
+        f'<div class="price-movement-tallies">{direct_tally}{conditional_tally}</div>'
+        f'<div class="price-movement-model-groups">{"".join(groups)}</div>'
+        '</section>'
+    )
+
+
 def _render_changes_html(
     *,
     by_date: dict[str, dict[str, dict[str, list[dict[str, Any]]]]],
@@ -4840,9 +7622,19 @@ def _render_changes_html(
     total_changes: int,
     provider_profiles: dict[str, ProviderProfile] | None = None,
     detail_policy: ReportDetailPolicy | None = None,
+    artifact_semantics: _StoredSemanticArtifactIndex | None = None,
+    changes_semantic_core: ChangesSemanticCore | None = None,
 ) -> str:
     h = html_module.escape
     detail_policy = detail_policy or make_report_detail_policy()
+    edge_anchors = _StoredEdgeAnchors()
+    has_conditional_semantics = bool(
+        artifact_semantics is not None
+        and any(
+            core.has_semantic_composite
+            for core in artifact_semantics.cores_by_edge.values()
+        )
+    )
 
     scope_parts = []
     if provider_id:
@@ -4869,6 +7661,8 @@ def _render_changes_html(
                 models,
                 detail_policy,
                 profile,
+                artifact_semantics=artifact_semantics,
+                include_evidence_only=True,
             )
             if provider_plan.renders_nothing:
                 continue
@@ -4909,12 +7703,48 @@ def _render_changes_html(
                 plan = entry.display
                 assert plan is not None  # `changed` entries always carry a plan
 
-                # Model change card
-                parts.append('<div class="model-card">')
+                edge_anchor = ""
+                if entry.semantic_core is not None and isinstance(
+                    entry.semantic_core.identity, StoredComparisonIdentity
+                ):
+                    identity = entry.semantic_core.identity
+                    edge_anchor = edge_anchors.assign(identity)
+
+                # Model change card: stored comparisons are exact edge cards,
+                # even when model/date are identical.
+                card_id = f' id="{h(edge_anchor)}"' if edge_anchor else ""
+                parts.append(f'<div class="model-card"{card_id}>')
                 parts.append(
                     f'<div class="model-card-header"><code>{h(model_id)}</code>'
                     f'<span class="display-name">{h(display_name)}</span></div>'
                 )
+                if entry.semantic_core is not None:
+                    event = entry.semantic_core.event
+                    parts.append(
+                        '<div class="edge-timestamps">'
+                        f'Source: {h(to_local_human(event.source_timestamp))} · '
+                        f'Target: {h(to_local_human(event.target_timestamp))}</div>'
+                    )
+                    projection = ModelEventPresentationPlan(
+                        entry.semantic_core,
+                        plan,
+                        detail_policy.mode != "squelched"
+                        and (
+                            entry.semantic_core.has_semantic_composite
+                            or (
+                                detail_policy.mode == "all"
+                                and entry.semantic_core.evidence_only
+                            )
+                        ),
+                    )
+                    conditional_html = _render_html_conditional_pricing(
+                        projection,
+                        profile,
+                        comparison_label="relative to selected baseline",
+                        include_audit=detail_policy.mode == "all",
+                    )
+                    if conditional_html:
+                        parts.append(conditional_html)
                 grouped = _group_field_changes_for_detail(
                     plan.visible,
                     detail_policy,
@@ -4933,6 +7763,15 @@ def _render_changes_html(
                     display_name=display_name, field_changes=list(plan.visible),
                     profile=profile,
                 ))
+                if entry.semantic_core is not None and detail_policy.mode != "squelched":
+                    conditional_entry = _conditional_summary_entry(
+                        entry.semantic_core,
+                        provider_label,
+                        profile,
+                        anchor=edge_anchor,
+                    )
+                    if conditional_entry is not None:
+                        summary_entries.append(conditional_entry)
             # Squelched changes are accounted for once per provider, from the
             # same rollup the body's squelched card is built from -- not once
             # per model, which double-counted against that card.
@@ -4956,13 +7795,24 @@ def _render_changes_html(
         f'  <h1>Model Sentinel <span class="count">\u2014 Change Log</span></h1>\n'
         f'  <div class="meta">{meta_line} &middot; {total_changes} change{"s" if total_changes != 1 else ""}'
         f' across {len(by_date)} date{"s" if len(by_date) != 1 else ""}</div>\n'
-        f'</header>'
+        + (
+            f'  <label class="raw-toggle"><input type="checkbox" id="{_RAW_TOGGLE_ID}"'
+            f'{" checked" if detail_policy.mode == "all" else ""}> Show raw values</label>\n'
+            if has_conditional_semantics
+            else ""
+        )
+        + f'</header>'
     )
 
+    movement_html = _render_changes_price_movement_summary(
+        changes_semantic_core,
+        display_labels,
+        edge_anchors,
+    ) if detail_policy.mode != "squelched" else ""
     return _render_html_page(
         title="Model Sentinel \u2014 Change Log",
         header_html=header_html,
-        body_html="".join(date_sections),
+        body_html=movement_html + "".join(date_sections),
         tail_html=_build_html_summary_table(summary_entries),
     )
 

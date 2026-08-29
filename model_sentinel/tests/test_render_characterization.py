@@ -13,6 +13,9 @@ constant.
 
 DELIBERATE UPDATES SO FAR (each was reviewed diff-by-diff before landing):
 
+* 2026-08-28: browser QA at a 390px viewport found the changes summary table
+  widening the whole document. The shared summary section now contains wide
+  tables with local horizontal scrolling; report content is unchanged.
 * 2026-08-15: provider-owned price rules changed contracted OpenRouter token
   labels from `/1M` (including the old spaced spelling) to `/1M tokens`, made
   the global mover label explicitly token-rate-only, and widened/wrapped the
@@ -266,6 +269,7 @@ The JSON goldens have never changed and must not: JSON is the audit path.
 from __future__ import annotations
 
 import os
+import json
 import re
 import time
 from dataclasses import replace
@@ -1274,6 +1278,7 @@ td.sem-neutral { color: var(--text-dim); }
   margin-top: 2.5rem;
   border-top: 1px solid var(--border);
   padding-top: 1.5rem;
+  overflow-x: auto;
 }
 .secondary-changes .summary-section {
   margin-top: 1.5rem;
@@ -2608,6 +2613,65 @@ def test_characterization_json() -> None:
         provider_results=characterization_scan_result(),
     )
     assert report == EXPECTED_JSON
+
+
+def test_legacy_scan_json_projection_keeps_schema_values_and_order() -> None:
+    """The scan JSON projection is an audit contract, not human prose."""
+    payload = json.loads(
+        render_scan_report(
+            generated_at=GENERATED_AT,
+            command=COMMAND,
+            format_name="json",
+            provider_results=characterization_scan_result(),
+        )
+    )
+
+    assert tuple(payload) == ("command", "generated_at", "providers")
+    provider = payload["providers"][0]
+    assert tuple(provider) == (
+        "added",
+        "baseline",
+        "baseline_message",
+        "changed",
+        "current_count",
+        "error_message",
+        "provider_id",
+        "provider_label",
+        "removed",
+        "saved",
+        "scrape_id",
+        "status",
+    )
+    assert provider["provider_id"] == "synthprov"
+    assert provider["provider_label"] == "Synth Provider"
+    assert provider["current_count"] == 7
+    assert provider["changed"][0]["provider_model_id"] == "synth/model-core"
+    assert [row["field_name"] for row in provider["changed"][0]["field_changes"]] == [
+        "pricing.completion",
+        "pricing.input_cache_read",
+        "pricing.input_cache_write",
+        "top_provider.context_length",
+        "top_provider.is_moderated",
+        "reasoning.default_enabled",
+        "supported_parameters",
+        "pricing.overrides",
+        "expiration_date",
+        "benchmarks.example_suite",
+    ]
+    assert provider["changed"][0]["field_changes"][0] == {
+        "field_name": "pricing.completion",
+        "old_value": 2e-06,
+        "new_value": 3.5e-06,
+    }
+    assert [row["provider_model_id"] for row in provider["changed"]] == [
+        "synth/model-core",
+        "synth/model-limit-add",
+        "synth/model-limit-remove",
+        "synth/model-moderation-off",
+        "synth/model-temp-toggle",
+        "synth/model-temp-null",
+        "synth/model-moderation-added",
+    ]
 
 
 def test_characterization_text_detail_all() -> None:

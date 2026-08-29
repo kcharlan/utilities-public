@@ -41,6 +41,33 @@ token-price leaves. The registered OpenRouter rules explicitly display
 leaves display with `/unit unknown` and are excluded from token snapshot
 columns and absolute token-rate comparisons.
 
+### OpenRouter conditional-pricing contract
+
+The registered profile's conditional semantics are derived from OpenRouter's
+[official generated model schema](https://github.com/OpenRouterTeam/terraform-provider-openrouter/blob/main/docs/data-sources/model.md),
+not inferred from one captured model. The profile owns these selectors:
+
+- `min_prompt_tokens`: applies only when the request prompt-token count is
+  strictly greater than the integer threshold;
+- `utc_days`: selected full English UTC weekday names, with an absent field
+  meaning every UTC day;
+- `utc_start`: inclusive HHMM UTC start; and
+- `utc_end`: exclusive HHMM UTC end.
+
+Conditions on one rule are conjunctive. Both time endpoints must be present
+together. A start later than the end wraps within each selected request-instant
+UTC civil day; it is not converted into a permanent local-time schedule. Rules
+are evaluated in source order, later matching rules win per price key, an
+omitted key retains the prior matching assignment or the top-level base, and
+the top-level pricing vector is the default-condition base.
+
+Unknown selectors, malformed values, unresolved units, or unavailable policy
+semantics use a non-directional stored-value fallback. Valid but overlapping or
+threshold rules remain source-ordered unless a complete effective partition is
+proven. These interpretation choices affect human presentation only: canonical
+snapshot values, override-list order, raw `field_changes` paths, JSON reports,
+and the SQLite schema are unchanged.
+
 ## Abacus.AI
 
 Endpoint reviewed: `https://routellm.abacus.ai/v1/models`.

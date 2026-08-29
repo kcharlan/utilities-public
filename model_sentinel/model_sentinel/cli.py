@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Sequence
@@ -18,16 +19,26 @@ from .config import (
     missing_credentials,
     validate_selected_providers,
 )
+from .conditional_pricing import ComparisonIdentity
 from .diffing import compare_models
-from .models import BaselineInfo, ModelDelta, ProviderScanResult
+from .models import BaselineInfo, ModelDelta, NormalizedModel, ProviderScanResult
 from .normalize import normalize_models
 from .notifications import send_notification
-from .provider_profiles import PROFILE_REGISTRY, profiles_for, resolve_profile
+from .provider_profiles import (
+    PROFILE_REGISTRY,
+    ProviderProfile,
+    profiles_for,
+    resolve_profile,
+)
 from .providers import ProviderFetchError, fetch_raw_models
 from .reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     DEFAULT_REPORT_SQUELCH_FIELDS,
+    ModelEventSemanticCore,
     ReportDetailPolicy,
+    build_changes_semantic_core,
+    build_live_comparison_events,
+    build_model_event_semantic_core,
     detail_policy_from_settings,
     render_changes_report,
     render_healthcheck_report,
@@ -35,6 +46,7 @@ from .reporting import (
     render_model_list_report,
     render_providers_report,
     make_report_detail_policy,
+    pricing_event_from_stored,
     render_scan_report,
 )
 from .storage import Store
@@ -42,6 +54,20 @@ from .time_utils import local_today, now_utc
 
 
 COMMANDS = {"scan", "history", "changes", "providers", "healthcheck", "browse"}
+
+
+@dataclass(frozen=True)
+class _PendingLiveSemanticInput:
+    provider_id: str
+    baseline_scrape_id: int | None
+    attempt_scrape_id: int
+    detected_at: str
+    source_timestamp: str | None
+    target_timestamp: str
+    changed: tuple[ModelDelta, ...]
+    baseline_models: dict[str, NormalizedModel]
+    current_models: dict[str, NormalizedModel]
+    profile: ProviderProfile
 
 
 def _invocation_name(argv0: str | None = None) -> str:
@@ -316,6 +342,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
 
     generated_at = _now().isoformat()
     provider_results: list[ProviderScanResult] = []
+    pending_live_semantics: list[_PendingLiveSemanticInput] = []
     selected_provider_ids = ", ".join(provider.provider_id for provider in selected)
     logger.info("Scanning providers: %s", selected_provider_ids)
 
@@ -356,6 +383,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 profile,
             )
             current_map = {model.provider_model_id: model for model in normalized_models}
+            baseline_models = {}
             if baseline:
                 baseline_models = store.load_saved_models(baseline.scrape_id)
                 added, removed, changed = compare_models(
@@ -408,6 +436,25 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 profile=profile,
             )
             provider_results.append(result)
+            if changed:
+                pending_live_semantics.append(
+                    _PendingLiveSemanticInput(
+                        provider_id=provider.provider_id,
+                        baseline_scrape_id=(
+                            baseline.scrape_id if baseline else None
+                        ),
+                        attempt_scrape_id=scrape_id,
+                        detected_at=completed.isoformat(),
+                        source_timestamp=(
+                            baseline.completed_at if baseline else None
+                        ),
+                        target_timestamp=completed.isoformat(),
+                        changed=tuple(changed),
+                        baseline_models=baseline_models,
+                        current_models=current_map,
+                        profile=profile,
+                    )
+                )
         except (ProviderFetchError, ValueError) as exc:
             completed = _now()
             scrape_id = store.create_scrape(
@@ -441,21 +488,33 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
 
     report_path = _determine_report_path(args=args, loaded=loaded, provider_results=provider_results, generated_at=generated_at)
     detail_policy = _report_detail_policy(args=args, loaded=loaded)
+    has_changes = any(r.change_count > 0 for r in provider_results)
+    companions_needed = bool(has_changes and report_path and not args.output)
+    live_semantic_cores = (
+        _build_pending_live_semantic_cores(pending_live_semantics)
+        if args.format != "json"
+        else {}
+    )
     report_text = render_scan_report(
         generated_at=generated_at,
         command="scan",
         format_name=args.format,
         provider_results=provider_results,
         detail_policy=detail_policy,
+        semantic_cores=live_semantic_cores,
     )
     _emit_output(report_text, output_path=report_path if args.output else None)
     if report_path and not args.output:
         report_path.write_text(report_text, encoding="utf-8")
 
-    # Auto-generate HTML companion report when changes are detected
-    has_changes = any(r.change_count > 0 for r in provider_results)
+    # Auto-generate HTML companion report when changes are detected. JSON is
+    # serialized through its legacy path before any human semantic planning.
     html_report_path = None
-    if has_changes and report_path and not args.output:
+    if companions_needed:
+        if args.format == "json":
+            live_semantic_cores = _build_pending_live_semantic_cores(
+                pending_live_semantics
+            )
         html_report_path = report_path.with_suffix(".html")
         html_text = render_scan_report(
             generated_at=generated_at,
@@ -463,6 +522,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
             format_name="html",
             provider_results=provider_results,
             detail_policy=detail_policy,
+            semantic_cores=live_semantic_cores,
         )
         html_report_path.write_text(html_text, encoding="utf-8")
         logger.info("HTML report written to %s", html_report_path)
@@ -478,6 +538,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 squelch_fields=detail_policy.squelch_fields,
                 unclassified_limit=detail_policy.unclassified_limit,
             ),
+            semantic_cores=live_semantic_cores,
         )
         full_html_report_path.write_text(full_html_text, encoding="utf-8")
         logger.info("Full HTML report written to %s", full_html_report_path)
@@ -487,6 +548,32 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
     _cleanup_old_reports(loaded.runtime_paths.report_dir, loaded.settings.report_retention_days, logger)
 
     return 1 if any(result.status == "error" for result in provider_results) else 0
+
+
+def _build_pending_live_semantic_cores(
+    pending: list[_PendingLiveSemanticInput],
+) -> dict[ComparisonIdentity, ModelEventSemanticCore]:
+    """Build human-only live semantics after provider persistence is final."""
+    cores = {}
+    for item in pending:
+        for event in build_live_comparison_events(
+            provider_id=item.provider_id,
+            baseline_scrape_id=item.baseline_scrape_id,
+            attempt_scrape_id=item.attempt_scrape_id,
+            detected_at=item.detected_at,
+            source_timestamp=item.source_timestamp,
+            target_timestamp=item.target_timestamp,
+            changed=item.changed,
+            baseline_models=item.baseline_models,
+            current_models=item.current_models,
+        ):
+            if event.identity in cores:
+                raise ValueError("duplicate live comparison identity")
+            cores[event.identity] = build_model_event_semantic_core(
+                event,
+                item.profile,
+            )
+    return cores
 
 
 def run_history(*, args: argparse.Namespace, loaded, store: Store) -> int:
@@ -530,6 +617,21 @@ def run_history(*, args: argparse.Namespace, loaded, store: Store) -> int:
         since=args.since,
         until=args.until,
     )
+    stored_events = ()
+    semantic_cores = {}
+    if args.format != "json":
+        stored_events = store.history_comparison_events(
+            provider_id=args.provider,
+            model_id=args.model,
+            since=args.since,
+            until=args.until,
+        )
+        for stored_event in stored_events:
+            event = pricing_event_from_stored(stored_event)
+            semantic_cores[event.identity] = build_model_event_semantic_core(
+                event,
+                profile,
+            )
     latest_model = store.get_latest_model_snapshot(provider_id=args.provider, model_id=args.model)
     report = render_history_report(
         provider_id=args.provider,
@@ -541,6 +643,8 @@ def run_history(*, args: argparse.Namespace, loaded, store: Store) -> int:
         latest_model=latest_model,
         profile=profile,
         detail_policy=_report_detail_policy(args=args, loaded=loaded),
+        stored_events=stored_events,
+        semantic_cores=semantic_cores,
     )
     _emit_output(report, output_path=args.output)
     return 0
@@ -580,6 +684,20 @@ def run_changes(*, args: argparse.Namespace, loaded, store: Store) -> int:
         until=args.until,
     )
     provider_profiles = profiles_for(loaded.providers)
+    stored_events = ()
+    semantic_cores = {}
+    changes_semantic_core = None
+    if args.format != "json":
+        stored_events = store.recent_comparison_events(
+            provider_id=args.provider,
+            since=args.since,
+            until=args.until,
+        )
+        changes_semantic_core = build_changes_semantic_core(
+            stored_events,
+            provider_profiles,
+        )
+        semantic_cores = changes_semantic_core.by_identity
     since_iso = args.since.isoformat() if args.since else None
     until_iso = args.until.isoformat() if args.until else None
     report = render_changes_report(
@@ -590,6 +708,9 @@ def run_changes(*, args: argparse.Namespace, loaded, store: Store) -> int:
         changes=changes,
         provider_profiles=provider_profiles,
         detail_policy=_report_detail_policy(args=args, loaded=loaded),
+        stored_events=stored_events,
+        semantic_cores=semantic_cores,
+        changes_semantic_core=changes_semantic_core,
     )
 
     if args.output:
@@ -611,6 +732,9 @@ def run_changes(*, args: argparse.Namespace, loaded, store: Store) -> int:
                 changes=changes,
                 provider_profiles=provider_profiles,
                 detail_policy=_report_detail_policy(args=args, loaded=loaded),
+                stored_events=stored_events,
+                semantic_cores=semantic_cores,
+                changes_semantic_core=changes_semantic_core,
             )
             html_path = text_path.with_suffix(".html")
             html_path.write_text(html_text, encoding="utf-8")
