@@ -438,6 +438,282 @@ def _stored_ordinary_event(
     )
 
 
+def _stored_event_with_sibling_fields(
+    event: StoredComparisonEvent,
+    *siblings: FieldChange,
+) -> StoredComparisonEvent:
+    rows = tuple(
+        StoredChangeRecord(
+            change_id=event.source_rows[-1].change_id + index,
+            provider_id=event.identity.provider_id,
+            provider_model_id=event.identity.provider_model_id,
+            from_scrape_id=event.identity.from_scrape_id,
+            to_scrape_id=event.identity.to_scrape_id,
+            change_kind="field_changed",
+            field_name=sibling.field_name,
+            old_value=sibling.old_value,
+            new_value=sibling.new_value,
+            detected_at=event.detected_at,
+        )
+        for index, sibling in enumerate(siblings, start=1)
+    )
+    return replace(
+        event,
+        source_rows=(*event.source_rows, *rows),
+        field_changes=(*event.field_changes, *siblings),
+    )
+
+
+def _legacy_history_row(event: HistoryEvent, format_name: str, mode: str) -> str:
+    rendered = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen=event.detected_at,
+        last_seen=event.detected_at,
+        events=(event,),
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(mode=mode),
+    )
+    return next(line for line in rendered.splitlines() if event.field_name in line)
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+@pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
+def test_conditional_history_sibling_uses_exact_legacy_row_in_every_detail_mode(
+    format_name: str,
+    detail_mode: str,
+) -> None:
+    rules = [{
+        "utc_days": ["monday"],
+        "utc_start": 100,
+        "utc_end": 200,
+        "prompt": "0.000002",
+    }]
+    status_change = FieldChange("status", "preview", "active")
+    stored = _stored_event_with_sibling_fields(
+        _stored_schedule_event(
+            from_scrape=10,
+            to_scrape=11,
+            old_rules=None,
+            new_rules=rules,
+            detected_at="2026-08-28T12:00:00+00:00",
+        ),
+        status_change,
+    )
+    status_event = reporting._history_event_from_stored_row(stored.source_rows[-1])
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(stored), OPENROUTER_PROFILE
+    )
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen=stored.detected_at,
+        last_seen=stored.detected_at,
+        events=tuple(
+            reporting._history_event_from_stored_row(row)
+            for row in stored.source_rows
+        ),
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(mode=detail_mode),
+        stored_events=(stored,),
+        semantic_cores={stored.identity: core},
+    )
+
+    expected = _legacy_history_row(status_event, format_name, detail_mode)
+    assert expected in report
+    assert report.count(expected) == 1
+    if detail_mode == "squelched":
+        assert "Comparison detected" not in report
+
+
+@pytest.mark.parametrize(
+    ("state", "rules"),
+    (
+        (
+            "grouped",
+            [{
+                "utc_days": ["monday"],
+                "utc_start": 100,
+                "utc_end": 200,
+                "prompt": "0.000002",
+            }],
+        ),
+        ("ordered", [{"min_prompt_tokens": 200000, "prompt": "0.000002"}]),
+        ("raw", {"unsupported": "synthetic"}),
+    ),
+)
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_conditional_history_states_keep_ordinary_sibling_when_panel_is_squelched(
+    state: str,
+    rules,
+    format_name: str,
+) -> None:
+    status = FieldChange("status", "preview", "active")
+    stored = _stored_event_with_sibling_fields(
+        _stored_schedule_event(
+            from_scrape=10,
+            to_scrape=11,
+            old_rules=None,
+            new_rules=rules,
+            detected_at="2026-08-28T12:00:00+00:00",
+        ),
+        status,
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(stored), OPENROUTER_PROFILE
+    )
+    assert core.interpretation is not None
+    assert core.interpretation.state == (
+        "raw-fallback" if state == "raw" else f"{state}-schedule" if state == "grouped" else "ordered-rules"
+    )
+    status_event = reporting._history_event_from_stored_row(stored.source_rows[-1])
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen=stored.detected_at,
+        last_seen=stored.detected_at,
+        events=tuple(
+            reporting._history_event_from_stored_row(row)
+            for row in stored.source_rows
+        ),
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(mode="squelched"),
+        stored_events=(stored,),
+        semantic_cores={stored.identity: core},
+    )
+
+    assert _legacy_history_row(status_event, format_name, "squelched") in report
+    assert "Comparison detected" not in report
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_conditional_history_does_not_restore_absorbed_price_sibling(
+    format_name: str,
+) -> None:
+    rules = [{
+        "utc_days": ["monday"],
+        "utc_start": 100,
+        "utc_end": 200,
+        "prompt": "0.000003",
+    }]
+    stored = _stored_event_with_sibling_fields(
+        _stored_schedule_event(
+            from_scrape=10,
+            to_scrape=11,
+            old_rules=None,
+            new_rules=rules,
+            detected_at="2026-08-28T12:00:00+00:00",
+        ),
+        FieldChange("pricing.prompt", "0.000002", "0.000001"),
+        FieldChange("status", "preview", "active"),
+    )
+    stored = replace(
+        stored,
+        old_model_metadata={
+            "id": "synthetic/model",
+            "status": "preview",
+            "pricing": {"prompt": "0.000002"},
+        },
+        new_model_metadata={
+            "id": "synthetic/model",
+            "status": "active",
+            "pricing": {"prompt": "0.000001", "overrides": rules},
+        },
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(stored), OPENROUTER_PROFILE
+    )
+    assert tuple(change.field_name for change in core.remaining_field_changes) == (
+        "status",
+    )
+    status_event = reporting._history_event_from_stored_row(stored.source_rows[-1])
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen=stored.detected_at,
+        last_seen=stored.detected_at,
+        events=tuple(
+            reporting._history_event_from_stored_row(row)
+            for row in stored.source_rows
+        ),
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(mode="squelched"),
+        stored_events=(stored,),
+        semantic_cores={stored.identity: core},
+    )
+
+    assert _legacy_history_row(status_event, format_name, "squelched") in report
+    assert "pricing.prompt" not in report
+    assert "0.000002" not in report
+
+
+@pytest.mark.parametrize("format_name", ("text", "markdown"))
+def test_conditional_history_preserves_source_order_around_composite(
+    format_name: str,
+) -> None:
+    rules = [{
+        "utc_days": ["monday"],
+        "utc_start": 100,
+        "utc_end": 200,
+        "prompt": "0.000002",
+    }]
+    base = _stored_schedule_event(
+        from_scrape=10,
+        to_scrape=11,
+        old_rules=None,
+        new_rules=rules,
+        detected_at="2026-08-28T12:00:00+00:00",
+    )
+    status_change = FieldChange("status", "preview", "active")
+    status_row = StoredChangeRecord(
+        change_id=base.source_rows[0].change_id - 1,
+        provider_id=base.identity.provider_id,
+        provider_model_id=base.identity.provider_model_id,
+        from_scrape_id=base.identity.from_scrape_id,
+        to_scrape_id=base.identity.to_scrape_id,
+        change_kind="field_changed",
+        field_name=status_change.field_name,
+        old_value=status_change.old_value,
+        new_value=status_change.new_value,
+        detected_at=base.detected_at,
+    )
+    stored = replace(
+        base,
+        source_rows=(status_row, *base.source_rows),
+        field_changes=(status_change, *base.field_changes),
+    )
+    core = reporting.build_model_event_semantic_core(
+        reporting.pricing_event_from_stored(stored), OPENROUTER_PROFILE
+    )
+    status_event = reporting._history_event_from_stored_row(status_row)
+
+    report = reporting.render_history_report(
+        provider_id="openrouter",
+        model_id="synthetic/model",
+        format_name=format_name,
+        first_seen=stored.detected_at,
+        last_seen=stored.detected_at,
+        events=tuple(
+            reporting._history_event_from_stored_row(row)
+            for row in stored.source_rows
+        ),
+        profile=OPENROUTER_PROFILE,
+        detail_policy=reporting.make_report_detail_policy(),
+        stored_events=(stored,),
+        semantic_cores={stored.identity: core},
+    )
+
+    legacy_row = _legacy_history_row(status_event, format_name, "default")
+    assert report.index(legacy_row) < report.index("Comparison detected")
+
+
 @pytest.mark.parametrize("format_name", ("text", "markdown"))
 @pytest.mark.parametrize("detail_mode", ("default", "all", "squelched"))
 def test_mixed_history_interleaves_legacy_rows_and_only_composites_conditional_edges(

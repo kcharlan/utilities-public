@@ -539,6 +539,30 @@ def _mutable_json(value: Any) -> Any:
     return value
 
 
+def _remaining_event_source_changes(
+    event: PricingComparisonEvent,
+    interpretation: ConditionalPricingInterpretation | None,
+    profile: ProviderProfile,
+    references: tuple[SourceChangeReference, ...],
+) -> tuple[tuple[FieldChange, SourceChangeReference], ...]:
+    """Return unconsumed ordinary changes with occurrence identity intact."""
+    consumed = (
+        set(interpretation.absorbed_base_price_changes)
+        if interpretation is not None
+        else set()
+    )
+    return tuple(
+        (change, reference)
+        for change, reference in zip(event.field_changes, references, strict=True)
+        if reference not in consumed
+        and not profile.is_pricing_override_selector_path(change.field_name)
+        and not (
+            interpretation is not None
+            and change.field_name == "pricing.overrides"
+        )
+    )
+
+
 def build_model_event_semantic_core(
     event: PricingComparisonEvent,
     profile: ProviderProfile,
@@ -565,19 +589,13 @@ def build_model_event_semantic_core(
         direct_price_facts=direct_facts,
     )
 
-    consumed = (
-        set(interpretation.absorbed_base_price_changes)
-        if interpretation is not None
-        else set()
-    )
     remaining = tuple(
         change
-        for change, reference in zip(event.field_changes, references, strict=True)
-        if reference not in consumed
-        and not profile.is_pricing_override_selector_path(change.field_name)
-        and not (
-            interpretation is not None
-            and change.field_name == "pricing.overrides"
+        for change, _reference in _remaining_event_source_changes(
+            event,
+            interpretation,
+            profile,
+            references,
         )
     )
     semantic_composite = bool(
@@ -1960,6 +1978,81 @@ def _history_plan_uses_semantic_projection(
     )
 
 
+def _semantic_history_ordinary_occurrences(
+    plan: StoredEventPresentationPlan,
+    profile: ProviderProfile,
+) -> tuple[tuple[int, HistoryEvent], ...]:
+    """Project unconsumed rich rows through their legacy occurrence contract."""
+    core = plan.projection.core
+    field_rows = tuple(
+        row
+        for row in plan.stored_event.source_rows
+        if row.change_kind == "field_changed"
+    )
+    if len(field_rows) != len(core.event.field_changes):
+        raise ValueError("stored field rows do not match semantic event occurrences")
+    remaining = _remaining_event_source_changes(
+        core.event,
+        core.interpretation,
+        profile,
+        _event_source_references(core.event),
+    )
+    return tuple(
+        (
+            reference.source_index,
+            _history_event_from_stored_row(field_rows[reference.source_index]),
+        )
+        for _change, reference in remaining
+    )
+
+
+def _semantic_history_composite_source_index(
+    plan: StoredEventPresentationPlan,
+) -> int:
+    """Return the first source occurrence represented by the composite block."""
+    interpretation = plan.projection.core.interpretation
+    if interpretation is None or not interpretation.source_changes:
+        return 0
+    return min(
+        source.reference.source_index
+        for source in interpretation.source_changes
+    )
+
+
+def _append_legacy_history_markdown_rows(
+    lines: list[str],
+    events: tuple[HistoryEvent, ...],
+    *,
+    table_open: bool,
+) -> bool:
+    if events and not table_open:
+        lines.extend(
+            [
+                "| Detected At | Kind | Field | Old | New |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        table_open = True
+    for event in events:
+        lines.append(
+            f"| {to_local_human(event.detected_at)} | {event.change_kind} | {event.field_name or ''} | "
+            f"{_scalar_display(event.old_value)} | {_scalar_display(event.new_value)} |"
+        )
+    return table_open
+
+
+def _append_legacy_history_text_rows(
+    lines: list[str],
+    events: tuple[HistoryEvent, ...],
+) -> None:
+    for event in events:
+        lines.append(
+            f"- {to_local_human(event.detected_at)} [{event.change_kind}] "
+            f"{event.field_name or ''} {_scalar_display(event.old_value)} -> "
+            f"{_scalar_display(event.new_value)}"
+        )
+
+
 def _field_category_for_detail(
     field_change: FieldChange,
     policy: ReportDetailPolicy,
@@ -2642,13 +2735,20 @@ def render_history_report(
     # stay on the byte-characterized five-field legacy renderer in full.
     if stored_plans and not semantic_stored_plans:
         stored_plans = ()
-    ordinary_by_identity = {
-        plan.identity: tuple(
-            _history_event_from_stored_row(row)
-            for row in plan.stored_event.source_rows
+    ordinary_occurrences_by_identity = {
+        plan.identity: (
+            _semantic_history_ordinary_occurrences(plan, profile)
+            if _history_plan_uses_semantic_projection(plan, profile)
+            else tuple(
+                (source_index, _history_event_from_stored_row(row))
+                for source_index, row in enumerate(plan.stored_event.source_rows)
+            )
         )
         for plan in stored_plans
-        if not _history_plan_uses_semantic_projection(plan, profile)
+    }
+    ordinary_by_identity = {
+        identity: tuple(event for _source_index, event in occurrences)
+        for identity, occurrences in ordinary_occurrences_by_identity.items()
     }
     ordinary_stored_events = tuple(
         event
@@ -2701,7 +2801,6 @@ def render_history_report(
                             f"{_scalar_display(event.old_value)} | {_scalar_display(event.new_value)} |"
                         )
                     continue
-                table_open = False
                 event = plan.projection.core.event
                 conditional_lines = _conditional_pricing_lines(
                     plan.projection,
@@ -2715,38 +2814,63 @@ def render_history_report(
                     for row in plan.stored_event.source_rows
                     if row.change_kind in {"added", "removed"}
                 )
+                visible_occurrences = tuple(
+                    (source_index, ordinary)
+                    for source_index, ordinary in ordinary_occurrences_by_identity[
+                        plan.identity
+                    ]
+                    if id(ordinary) in visible_ordinary_ids
+                )
+                composite_index = _semantic_history_composite_source_index(plan)
+                before_composite = tuple(
+                    ordinary
+                    for source_index, ordinary in visible_occurrences
+                    if source_index < composite_index
+                )
+                after_composite = tuple(
+                    ordinary
+                    for source_index, ordinary in visible_occurrences
+                    if source_index >= composite_index
+                )
                 if (
                     not conditional_lines
                     and not presence_rows
-                    and not plan.projection.display.visible
+                    and not visible_occurrences
                 ):
                     continue
-                if lines and lines[-1] != "":
+                table_open = _append_legacy_history_markdown_rows(
+                    lines,
+                    before_composite,
+                    table_open=table_open,
+                )
+                if conditional_lines or presence_rows:
+                    if lines and lines[-1] != "":
+                        lines.append("")
+                    lines.extend(
+                        [
+                            f"## Comparison detected {to_local_human(event.detected_at)}",
+                            "",
+                            f"- Source: {to_local_human(event.source_timestamp)}",
+                            f"- Target: {to_local_human(event.target_timestamp)}",
+                            "",
+                        ]
+                    )
+                    lines.extend(
+                        f"- {line}"
+                        for line in conditional_lines
+                    )
+                    for source_row in presence_rows:
+                        marker = "+" if source_row.change_kind == "added" else "-"
+                        lines.append(
+                            f"- {marker} `{event.provider_model_id}` ({event.display_name})"
+                        )
                     lines.append("")
-                lines.extend(
-                    [
-                        f"## Comparison detected {to_local_human(event.detected_at)}",
-                        "",
-                        f"- Source: {to_local_human(event.source_timestamp)}",
-                        f"- Target: {to_local_human(event.target_timestamp)}",
-                        "",
-                    ]
+                    table_open = False
+                table_open = _append_legacy_history_markdown_rows(
+                    lines,
+                    after_composite,
+                    table_open=table_open,
                 )
-                lines.extend(
-                    f"- {line}"
-                    for line in conditional_lines
-                )
-                for source_row in presence_rows:
-                    marker = "+" if source_row.change_kind == "added" else "-"
-                    lines.append(
-                        f"- {marker} `{event.provider_model_id}` ({event.display_name})"
-                    )
-                for change in plan.projection.display.visible:
-                    lines.append(
-                        f"- `{change.field_name}`: {_scalar_display(change.old_value)} → "
-                        f"{_scalar_display(change.new_value)}"
-                    )
-                lines.append("")
             lines.extend(
                 _history_summary_markdown(
                     ordinary_stored_events, detail_policy
@@ -2801,34 +2925,50 @@ def render_history_report(
                 for row in plan.stored_event.source_rows
                 if row.change_kind in {"added", "removed"}
             )
+            visible_occurrences = tuple(
+                (source_index, ordinary)
+                for source_index, ordinary in ordinary_occurrences_by_identity[
+                    plan.identity
+                ]
+                if id(ordinary) in visible_ordinary_ids
+            )
+            composite_index = _semantic_history_composite_source_index(plan)
+            before_composite = tuple(
+                ordinary
+                for source_index, ordinary in visible_occurrences
+                if source_index < composite_index
+            )
+            after_composite = tuple(
+                ordinary
+                for source_index, ordinary in visible_occurrences
+                if source_index >= composite_index
+            )
             if (
                 not conditional_lines
                 and not presence_rows
-                and not plan.projection.display.visible
+                and not visible_occurrences
             ):
                 continue
-            lines.extend(
-                [
-                    f"Comparison detected {to_local_human(event.detected_at)}",
-                    f"  Source: {to_local_human(event.source_timestamp)}",
-                    f"  Target: {to_local_human(event.target_timestamp)}",
-                ]
-            )
-            lines.extend(
-                f"  {line}"
-                for line in conditional_lines
-            )
-            for source_row in presence_rows:
-                marker = "+" if source_row.change_kind == "added" else "-"
-                lines.append(
-                    f"  {marker} {event.provider_model_id} ({event.display_name})"
+            _append_legacy_history_text_rows(lines, before_composite)
+            if conditional_lines or presence_rows:
+                lines.extend(
+                    [
+                        f"Comparison detected {to_local_human(event.detected_at)}",
+                        f"  Source: {to_local_human(event.source_timestamp)}",
+                        f"  Target: {to_local_human(event.target_timestamp)}",
+                    ]
                 )
-            for change in plan.projection.display.visible:
-                lines.append(
-                    f"  {change.field_name}: {_scalar_display(change.old_value)} -> "
-                    f"{_scalar_display(change.new_value)}"
+                lines.extend(
+                    f"  {line}"
+                    for line in conditional_lines
                 )
-            lines.append("")
+                for source_row in presence_rows:
+                    marker = "+" if source_row.change_kind == "added" else "-"
+                    lines.append(
+                        f"  {marker} {event.provider_model_id} ({event.display_name})"
+                    )
+                lines.append("")
+            _append_legacy_history_text_rows(lines, after_composite)
         lines.extend(
             _history_summary_text(ordinary_stored_events, detail_policy)
         )
