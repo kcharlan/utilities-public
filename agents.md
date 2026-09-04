@@ -19,7 +19,7 @@ This is a public-facing repository. Never place sensitive data in code or commit
 
 1. **Ignore broken tests.** If a test fails, it is your problem. Investigate it, root-cause it, and fix it. There is no category of test failure you are permitted to disregard.
 
-2. **Skip ANY tests.** You must run the complete test suite — unit, integration, E2E, CLI, Playwright, every category. No test category may be omitted, deferred, or "run later." If a test exists, it runs.
+2. **Skip required tests.** For every executable change, run the complete documented test suite for each touched top-level project — unit, integration, E2E, CLI, Playwright, and every other category that belongs to that project. If a change touches multiple top-level projects, run the complete suite for each of them. Do not run suites belonging only to untouched projects. Changes that are intentionally outside automated coverage, such as documentation-only edits, comments, prose, or GitHub Actions schedule/metadata updates, do not require tests.
 
 3. **Hide broken tests.** You must report ALL test failures explicitly — every single one, by name, with output. Do not selectively report passing tests while omitting failures. Do not summarize a run as "passing" or "mostly passing" when any test has failed. Partial reporting is dishonest reporting.
 
@@ -75,7 +75,7 @@ Before finalizing changes, verify you haven't:
 - Docker stacks and services: `docker/actual-data`, `docker/excalidraw`, `docker/llm_collector`, `docker/mermaid`, `docker/webserver`.
 
 ## Validation Matrix
-Run the smallest relevant check for the area you changed:
+Use this matrix to identify project-specific validation commands after applying the testing scope above. For executable changes, run the complete documented suite for every touched top-level project; a command listed here does not authorize omitting another test category belonging to that project. For touched projects not listed below, follow the project's README and local documentation and run every documented test category. Non-executable-only changes do not require tests.
 
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --script tools/check_uv_headers.py`.
