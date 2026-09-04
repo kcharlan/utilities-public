@@ -19,7 +19,7 @@ This is a public-facing repository. Never place sensitive data in code or commit
 
 1. **Ignore broken tests.** If a test fails, it is your problem. Investigate it, root-cause it, and fix it. There is no category of test failure you are permitted to disregard.
 
-2. **Skip required tests.** For every executable change, run the complete documented test suite for each touched top-level project — unit, integration, E2E, CLI, Playwright, and every other category that belongs to that project. If a change touches multiple top-level projects, run the complete suite for each of them. Do not run suites belonging only to untouched projects. Changes that are intentionally outside automated coverage, such as documentation-only edits, comments, prose, or GitHub Actions schedule/metadata updates, do not require tests.
+2. **Skip required tests.** For changes affecting executable behavior, build logic, or other areas meaningfully validated by automated tests, run the complete documented test suite for every affected independently maintained project — unit, integration, E2E, CLI, Playwright, and every other category that belongs to that project. Determine project boundaries from the project's README, runtime, dependencies, and test configuration, not directory depth alone. Changes to shared code, tooling, or configuration also require the suites of affected consumer projects, even when their files are unchanged. Do not run suites belonging only to unaffected projects. Changes intentionally outside automated coverage, such as documentation-only edits, comments, prose, or GitHub Actions schedule/metadata updates that the suites do not exercise, do not require tests. For mixed executable and non-executable changes, determine test scope from the executable or otherwise test-relevant portion.
 
 3. **Hide broken tests.** You must report ALL test failures explicitly — every single one, by name, with output. Do not selectively report passing tests while omitting failures. Do not summarize a run as "passing" or "mostly passing" when any test has failed. Partial reporting is dishonest reporting.
 
@@ -30,10 +30,10 @@ This is a public-facing repository. Never place sensitive data in code or commit
 **If you find yourself wanting to skip, minimize, or explain away a test failure — STOP. That impulse is the exact problem this section exists to prevent.**
 
 ## Scope
-This repository is a personal utilities monorepo. Each top-level folder is an independent project with its own runtime, dependencies, and workflow.
+This repository is a personal utilities monorepo of independently maintained projects with their own runtimes, dependencies, and workflows. Many projects occupy top-level folders; grouping directories such as `docker` and `web_games` contain separate nested projects.
 
 ## Core Rules
-- Treat each top-level directory as a standalone project.
+- Treat each independently maintained project as standalone, whether top-level or nested; account for shared dependencies when determining affected projects.
 - Read that project's `README.md` before editing code.
 - Keep changes scoped; do not refactor across unrelated projects unless explicitly asked.
 - Many paths contain spaces (for example `Calculation tools`, `abacus usage`, `moneydance backup rotation`): always quote paths in shell commands.
@@ -75,7 +75,7 @@ Before finalizing changes, verify you haven't:
 - Docker stacks and services: `docker/actual-data`, `docker/excalidraw`, `docker/llm_collector`, `docker/mermaid`, `docker/webserver`.
 
 ## Validation Matrix
-Use this matrix to identify project-specific validation commands after applying the testing scope above. For executable changes, run the complete documented suite for every touched top-level project; a command listed here does not authorize omitting another test category belonging to that project. For touched projects not listed below, follow the project's README and local documentation and run every documented test category. Non-executable-only changes do not require tests.
+Use this matrix to identify project-specific validation commands after applying the testing scope above. Run the complete documented suite for every affected independently maintained project, including affected consumers of shared changes; a command listed here does not authorize omitting another test category belonging to that project. For affected projects not listed below, follow the project's README and local documentation and run every documented test category. Changes intentionally outside automated coverage do not require tests; for mixed changes, apply the scope rule above.
 
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --script tools/check_uv_headers.py`.
@@ -194,5 +194,5 @@ Rules:
 - Prefer `rg`/`rg --files` for discovery.
 - Prefer minimal, targeted diffs over broad formatting sweeps.
 - Update documentation when behavior, interfaces, or run commands change.
-- If a change touches multiple projects, validate each project independently with the commands above.
+- If a change affects multiple projects, including through shared dependencies, validate each affected project independently with the commands above.
 - Pytest environment note (Homebrew macOS): `pytest` may be installed as a shell entrypoint even when `python3 -m pytest` fails in a specific interpreter. For test execution, prefer `pytest` first; if needed, also try `python3 -m pytest` as a secondary option.
