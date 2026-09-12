@@ -238,6 +238,7 @@
         <div class="filter-row">
           <fieldset class="providers"><legend>Providers</legend><div>${meta.providers.map(provider => html`<button type="button" key=${provider.id} class=${providers.includes(provider.id) ? "chip is-active" : "chip"} aria-pressed=${providers.includes(provider.id)} onClick=${() => toggle(provider.id)}><i></i>${provider.label}</button>`)}</div></fieldset>
           <fieldset class="dates" disabled=${!meta.date_span}><legend>Date range</legend><label>From<input type="date" min=${meta.date_span && meta.date_span.first} max=${meta.date_span && meta.date_span.last} value=${state.from || ""} onChange=${dateChange("from")} /></label><b>→</b><label>To<input type="date" min=${meta.date_span && meta.date_span.first} max=${meta.date_span && meta.date_span.last} value=${state.to || ""} onChange=${dateChange("to")} /></label></fieldset>
+          <${RangePresets} span=${meta.date_span} from=${state.from} to=${state.to} write=${write} />
           <${Segmented} label="Detail" value=${state.detail} options=${["default", "all", "squelched"].map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${detail => write({detail})} />
           <${Segmented} label="Theme" value=${theme} options=${THEMES.map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${setTheme} />
         </div>
@@ -346,14 +347,18 @@
     </article>`;
   }
 
-  function Feed({data, loading, hasMore, loadMore, openModel, openRaw, write}) {
+  function Feed({data, loading, hasMore, loadMore, openModel, openRaw, write, selectedCategories}) {
     const groups = useMemo(() => {
-      const result = [];
+      const result = [], byDate = new Map();
       for (const entry of data && data.entries || []) {
-        let group = result.at(-1);
-        if (!group || group.date !== entry.date) { group = {date: entry.date, entries: []}; result.push(group); }
+        let group = byDate.get(entry.date);
+        if (!group) { group = {date: entry.date, entries: []}; byDate.set(entry.date, group); result.push(group); }
         group.entries.push(entry);
       }
+      for (const [day, rollup] of Object.entries(data && data.rollups_by_date || {})) {
+        if (rollup.folded && rollup.folded.models && !byDate.has(day)) result.push({date: day, entries: []});
+      }
+      result.sort((left, right) => right.date.localeCompare(left.date));
       return result;
     }, [data]);
     const rollupLine = day => {
@@ -366,9 +371,14 @@
     };
     return html`<section class="feed" aria-labelledby="feed-title" aria-busy=${loading}>
       <header class="section-heading"><div><p>03 / event record</p><h2 id="feed-title">Observed changes</h2></div><span>${data ? `${data.total} grouped events` : "Awaiting sample"}</span></header>
+      ${data ? html`<${SummaryStrip} summary=${data.summary} selected=${selectedCategories} write=${write} />` : null}
       ${loading && !data && html`<div class="loading"><i></i><p>Reconstructing the field log…</p></div>`}
       ${data && !data.entries.length && html`<div class="empty"><b>∅</b><div><h2>No changes in this slice</h2><p>Widen the date range or clear a facet.</p></div></div>`}
-      ${groups.map(group => html`<section class="date-block" key=${group.date}><header><time datetime=${group.date}>${new Date(`${group.date}T12:00:00Z`).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC"})}</time><span>${String(group.entries.length).padStart(2,"0")} entries</span></header><div>${group.entries.map(entry => html`<${Entry} key=${activityEntryId(entry)} entry=${entry} openModel=${openModel} openRaw=${openRaw} />`)}${rollupLine(group.date)}</div></section>`)}
+      ${groups.map(group => {
+        const rollup = data.rollups_by_date[group.date] || {};
+        const summary = rollup.summary || {};
+        return html`<section class="date-block" key=${group.date}><header><time datetime=${group.date}>${new Date(`${group.date}T12:00:00Z`).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC"})}</time><span>${String(group.entries.length).padStart(2,"0")} entries · ${summary.added || 0} added · ${summary.removed || 0} removed</span></header><div>${group.entries.map(entry => html`<${Entry} key=${activityEntryId(entry)} entry=${entry} openModel=${openModel} openRaw=${openRaw} />`)}${rollupLine(group.date)}<${FoldedLine} folded=${rollup.folded} day=${group.date} openModel=${openModel} openRaw=${openRaw} write=${write} /></div></section>`;
+      })}
       ${data && hasMore && html`<div class="feed-more"><button type="button" disabled=${loading} onClick=${loadMore}>${loading ? "Loading more changes…" : "Load more changes"}</button><span>${data.entries.length} of ${data.total} events loaded</span></div>`}
     </section>`;
   }
@@ -384,7 +394,7 @@
     }, Boolean(state.to));
     const models = useApi("/api/models", {providers: state.providers, limit: 50}, Boolean(state.providers && state.providers.length));
     useEffect(() => reportError(feed.error || heat.error || models.error, feed.error ? feed.reload : heat.error ? heat.reload : models.reload), [feed.error, heat.error, models.error]);
-    return html`<div class="activity"><${Heatmap} rows=${heat.data} from=${state.from} to=${state.to} detail=${state.detail} write=${write} loading=${heat.loading} /><div class="activity-grid"><${Facets} meta=${meta} state=${state} write=${write} modelOptions=${models.data || []} /><${Feed} data=${feed.data} loading=${feed.loading} hasMore=${feed.hasMore} loadMore=${feed.loadMore} openModel=${openModel} openRaw=${openRaw} write=${write} /></div></div>`;
+    return html`<div class="activity"><${Heatmap} rows=${heat.data} from=${state.from} to=${state.to} detail=${state.detail} write=${write} loading=${heat.loading} /><div class="activity-grid"><${Facets} meta=${meta} state=${state} write=${write} modelOptions=${models.data || []} /><${Feed} data=${feed.data} loading=${feed.loading} hasMore=${feed.hasMore} loadMore=${feed.loadMore} openModel=${openModel} openRaw=${openRaw} write=${write} selectedCategories=${state.categories || []} /></div></div>`;
   }
 
   function pinParts(pin, providers) {
@@ -1080,6 +1090,30 @@
     if (preferred.length) return preferred;
     const pricing = providerAspects.filter(aspect => aspect.category === "Pricing").slice(0, 2).map(aspect => aspect.id);
     return pricing.length ? pricing : providerAspects.slice(0, 1).map(aspect => aspect.id);
+  }
+
+  function RangePresets({span, from, to, write}) {
+    if (!span) return null;
+    const presets = [
+      ["7d", clamp(shiftDay(span.last, -7), span)],
+      ["30d", clamp(shiftDay(span.last, -30), span)],
+      ["90d", clamp(shiftDay(span.last, -90), span)],
+      ["180d", clamp(shiftDay(span.last, -180), span)],
+      ["All", span.first]
+    ];
+    return html`<fieldset class="range-presets"><legend>Range presets</legend><div>${presets.map(([label, start]) => html`<button type="button" key=${label} aria-pressed=${from === start && to === span.last} onClick=${() => write({from: start, to: span.last})}>${label}</button>`)}</div></fieldset>`;
+  }
+
+  function SummaryStrip({summary, selected, write}) {
+    const categories = Object.entries(summary.by_category || {});
+    const toggle = category => write({categories: selected.includes(category) ? selected.filter(value => value !== category) : [...selected, category]});
+    return html`<section class="summary-strip" aria-label="Activity summary"><div><strong>${summary.added}</strong><span>added</span></div><div><strong>${summary.removed}</strong><span>removed</span></div><div><strong>${summary.changed}</strong><span>changed</span></div><nav aria-label="Change categories">${categories.map(([category, count]) => html`<button type="button" key=${category} aria-pressed=${selected.includes(category)} onClick=${() => toggle(category)}>${category}<b>${count}</b></button>`)}</nav></section>`;
+  }
+
+  function FoldedLine({folded, day, openModel, openRaw, write}) {
+    if (!folded || !folded.models) return null;
+    const noun = folded.models === 1 ? "model" : "models";
+    return html`<details class="folded-line"><summary>${folded.models} ${noun} changed only in squelched fields</summary><ol>${folded.items.map(item => html`<li key=${`${item.provider_id}/${item.model_id}`}><button class="model-link" type="button" onClick=${() => openModel(item.provider_id, item.model_id, item.display_name, day)}><strong>${item.display_name || item.model_id}</strong><small>${item.model_id}</small></button><button type="button" class="raw-link" disabled=${!item.change_ids.length} onClick=${() => item.change_ids.length && openRaw(item.change_ids[0])}>raw</button></li>`)}</ol><button type="button" class="show-all-link" onClick=${() => write({detail: "all"})}>Show all changes</button></details>`;
   }
 
   function RawDrawer({id, close}) {

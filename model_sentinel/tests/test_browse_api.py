@@ -146,7 +146,8 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
     context, facts = browse_context
     result = api.activity(context, {"providers": EXAMPLE_PROVIDER.provider_id})
     assert set(result) == {
-        "total", "page", "page_size", "entries", "rollups", "rollups_by_date",
+        "total", "page", "page_size", "entries", "summary", "rollups",
+        "rollups_by_date",
     }
     assert set(result["rollups"]) == {"squelched", "non_squelched", "noop"}
     assert result["rollups"] == {
@@ -154,17 +155,18 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
         "non_squelched": [],
         "noop": [],
     }
-    assert result["rollups_by_date"] == {
-        day.isoformat(): {
-            "squelched": [["benchmarks.design_arena.score", 1]],
-            "non_squelched": [],
-            "noop": [],
+    for day in facts.scrape_dates[1:]:
+        rollup = result["rollups_by_date"][day.isoformat()]
+        assert rollup["squelched"] == [["benchmarks.design_arena.score", 1]]
+        assert rollup["non_squelched"] == []
+        assert rollup["noop"] == []
+        assert set(rollup) == {
+            "squelched", "non_squelched", "noop", "folded", "summary"
         }
-        for day in facts.scrape_dates[1:]
-    }
     bulk = next(entry for entry in result["entries"] if entry["kind"] == "bulk")
-    # T0.3 adds one synthetic equal-length list transition to the fixture.
-    assert result["total"] == 10
+    # A1 folds three benchmark-only cards; T0.3 contributes one visible list
+    # transition on the first of those days.
+    assert result["total"] == 7
     assert [entry["kind"] for entry in result["entries"]].count("bulk") == 1
     assert [entry["kind"] for entry in result["entries"]].count("added") == 1
     assert [entry["kind"] for entry in result["entries"]].count("removed") == 1
@@ -203,7 +205,16 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
             until=None,
         )
     }
-    response_ids = [change_id for entry in result["entries"] for change_id in entry["change_ids"]]
+    response_ids = [
+        change_id
+        for entry in result["entries"]
+        for change_id in entry["change_ids"]
+    ] + [
+        change_id
+        for rollup in result["rollups_by_date"].values()
+        for item in rollup["folded"]["items"]
+        for change_id in item["change_ids"]
+    ]
     assert set(response_ids) == source_ids
     assert len(response_ids) == len(source_ids)
     for entry in result["entries"]:
@@ -217,11 +228,10 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
                 {"change_id": str(entry["change_ids_by_change"][index][0])},
             )
             assert detail["field"] == change["field_path"]
-    squelched_only = next(
-        entry for entry in result["entries"]
-        if entry["kind"] == "changed" and entry["hidden"]["squelched"] and not entry["changes"]
-    )
-    assert len(squelched_only["change_ids"]) == squelched_only["hidden"]["squelched"]
+    assert sum(
+        rollup["folded"]["models"]
+        for rollup in result["rollups_by_date"].values()
+    ) == 3
 
     heatmap = api.heatmap(context, {"providers": EXAMPLE_PROVIDER.provider_id})
     assert heatmap == [
@@ -232,6 +242,49 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
         {"date": "2026-08-15", "changed": 3, "added": 0, "removed": 0, "squelched": 1},
     ]
     assert all(set(day) == {"date", "changed", "added", "removed", "squelched"} for day in heatmap)
+
+
+def test_activity_folds_squelched_only_entries_and_summarizes_signal(
+    browse_context,
+) -> None:
+    context, facts = browse_context
+    day = facts.scrape_dates[1].isoformat()
+    common = {
+        "providers": EXAMPLE_PROVIDER.provider_id,
+        "from": day,
+        "to": day,
+    }
+
+    default = api.activity(context, common)
+    folded = default["rollups_by_date"][day]["folded"]
+    assert all(
+        entry["model_id"] != facts.benchmark_churn_model
+        for entry in default["entries"]
+    )
+    [item] = [
+        item
+        for item in folded["items"]
+        if item["model_id"] == facts.benchmark_churn_model
+    ]
+    assert folded["models"] == 1
+    assert item["hidden"] == 1
+    assert item["change_ids"]
+
+    all_detail = api.activity(context, {**common, "detail": "all"})
+    assert any(
+        entry["model_id"] == facts.benchmark_churn_model
+        for entry in all_detail["entries"]
+    )
+    benchmark_filter = api.activity(
+        context,
+        {**common, "categories": "Benchmarks"},
+    )
+    assert any(
+        entry["model_id"] == facts.benchmark_churn_model
+        for entry in benchmark_filter["entries"]
+    )
+    assert default["summary"]["by_category"] == {"Parameters": 1}
+    assert default["rollups_by_date"][day]["summary"] == default["summary"]
 
 
 def test_activity_associates_expanded_children_with_raw_origin_ids(tmp_path) -> None:
@@ -1196,6 +1249,12 @@ def test_empty_history_endpoint_responses(tmp_path) -> None:
         "page": 1,
         "page_size": 100,
         "entries": [],
+        "summary": {
+            "added": 0,
+            "removed": 0,
+            "changed": 0,
+            "by_category": {},
+        },
         "rollups": {"squelched": [], "non_squelched": [], "noop": []},
         "rollups_by_date": {},
     }

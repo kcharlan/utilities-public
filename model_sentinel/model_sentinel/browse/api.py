@@ -19,6 +19,7 @@ from ..reporting import (
     ReportDetailPolicy,
     detail_policy_from_settings,
     group_planned_entries_by_bulk,
+    is_squelched_only,
     plan_changes_provider,
     visibility_of,
 )
@@ -427,6 +428,148 @@ def _structural_row_matches(
     )
 
 
+def _serialize_entry_group(
+    entries: Sequence[Any],
+    rows_by_model: Mapping[str, Sequence[Mapping[str, Any]]],
+    profile: ProviderProfile,
+    category_filter: set[str],
+    kind_filter: set[str],
+    presence_offsets: Counter[tuple[str, str]],
+    day: date,
+    provider_id: str,
+) -> dict[str, Any] | None:
+    if not entries:
+        return None
+    representative = entries[0]
+    original_kind = representative.kind
+    if kind_filter and original_kind not in kind_filter:
+        return None
+    changes = list(representative.display.visible if representative.display else ())
+    kind = "bulk" if len(entries) > 1 else original_kind
+    if category_filter:
+        changes = [
+            change
+            for change in changes
+            if profile.categorize(change.field_name) in category_filter
+        ]
+    hidden = _count_hidden(entries, profile, category_filter)
+    if original_kind == "changed" and not changes and not any(hidden.values()):
+        return None
+    if original_kind == "changed":
+        eligible_rows = [
+            row
+            for entry in entries
+            for row in rows_by_model[entry.model_id]
+            if row["change_kind"] not in ("added", "removed")
+            and (
+                not category_filter
+                or row["field_name"] is not None
+                and profile.categorize(row["field_name"]) in category_filter
+            )
+        ]
+        change_ids_by_change = [[] for _ in changes]
+        for entry in entries:
+            model_rows = [
+                row
+                for row in eligible_rows
+                if row["provider_model_id"] == entry.model_id
+            ]
+            entry_changes = list(entry.display.visible if entry.display else ())
+            if category_filter:
+                entry_changes = [
+                    change
+                    for change in entry_changes
+                    if profile.categorize(change.field_name) in category_filter
+                ]
+            model_associations = _change_ids_by_rendered_change(
+                entry_changes,
+                model_rows,
+            )
+            for index, associated_ids in enumerate(
+                model_associations[: len(change_ids_by_change)]
+            ):
+                change_ids_by_change[index].extend(associated_ids)
+        primary_ids: list[int] = []
+        used_ids: set[int] = set()
+        for associated_ids in change_ids_by_change:
+            matching = next(
+                (
+                    change_id
+                    for change_id in associated_ids
+                    if change_id not in used_ids
+                ),
+                None,
+            )
+            if matching is not None:
+                primary_ids.append(matching)
+                used_ids.add(matching)
+        change_ids = primary_ids + [
+            row["change_id"]
+            for row in eligible_rows
+            if row["change_id"] not in used_ids
+        ]
+    else:
+        presence_rows = [
+            row["change_id"]
+            for row in rows_by_model[representative.model_id]
+            if row["change_kind"] == original_kind and row["field_name"] is None
+        ]
+        presence_key = (representative.model_id, original_kind)
+        offset = presence_offsets[presence_key]
+        change_ids = presence_rows[offset : offset + 1]
+        presence_offsets[presence_key] += 1
+        change_ids_by_change = []
+    item = {
+        "date": day.isoformat(),
+        "provider_id": provider_id,
+        "model_id": representative.model_id,
+        "display_name": representative.display_name,
+        "kind": kind,
+        "changes": [
+            rendered_change_to_json(classify_change(change, profile=profile))
+            for change in changes
+        ],
+        "hidden": hidden,
+        "change_ids": change_ids,
+        "change_ids_by_change": change_ids_by_change,
+    }
+    if kind == "bulk":
+        item["bulk_models"] = [
+            {"model_id": entry.model_id, "display_name": entry.display_name}
+            for entry in entries
+        ]
+    return item
+
+
+def _activity_summary(
+    entries: Sequence[Mapping[str, Any]],
+    profiles: Mapping[str, ProviderProfile],
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "added": 0,
+        "removed": 0,
+        "changed": 0,
+        "by_category": {},
+    }
+    for entry in entries:
+        kind = entry["kind"]
+        if kind in ("added", "removed"):
+            summary[kind] += 1
+        else:
+            summary["changed"] += 1
+    by_category: Counter[str] = Counter()
+    for entry in entries:
+        provider_profile = profiles[entry["provider_id"]]
+        for change in entry.get("changes", ()):
+            by_category[provider_profile.categorize(change["field_path"])] += 1
+    summary["by_category"] = {
+        category: by_category[category]
+        for category in CATEGORIES
+        if by_category[category]
+    }
+    return summary
+
+
 def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
     common = ctx.parse_common(params)
     page = _integer(params, "page", 1)
@@ -448,6 +591,7 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
             source[(local_date_for(row["detected_at"]), provider_id)].append(row)
 
     serialized: list[dict[str, Any]] = []
+    folded_by_date: dict[date, list[dict[str, Any]]] = defaultdict(list)
     plans = []
     plans_by_date: dict[date, list[tuple[Any, ProviderProfile]]] = defaultdict(list)
     for (day, provider_id), rows in source.items():
@@ -476,112 +620,64 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
                 ]
             if not entries:
                 continue
-            representative = entries[0]
-            original_kind = representative.kind
-            if kind_filter and original_kind not in kind_filter:
-                continue
-            if len(entries) > 1:
-                changes = list(representative.display.visible if representative.display else ())
-                kind = "bulk"
-            else:
-                changes = list(representative.display.visible if representative.display else ())
-                kind = original_kind
-            if category_filter:
-                changes = [change for change in changes if profile.categorize(change.field_name) in category_filter]
-            hidden = _count_hidden(entries, profile, category_filter)
-            if original_kind == "changed" and not changes and not any(hidden.values()):
-                continue
-            if original_kind == "changed":
-                eligible_rows = [
-                    row
-                    for entry in entries
-                    for row in rows_by_model[entry.model_id]
-                    if row["change_kind"] not in ("added", "removed")
-                    and (
-                        not category_filter
-                        or row["field_name"] is not None
-                        and profile.categorize(row["field_name"]) in category_filter
-                    )
-                ]
-                change_ids_by_change = [[] for _ in changes]
+            if common.detail == "default" and not category_filter:
+                retained = []
                 for entry in entries:
-                    model_rows = [
-                        row
-                        for row in eligible_rows
-                        if row["provider_model_id"] == entry.model_id
-                    ]
-                    entry_changes = list(
-                        entry.display.visible if entry.display else ()
+                    if entry.display is None or not is_squelched_only(entry.display):
+                        retained.append(entry)
+                        continue
+                    folded = _serialize_entry_group(
+                        [entry], rows_by_model, profile, category_filter,
+                        kind_filter, presence_offsets, day, provider_id,
                     )
-                    if category_filter:
-                        entry_changes = [
-                            change
-                            for change in entry_changes
-                            if profile.categorize(change.field_name)
-                            in category_filter
-                        ]
-                    model_associations = _change_ids_by_rendered_change(
-                        entry_changes,
-                        model_rows,
-                    )
-                    for index, associated_ids in enumerate(
-                        model_associations[: len(change_ids_by_change)]
-                    ):
-                        change_ids_by_change[index].extend(associated_ids)
-                primary_ids: list[int] = []
-                used_ids: set[int] = set()
-                for associated_ids in change_ids_by_change:
-                    matching = next(
-                        (
-                            change_id
-                            for change_id in associated_ids
-                            if change_id not in used_ids
-                        ),
-                        None,
-                    )
-                    if matching is not None:
-                        primary_ids.append(matching)
-                        used_ids.add(matching)
-                change_ids = primary_ids + [
-                    row["change_id"]
-                    for row in eligible_rows
-                    if row["change_id"] not in used_ids
-                ]
-            else:
-                presence_rows = [
-                    row["change_id"]
-                    for row in rows_by_model[representative.model_id]
-                    if row["change_kind"] == original_kind and row["field_name"] is None
-                ]
-                presence_key = (representative.model_id, original_kind)
-                offset = presence_offsets[presence_key]
-                change_ids = presence_rows[offset : offset + 1]
-                presence_offsets[presence_key] += 1
-                change_ids_by_change = []
-            item = {
-                "date": day.isoformat(),
-                "provider_id": provider_id,
-                "model_id": representative.model_id,
-                "display_name": representative.display_name,
-                "kind": kind,
-                "changes": [rendered_change_to_json(classify_change(change, profile=profile)) for change in changes],
-                "hidden": hidden,
-                "change_ids": change_ids,
-                "change_ids_by_change": change_ids_by_change,
-            }
-            if kind == "bulk":
-                item["bulk_models"] = [
-                    {"model_id": entry.model_id, "display_name": entry.display_name} for entry in entries
-                ]
-            serialized.append(item)
-    serialized.sort(key=lambda item: (-date.fromisoformat(item["date"]).toordinal(), item["provider_id"], item["model_id"]))
+                    if folded is not None:
+                        folded_by_date[day].append(
+                            {
+                                "provider_id": provider_id,
+                                "model_id": entry.model_id,
+                                "display_name": entry.display_name,
+                                "hidden": sum(folded["hidden"].values()),
+                                "change_ids": folded["change_ids"],
+                            }
+                        )
+                entries = retained
+            item = _serialize_entry_group(
+                entries, rows_by_model, profile, category_filter, kind_filter,
+                presence_offsets, day, provider_id,
+            )
+            if item is not None:
+                serialized.append(item)
+
+    category_rank = {category: index for index, category in enumerate(CATEGORIES)}
+    def significance(item: Mapping[str, Any]) -> tuple[Any, ...]:
+        profile = ctx.profiles[item["provider_id"]]
+        best_category = min(
+            (
+                category_rank.get(profile.categorize(change["field_path"]), 99)
+                for change in item["changes"]
+            ),
+            default=99,
+        )
+        return (
+            -date.fromisoformat(item["date"]).toordinal(),
+            0 if item["kind"] in ("added", "removed") else 1,
+            best_category,
+            item["provider_id"],
+            item["model_id"],
+        )
+
+    serialized.sort(key=significance)
     total = len(serialized)
     start = (page - 1) * page_size
+    by_date: dict[date, list[dict[str, Any]]] = defaultdict(list)
+    for item in serialized:
+        by_date[date.fromisoformat(item["date"])].append(item)
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
         "entries": serialized[start : start + page_size],
+        "summary": _activity_summary(serialized, ctx.profiles),
         "rollups": _rollup_json(
             plans,
             models=model_filter,
@@ -589,12 +685,19 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
             kinds=kind_filter,
         ),
         "rollups_by_date": {
-            day.isoformat(): _rollup_json(
-                day_plans,
-                models=model_filter,
-                categories=category_filter,
-                kinds=kind_filter,
-            )
+            day.isoformat(): {
+                **_rollup_json(
+                    day_plans,
+                    models=model_filter,
+                    categories=category_filter,
+                    kinds=kind_filter,
+                ),
+                "folded": {
+                    "models": len(folded_by_date[day]),
+                    "items": folded_by_date[day],
+                },
+                "summary": _activity_summary(by_date[day], ctx.profiles),
+            }
             for day, day_plans in sorted(plans_by_date.items())
         },
     }

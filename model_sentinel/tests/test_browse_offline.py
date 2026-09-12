@@ -651,6 +651,22 @@ def test_activity_frontend_preserves_list_semantics_and_date_local_rollups() -> 
     assert "entry.change_ids[Math.min(index" not in source
 
 
+def test_activity_wires_summary_and_folded_models_into_the_feed() -> None:
+    source = _read_asset("app.js")
+    feed = source[
+        source.index("function Feed(") : source.index("function Activity(")
+    ]
+    summary = source[
+        source.index("function SummaryStrip(") : source.index("function FoldedLine(")
+    ]
+
+    assert "rollupLine(group.date)" in feed
+    assert "<${FoldedLine}" in feed
+    assert "openModel=${openModel}" in feed
+    assert "<${SummaryStrip}" in feed
+    assert "write({categories" in summary
+
+
 def test_change_table_explains_equal_length_list_content_changes() -> None:
     source = _read_asset("app.js")
     table = source[
@@ -669,6 +685,21 @@ def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:
     assert "detail=${state.detail}" in source
     assert 'detail === "all"' in source
     assert 'detail === "squelched"' in source
+
+
+def test_filter_bar_wires_date_range_presets_as_user_navigation() -> None:
+    source = _read_asset("app.js")
+    filter_bar = source[
+        source.index("function FilterBar(") : source.index("function Heatmap(")
+    ]
+    presets = source[
+        source.index("function RangePresets(") : source.index("function SummaryStrip(")
+    ]
+
+    assert "<${RangePresets}" in filter_bar
+    assert "write({from" in presets
+    for label in ("7d", "30d", "90d", "180d", "All"):
+        assert f'"{label}"' in presets
 
 
 def test_facets_do_not_duplicate_the_global_detail_control() -> None:

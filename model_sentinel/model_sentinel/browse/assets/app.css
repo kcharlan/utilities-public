@@ -525,6 +525,39 @@ legend,
   border-block-start: 1px solid var(--border);
 }
 .feed > .section-heading { padding-inline: 0; }
+.summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: stretch;
+  margin-block-end: 0.8rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  background: var(--ground);
+}
+.summary-strip > div { display: grid; min-width: 4.4rem; }
+.summary-strip strong { color: var(--ink-strong); font-size: 1.05rem; }
+.summary-strip span { color: var(--ink-muted); font-size: 0.62rem; text-transform: uppercase; }
+.summary-strip nav { display: flex; flex: 1; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
+.summary-strip button {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 0.68rem;
+}
+.summary-strip button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.summary-strip button b { margin-inline-start: 0.4rem; }
+.range-presets > div { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.range-presets button {
+  padding: 0.38rem 0.48rem;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 0.68rem;
+}
+.range-presets button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .date-block {
   display: grid;
   grid-template-columns: minmax(7.5rem, 0.22fr) minmax(0, 1fr);
@@ -646,6 +679,12 @@ legend,
   cursor: pointer;
   text-decoration: underline;
 }
+.folded-line { padding: 0.7rem 1rem; border-block-start: 1px dashed var(--border); background: var(--ground); color: var(--ink-muted); font-size: 0.7rem; }
+.folded-line > summary { cursor: pointer; }
+.folded-line ol { display: grid; gap: 0.45rem; padding-inline-start: 1.2rem; }
+.folded-line li { display: flex; gap: 0.7rem; align-items: center; justify-content: space-between; }
+.folded-line .raw-link,
+.folded-line .show-all-link { border: 0; color: var(--accent); background: transparent; cursor: pointer; text-decoration: underline; }
 
 .feed-more {
   display: flex;

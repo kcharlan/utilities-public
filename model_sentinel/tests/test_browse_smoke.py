@@ -146,10 +146,84 @@ def test_activity_has_one_detail_control_and_all_reveals_churn(
         f"#view=activity&providers=example-provider&from={day}&to={day}",
     )
     expect(page.get_by_role("group", name="Visibility")).to_have_count(0)
-    page.get_by_role("button", name="All", exact=True).click()
+    page.get_by_role("group", name="Detail").get_by_role(
+        "button", name="All", exact=True
+    ).click()
     expect(page).to_have_url(re.compile(r"detail=all"))
     churn = page.locator("article").filter(has_text=facts.benchmark_churn_model)
     expect(churn.get_by_role("row").filter(has_text="Score")).to_be_visible()
+
+
+def test_activity_folds_churn_summarizes_and_orders_signal(
+    page: Page, smoke_server
+) -> None:
+    _, facts = smoke_server
+    squelched_day = facts.scrape_dates[1].isoformat()
+    goto(
+        page,
+        smoke_server,
+        f"#view=activity&providers=example-provider&from={squelched_day}&to={squelched_day}",
+    )
+    expect(
+        page.locator("article").filter(has_text=facts.benchmark_churn_model)
+    ).to_have_count(0)
+    folded = page.get_by_text(
+        "1 model changed only in squelched fields", exact=True
+    )
+    folded.click()
+    folded_panel = page.locator("details.folded-line")
+    expect(
+        folded_panel.get_by_role(
+            "button", name=re.compile("Synthetic Test Model A")
+        )
+    ).to_be_visible()
+    folded_panel.get_by_role("button", name="raw", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Raw change evidence")
+    expect(dialog).to_be_visible()
+    dialog.get_by_role("button", name="Close raw change drawer").click()
+    expect(dialog).to_be_hidden()
+
+    price_day = facts.scrape_dates[2].isoformat()
+    goto(
+        page,
+        smoke_server,
+        f"#view=activity&providers=example-provider&from={price_day}&to={price_day}",
+    )
+    summary = page.get_by_role("navigation", name="Change categories")
+    summary.get_by_role("button", name=re.compile(r"Pricing")).click()
+    expect(page).to_have_url(re.compile(r"categories=Pricing"))
+
+    mixed_day = facts.scrape_dates[3].isoformat()
+    goto(
+        page,
+        smoke_server,
+        f"#view=activity&providers=example-provider&from={mixed_day}&to={mixed_day}",
+    )
+    expect(page.locator("article").first).to_contain_text(facts.added_model)
+
+
+def test_activity_range_presets_are_navigable(page: Page, smoke_server) -> None:
+    _, facts = smoke_server
+    custom_from = facts.scrape_dates[2].isoformat()
+    custom_to = facts.scrape_dates[4].isoformat()
+    goto(
+        page,
+        smoke_server,
+        f"#view=activity&providers=example-provider&from={custom_from}&to={custom_to}",
+    )
+    presets = page.get_by_role("group", name="Range presets")
+    seven = presets.get_by_role("button", name="7d", exact=True)
+    expect(seven).to_have_attribute("aria-pressed", "false")
+    seven.click()
+    expect(page.get_by_role("textbox", name="From")).to_have_value(
+        facts.scrape_dates[1].isoformat()
+    )
+    expect(page.get_by_role("textbox", name="To")).to_have_value("2026-08-18")
+    expect(seven).to_have_attribute("aria-pressed", "true")
+    page.go_back()
+    expect(page.get_by_role("textbox", name="From")).to_have_value(custom_from)
+    expect(page.get_by_role("textbox", name="To")).to_have_value(custom_to)
+    expect(presets.get_by_role("button", pressed=True)).to_have_count(0)
 
 
 def test_models_pin_defaults_aspects_and_hover_timeline(page: Page, smoke_server) -> None:

@@ -1349,7 +1349,7 @@ def _prune_empty_items(
             and (
                 item.semantic_core is not None
                 and item.semantic_core.has_semantic_composite
-                or not _is_squelched_only(item.display)
+                or not is_squelched_only(item.display)
             )
         )
     )
@@ -1378,7 +1378,7 @@ def _collect_hidden_rollups(
     return _HiddenRollups(squelched, non_squelched, noop)
 
 
-def _is_squelched_only(plan: _FieldDisplayPlan) -> bool:
+def is_squelched_only(plan: _FieldDisplayPlan) -> bool:
     """Whether a default-detail model has no reportable content of its own.
 
     Squelched changes are retained in the provider-level rollup, but a model
