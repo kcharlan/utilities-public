@@ -12,41 +12,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from model_sentinel.browse import api, queries, server as server_module
-from model_sentinel.browse.aspects import build_aspect_catalog
+from model_sentinel.browse import api, server as server_module
 from model_sentinel.browse.readonly import DatabaseBusyError, open_readonly
 from model_sentinel.browse.server import find_free_port, make_server
-from model_sentinel.provider_profiles import profiles_for, resolve_profile
-from model_sentinel.reporting import (
-    DEFAULT_REPORT_SHOW_FIELDS,
-    DEFAULT_REPORT_SQUELCH_FIELDS,
-    detail_policy_from_settings,
+from tests.browse_fixtures import (
+    EXAMPLE_PROVIDER,
+    OTHER_PROVIDER,
+    browse_context,
+    browse_settings,
+    build_fixture_db,
 )
-from tests.browse_fixtures import EXAMPLE_PROVIDER, OTHER_PROVIDER, build_fixture_db
-
-
-def _settings() -> SimpleNamespace:
-    return SimpleNamespace(
-        report_detail="default",
-        report_show_fields=DEFAULT_REPORT_SHOW_FIELDS,
-        report_squelch_fields=DEFAULT_REPORT_SQUELCH_FIELDS,
-        report_unclassified_limit=20,
-    )
-
-
-def _context(db):
-    providers = (EXAMPLE_PROVIDER, OTHER_PROVIDER)
-    db_providers = tuple(queries.db_providers(db.connection()))
-    profiles = profiles_for(providers)
-    for row in db_providers:
-        profiles.setdefault(str(row["provider_id"]), resolve_profile(str(row["kind"])))
-    settings = _settings()
-    aspects = build_aspect_catalog(
-        db,
-        profiles=profiles,
-        policy=detail_policy_from_settings(settings),
-    )
-    return api.ApiContext(db, providers, db_providers, profiles, settings, aspects)
 
 
 @pytest.fixture
@@ -55,7 +30,7 @@ def browse_server(tmp_path: Path):
     build_fixture_db(database_path)
     before = hashlib.sha256(database_path.read_bytes()).hexdigest()
     db = open_readonly(database_path)
-    server = make_server(_context(db), port=0)
+    server = make_server(browse_context(db), port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server, db, database_path, before
@@ -429,7 +404,7 @@ def test_run_browse_closes_database_when_server_creation_fails(
     monkeypatch.setattr(server_module, "make_server", reject_server)
     loaded = SimpleNamespace(
         providers=(EXAMPLE_PROVIDER, OTHER_PROVIDER),
-        settings=_settings(),
+        settings=browse_settings(),
     )
 
     with pytest.raises(OSError, match="synthetic bind failure"):

@@ -5,12 +5,20 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
+from model_sentinel.browse import api, queries
+from model_sentinel.browse.aspects import build_aspect_catalog
 from model_sentinel.config import ProviderConfig
 from model_sentinel.diffing import compare_models
 from model_sentinel.models import NormalizedModel
 from model_sentinel.normalize import normalize_models
-from model_sentinel.provider_profiles import resolve_profile
+from model_sentinel.provider_profiles import profiles_for, resolve_profile
+from model_sentinel.reporting import (
+    DEFAULT_REPORT_SHOW_FIELDS,
+    DEFAULT_REPORT_SQUELCH_FIELDS,
+    detail_policy_from_settings,
+)
 from model_sentinel.storage import Store
 from model_sentinel.time_utils import local_date_for
 
@@ -54,6 +62,30 @@ OTHER_PROVIDER = ProviderConfig(
     price_divisor=1,
     enabled=True,
 )
+
+
+def browse_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        report_detail="default",
+        report_show_fields=DEFAULT_REPORT_SHOW_FIELDS,
+        report_squelch_fields=DEFAULT_REPORT_SQUELCH_FIELDS,
+        report_unclassified_limit=20,
+    )
+
+
+def browse_context(db) -> api.ApiContext:
+    providers = (EXAMPLE_PROVIDER, OTHER_PROVIDER)
+    db_providers = tuple(queries.db_providers(db.connection()))
+    profiles = profiles_for(providers)
+    for row in db_providers:
+        profiles.setdefault(str(row["provider_id"]), resolve_profile(str(row["kind"])))
+    settings = browse_settings()
+    aspects = build_aspect_catalog(
+        db,
+        profiles=profiles,
+        policy=detail_policy_from_settings(settings),
+    )
+    return api.ApiContext(db, providers, db_providers, profiles, settings, aspects)
 
 
 def _raw_model(model_id: str, scrape_number: int) -> dict[str, object]:
