@@ -651,6 +651,17 @@ def test_activity_frontend_preserves_list_semantics_and_date_local_rollups() -> 
     assert "entry.change_ids[Math.min(index" not in source
 
 
+def test_change_table_explains_equal_length_list_content_changes() -> None:
+    source = _read_asset("app.js")
+    table = source[
+        source.index("function ChangeTable(") : source.index("function Entry(")
+    ]
+
+    assert 'change.kind === "list"' in table
+    assert "change.old_display === change.new_display" in table
+    assert "contents changed" in table
+
+
 def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:
     source = _read_asset("app.js")
 
@@ -658,6 +669,16 @@ def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:
     assert "detail=${state.detail}" in source
     assert 'detail === "all"' in source
     assert 'detail === "squelched"' in source
+
+
+def test_facets_do_not_duplicate_the_global_detail_control() -> None:
+    source = _read_asset("app.js")
+    facets = source[
+        source.index("function Facets(") : source.index("function semantic(")
+    ]
+
+    assert "state.detail" not in facets
+    assert 'label="Visibility"' not in facets
 
 
 def test_frontend_pages_activity_and_merges_stable_entry_identities() -> None:
@@ -746,6 +767,16 @@ def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
     assert "meta.pin_limit" in source
     assert "meta.categories" in source
     assert "aspect.squelched" in source
+
+
+def test_models_canonicalize_default_timeline_aspects_after_first_pin() -> None:
+    source = _read_asset("app.js")
+    models = source[
+        source.index("function Models(") : source.index("function catalogScrapes(")
+    ]
+
+    assert "function defaultTimelineAspects(" in source
+    assert "replaceState({aspects: defaultTimelineAspects(" in models
 
 
 def test_model_typeahead_portal_escapes_sidebar_and_cleans_up() -> None:

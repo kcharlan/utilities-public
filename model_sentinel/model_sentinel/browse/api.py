@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from typing import Any, Mapping, Sequence
 
-from ..change_render import classify_change, resolve_price_rule
+from ..change_render import absent_side_display, classify_change, resolve_price_rule
 from ..config import ProviderConfig
 from ..models import FieldChange
 from ..normalize import profile_field_candidate
@@ -127,7 +127,11 @@ def _integer(
 
 
 def rendered_change_to_json(rendered: Any) -> dict[str, Any]:
-    return asdict(rendered)
+    return {
+        **asdict(rendered),
+        "old_display": absent_side_display(rendered.old_display, rendered.old_raw),
+        "new_display": absent_side_display(rendered.new_display, rendered.new_raw),
+    }
 
 
 def _render_presence_change(
@@ -954,9 +958,9 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
             old_raw = _raw_aspect_value(old_row, aspect, profile)
             stored = _catalog_machine_value(new_row, aspect, new_raw, profile)
             rendered = classify_change(FieldChange(aspect.field_name, old_raw, new_raw), profile=profile)
-            new_display = rendered.new_display
-            old_display = rendered.old_display
             rendered_json = rendered_change_to_json(rendered)
+            new_display = rendered_json["new_display"]
+            old_display = rendered_json["old_display"]
             if aspect.kind == "boolean":
                 old_display = "—" if old_raw is None else "on" if bool(old_raw) else "off"
                 new_display = "—" if new_raw is None else "on" if bool(new_raw) else "off"
@@ -970,7 +974,8 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
                     FieldChange(aspect.field_name, None, new_raw),
                     profile=profile,
                 )
-                new_display = old_display = stable.new_display
+                stable_json = rendered_change_to_json(stable)
+                new_display = old_display = stable_json["new_display"]
             cell = {"value": stored, "display": new_display, "unit": aspect.unit}
             if compare is not None:
                 cell.update({

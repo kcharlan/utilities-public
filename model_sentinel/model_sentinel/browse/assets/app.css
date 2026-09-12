@@ -588,6 +588,17 @@ legend,
 .changes td { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
 .changes .transition { white-space: nowrap; }
 .changes .transition b { padding-inline: 0.35rem; color: var(--ink-muted); }
+.changes .content-change {
+  display: inline-block;
+  margin-inline-start: 0.45rem;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--ink-muted);
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+}
 .changes .unit { color: var(--ink-muted); font-size: 0.62rem; }
 .changes tr.actionable { cursor: pointer; }
 .changes tr.actionable:hover { background: var(--ground); }

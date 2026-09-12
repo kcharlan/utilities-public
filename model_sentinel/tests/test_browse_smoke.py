@@ -111,13 +111,59 @@ def test_activity_opens_raw_drawer_and_restores_focus(
     expect(row).to_be_focused()
 
 
-def test_models_pin_aspect_and_hover_timeline(page: Page, smoke_server) -> None:
+def test_activity_explains_equal_length_list_changes(page: Page, smoke_server) -> None:
+    _, facts = smoke_server
+    model_id, changed_date = facts.equal_length_list_step
+    day = changed_date.isoformat()
+    goto(
+        page,
+        smoke_server,
+        f"#view=activity&providers=example-provider&from={day}&to={day}&detail=all",
+    )
+
+    entry = page.locator("article").filter(has_text=model_id)
+    expect(entry.get_by_text("contents changed", exact=True)).to_be_visible()
+    expect(entry.get_by_text("1 → 1", exact=True)).to_have_count(0)
+
+    bulk_day = facts.scrape_dates[-1].isoformat()
+    goto(
+        page,
+        smoke_server,
+        f"#view=activity&providers=example-provider&from={bulk_day}&to={bulk_day}&detail=all",
+    )
+    bulk = page.locator("article").filter(has_text="models share this change")
+    expect(bulk.get_by_text("contents changed", exact=True)).to_have_count(0)
+
+
+def test_activity_has_one_detail_control_and_all_reveals_churn(
+    page: Page, smoke_server
+) -> None:
+    _, facts = smoke_server
+    day = facts.scrape_dates[1].isoformat()
+    goto(
+        page,
+        smoke_server,
+        f"#view=activity&providers=example-provider&from={day}&to={day}",
+    )
+    expect(page.get_by_role("group", name="Visibility")).to_have_count(0)
+    page.get_by_role("button", name="All", exact=True).click()
+    expect(page).to_have_url(re.compile(r"detail=all"))
+    churn = page.locator("article").filter(has_text=facts.benchmark_churn_model)
+    expect(churn.get_by_role("row").filter(has_text="Score")).to_be_visible()
+
+
+def test_models_pin_defaults_aspects_and_hover_timeline(page: Page, smoke_server) -> None:
     goto(page, smoke_server, "#view=models&providers=example-provider")
     page.get_by_role("searchbox", name="Add model").fill("test-model-a")
     option = page.get_by_role("option", name=re.compile("Synthetic Test Model A"))
     expect(option).to_be_visible()
     option.click()
-    page.get_by_role("checkbox", name=re.compile(r"^Input")).check()
+    expect(page.get_by_role("heading", name="Input", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Output", exact=True)).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Context length (model)", exact=True)
+    ).to_be_visible()
+    expect(page).to_have_url(re.compile(r"aspects=.*input_price.*output_price.*context_window"))
     expect(page.locator("canvas").first).to_be_visible()
 
     plot = page.locator(".u-over").first
@@ -130,6 +176,8 @@ def test_catalog_sort_filter_and_sparkline(page: Page, smoke_server) -> None:
     goto(page, smoke_server, "#view=catalog&providers=example-provider")
     table = page.get_by_role("table")
     expect(table.get_by_role("row")).to_have_count(5)
+    expect(table.get_by_text("null", exact=True)).to_have_count(0)
+    expect(table.get_by_text("—", exact=True).first).to_be_visible()
     table.get_by_role("button", name=re.compile(r"^Input")).click()
     expect(table.get_by_role("columnheader").filter(has_text="Input")).to_have_attribute(
         "aria-sort", "ascending"

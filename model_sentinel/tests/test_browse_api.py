@@ -163,7 +163,8 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
         for day in facts.scrape_dates[1:]
     }
     bulk = next(entry for entry in result["entries"] if entry["kind"] == "bulk")
-    assert result["total"] == 9
+    # T0.3 adds one synthetic equal-length list transition to the fixture.
+    assert result["total"] == 10
     assert [entry["kind"] for entry in result["entries"]].count("bulk") == 1
     assert [entry["kind"] for entry in result["entries"]].count("added") == 1
     assert [entry["kind"] for entry in result["entries"]].count("removed") == 1
@@ -224,7 +225,7 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
 
     heatmap = api.heatmap(context, {"providers": EXAMPLE_PROVIDER.provider_id})
     assert heatmap == [
-        {"date": "2026-08-11", "changed": 0, "added": 0, "removed": 0, "squelched": 1},
+        {"date": "2026-08-11", "changed": 1, "added": 0, "removed": 0, "squelched": 1},
         {"date": "2026-08-12", "changed": 1, "added": 0, "removed": 0, "squelched": 1},
         {"date": "2026-08-13", "changed": 1, "added": 1, "removed": 0, "squelched": 1},
         {"date": "2026-08-14", "changed": 1, "added": 0, "removed": 1, "squelched": 1},
@@ -690,6 +691,38 @@ def test_catalog_raw_price_diff_and_change_lookup(browse_context) -> None:
     )
     assert next(row for row in removed_catalog["rows"] if row["model_id"] == facts.removed_model)["presence"] == "removed"
     json.dumps(result)
+
+
+def test_browse_absent_sides_render_as_em_dash_without_changing_machine_values(
+    browse_context,
+) -> None:
+    context, facts = browse_context
+    cache_read = f"{EXAMPLE_PROVIDER.provider_id}:cache_read_price"
+    cache_write = f"{EXAMPLE_PROVIDER.provider_id}:cache_write_price"
+    catalog = api.catalog(
+        context,
+        {
+            "provider": EXAMPLE_PROVIDER.provider_id,
+            "as_of": str(facts.scrape_ids[-1]),
+            "columns": f"{cache_read},{cache_write}",
+        },
+    )
+
+    for row in catalog["rows"]:
+        for aspect_id in (cache_read, cache_write):
+            assert row["cells"][aspect_id]["value"] is None
+            assert row["cells"][aspect_id]["display"] == "—"
+
+    # T0.2: the browser JSON choke point, unlike text reports, never emits
+    # the historical literal-null spelling for a genuinely absent side.
+    rendered = api.rendered_change_to_json(
+        api.classify_change(
+            FieldChange("pricing.prompt", None, 0.000002),
+            profile=context.profiles[EXAMPLE_PROVIDER.provider_id],
+        )
+    )
+    assert rendered["old_raw"] is None
+    assert rendered["old_display"] == "—"
 
 
 def test_catalog_price_resolver_preserves_present_zero_values(tmp_path) -> None:

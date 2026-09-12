@@ -297,7 +297,6 @@
       <details class="model-facet"><summary>Models${state.models && state.models.length ? ` · ${state.models.length}` : ""}</summary><div><${Facet} title="Model" values=${modelOptions.map(value => value.model_id)} selected=${state.models || []} labels=${Object.fromEntries(modelOptions.map(value => [value.model_id, value.display_name || value.model_id]))} onChange=${models => write({models})} /></div></details>
       <${Facet} title="Category" values=${meta.categories} selected=${state.categories || []} onChange=${categories => write({categories})} />
       <${Facet} title="Change kind" values=${["added", "removed", "changed"]} selected=${state.kinds || []} labels=${{added: "Added", removed: "Removed", changed: "Field changed"}} onChange=${kinds => write({kinds})} />
-      <${Segmented} label="Visibility" value=${state.detail} options=${["default", "all", "squelched"].map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${detail => write({detail})} />
     </aside>`;
   }
 
@@ -318,10 +317,20 @@
       const associated = entry.change_ids_by_change[index] || [];
       if (associated.length) openRaw(associated[0]);
     };
+    const transition = change => {
+      if (change.kind === "list" && change.old_display === change.new_display) {
+        const details = [];
+        if (change.list_added && change.list_added.length) details.push(`Added: ${change.list_added.join(", ")}`);
+        if (change.list_removed && change.list_removed.length) details.push(`Removed: ${change.list_removed.join(", ")}`);
+        const title = details.join(" · ") || "Nested values changed; open the raw record.";
+        return html`<span>${change.old_display}</span><span class="content-change" title=${title}>contents changed</span>`;
+      }
+      return html`${change.old_display}<b>→</b>${change.new_display}`;
+    };
     return html`<div class="table-wrap"><table class="changes"><thead><tr><th>Field</th><th>Transition</th><th>Δ</th><th>%</th><th>Unit</th></tr></thead><tbody>${entry.changes.map((change, index) => html`
       <tr key=${`${change.field_path}-${index}`} tabindex=${entry.change_ids_by_change[index] && entry.change_ids_by_change[index].length ? 0 : undefined} class=${entry.change_ids_by_change[index] && entry.change_ids_by_change[index].length ? "actionable" : ""} onClick=${event => activate(event, index)} onKeyDown=${event => activate(event, index)}>
         <th scope="row"><span>${change.label}</span>${change.qualifier && html`<small>${change.qualifier}</small>`}</th>
-        <td class=${`transition ${semantic(change)}`}>${change.old_display}<b>→</b>${change.new_display}</td><td>${change.delta_display || "—"}</td><td>${change.pct_display || (change.pct_basis_zero ? "from zero" : "—")}</td><td class="unit">${change.unit || "—"}</td>
+        <td class=${`transition ${semantic(change)}`}>${transition(change)}</td><td>${change.delta_display || "—"}</td><td>${change.pct_display || (change.pct_basis_zero ? "from zero" : "—")}</td><td class="unit">${change.unit || "—"}</td>
       </tr>`)}</tbody></table></div>`;
   }
 
@@ -882,7 +891,7 @@
     })}</div>`;
   }
 
-  function Models({meta, state, write, inputRef, openRaw, reportError, toast, themeKey}) {
+  function Models({meta, state, write, replaceState, inputRef, openRaw, reportError, toast, themeKey}) {
     const pins = state.pins || [], aspects = state.aspects || [];
     const pinProviders = new Set(pins.map(pin => pinParts(pin, meta.providers).provider).filter(Boolean).map(provider => provider.id));
     const aspectLookup = new Map(meta.aspects.map(aspect => [aspect.id, aspect]));
@@ -892,6 +901,11 @@
     const series = useApi("/api/series", params, enabled);
     const events = useApi("/api/events", {models: pins, providers: state.providers, from: state.from, to: state.to, detail: state.detail}, Boolean(pins.length));
     const plots = useRef(new Map());
+    useEffect(() => {
+      if (!pins.length || activeAspects.length) return;
+      const provider = pinParts(pins.at(-1), meta.providers).provider;
+      if (provider) replaceState({aspects: defaultTimelineAspects(meta, provider.id)});
+    }, [pins.join(","), activeAspects.join(","), meta, replaceState]);
     useEffect(() => reportError(series.error || events.error, series.error ? series.reload : events.reload), [series.error, events.error]);
     return html`<div class="models-view"><aside class="instrument model-controls"><${Pins} meta=${meta} pins=${pins} providers=${state.providers} write=${write} inputRef=${inputRef} toast=${toast} /><${AspectPicker} meta=${meta} pins=${pins} selected=${aspects} write=${write} toast=${toast} /></aside><main class="timeline-workbench">
       ${pins.length ? html`<${EventRail} events=${events.data || []} from=${state.from} to=${state.to} plots=${plots} openRaw=${openRaw} />` : null}
@@ -1057,6 +1071,17 @@
     return html`<div class="catalog-view"><aside class="catalog-controls"><${Pickers} meta=${meta} providerId=${providerId} scrapes=${scrapes} asOf=${asOf} compare=${compare} write=${write} /><${ColumnChooser} aspects=${providerAspects} selected=${columns} write=${write} />${compare ? html`<button class="feed-link" type="button" onClick=${showFeed}>Show as feed <span>↗</span></button>` : null}</aside><main class="catalog-workbench"><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !catalogData ? html`<div class="loading"><i></i><p>Resolving snapshot registry…</p></div>` : catalogData ? html`<${CatalogTable} data=${catalogData} aspects=${selectedAspects} state=${{...state, sort, dir}} write=${write} replaceState=${replaceState} page=${page} setPage=${setPage} openSparkline=${setSparkline} />` : null}</main>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
   }
 
+  function defaultTimelineAspects(meta, providerId) {
+    const providerAspects = meta.aspects.filter(aspect => aspect.provider_id === providerId);
+    const known = new Set(providerAspects.map(aspect => aspect.id));
+    const preferred = ["input_price", "output_price", "context_window"]
+      .map(name => `${providerId}:${name}`)
+      .filter(id => known.has(id));
+    if (preferred.length) return preferred;
+    const pricing = providerAspects.filter(aspect => aspect.category === "Pricing").slice(0, 2).map(aspect => aspect.id);
+    return pricing.length ? pricing : providerAspects.slice(0, 1).map(aspect => aspect.id);
+  }
+
   function RawDrawer({id, close}) {
     const closeRef = useRef(null), previous = useRef(null);
     const request = useApi(id ? `/api/change/${id}` : "", {}, Boolean(id));
@@ -1131,7 +1156,7 @@
       write({view: "models", pins, from: clamp(shiftDay(date, -30), meta.date_span), to: clamp(shiftDay(date, 30), meta.date_span)});
     };
     return html`<div class="app-shell" data-view=${resolved.view}><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
-      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>${invocation} scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} themeKey=${`${theme}:${themeRevision}`} />`}
+      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>${invocation} scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} themeKey=${`${theme}:${themeRevision}`} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
   render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));

@@ -829,10 +829,20 @@ def _finite_fraction_projection(value: Fraction) -> float | None:
 # emit it while the HTML ones must not. It is no longer RECOGNISED anywhere:
 # `_summary_detail_with_absent_sides`, which respelled the token after the fact
 # in the Change Summary, is gone -- the summary composes its cell from
-# `RenderedChange` through `_html_side_display`, so `null` is never produced on
+# `RenderedChange` through `absent_side_display`, so `null` is never produced on
 # an HTML path rather than produced and then replaced.
 ABSENT_DISPLAY = "—"
 ABSENT_TEXT_DISPLAY = "null"
+
+
+def absent_side_display(display: str, raw: str | None) -> str:
+    """Return the browser/HTML spelling for a rendered change side.
+
+    ``raw is None`` is the unambiguous signal that the side was absent.  The
+    displayed string itself cannot be used because a provider may legitimately
+    supply the literal string ``"null"``.
+    """
+    return ABSENT_DISPLAY if raw is None else display
 
 
 def _raw_value(value: Any) -> str | None:

@@ -53,6 +53,7 @@ from .change_render import (
     _list_diff_members,
     _numeric_value,
     _scalar_display,
+    absent_side_display,
     classify_change,
     format_price_values,
     pricing_field_sort_key,
@@ -5414,7 +5415,7 @@ def _summary_change_detail(rendered: RenderedChange) -> str:
     So the cell is composed from `RenderedChange` instead, from the same
     operands and in the same order as the card's columns:
 
-    * the sides through `_html_side_display`, which is what makes an absent
+    * the sides through `absent_side_display`, which is what makes an absent
       side read `—` here (the reason `_summary_detail_with_absent_sides` --
       which respelled `null` after the fact -- is gone rather than adapted:
       composing from the operands means the token is never produced);
@@ -5437,8 +5438,8 @@ def _summary_change_detail(rendered: RenderedChange) -> str:
     """
     if rendered.kind == "list":
         return _list_diff_body(rendered)
-    old = _html_side_display(rendered.old_display, rendered.old_raw)
-    new = _html_side_display(rendered.new_display, rendered.new_raw)
+    old = absent_side_display(rendered.old_display, rendered.old_raw)
+    new = absent_side_display(rendered.new_display, rendered.new_raw)
     unit = f" {rendered.unit}" if rendered.unit else ""
     annotations = [
         part
@@ -6328,52 +6329,22 @@ def _card_semantic_class(rendered: RenderedChange) -> str:
     return _CARD_SEMANTIC_CLASSES.get((rendered.semantic, rendered.direction), _CARD_NEUTRAL_CLASS)
 
 
-def _html_side_display(display: str, raw: str | None) -> str:
-    """One side of a change as HTML spells it, absent sides included.
-
-    `classify_change` spells the absent side of a one-sided boolean `—` but the
-    absent side of a one-sided price, count or scalar `null` -- three renderers
-    inherited that split. HTML closes it: `raw is None` is what "this side was
-    absent" MEANS (`_raw_value` returns `None` for exactly that), so it is read
-    here rather than string-matching `"null"`, which is also a legitimate
-    rendering of the literal string `"null"` arriving from a provider payload.
-
-    THE spelling for every HTML value cell in either document -- the scan
-    report's model card (`_render_html_card_row`) and the `changes` report's
-    four-column change table (`_render_html_table_row`) alike. Fix pass 2,
-    finding 1: it was scoped to the card, while the summary helper below was
-    scoped to neither, so the `changes` report ended up with `null` in its card
-    and `—` in its summary -- the same contradiction the card's fix removed
-    from the scan report, relocated to the document nobody had a golden for.
-    The design's cross-renderer matrix already asked for this ("A1 price
-    layout: `changes` HTML = yes"), so widening the helper closes a gap rather
-    than papering over one.
-
-    Text and markdown are deliberately NOT changed here. They are the formats
-    whose goldens are the audit trail for this branch, `null` is what
-    `change_render` produces for an absent side, and respelling it in the text
-    renderer would move every text and markdown golden for a fix whose whole
-    scope is HTML. See the design's Amendment 8.
-    """
-    return ABSENT_DISPLAY if raw is None else display
-
-
 def _html_raw_and_normalized(raw: str | None, display: str, unit: str) -> str:
     """`<raw> (<normalized> <unit>)` for a present price side, absent token else.
 
     Takes the OPERANDS, not the composed string. The `changes` table used to
     build `f"{raw} ({display} / 1M)"` unconditionally and hand it to
-    `_html_side_display`, which threw it away whenever `raw` was `None` -- so
+    `absent_side_display`, which threw it away whenever `raw` was `None` -- so
     the literal text `None (null / 1M)` existed in the source, was constructed
     on every one-sided price row, and was one refactor of that helper away from
     reaching a cell. Composing after the absence check makes the string
     unconstructible instead of merely unused.
 
-    The `raw is None` rule itself is still `_html_side_display`'s and is not
+    The `raw is None` rule itself is still `absent_side_display`'s and is not
     restated here, so both spellings of an absent side keep coming from one
     place.
     """
-    return _html_side_display(f"{raw} ({display} {unit})" if raw is not None else "", raw)
+    return absent_side_display(f"{raw} ({display} {unit})" if raw is not None else "", raw)
 
 
 def _card_delta_cell(rendered: RenderedChange) -> str:
@@ -6544,7 +6515,7 @@ def _card_raw_line_row(rendered: RenderedChange, *, alternate: bool) -> str:
 
     Takes its LABEL row's stripe, for the same reason the list-members row
     does: the two rows are one field, and shading them differently splits the
-    band. Absent sides are spelled through `_html_side_display`, so this line
+    band. Absent sides are spelled through `absent_side_display`, so this line
     and the value cell above it cannot disagree about what "absent" looks like.
     """
     if rendered.kind != "price":
@@ -6552,8 +6523,8 @@ def _card_raw_line_row(rendered: RenderedChange, *, alternate: bool) -> str:
     if rendered.old_raw is None and rendered.new_raw is None:
         return ""
     h = html_module.escape
-    old = _html_side_display(rendered.old_raw or "", rendered.old_raw)
-    new = _html_side_display(rendered.new_raw or "", rendered.new_raw)
+    old = absent_side_display(rendered.old_raw or "", rendered.old_raw)
+    new = absent_side_display(rendered.new_raw or "", rendered.new_raw)
     row_class = "raw-line row-alt" if alternate else "raw-line"
     return (
         f'<tr class="{row_class}"><td></td>'
@@ -6634,9 +6605,9 @@ def _render_html_card_row(
     )
     field_row = (
         f'<tr{row_class}>{chip}{label}'
-        f'<td class="old-val{value_cls}"{old_title}>{h(_html_side_display(rendered.old_display, rendered.old_raw))}</td>'
+        f'<td class="old-val{value_cls}"{old_title}>{h(absent_side_display(rendered.old_display, rendered.old_raw))}</td>'
         f'<td class="arrow">→</td>'
-        f'<td class="new-val{value_cls}"{new_title}>{h(_html_side_display(rendered.new_display, rendered.new_raw))}</td>'
+        f'<td class="new-val{value_cls}"{new_title}>{h(absent_side_display(rendered.new_display, rendered.new_raw))}</td>'
         f'<td class="unit">{h(rendered.unit or "")}</td>'
         f'<td class="delta {semantic_cls}">{h(_card_delta_cell(rendered))}</td>'
         f'<td class="pct {semantic_cls}">{h(rendered.pct_display or "")}</td></tr>'
@@ -6806,8 +6777,8 @@ def _render_price_movement_headline(
         f'<div class="price-headline-field" title="{h(rendered.field_path)}">'
         f'{h(rendered.display_label)}</div>'
         f'<div class="price-headline-values">'
-        f'{h(_html_side_display(rendered.old_display, rendered.old_raw))} \u2192 '
-        f'{h(_html_side_display(rendered.new_display, rendered.new_raw))}'
+        f'{h(absent_side_display(rendered.old_display, rendered.old_raw))} \u2192 '
+        f'{h(absent_side_display(rendered.new_display, rendered.new_raw))}'
         f'<span class="price-headline-unit">{h(rendered.unit or "")}</span></div>'
         f'<div class="price-headline-figures">'
         f'<span class="price-headline-delta {css_class}">{h(_card_delta_cell(rendered))}</span>'
@@ -7838,7 +7809,7 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
     Pure formatter, mirroring `_render_change_text` branch for branch. `noop`
     entries never reach here -- E1 drops them once, in `_drop_noop_changes`.
 
-    Every value cell goes through `_html_side_display`, the same helper the scan
+    Every value cell goes through `absent_side_display`, the same helper the scan
     report's card uses, so an absent side reads `—` here too. Fix pass 2,
     finding 1: this renderer kept printing `null` while the Change Summary a few
     inches below it -- built by `_build_summary_entries_from_fc`, which both HTML
@@ -7895,8 +7866,8 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
     if rendered.kind == "count" and _is_one_sided(rendered):
         return _html_change_row(
             label=rendered.display_label,
-            old_cell=h(_html_side_display(rendered.old_display, rendered.old_raw)),
-            new_cell=h(_html_side_display(rendered.new_display, rendered.new_raw)),
+            old_cell=h(absent_side_display(rendered.old_display, rendered.old_raw)),
+            new_cell=h(absent_side_display(rendered.new_display, rendered.new_raw)),
             delta_cls=delta_cls,
             delta_cell=h(rendered.direction),
         )
@@ -7911,8 +7882,8 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         # collided with capacity's amber for a reason a reader could not see.
         return _html_change_row(
             label=rendered.display_label,
-            old_cell=h(_html_side_display(rendered.old_display, rendered.old_raw)),
-            new_cell=h(_html_side_display(rendered.new_display, rendered.new_raw)),
+            old_cell=h(absent_side_display(rendered.old_display, rendered.old_raw)),
+            new_cell=h(absent_side_display(rendered.new_display, rendered.new_raw)),
             delta_cls=delta_cls,
             delta_cell=h(rendered.pct_display or ""),
         )
@@ -7926,16 +7897,16 @@ def _render_html_table_row(rendered: RenderedChange) -> str:
         # every `0 -> 1` flag.
         return _html_change_row(
             label=rendered.display_label,
-            old_cell=h(_html_side_display(rendered.old_display, rendered.old_raw)),
-            new_cell=h(_html_side_display(rendered.new_display, rendered.new_raw)),
+            old_cell=h(absent_side_display(rendered.old_display, rendered.old_raw)),
+            new_cell=h(absent_side_display(rendered.new_display, rendered.new_raw)),
             delta_cls=delta_cls,
             delta_cell=h(rendered.delta_display or ""),
         )
 
     return _html_change_row(
         label=rendered.display_label,
-        old_cell=h(_html_side_display(rendered.old_display, rendered.old_raw)),
-        new_cell=h(_html_side_display(rendered.new_display, rendered.new_raw)),
+        old_cell=h(absent_side_display(rendered.old_display, rendered.old_raw)),
+        new_cell=h(absent_side_display(rendered.new_display, rendered.new_raw)),
         delta_cls=delta_cls,
         delta_cell="\u2014",
     )

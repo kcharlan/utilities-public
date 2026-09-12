@@ -38,6 +38,7 @@ class FixtureFacts:
     bool_flip: tuple[str, int, int, bool, bool]
     bulk_list_models: tuple[str, ...]
     benchmark_churn_model: str
+    equal_length_list_step: tuple[str, date]
 
 
 EXAMPLE_PROVIDER = ProviderConfig(
@@ -91,6 +92,8 @@ def browse_context(db) -> api.ApiContext:
 def _raw_model(model_id: str, scrape_number: int) -> dict[str, object]:
     suffix = model_id.rsplit("-", 1)[-1]
     supported = ["tools"]
+    if scrape_number >= 2 and suffix == "e":
+        supported = ["response_format"]
     if scrape_number >= 6 and suffix in {"a", "b", "c"}:
         supported.append("reasoning_effort")
     prompt = 0.0000035 if suffix == "a" and scrape_number >= 3 else 0.000002
@@ -244,6 +247,7 @@ def build_fixture_db(path: Path) -> FixtureFacts:
         bool_flip=("fake-org/test-model-c", ids[3], ids[4], False, True),
         bulk_list_models=tuple(f"fake-org/test-model-{suffix}" for suffix in "abc"),
         benchmark_churn_model="fake-org/test-model-a",
+        equal_length_list_step=("fake-org/test-model-e", local_date_for(example_times[1])),
     )
 
 
