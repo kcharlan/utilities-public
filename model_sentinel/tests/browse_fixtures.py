@@ -5,14 +5,26 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
+from model_sentinel.browse import api, queries
+from model_sentinel.browse.aspects import build_aspect_catalog
 from model_sentinel.config import ProviderConfig
 from model_sentinel.diffing import compare_models
 from model_sentinel.models import NormalizedModel
 from model_sentinel.normalize import normalize_models
-from model_sentinel.provider_profiles import resolve_profile
+from model_sentinel.provider_profiles import profiles_for, resolve_profile
+from model_sentinel.reporting import (
+    DEFAULT_REPORT_SHOW_FIELDS,
+    DEFAULT_REPORT_SQUELCH_FIELDS,
+    detail_policy_from_settings,
+)
 from model_sentinel.storage import Store
 from model_sentinel.time_utils import local_date_for
+from tests.conditional_pricing_fixtures import (
+    SYNTHETIC_SCHEDULED_RATE_MODEL_ID,
+    synthetic_scheduled_rate_models,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +42,9 @@ class FixtureFacts:
     bool_flip: tuple[str, int, int, bool, bool]
     bulk_list_models: tuple[str, ...]
     benchmark_churn_model: str
+    equal_length_list_step: tuple[str, date]
+    conditional_pricing_model: str
+    conditional_provider_id: str
 
 
 EXAMPLE_PROVIDER = ProviderConfig(
@@ -54,11 +69,48 @@ OTHER_PROVIDER = ProviderConfig(
     price_divisor=1,
     enabled=True,
 )
+CONDITIONAL_PROVIDER = ProviderConfig(
+    provider_id="conditional-example",
+    label="Conditional Example",
+    kind="openrouter",
+    base_url="https://conditional.invalid/api/v1",
+    models_path="/models",
+    credential_env_var="CONDITIONAL_EXAMPLE_FAKE_TOKEN",
+    price_multiplier=1_000_000,
+    price_divisor=1,
+    enabled=False,
+)
+
+
+def browse_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        report_detail="default",
+        report_show_fields=DEFAULT_REPORT_SHOW_FIELDS,
+        report_squelch_fields=DEFAULT_REPORT_SQUELCH_FIELDS,
+        report_unclassified_limit=20,
+    )
+
+
+def browse_context(db) -> api.ApiContext:
+    providers = (EXAMPLE_PROVIDER, OTHER_PROVIDER)
+    db_providers = tuple(queries.db_providers(db.connection()))
+    profiles = profiles_for(providers)
+    for row in db_providers:
+        profiles.setdefault(str(row["provider_id"]), resolve_profile(str(row["kind"])))
+    settings = browse_settings()
+    aspects = build_aspect_catalog(
+        db,
+        profiles=profiles,
+        policy=detail_policy_from_settings(settings),
+    )
+    return api.ApiContext(db, providers, db_providers, profiles, settings, aspects)
 
 
 def _raw_model(model_id: str, scrape_number: int) -> dict[str, object]:
     suffix = model_id.rsplit("-", 1)[-1]
     supported = ["tools"]
+    if scrape_number >= 2 and suffix == "e":
+        supported = ["response_format"]
     if scrape_number >= 6 and suffix in {"a", "b", "c"}:
         supported.append("reasoning_effort")
     prompt = 0.0000035 if suffix == "a" and scrape_number >= 3 else 0.000002
@@ -137,7 +189,7 @@ def build_fixture_db(path: Path) -> FixtureFacts:
     store = Store(path)
     store.initialize()
     store.upsert_provider_configs(
-        (EXAMPLE_PROVIDER, OTHER_PROVIDER),
+        (EXAMPLE_PROVIDER, OTHER_PROVIDER, CONDITIONAL_PROVIDER),
         updated_at="2026-08-01T12:00:00+00:00",
     )
 
@@ -197,6 +249,24 @@ def build_fixture_db(path: Path) -> FixtureFacts:
         previous_models=other_models,
     )
 
+    conditional_old, conditional_new = synthetic_scheduled_rate_models()
+    conditional_first, conditional_models = _save_scrape(
+        store,
+        CONDITIONAL_PROVIDER,
+        completed_at="2026-07-01T12:00:00+00:00",
+        raw_models=[conditional_old],
+        previous_id=None,
+        previous_models=[],
+    )
+    _save_scrape(
+        store,
+        CONDITIONAL_PROVIDER,
+        completed_at="2026-07-02T12:00:00+00:00",
+        raw_models=[conditional_new],
+        previous_id=conditional_first,
+        previous_models=conditional_models,
+    )
+
     ids = tuple(example_ids)
     return FixtureFacts(
         provider_ids=(EXAMPLE_PROVIDER.provider_id, OTHER_PROVIDER.provider_id),
@@ -212,6 +282,9 @@ def build_fixture_db(path: Path) -> FixtureFacts:
         bool_flip=("fake-org/test-model-c", ids[3], ids[4], False, True),
         bulk_list_models=tuple(f"fake-org/test-model-{suffix}" for suffix in "abc"),
         benchmark_churn_model="fake-org/test-model-a",
+        equal_length_list_step=("fake-org/test-model-e", local_date_for(example_times[1])),
+        conditional_pricing_model=SYNTHETIC_SCHEDULED_RATE_MODEL_ID,
+        conditional_provider_id=CONDITIONAL_PROVIDER.provider_id,
     )
 
 

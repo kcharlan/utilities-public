@@ -9,7 +9,7 @@
   const ASPECT_LIMIT = 12;
   const CATALOG_PAGE_SIZE = 50;
   const LIST_KEYS = new Set(["providers", "models", "categories", "kinds", "pins", "aspects", "cols"]);
-  const HASH_KEYS = ["view", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "cols", "q", "sort", "dir"];
+  const HASH_KEYS = ["view", "model", "at", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "changed", "page", "cols", "q", "sort", "dir"];
 
   function decode(value) {
     try { return decodeURIComponent(value); } catch (error) { return value; }
@@ -48,7 +48,7 @@
   };
 
   class ApiError extends Error {
-    constructor(message) { super(message); this.name = "ApiError"; }
+    constructor(message, status = 0) { super(message); this.name = "ApiError"; this.status = status; }
   }
 
   const api = {
@@ -67,7 +67,7 @@
       let payload;
       try { payload = await response.json(); }
       catch (error) { throw new ApiError("The local server returned an invalid response."); }
-      if (!response.ok) throw new ApiError(payload && payload.error ? payload.error : `Request failed (${response.status}).`);
+      if (!response.ok) throw new ApiError(payload && payload.error ? payload.error : `Request failed (${response.status}).`, response.status);
       return payload;
     }
   };
@@ -164,6 +164,11 @@
     date.setUTCDate(date.getUTCDate() + amount);
     return date.toISOString().slice(0, 10);
   }
+  function localDay(value) {
+    const observed = new Date(value);
+    const pad = part => String(part).padStart(2, "0");
+    return `${observed.getFullYear()}-${pad(observed.getMonth() + 1)}-${pad(observed.getDate())}`;
+  }
   function clamp(value, span) { return !span ? value : value < span.first ? span.first : value > span.last ? span.last : value; }
   function defaults(meta) {
     const span = meta.date_span;
@@ -188,7 +193,13 @@
       ? value.filter(item => typeof item === "string" && item && (!allowed || allowed.has(item)))
       : [];
     const resolved = {...state};
-    resolved.view = VIEWS.includes(state.view) ? state.view : fallback.view;
+    const modelParts = typeof state.model === "string" ? pinParts(state.model, meta.providers) : {provider: null, model: ""};
+    const validModel = Boolean(modelParts.provider && modelParts.model);
+    resolved.view = state.view === "model" && validModel ? "model" : VIEWS.includes(state.view) ? state.view : fallback.view;
+    resolved.model = validModel ? state.model : "";
+    resolved.at = validDate(state.at) ? state.at : "";
+    resolved.changed = state.changed === "0" ? "0" : "";
+    resolved.page = /^\d+$/.test(state.page || "") && Number(state.page) > 0 ? state.page : "";
     resolved.detail = ["default", "all", "squelched"].includes(state.detail) ? state.detail : fallback.detail;
     resolved.providers = list(state.providers, knownProviders);
     if (!resolved.providers.length) resolved.providers = fallback.providers;
@@ -220,7 +231,11 @@
     return html`<fieldset class="segmented"><legend>${label}</legend><div>${options.map(option => html`<button key=${option.value} type="button" class=${value === option.value ? "is-active" : ""} aria-pressed=${value === option.value} onClick=${() => onChange(option.value)}>${option.label}</button>`)}</div></fieldset>`;
   }
 
-  function FilterBar({meta, state, write, theme, setTheme}) {
+  function FindModel({meta, openModel, inputRef}) {
+    return html`<div class="find-model"><${ModelTypeahead} providers=${meta.providers.map(provider => provider.id)} onPick=${item => openModel(item.provider_id, item.model_id)} inputRef=${inputRef} placeholder="Find model in saved history" listboxId="find-model-results" label="Find model" /></div>`;
+  }
+
+  function FilterBar({meta, state, write, theme, setTheme, openModel, inputRef}) {
     const providers = state.providers || [];
     const toggle = id => {
       const next = providers.includes(id) ? providers.filter(value => value !== id) : [...providers, id];
@@ -235,12 +250,14 @@
     return html`
       <section class="filter-bar" aria-label="Browser controls">
         <nav class="view-tabs" aria-label="Views">${VIEWS.map((view, index) => html`<button type="button" key=${view} class=${state.view === view ? "is-active" : ""} aria-current=${state.view === view ? "page" : undefined} onClick=${() => write({view})}><span>${index + 1}</span>${view[0].toUpperCase() + view.slice(1)}</button>`)}</nav>
+        <${FindModel} meta=${meta} openModel=${openModel} inputRef=${inputRef} />
         <div class="filter-row">
           <fieldset class="providers"><legend>Providers</legend><div>${meta.providers.map(provider => html`<button type="button" key=${provider.id} class=${providers.includes(provider.id) ? "chip is-active" : "chip"} aria-pressed=${providers.includes(provider.id)} onClick=${() => toggle(provider.id)}><i></i>${provider.label}</button>`)}</div></fieldset>
           <fieldset class="dates" disabled=${!meta.date_span}><legend>Date range</legend><label>From<input type="date" min=${meta.date_span && meta.date_span.first} max=${meta.date_span && meta.date_span.last} value=${state.from || ""} onChange=${dateChange("from")} /></label><b>→</b><label>To<input type="date" min=${meta.date_span && meta.date_span.first} max=${meta.date_span && meta.date_span.last} value=${state.to || ""} onChange=${dateChange("to")} /></label></fieldset>
+          <${RangePresets} span=${meta.date_span} from=${state.from} to=${state.to} write=${write} />
           <${Segmented} label="Detail" value=${state.detail} options=${["default", "all", "squelched"].map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${detail => write({detail})} />
-          <${Segmented} label="Theme" value=${theme} options=${THEMES.map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${setTheme} />
         </div>
+        <details class="appearance"><summary>Appearance</summary><${Segmented} label="Theme" value=${theme} options=${THEMES.map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${setTheme} /></details>
       </section>`;
   }
 
@@ -297,7 +314,6 @@
       <details class="model-facet"><summary>Models${state.models && state.models.length ? ` · ${state.models.length}` : ""}</summary><div><${Facet} title="Model" values=${modelOptions.map(value => value.model_id)} selected=${state.models || []} labels=${Object.fromEntries(modelOptions.map(value => [value.model_id, value.display_name || value.model_id]))} onChange=${models => write({models})} /></div></details>
       <${Facet} title="Category" values=${meta.categories} selected=${state.categories || []} onChange=${categories => write({categories})} />
       <${Facet} title="Change kind" values=${["added", "removed", "changed"]} selected=${state.kinds || []} labels=${{added: "Added", removed: "Removed", changed: "Field changed"}} onChange=${kinds => write({kinds})} />
-      <${Segmented} label="Visibility" value=${state.detail} options=${["default", "all", "squelched"].map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${detail => write({detail})} />
     </aside>`;
   }
 
@@ -318,10 +334,20 @@
       const associated = entry.change_ids_by_change[index] || [];
       if (associated.length) openRaw(associated[0]);
     };
+    const transition = change => {
+      if (change.kind === "list" && change.old_display === change.new_display) {
+        const details = [];
+        if (change.list_added && change.list_added.length) details.push(`Added: ${change.list_added.join(", ")}`);
+        if (change.list_removed && change.list_removed.length) details.push(`Removed: ${change.list_removed.join(", ")}`);
+        const title = details.join(" · ") || "Nested values changed; open the raw record.";
+        return html`<span>${change.old_display}</span><span class="content-change" title=${title}>contents changed</span>`;
+      }
+      return html`${change.old_display}<b>→</b>${change.new_display}`;
+    };
     return html`<div class="table-wrap"><table class="changes"><thead><tr><th>Field</th><th>Transition</th><th>Δ</th><th>%</th><th>Unit</th></tr></thead><tbody>${entry.changes.map((change, index) => html`
       <tr key=${`${change.field_path}-${index}`} tabindex=${entry.change_ids_by_change[index] && entry.change_ids_by_change[index].length ? 0 : undefined} class=${entry.change_ids_by_change[index] && entry.change_ids_by_change[index].length ? "actionable" : ""} onClick=${event => activate(event, index)} onKeyDown=${event => activate(event, index)}>
         <th scope="row"><span>${change.label}</span>${change.qualifier && html`<small>${change.qualifier}</small>`}</th>
-        <td class=${`transition ${semantic(change)}`}>${change.old_display}<b>→</b>${change.new_display}</td><td>${change.delta_display || "—"}</td><td>${change.pct_display || (change.pct_basis_zero ? "from zero" : "—")}</td><td class="unit">${change.unit || "—"}</td>
+        <td class=${`transition ${semantic(change)}`}>${transition(change)}</td><td>${change.delta_display || "—"}</td><td>${change.pct_display || (change.pct_basis_zero ? "from zero" : "—")}</td><td class="unit">${change.unit || "—"}</td>
       </tr>`)}</tbody></table></div>`;
   }
 
@@ -337,14 +363,18 @@
     </article>`;
   }
 
-  function Feed({data, loading, hasMore, loadMore, openModel, openRaw, write}) {
+  function Feed({data, loading, hasMore, loadMore, openModel, openRaw, write, selectedCategories}) {
     const groups = useMemo(() => {
-      const result = [];
+      const result = [], byDate = new Map();
       for (const entry of data && data.entries || []) {
-        let group = result.at(-1);
-        if (!group || group.date !== entry.date) { group = {date: entry.date, entries: []}; result.push(group); }
+        let group = byDate.get(entry.date);
+        if (!group) { group = {date: entry.date, entries: []}; byDate.set(entry.date, group); result.push(group); }
         group.entries.push(entry);
       }
+      for (const [day, rollup] of Object.entries(data && data.rollups_by_date || {})) {
+        if (rollup.folded && rollup.folded.models && !byDate.has(day)) result.push({date: day, entries: []});
+      }
+      result.sort((left, right) => right.date.localeCompare(left.date));
       return result;
     }, [data]);
     const rollupLine = day => {
@@ -357,9 +387,14 @@
     };
     return html`<section class="feed" aria-labelledby="feed-title" aria-busy=${loading}>
       <header class="section-heading"><div><p>03 / event record</p><h2 id="feed-title">Observed changes</h2></div><span>${data ? `${data.total} grouped events` : "Awaiting sample"}</span></header>
+      ${data ? html`<${SummaryStrip} summary=${data.summary} selected=${selectedCategories} write=${write} />` : null}
       ${loading && !data && html`<div class="loading"><i></i><p>Reconstructing the field log…</p></div>`}
       ${data && !data.entries.length && html`<div class="empty"><b>∅</b><div><h2>No changes in this slice</h2><p>Widen the date range or clear a facet.</p></div></div>`}
-      ${groups.map(group => html`<section class="date-block" key=${group.date}><header><time datetime=${group.date}>${new Date(`${group.date}T12:00:00Z`).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC"})}</time><span>${String(group.entries.length).padStart(2,"0")} entries</span></header><div>${group.entries.map(entry => html`<${Entry} key=${activityEntryId(entry)} entry=${entry} openModel=${openModel} openRaw=${openRaw} />`)}${rollupLine(group.date)}</div></section>`)}
+      ${groups.map(group => {
+        const rollup = data.rollups_by_date[group.date] || {};
+        const summary = rollup.summary || {};
+        return html`<section class="date-block" key=${group.date}><header><time datetime=${group.date}>${new Date(`${group.date}T12:00:00Z`).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC"})}</time><span>${String(group.entries.length).padStart(2,"0")} entries · ${summary.added || 0} added · ${summary.removed || 0} removed</span></header><div>${group.entries.map(entry => html`<${Entry} key=${activityEntryId(entry)} entry=${entry} openModel=${openModel} openRaw=${openRaw} />`)}${rollupLine(group.date)}<${FoldedLine} folded=${rollup.folded} day=${group.date} openModel=${openModel} openRaw=${openRaw} write=${write} /></div></section>`;
+      })}
       ${data && hasMore && html`<div class="feed-more"><button type="button" disabled=${loading} onClick=${loadMore}>${loading ? "Loading more changes…" : "Load more changes"}</button><span>${data.entries.length} of ${data.total} events loaded</span></div>`}
     </section>`;
   }
@@ -375,7 +410,7 @@
     }, Boolean(state.to));
     const models = useApi("/api/models", {providers: state.providers, limit: 50}, Boolean(state.providers && state.providers.length));
     useEffect(() => reportError(feed.error || heat.error || models.error, feed.error ? feed.reload : heat.error ? heat.reload : models.reload), [feed.error, heat.error, models.error]);
-    return html`<div class="activity"><${Heatmap} rows=${heat.data} from=${state.from} to=${state.to} detail=${state.detail} write=${write} loading=${heat.loading} /><div class="activity-grid"><${Facets} meta=${meta} state=${state} write=${write} modelOptions=${models.data || []} /><${Feed} data=${feed.data} loading=${feed.loading} hasMore=${feed.hasMore} loadMore=${feed.loadMore} openModel=${openModel} openRaw=${openRaw} write=${write} /></div></div>`;
+    return html`<div class="activity"><${Heatmap} rows=${heat.data} from=${state.from} to=${state.to} detail=${state.detail} write=${write} loading=${heat.loading} /><div class="activity-grid"><${Facets} meta=${meta} state=${state} write=${write} modelOptions=${models.data || []} /><${Feed} data=${feed.data} loading=${feed.loading} hasMore=${feed.hasMore} loadMore=${feed.loadMore} openModel=${openModel} openRaw=${openRaw} write=${write} selectedCategories=${state.categories || []} /></div></div>`;
   }
 
   function pinParts(pin, providers) {
@@ -482,16 +517,31 @@
     return html`<${Portal}>${placement ? html`<div class="typeahead" style=${placement}>${children}</div>` : null}</${Portal}>`;
   }
 
-  function Pins({meta, pins, providers, write, inputRef, toast}) {
+  function ModelTypeahead({providers, onPick, inputRef, placeholder, listboxId, label}) {
     const [query, setQuery] = useState("");
     const [debouncedQuery, setDebouncedQuery] = useState("");
-    const listboxId = "pin-results";
+    const ownRef = useRef(null);
+    const anchorRef = inputRef || ownRef;
     const open = Boolean(query.trim());
     useEffect(() => {
       const timer = setTimeout(() => setDebouncedQuery(query), 150);
       return () => clearTimeout(timer);
     }, [query]);
     const results = useApi("/api/models", {providers, q: debouncedQuery, limit: 20}, Boolean(debouncedQuery.trim() && providers.length));
+    const pick = item => { onPick(item); setQuery(""); };
+    const optionKey = event => {
+      const option = event.currentTarget;
+      if (event.key === "Escape") { event.preventDefault(); setQuery(""); anchorRef.current && anchorRef.current.focus(); }
+      else if (event.key === "ArrowDown") { const next = option.nextElementSibling; if (next) { event.preventDefault(); next.focus(); } }
+      else if (event.key === "ArrowUp") { event.preventDefault(); const previous = option.previousElementSibling; if (previous) previous.focus(); else anchorRef.current && anchorRef.current.focus(); }
+    };
+    return html`<div class="model-typeahead"><label>${label}<input ref=${anchorRef} type="search" autocomplete="off" value=${query} placeholder=${placeholder} aria-expanded=${open} aria-controls=${open ? listboxId : undefined} onInput=${event => setQuery(event.currentTarget.value)} onKeyDown=${event => {
+      if (event.key === "Escape") setQuery("");
+      else if (event.key === "ArrowDown") { const first = document.getElementById(listboxId)?.querySelector("button"); if (first) { event.preventDefault(); first.focus(); } }
+    }} /></label><${TypeaheadOverlay} anchorRef=${anchorRef} open=${open}><div id=${listboxId} role="listbox" aria-label="Model search results">${results.loading ? html`<p>Searching local history…</p>` : results.error ? html`<p>${results.error.message}</p>` : results.data && results.data.length ? results.data.map(item => html`<button type="button" role="option" aria-selected="false" key=${`${item.provider_id}/${item.model_id}`} onKeyDown=${optionKey} onClick=${() => pick(item)}><strong>${item.display_name || item.model_id}</strong><span>${item.provider_id} / ${item.model_id}</span></button>`) : html`<p>No matching models</p>`}</div></${TypeaheadOverlay}></div>`;
+  }
+
+  function Pins({meta, pins, providers, write, toast, openModel}) {
     const add = item => {
       const pin = `${item.provider_id}/${item.model_id}`;
       const next = pins.filter(value => value !== pin);
@@ -501,20 +551,14 @@
         toast(`Pin limit reached. Dropped ${dropped.join(", ")}.`);
       }
       write({pins: next});
-      setQuery("");
     };
     return html`<section class="pins" aria-labelledby="pins-title">
       <header><div><p>01 / specimens</p><h2 id="pins-title">Pinned models</h2></div><span>${pins.length} / ${meta.pin_limit}</span></header>
       <ol>${pins.map((pin, index) => {
         const parts = pinParts(pin, meta.providers);
-        return html`<li key=${pin}><i style=${`--pin-color: var(--series-${index + 1})`}></i><span><strong>${parts.model}</strong><small>${parts.provider ? parts.provider.label : pin}</small></span><button type="button" aria-label=${`Remove ${parts.model}`} onClick=${() => write({pins: pins.filter(value => value !== pin)})}>×</button></li>`;
+        return html`<li key=${pin}><i style=${`--pin-color: var(--series-${index + 1})`}></i><button type="button" class="model-link" onClick=${() => parts.provider && openModel(parts.provider.id, parts.model)}><strong>${parts.model}</strong><small>${parts.provider ? parts.provider.label : pin}</small></button><button type="button" aria-label=${`Remove ${parts.model}`} onClick=${() => write({pins: pins.filter(value => value !== pin)})}>×</button></li>`;
       })}</ol>
-      <div class="pin-search"><label for="pin-query">Add model</label><input id="pin-query" ref=${inputRef} type="search" autocomplete="off" value=${query} placeholder="Search model id or name" aria-expanded=${open} aria-controls=${open ? listboxId : undefined} onInput=${event => setQuery(event.currentTarget.value)} onKeyDown=${event => {
-        if (event.key === "Escape") setQuery("");
-        else if (event.key === "ArrowDown") { const first = document.getElementById(listboxId)?.querySelector("button"); if (first) { event.preventDefault(); first.focus(); } }
-      }} />
-        <${TypeaheadOverlay} anchorRef=${inputRef} open=${open}><div id=${listboxId} role="listbox" aria-label="Model search results">${results.loading ? html`<p>Searching local history…</p>` : results.error ? html`<p>${results.error.message}</p>` : results.data && results.data.length ? results.data.map(item => html`<button type="button" role="option" aria-selected="false" key=${`${item.provider_id}/${item.model_id}`} onClick=${() => add(item)}><strong>${item.display_name || item.model_id}</strong><span>${item.provider_id} / ${item.model_id}</span></button>`) : html`<p>No matching models</p>`}</div></${TypeaheadOverlay}>
-      </div>
+      <div class="pin-search"><${ModelTypeahead} providers=${providers} onPick=${add} placeholder="Search model id or name" listboxId="pin-results" label="Add model" /></div>
     </section>`;
   }
 
@@ -882,7 +926,7 @@
     })}</div>`;
   }
 
-  function Models({meta, state, write, inputRef, openRaw, reportError, toast, themeKey}) {
+  function Models({meta, state, write, replaceState, openRaw, openModel, reportError, toast, themeKey}) {
     const pins = state.pins || [], aspects = state.aspects || [];
     const pinProviders = new Set(pins.map(pin => pinParts(pin, meta.providers).provider).filter(Boolean).map(provider => provider.id));
     const aspectLookup = new Map(meta.aspects.map(aspect => [aspect.id, aspect]));
@@ -892,10 +936,15 @@
     const series = useApi("/api/series", params, enabled);
     const events = useApi("/api/events", {models: pins, providers: state.providers, from: state.from, to: state.to, detail: state.detail}, Boolean(pins.length));
     const plots = useRef(new Map());
+    useEffect(() => {
+      if (!pins.length || activeAspects.length) return;
+      const provider = pinParts(pins.at(-1), meta.providers).provider;
+      if (provider) replaceState({aspects: defaultTimelineAspects(meta, provider.id)});
+    }, [pins.join(","), activeAspects.join(","), meta, replaceState]);
     useEffect(() => reportError(series.error || events.error, series.error ? series.reload : events.reload), [series.error, events.error]);
-    return html`<div class="models-view"><aside class="instrument model-controls"><${Pins} meta=${meta} pins=${pins} providers=${state.providers} write=${write} inputRef=${inputRef} toast=${toast} /><${AspectPicker} meta=${meta} pins=${pins} selected=${aspects} write=${write} toast=${toast} /></aside><main class="timeline-workbench">
+    return html`<div class="models-view"><aside class="instrument model-controls"><${Pins} meta=${meta} pins=${pins} providers=${state.providers} write=${write} toast=${toast} openModel=${openModel} /><${AspectPicker} meta=${meta} pins=${pins} selected=${aspects} write=${write} toast=${toast} /></aside><main class="timeline-workbench">
       ${pins.length ? html`<${EventRail} events=${events.data || []} from=${state.from} to=${state.to} plots=${plots} openRaw=${openRaw} />` : null}
-      ${!pins.length ? html`<div class="empty"><b>+</b><div><h2>Pin a model to begin</h2><p>Search the saved catalog at left, or press <kbd>/</kbd> from anywhere.</p></div></div>` : !activeAspects.length ? html`<div class="empty"><b>↗</b><div><h2>Select an aspect</h2><p>Pricing, limits, capabilities, and benchmark histories are available at left.</p></div></div>` : series.loading && !series.data ? html`<div class="loading"><i></i><p>Aligning saved snapshots…</p></div>` : series.data ? html`<${PanelStack} meta=${meta} aspects=${activeAspects} pins=${pins} data=${series.data} plots=${plots} write=${write} themeKey=${themeKey} />` : null}
+      ${!pins.length ? html`<div class="empty"><b>+</b><div><h2>Pin a model to begin</h2><p>Use Add model at left for a comparison, or Find model above to open a dossier.</p></div></div>` : !activeAspects.length ? html`<div class="empty"><b>↗</b><div><h2>Select an aspect</h2><p>Pricing, limits, capabilities, and benchmark histories are available at left.</p></div></div>` : series.loading && !series.data ? html`<div class="loading"><i></i><p>Aligning saved snapshots…</p></div>` : series.data ? html`<${PanelStack} meta=${meta} aspects=${activeAspects} pins=${pins} data=${series.data} plots=${plots} write=${write} themeKey=${themeKey} />` : null}
     </main></div>`;
   }
 
@@ -913,13 +962,26 @@
     return `${scrape.date} · ${scrape.model_count} ${scrape.model_count === 1 ? "model" : "models"}`;
   }
 
+  function SnapshotPicker({label, scrapes, value, onChange, optional = false}) {
+    const selected = value ? scrapes.find(scrape => scrape.scrape_id === value.scrape_id) : null;
+    const index = selected ? scrapes.findIndex(scrape => scrape.scrape_id === selected.scrape_id) : -1;
+    const chronological = [...scrapes].reverse();
+    const snap = (date, input) => {
+      if (!date && optional) { onChange(null); return; }
+      const match = scrapes.find(scrape => scrape.date <= date) || scrapes.at(-1);
+      if (match) { input.value = match.date; onChange(match); }
+    };
+    return html`<div class="snapshot-picker"><label>${label}<input type="date" value=${selected ? selected.date : ""} min=${chronological[0] && chronological[0].date} max=${chronological.at(-1) && chronological.at(-1).date} onInput=${event => snap(event.currentTarget.value, event.currentTarget)} /></label><div><button type="button" aria-label=${`Earlier ${label} snapshot`} disabled=${index < 0 || index >= scrapes.length - 1} onClick=${() => onChange(scrapes[index + 1])}>‹</button><span>${selected ? `snapped to ${scrapeLabel(selected)}` : "No comparison snapshot"}</span><button type="button" aria-label=${`Later ${label} snapshot`} disabled=${index <= 0} onClick=${() => onChange(scrapes[index - 1])}>›</button></div></div>`;
+  }
+
   function Pickers({meta, providerId, scrapes, asOf, compare, write}) {
     const earlier = scrapes.filter(scrape => asOf && (scrape.completed_at < asOf.completed_at
       || scrape.completed_at === asOf.completed_at && scrape.scrape_id < asOf.scrape_id));
     return html`<section class="catalog-pickers instrument" aria-labelledby="catalog-pickers-title"><header class="section-heading"><div><p>01 / coordinates</p><h2 id="catalog-pickers-title">Snapshot coordinates</h2></div><span>Saved records only</span></header><div>
-      <label>Provider<select value=${providerId} onChange=${event => write({providers: [event.currentTarget.value], asof: null, compare: null, cols: null, sort: null, dir: null})}>${meta.providers.map(provider => html`<option key=${provider.id} value=${provider.id} disabled=${!catalogScrapes(meta, provider.id).length}>${provider.label}</option>`)}</select></label>
-      <label>As of<select value=${asOf ? String(asOf.scrape_id) : ""} onChange=${event => write({asof: event.currentTarget.value, compare: null})}>${scrapes.map(scrape => html`<option key=${scrape.scrape_id} value=${scrape.scrape_id}>${scrapeLabel(scrape)}</option>`)}</select></label>
-      <label>Compare<select value=${compare ? String(compare.scrape_id) : ""} onChange=${event => write({compare: event.currentTarget.value || null})}><option value="">None</option>${earlier.map(scrape => html`<option key=${scrape.scrape_id} value=${scrape.scrape_id}>${scrapeLabel(scrape)}</option>`)}</select></label>
+      <fieldset class="catalog-providers"><legend>Provider</legend>${meta.providers.map(provider => html`<button type="button" key=${provider.id} aria-pressed=${provider.id === providerId} disabled=${!catalogScrapes(meta, provider.id).length} onClick=${() => write({providers: [provider.id], asof: null, compare: null, changed: null, cols: null, sort: null, dir: null})}>${provider.label}</button>`)}</fieldset>
+      <${SnapshotPicker} label="As of" scrapes=${scrapes} value=${asOf} onChange=${scrape => write({asof: String(scrape.scrape_id), compare: null, changed: null})} />
+      <${SnapshotPicker} label="Compare" scrapes=${earlier} value=${compare} optional=${true} onChange=${scrape => write({compare: scrape ? String(scrape.scrape_id) : null, changed: null})} />
+      ${!compare && earlier.length ? html`<button type="button" class="compare-previous" onClick=${() => write({compare: String(earlier[0].scrape_id), changed: null})}>Compare with previous</button>` : null}
     </div></section>`;
   }
 
@@ -929,49 +991,29 @@
     return html`<section class="column-chooser instrument" aria-labelledby="column-title"><header class="section-heading"><div><p>02 / projection</p><h2 id="column-title">Columns</h2></div><span>${selected.length} visible</span></header><div>${groups.map(group => html`<fieldset key=${group}><legend>${group}</legend>${aspects.filter(aspect => aspect.category === group).map(aspect => html`<label key=${aspect.id}><input type="checkbox" checked=${selected.includes(aspect.id)} onChange=${() => toggle(aspect.id)} /><span>${aspect.label}${aspect.qualifier || aspect.source === "path" ? html`<small>${aspect.qualifier || aspect.path}</small>` : null}</span></label>`)}</fieldset>`)}</div></section>`;
   }
 
+  function ColumnPresets({meta, providerId, aspects, write, toast}) {
+    const choose = name => {
+      let selected;
+      if (name === "Default") selected = defaultCatalogColumns(meta, providerId);
+      else if (name === "All") selected = aspects.map(aspect => aspect.id);
+      else {
+        const category = name === "Limits" ? "Context & Limits" : name;
+        selected = aspects.filter(aspect => aspect.category === category).map(aspect => aspect.id);
+      }
+      if (selected.length > 24) { selected = selected.slice(0, 24); toast("Catalog columns are limited to 24; showing the first 24."); }
+      write({cols: selected});
+    };
+    return html`<section class="column-presets" aria-label="Column presets">${["Pricing", "Limits", "Capabilities", "Default", "All"].map(name => html`<button type="button" key=${name} onClick=${() => choose(name)}>${name}</button>`)}</section>`;
+  }
+
   function sameList(left, right) {
     return left.length === right.length && left.every((value, index) => value === right[index]);
   }
 
-  function cellChanged(cell) {
-    return Object.prototype.hasOwnProperty.call(cell, "old_value") && JSON.stringify(cell.old_value) !== JSON.stringify(cell.value);
-  }
-
   function SparklinePopover({meta, pin, aspect, write, close, themeKey}) {
-    const host = useRef(null), closeRef = useRef(null), previous = useRef(null);
+    const host = useRef(null), panelRef = useRef(null);
     const request = useApi("/api/series", {models: pin, aspects: aspect.id}, Boolean(pin && aspect));
-    useEffect(() => {
-      previous.current = document.activeElement;
-      const timer = setTimeout(() => closeRef.current && closeRef.current.focus(), 0);
-      const layer = closeRef.current && closeRef.current.closest(".spark-layer");
-      const inerted = [];
-      let branch = layer;
-      while (branch && branch.parentElement) {
-        const parent = branch.parentElement;
-        for (const element of parent.children) {
-          if (element !== branch && !element.inert) { element.inert = true; inerted.push(element); }
-        }
-        branch = parent;
-        if (parent === document.body) break;
-      }
-      const keyboard = event => {
-        if (event.key === "Escape") { close(); return; }
-        if (event.key !== "Tab") return;
-        const panel = closeRef.current && closeRef.current.closest('[role="dialog"]');
-        const focusable = panel && [...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(element => !element.disabled);
-        if (!focusable || !focusable.length) return;
-        const first = focusable[0], last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-      };
-      addEventListener("keydown", keyboard);
-      return () => {
-        clearTimeout(timer);
-        removeEventListener("keydown", keyboard);
-        for (const element of inerted) element.inert = false;
-        previous.current && previous.current.focus();
-      };
-    }, []);
+    useFocusTrap(panelRef, true, close);
     useEffect(() => {
       if (!host.current || !request.data || !request.data.axis.length) return;
       const item = request.data.series[0];
@@ -992,7 +1034,7 @@
       return () => { observer.disconnect(); plot.destroy(); };
     }, [request.data, themeKey]);
     const parts = pinParts(pin, meta.providers), pins = [pin];
-    return html`<div class="spark-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section class="spark-popover" role="dialog" aria-modal="true" aria-labelledby="spark-title"><header><div><p>${parts.model}</p><h2 id="spark-title">${aspect.label} over full history</h2></div><button ref=${closeRef} type="button" aria-label="Close sparkline" onClick=${close}>×</button></header><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="spark-loading">Loading series…</div>` : html`<div ref=${host} class="spark-host"></div>`}<footer><span>${aspect.unit || aspect.kind}</span><button type="button" onClick=${() => { write({view: "models", pins, aspects: [aspect.id], from: meta.date_span.first, to: meta.date_span.last}); close(); }}>Open timeline</button></footer></section></div>`;
+    return html`<div class="spark-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section ref=${panelRef} class="spark-popover" role="dialog" aria-modal="true" aria-labelledby="spark-title"><header><div><p>${parts.model}</p><h2 id="spark-title">${aspect.label} over full history</h2></div><button type="button" aria-label="Close sparkline" onClick=${close}>×</button></header><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !request.data ? html`<div class="spark-loading">Loading series…</div>` : html`<div ref=${host} class="spark-host"></div>`}<footer><span>${aspect.unit || aspect.kind}</span><button type="button" onClick=${() => { write({view: "models", pins, aspects: [aspect.id], from: meta.date_span.first, to: meta.date_span.last}); close(); }}>Open timeline</button></footer></section></div>`;
   }
 
   function CatalogSearch({value, replaceState}) {
@@ -1006,19 +1048,19 @@
     return html`<label>Filter models<input type="search" value=${draft} placeholder="ID or display name" onInput=${event => setDraft(event.currentTarget.value)} /></label>`;
   }
 
-  function CatalogTable({data, aspects, state, write, replaceState, page, setPage, openSparkline}) {
+  function CatalogTable({data, aspects, state, write, replaceState, replaceCatalogState, page, openSparkline, openModel}) {
     const aspectLookup = new Map(aspects.map(aspect => [aspect.id, aspect]));
     const nextSortDirection = id => state.sort === id && state.dir !== "desc" ? "desc" : "asc";
     const sortAria = id => state.sort === id ? (state.dir === "desc" ? "descending" : "ascending") : "none";
     const pages = Math.max(1, Math.ceil(data.total / CATALOG_PAGE_SIZE));
-    return html`<section class="catalog-table-panel instrument" aria-labelledby="catalog-table-title"><header class="catalog-toolbar"><div><p>03 / registry</p><h2 id="catalog-table-title">Model catalog</h2><span>${data.total} records</span></div><${CatalogSearch} value=${state.q} replaceState=${replaceState} /></header><div class="catalog-table-wrap"><table class="catalog-table"><thead><tr><th aria-sort=${sortAria("model_id")}><button type="button" onClick=${() => write({sort: "model_id", dir: nextSortDirection("model_id")})}>Model <span>↕</span></button></th>${aspects.map(aspect => html`<th key=${aspect.id} aria-sort=${sortAria(aspect.id)}><button type="button" onClick=${() => write({sort: aspect.id, dir: nextSortDirection(aspect.id)})}>${aspect.label}<span>↕</span></button><small>${aspect.unit || aspect.qualifier || aspect.kind}</small></th>`)}</tr></thead><tbody>${data.rows.map(row => html`<tr key=${row.model_id} class=${`catalog-row --presence-${row.presence}`}><th scope="row"><strong>${row.display_name || row.model_id}</strong><small>${row.model_id}</small>${row.presence !== "present" ? html`<em>${row.presence}</em>` : null}</th>${aspects.map(aspect => {
-      const cell = row.cells[aspect.id], changed = cell && cellChanged(cell), numeric = ["price", "count", "numeric"].includes(aspect.kind);
+    return html`<section class="catalog-table-panel instrument" aria-labelledby="catalog-table-title"><header class="catalog-toolbar"><div><p>03 / registry</p><h2 id="catalog-table-title">Model catalog</h2><span>${data.total} records</span>${data.compare ? html`<button type="button" class="changed-only" aria-pressed=${state.changed !== "0"} onClick=${() => write({changed: state.changed === "0" ? null : "0"})}>Changed only · ${data.changed_total}</button>` : null}</div><${CatalogSearch} value=${state.q} replaceState=${replaceCatalogState} /></header><div class="catalog-table-wrap"><table class="catalog-table"><thead><tr><th aria-sort=${sortAria("model_id")}><button type="button" onClick=${() => write({sort: "model_id", dir: nextSortDirection("model_id")})}>Model <span>↕</span></button></th>${aspects.map(aspect => html`<th key=${aspect.id} aria-sort=${sortAria(aspect.id)}><button type="button" onClick=${() => write({sort: aspect.id, dir: nextSortDirection(aspect.id)})}>${aspect.label}<span>↕</span></button><small>${aspect.unit || aspect.qualifier || aspect.kind}</small></th>`)}</tr></thead><tbody>${data.rows.map(row => html`<tr key=${row.model_id} class=${`catalog-row --presence-${row.presence}`}><th scope="row"><button type="button" class="model-link" onClick=${() => openModel(data.as_of.provider_id, row.model_id)}><strong>${row.display_name || row.model_id}</strong><small>${row.model_id}</small></button>${row.presence !== "present" ? html`<em>${row.presence}</em>` : null}</th>${aspects.map(aspect => {
+      const cell = row.cells[aspect.id], changed = cell && cell.changed, numeric = ["price", "count", "numeric"].includes(aspect.kind);
       const content = changed ? html`<span class=${`cell-diff ${semantic(cell.change)}`}><del>${cell.old_display}</del><b>→</b><ins>${cell.display}</ins></span>` : html`<span>${cell ? cell.display : "—"}</span>`;
       return html`<td key=${aspect.id} class=${changed ? `is-changed ${semantic(cell.change)}` : ""}>${numeric && cell && (typeof cell.value === "number" || typeof cell.old_value === "number") ? html`<button type="button" class="spark-trigger" aria-label=${`Open ${aspect.label} history for ${row.model_id}`} onClick=${() => openSparkline({pin: `${data.as_of.provider_id}/${row.model_id}`, aspect: aspectLookup.get(aspect.id)})}>${content}<i>⌁</i></button>` : content}</td>`;
-    })}</tr>`)}</tbody></table></div><footer class="catalog-pager"><span>Page ${page} of ${pages}</span><div><button type="button" disabled=${page <= 1} onClick=${() => setPage(Math.max(1, page - 1))}>Previous</button><button type="button" disabled=${page >= pages} onClick=${() => setPage(Math.min(pages, page + 1))}>Next</button></div></footer></section>`;
+    })}</tr>`)}</tbody></table></div><footer class="catalog-pager"><span>Page ${page} of ${pages}</span><div><button type="button" disabled=${page <= 1} onClick=${() => replaceState({page: String(Math.max(1, page - 1))})}>Previous</button><button type="button" disabled=${page >= pages} onClick=${() => replaceState({page: String(Math.min(pages, page + 1))})}>Next</button></div></footer></section>`;
   }
 
-  function Catalog({meta, state, write, replaceState, themeKey}) {
+  function Catalog({meta, state, write, replaceState, openModel, toast, themeKey}) {
     const providerIds = meta.providers.map(provider => provider.id);
     const availableProvider = providerIds.find(id => catalogScrapes(meta, id).length);
     const providerId = state.providers.find(id => catalogScrapes(meta, id).length) || availableProvider || state.providers[0];
@@ -1031,21 +1073,22 @@
     const columns = requestedColumns.length ? requestedColumns : defaultCatalogColumns(meta, providerId);
     const sort = state.sort === "model_id" || columns.includes(state.sort) ? state.sort : "model_id";
     const dir = ["asc", "desc"].includes(state.dir) ? state.dir : "asc";
-    const [page, setPage] = useState(1), [sparkline, setSparkline] = useState(null);
-    const requestKey = JSON.stringify([providerId, asOf && asOf.scrape_id, compare && compare.scrape_id, columns, state.q, sort, dir]);
+    const page = Number(state.page) || 1, [sparkline, setSparkline] = useState(null);
     useEffect(() => {
       if (!providerId || !asOf) return;
       const patch = {};
       if (!state.providers.includes(providerId)) patch.providers = [providerId];
       if (String(state.asof || "") !== String(asOf.scrape_id)) patch.asof = String(asOf.scrape_id);
       if (state.compare && !compare) patch.compare = null;
+      if (!compare && state.changed) patch.changed = null;
       if (!sameList(state.cols || [], columns)) patch.cols = columns;
       if (state.sort !== sort) patch.sort = sort;
       if (state.dir !== dir) patch.dir = dir;
       if (Object.keys(patch).length) replaceState(patch);
     }, [providerId, asOf && asOf.scrape_id, compare && compare.scrape_id, columns.join(","), JSON.stringify(state.providers), JSON.stringify(state.cols || []), state.asof, state.compare, sort, dir]);
-    useEffect(() => setPage(1), [requestKey]);
-    const request = useApi("/api/catalog", {provider: providerId, as_of: asOf && asOf.scrape_id, compare: compare && compare.scrape_id, columns, q: state.q, sort, dir, page, page_size: CATALOG_PAGE_SIZE}, Boolean(providerId && asOf && columns.length));
+    const catalogWrite = patch => write({...patch, page: null});
+    const catalogReplace = patch => replaceState({...patch, page: null});
+    const request = useApi("/api/catalog", {provider: providerId, as_of: asOf && asOf.scrape_id, compare: compare && compare.scrape_id, changed_only: compare && state.changed !== "0" ? 1 : null, columns, q: state.q, sort, dir, page, page_size: CATALOG_PAGE_SIZE}, Boolean(providerId && asOf && columns.length));
     const catalogData = request.fresh ? request.data : null;
     const selectedAspects = columns.map(id => providerAspects.find(aspect => aspect.id === id)).filter(Boolean);
     const showFeed = () => {
@@ -1054,33 +1097,117 @@
       write({view: "activity", providers: [providerId], from: dates[0], to: dates[1]});
     };
     if (!providerId || !asOf) return html`<div class="empty"><b>∅</b><div><h2>No saved snapshots</h2><p>This provider has no successful saved scrape to browse.</p></div></div>`;
-    return html`<div class="catalog-view"><aside class="catalog-controls"><${Pickers} meta=${meta} providerId=${providerId} scrapes=${scrapes} asOf=${asOf} compare=${compare} write=${write} /><${ColumnChooser} aspects=${providerAspects} selected=${columns} write=${write} />${compare ? html`<button class="feed-link" type="button" onClick=${showFeed}>Show as feed <span>↗</span></button>` : null}</aside><main class="catalog-workbench"><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !catalogData ? html`<div class="loading"><i></i><p>Resolving snapshot registry…</p></div>` : catalogData ? html`<${CatalogTable} data=${catalogData} aspects=${selectedAspects} state=${{...state, sort, dir}} write=${write} replaceState=${replaceState} page=${page} setPage=${setPage} openSparkline=${setSparkline} />` : null}</main>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
+    return html`<div class="catalog-view"><aside class="catalog-controls"><${Pickers} meta=${meta} providerId=${providerId} scrapes=${scrapes} asOf=${asOf} compare=${compare} write=${catalogWrite} /><${ColumnPresets} meta=${meta} providerId=${providerId} aspects=${providerAspects} write=${catalogWrite} toast=${toast} /><${ColumnChooser} aspects=${providerAspects} selected=${columns} write=${catalogWrite} />${compare ? html`<button class="feed-link" type="button" onClick=${showFeed}>Show as feed <span>↗</span></button>` : null}</aside><main class="catalog-workbench"><${ErrorBanner} error=${request.error} reload=${request.reload} />${request.loading && !catalogData ? html`<div class="loading"><i></i><p>Resolving snapshot registry…</p></div>` : catalogData ? html`<${CatalogTable} data=${catalogData} aspects=${selectedAspects} state=${{...state, sort, dir}} write=${catalogWrite} replaceState=${replaceState} replaceCatalogState=${catalogReplace} page=${page} openSparkline=${setSparkline} openModel=${openModel} />` : null}</main>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
   }
 
-  function RawDrawer({id, close}) {
-    const closeRef = useRef(null), previous = useRef(null);
-    const request = useApi(id ? `/api/change/${id}` : "", {}, Boolean(id));
+  function defaultTimelineAspects(meta, providerId) {
+    const providerAspects = meta.aspects.filter(aspect => aspect.provider_id === providerId);
+    const known = new Set(providerAspects.map(aspect => aspect.id));
+    const preferred = ["input_price", "output_price", "context_window"]
+      .map(name => `${providerId}:${name}`)
+      .filter(id => known.has(id));
+    if (preferred.length) return preferred;
+    const pricing = providerAspects.filter(aspect => aspect.category === "Pricing").slice(0, 2).map(aspect => aspect.id);
+    return pricing.length ? pricing : providerAspects.slice(0, 1).map(aspect => aspect.id);
+  }
+
+  function RangePresets({span, from, to, write}) {
+    if (!span) return null;
+    const presets = [
+      ["7d", clamp(shiftDay(span.last, -7), span)],
+      ["30d", clamp(shiftDay(span.last, -30), span)],
+      ["90d", clamp(shiftDay(span.last, -90), span)],
+      ["180d", clamp(shiftDay(span.last, -180), span)],
+      ["All", span.first]
+    ];
+    return html`<fieldset class="range-presets"><legend>Range presets</legend><div>${presets.map(([label, start]) => html`<button type="button" key=${label} aria-pressed=${from === start && to === span.last} onClick=${() => write({from: start, to: span.last})}>${label}</button>`)}</div></fieldset>`;
+  }
+
+  function SummaryStrip({summary, selected, write}) {
+    const categories = Object.entries(summary.by_category || {});
+    const toggle = category => write({categories: selected.includes(category) ? selected.filter(value => value !== category) : [...selected, category]});
+    return html`<section class="summary-strip" aria-label="Activity summary"><div><strong>${summary.added}</strong><span>added</span></div><div><strong>${summary.removed}</strong><span>removed</span></div><div><strong>${summary.changed}</strong><span>changed</span></div><nav aria-label="Change categories">${categories.map(([category, count]) => html`<button type="button" key=${category} aria-pressed=${selected.includes(category)} onClick=${() => toggle(category)}>${category}<b>${count}</b></button>`)}</nav></section>`;
+  }
+
+  function FoldedLine({folded, day, openModel, openRaw, write}) {
+    if (!folded || !folded.models) return null;
+    const noun = folded.models === 1 ? "model" : "models";
+    return html`<details class="folded-line"><summary>${folded.models} ${noun} changed only in squelched fields</summary><ol>${folded.items.map(item => html`<li key=${`${item.provider_id}/${item.model_id}`}><button class="model-link" type="button" onClick=${() => openModel(item.provider_id, item.model_id, item.display_name, day)}><strong>${item.display_name || item.model_id}</strong><small>${item.model_id}</small></button><button type="button" class="raw-link" disabled=${!item.change_ids.length} onClick=${() => item.change_ids.length && openRaw(item.change_ids[0])}>raw</button></li>`)}</ol><button type="button" class="show-all-link" onClick=${() => write({detail: "all"})}>Show all changes</button></details>`;
+  }
+
+  function FactsList({meta, dossier, openRaw, openSparkline}) {
+    const aspects = new Map(meta.aspects.map(aspect => [aspect.id, aspect]));
+    const groups = [...new Set(dossier.facts.map(fact => fact.category))];
+    return html`<section class="dossier-facts instrument" aria-labelledby="facts-title"><header class="section-heading"><div><p>02 / latest state</p><h2 id="facts-title">Current facts</h2></div><span>${dossier.facts.length} observed</span></header>${groups.map(category => html`<section key=${category}><h3>${category}</h3><dl>${dossier.facts.filter(fact => fact.category === category).map(fact => {
+      const numeric = ["price", "count", "numeric"].includes(fact.kind);
+      const changed = fact.last_changed;
+      return html`<div key=${fact.aspect}><dt>${fact.label}${fact.qualifier ? html`<small>${fact.qualifier}</small>` : null}</dt><dd><strong>${fact.display}</strong>${fact.unit ? html`<span>${fact.unit}</span>` : null}${numeric ? html`<button type="button" class="spark-trigger" aria-label=${`Open ${fact.label} history for ${dossier.model_id}`} onClick=${() => openSparkline({pin: `${dossier.provider_id}/${dossier.model_id}`, aspect: aspects.get(fact.aspect)})}>⌁</button>` : null}${changed ? html`<button type="button" class="fact-change" disabled=${!changed.change_id} onClick=${() => changed.change_id && openRaw(changed.change_id)}>last changed ${changed.date}: ${changed.old_display} → ${changed.new_display}</button>` : html`<small>No recorded field change</small>`}</dd></div>`;
+    })}</dl></section>`)}</section>`;
+  }
+
+  function ModelView({meta, state, write, openRaw, inputRef, themeKey}) {
+    const parts = pinParts(state.model, meta.providers);
+    const request = useApi("/api/model", {provider: parts.provider && parts.provider.id, model: parts.model, detail: state.detail}, Boolean(parts.provider && parts.model));
+    const [sparkline, setSparkline] = useState(null);
+    const changelogHost = useRef(null);
     useEffect(() => {
-      if (!id) return;
-      previous.current = document.activeElement;
-      const timer = setTimeout(() => closeRef.current && closeRef.current.focus(), 0);
+      if (!state.at || !changelogHost.current) return;
+      const target = changelogHost.current.querySelector(`[data-changelog-date="${state.at}"]`);
+      if (target) target.scrollIntoView({block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
+    }, [state.at, request.data && request.data.model_id]);
+    useEffect(() => {
+      if (request.error && request.error.status === 400) inputRef.current && inputRef.current.focus();
+    }, [request.error]);
+    if (request.error && request.error.status === 400) return html`<div class="model-detail"><div class="model-breadcrumb"><span>Model</span><b>${parts.model}</b><button type="button" onClick=${() => write({view: "activity", model: null, at: null})}>Close</button></div><div class="empty"><b>∅</b><div><h2>No saved history for ${parts.model}</h2><p>Use Find model to choose a saved provider/model pair.</p></div></div></div>`;
+    if (request.loading && !request.data) return html`<div class="loading"><i></i><p>Reconstructing model history…</p></div>`;
+    if (request.error) return html`<${ErrorBanner} error=${request.error} reload=${request.reload} />`;
+    const dossier = request.data;
+    if (!dossier) return null;
+    const firstSeen = localDay(dossier.first_seen), lastSeen = localDay(dossier.last_seen);
+    const timeline = () => write({view: "models", model: null, at: null, pins: [`${dossier.provider_id}/${dossier.model_id}`], aspects: defaultTimelineAspects(meta, dossier.provider_id), from: clamp(shiftDay(firstSeen, -30), meta.date_span), to: clamp(lastSeen, meta.date_span)});
+    const changelog = html`<section ref=${changelogHost} class="dossier-changelog instrument" aria-labelledby="changelog-title"><header class="section-heading"><div><p>03 / complete record</p><h2 id="changelog-title">Changelog</h2></div><span>${dossier.changelog.length} comparison edges</span></header>${dossier.changelog.map((item, index) => html`<article key=${`${item.date}-${index}`} class=${`date-block dossier-edge${state.at === item.date ? " is-target" : ""}`} data-changelog-date=${item.date}><header><time datetime=${item.date}>${item.date}</time><span>${item.kind}</span></header><div>${item.kind === "initial" ? html`<p class="presence-summary"><i>•</i> Initial saved observation</p>` : html`<${ChangeTable} entry=${item} openRaw=${openRaw} />`}${Object.values(item.hidden || {}).some(Boolean) ? html`<p class="entry-hidden">${Object.values(item.hidden).reduce((a,b) => a+b, 0)} additional details hidden by visibility policy</p>` : null}<button type="button" class="day-activity-link" onClick=${() => write({view: "activity", providers: [dossier.provider_id], from: item.date, to: item.date, model: null, at: null})}>That day in Activity</button></div></article>`)}</section>`;
+    return html`<div class="model-detail"><div class="model-breadcrumb"><span>Model</span><b>${dossier.display_name}</b><button type="button" aria-label="Close model dossier" onClick=${() => write({view: "activity", model: null, at: null})}>×</button></div><div class="dossier-layout"><aside class="dossier-identity instrument"><p>01 / identity</p><h2>${dossier.display_name}</h2><code>${dossier.model_id}</code><span>${dossier.provider_label}</span><dl><div><dt>First seen</dt><dd>${firstSeen}</dd></div><div><dt>Last seen</dt><dd>${lastSeen}</dd></div><div><dt>Observations</dt><dd>${dossier.observations}</dd></div></dl><strong class=${dossier.present_in_latest ? "is-present" : "is-removed"}>${dossier.present_in_latest ? "Present in latest" : "Not in latest"}</strong><button type="button" onClick=${timeline}>Timeline</button></aside><main><${FactsList} meta=${meta} dossier=${dossier} openRaw=${openRaw} openSparkline=${setSparkline} />${changelog}</main></div>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
+  }
+
+  function useFocusTrap(panelRef, active, onClose) {
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+    useEffect(() => {
+      if (!active || !panelRef.current) return;
+      const panel = panelRef.current;
+      const previous = document.activeElement;
+      const focusableElements = () => [...panel.querySelectorAll('button, summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(element => !element.disabled);
+      const timer = setTimeout(() => { const first = focusableElements()[0]; if (first) first.focus(); }, 0);
+      const inerted = [];
+      let branch = panel.closest(".drawer-layer, .spark-layer") || panel;
+      while (branch && branch.parentElement) {
+        const parent = branch.parentElement;
+        for (const element of parent.children) if (element !== branch && !element.inert) { element.inert = true; inerted.push(element); }
+        branch = parent;
+        if (parent === document.body) break;
+      }
       const keyboard = event => {
-        if (event.key === "Escape") { close(); return; }
+        if (event.key === "Escape") { onCloseRef.current(); return; }
         if (event.key !== "Tab") return;
-        const panel = closeRef.current && closeRef.current.closest('[role="dialog"]');
-        const focusable = panel && [...panel.querySelectorAll('button, summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(element => !element.disabled);
-        if (!focusable || !focusable.length) return;
+        const focusable = focusableElements();
+        if (!focusable.length) return;
         const first = focusable[0], last = focusable[focusable.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
       };
       addEventListener("keydown", keyboard);
-      return () => { clearTimeout(timer); removeEventListener("keydown", keyboard); previous.current && previous.current.focus(); };
-    }, [id]);
+      return () => { clearTimeout(timer); removeEventListener("keydown", keyboard); for (const element of inerted) element.inert = false; previous && previous.focus(); };
+    }, [active]);
+  }
+
+  function RawDrawer({id, close}) {
+    const panelRef = useRef(null);
+    const request = useApi(id ? `/api/change/${id}` : "", {}, Boolean(id));
+    useFocusTrap(panelRef, Boolean(id), close);
     if (!id) return null;
     const value = request.data;
-    return html`<div class="drawer-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
-      <header><div><p>source record / ${id}</p><h2 id="drawer-title">Raw change evidence</h2></div><button ref=${closeRef} type="button" aria-label="Close raw change drawer" onClick=${close}>×</button></header>
+    return html`<div class="drawer-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section ref=${panelRef} class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+      <header><div><p>source record / ${id}</p><h2 id="drawer-title">Raw change evidence</h2></div><button type="button" aria-label="Close raw change drawer" onClick=${close}>×</button></header>
       <${ErrorBanner} error=${request.error} reload=${request.reload} />
       ${request.loading && !value && html`<div class="loading"><i></i><p>Reading change record…</p></div>`}
       ${value && html`<div class="drawer-body"><dl><div><dt>Provider</dt><dd>${value.provider_id}</dd></div><div><dt>Model</dt><dd>${value.model_id}</dd></div><div><dt>Field</dt><dd>${value.rendered.label}${value.rendered.qualifier ? ` · ${value.rendered.qualifier}` : ""}</dd></div><div><dt>Observed</dt><dd>${value.detected_at}</dd></div></dl><p class=${`drawer-transition ${semantic(value.rendered)}`}>${value.rendered.old_display} <b>→</b> ${value.rendered.new_display}</p><div class="scrapes"><section><h3>From scrape</h3><p>${value.from_scrape ? `${value.from_scrape.date} · #${value.from_scrape.scrape_id} · ${value.from_scrape.status}` : "Initial observation"}</p></section><section><h3>To scrape</h3><p>${value.to_scrape ? `${value.to_scrape.date} · #${value.to_scrape.scrape_id} · ${value.to_scrape.status}` : "Unavailable"}</p></section></div><details open><summary>Raw JSON record</summary><pre>${JSON.stringify(value, null, 2)}</pre></details></div>`}
@@ -1105,6 +1232,8 @@
       if (!metaRequest.data) return;
       const missing = {};
       for (const [key, value] of Object.entries(defaults(metaRequest.data))) if (state[key] == null || state[key] === "" || Array.isArray(state[key]) && !state[key].length) missing[key] = value;
+      const normalized = resolveState(metaRequest.data, state);
+      if (state.view === "model" && normalized.view !== "model") Object.assign(missing, {view: null, model: null, at: null});
       if (Object.keys(missing).length) replaceState(missing);
     }, [metaRequest.data, JSON.stringify(state)]);
     useEffect(() => {
@@ -1112,7 +1241,7 @@
         const editing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable;
         if (event.key === "Escape" && drawer) { setDrawer(null); return; }
         if (editing || event.metaKey || event.ctrlKey || event.altKey) return;
-        if (event.key === "/") { event.preventDefault(); if (state.view !== "models") write({view: "models"}); setTimeout(() => inputRef.current && inputRef.current.focus(), 0); }
+        if (event.key === "/") { event.preventDefault(); setTimeout(() => inputRef.current && inputRef.current.focus(), 0); }
         else if (["1","2","3"].includes(event.key)) write({view: VIEWS[Number(event.key) - 1]});
       };
       addEventListener("keydown", key); return () => removeEventListener("keydown", key);
@@ -1124,14 +1253,9 @@
     if (!meta) return null;
     const invocation = meta.display_invocation || "model-sentinel";
     const resolved = resolveState(meta, state);
-    const openModel = (provider, model, name, date) => {
-      const pin = `${provider}/${model}`, pins = (resolved.pins || []).filter(value => value !== pin);
-      pins.push(pin);
-      if (pins.length > meta.pin_limit) { const dropped = pins.splice(0, pins.length - meta.pin_limit); setToast(`Pin limit reached. Dropped ${dropped.join(", ")}.`); }
-      write({view: "models", pins, from: clamp(shiftDay(date, -30), meta.date_span), to: clamp(shiftDay(date, 30), meta.date_span)});
-    };
-    return html`<div class="app-shell"><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
-      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>${invocation} scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} inputRef=${inputRef} openRaw=${setDrawer} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} themeKey=${`${theme}:${themeRevision}`} />`}
+    const openModel = (provider, model, name, date) => write({view: "model", model: `${provider}/${model}`, at: date || null});
+    return html`<div class="app-shell" data-view=${resolved.view}><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} openModel=${openModel} inputRef=${inputRef} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
+      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>${invocation} scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "model" ? html`<${ModelView} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} inputRef=${inputRef} themeKey=${`${theme}:${themeRevision}`} />` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} openModel=${openModel} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
   render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));

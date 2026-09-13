@@ -321,17 +321,30 @@ artifact.
 ```bash
 ./model-sentinel browse
 ./model-sentinel browse --provider openrouter
+./model-sentinel browse --view catalog
+./model-sentinel browse --model example-provider/fake-org/test-model-a
 ./model-sentinel browse --no-open --port 8110
 ```
 
 `browse` starts a local history browser over the existing SQLite database:
 
 - **Activity** is an event-first feed with a 180-day heatmap, provider and
-  change facets, bulk-change groups, and raw-value detail.
+  change facets, range presets, bulk-change groups, and raw-value detail.
+  Default detail folds models whose only changes are squelched into one line
+  per day; selecting a category or switching to All shows those model cards.
 - **Models** pins up to eight provider/model pairs and compares their saved
   aspects on synchronized timelines and an event rail.
 - **Catalog** compares saved provider snapshots in a sortable table, with
-  per-cell history sparklines and links back to the timeline or feed.
+  date-snapping snapshot controls, column presets, per-cell history
+  sparklines, and links back to the timeline or feed. Compare mode initially
+  shows changed models only; turn off **Changed only** to inspect the full
+  snapshot.
+
+Every model name opens a dossier containing identity and presence evidence,
+current facts, field-history sparklines, and the complete stored changelog.
+Use the **Timeline** action to graph that model or **That day in Activity** to
+inspect the provider-wide context. The **Find model** box searches every saved
+provider regardless of the current provider filter.
 
 The browser is read-only: it opens SQLite in read-only/query-only mode and does
 not create or update database, config, log, report, or cache files. It is also
@@ -339,11 +352,11 @@ fully offline; Preact, htm, uPlot, CSS, and every other page asset are packaged
 with Model Sentinel, so viewing history makes no network request.
 
 The URL hash contains the selected view and filters, making browser
-back/forward and copied local URLs reproducible. Press `/` to switch to Models
-and focus its model search, `1`, `2`, or `3` to switch views, and `Esc` to close
-drawers or popovers. The theme control supports System, Light, and Dark; the
-choice is stored only in browser `localStorage`, not in Model Sentinel's
-runtime home.
+back/forward and copied local URLs reproducible. Press `/` to focus **Find
+model**, `1`, `2`, or `3` to switch among Activity, Models, and Catalog, and
+`Esc` to close search results, drawers, or popovers. The Appearance disclosure
+offers System, Light, and Dark themes; the choice is stored only in browser
+`localStorage`, not in Model Sentinel's runtime home.
 
 `browse` requires readable `providers.env` and `settings.env` files plus an
 existing database containing at least the Model Sentinel schema. Run
@@ -607,12 +620,19 @@ When notifications fire and you did not explicitly supply `--output`, Model Sent
 
 ## Testing
 
-Create or activate a project virtual environment, install pytest there, and run
-the complete project test suite from this directory:
+Create or activate a project virtual environment, install the development
+dependencies, install Chromium once per machine, and run the complete project
+test suite from this directory:
 
 ```bash
-pytest
+python -m pip install -r requirements-dev.txt
+python -m playwright install chromium
+python -m pytest
 ```
+
+The Playwright browser smoke suite is part of the ordinary test run. It is not
+silently skipped when Chromium is unavailable; install the browser dependency
+before running the suite.
 
 ## Documents
 

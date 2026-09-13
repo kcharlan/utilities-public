@@ -26,7 +26,7 @@ _SAFE_STATIC_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _ENCODED_SEPARATOR = re.compile(r"%(?:2f|5c)", re.IGNORECASE)
 _BUSY_MESSAGE = "The database is busy — a scan may be writing. Try again in a moment."
 _API_ROUTES = frozenset(
-    ("meta", "activity", "heatmap", "series", "events", "catalog", "models")
+    ("meta", "activity", "heatmap", "series", "events", "catalog", "model", "models")
 )
 
 
@@ -292,6 +292,8 @@ def run_browse(
     port: int,
     open_browser: bool,
     initial_provider: str | None,
+    initial_view: str | None = None,
+    initial_model: str | None = None,
     display_invocation: str = "model-sentinel",
 ) -> int:
     server: ThreadingHTTPServer | None = None
@@ -319,11 +321,16 @@ def run_browse(
             _LOG.warning("Port %s is in use; using port %s instead.", port, resolved_port)
         actual_port = server.server_address[1]
         base_url = f"http://127.0.0.1:{actual_port}/"
-        print(f"Model Sentinel browser: {base_url}", flush=True)
+        fragment = []
+        if initial_model is not None:
+            fragment.extend(("view=model", f"model={quote(initial_model, safe='')}"))
+        elif initial_view and initial_view != "activity":
+            fragment.append(f"view={quote(initial_view, safe='')}")
+        if initial_provider is not None:
+            fragment.append(f"providers={quote(initial_provider, safe='')}")
+        browser_url = base_url + (f"#{'&'.join(fragment)}" if fragment else "")
+        print(f"Model Sentinel browser: {browser_url}", flush=True)
         if open_browser:
-            browser_url = base_url
-            if initial_provider is not None:
-                browser_url += f"#providers={quote(initial_provider, safe='')}"
             threading.Thread(
                 target=_open_browser,
                 args=(browser_url,),

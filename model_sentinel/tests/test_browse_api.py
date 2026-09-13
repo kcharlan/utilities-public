@@ -146,7 +146,8 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
     context, facts = browse_context
     result = api.activity(context, {"providers": EXAMPLE_PROVIDER.provider_id})
     assert set(result) == {
-        "total", "page", "page_size", "entries", "rollups", "rollups_by_date",
+        "total", "page", "page_size", "entries", "summary", "rollups",
+        "rollups_by_date",
     }
     assert set(result["rollups"]) == {"squelched", "non_squelched", "noop"}
     assert result["rollups"] == {
@@ -154,16 +155,18 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
         "non_squelched": [],
         "noop": [],
     }
-    assert result["rollups_by_date"] == {
-        day.isoformat(): {
-            "squelched": [["benchmarks.design_arena.score", 1]],
-            "non_squelched": [],
-            "noop": [],
+    for day in facts.scrape_dates[1:]:
+        rollup = result["rollups_by_date"][day.isoformat()]
+        assert rollup["squelched"] == [["benchmarks.design_arena.score", 1]]
+        assert rollup["non_squelched"] == []
+        assert rollup["noop"] == []
+        assert set(rollup) == {
+            "squelched", "non_squelched", "noop", "folded", "summary"
         }
-        for day in facts.scrape_dates[1:]
-    }
     bulk = next(entry for entry in result["entries"] if entry["kind"] == "bulk")
-    assert result["total"] == 9
+    # A1 folds three benchmark-only cards; T0.3 contributes one visible list
+    # transition on the first of those days.
+    assert result["total"] == 7
     assert [entry["kind"] for entry in result["entries"]].count("bulk") == 1
     assert [entry["kind"] for entry in result["entries"]].count("added") == 1
     assert [entry["kind"] for entry in result["entries"]].count("removed") == 1
@@ -202,7 +205,16 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
             until=None,
         )
     }
-    response_ids = [change_id for entry in result["entries"] for change_id in entry["change_ids"]]
+    response_ids = [
+        change_id
+        for entry in result["entries"]
+        for change_id in entry["change_ids"]
+    ] + [
+        change_id
+        for rollup in result["rollups_by_date"].values()
+        for item in rollup["folded"]["items"]
+        for change_id in item["change_ids"]
+    ]
     assert set(response_ids) == source_ids
     assert len(response_ids) == len(source_ids)
     for entry in result["entries"]:
@@ -215,22 +227,68 @@ def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
                 context,
                 {"change_id": str(entry["change_ids_by_change"][index][0])},
             )
-            assert detail["field"] == change["field_path"]
-    squelched_only = next(
-        entry for entry in result["entries"]
-        if entry["kind"] == "changed" and entry["hidden"]["squelched"] and not entry["changes"]
-    )
-    assert len(squelched_only["change_ids"]) == squelched_only["hidden"]["squelched"]
+            # B1 semantic pricing rows retain the stored parent record.
+            assert detail["field"] == change["field_path"] or (
+                detail["field"] == "pricing.overrides"
+                and change["field_path"].startswith("pricing.overrides")
+            )
+    assert sum(
+        rollup["folded"]["models"]
+        for rollup in result["rollups_by_date"].values()
+    ) == 3
 
     heatmap = api.heatmap(context, {"providers": EXAMPLE_PROVIDER.provider_id})
     assert heatmap == [
-        {"date": "2026-08-11", "changed": 0, "added": 0, "removed": 0, "squelched": 1},
+        {"date": "2026-08-11", "changed": 1, "added": 0, "removed": 0, "squelched": 1},
         {"date": "2026-08-12", "changed": 1, "added": 0, "removed": 0, "squelched": 1},
         {"date": "2026-08-13", "changed": 1, "added": 1, "removed": 0, "squelched": 1},
         {"date": "2026-08-14", "changed": 1, "added": 0, "removed": 1, "squelched": 1},
         {"date": "2026-08-15", "changed": 3, "added": 0, "removed": 0, "squelched": 1},
     ]
     assert all(set(day) == {"date", "changed", "added", "removed", "squelched"} for day in heatmap)
+
+
+def test_activity_folds_squelched_only_entries_and_summarizes_signal(
+    browse_context,
+) -> None:
+    context, facts = browse_context
+    day = facts.scrape_dates[1].isoformat()
+    common = {
+        "providers": EXAMPLE_PROVIDER.provider_id,
+        "from": day,
+        "to": day,
+    }
+
+    default = api.activity(context, common)
+    folded = default["rollups_by_date"][day]["folded"]
+    assert all(
+        entry["model_id"] != facts.benchmark_churn_model
+        for entry in default["entries"]
+    )
+    [item] = [
+        item
+        for item in folded["items"]
+        if item["model_id"] == facts.benchmark_churn_model
+    ]
+    assert folded["models"] == 1
+    assert item["hidden"] == 1
+    assert item["change_ids"]
+
+    all_detail = api.activity(context, {**common, "detail": "all"})
+    assert any(
+        entry["model_id"] == facts.benchmark_churn_model
+        for entry in all_detail["entries"]
+    )
+    benchmark_filter = api.activity(
+        context,
+        {**common, "categories": "Benchmarks"},
+    )
+    assert any(
+        entry["model_id"] == facts.benchmark_churn_model
+        for entry in benchmark_filter["entries"]
+    )
+    assert default["summary"]["by_category"] == {"Parameters": 1}
+    assert default["rollups_by_date"][day]["summary"] == default["summary"]
 
 
 def test_activity_associates_expanded_children_with_raw_origin_ids(tmp_path) -> None:
@@ -609,6 +667,25 @@ def test_series_union_axis_scaling_and_events(browse_context) -> None:
     assert events[0]["model"] == f"{EXAMPLE_PROVIDER.provider_id}/{model}"
 
 
+def test_events_apply_detail_visibility_without_hiding_presence(browse_context) -> None:
+    context, facts = browse_context
+    pin = ",".join(
+        f"{EXAMPLE_PROVIDER.provider_id}/{model}"
+        for model in (facts.benchmark_churn_model, facts.removed_model)
+    )
+
+    default = api.events(context, {"models": pin, "detail": "default"})
+    all_events = api.events(context, {"models": pin, "detail": "all"})
+    squelched = api.events(context, {"models": pin, "detail": "squelched"})
+
+    assert not any(event["field"] == "benchmarks.design_arena.score" for event in default)
+    assert any(event["field"] == "benchmarks.design_arena.score" for event in all_events)
+    assert squelched
+    assert all(event["field"] is None or event["squelched"] for event in squelched)
+    for result in (default, all_events, squelched):
+        assert any(event["field"] is None for event in result)
+
+
 def test_catalog_raw_price_diff_and_change_lookup(browse_context) -> None:
     context, facts = browse_context
     model, old_scrape, new_scrape, *_ = facts.price_step
@@ -625,14 +702,16 @@ def test_catalog_raw_price_diff_and_change_lookup(browse_context) -> None:
         },
     )
     row = next(row for row in result["rows"] if row["model_id"] == model)
-    assert set(result) == {"as_of", "compare", "total", "rows"}
-    assert set(row) == {"model_id", "display_name", "presence", "cells"}
+    # C2: compare responses expose server-computed equality and totals.
+    assert set(result) == {"as_of", "compare", "total", "changed_total", "rows"}
+    assert set(row) == {"model_id", "display_name", "presence", "cells", "changed"}
     cell = row["cells"][aspect]
-    assert set(cell) == {"value", "display", "unit", "old_value", "old_display", "change"}
+    assert set(cell) == {"value", "display", "unit", "old_value", "old_display", "change", "changed"}
     assert cell["old_display"] == "$2.00"
     assert cell["display"] == "$3.50"
     assert cell["change"]["old_display"] == "$2.00"
     assert cell["change"]["new_display"] == "$3.50"
+    assert cell["changed"] is True
     unchanged = next(
         candidate for candidate in result["rows"]
         if candidate["presence"] == "present" and candidate["model_id"] != model
@@ -679,6 +758,42 @@ def test_catalog_raw_price_diff_and_change_lookup(browse_context) -> None:
         },
     )
     assert next(row for row in added_catalog["rows"] if row["model_id"] == facts.added_model)["presence"] == "added"
+
+
+def test_catalog_changed_only_filters_after_server_side_equality(browse_context) -> None:
+    context, facts = browse_context
+    model, old_scrape, new_scrape, *_ = facts.price_step
+    aspect = f"{EXAMPLE_PROVIDER.provider_id}:input_price"
+    result = api.catalog(
+        context,
+        {
+            "provider": EXAMPLE_PROVIDER.provider_id,
+            "as_of": str(new_scrape),
+            "compare": str(old_scrape),
+            "columns": aspect,
+            "changed_only": "1",
+        },
+    )
+    assert result["total"] == result["changed_total"] == 1
+    assert [row["model_id"] for row in result["rows"]] == [model]
+
+    added = api.catalog(
+        context,
+        {
+            "provider": EXAMPLE_PROVIDER.provider_id,
+            "as_of": str(facts.added_at_scrape),
+            "compare": str(facts.added_at_scrape - 1),
+            "columns": aspect,
+            "changed_only": "1",
+        },
+    )
+    assert added["changed_total"] == added["total"]
+    assert any(row["model_id"] == facts.added_model and row["presence"] == "added" for row in added["rows"])
+    with pytest.raises(api.BadRequest, match="requires compare"):
+        api.catalog(
+            context,
+            {"provider": EXAMPLE_PROVIDER.provider_id, "as_of": str(new_scrape), "changed_only": "1"},
+        )
     removed_catalog = api.catalog(
         context,
         {
@@ -690,6 +805,105 @@ def test_catalog_raw_price_diff_and_change_lookup(browse_context) -> None:
     )
     assert next(row for row in removed_catalog["rows"] if row["model_id"] == facts.removed_model)["presence"] == "removed"
     json.dumps(result)
+
+
+def test_browse_absent_sides_render_as_em_dash_without_changing_machine_values(
+    browse_context,
+) -> None:
+    context, facts = browse_context
+    cache_read = f"{EXAMPLE_PROVIDER.provider_id}:cache_read_price"
+    cache_write = f"{EXAMPLE_PROVIDER.provider_id}:cache_write_price"
+    catalog = api.catalog(
+        context,
+        {
+            "provider": EXAMPLE_PROVIDER.provider_id,
+            "as_of": str(facts.scrape_ids[-1]),
+            "columns": f"{cache_read},{cache_write}",
+        },
+    )
+
+    for row in catalog["rows"]:
+        for aspect_id in (cache_read, cache_write):
+            assert row["cells"][aspect_id]["value"] is None
+            assert row["cells"][aspect_id]["display"] == "—"
+
+    # T0.2: the browser JSON choke point, unlike text reports, never emits
+    # the historical literal-null spelling for a genuinely absent side.
+    rendered = api.rendered_change_to_json(
+        api.classify_change(
+            FieldChange("pricing.prompt", None, 0.000002),
+            profile=context.profiles[EXAMPLE_PROVIDER.provider_id],
+        )
+    )
+    assert rendered["old_raw"] is None
+    assert rendered["old_display"] == "—"
+
+
+def test_model_dossier_returns_current_facts_and_exact_edge_changelog(
+    browse_context,
+) -> None:
+    context, facts = browse_context
+    model_id = facts.price_step[0]
+    dossier = api.model(
+        context,
+        {"provider": EXAMPLE_PROVIDER.provider_id, "model": model_id},
+    )
+
+    assert dossier["provider_id"] == EXAMPLE_PROVIDER.provider_id
+    assert dossier["provider_label"] == EXAMPLE_PROVIDER.label
+    assert dossier["model_id"] == model_id
+    assert dossier["display_name"] == "Synthetic Test Model A"
+    assert dossier["first_seen"] == "2026-08-10T12:00:00+00:00"
+    assert dossier["last_seen"] == "2026-08-15T12:00:00+00:00"
+    assert dossier["observations"] == 6
+    assert dossier["present_in_latest"] is True
+    input_fact = next(
+        fact
+        for fact in dossier["facts"]
+        if fact["aspect"] == f"{EXAMPLE_PROVIDER.provider_id}:input_price"
+    )
+    assert input_fact["display"] == "$3.50"
+    assert input_fact["last_changed"]["date"] == facts.scrape_dates[2].isoformat()
+    assert dossier["changelog"][0]["date"] == facts.scrape_dates[-1].isoformat()
+    assert dossier["changelog"][-1]["kind"] == "initial"
+    conditional = api.model(
+        context,
+        {"provider": facts.conditional_provider_id, "model": facts.conditional_pricing_model},
+    )
+    price_edge = next(item for item in conditional["changelog"] if item["date"] == "2026-07-02")
+    assert any(change["label"].startswith("Conditional pricing") for change in price_edge["changes"])
+    assert not any("pricing.overrides[" in change["field_path"] for change in price_edge["changes"])
+    override_aspect = next(
+        aspect for aspect in context.aspects
+        if aspect.provider_id == facts.conditional_provider_id and aspect.field_name == "pricing.overrides"
+    )
+    override_series = api.series(
+        context,
+        {
+            "models": f"{facts.conditional_provider_id}/{facts.conditional_pricing_model}",
+            "aspects": override_aspect.id,
+        },
+    )
+    assert override_series["series"][0]["kind"] == "list"
+    assert max(value for value in override_series["series"][0]["values"] if value is not None) == 6
+
+    removed = api.model(
+        context,
+        {"provider": EXAMPLE_PROVIDER.provider_id, "model": facts.removed_model},
+    )
+    assert removed["present_in_latest"] is False
+    assert {item["kind"] for item in removed["changelog"]} >= {"initial", "removed"}
+    removal = next(item for item in removed["changelog"] if item["kind"] == "removed")
+    assert removal["changes"][0]["field_path"] == "model_presence"
+    assert removal["change_ids_by_change"] == [removal["change_ids"]]
+
+    with pytest.raises(api.BadRequest, match="unknown provider"):
+        api.model(context, {"provider": "missing", "model": model_id})
+    with pytest.raises(api.BadRequest, match="unknown model"):
+        api.model(
+            context,
+            {"provider": EXAMPLE_PROVIDER.provider_id, "model": "fake-org/missing"},
+        )
 
 
 def test_catalog_price_resolver_preserves_present_zero_values(tmp_path) -> None:
@@ -1163,6 +1377,12 @@ def test_empty_history_endpoint_responses(tmp_path) -> None:
         "page": 1,
         "page_size": 100,
         "entries": [],
+        "summary": {
+            "added": 0,
+            "removed": 0,
+            "changed": 0,
+            "by_category": {},
+        },
         "rollups": {"squelched": [], "non_squelched": [], "noop": []},
         "rollups_by_date": {},
     }

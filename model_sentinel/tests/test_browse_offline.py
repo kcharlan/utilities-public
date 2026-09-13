@@ -651,6 +651,33 @@ def test_activity_frontend_preserves_list_semantics_and_date_local_rollups() -> 
     assert "entry.change_ids[Math.min(index" not in source
 
 
+def test_activity_wires_summary_and_folded_models_into_the_feed() -> None:
+    source = _read_asset("app.js")
+    feed = source[
+        source.index("function Feed(") : source.index("function Activity(")
+    ]
+    summary = source[
+        source.index("function SummaryStrip(") : source.index("function FoldedLine(")
+    ]
+
+    assert "rollupLine(group.date)" in feed
+    assert "<${FoldedLine}" in feed
+    assert "openModel=${openModel}" in feed
+    assert "<${SummaryStrip}" in feed
+    assert "write({categories" in summary
+
+
+def test_change_table_explains_equal_length_list_content_changes() -> None:
+    source = _read_asset("app.js")
+    table = source[
+        source.index("function ChangeTable(") : source.index("function Entry(")
+    ]
+
+    assert 'change.kind === "list"' in table
+    assert "change.old_display === change.new_display" in table
+    assert "contents changed" in table
+
+
 def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:
     source = _read_asset("app.js")
 
@@ -658,6 +685,31 @@ def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:
     assert "detail=${state.detail}" in source
     assert 'detail === "all"' in source
     assert 'detail === "squelched"' in source
+
+
+def test_filter_bar_wires_date_range_presets_as_user_navigation() -> None:
+    source = _read_asset("app.js")
+    filter_bar = source[
+        source.index("function FilterBar(") : source.index("function Heatmap(")
+    ]
+    presets = source[
+        source.index("function RangePresets(") : source.index("function SummaryStrip(")
+    ]
+
+    assert "<${RangePresets}" in filter_bar
+    assert "write({from" in presets
+    for label in ("7d", "30d", "90d", "180d", "All"):
+        assert f'"{label}"' in presets
+
+
+def test_facets_do_not_duplicate_the_global_detail_control() -> None:
+    source = _read_asset("app.js")
+    facets = source[
+        source.index("function Facets(") : source.index("function semantic(")
+    ]
+
+    assert "state.detail" not in facets
+    assert 'label="Visibility"' not in facets
 
 
 def test_frontend_pages_activity_and_merges_stable_entry_identities() -> None:
@@ -746,6 +798,32 @@ def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
     assert "meta.pin_limit" in source
     assert "meta.categories" in source
     assert "aspect.squelched" in source
+
+
+def test_models_canonicalize_default_timeline_aspects_after_first_pin() -> None:
+    source = _read_asset("app.js")
+    models = source[
+        source.index("function Models(") : source.index("function catalogScrapes(")
+    ]
+
+    assert "function defaultTimelineAspects(" in source
+    assert "replaceState({aspects: defaultTimelineAspects(" in models
+
+
+def test_model_dossier_route_wires_changelog_and_sparklines_without_a_fourth_tab() -> None:
+    source = _read_asset("app.js")
+    model_view = source[
+        source.index("function ModelView(") : source.index("function RawDrawer(")
+    ]
+
+    assert '"model"' in source[source.index("const HASH_KEYS") : source.index("function decode(")]
+    assert '"at"' in source[source.index("const HASH_KEYS") : source.index("function decode(")]
+    assert 'state.view === "model"' in source
+    assert "pinParts(state.model" in source
+    assert "<${ModelView}" in source
+    assert "<${ChangeTable}" in model_view
+    assert "<${SparklinePopover}" in model_view
+    assert 'const VIEWS = ["activity", "models", "catalog"]' in source
 
 
 def test_model_typeahead_portal_escapes_sidebar_and_cleans_up() -> None:
@@ -881,7 +959,10 @@ def test_model_typeahead_preserves_listbox_keyboard_contract() -> None:
     overlay = source[
         source.index("function TypeaheadOverlay(") : source.index("function Pins(")
     ]
-    pins = source[source.index("function Pins(") : source.index("function ambiguousAspectIds(")]
+    # B4: the shared typeahead owns this contract for both Pins and FindModel.
+    typeahead = source[
+        source.index("function ModelTypeahead(") : source.index("function Pins(")
+    ]
 
     assert "getBoundingClientRect()" in overlay
     assert "typeaheadPlacement(" in overlay
@@ -916,32 +997,32 @@ def test_model_typeahead_preserves_listbox_keyboard_contract() -> None:
     assert "placement ?" in overlay
     assert "style=${placement}" in overlay
 
-    listbox_match = re.search(r'const (\w+) = "pin-results";', pins)
-    query_match = re.search(r'const \[(\w+), (\w+)\] = useState\(""\);', pins)
-    assert listbox_match is not None and query_match is not None
+    query_match = re.search(r'const \[(\w+), (\w+)\] = useState\(""\);', typeahead)
+    assert query_match is not None
     query, clear_query = map(re.escape, query_match.groups())
-    open_match = re.search(rf"const (\w+) = Boolean\({query}\.trim\(\)\);", pins)
+    open_match = re.search(rf"const (\w+) = Boolean\({query}\.trim\(\)\);", typeahead)
     assert open_match is not None
-    listbox_id = re.escape(listbox_match.group(1))
+    listbox_id = "listboxId"
     open_state = re.escape(open_match.group(1))
-    assert re.search(rf"aria-expanded=\$\{{{open_state}\}}", pins)
+    assert re.search(rf"aria-expanded=\$\{{{open_state}\}}", typeahead)
     assert re.search(
-        rf"aria-controls=\$\{{{open_state} \? {listbox_id} : undefined\}}", pins
+        rf"aria-controls=\$\{{{open_state} \? {listbox_id} : undefined\}}", typeahead
     )
     option_match = re.search(
         rf'const (\w+) = document\.getElementById\({listbox_id}\)\?\.querySelector\("button"\)',
-        pins,
+        typeahead,
     )
     assert option_match is not None
     option = re.escape(option_match.group(1))
-    assert "event.preventDefault()" in pins
-    assert re.search(rf"{option}\.focus\(\)", pins)
-    assert "nextElementSibling" not in pins
-    assert 'role="listbox"' in pins
-    assert 'role="option"' in pins
-    assert 'event.key === "Escape"' in pins
-    assert len(re.findall(rf'{clear_query}\(""\)', pins)) >= 2
-    assert re.search(rf"open=\$\{{{open_state}\}}", pins)
+    assert "event.preventDefault()" in typeahead
+    assert re.search(rf"{option}\.focus\(\)", typeahead)
+    assert 'role="listbox"' in typeahead
+    assert 'role="option"' in typeahead
+    assert 'event.key === "Escape"' in typeahead
+    assert len(re.findall(rf'{clear_query}\(""\)', typeahead)) >= 2
+    assert re.search(rf"open=\$\{{{open_state}\}}", typeahead)
+    assert source.count("function ModelTypeahead(") == 1
+    assert source.count("<${ModelTypeahead}") == 2
 
 
 def test_model_typeahead_css_is_fixed_bounded_overlay() -> None:
@@ -1380,7 +1461,8 @@ def test_catalog_frontend_uses_provider_scoped_saved_scrapes_and_canonical_defau
     assert 'const dir = ["asc", "desc"].includes(state.dir) ? state.dir : "asc"' in source
     assert "patch.sort = sort" in source
     assert "patch.dir = dir" in source
-    assert "function Catalog({meta, state, write, replaceState, themeKey})" in source
+    # C1/C2/C3 add catalog collaborators while preserving canonicalization.
+    assert "function Catalog({meta, state, write, replaceState, openModel, toast, themeKey})" in source
     assert "if (Object.keys(patch).length) replaceState(patch)" in source
     assert "replaceState=${replaceState}" in source
 
@@ -1394,7 +1476,9 @@ def test_catalog_table_supports_filter_sort_paging_and_semantic_diffs() -> None:
     assert 'aria-sort=${sortAria("model_id")}' in source
     assert "write({sort: aspect.id, dir: nextSortDirection(aspect.id)})" in source
     assert "Math.ceil(data.total / CATALOG_PAGE_SIZE)" in source
-    assert "cellChanged(cell)" in source
+    # C2: the server is the single source of truth for value equality.
+    assert "cellChanged" not in source
+    assert "cell && cell.changed" in source
     assert "semantic(cell.change)" in source
     assert '`catalog-row --presence-${row.presence}`' in source
     assert "position: sticky" in styles
@@ -1439,10 +1523,11 @@ def test_catalog_sparkline_traps_focus_inerts_background_and_resizes() -> None:
     styles = _read_asset("app.css")
     sparkline = source[source.index("function SparklinePopover("):source.index("function CatalogTable(")]
 
-    assert 'if (event.key !== "Tab") return' in sparkline
-    assert "const focusable = panel && [...panel.querySelectorAll" in sparkline
-    assert "element.inert = true" in sparkline
-    assert "element.inert = false" in sparkline
+    # B5: both dialogs share one focus trap implementation.
+    assert "useFocusTrap(panelRef, true, close)" in sparkline
+    assert source.count('if (event.key !== "Tab") return') == 1
+    assert source.count("element.inert = true") == 1
+    assert source.count("element.inert = false") == 1
     assert "const observer = new ResizeObserver" in sparkline
     assert "plot.setSize({width, height: 80})" in sparkline
     assert "observer.disconnect()" in sparkline
@@ -1458,6 +1543,29 @@ def test_catalog_feed_cross_link_bounds_activity_to_compared_scrapes() -> None:
     assert "const dates = [compare.date, asOf.date].sort()" in source
     assert "compare.completed_at.slice" not in source
     assert "asOf.completed_at.slice" not in source
+
+
+def test_history_browser_enhancement_controls_are_wired_to_hash_state() -> None:
+    source = _read_asset("app.js")
+    styles = _read_asset("app.css")
+    pickers = source[source.index("function Pickers(") : source.index("function ColumnChooser(")]
+    filter_bar = source[source.index("function FilterBar(") : source.index("function Heatmap(")]
+
+    # C1: two date-based saved-snapshot controls replace snapshot selects.
+    assert pickers.count("<${SnapshotPicker}") == 2
+    assert "Compare with previous" in pickers
+    assert "<select" not in pickers
+    # C2: compare filtering and paging survive reload through the hash.
+    hash_keys = source[source.index("const HASH_KEYS") : source.index("function decode(")]
+    assert '"changed"' in hash_keys and '"page"' in hash_keys
+    assert "changed_only: compare && state.changed" in source
+    # C3: presets and the model column stay available across wide tables.
+    assert "<${ColumnPresets}" in source
+    assert '.catalog-table tbody th[scope="row"]' in styles
+    assert ".catalog-table thead th:first-child" in styles
+    # D2: theme stays functional inside a secondary disclosure.
+    assert '<details class="appearance"><summary>Appearance</summary>' in filter_bar
+    assert 'label="Theme"' in filter_bar
 
 
 @pytest.mark.parametrize(

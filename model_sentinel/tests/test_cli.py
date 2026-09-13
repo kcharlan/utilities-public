@@ -328,6 +328,30 @@ def test_browse_help_lists_browser_options(capsys) -> None:
     assert "--port" in captured.out
     assert "--no-open" in captured.out
     assert "--provider" in captured.out
+    assert "--view" in captured.out
+    assert "--model" in captured.out
+    assert "browse --view catalog" in captured.out
+
+
+def test_browse_model_requires_provider_and_model_id(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["browse", "--model", "nope"])
+    assert exc_info.value.code == 2
+    assert "expected PROVIDER/MODEL_ID" in capsys.readouterr().err
+
+
+def test_browse_model_rejects_unknown_provider_after_opening_history(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    build_fixture_db(runtime_home / "model_sentinel.db")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["browse", "--model", "missing-provider/fake-model"])
+
+    assert exc_info.value.code == 2
+    assert "Unknown provider for --model: missing-provider" in capsys.readouterr().err
 
 
 def test_browse_missing_database_exits_without_creating_it(
@@ -393,6 +417,8 @@ def test_browse_dispatches_resolved_invocation_before_runtime_writes(
     assert received["port"] == 8123
     assert received["open_browser"] is False
     assert received["initial_provider"] is None
+    assert received["initial_view"] == "activity"
+    assert received["initial_model"] is None
     assert received["display_invocation"] == expected_invocation
     assert received["db"].connection().execute("PRAGMA query_only").fetchone()[0] == 1
     received["db"].close_all()
@@ -404,6 +430,9 @@ def test_browse_dispatches_resolved_invocation_before_runtime_writes(
         (("browse", "--port", "0", "--no-open"), None, 0),
         (("browse", "--port", "0"), None, 1),
         (("browse", "--port", "0", "--provider", "openrouter"), "#providers=openrouter", 1),
+        (("browse", "--port", "0", "--view", "catalog", "--no-open"), "#view=catalog", 0),
+        (("browse", "--port", "0", "--model", "openrouter/fake-org/test-model-a", "--no-open"), "#view=model&model=openrouter%2Ffake-org%2Ftest-model-a", 0),
+        (("browse", "--port", "0", "--provider", "openrouter", "--model", "openrouter/fake-org/test-model-a", "--no-open"), "#view=model&model=openrouter%2Ffake-org%2Ftest-model-a&providers=openrouter", 0),
     ),
 )
 def test_browse_server_lifecycle_and_browser_open(
@@ -461,7 +490,11 @@ def test_browse_server_lifecycle_and_browser_open(
     captured = capsys.readouterr()
     line = captured.out.strip()
     assert line.startswith("Model Sentinel browser: http://127.0.0.1:")
-    assert line.endswith("/")
+    # B6: the printed URL is the same directly usable deep link as the opener URL.
+    if expected_fragment:
+        assert line.endswith(expected_fragment)
+    else:
+        assert line.endswith("/")
     assert lifecycle == [
         "serve",
         "shutdown",
