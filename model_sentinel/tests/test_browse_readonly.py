@@ -153,7 +153,7 @@ def test_threads_receive_distinct_connections_and_close_all_closes_each_one(
 
     def query_after_close() -> bool:
         connection = database.connection()
-        assert connection.execute("SELECT COUNT(*) FROM scrapes").fetchone()[0] == 9
+        assert connection.execute("SELECT COUNT(*) FROM scrapes").fetchone()[0] == 11
         connection_ids.put(id(connection))
         ready.wait(timeout=5)
         assert release.wait(timeout=5)
@@ -183,7 +183,7 @@ def test_short_lived_threads_close_connections_and_do_not_grow_registry(
 
     def open_and_query() -> sqlite3.Connection:
         connection = database.connection()
-        assert connection.execute("SELECT COUNT(*) FROM scrapes").fetchone()[0] == 9
+        assert connection.execute("SELECT COUNT(*) FROM scrapes").fetchone()[0] == 11
         return connection
 
     for _ in range(40):

@@ -84,7 +84,7 @@ def test_date_span_covers_successful_saved_scrapes_only(tmp_path: Path) -> None:
     with _connection(database_path) as connection:
         span = queries.date_span(connection)
 
-    assert span == (facts.scrape_dates[0], date(2026, 8, 18))
+    assert span == (date(2026, 7, 1), date(2026, 8, 18))
 
 
 def test_date_span_is_none_without_successful_saved_scrapes() -> None:
@@ -330,6 +330,57 @@ def test_catalog_rows_reflects_exact_scrape_and_keeps_raw_metadata_json(tmp_path
     assert json.loads(model["metadata_json"])["id"] == facts.model_ids[0]
 
 
+def test_model_presence_and_snapshot_row_are_model_scoped(tmp_path: Path) -> None:
+    database_path = tmp_path / "fixture.db"
+    facts = build_fixture_db(database_path)
+
+    with _connection(database_path) as connection:
+        presence = queries.model_presence(
+            connection,
+            provider_id="example-provider",
+            model_id=facts.price_step[0],
+        )
+        row = queries.snapshot_model_row(
+            connection,
+            scrape_id=facts.scrape_ids[-1],
+            provider_id="example-provider",
+            model_id=facts.price_step[0],
+            columns=["input_price"],
+            paths=["pricing.prompt"],
+        )
+
+    assert presence == {
+        "first_seen": "2026-08-10T12:00:00+00:00",
+        "last_seen": "2026-08-15T12:00:00+00:00",
+        "observations": 6,
+        "latest_scrape": {
+            "scrape_id": facts.scrape_ids[-1],
+            "date": facts.scrape_dates[-1],
+            "completed_at": "2026-08-15T12:00:00+00:00",
+            "status": "success",
+        },
+    }
+    assert row is not None
+    assert row["display_name"] == "Synthetic Test Model A"
+    assert row["input_price"] == 3.5
+    assert row[queries.path_value_key("pricing.prompt")] == 0.0000035
+
+    with _connection(database_path) as connection:
+        assert queries.model_presence(
+            connection,
+            provider_id="example-provider",
+            model_id="fake-org/missing-model",
+        ) is None
+        assert queries.snapshot_model_row(
+            connection,
+            scrape_id=facts.scrape_ids[-1],
+            provider_id="example-provider",
+            model_id="fake-org/missing-model",
+            columns=[],
+            paths=[],
+        ) is None
+
+
 def test_catalog_rows_keeps_fixed_canonical_and_path_keys_distinct(tmp_path: Path) -> None:
     database_path = tmp_path / "fixture.db"
     facts = build_fixture_db(database_path)
@@ -447,6 +498,12 @@ def test_db_providers_lists_all_database_providers(tmp_path: Path) -> None:
         rows = queries.db_providers(connection)
 
     assert rows == [
+        {
+            "provider_id": "conditional-example",
+            "label": "Conditional Example",
+            "kind": "openrouter",
+            "enabled": False,
+        },
         {
             "provider_id": "example-provider",
             "label": "Example Provider",

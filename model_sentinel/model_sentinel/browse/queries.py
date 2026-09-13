@@ -298,6 +298,71 @@ def catalog_rows(
 
 
 @_translate_busy
+def model_presence(
+    connection: sqlite3.Connection,
+    *,
+    provider_id: str,
+    model_id: str,
+) -> dict[str, Any] | None:
+    row = connection.execute(
+        """SELECT sm.scrape_id, s.completed_at, s.status,
+                  COUNT(*) OVER () AS observations,
+                  MIN(s.completed_at) OVER () AS first_seen,
+                  MAX(s.completed_at) OVER () AS last_seen
+           FROM snapshot_models AS sm
+           JOIN scrapes AS s ON s.scrape_id = sm.scrape_id
+           WHERE sm.provider_id = ? AND sm.provider_model_id = ?
+             AND s.status = 'success' AND s.saved_snapshot = 1
+           ORDER BY s.completed_at DESC, sm.scrape_id DESC
+           LIMIT 1""",
+        (provider_id, model_id),
+    ).fetchone()
+    if row is None:
+        return None
+    completed_at = str(row["completed_at"])
+    return {
+        "first_seen": str(row["first_seen"]),
+        "last_seen": str(row["last_seen"]),
+        "observations": int(row["observations"]),
+        "latest_scrape": {
+            "scrape_id": int(row["scrape_id"]),
+            "date": local_date_for(completed_at),
+            "completed_at": completed_at,
+            "status": row["status"],
+        },
+    }
+
+
+@_translate_busy
+def snapshot_model_row(
+    connection: sqlite3.Connection,
+    *,
+    scrape_id: int,
+    provider_id: str,
+    model_id: str,
+    columns: Sequence[str],
+    paths: Sequence[str],
+) -> dict[str, Any] | None:
+    columns, paths = _validated_identifiers(columns, paths)
+    selections = ["display_name", "metadata_json"]
+    selections.extend(f'"{column}"' for column in columns)
+    parameters: list[Any] = []
+    for path in paths:
+        selections.append(f'json_extract(metadata_json, ?) AS "{path_value_key(path)}"')
+        parameters.append(_json_path(path))
+    parameters.extend((scrape_id, provider_id, model_id))
+    row = connection.execute(
+        f"""SELECT {', '.join(selections)}
+            FROM snapshot_models
+            WHERE scrape_id = ? AND provider_id = ? AND provider_model_id = ?""",
+        parameters,
+    ).fetchone()
+    if row is None:
+        return None
+    return {key: row[key] for key in row.keys()}
+
+
+@_translate_busy
 def search_models(
     connection: sqlite3.Connection,
     *,

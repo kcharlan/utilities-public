@@ -17,13 +17,20 @@ from ..reporting import (
     BULK_CHANGE_MIN_MODELS,
     REPORT_DETAIL_MODES,
     ReportDetailPolicy,
+    build_model_event_semantic_core,
     detail_policy_from_settings,
     group_planned_entries_by_bulk,
     is_squelched_only,
     plan_changes_provider,
+    pricing_event_from_stored,
     visibility_of,
 )
-from ..storage import recent_change_rows
+from ..storage import (
+    _build_comparison_events,
+    _comparison_event_envelopes,
+    _selected_comparison_change_rows,
+    recent_change_rows,
+)
 from ..time_utils import local_date_for
 from . import queries
 from .aspects import CATEGORIES, Aspect
@@ -445,6 +452,19 @@ def _serialize_entry_group(
     if kind_filter and original_kind not in kind_filter:
         return None
     changes = list(representative.display.visible if representative.display else ())
+    semantic_core = getattr(representative, "semantic_core", None)
+    interpretation = getattr(semantic_core, "interpretation", None)
+    if semantic_core is not None and semantic_core.has_semantic_composite and interpretation is not None:
+        old_policy = interpretation.old_policy
+        new_policy = interpretation.new_policy
+        changes.insert(
+            0,
+            FieldChange(
+                "pricing.overrides",
+                None if old_policy is None else old_policy.source_value,
+                None if new_policy is None else new_policy.source_value,
+            ),
+        )
     kind = "bulk" if len(entries) > 1 else original_kind
     if category_filter:
         changes = [
@@ -526,8 +546,13 @@ def _serialize_entry_group(
         "display_name": representative.display_name,
         "kind": kind,
         "changes": [
-            rendered_change_to_json(classify_change(change, profile=profile))
+            rendered_change_to_json(
+                replace(rendered, label="Conditional pricing policy")
+                if change.field_name == "pricing.overrides" and semantic_core is not None and semantic_core.has_semantic_composite
+                else rendered
+            )
             for change in changes
+            for rendered in (classify_change(change, profile=profile),)
         ],
         "hidden": hidden,
         "change_ids": change_ids,
@@ -881,6 +906,11 @@ def events(ctx: ApiContext, params: Mapping[str, str]) -> list[dict[str, Any]]:
             if row["field_name"] is None:
                 semantic, direction = "coverage", row["change_kind"]
             else:
+                visibility = visibility_of(row["field_name"], policy)
+                if common.detail == "default" and visibility == "squelched":
+                    continue
+                if common.detail == "squelched" and visibility != "squelched":
+                    continue
                 rendered = classify_change(
                     FieldChange(row["field_name"], row["old_value"], row["new_value"]), profile=profile
                 )
@@ -996,6 +1026,22 @@ def _catalog_machine_value(
     return None
 
 
+def _aspect_cell(
+    row: dict[str, Any] | None,
+    aspect: Aspect,
+    profile: ProviderProfile,
+) -> dict[str, Any]:
+    raw = _raw_aspect_value(row, aspect, profile)
+    rendered = rendered_change_to_json(
+        classify_change(FieldChange(aspect.field_name, None, raw), profile=profile)
+    )
+    return {
+        "value": _catalog_machine_value(row, aspect, raw, profile),
+        "display": rendered["new_display"],
+        "unit": aspect.unit,
+    }
+
+
 def _catalog_sort_key(value: Any) -> tuple[Any, ...]:
     if isinstance(value, bool):
         return (0, int(value))
@@ -1032,6 +1078,11 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         compare = _scrape_for_catalog(ctx, provider_id, params.get("compare"), "compare")
         if (compare["completed_at"], compare["scrape_id"]) >= (as_of["completed_at"], as_of["scrape_id"]):
             raise BadRequest("compare must be earlier than as_of")
+    changed_only = params.get("changed_only")
+    if changed_only not in (None, "", "1"):
+        raise BadRequest("changed_only must be 1")
+    if changed_only == "1" and compare is None:
+        raise BadRequest("changed_only requires compare")
     aspects = _catalog_aspects(ctx, provider_id, params)
     columns = [aspect.column for aspect in aspects if aspect.column]
     paths = [aspect.path for aspect in aspects if aspect.path]
@@ -1059,10 +1110,10 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         for aspect in aspects:
             new_raw = _raw_aspect_value(new_row, aspect, profile)
             old_raw = _raw_aspect_value(old_row, aspect, profile)
-            stored = _catalog_machine_value(new_row, aspect, new_raw, profile)
+            cell = _aspect_cell(new_row, aspect, profile)
             rendered = classify_change(FieldChange(aspect.field_name, old_raw, new_raw), profile=profile)
             rendered_json = rendered_change_to_json(rendered)
-            new_display = rendered_json["new_display"]
+            new_display = cell["display"]
             old_display = rendered_json["old_display"]
             if aspect.kind == "boolean":
                 old_display = "—" if old_raw is None else "on" if bool(old_raw) else "off"
@@ -1079,15 +1130,20 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
                 )
                 stable_json = rendered_change_to_json(stable)
                 new_display = old_display = stable_json["new_display"]
-            cell = {"value": stored, "display": new_display, "unit": aspect.unit}
+            cell["display"] = new_display
             if compare is not None:
                 cell.update({
                     "old_value": _catalog_machine_value(old_row, aspect, old_raw, profile),
                     "old_display": old_display,
                     "change": rendered_json,
+                    "changed": not _same_value(old_raw, new_raw),
                 })
             cells[aspect.id] = cell
-        output.append({"model_id": model_id, "display_name": display_name, "presence": presence, "cells": cells})
+        row_changed = presence != "present" or any(cell.get("changed", False) for cell in cells.values())
+        output.append({"model_id": model_id, "display_name": display_name, "presence": presence, "cells": cells, "changed": row_changed})
+    changed_total = sum(1 for row in output if row["changed"])
+    if changed_only == "1":
+        output = [row for row in output if row["changed"]]
     sort = params.get("sort", "model_id")
     direction = params.get("dir", "asc")
     if direction not in ("asc", "desc"):
@@ -1109,11 +1165,247 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
     page_size = _integer(params, "page_size", 200, maximum=500)
     total = len(output)
     start = (page - 1) * page_size
-    return {
+    response = {
         "as_of": _json_scrape(as_of),
         "compare": None if compare is None else _json_scrape(compare),
         "total": total,
         "rows": output[start:start + page_size],
+    }
+    if compare is not None:
+        response["changed_total"] = changed_total
+    return response
+
+
+def model(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
+    provider_id = params.get("provider")
+    model_id = params.get("model")
+    if not provider_id:
+        raise BadRequest("provider is required")
+    if provider_id not in ctx.profiles:
+        raise BadRequest(f"unknown provider: {provider_id}")
+    if not model_id:
+        raise BadRequest("model is required")
+    detail = params.get("detail") or getattr(ctx.settings, "report_detail", "default")
+    if detail not in REPORT_DETAIL_MODES:
+        raise BadRequest("detail must be one of default, all, squelched")
+
+    connection = ctx.db.connection()
+    presence = queries.model_presence(
+        connection,
+        provider_id=provider_id,
+        model_id=model_id,
+    )
+    if presence is None:
+        raise BadRequest(f"unknown model: {model_id}")
+    profile = ctx.profiles[provider_id]
+    aspects = tuple(
+        aspect for aspect in ctx.aspects if aspect.provider_id == provider_id
+    )
+    columns = [aspect.column for aspect in aspects if aspect.column]
+    paths = [aspect.path for aspect in aspects if aspect.path]
+    latest_scrape = presence["latest_scrape"]
+    row = queries.snapshot_model_row(
+        connection,
+        scrape_id=latest_scrape["scrape_id"],
+        provider_id=provider_id,
+        model_id=model_id,
+        columns=columns,
+        paths=paths,
+    )
+    if row is None:
+        raise BadRequest(f"unknown model: {model_id}")
+
+    envelopes = _comparison_event_envelopes(
+        connection,
+        provider_id=provider_id,
+        model_id=model_id,
+        since=None,
+        until=None,
+        exclude_initial=False,
+    )
+    identities = tuple(envelope.identity for envelope in envelopes)
+    selected_rows = _selected_comparison_change_rows(
+        connection,
+        identities,
+        provider_id=provider_id,
+        model_id=model_id,
+        since=None,
+        until=None,
+        exclude_initial=False,
+    )
+    stored_events = _build_comparison_events(envelopes, selected_rows)
+    semantic_cores = {}
+    for stored_event in stored_events:
+        pricing_event = pricing_event_from_stored(stored_event)
+        semantic_cores[pricing_event.identity] = build_model_event_semantic_core(
+            pricing_event, profile
+        )
+    scrape_lookup = {
+        scrape["scrape_id"]: scrape
+        for scrape in queries.list_scrapes(connection)
+        if scrape["provider_id"] == provider_id
+    }
+    changelog: list[dict[str, Any]] = []
+    for event in stored_events:
+        identity = event.identity
+        day = local_date_for(event.detected_at)
+        base = {
+            "date": day.isoformat(),
+            "detected_at": event.detected_at,
+            "from_scrape": None
+            if identity.from_scrape_id is None
+            else _json_scrape(scrape_lookup[identity.from_scrape_id]),
+            "to_scrape": _json_scrape(scrape_lookup[identity.to_scrape_id]),
+        }
+        if identity.from_scrape_id is None:
+            changelog.append(
+                {
+                    **base,
+                    "kind": "initial",
+                    "changes": [],
+                    "hidden": {"squelched": 0, "unclassified": 0, "noop": 0},
+                    "change_ids": [source.change_id for source in event.source_rows],
+                    "change_ids_by_change": [],
+                }
+            )
+            continue
+        edge_key = (
+            identity.provider_id,
+            identity.provider_model_id,
+            identity.from_scrape_id,
+            identity.to_scrape_id,
+        )
+        rows = [
+            {
+                "change_id": source.change_id,
+                "provider_id": source.provider_id,
+                "provider_model_id": source.provider_model_id,
+                "display_name": event.display_name,
+                "change_kind": source.change_kind,
+                "field_name": source.field_name,
+                "old_value": source.old_value,
+                "new_value": source.new_value,
+                "detected_at": source.detected_at,
+                "_comparison_edge": edge_key,
+            }
+            for source in event.source_rows
+        ]
+        plan = plan_changes_provider(
+            {model_id: rows},
+            ctx.policy_for(detail),
+            profile,
+            semantic_cores,
+        )
+        items = [
+            item
+            for grouping in group_planned_entries_by_bulk(plan.entries)
+            if (
+                item := _serialize_entry_group(
+                    list(grouping.entries),
+                    {model_id: rows},
+                    profile,
+                    set(),
+                    set(),
+                    Counter(),
+                    day,
+                    provider_id,
+                )
+            )
+            is not None
+        ]
+        if not items:
+            continue
+        item = items[0]
+        if item["kind"] in {"added", "removed"}:
+            item["changes"] = [
+                _render_presence_change(
+                    model_id=model_id,
+                    kind=item["kind"],
+                    profile=profile,
+                )
+            ]
+            item["change_ids_by_change"] = [list(item["change_ids"])]
+        changelog.append(
+            {
+                **base,
+                "kind": item["kind"],
+                "changes": item["changes"],
+                "hidden": item["hidden"],
+                "change_ids": item["change_ids"],
+                "change_ids_by_change": item["change_ids_by_change"],
+            }
+        )
+    changelog.reverse()
+
+    latest_provider_scrape = next(
+        (
+            scrape
+            for scrape in queries.list_scrapes(connection)
+            if scrape["provider_id"] == provider_id
+            and scrape["status"] == "success"
+            and scrape["saved"]
+        ),
+        None,
+    )
+    facts = []
+    for aspect in aspects:
+        raw = _raw_aspect_value(row, aspect, profile)
+        if raw is None:
+            continue
+        cell = _aspect_cell(row, aspect, profile)
+        last_changed = None
+        for item in changelog:
+            for index, change in enumerate(item["changes"]):
+                if change["field_path"] != aspect.field_name:
+                    continue
+                ids = item["change_ids_by_change"][index]
+                last_changed = {
+                    "date": item["date"],
+                    "old_display": change["old_display"],
+                    "new_display": change["new_display"],
+                    "change_id": ids[0] if ids else None,
+                }
+                break
+            if last_changed is not None:
+                break
+        facts.append(
+            {
+                "aspect": aspect.id,
+                "category": aspect.category,
+                "label": aspect.label,
+                "qualifier": aspect.qualifier,
+                "kind": aspect.kind,
+                "unit": aspect.unit,
+                **cell,
+                "last_changed": last_changed,
+            }
+        )
+
+    configured = next(
+        (provider for provider in ctx.providers if provider.provider_id == provider_id),
+        None,
+    )
+    db_provider = next(
+        (row for row in ctx.db_providers if row["provider_id"] == provider_id),
+        None,
+    )
+    return {
+        "provider_id": provider_id,
+        "provider_label": configured.label
+        if configured is not None
+        else db_provider["label"],
+        "model_id": model_id,
+        "display_name": row["display_name"],
+        "first_seen": presence["first_seen"],
+        "last_seen": presence["last_seen"],
+        "observations": presence["observations"],
+        "present_in_latest": bool(
+            latest_provider_scrape
+            and latest_provider_scrape["scrape_id"] == latest_scrape["scrape_id"]
+        ),
+        "latest_scrape": _json_scrape(latest_scrape),
+        "facts": facts,
+        "changelog": changelog,
     }
 
 

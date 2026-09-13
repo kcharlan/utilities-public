@@ -252,14 +252,17 @@ def _kind_for(
     profile: ProviderProfile,
     json_type: str | None,
 ) -> AspectKind:
+    # Composite pricing policies are arrays, not numeric price amounts. Their
+    # leaves remain price aspects, while the parent is safely charted as list
+    # membership/count state.
+    if json_type == "array":
+        return "list"
     if profile.is_price_amount_field(field_name):
         return "price"
     if field_name in profile.known_boolean_fields or (
         source == "column" and name in _BOOLEAN_COLUMNS
     ) or json_type in {"true", "false"}:
         return "boolean"
-    if json_type == "array":
-        return "list"
     if profile.is_count_field(field_name):
         return "count"
     if json_type in {"integer", "real"} or source == "column" and name in _TOKEN_COLUMNS:

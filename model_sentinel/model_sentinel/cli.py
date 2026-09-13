@@ -121,6 +121,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.exit(status=2, message=f"{exc}\n")
 
 
+def _browse_model_pin(value: str) -> str:
+    if "/" not in value or any(not part for part in value.split("/", 1)):
+        raise argparse.ArgumentTypeError("expected PROVIDER/MODEL_ID")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     invocation = _invocation_name()
     parser = argparse.ArgumentParser(
@@ -152,6 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
             "      Show OpenRouter changes in a specific date range.\n\n"
             f"  {invocation} browse --no-open\n"
             "      Start the read-only local history browser without opening a browser window.\n\n"
+            f"  {invocation} browse --view catalog --no-open\n"
+            "      Start directly in the saved model catalog.\n\n"
+            f"  {invocation} browse --model example-provider/fake-org/test-model-a --no-open\n"
+            "      Open one saved model dossier.\n\n"
             "First run:\n"
             "  If no baseline exists yet, run:\n"
             f"      {invocation} scan --save\n"
@@ -247,10 +257,20 @@ def build_parser() -> argparse.ArgumentParser:
     browse_parser = subparsers.add_parser(
         "browse",
         help="Explore saved model history in a read-only local browser.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            f"  {invocation} browse --view catalog\n"
+            "      Open the saved model catalog.\n\n"
+            f"  {invocation} browse --model example-provider/fake-org/test-model-a --no-open\n"
+            "      Print a link to one saved model dossier without opening it.\n"
+        ),
     )
     browse_parser.add_argument("--port", type=int, default=8110, help="preferred local server port")
     browse_parser.add_argument("--no-open", action="store_true", help="do not open a browser window")
     browse_parser.add_argument("--provider", help="initial configured provider ID")
+    browse_parser.add_argument("--view", choices=("activity", "models", "catalog"), default="activity", help="initial browser view")
+    browse_parser.add_argument("--model", type=_browse_model_pin, help="initial model dossier as PROVIDER/MODEL_ID")
 
     healthcheck_parser = subparsers.add_parser(
         "healthcheck",
@@ -270,6 +290,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_browse_command(*, args: argparse.Namespace, loaded) -> int:
+    from .browse import queries
     from .browse.readonly import MissingDatabaseError, SchemaError, open_readonly
     from .browse.server import run_browse
 
@@ -300,6 +321,16 @@ def run_browse_command(*, args: argparse.Namespace, loaded) -> int:
         )
         raise SystemExit(2) from None
 
+    if args.model:
+        model_provider = args.model.split("/", 1)[0]
+        known_providers = {provider.provider_id for provider in loaded.providers} | {
+            str(row["provider_id"]) for row in queries.db_providers(database.connection())
+        }
+        if model_provider not in known_providers:
+            print(f"Unknown provider for --model: {model_provider}", file=sys.stderr)
+            database.close_all()
+            raise SystemExit(2)
+
     try:
         return run_browse(
             db=database,
@@ -307,6 +338,8 @@ def run_browse_command(*, args: argparse.Namespace, loaded) -> int:
             port=args.port,
             open_browser=not args.no_open,
             initial_provider=args.provider,
+            initial_view=args.view,
+            initial_model=args.model,
             display_invocation=_invocation_name(),
         )
     finally:

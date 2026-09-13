@@ -21,6 +21,10 @@ from model_sentinel.reporting import (
 )
 from model_sentinel.storage import Store
 from model_sentinel.time_utils import local_date_for
+from tests.conditional_pricing_fixtures import (
+    SYNTHETIC_SCHEDULED_RATE_MODEL_ID,
+    synthetic_scheduled_rate_models,
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,8 @@ class FixtureFacts:
     bulk_list_models: tuple[str, ...]
     benchmark_churn_model: str
     equal_length_list_step: tuple[str, date]
+    conditional_pricing_model: str
+    conditional_provider_id: str
 
 
 EXAMPLE_PROVIDER = ProviderConfig(
@@ -62,6 +68,17 @@ OTHER_PROVIDER = ProviderConfig(
     price_multiplier=1,
     price_divisor=1,
     enabled=True,
+)
+CONDITIONAL_PROVIDER = ProviderConfig(
+    provider_id="conditional-example",
+    label="Conditional Example",
+    kind="openrouter",
+    base_url="https://conditional.invalid/api/v1",
+    models_path="/models",
+    credential_env_var="CONDITIONAL_EXAMPLE_FAKE_TOKEN",
+    price_multiplier=1_000_000,
+    price_divisor=1,
+    enabled=False,
 )
 
 
@@ -172,7 +189,7 @@ def build_fixture_db(path: Path) -> FixtureFacts:
     store = Store(path)
     store.initialize()
     store.upsert_provider_configs(
-        (EXAMPLE_PROVIDER, OTHER_PROVIDER),
+        (EXAMPLE_PROVIDER, OTHER_PROVIDER, CONDITIONAL_PROVIDER),
         updated_at="2026-08-01T12:00:00+00:00",
     )
 
@@ -232,6 +249,24 @@ def build_fixture_db(path: Path) -> FixtureFacts:
         previous_models=other_models,
     )
 
+    conditional_old, conditional_new = synthetic_scheduled_rate_models()
+    conditional_first, conditional_models = _save_scrape(
+        store,
+        CONDITIONAL_PROVIDER,
+        completed_at="2026-07-01T12:00:00+00:00",
+        raw_models=[conditional_old],
+        previous_id=None,
+        previous_models=[],
+    )
+    _save_scrape(
+        store,
+        CONDITIONAL_PROVIDER,
+        completed_at="2026-07-02T12:00:00+00:00",
+        raw_models=[conditional_new],
+        previous_id=conditional_first,
+        previous_models=conditional_models,
+    )
+
     ids = tuple(example_ids)
     return FixtureFacts(
         provider_ids=(EXAMPLE_PROVIDER.provider_id, OTHER_PROVIDER.provider_id),
@@ -248,6 +283,8 @@ def build_fixture_db(path: Path) -> FixtureFacts:
         bulk_list_models=tuple(f"fake-org/test-model-{suffix}" for suffix in "abc"),
         benchmark_churn_model="fake-org/test-model-a",
         equal_length_list_step=("fake-org/test-model-e", local_date_for(example_times[1])),
+        conditional_pricing_model=SYNTHETIC_SCHEDULED_RATE_MODEL_ID,
+        conditional_provider_id=CONDITIONAL_PROVIDER.provider_id,
     )
 
 

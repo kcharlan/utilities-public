@@ -49,9 +49,14 @@ def page(browser: Browser) -> Iterator[Page]:
         if message.type == "error"
         else None,
     )
+    instance._allowed_console_errors = []
     yield instance
     assert page_errors == []
-    assert console_errors == []
+    assert [
+        error
+        for error in console_errors
+        if not any(allowed in error for allowed in instance._allowed_console_errors)
+    ] == []
     context.close()
 
 
@@ -106,6 +111,10 @@ def test_activity_opens_raw_drawer_and_restores_focus(
     dialog = page.get_by_role("dialog", name="Raw change evidence")
     expect(dialog).to_be_visible()
     expect(dialog).to_contain_text(re.compile(r"source record / \d+"))
+    # B5: Tab from the last focusable control wraps to the first.
+    dialog.locator("summary").last.focus()
+    page.keyboard.press("Tab")
+    expect(dialog.get_by_role("button", name="Close raw change drawer")).to_be_focused()
     page.keyboard.press("Escape")
     expect(dialog).to_be_hidden()
     expect(row).to_be_focused()
@@ -259,17 +268,123 @@ def test_catalog_sort_filter_and_sparkline(page: Page, smoke_server) -> None:
     page.get_by_role("searchbox", name="Filter models").fill("test-model-d")
     expect(table.get_by_role("row")).to_have_count(2)
     page.get_by_role("button", name=re.compile(r"Open Input history")).click()
-    expect(page.get_by_role("dialog", name=re.compile("Input over full history"))).to_be_visible()
+    dialog = page.get_by_role("dialog", name=re.compile("Input over full history"))
+    expect(dialog).to_be_visible()
+    dialog.get_by_role("button", name="Open timeline").focus()
+    page.keyboard.press("Tab")
+    expect(dialog.get_by_role("button", name="Close sparkline")).to_be_focused()
+
+
+def test_model_dossier_deep_link_timeline_unknown_and_back(page: Page, smoke_server) -> None:
+    _, facts = smoke_server
+    model_id, _, _, *_ = facts.price_step
+    changed_day = facts.scrape_dates[2].isoformat()
+    goto(
+        page,
+        smoke_server,
+        f"#view=model&model=example-provider%2F{model_id.replace('/', '%2F')}&at={changed_day}",
+    )
+    expect(page.locator(".view-tabs [aria-current=page]")).to_have_count(0)
+    expect(page.locator(".model-breadcrumb")).to_contain_text("Synthetic Test Model A")
+    facts_panel = page.locator(".dossier-facts")
+    expect(facts_panel).to_contain_text("Input")
+    expect(facts_panel).to_contain_text(f"last changed {changed_day}")
+    expect(page.locator(".dossier-edge").filter(has_text="initial")).to_be_visible()
+    target = page.locator(f'[data-changelog-date="{changed_day}"]')
+    expect(target).to_have_class(re.compile("is-target"))
+    assert target.evaluate("element => { const r = element.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; }")
+
+    page.get_by_role("button", name="Timeline", exact=True).click()
+    expect(page.locator(".app-shell")).to_have_attribute("data-view", "models")
+    expect(page.locator(".timeline-panel").first).to_be_visible()
+    page.go_back()
+    expect(page.locator(".app-shell")).to_have_attribute("data-view", "model")
+
+    page._allowed_console_errors.append("400 (Bad Request)")
+    goto(page, smoke_server, "#view=model&model=example-provider%2Ffake-org%2Fmissing")
+    expect(page.get_by_role("heading", name="No saved history for fake-org/missing")).to_be_visible()
+    expect(page.get_by_role("searchbox", name="Find model")).to_be_focused()
+
+
+def test_every_model_surface_and_global_find_open_dossier(page: Page, smoke_server) -> None:
+    _, facts = smoke_server
+    day = facts.scrape_dates[2].isoformat()
+    goto(page, smoke_server, f"#view=activity&providers=example-provider&from={day}&to={day}")
+    page.get_by_role("button", name=re.compile("Synthetic Test Model A")).click()
+    expect(page).to_have_url(re.compile(r"view=model.*at=2026-08-12"))
+
+    goto(page, smoke_server, "#view=catalog&providers=example-provider")
+    page.get_by_role("table").get_by_role("button", name=re.compile("Synthetic Test Model A")).click()
+    expect(page.locator(".app-shell")).to_have_attribute("data-view", "model")
+
+    goto(page, smoke_server, "#view=models&providers=example-provider&pins=example-provider%2Ffake-org%2Ftest-model-a")
+    page.locator(".pins .model-link").click()
+    expect(page.locator(".app-shell")).to_have_attribute("data-view", "model")
+
+    goto(page, smoke_server, "#view=catalog&providers=example-provider")
+    page.keyboard.press("/")
+    finder = page.get_by_role("searchbox", name="Find model")
+    expect(finder).to_be_focused()
+    finder.fill("test-model-b")
+    expect(page.get_by_role("option", name=re.compile("Synthetic Test Model B"))).to_be_visible()
+    finder.press("ArrowDown")
+    page.keyboard.press("Enter")
+    expect(page.locator(".model-breadcrumb")).to_contain_text("Synthetic Test Model B")
+
+
+def test_catalog_snapshot_compare_changed_only_presets_and_sticky_column(page: Page, smoke_server) -> None:
+    _, facts = smoke_server
+    goto(page, smoke_server, "#view=catalog&providers=example-provider")
+    as_of = page.get_by_role("textbox", name="As of")
+    as_of.fill("2026-08-16")
+    expect(as_of).to_have_value("2026-08-15")
+    page.get_by_role("button", name="Earlier As of snapshot").click()
+    expect(as_of).to_have_value("2026-08-14")
+    page.get_by_role("button", name="Later As of snapshot").click()
+    expect(as_of).to_have_value("2026-08-15")
+
+    as_of.fill(facts.scrape_dates[2].isoformat())
+    page.get_by_role("button", name="Compare with previous").click()
+    toggle = page.get_by_role("button", name="Changed only · 1")
+    expect(toggle).to_be_visible()
+    expect(page.get_by_role("table").get_by_role("row")).to_have_count(2)
+    toggle.click()
+    expect(page).to_have_url(re.compile(r"changed=0"))
+    expect(page.get_by_role("table").get_by_role("row")).to_have_count(5)
+
+    page.get_by_role("button", name="Pricing", exact=True).click()
+    expect(page).to_have_url(re.compile(r"cols=.*input_price"))
+    page.get_by_role("button", name="All", exact=True).last.click()
+    table_wrap = page.locator(".catalog-table-wrap")
+    first_model = page.locator('.catalog-table tbody th[scope="row"]').first
+    value_cell = page.locator(".catalog-table tbody td").first
+    before = first_model.bounding_box(), value_cell.bounding_box()
+    table_wrap.evaluate("element => { element.scrollLeft = 400; }")
+    after = first_model.bounding_box(), value_cell.bounding_box()
+    assert before[0] and after[0] and abs(before[0]["x"] - after[0]["x"]) < 1
+    assert before[1] and after[1] and before[1]["x"] != after[1]["x"]
+
+
+def test_models_default_detail_omits_squelched_rail_marks(page: Page, smoke_server) -> None:
+    _, facts = smoke_server
+    pin = f"example-provider%2F{facts.benchmark_churn_model.replace('/', '%2F')}"
+    goto(page, smoke_server, f"#view=models&providers=example-provider&pins={pin}&from={facts.scrape_dates[0]}&to={facts.scrape_dates[-1]}")
+    default_count = page.locator(".event-mark").count()
+    page.get_by_role("group", name="Detail").get_by_role("button", name="All", exact=True).click()
+    expect(page.locator(".event-mark")).to_have_count(default_count + 5)
 
 
 def test_theme_choice_survives_reload_without_extra_storage(
     page: Page, smoke_server
 ) -> None:
     goto(page, smoke_server)
+    # D2: appearance is deliberately secondary to the history filters.
+    page.get_by_text("Appearance", exact=True).click()
     page.get_by_role("button", name="Dark", exact=True).click()
     expect(page.locator("html")).to_have_attribute("data-theme", "dark")
     page.reload()
     expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+    page.get_by_text("Appearance", exact=True).click()
     page.get_by_role("button", name="Light", exact=True).click()
     expect(page.locator("html")).to_have_attribute("data-theme", "light")
     page.get_by_role("button", name="System", exact=True).click()

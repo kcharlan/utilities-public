@@ -211,6 +211,14 @@ def test_api_routes_and_errors(browse_server) -> None:
     assert _request(server, "GET", "/api/change/999999")[0] == 404
     assert _request(server, "GET", "/api/nope")[0] == 404
 
+    status, _, body = _request(
+        server,
+        "GET",
+        "/api/model?provider=example-provider&model=fake-org/test-model-a",
+    )
+    assert status == 200
+    assert json.loads(body)["model_id"] == "fake-org/test-model-a"
+
 
 def test_duplicate_query_values_are_rejected(browse_server) -> None:
     server, _, _, _ = browse_server
@@ -318,6 +326,7 @@ def test_locked_database_returns_retryable_503_from_every_query_path(
 ) -> None:
     targets = (
         "/api/activity",
+        "/api/model?provider=example-provider&model=fake-org/test-model-a",
         "/api/series?models=example-provider/fake-org/test-model-a&aspects=example-provider:input_price",
         "/api/events?models=example-provider/fake-org/test-model-a",
     )

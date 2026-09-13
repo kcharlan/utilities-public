@@ -278,12 +278,23 @@ cross-provider changes, provider configuration, and healthcheck results.
 ### History browser
 
 The `browse` subcommand serves one packaged Preact SPA with Activity, Models,
-and Catalog views over a per-thread, read-only SQLite connection. It dispatches
+and Catalog views plus a model dossier route over a per-thread, read-only SQLite connection. It dispatches
 before runtime directory or rotating-log initialization, serves only vendored
 assets, and keeps shareable view state in the URL hash. Theme preference is
 the sole browser-local state. The API contracts, interaction model, visual
 semantics, failure behavior, and packaging constraints are documented in the
 project README and enforced by the browse test suite.
+
+The dossier route is `view=model&model=<provider>/<model-id>` and is backed by
+`/api/model`. The API reuses the storage layer's exact stored comparison-edge
+helpers and builds the same conditional-pricing semantic cores used by CLI
+history reports. This keeps edge identity, presence transitions, and composite
+pricing interpretation aligned across artifacts. One accepted difference
+remains: the report planner's unclassified-field budget is shared across every
+model in a feed call, while each dossier plans one model per edge, so their
+hidden-unclassified counts can differ. The aspect catalog is frozen when the
+server starts; fields first observed during that server session appear in
+Facts, Catalog, and Models after restart.
 
 Format support is intentionally command-specific:
 
