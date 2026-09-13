@@ -1,13 +1,17 @@
-Built-in strict runner pack for OpenAI Codex CLI driven planning, resolution,
+# Codex Pack
+
+Built-in strict runner pack for OpenAI Codex CLI-driven planning, resolution,
 execution, verification, and auto-fix.
 
-Prerequisites:
+## Prerequisites
+
 - `codex` must be installed and authenticated on `PATH`.
 - `git` must be available on `PATH`.
 - For git-worktree isolation, set `COGNITIVE_SWITCHYARD_REPO_ROOT` to the
   repository root that workers should execute inside.
 
-Runtime notes:
+## Runtime Notes
+
 - Planning, resolution, execution, and auto-fix all use Codex.
 - Execution delegates worker calls to `scripts/execute`, which invokes `codex exec`.
 - Verification uses `scripts/verify` through the pack-root environment exported

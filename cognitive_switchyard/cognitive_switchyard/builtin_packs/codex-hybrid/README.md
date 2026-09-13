@@ -1,14 +1,18 @@
+# Codex Hybrid Pack
+
 Built-in hybrid runner pack using Claude for planning, resolution, and auto-fix,
 with Codex handling execution.
 
-Prerequisites:
+## Prerequisites
+
 - `claude` must be installed and authenticated on `PATH`.
 - `codex` must be installed and authenticated on `PATH`.
 - `git` must be available on `PATH`.
 - For git-worktree isolation, set `COGNITIVE_SWITCHYARD_REPO_ROOT` to the
   repository root that workers should execute inside.
 
-Runtime notes:
+## Runtime Notes
+
 - Planning, resolution, and auto-fix use Claude.
 - Execution delegates worker calls to `scripts/execute`, which invokes `codex exec`.
 - Verification uses `scripts/verify` through the pack-root environment exported

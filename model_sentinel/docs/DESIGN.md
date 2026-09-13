@@ -352,11 +352,6 @@ cover every monetary unit, while absolute headlines and impact scores compare
 only the active profile's declared primary group. OpenRouter's global panels
 are explicitly token-rate-only.
 
-The HTML triage layout, cost-only color vocabulary, price-movement model,
-sorting, navigation, raw-value behavior, and implementation amendments are
-specified in
-[report_readability_redesign_design.md](./report_readability_redesign_design.md).
-
 Price Movement uses five fixed, mutually exclusive model buckets: higher only,
 lower only, both directions, added/removed price coverage only, and
 conditional/variable pricing. Conditional events therefore remain visible

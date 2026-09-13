@@ -59,7 +59,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `div_conv` – Privacy-safe standalone converter for supported Fidelity dividend and Vanguard activity CSV exports, using local-only account/security mappings to produce cooked CSV and QIF output.
 - `dloc` – Daily Lines of Code utility that parses git history to report insertions, deletions, and net changes by date.
 - `docker` – Grouped home for containerized utilities (see `docker/README.md`).
-- `docker/actual-data` – Docker Compose configuration for Actual Budget; private application data lives in untracked runtime directories.
+- `docker/actual-data` – Docker helpers for Actual Budget. The current scripts mount the project directory as `/data`, so run them only from a private operational copy and never from a public working copy that could stage financial data.
 - `docker/docker-disk-compact` – macOS Zsh utility for reclaiming Docker Desktop disk space and measuring the real physical size of `Docker.raw`.
 - `docker/excalidraw` – Docker Compose setup for a local Excalidraw whiteboard instance.
 - `docker/llm_collector` - Tooling for collecting LLM usage data, including the browser extension, collector service, and Docker runtime.
@@ -81,11 +81,11 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `md-json` – Moneydance JSON export to CSV converter with account hierarchy resolution and split transaction handling.
 - `media-dater` – CLI wrapper for `exiftool` that safely renames image and video files by their creation date with collision handling and dry-run support.
 - `mem_snapshots` – Two manual shell commands for capturing macOS memory and process snapshots; scheduling is optional and not included.
-- `model_sentinel` – Local CLI tracker for authenticated LLM model lists across providers. Stores saved snapshots in SQLite, diffs adds/removes/metadata drift over time, supports history queries, and can run on a schedule via user-level `launchd`.
-- `mls-tracker` – uv-managed FastAPI + React SPA playoff tracker for both MLS conferences, with dynamic ESPN-sourced team branding, configurable cutoff position, and clinch/elimination logic.
+- `model_sentinel` – Local CLI tracker for authenticated LLM model lists across providers. Stores saved snapshots in SQLite, diffs additions/removals/metadata drift, serves an offline Activity/Models/Catalog history browser, and can run on a schedule via user-level `launchd`.
+- `mls-tracker` – uv-managed FastAPI + React SPA playoff tracker for both MLS conferences, with dynamic ESPN-sourced team branding, a configurable cutoff position, and planning-oriented clinch/elimination indicators that do not model fixtures or tiebreakers.
 - `moneydance backup rotation` – Standalone shell script that prunes NAS-hosted Moneydance backups by retention day, with optional file and syslog logging.
 - `pdf-split` – Zsh utility that slices large PDFs into size-limited chunks using `qpdf`.
-- `router-log-analyzer` – Standalone NETGEAR router log analyzer with persistent SQLite-backed learning, baseline/config imports, PDF or plain-text parsing, and text/Markdown/HTML/JSON reporting.
+- `router-log-analyzer` – Standalone NETGEAR and TP-Link Archer router log analyzer with SQLite-backed learning where stable router identity is available, baseline/policy imports, PDF or plain-text parsing, and text/Markdown/HTML/JSON reporting.
 - `routerview` – Self-hosted OpenRouter analytics dashboard for CSV imports, with calendar-aligned comparisons, cumulative cost tracking, saved views, and full export. Replaces the official OpenRouter Activity page without any live integration setup.
 - `storage_monitor` – Local-first macOS disk-usage and cleanup console. Scans APFS volumes, local snapshots, caches, model stores, and large files, then serves a React dashboard with treemap breakdowns, drill-down directory exploration (with file/folder icons, on-demand scanning, Reveal in Finder, and per-directory Rescan), watchlist-based cleanup actions, and snapshot management.
 - `reversible-skew` – Burrows-Wheeler/Move-to-Front experiment with reversible block-wise compression and passthrough heuristics.

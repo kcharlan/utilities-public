@@ -15,13 +15,15 @@ Projects how long a cash buffer and investment principal remain solvent under mo
 - Uses investment sales to restore the cash buffer to its floor. When sufficient assets exist and the asset sale rate is below 100%, the gross sale is `shortfall / (1 - rate)` so the net proceeds fill the shortfall.
 - Reduces principal by the gross liquidation, not the net proceeds. Gross liquidation also drives the permanent, cumulative investment-income reduction configured by the income modifier.
 - Simulates monthly even when the yearly view is selected; yearly rows aggregate groups of 12 monthly results.
-- Supports forward-looking overrides ("pins") from a selected month. Expense, investment income, buffer, and investment cells can also be edited directly to create an override.
+- Supports forward-looking overrides ("pins") from a selected month. The full row editor can change buffer, investments, investment income, income modifier, cash floor, external income, expense, inflation, recurring-income tax, and asset-sale tax. Only fields actually changed by the user are stored.
+- Expense, investment income, buffer, and investment cells can also be edited directly. In yearly view, an edit applies at the first month represented by that row.
+- Lists pins in the **Adjustments** panel, where they can be opened or removed. Pins share one chronological model, compose with later pins, and remain in page memory only.
 - Shows summary statistics, a trajectory chart, a detailed table, and CSV export.
 - Treats a period count of `0` as "run to depletion," subject to a 1,200-month (100-year) safety cap.
 
 Projection dates are anchored to the browser's current local month when the page loads. Month 1 is the following calendar month. Overrides exist only in page memory and disappear on reload. Google Fonts are loaded from the network when available; the calculator otherwise uses local fallback fonts.
 
-In CSV exports, `tax_paid` is the combined recurring-income and asset-sale tax. The appended `income_tax_paid`, `sale_tax_paid`, and `net_sale_proceeds` columns provide the components and net cash received from sales.
+In CSV exports, `tax_paid` is the combined recurring-income and asset-sale tax. The `overrides` column records pin values as deterministic semicolon-separated `key=value` pairs. The appended `income_tax_paid`, `sale_tax_paid`, and `net_sale_proceeds` columns provide the tax components and net cash received from sales.
 
 The tax model is a planning simplification. It does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules.
 
@@ -75,6 +77,6 @@ Both calculators use `APR / 12` monthly compounding and round monthly amounts to
 3. Click **Calculate** where provided. `drawdown.html` also recalculates shortly after an input changes.
 4. Use the page's export controls if you need CSV data or, for the early-loan calculator, a PNG chart.
 
-Run the dependency-free date regression test with `node --test tests/*.test.js`. No package installation is required. When modifying a calculator, also verify its default scenario, representative edge cases such as zero interest, and its download controls in a browser.
+Run the dependency-free Node regression suite with `node --test tests/*.test.js`. It covers drawdown date anchoring, asset-sale tax and liquidation behavior, pin normalization, yearly aggregation, summary output, and CSV schema/rounding. No package installation is required. Pin editing interactions and the other calculators still require browser checks; verify their default scenarios, representative edge cases such as zero interest, and download controls when changing them.
 
 These tools provide planning estimates, not financial, tax, or investment advice.

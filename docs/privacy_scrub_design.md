@@ -4,9 +4,9 @@
 
 ## Decision
 
-The existing `example/utilities` repository remains private and quarantined. It will not be history-rewritten or made public again.
+The original source repository remains private and quarantined. It will not be history-rewritten or made public again.
 
-This repository was created as `example/utilities-public` from an audited, history-free export of tracked source. It was kept private until tests, privacy audits, review, and fresh-clone verification completed.
+This public repository was created from an audited, history-free export of tracked source. It was kept private until tests, privacy audits, review, and fresh-clone verification completed.
 
 ## Why this replaces history rewriting
 

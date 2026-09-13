@@ -10,7 +10,7 @@
 - router/system and explicitly mapped security events
 - router metadata, client snapshot counts, parse coverage, and repeated snapshot content
 
-The program is designed for one person reviewing their own router exports on one machine. It has no server, account, multi-user, or distributed-processing layer. See [Future Multi-Vendor Support](FUTURE_MULTI_VENDOR_SUPPORT.md) for the historical adapter proposal and its current implementation status.
+The program is designed for one person reviewing their own router exports on one machine. It has no server, account, multi-user, or distributed-processing layer. The supported NETGEAR and TP-Link parsers are explicit in-file adapters; there is no declarative profile, third-party plugin, or generic vendor runtime.
 
 ## Quick Start
 

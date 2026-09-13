@@ -625,9 +625,10 @@ dependencies, install Chromium once per machine, and run the complete project
 test suite from this directory:
 
 ```bash
-python -m pip install -r requirements-dev.txt
-python -m playwright install chromium
-python -m pytest
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
+.venv/bin/python -m pytest
 ```
 
 The Playwright browser smoke suite is part of the ordinary test run. It is not
@@ -639,4 +640,3 @@ before running the suite.
 - [`docs/DESIGN.md`](./docs/DESIGN.md)
 - [`docs/LAUNCHD.md`](./docs/LAUNCHD.md)
 - [`docs/provider_schema_notes.md`](./docs/provider_schema_notes.md)
-- [`docs/report_readability_redesign_design.md`](./docs/report_readability_redesign_design.md)
