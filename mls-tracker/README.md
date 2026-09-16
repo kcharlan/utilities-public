@@ -10,7 +10,7 @@ A local dashboard for exploring MLS playoff races across both conferences. It pu
 
 Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`); the launcher uses a PEP 723 inline-metadata header. The first run resolves its dependencies (fastapi, uvicorn, requests) into uv's shared cache — that invocation may briefly hit the network; subsequent runs are fast. A browser tab opens automatically to `http://127.0.0.1:8501`.
 
-The dashboard also needs internet access while running: the backend calls ESPN, and the frontend loads React, Babel, Tailwind CSS, Lucide Icons, and Google Fonts from CDNs.
+The dashboard also needs internet access while running: the backend calls ESPN, and the frontend loads React, Babel, exact-version `@tailwindcss/browser` 4.3.3, Lucide Icons, and Google Fonts from CDNs.
 
 ### Options
 
@@ -37,7 +37,7 @@ The scenario model assumes a 34-game season and projects only the team currently
 Single-file FastAPI + embedded React SPA (no Node.js build tooling required).
 
 - **Backend**: FastAPI + uvicorn serving JSON API endpoints and an HTML template.
-- **Frontend**: React 18 + Tailwind CSS + Lucide Icons, all loaded via CDN with in-browser Babel JSX transpilation.
+- **Frontend**: React 18 + `@tailwindcss/browser` 4.3.3 + Lucide Icons, all loaded via CDN with in-browser Babel JSX transpilation.
 - **Data sources**:
   - Standings: `https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings?season={year}`
   - Teams: `https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/teams`
@@ -46,12 +46,22 @@ Single-file FastAPI + embedded React SPA (no Node.js build tooling required).
 
 The embedded, build-free SPA intentionally stays on the React 18 UMD global
 contract. React 19 does not publish the same UMD artifacts and would require a
-module/bundler migration. Tailwind stays on the classic Play CDN; 3.4.17 is
-the newest version that service actually serves (the 3.4.19 URL returns a
-runtime error). Moving to Tailwind 4 requires replacing the classic CDN path
-and revisiting the inline configuration. Browser smoke coverage protects this
-boundary and the Lucide UMD API. Babel Standalone remains on major 7 for the
-inline `text/babel` transform; major 8 needs a separate transform migration.
+module/bundler migration. Tailwind uses the exact `@tailwindcss/browser` 4.3.3
+package and CSS-first `@theme` tokens, with an explicit class-based dark-mode
+variant. The exact URL prevents package-version resolution drift, but runtime
+CDN delivery is not byte-immutable and still requires network access when the
+asset is not cached. Babel Standalone remains on major 7 for the inline
+`text/babel` transform; major 8 needs a separate transform migration.
+
+### Browser support
+
+The automated browser suite runs with Playwright Chromium and verifies the
+Tailwind resource graph, representative computed styles, dark-mode
+persistence, refresh behavior, and page/console error cleanliness. Tailwind
+4's manual client floors for this browser-delivered UI are Chrome 111, Safari 16.4,
+and Firefox 128. Safari and Firefox are not covered by the automated
+browser test, so browser-specific behavior on those clients requires manual
+verification.
 
 ## API Endpoints
 

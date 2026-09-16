@@ -25,7 +25,7 @@ MLS Tracker starts a local web server bound to `127.0.0.1` and opens the corresp
 
 Install [uv](https://docs.astral.sh/uv/) first (`brew install uv`). The launcher declares Python 3.12+ and its runtime dependencies (FastAPI, uvicorn, and requests) in a PEP 723 header. On first launch, uv resolves them into its shared cache; later launches reuse that cache.
 
-**Requirements:** uv and an internet connection. The backend fetches data from ESPN, while the browser loads React, Babel, Tailwind CSS, Lucide Icons, and Google Fonts from CDNs.
+**Requirements:** uv and an internet connection. The backend fetches data from ESPN, while the browser loads React, Babel, exact-version `@tailwindcss/browser` 4.3.3, Lucide Icons, and Google Fonts from CDNs. Tailwind uses embedded CSS-first theme tokens and class-based dark mode.
 
 ### Data Source
 
@@ -204,6 +204,12 @@ A React error boundary also catches UI crashes and shows a full-page error overl
 ---
 
 ## 11. Quick Reference
+
+### Browser compatibility
+
+Playwright Chromium provides the automated browser coverage. The manual
+compatibility floors are Chrome 111, Safari 16.4, and Firefox 128; Safari and
+Firefox are not automated by this project.
 
 ### CLI Flags
 
