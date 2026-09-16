@@ -19,7 +19,9 @@ import json
 import os
 import re
 import urllib.request
+from collections import Counter
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -40,14 +42,206 @@ pytestmark = pytest.mark.e2e
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = PROJECT_ROOT / "launchmaster"
+README = PROJECT_ROOT / "README.md"
+
+
+@pytest.fixture(autouse=True)
+def fail_on_unexpected_browser_errors(request):
+    """Make every Playwright page test reject uncaught browser errors."""
+    if "page" not in request.fixturenames:
+        yield
+        return
+
+    page = request.getfixturevalue("page")
+    errors = _capture_browser_errors(page)
+
+    yield
+
+    assert errors == [], f"Unexpected browser errors: {errors}"
+
+
+def _capture_browser_errors(page):
+    """Attach strict error listeners and return their shared capture list."""
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on(
+        "console",
+        lambda message: errors.append(message.text)
+        if message.type == "error"
+        else None,
+    )
+    return errors
+
+
+def _is_react_package_resource(resource_url):
+    """Match React package path segments, including bare package roots."""
+    path = urlsplit(resource_url).path
+    return re.search(
+        r"(?:^|/)(?:react|react-dom|react-is)(?:@[^/]+)?(?:/|$)",
+        path,
+    ) is not None
+
+
+def _assert_react_peer_graph(resource_urls):
+    """Require the one supported esm.sh React peer/module topology."""
+    required_wrappers = Counter({
+        ("/react@19.3.0", ""): 1,
+        ("/react@19.3.0/jsx-runtime", ""): 1,
+        ("/react-dom@19.3.0", "external=react"): 1,
+        ("/react-dom@19.3.0/client", "external=react"): 1,
+    })
+    wrapper_counts = Counter()
+    compiled_counts = Counter()
+    compiled_targets = {}
+    react_dom_external_markers = {}
+    react_is_seen = False
+
+    for resource_url in resource_urls:
+        parsed = urlsplit(resource_url)
+        assert (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.fragment,
+        ) == ("https", "esm.sh", ""), (
+            f"unexpected React resource origin: {resource_url}"
+        )
+
+        wrapper_signature = (parsed.path, parsed.query)
+        if wrapper_signature in required_wrappers:
+            wrapper_counts[wrapper_signature] += 1
+            continue
+        if wrapper_signature == (
+            "/react-is@19.3.0",
+            "external=react",
+        ):
+            react_is_seen = True
+            wrapper_counts[wrapper_signature] += 1
+            continue
+
+        if parsed.query:
+            raise AssertionError(f"unexpected React resource: {resource_url}")
+
+        react_match = re.fullmatch(
+            r"/react@19\.3\.0/([a-z][a-z0-9_-]*)/"
+            r"(react|jsx-runtime)\.mjs",
+            parsed.path,
+        )
+        if react_match:
+            target, module_name = react_match.groups()
+            compiled_counts[module_name] += 1
+            compiled_targets[module_name] = target
+            continue
+
+        react_dom_match = re.fullmatch(
+            r"/react-dom@19\.3\.0/(X-[A-Za-z0-9_-]+)/"
+            r"([a-z][a-z0-9_-]*)/(react-dom|client)\.mjs",
+            parsed.path,
+        )
+        if react_dom_match:
+            marker, target, module_name = react_dom_match.groups()
+            compiled_counts[module_name] += 1
+            compiled_targets[module_name] = target
+            react_dom_external_markers[module_name] = marker
+            continue
+
+        react_is_match = re.fullmatch(
+            r"/react-is@19\.3\.0/(?:X-[A-Za-z0-9_-]+/)?"
+            r"([a-z][a-z0-9_-]*)/react-is\.mjs",
+            parsed.path,
+        )
+        if react_is_match:
+            react_is_seen = True
+            compiled_counts["react-is"] += 1
+            compiled_targets["react-is"] = react_is_match.group(1)
+            continue
+
+        raise AssertionError(f"unexpected React resource: {resource_url}")
+
+    expected_wrappers = required_wrappers.copy()
+    expected_compiled = Counter({
+        "react": 1,
+        "jsx-runtime": 1,
+        "react-dom": 1,
+        "client": 1,
+    })
+    if react_is_seen:
+        expected_wrappers[(
+            "/react-is@19.3.0",
+            "external=react",
+        )] = 1
+        expected_compiled["react-is"] = 1
+
+    assert wrapper_counts == expected_wrappers
+    assert compiled_counts == expected_compiled
+    assert len(set(compiled_targets.values())) == 1
+    assert react_dom_external_markers == {
+        "react-dom": react_dom_external_markers.get("client"),
+        "client": react_dom_external_markers.get("react-dom"),
+    }
 
 
 def test_supported_cdn_versions_are_pinned():
     source = LAUNCHER.read_text()
-    assert "react@18.3.1" in source
-    assert "react-dom@18.3.1" in source
-    assert "@babel/standalone@7.29.8" in source
+    import_map_match = re.search(
+        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
+        source,
+        re.DOTALL,
+    )
+    assert import_map_match is not None
+    import_map = json.loads(import_map_match.group(1))
+    assert list(import_map["imports"].items()) == [
+        ("react", "https://esm.sh/react@19.3.0"),
+        (
+            "react/jsx-runtime",
+            "https://esm.sh/react@19.3.0/jsx-runtime",
+        ),
+        (
+            "react/jsx-dev-runtime",
+            "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+        ),
+        (
+            "react-dom",
+            "https://esm.sh/react-dom@19.3.0?external=react",
+        ),
+        (
+            "react-dom/client",
+            "https://esm.sh/react-dom@19.3.0/client?external=react",
+        ),
+        (
+            "react-is",
+            "https://esm.sh/react-is@19.3.0?external=react",
+        ),
+    ]
+    assert "react@18.3.1" not in source
+    assert "react-dom@18.3.1" not in source
+    assert "@babel/standalone@8.0.5" in source
     assert "lucide@1.46.0" in source
+    assert (
+        '<script type="text/babel" data-type="module" '
+        'data-presets="env,react">'
+    ) in source
+    assert "import * as React from 'react';" in source
+    assert "import * as ReactDOM from 'react-dom';" in source
+    assert "import * as ReactDOMClient from 'react-dom/client';" in source
+    assert "ReactDOMClient.createRoot(" in source
+
+    readme = " ".join(README.read_text().split())
+    for dependency in (
+        "React 19.3.0",
+        "ReactDOM 19.3.0",
+        "Babel Standalone 8.0.5",
+        "react-is 19.3.0",
+    ):
+        assert dependency in readme
+    assert "exact-version import map" in readme
+    assert "module-aware inline JSX" in readme
+    assert "not byte-immutable" in readme
+    assert "direct top-level package versions" in readme
+    assert (
+        "CDN-generated transitive dependencies are not fully locked"
+        in readme
+    )
+    assert "current Playwright Chromium" in readme
 
 
 def _put_settings(server, updates):
@@ -495,21 +689,112 @@ class TestFailedPanelActions:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestPageLoad:
+    def test_browser_error_capture_observes_console_and_page_errors(
+        self, browser
+    ):
+        unguarded_page = browser.new_page()
+        try:
+            errors = _capture_browser_errors(unguarded_page)
+            unguarded_page.evaluate(
+                "console.error('__console_error_capture__')"
+            )
+            with unguarded_page.expect_event("pageerror"):
+                unguarded_page.evaluate(
+                    "setTimeout(() => { "
+                    "throw new Error('__page_error_capture__'); "
+                    "}, 0)"
+                )
+
+            assert errors == [
+                "__console_error_capture__",
+                "__page_error_capture__",
+            ]
+        finally:
+            unguarded_page.close()
+
+    def test_react_esm_resource_graph_is_single_version(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        expect(page.locator(".topbar-brand")).to_be_visible()
+
+        assert page.locator("script[src]").evaluate_all(
+            "elements => elements.map(element => element.src)"
+        ) == [
+            "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
+            "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+        ]
+
+        resource_urls = page.evaluate(
+            """() => performance.getEntriesByType('resource')
+                .map(entry => entry.name)"""
+        )
+        dependency_resources = [
+            url for url in resource_urls if _is_react_package_resource(url)
+        ]
+        _assert_react_peer_graph(dependency_resources)
+
+        for bad_resource in (
+            "https://esm.sh/react",
+            "https://esm.sh/react-dom",
+            "https://esm.sh/react-is",
+            "https://esm.sh/preact@19.3.0",
+            "https://esm.sh/react@19.2.0",
+            "https://esm.sh/react@19.3.0?dev",
+            "https://cdn.example.invalid/react@19.3.0",
+            dependency_resources[0],
+        ):
+            mutated_resources = [*resource_urls, bad_resource]
+            discovered_resources = [
+                url
+                for url in mutated_resources
+                if _is_react_package_resource(url)
+            ]
+            if "preact" in bad_resource:
+                discovered_resources.append(bad_resource)
+            with pytest.raises(AssertionError):
+                _assert_react_peer_graph(discovered_resources)
+
+        compiled_resources = [
+            url
+            for url in dependency_resources
+            if urlsplit(url).path.endswith(".mjs")
+        ]
+        observed_targets = {
+            match.group(1)
+            for url in compiled_resources
+            if (
+                match := re.search(
+                    r"/([a-z][a-z0-9_-]*)/"
+                    r"(?:react|jsx-runtime|react-dom|client|react-is)\.mjs$",
+                    urlsplit(url).path,
+                )
+            )
+        }
+        assert len(observed_targets) == 1
+        observed_target = observed_targets.pop()
+        alternate_target = (
+            "es2098" if observed_target == "es2099" else "es2099"
+        )
+        alternate_target_resources = [
+            url.replace(
+                f"/{observed_target}/",
+                f"/{alternate_target}/",
+            )
+            if url in compiled_resources
+            else url
+            for url in dependency_resources
+        ]
+        assert alternate_target_resources != dependency_resources
+        assert all(
+            f"/{alternate_target}/" in url
+            for url in alternate_target_resources
+            if urlsplit(url).path.endswith(".mjs")
+        )
+        _assert_react_peer_graph(alternate_target_resources)
+
     def test_page_loads_without_js_errors(self, server, page):
         """SPA loads without uncaught exceptions or console errors."""
-        errors = []
-        page.on("pageerror", lambda err: errors.append(str(err)))
-        page.on(
-            "console",
-            lambda message: errors.append(message.text)
-            if message.type == "error"
-            else None,
-        )
         page.goto(server, wait_until="networkidle")
-        page.evaluate("console.error('__console_capture_probe__')")
-        assert errors == ["__console_capture_probe__"]
-        errors.clear()
-        assert not errors, f"JavaScript errors on page load: {errors}"
+        expect(page.locator(".topbar-brand")).to_be_visible()
 
     def test_title_is_launchmaster(self, server, page):
         page.goto(server, wait_until="networkidle")
