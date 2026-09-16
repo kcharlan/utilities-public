@@ -50,13 +50,20 @@ expense_dock
 
 Expense Dock runs via uv using a PEP 723 inline-metadata header. On first run it creates its runtime home at `~/.expense_dock/` and writes a default `config.json`; uv resolves the dependencies (fastapi, uvicorn[standard], python-multipart, httpx, msal, openpyxl) into its shared cache — that first invocation may briefly hit the network. No manual `pip install` and no virtual environment in your home directory are required.
 
-The embedded frontend intentionally stays on the React 18 UMD and Tailwind 3
-classic-CDN lines. React 19 does not ship the UMD artifacts used here, and
-Tailwind 4 uses a different browser package and configuration model; either
-major upgrade requires a build/bundling migration rather than a URL-only
-dependency update. The classic Play CDN is pinned to 3.4.17, its latest
-published browser artifact; the endpoint rejects the newer 3.4.19 npm package
-version as unknown.
+The embedded frontend uses React 18 UMD and the exact-version
+`@tailwindcss/browser` 4.3.3 runtime from CDNs. Tailwind configuration is
+CSS-first: project theme tokens and the class-based dark variant live in a
+`text/tailwindcss` block, while the app's ordinary first-party CSS remains
+native browser CSS. The versioned CDN URL is pinned for dependency-graph
+stability, but it is not byte-immutable; the browser needs network access when
+the runtime and other frontend dependencies are not cached.
+
+Automated browser coverage uses Playwright with its installed Chromium and
+checks the pinned script graph, a generated custom-theme style, dark-mode
+styling and persistence, a primary navigation interaction, and page/console
+cleanliness. For manual clients, Tailwind 4 requires Chrome 111 or newer,
+Safari 16.4 or newer, or Firefox 128 or newer. Safari and Firefox are not
+covered by the automated browser test.
 
 The preferred port is `8420`. If it is occupied, Expense Dock scans through port `8439` and opens the first free port. Use `--port` to choose a different starting port and `--no-browser` to suppress automatic browser launch.
 
