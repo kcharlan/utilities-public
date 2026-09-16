@@ -51,7 +51,7 @@ HAR (HTTP Archive) file analyzer and sanitizer. Combines rich visualization with
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`) — manages the Python interpreter and dependencies
-- Internet connection to resolve Python dependencies on first run and to load browser assets from CDNs when they are not already cached
+- Internet connection to resolve Python dependencies on first run and to load browser assets from CDNs when they are not already cached. The exact `@tailwindcss/browser` 4.3.3 URL is pinned, but this runtime CDN delivery is not byte-immutable.
 
 ## First-Time Setup
 
@@ -127,16 +127,21 @@ Validation checks:
 
 Single-file Python application (uv-managed via a PEP 723 header) with:
 - FastAPI backend with 26 REST routes
-- Embedded React 18 SPA (CDN: React, Babel, Tailwind, Lucide Icons, Google Fonts)
+- Embedded React 18 SPA (CDN: React, Babel, exact `@tailwindcss/browser` 4.3.3, Lucide Icons, Google Fonts)
 - No build step, no npm, no node_modules
 - Recursive whole-tree scanner with JSON body parsing, base64 decoding, and WebSocket message inspection
 
-The frontend intentionally stays on the React 18 UMD and Tailwind 3
-classic-CDN lines. React 19 does not provide the UMD artifacts used by this
-single-file app, and Tailwind 4 changes the browser package and configuration
-model. Adopting either major requires a separate build/bundling migration. The
-classic Play CDN is pinned to 3.4.17, its newest published browser artifact;
-the endpoint rejects the newer 3.4.19 npm package version as unknown.
+Tailwind configuration is CSS-first: custom design tokens live in an embedded
+`@theme` block, and the class-based dark mode uses an explicit custom variant.
+React remains on its pinned UMD line independently of the Tailwind migration.
+
+### Browser support
+
+The automated browser suite uses Playwright Chromium. Tailwind 4's manual
+client floors for this browser-delivered UI are Chrome 111, Safari 16.4, and
+Firefox 128. Safari and Firefox are not covered by the automated browser test,
+so those clients require manual verification when browser-specific behavior is
+important.
 
 ## Testing
 

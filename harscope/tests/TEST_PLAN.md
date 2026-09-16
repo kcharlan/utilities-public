@@ -15,6 +15,11 @@ No UI interaction is needed — everything is tested through the backend API end
 - HAR files with WebSocket messages are needed to test WS-specific redaction
 - The current runner assumes no info-only findings: scanner defaults keep info findings, while Tests 7 and 8 assert that every remaining finding is redacted and a rescan produces zero findings
 
+The separate Playwright Chromium test in `test_e2e.py` covers the browser UI,
+including the exact `@tailwindcss/browser` 4.3.3 dependency, custom theme
+output, class-based dark styling, interaction, and page/console errors. It does
+not automate Safari or Firefox.
+
 ## Test Matrix
 
 ### Test 1: Auto-detected findings redacted in export

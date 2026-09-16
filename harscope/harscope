@@ -2711,42 +2711,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
-<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
 <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<script>
-tailwind.config = {
-  darkMode: 'class',
-  theme: {
-    extend: {
-      colors: {
-        cream: '#faf9f6',
-        ink: '#1a1a1a',
-        grid: '#f0ede8',
-        'grid-dark': '#222222',
-        card: '#ffffff',
-        'card-dark': '#242424',
-        redact: '#dc2626',
-        safe: '#2563eb',
-        warn: '#d97706',
-        't-blocked': '#64748b',
-        't-dns': '#06b6d4',
-        't-connect': '#22c55e',
-        't-ssl': '#a855f7',
-        't-send': '#3b82f6',
-        't-wait': '#eab308',
-        't-receive': '#10b981',
-      },
-      fontFamily: {
-        sans: ['DM Sans', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
-      },
-    },
-  },
-};
-</script>
+<style type="text/tailwindcss">
+  @custom-variant dark (&:where(.dark, .dark *));
+
+  @theme {
+    --color-cream: #faf9f6;
+    --color-ink: #1a1a1a;
+    --color-grid: #f0ede8;
+    --color-grid-dark: #222222;
+    --color-card: #ffffff;
+    --color-card-dark: #242424;
+    --color-redact: #dc2626;
+    --color-safe: #2563eb;
+    --color-warn: #d97706;
+    --color-t-blocked: #64748b;
+    --color-t-dns: #06b6d4;
+    --color-t-connect: #22c55e;
+    --color-t-ssl: #a855f7;
+    --color-t-send: #3b82f6;
+    --color-t-wait: #eab308;
+    --color-t-receive: #10b981;
+    --font-sans: 'DM Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+</style>
 <style>
   body { font-family: 'DM Sans', system-ui, sans-serif; margin: 0; }
   .light-bg {

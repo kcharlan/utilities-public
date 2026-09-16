@@ -24,7 +24,7 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
 
-The pytest suite imports the FastAPI application in-process and uses `httpx.AsyncClient` with `ASGITransport`, so it does not open a network port. Fixtures reset the launcher’s process-global state around every test.
+The pytest suite imports the FastAPI application in-process and uses `httpx.AsyncClient` with `ASGITransport`, so it does not open a network port. Fixtures reset the launcher’s process-global state around every test. The Playwright Chromium coverage also verifies the exact `@tailwindcss/browser` 4.3.3 resource graph, representative CSS-first theme and dark-variant output, a key tab interaction, and browser/console error cleanliness. Safari and Firefox are manual compatibility targets, not automated claims.
 
 ## Optional Real-HAR Workflow
 

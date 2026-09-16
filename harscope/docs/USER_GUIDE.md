@@ -25,7 +25,7 @@ harscope starts a local web server and opens your browser automatically. The def
 
 The launcher uses uv and its PEP 723 metadata to select Python 3.12+ and resolve FastAPI, uvicorn, python-multipart, and pydantic into uv's shared cache. It does not create a harscope-specific environment or state directory in your home folder.
 
-**Requirements:** [uv](https://docs.astral.sh/uv/) and an internet connection to resolve dependencies on first run. The browser also loads React, Babel, Tailwind, Lucide, and fonts from CDNs whenever those assets are not cached.
+**Requirements:** [uv](https://docs.astral.sh/uv/) and an internet connection to resolve dependencies on first run. The browser also loads React, Babel, exact `@tailwindcss/browser` 4.3.3, Lucide, and fonts from CDNs whenever those assets are not cached. The pinned runtime URL is version-specific but not byte-immutable. Tailwind 4's manual client floors are Chrome 111, Safari 16.4, and Firefox 128; the automated browser check covers Playwright Chromium, not Safari or Firefox.
 
 ### Loading a HAR File
 
