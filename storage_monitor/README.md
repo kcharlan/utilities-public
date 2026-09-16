@@ -39,12 +39,22 @@ On first run, uv resolves FastAPI and uvicorn into its shared cache, so that inv
 5. opens the dashboard in the default browser.
 
 The build-free frontend intentionally stays on React 18's UMD globals; React
-19 would require a module/bundler migration. It also stays on the classic
-Tailwind Play CDN. Version 3.4.17 is the newest release that CDN actually
-serves—the 3.4.19 URL emits a runtime error—and Tailwind 4 requires a different
-integration. Babel Standalone remains on major 7 for the inline `text/babel`
-transform; major 8 needs a separate transform migration. The browser smoke
-test also verifies the current Lucide UMD API.
+19 requires a separate module-loader migration. Tailwind CSS is loaded through
+the exact-version `@tailwindcss/browser` 4.3.3 package. A minimal
+`text/tailwindcss` block declares the generated utilities, while first-party
+theme and component rules remain in a normal stylesheet so the dashboard keeps
+its core styling if the Tailwind CDN is unavailable. Babel Standalone remains
+on major 7 for the inline `text/babel` transform; major 8 needs a separate
+transform migration. These exact CDN version pins prevent package resolution
+drift, but the app still requires network access at runtime and CDN responses
+are not byte-immutable.
+
+The automated browser smoke covers the current Playwright Chromium only. For
+manual clients, Tailwind 4 requires Chrome 111 or newer, Safari 16.4 or newer,
+or Firefox 128 or newer. Safari and Firefox are not covered by the automated
+suite. The browser smoke also verifies the current Lucide UMD API, representative
+Tailwind-generated utility styles, theme persistence, and browser error
+cleanliness.
 
 Use `--no-browser` to suppress the browser launch or `--port PORT` (`-p PORT`) to choose a different preferred port:
 
