@@ -2171,7 +2171,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com/3.4.17"></script>
 <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
-<script src="https://unpkg.com/recharts@2.15.4/umd/Recharts.js"></script>
+<script src="https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"></script>
+<script src="https://unpkg.com/recharts@3.10.1/umd/Recharts.js"></script>
 <script>
 tailwind.config = {
   darkMode: 'class',
@@ -2198,7 +2199,7 @@ body { background: #0f172a; color: #f1f5f9; font-family: ui-sans-serif,system-ui
 <script type="text/babel">
 const { useState, useEffect, useCallback, useRef, useMemo, memo } = React;
 const COLORS = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#22c55e','#06b6d4','#f97316','#a855f7','#14b8a6','#ef4444','#84cc16','#64748b'];
-const { AreaChart,Area,LineChart,Line,BarChart,Bar,PieChart,Pie,Cell,XAxis,YAxis,CartesianGrid,Tooltip,Legend,ResponsiveContainer,ReferenceLine } = Recharts;
+const { AreaChart,Area,LineChart,Line,BarChart,Bar,PieChart,Pie,Cell,Rectangle,XAxis,YAxis,CartesianGrid,Tooltip,Legend,ResponsiveContainer,ReferenceLine } = Recharts;
 
 // Inline SVG icons — no CDN dependency
 const _i = (d,extra='') => ({size=14,className='',...p}) =>
@@ -2536,16 +2537,38 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
   };
   const commonAxisProps={stroke:'#475569',fontSize:11,tick:{fill:'#94a3b8'}};
   const gridProps={strokeDasharray:'3 3',stroke:'#334155'};
-  const handleLegend = e => setHidden(prev=>{const n=new Set(prev);n.has(e.value)?n.delete(e.value):n.add(e.value);return n;});
+  const handleLegend = e => {
+    const seriesName=e?.dataKey??e?.value;
+    if(seriesName==null) return;
+    setHidden(prev=>{const n=new Set(prev);n.has(seriesName)?n.delete(seriesName):n.add(seriesName);return n;});
+  };
 
   const ChartEl = chartType==='line'?LineChart:chartType==='bar'?BarChart:AreaChart;
   const SeriesEl = chartType==='line'?Line:chartType==='bar'?Bar:Area;
   const stackId = isCum?undefined:(chartType==='area'||chartType==='bar'?'1':undefined);
 
-  // Linked crosshair: store fractional position (0-1) so charts with different bucket counts sync proportionally
-  const handleMouseMove = (state, len) => {
-    if(state?.activeTooltipIndex!=null && len>1) setHoverIdx(state.activeTooltipIndex/(len-1));
-    else if(state?.activeTooltipIndex!=null) setHoverIdx(0);
+  // Linked crosshair: measure the rendered plot rather than the outer chart,
+  // whose Y-axis gutter would shift the categorical bucket calculation.
+  const handleMouseMove = (event,sourceLength) => {
+    const plotParts=[...event.currentTarget.querySelectorAll('.rv-main-chart-plot')];
+    if(!plotParts.length||!sourceLength) { setHoverIdx(null); return; }
+    const rects=plotParts.map(part=>part.getBoundingClientRect());
+    const bounds={
+      left:Math.min(...rects.map(rect=>rect.left)),
+      right:Math.max(...rects.map(rect=>rect.right)),
+      top:Math.min(...rects.map(rect=>rect.top)),
+      bottom:Math.max(...rects.map(rect=>rect.bottom)),
+    };
+    bounds.width=bounds.right-bounds.left;
+    bounds.height=bounds.bottom-bounds.top;
+    const outside=event.clientX<bounds.left||event.clientX>bounds.right||
+      event.clientY<bounds.top||event.clientY>bounds.bottom;
+    if(!bounds.width||!bounds.height||outside) { setHoverIdx(null); return; }
+    const position=(event.clientX-bounds.left)/bounds.width;
+    const sourceIndex=sourceLength<=1 ? 0 : chartType==='bar'
+      ? Math.min(sourceLength-1,Math.floor(position*sourceLength))
+      : Math.round(position*(sourceLength-1));
+    setHoverIdx(sourceLength<=1 ? 0 : sourceIndex/(sourceLength-1));
   };
   const handleMouseLeave = () => setHoverIdx(null);
 
@@ -2557,11 +2580,11 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
   const metricLabel = metric==='cost'?'Cost':metric==='requests'?'Requests':metric==='tokens'?'Tokens':'Latency';
 
   const renderChart = (chartData, label, height) => (
-    <div>
+    <div onMouseMove={event=>handleMouseMove(event,chartData.length)} onMouseLeave={handleMouseLeave}>
       {hasComp && <p className="text-xs text-slate-500 mb-1 ml-1">{label}</p>}
       <ResponsiveContainer width="100%" height={height}>
-        <ChartEl data={chartData} onMouseMove={s=>handleMouseMove(s,chartData.length)} onMouseLeave={handleMouseLeave}>
-          <CartesianGrid {...gridProps}/>
+        <ChartEl data={chartData}>
+          <CartesianGrid className="rv-main-chart-plot" {...gridProps}/>
           <XAxis dataKey="bucket" {...commonAxisProps} tickFormatter={xFmt}/>
           <YAxis {...commonAxisProps} tickFormatter={yFmt} width={70} {...(yDomain?{domain:yDomain}:{})}/>
           <Tooltip content={<ChartTooltip metric={metric}/>} wrapperStyle={{outline:'none'}}/>
@@ -2581,11 +2604,11 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
   );
 
   const renderCompChart = (chartData, label, height) => (
-    <div>
+    <div onMouseMove={event=>handleMouseMove(event,chartData.length)} onMouseLeave={handleMouseLeave}>
       <p className="text-xs text-slate-500 mb-1 ml-1">{label}</p>
       <ResponsiveContainer width="100%" height={height}>
-        <ChartEl data={chartData} onMouseMove={s=>handleMouseMove(s,chartData.length)} onMouseLeave={handleMouseLeave}>
-          <CartesianGrid {...gridProps}/>
+        <ChartEl data={chartData}>
+          <CartesianGrid className="rv-main-chart-plot" {...gridProps}/>
           <XAxis dataKey="bucket" {...commonAxisProps} tickFormatter={xFmt}/>
           <YAxis {...commonAxisProps} tickFormatter={yFmt} width={70} {...(yDomain?{domain:yDomain}:{})}/>
           <Tooltip content={<ChartTooltip metric={metric}/>} wrapperStyle={{outline:'none'}}/>
@@ -2684,6 +2707,15 @@ function BreakdownPanel({title,data,type='bar',metric='cost',onFilter,chartRef,p
     </div>;
   };
   const tooltipProps={content:<BDTooltip/>,wrapperStyle:{outline:'none'}};
+  const activateBarFilter = dimension => {
+    if(onFilter&&dimension) onFilter(dimension);
+  };
+  const handleBarKeyDown = (event,dimension) => {
+    if(event.key==='Enter'||event.key===' ') {
+      event.preventDefault();
+      activateBarFilter(dimension);
+    }
+  };
 
   return <div className="bg-slate-800 rounded-xl p-4" {...dragProps}>
     <div className="flex items-center justify-between mb-3">
@@ -2723,7 +2755,7 @@ function BreakdownPanel({title,data,type='bar',metric='cost',onFilter,chartRef,p
             const barItems = items.slice(0,10);
             const barH = Math.max(220, barItems.length * 28 + 40);
             return <ResponsiveContainer width="100%" height={barH}>
-              <BarChart layout="vertical" data={barItems} onClick={e=>onFilter&&e&&onFilter(e.activePayload?.[0]?.payload?.dimension)}>
+              <BarChart layout="vertical" data={barItems}>
                 <XAxis type="number" stroke="#475569" fontSize={11} tickFormatter={fmtVal}/>
                 <YAxis type="category" dataKey="dimension" stroke="#475569" fontSize={10} width={130}
                   tick={({x,y,payload})=>{
@@ -2732,7 +2764,15 @@ function BreakdownPanel({title,data,type='bar',metric='cost',onFilter,chartRef,p
                     return <g transform={`translate(${x},${y})`}><title>{t}</title><text x={-4} y={0} dy={4} textAnchor="end" fill="#94a3b8" fontSize={10}>{label}</text></g>;
                   }}/>
                 <Tooltip {...tooltipProps}/>
-                <Bar dataKey="value" radius={[0,4,4,0]}>
+                <Bar dataKey="value" radius={[0,4,4,0]}
+                  shape={props=>{
+                    const dimension=props?.payload?.dimension;
+                    const dimensionLabel=panelKey.replace(/_/g,' ');
+                    return <Rectangle {...props} style={{cursor:'pointer'}} role="button" tabIndex={0}
+                      aria-label={`Filter by ${dimensionLabel} ${dimension}`}
+                      onClick={()=>activateBarFilter(dimension)}
+                      onKeyDown={event=>handleBarKeyDown(event,dimension)}/>;
+                  }}>
                   {barItems.map((entry,i)=><Cell key={i} fill={modelColor(entry.dimension)}/>)}
                 </Bar>
               </BarChart>

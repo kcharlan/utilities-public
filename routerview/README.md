@@ -14,7 +14,7 @@ RouterView runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using a
 
 On first run RouterView creates its runtime home at `~/.routerview/`; uv resolves the dependencies (fastapi, uvicorn[standard], aiosqlite, python-multipart) into its shared cache — that first invocation may briefly hit the network. No virtual environment is written to your home directory.
 
-The dashboard loads React, Babel, Tailwind CSS, PropTypes, and Recharts from public CDNs, so the browser needs network access unless those assets are already cached.
+The dashboard loads React, Babel, Tailwind CSS, PropTypes, React Is, and Recharts from public CDNs, so the browser needs network access unless those assets are already cached.
 
 To make `routerview` available on your `PATH`, create an optional symlink from this directory:
 
@@ -62,11 +62,12 @@ The dashboard refreshes immediately after a successful CSV import, including the
 ### Frontend compatibility boundary
 
 The embedded, build-free SPA intentionally uses React 18's UMD globals.
-React 19 would require a module/bundler migration. Recharts remains on the 2.x
-UMD/global contract used by the inline chart code; adopting Recharts 3 requires
-rewiring that loading and API boundary. Tailwind remains on the classic Play
-CDN, whose newest working release is 3.4.17; the 3.4.19 URL emits a runtime
-error, and Tailwind 4 requires a different browser/build integration.
+React 19 would require a module/bundler migration. Recharts 3.10.1 uses its UMD
+global and loads after the React-18-aligned React Is 18.3.1 peer. Chart
+interactions use public tooltip, legend, shape, and cell callbacks rather than
+Recharts 2 chart-state fields. Tailwind remains on the classic Play CDN, whose
+newest working release is 3.4.17; the 3.4.19 URL emits a runtime error, and
+Tailwind 4 requires a different browser/build integration.
 Babel Standalone remains on major 7 for the inline `text/babel` transform;
 major 8 needs a separate transform migration.
 

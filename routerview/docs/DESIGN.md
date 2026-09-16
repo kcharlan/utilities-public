@@ -1,6 +1,6 @@
 # RouterView Design
 
-> Last updated: 2026-07-26
+> Last updated: 2026-09-16
 
 ## Overview
 
@@ -39,6 +39,8 @@ RouterView is now a CSV-only OpenRouter analytics dashboard. The application no 
 ### Frontend
 
 - Embedded React SPA served from the Python file
+- React 18.3.1 and Recharts 3.10.1 UMD globals, with the aligned React Is 18.3.1 peer loaded before Recharts
+- Public Recharts tooltip, legend, shape, and cell callbacks for chart interactions; no dependency on removed Recharts 2 chart state
 - Fetch-based data loading
 - No websocket client
 - Settings panel used for CSV import, purge, and admin refresh actions

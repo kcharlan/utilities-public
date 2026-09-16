@@ -14,6 +14,32 @@ def load_module():
     return load_launcher(SCRIPT_PATH)
 
 
+def test_recharts_3_loads_once_with_aligned_react_is_peer():
+    module = load_module()
+    html = module.HTML_TEMPLATE
+    react_url = "https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+    react_dom_url = "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+    react_is_url = "https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"
+    recharts_url = "https://unpkg.com/recharts@3.10.1/umd/Recharts.js"
+
+    assert html.count(react_url) == 1
+    assert html.count(react_dom_url) == 1
+    assert html.count(react_is_url) == 1
+    assert html.count(recharts_url) == 1
+    assert html.index(react_is_url) < html.index(recharts_url)
+    assert "recharts@2.15.4" not in html
+
+
+def test_chart_interactions_do_not_read_removed_recharts_2_state():
+    module = load_module()
+    html = module.HTML_TEMPLATE
+
+    assert "activeTooltipIndex" not in html
+    assert "activePayload" not in html
+    assert 'className="rv-main-chart-plot"' in html
+    assert "querySelectorAll('.rv-main-chart-plot')" in html
+
+
 def test_chart_tooltip_includes_bucket_totals_for_additive_metrics():
     module = load_module()
 
