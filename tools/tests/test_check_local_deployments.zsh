@@ -134,12 +134,28 @@ build_model_zipapp() {
   local staging="$FIXTURE_ROOT/model-staging"
   local archive="$FIXTURE_ROOT/model.zip"
   local target="$FIXTURE_SCRIPTS/model-sentinel"
+  local source_hash
 
   rm -rf -- "$staging"
   mkdir -p -- "$staging/model_sentinel"
   cp -p -- "$FIXTURE_REPO/model_sentinel/__main__.py" "$staging/__main__.py"
   cp -p -- "$FIXTURE_REPO"/model_sentinel/model_sentinel/*.py \
     "$staging/model_sentinel/"
+  source_hash="$(
+    cd "$staging"
+    find . -type f \
+      ! -path './model_sentinel/_packaged_build.py' \
+      -exec shasum -a 256 {} \; \
+      | LC_ALL=C sort \
+      | shasum -a 256 \
+      | awk '{print $1}'
+  )"
+  cat > "$staging/model_sentinel/_packaged_build.py" <<EOF
+BUILD_KIND = "standalone"
+BUILD_REVISION = "unknown"
+BUILD_SOURCE_HASH = "$source_hash"
+BUILD_TIME_UTC = "2026-01-02T03:04:05Z"
+EOF
   (
     cd "$staging"
     zip -q -X "$archive" __main__.py model_sentinel/ model_sentinel/*.py
@@ -148,6 +164,42 @@ build_model_zipapp() {
   /bin/cat "$archive" >> "$target"
   zip -q -A "$target"
   chmod 755 "$target"
+}
+
+build_installer_style_model_zipapp() {
+  local staging="$FIXTURE_ROOT/model-staging"
+  local archive="$FIXTURE_ROOT/model.zip"
+  local target="$FIXTURE_SCRIPTS/model-sentinel"
+  local source_hash
+
+  rm -rf -- "$staging" "$archive"
+  mkdir -p -- "$staging/model_sentinel"
+  cp -p -- "$FIXTURE_REPO/model_sentinel/__main__.py" "$staging/__main__.py"
+  cp -p -- "$FIXTURE_REPO"/model_sentinel/model_sentinel/*.py \
+    "$staging/model_sentinel/"
+  cp -R -- \
+    "$FIXTURE_REPO/model_sentinel/model_sentinel/browse" \
+    "$staging/model_sentinel/browse"
+  source_hash="$(
+    cd "$staging"
+    find . -type f \
+      ! -path './model_sentinel/_packaged_build.py' \
+      -exec shasum -a 256 {} \; \
+      | LC_ALL=C sort \
+      | shasum -a 256 \
+      | awk '{print $1}'
+  )"
+  cat > "$staging/model_sentinel/_packaged_build.py" <<EOF
+BUILD_KIND = "standalone"
+BUILD_REVISION = "unknown"
+BUILD_SOURCE_HASH = "$source_hash"
+BUILD_TIME_UTC = "2026-01-02T03:04:05Z"
+EOF
+  (
+    cd "$staging"
+    zip -q -X -r "$archive" __main__.py model_sentinel/
+  )
+  install_fixture_archive "$archive"
 }
 
 install_fixture_archive() {
@@ -1100,6 +1152,69 @@ test_model_archive_rejects_untracked_extra_module() {
   assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
 }
 
+test_model_archive_accepts_installer_layout() {
+  new_fixture
+  write_synthetic_file \
+    "$FIXTURE_REPO/model_sentinel/model_sentinel/browse/__init__.py" \
+    "tracked browse package"
+  write_synthetic_file \
+    "$FIXTURE_REPO/model_sentinel/model_sentinel/browse/assets/index.html" \
+    "tracked browse asset"
+  git -C "$FIXTURE_REPO" add \
+    model_sentinel/model_sentinel/browse/__init__.py \
+    model_sentinel/model_sentinel/browse/assets/index.html
+  git -C "$FIXTURE_REPO" commit -qm "add synthetic browse package"
+  build_installer_style_model_zipapp
+  run_audit
+
+  assert_status 0 "$AUDIT_STATUS" "installer-style model archive"
+  assert_occurrences "$AUDIT_STDOUT" 1 "OK: model-sentinel zipapp"
+}
+
+test_model_archive_detects_nested_asset_drift() {
+  new_fixture
+  local asset="$FIXTURE_REPO/model_sentinel/model_sentinel/browse/assets/index.html"
+  write_synthetic_file "$asset" "tracked browse asset"
+  git -C "$FIXTURE_REPO" add \
+    model_sentinel/model_sentinel/browse/assets/index.html
+  git -C "$FIXTURE_REPO" commit -qm "add synthetic browse asset"
+  build_installer_style_model_zipapp
+  local changed="$FIXTURE_ROOT/changed-browse-asset"
+  /usr/bin/tr 's' 'S' < "$asset" > "$changed"
+  mv "$changed" "$asset"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "nested model asset drift"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel package entry model_sentinel/browse/assets/index.html is stale"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_rejects_invalid_packaged_provenance() {
+  new_fixture
+  local staging="$FIXTURE_ROOT/model-staging"
+  local archive="$FIXTURE_ROOT/model-invalid-provenance.zip"
+  cat > "$staging/model_sentinel/_packaged_build.py" <<'EOF'
+BUILD_KIND = "standalone"
+BUILD_REVISION = "unknown"
+BUILD_SOURCE_HASH = "0000000000000000000000000000000000000000000000000000000000000000"
+BUILD_TIME_UTC = "2026-01-02T03:04:05Z"
+EOF
+  (
+    cd "$staging"
+    zip -q -X -r "$archive" __main__.py model_sentinel/
+  )
+  install_fixture_archive "$archive"
+  run_audit
+
+  assert_status 1 "$AUDIT_STATUS" "invalid packaged provenance"
+  assert_contains \
+    "$AUDIT_STDERR" \
+    "model-sentinel packaged build provenance is invalid"
+  assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
 test_model_archive_rejects_deleted_index_module() {
   new_fixture
   git -C "$FIXTURE_REPO" rm -q \
@@ -1164,6 +1279,7 @@ test_model_archive_rejects_duplicate_entry() {
       model_sentinel/ \
       model_sentinel/__init__.py \
       model_sentinel/audit.py \
+      model_sentinel/_packaged_build.py \
       __main__.py
   )
   install_fixture_archive "$archive"
@@ -1332,6 +1448,9 @@ test_side_branch_only_deletion_is_excluded
 test_stale_pathname_with_spaces_is_not_printed
 test_shallow_history_fails_coverage
 test_model_archive_rejects_untracked_extra_module
+test_model_archive_accepts_installer_layout
+test_model_archive_detects_nested_asset_drift
+test_model_archive_rejects_invalid_packaged_provenance
 test_model_archive_rejects_deleted_index_module
 test_model_archive_requires_exact_preamble
 test_model_archive_content_mismatches
