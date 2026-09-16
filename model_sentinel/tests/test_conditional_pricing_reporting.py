@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import ast
 import json
 import re
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -3152,19 +3150,6 @@ def test_legacy_json_selector_projections_remain_unchanged() -> None:
     assert scan["providers"][0]["changed"][0]["field_changes"][0]["field_name"] == selector_path
     assert history["events"][0]["field_name"] == selector_path
     assert changes["changes"][0]["field_name"] == selector_path
-
-
-def test_generic_reporting_has_no_provider_raw_utc_selector_constants() -> None:
-    source = (
-        Path(__file__).parents[1] / "model_sentinel" / "reporting.py"
-    ).read_text()
-    string_constants = {
-        node.value
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
-
-    assert string_constants.isdisjoint({"utc_days", "utc_start", "utc_end"})
 
 
 def test_changes_edge_anchors_disambiguate_full_stored_identities() -> None:

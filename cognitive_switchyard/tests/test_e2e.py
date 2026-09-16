@@ -22,7 +22,6 @@ Covers:
 """
 from __future__ import annotations
 
-import json
 import socket
 import threading
 import time
@@ -363,12 +362,6 @@ def _write_intake_plan(home: Path, session_id: str, task_id: str, *, depends_on:
         encoding="utf-8",
     )
     return target
-
-
-def _label_input(page, label_text: str):
-    """Find an input by its preceding label text."""
-    return page.locator(f"label:has-text('{label_text}') + input, label:has-text('{label_text}') + select,"
-                        f" label:has-text('{label_text}') ~ input, label:has-text('{label_text}') ~ select").first
 
 
 def _poll_session_status(page, session_id: str, target_statuses: set[str], *, timeout: float = 30.0) -> str:

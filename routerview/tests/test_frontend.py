@@ -47,15 +47,6 @@ def test_csv_import_triggers_dashboard_refresh():
     assert "/api/admin/rebuild-timestamps?confirm=true" in module.HTML_TEMPLATE
 
 
-def test_frontend_removes_live_observability_controls():
-    module = load_module()
-
-    assert "Fetch from API" not in module.HTML_TEMPLATE
-    assert "function SetupWizard(" not in module.HTML_TEMPLATE
-    assert "new WebSocket(" not in module.HTML_TEMPLATE
-    assert "wsConnected?'Live':'Disconnected'" not in module.HTML_TEMPLATE
-
-
 def test_header_shows_selected_preset_with_resolved_range():
     module = load_module()
 

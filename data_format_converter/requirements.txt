@@ -1,6 +1,4 @@
 xmltodict
-requests
-tiktoken
 pyyaml
 tomli
 tomli_w

@@ -1462,7 +1462,7 @@ The live implementation and automated tests are the source of truth for current 
 | Planning and agent runtimes | `planning_runtime.py`, `agent_runtime.py`, `tests/test_planning_runtime.py`, `tests/test_agent_runtime.py` |
 | Execution and verification | `orchestrator.py`, `worker_manager.py`, `verification_runtime.py`, their corresponding test modules |
 | API and frontend contracts | `server.py`, `html_template.py`, `tests/test_server.py`, `tests/test_html_template.py`, `tests/test_e2e.py` |
-| Built-in pack behavior | `cognitive_switchyard/builtin_packs/`, `tests/test_builtin_verify_scripts.py`, `tests/test_execute_script_code_detection.py` |
+| Built-in pack behavior | `cognitive_switchyard/builtin_packs/`, `tests/test_builtin_verify_scripts.py` |
 
 ---
 

@@ -9,7 +9,7 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -36,12 +36,6 @@ import git_dashboard  # noqa: E402
 def run(coro):
     """Run an async coroutine in a new event loop."""
     return asyncio.run(coro)
-
-
-def _close_coro(coro, *args, **kwargs):
-    """Mock side-effect for asyncio.create_task: close the coroutine to suppress warnings."""
-    coro.close()
-    return MagicMock()
 
 
 def _make_dep(name: str, manager: str = "pip", severity: str = "ok",

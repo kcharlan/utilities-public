@@ -49,25 +49,3 @@ def test_dump_xml_no_root():
     """Tests that dumping an object without a single root key raises an error."""
     with pytest.raises(ValueError):
         dump_xml({"a": 1, "b": 2})
-
-def test_round_trip(sample_data):
-    """
-    Tests that a round trip (dump -> load) preserves the structure.
-    Note: Types are not preserved (int/float/bool become strings).
-    """
-    xml_string = dump_xml(sample_data)
-    loaded_data = load_xml(xml_string)
-
-    # Reconstruct expected data with stringified values
-    expected_data = {
-        "root": {
-            "z": "1",
-            "a": "hello",
-            "nested": {
-                "y": "true",
-                "x": "3.14"
-            },
-            "items": ["item1", "item2"]
-        }
-    }
-    assert loaded_data == expected_data

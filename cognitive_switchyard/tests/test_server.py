@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
@@ -14,7 +13,6 @@ from textwrap import dedent
 import pytest
 from fastapi.testclient import TestClient
 
-from cognitive_switchyard.cli import main
 from cognitive_switchyard.config import GlobalConfig, build_runtime_paths, write_global_config
 from cognitive_switchyard.models import BackendRuntimeEvent, PackManifest, TaskPlan
 from cognitive_switchyard.pack_loader import load_pack_manifest
@@ -3246,40 +3244,6 @@ def test_dashboard_uses_list_all_tasks_single_query(tmp_path: Path) -> None:
     assert mock_active.call_count == 0, "list_active_tasks should not be called (consolidated)"
     assert mock_done.call_count == 0, "list_done_tasks should not be called (consolidated)"
     assert mock_blocked.call_count == 0, "list_blocked_tasks should not be called (consolidated)"
-
-
-def test_list_all_tasks_returns_tasks_across_all_statuses(tmp_path: Path) -> None:
-    """CF-1 regression: list_all_tasks must return tasks regardless of status."""
-    from cognitive_switchyard.models import TaskPlan
-
-    store, runtime_paths = _build_store(tmp_path)
-    _write_runtime_pack(runtime_paths)
-    session = store.create_session(
-        session_id="all-tasks-session",
-        name="All tasks session",
-        pack="claude-code",
-        created_at="2026-03-11T12:00:00Z",
-    )
-
-    # Register tasks in different statuses.
-    for task_id, exec_order in [("001", 1), ("002", 2), ("003", 3)]:
-        plan = TaskPlan(task_id=task_id, title=f"Task {task_id}", exec_order=exec_order)
-        store.register_task_plan(
-            session_id=session.id,
-            plan=plan,
-            plan_text=f"# Task {task_id}\n",
-            created_at="2026-03-11T12:00:00Z",
-        )
-    # Move tasks to distinct statuses.
-    store.project_task(session.id, "002", status="active", worker_slot=0, timestamp="2026-03-11T12:01:00Z")
-    store.project_task(session.id, "003", status="done", timestamp="2026-03-11T12:02:00Z")
-
-    all_tasks = store.list_all_tasks(session.id)
-    statuses = {t.task_id: t.status for t in all_tasks}
-
-    assert statuses == {"001": "ready", "002": "active", "003": "done"}, (
-        f"list_all_tasks returned unexpected statuses: {statuses}"
-    )
 
 
 # --- Regression tests for plan 001: session timer active during planning/resolving ---

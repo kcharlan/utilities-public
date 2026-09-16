@@ -1,5 +1,5 @@
 import pytest
-from src.converters.toon_conv import load_toon, dump_toon, ToonUnavailable
+from src.converters.toon_conv import load_toon, dump_toon
 
 @pytest.fixture
 def sample_data():

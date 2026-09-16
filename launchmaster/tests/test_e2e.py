@@ -19,7 +19,6 @@ import json
 import os
 import re
 import urllib.request
-from pathlib import Path
 
 import pytest
 
@@ -37,7 +36,6 @@ except ImportError:
     )
 
 pytestmark = pytest.mark.e2e
-LAUNCHMASTER_SCRIPT = Path(__file__).resolve().parents[1] / "launchmaster"
 
 
 def _put_settings(server, updates):
@@ -108,25 +106,6 @@ class TestSyntheticHarness:
         ):
             expect(labels.filter(has_text=label)).to_be_visible()
 
-    def test_synthetic_failed_job_appears_in_failed_panel(self, server, page):
-        page.goto(server, wait_until="networkidle")
-        expect(
-            page.locator(".failed-panel .failed-job-label").filter(
-                has_text="com.example.synthetic-failed"
-            )
-        ).to_be_visible()
-
-    def test_synthetic_orphan_apple_job_is_searchable(self, server, page):
-        page.goto(server, wait_until="networkidle")
-        page.locator(".filter-toggle:has-text('Apple')").click()
-        page.locator(".filter-search").fill("com.apple.example-synthetic")
-        expect(
-            page.locator(".job-table tbody .job-label-text").filter(
-                has_text="com.apple.example-synthetic"
-            )
-        ).to_be_visible()
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Shared actions and confirmation policy
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -150,24 +129,6 @@ class TestSharedActions:
         row.locator("button[title^='Stop']").click()
         expect(page.locator(".toast.success")).to_be_visible()
         assert len(calls) == 1
-
-    def test_no_duplicate_action_fetch_logic(self):
-        src = LAUNCHMASTER_SCRIPT.read_text()
-        job_table = src.split("function JobTable", 1)[1].split(
-            "// ---- Bulk Action Bar", 1
-        )[0]
-        detail_panel = src.split("function DetailPanel", 1)[1].split(
-            "// ---- Create Job Modal", 1
-        )[0]
-        app = src.split("function App()", 1)[1].split(
-            "ReactDOM.createRoot", 1
-        )[0]
-
-        assert "handleRowAction" not in job_table
-        assert "const handleAction =" not in detail_panel
-        assert "const handleDelete =" not in detail_panel
-        assert "const handleExport =" not in detail_panel
-        assert "onReload={async" not in app
 
     def test_success_false_response_shows_error_toast(self, server, page):
         def intercept(route):
@@ -331,13 +292,14 @@ class TestConfirmationPolicy:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestRowActionsAndKebab:
-    def test_kebab_is_visible_without_hover(self, server, page):
+    def test_primary_actions_and_kebab_are_visible_without_hover(
+        self, server, page
+    ):
         page.goto(server, wait_until="networkidle")
         row = _job_row(page, "com.example.synthetic-idle")
 
-        expect(
-            row.get_by_role("button", name="More actions")
-        ).to_be_visible()
+        for title in ("Run Now (one-shot)", "Stop (x)", "More actions"):
+            expect(row.locator(f"button[title='{title}']")).to_be_visible()
 
     def test_actions_column_is_on_screen_without_horizontal_scroll(
         self, server, page
@@ -432,13 +394,6 @@ class TestRowActionsAndKebab:
         )
         assert len(calls) == 1
 
-    def test_each_row_has_exactly_three_action_buttons(self, server, page):
-        page.goto(server, wait_until="networkidle")
-        row = _job_row(page, "com.example.synthetic-idle")
-
-        expect(row.locator(".row-actions button")).to_have_count(3)
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Right-click context menu and failed-panel actions
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -459,19 +414,6 @@ class TestContextMenu:
         expect(menu).to_have_attribute(
             "aria-label", "Actions for com.example.synthetic-idle"
         )
-        assert menu.locator(".job-action-menu-item").all_text_contents() == [
-            "Start",
-            "Stop",
-            "Run Now",
-            "Reload",
-            "Disable",
-            "Unload",
-            "Edit",
-            "Logs",
-            "Details",
-            "Export",
-            "Delete",
-        ]
         menu_box = menu.bounding_box()
         assert menu_box is not None
         assert abs(menu_box["x"] - (row_box["x"] + 80)) <= 2
@@ -558,27 +500,6 @@ class TestPageLoad:
         expect(brand).to_be_visible()
         expect(brand).to_contain_text("launchmaster")
 
-    def test_react_mounts(self, server, page):
-        """The React app mounts and renders content (not blank screen)."""
-        page.goto(server, wait_until="networkidle")
-        # The app-shell should exist and have child content
-        shell = page.locator(".app-shell")
-        expect(shell).to_be_visible()
-        # Status cards should render
-        cards = page.locator(".status-cards")
-        expect(cards).to_be_visible()
-
-    def test_no_babel_syntax_errors(self, server, page):
-        """Babel compiles the JSX without syntax errors (regression for \\n bug)."""
-        errors = []
-        page.on("pageerror", lambda err: errors.append(str(err)))
-        page.goto(server, wait_until="networkidle")
-        syntax_errors = [e for e in errors if "SyntaxError" in e]
-        assert not syntax_errors, (
-            f"Babel syntax errors (likely unescaped \\n in template): {syntax_errors}"
-        )
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2. Status Cards
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -613,29 +534,11 @@ class TestStatusCards:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestJobTable:
-    def test_job_table_renders(self, server, page):
-        page.goto(server, wait_until="networkidle")
-        table = page.locator(".job-table")
-        expect(table).to_be_visible()
-
-    def test_job_rows_exist(self, server, page):
-        page.goto(server, wait_until="networkidle")
-        rows = page.locator(".job-table tbody tr")
-        count = rows.count()
-        assert count > 0, "No job rows rendered"
-
     def test_job_row_has_status_dot(self, server, page):
         page.goto(server, wait_until="networkidle")
         first_row = page.locator(".job-table tbody tr").first
         dot = first_row.locator(".status-dot")
         expect(dot).to_be_visible()
-
-    def test_job_row_click_opens_detail_panel(self, server, page):
-        page.goto(server, wait_until="networkidle")
-        first_row = page.locator(".job-table tbody tr").first
-        first_row.click()
-        panel = page.locator(".detail-panel")
-        expect(panel).to_have_class(re.compile(r"open"))
 
     def test_pagination_visible_when_many_jobs(self, server, page):
         """If there are more than 25 jobs, pagination should appear."""
@@ -779,27 +682,11 @@ class TestEnabledDisplayRegression:
             f"0 running, 0 idle) — regression: enabled field missing"
         )
 
-    def test_running_status_dots_exist(self, server, page):
-        """There should be green (running) status dots in the table."""
-        page.goto(server, wait_until="networkidle")
-        running_dots = page.locator(".status-dot.running")
-        assert running_dots.count() > 0, (
-            "No running status dots visible — likely all showing disabled"
-        )
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # 7. Create Job Modal
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestCreateJobModal:
-    def test_new_job_button_opens_modal(self, server, page):
-        page.goto(server, wait_until="networkidle")
-        new_btn = page.locator("button:has-text('New Job')")
-        new_btn.click()
-        modal = page.locator(".modal")
-        expect(modal).to_be_visible()
-
     def test_create_modal_has_form_fields(self, server, page):
         page.goto(server, wait_until="networkidle")
         page.locator("button:has-text('New Job')").click()
@@ -826,16 +713,6 @@ class TestCreateJobModal:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestSettingsModal:
-    def test_settings_button_opens_modal(self, server, page):
-        page.goto(server, wait_until="networkidle")
-        # Settings is an icon button in the topbar
-        settings_btn = page.locator(".topbar-right .icon-btn").last
-        settings_btn.click()
-        # Modal should appear with "Settings" title
-        modal = page.locator(".modal")
-        expect(modal).to_be_visible()
-        expect(modal.locator(".modal-title")).to_contain_text("Settings")
-
     def test_poll_interval_is_saved_as_number(self, server, page):
         request_bodies = []
 

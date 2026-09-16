@@ -261,48 +261,7 @@ def test_delete_repo_removes_it(test_app, tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 13. DELETE /api/repos/{id} — cascades to related tables
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_delete_cascades_to_working_state(test_app, tmp_path):
-    """Deleting a repo also removes its working_state row (CASCADE)."""
-    client, db_path = test_app
-
-    _make_git_repo(tmp_path / "repo_a")
-
-    post_resp = client.post("/api/repos", json={"path": str(tmp_path)})
-    repo_id = post_resp.json()["repos"][0]["id"]
-
-    # Insert a working_state row for this repo
-    async def insert_ws():
-        async with aiosqlite.connect(str(db_path)) as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO working_state (repo_id, checked_at) VALUES (?, ?)",
-                (repo_id, "2026-01-01T00:00:00Z"),
-            )
-            await db.commit()
-
-    run(insert_ws())
-
-    # Verify the row exists
-    async def fetch_ws():
-        async with aiosqlite.connect(str(db_path)) as db:
-            cursor = await db.execute(
-                "SELECT repo_id FROM working_state WHERE repo_id = ?", (repo_id,)
-            )
-            return await cursor.fetchone()
-
-    assert run(fetch_ws()) is not None
-
-    # Delete the repo
-    client.delete(f"/api/repos/{repo_id}")
-
-    # working_state row should be gone (CASCADE)
-    assert run(fetch_ws()) is None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 13b. DELETE /api/repos/{id} — cascades to ALL child tables
+# 13. DELETE /api/repos/{id} — cascades to ALL child tables
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_delete_cascades_to_all_child_tables(test_app, tmp_path):

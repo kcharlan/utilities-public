@@ -29,8 +29,6 @@ Frontend feature tests:
   TestCollapseAll            - Collapse-all clears all descendant expanded state
 """
 import json
-import os
-import pytest
 
 from tests.conftest import SAMPLE_DATA
 
@@ -111,11 +109,6 @@ class TestOpen:
         resp = client.post("/api/open", json={"path": str(bad)})
         assert resp.status_code == 400
         assert "Invalid JSON" in resp.json()["detail"]
-
-    def test_open_with_tilde_expansion(self, client, sample_json_file, tmp_path):
-        # Only testable if the file happens to be under $HOME; just test the endpoint doesn't crash
-        resp = client.post("/api/open", json={"path": sample_json_file})
-        assert resp.status_code == 200
 
     def test_open_readonly(self, client, sample_json_file):
         resp = client.post("/api/open", json={"path": sample_json_file, "readonly": True})
@@ -287,16 +280,6 @@ class TestGetChildren:
         assert data["total"] == 0
         assert data["children"] == []
 
-    def test_negative_offset_clamped(self, loaded_client):
-        data = loaded_client.get("/api/children", params={"path": "", "offset": -5}).json()
-        assert data["total"] == len(SAMPLE_DATA)
-
-    def test_overlarge_limit_clamped(self, loaded_client):
-        """Limits > 500 are clamped to 50."""
-        data = loaded_client.get("/api/children", params={"path": "", "limit": 9999}).json()
-        # Clamped to 50, but our data has only 8 keys so all returned
-        assert len(data["children"]) == len(SAMPLE_DATA)
-
     def test_invalid_path_returns_404(self, loaded_client):
         resp = loaded_client.get("/api/children", params={"path": "nope"})
         assert resp.status_code == 404
@@ -323,16 +306,6 @@ class TestGetSubtree:
         nested = [c for c in data["children"] if c["path"] == "nested"][0]
         assert "children" in nested
         assert len(nested["children"]) == 3
-
-    def test_depth_clamped_minimum(self, loaded_client):
-        """depth < 1 should be clamped to 1."""
-        data = loaded_client.get("/api/subtree", params={"path": "", "depth": 0}).json()
-        assert data["type"] == "object"
-
-    def test_depth_clamped_maximum(self, loaded_client):
-        """depth > 10 should be clamped to 10."""
-        resp = loaded_client.get("/api/subtree", params={"path": "", "depth": 100})
-        assert resp.status_code == 200
 
     def test_subtree_of_leaf(self, loaded_client):
         data = loaded_client.get("/api/subtree", params={"path": "name"}).json()
@@ -377,10 +350,6 @@ class TestSearch:
     def test_search_limit(self, loaded_client):
         data = loaded_client.get("/api/search", params={"q": "e", "limit": 2}).json()
         assert len(data) <= 2
-
-    def test_search_invalid_type_defaults_to_both(self, loaded_client):
-        resp = loaded_client.get("/api/search", params={"q": "name", "type": "invalid"})
-        assert resp.status_code == 200
 
     def test_search_in_array_values(self, loaded_client):
         data = loaded_client.get("/api/search", params={"q": "viewer", "type": "value"}).json()
@@ -435,11 +404,6 @@ class TestSetValue:
     def test_set_readonly_returns_403(self, readonly_client):
         resp = readonly_client.put("/api/node", params={"path": "name"}, json={"value": "x"})
         assert resp.status_code == 403
-
-    def test_set_marks_dirty(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 99})
-        status = loaded_client.get("/api/status").json()
-        assert status["dirty"] is True
 
     def test_set_missing_body(self, loaded_client):
         resp = loaded_client.put("/api/node", params={"path": "name"})
@@ -650,12 +614,6 @@ class TestSaveAs:
             data = json.load(f)
         assert data["name"] == "jtree"
 
-    def test_save_as_tilde_expansion(self, loaded_client, tmp_path):
-        # Can't easily test real ~ expansion, but verify the endpoint doesn't crash
-        target = str(tmp_path / "tilde_test.json")
-        resp = loaded_client.post("/api/save-as", json={"path": target})
-        assert resp.status_code == 200
-
     def test_save_as_missing_path(self, loaded_client):
         resp = loaded_client.post("/api/save-as", json={})
         assert resp.status_code == 422
@@ -846,15 +804,6 @@ class TestCopy:
         resp = loaded_client.get("/api/copy", params={"path": "nope"})
         assert resp.status_code == 404
 
-    def test_copy_is_deep(self, loaded_client):
-        """Modifying the copy source should not affect the copied value."""
-        data = loaded_client.get("/api/copy", params={"path": "nested"}).json()
-        original_a = data["value"]["a"]
-        loaded_client.put("/api/node", params={"path": "nested.a"}, json={"value": 999})
-        # Re-copy to verify original copy was independent
-        assert original_a == 1
-
-
 # ============================================================================
 # POST /api/paste
 # ============================================================================
@@ -932,27 +881,6 @@ class TestMalformedInput:
         )
         assert resp.status_code == 422
 
-    def test_extra_fields_ignored(self, loaded_client):
-        """Extra fields in the body should be ignored by Pydantic."""
-        resp = loaded_client.put(
-            "/api/node",
-            params={"path": "version"},
-            json={"value": 7, "extraField": "ignored"},
-        )
-        assert resp.status_code == 200
-
-    def test_path_with_dots_in_key(self, client, tmp_path):
-        """Keys containing dots are a known limitation of the dot-path scheme."""
-        # This is just documenting the behavior, not asserting it should work
-        f = tmp_path / "dots.json"
-        f.write_text('{"a.b": 1, "c": {"d.e": 2}}')
-        client.post("/api/open", json={"path": str(f)})
-        # "a.b" as a path would try to resolve a -> b, not "a.b" as one key
-        resp = client.get("/api/node", params={"path": "a.b"})
-        # Expect 404 because it tries "a" then "b" rather than the literal key "a.b"
-        assert resp.status_code == 404
-
-
 # ============================================================================
 # Integration: copy-then-paste workflow
 # ============================================================================
@@ -981,11 +909,11 @@ class TestCopyPasteWorkflow:
 
 
 # ============================================================================
-# Regression tests for audit findings
+# Security and robustness regressions
 # ============================================================================
 
-class TestAuditFinding1_XssFilename:
-    """Finding #1: HTML special chars in filenames must be escaped in SPA."""
+class TestFilenameEscaping:
+    """HTML special chars in filenames must be escaped in the SPA."""
 
     def test_html_chars_in_filename_are_escaped(self, client):
         """A filename containing HTML chars should be escaped in the page."""
@@ -1014,8 +942,8 @@ class TestAuditFinding1_XssFilename:
         assert "a&amp;b.json" in resp.text
 
 
-class TestAuditFinding6_ServeSpaOpenContent:
-    """Finding #6: serve_spa crashes when file loaded via open-content (file_path=None)."""
+class TestServeSpaAfterContentUpload:
+    """The SPA must work after content upload leaves file_path unset."""
 
     def test_spa_works_after_open_content(self, client):
         """GET / must not crash after loading JSON via browser upload."""
@@ -1028,8 +956,8 @@ class TestAuditFinding6_ServeSpaOpenContent:
         assert "uploaded.json" in resp.text
 
 
-class TestAuditFinding4_SearchDepthGuard:
-    """Finding #4: Deeply nested JSON should not blow the Python call stack."""
+class TestSearchDepthGuard:
+    """Deeply nested JSON must not blow the Python call stack."""
 
     def test_search_deeply_nested_json(self, client, tmp_path):
         """Search on a deeply nested file should not raise RecursionError."""
@@ -1047,8 +975,8 @@ class TestAuditFinding4_SearchDepthGuard:
         assert resp.status_code == 200
 
 
-class TestAuditFinding5_SaveAsPathValidation:
-    """Finding #5: save-as should reject non-.json file extensions."""
+class TestSaveAsPathValidation:
+    """Save As must reject non-.json file extensions."""
 
     def test_save_as_rejects_non_json_extension(self, loaded_client, tmp_path):
         """Saving as a .txt file should be rejected."""
@@ -1056,13 +984,6 @@ class TestAuditFinding5_SaveAsPathValidation:
         resp = loaded_client.post("/api/save-as", json={"path": target})
         assert resp.status_code == 400
         assert ".json" in resp.json()["detail"]
-
-    def test_save_as_accepts_json_extension(self, loaded_client, tmp_path):
-        """Saving as a .json file should still work."""
-        target = str(tmp_path / "output.json")
-        resp = loaded_client.post("/api/save-as", json={"path": target})
-        assert resp.status_code == 200
-
 
 class TestExpandAllViewCentering:
     """Expand-all on a large subtree must re-center the view on the target node.

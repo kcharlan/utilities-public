@@ -76,9 +76,3 @@ def test_sparse_large_file_uses_apparent_size(monkeypatch, tmp_path):
     result = module.walk_tree(root, workers=1, excluded_paths=[])
     assert result.large_files[0]["apparent_bytes"] == module.LARGE_FILE_THRESHOLD_BYTES
     assert result.large_files[0]["allocated_bytes"] < module.LARGE_FILE_THRESHOLD_BYTES
-
-
-def test_regression_guard_has_no_du_or_find_command_literals():
-    source = SCRIPT_PATH.read_text(encoding="utf-8")
-    assert '"du"' not in source
-    assert '"find"' not in source

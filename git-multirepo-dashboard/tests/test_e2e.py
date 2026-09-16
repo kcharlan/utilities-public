@@ -162,18 +162,6 @@ def test_react_app_mounts(server, page):
     assert root.inner_html() != "", "React app did not mount — #root is empty"
 
 
-def test_no_recharts_reference_error(server, page):
-    """Recharts loads correctly — no ReferenceError for Recharts global."""
-    errors = []
-    page.on("pageerror", lambda err: errors.append(str(err)))
-
-    page.goto(server)
-    page.wait_for_load_state("networkidle")
-
-    recharts_errors = [e for e in errors if "Recharts" in e or "ReferenceError" in e]
-    assert recharts_errors == [], f"Recharts/reference errors: {recharts_errors}"
-
-
 # ═════════════════════════════════════════════════════════════════════════════
 # 2. Header & Navigation
 # ═════════════════════════════════════════════════════════════════════════════

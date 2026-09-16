@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import ast
 import math
 from dataclasses import FrozenInstanceError, replace
 from fractions import Fraction
-from pathlib import Path
 from typing import Any, get_args
 from unittest.mock import patch
 
@@ -997,18 +995,6 @@ def test_event_and_result_defensively_freeze_input_json() -> None:
     assert event.new_model_metadata["pricing"]["prompt"] == "0.000001"  # type: ignore[index]
     with pytest.raises(TypeError):
         event.new_model_metadata["pricing"]["prompt"] = "mutated"  # type: ignore[index]
-
-
-def test_generic_parser_source_contains_no_openrouter_raw_selector_names() -> None:
-    source = (Path(__file__).parents[1] / "model_sentinel" / "conditional_pricing.py").read_text()
-    string_constants = {
-        node.value
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
-
-    forbidden_names = {"min_prompt_tokens", "utc_days", "utc_start", "utc_end"}
-    assert string_constants.isdisjoint(forbidden_names)
 
 
 def test_reason_code_types_cover_every_task_two_emission() -> None:

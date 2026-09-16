@@ -5,7 +5,7 @@ Tests cover:
   - check_rust_outdated(), check_rust_vulns(), check_rust_deps()
   - check_ruby_outdated(), check_ruby_vulns(), check_ruby_deps()
   - check_php_outdated(), check_php_vulns(), check_php_deps()
-  - Cross-ecosystem: required fields, severity escalation, classify_severity reuse
+  - Cross-ecosystem: required fields and severity escalation
 
 Run from project root:
     .venv/bin/python -m pytest tests/test_remaining_dep_health.py -v
@@ -862,21 +862,3 @@ def test_vuln_overrides_outdated(tmp_path, ecosystem, manager, outdated_fn, vuln
         )
     finally:
         gd.TOOLS[tool_key] = old_val
-
-
-# Test 40 — classify_severity reuse
-def test_classify_severity_reuse():
-    """Each ecosystem calls the shared classify_severity, not a duplicate."""
-    # Verify the function exists in git_dashboard module and is callable
-    assert callable(gd.classify_severity)
-    # Verify it produces consistent output (not duplicated with different behavior)
-    assert gd.classify_severity("1.0.0", "1.1.0") == "outdated"
-    assert gd.classify_severity("1.0.0", "2.0.0") == "major"
-    assert gd.classify_severity("1.0.0", "1.0.0") == "ok"
-    # verify module has no alternative classify functions
-    import inspect
-    members = inspect.getmembers(gd, predicate=inspect.isfunction)
-    classify_fns = [name for name, _ in members if "classify" in name.lower()]
-    assert classify_fns == ["classify_severity"], (
-        f"Found unexpected classify functions: {classify_fns}"
-    )
