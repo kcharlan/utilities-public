@@ -256,7 +256,7 @@ stream_archive_entry() {
 }
 
 typeset -a direct_source_paths audited_scopes index_paths
-typeset -a invalid_index_paths pending_deletion_paths model_module_paths
+typeset -a invalid_index_paths pending_deletion_paths model_source_paths
 typeset -A index_membership index_modes index_oids
 typeset -A invalid_index_membership source_state_invalid pending_deletions
 typeset -A stale_counts stale_history_operational_errors
@@ -635,26 +635,45 @@ fi
 
 if [[ "$git_snapshot_ok" == true ]]; then
   for indexed_path in "${index_paths[@]}"; do
-    if [[ "$indexed_path" == model_sentinel/model_sentinel/*.py ]]; then
+    if [[ "$indexed_path" == model_sentinel/model_sentinel/* ]]; then
       model_relative="${indexed_path#model_sentinel/model_sentinel/}"
-      if [[ "$model_relative" == */* ]]; then
-        continue
-      fi
-      model_stem="${model_relative%.py}"
-      if [[ "$model_relative" != *.py ||
-            -z "$model_stem" ||
-            "${model_stem[1]}" != [A-Za-z_] ||
-            "$model_stem" == *[^A-Za-z0-9_]* ]]; then
+      if [[ "$model_relative" == _packaged_build.py ]]; then
         report_failure \
-          "model-sentinel module has unsupported source pathname"
+          "model-sentinel generated build metadata path must not be tracked"
         model_zipapp_ok=false
         model_source_ok=false
         continue
       fi
-      model_module_paths+=("$indexed_path")
-      if [[ -n "${source_state_invalid[$indexed_path]-}" ]]; then
+      if [[ "$model_relative" == */* &&
+            "$model_relative" != browse/* ]]; then
         report_failure \
-          "model-sentinel module ${indexed_path:t} source is missing or unsupported"
+          "model-sentinel package contains an unsupported nested source path"
+        model_zipapp_ok=false
+        model_source_ok=false
+        continue
+      fi
+      if [[ "$model_relative" != */* ]]; then
+        model_stem="${model_relative%.py}"
+        if [[ "$model_relative" != *.py ||
+              -z "$model_stem" ||
+              "${model_stem[1]}" != [A-Za-z_] ||
+              "$model_stem" == *[^A-Za-z0-9_]* ]]; then
+          report_failure \
+            "model-sentinel module has unsupported source pathname"
+          model_zipapp_ok=false
+          model_source_ok=false
+          continue
+        fi
+      fi
+      model_source_paths+=("$indexed_path")
+      if [[ -n "${source_state_invalid[$indexed_path]-}" ]]; then
+        if [[ "$model_relative" == */* ]]; then
+          report_failure \
+            "model-sentinel package entry $model_relative source is missing or unsupported"
+        else
+          report_failure \
+            "model-sentinel module $model_relative source is missing or unsupported"
+        fi
         model_zipapp_ok=false
         model_source_ok=false
       fi
@@ -669,9 +688,9 @@ if [[ "$git_snapshot_ok" == true ]]; then
     fi
   done
   for pending_path in "${pending_deletion_paths[@]}"; do
-    if [[ "$pending_path" == model_sentinel/model_sentinel/*.py ]]; then
+    if [[ "$pending_path" == model_sentinel/model_sentinel/* ]]; then
       report_failure \
-        "model-sentinel module ${pending_path:t} source is pending deletion"
+        "model-sentinel package source is pending deletion"
       model_zipapp_ok=false
       model_source_ok=false
     fi
@@ -731,17 +750,36 @@ if [[ "$model_can_inspect" == true ]]; then
   expected_archive_types[model_sentinel/]=directory
   expected_archive_sizes[model_sentinel/]=0
 
-  for model_module_path in "${model_module_paths[@]}"; do
-    archive_entry="model_sentinel/${model_module_path:t}"
+  for model_source_path in "${model_source_paths[@]}"; do
+    model_relative="${model_source_path#model_sentinel/model_sentinel/}"
+    archive_entry="model_sentinel/$model_relative"
     expected_archive_entries+=("$archive_entry")
     expected_regular_entries+=("$archive_entry")
-    expected_archive_sources[$archive_entry]="$model_module_path"
+    expected_archive_sources[$archive_entry]="$model_source_path"
     expected_archive_types[$archive_entry]=file
+
+    archive_parent="${archive_entry:h}/"
+    while [[ "$archive_parent" != model_sentinel/ ]]; do
+      if [[ -z "${expected_archive_types[$archive_parent]-}" ]]; then
+        expected_archive_entries+=("$archive_parent")
+        expected_archive_types[$archive_parent]=directory
+        expected_archive_sizes[$archive_parent]=0
+      fi
+      archive_parent="${${archive_parent%/}:h}/"
+    done
   done
+
+  generated_build_entry=model_sentinel/_packaged_build.py
+  expected_archive_entries+=("$generated_build_entry")
+  expected_regular_entries+=("$generated_build_entry")
+  expected_archive_types[$generated_build_entry]=generated
 
   expected_total_size=0
   if [[ "$model_source_ok" == true ]]; then
     for archive_entry in "${expected_regular_entries[@]}"; do
+      if [[ "$archive_entry" == "$generated_build_entry" ]]; then
+        continue
+      fi
       archive_source="$REPO_ROOT/${expected_archive_sources[$archive_entry]}"
       archive_source_size=
       if ! archive_source_size="$(file_size "$archive_source" 2>/dev/null)" ||
@@ -754,6 +792,47 @@ if [[ "$model_can_inspect" == true ]]; then
       expected_archive_sizes[$archive_entry]="$archive_source_size"
       expected_total_size=$((expected_total_size + archive_source_size))
     done
+
+    model_hash_stage="$AUDIT_TMP/model-source-hash"
+    if ! mkdir -p -- "$model_hash_stage"; then
+      report_failure "model-sentinel source hash staging failed"
+      model_zipapp_ok=false
+      model_inventory_ok=false
+    else
+      for archive_entry in "${expected_regular_entries[@]}"; do
+        if [[ "$archive_entry" == "$generated_build_entry" ]]; then
+          continue
+        fi
+        hash_target="$model_hash_stage/$archive_entry"
+        if ! mkdir -p -- "${hash_target:h}" ||
+            ! cp -p -- \
+              "$REPO_ROOT/${expected_archive_sources[$archive_entry]}" \
+              "$hash_target"; then
+          report_failure "model-sentinel source hash staging failed"
+          model_zipapp_ok=false
+          model_inventory_ok=false
+          break
+        fi
+      done
+    fi
+    model_source_hash=
+    if [[ "$model_inventory_ok" == true ]]; then
+      model_source_hash="$(
+        cd "$model_hash_stage" || exit 1
+        find . -type f \
+          ! -path './model_sentinel/_packaged_build.py' \
+          -exec shasum -a 256 {} \; \
+          | LC_ALL=C sort \
+          | shasum -a 256 \
+          | awk '{print $1}'
+      )" || true
+      if [[ "$model_source_hash" == *[^0-9a-f]* ||
+            ${#model_source_hash} != 64 ]]; then
+        report_failure "model-sentinel source hash calculation failed"
+        model_zipapp_ok=false
+        model_inventory_ok=false
+      fi
+    fi
   fi
 
   inventory_list="$AUDIT_TMP/model-inventory.list"
@@ -830,18 +909,25 @@ if [[ "$model_can_inspect" == true ]]; then
         fi
       done < "$detail_file"
       expected_type="${expected_archive_types[$archive_entry]}"
-      expected_size="${expected_archive_sizes[$archive_entry]}"
+      expected_size="${expected_archive_sizes[$archive_entry]-}"
       if (( detail_records != 1 )) ||
           [[ "$advertised_size" != <-> ]] ||
-          { [[ "$expected_type" == file ]] &&
+          { [[ "$expected_type" == file || "$expected_type" == generated ]] &&
             [[ "${detail_permissions[1]}" != - ]]; } ||
           { [[ "$expected_type" == directory ]] &&
             [[ "${detail_permissions[1]}" != d ]]; } ||
-          [[ "$advertised_size" != "$expected_size" ]]; then
+          { [[ "$expected_type" != generated ]] &&
+            [[ "$advertised_size" != "$expected_size" ]]; } ||
+          { [[ "$expected_type" == generated ]] &&
+            (( advertised_size < 1 || advertised_size > 512 )); }; then
         report_failure "model-sentinel archive entry type or size is invalid"
         model_zipapp_ok=false
         model_inventory_ok=false
         continue
+      fi
+      if [[ "$expected_type" == generated ]]; then
+        expected_archive_sizes[$archive_entry]="$advertised_size"
+        expected_total_size=$((expected_total_size + advertised_size))
       fi
       advertised_total_size=$((advertised_total_size + advertised_size))
 
@@ -890,6 +976,29 @@ if [[ "$model_can_inspect" == true ]]; then
         model_zipapp_ok=false
         continue
       fi
+      if [[ "$archive_entry" == "$generated_build_entry" ]]; then
+        metadata_line_count="$(wc -l < "$streamed_file" | tr -d ' ')"
+        metadata_kind_count="$(grep -Ec \
+          '^BUILD_KIND = "standalone"$' "$streamed_file" || true)"
+        metadata_revision_count="$(grep -Ec \
+          '^BUILD_REVISION = "([0-9a-f]{12}(\+modified)?|unknown)"$' \
+          "$streamed_file" || true)"
+        metadata_hash_count="$(grep -Fxc \
+          "BUILD_SOURCE_HASH = \"$model_source_hash\"" \
+          "$streamed_file" || true)"
+        metadata_time_count="$(grep -Ec \
+          '^BUILD_TIME_UTC = "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"$' \
+          "$streamed_file" || true)"
+        if [[ "$metadata_line_count" != 4 ||
+              "$metadata_kind_count" != 1 ||
+              "$metadata_revision_count" != 1 ||
+              "$metadata_hash_count" != 1 ||
+              "$metadata_time_count" != 1 ]]; then
+          report_failure "model-sentinel packaged build provenance is invalid"
+          model_zipapp_ok=false
+        fi
+        continue
+      fi
       archive_source="$REPO_ROOT/${expected_archive_sources[$archive_entry]}"
       if compare_bytes "$archive_source" "$streamed_file"; then
         :
@@ -897,8 +1006,10 @@ if [[ "$model_can_inspect" == true ]]; then
         comparison_status=$?
         if [[ "$archive_entry" == __main__.py ]]; then
           artifact_label="model-sentinel __main__.py"
-        else
+        elif [[ "${archive_entry#model_sentinel/}" != */* ]]; then
           artifact_label="model-sentinel module ${archive_entry:t}"
+        else
+          artifact_label="model-sentinel package entry $archive_entry"
         fi
         if (( comparison_status == 1 )); then
           report_failure "$artifact_label is stale"

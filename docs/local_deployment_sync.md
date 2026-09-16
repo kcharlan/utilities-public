@@ -87,10 +87,12 @@ These files are direct copies of tracked source and should remain byte-for-byte 
 
 `model-sentinel` is intentionally different: it is a generated zipapp. Rebuild
 it with `model_sentinel/install_standalone.sh`. The audit derives its exact
-expected `__main__.py` and `model_sentinel/*.py` inventory from the same
-validated Git-index snapshot used for other deployments, then validates and
-streams only those entries. Run the installer with a venv-provided `python3`
-on Homebrew-managed macOS.
+expected `__main__.py`, `model_sentinel/*.py`, and
+`model_sentinel/browse/**` inventory from the same validated Git-index snapshot
+used for other deployments, then validates and streams only those entries. It
+also validates the generated `model_sentinel/_packaged_build.py` provenance
+file, including its bounded size, exact structure, and source hash. Run the
+installer with a venv-provided `python3` on Homebrew-managed macOS.
 
 `time_machine_snapshot_monitor` is a maintained multi-file copy under
 `~/Library/Scripts/time_machine_snapshot_monitor`. Deploy or update it from the
