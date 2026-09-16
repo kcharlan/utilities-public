@@ -117,3 +117,13 @@ def test_router_log_lazy_dependencies_are_covered() -> None:
 
     assert metadata is not None
     assert missing_declared_imports(path, text, metadata["dependencies"]) == []
+
+
+def test_git_fleet_browser_test_dependencies_are_manifest_only() -> None:
+    manifest_type, manifest_path, allowed_extras = DEPENDENCY_MANIFESTS[
+        "git-multirepo-dashboard/git_dashboard.py"
+    ]
+
+    assert manifest_type == "requirements"
+    assert manifest_path == "git-multirepo-dashboard/tests/requirements-test.txt"
+    assert {"playwright", "pytest-playwright"} <= allowed_extras

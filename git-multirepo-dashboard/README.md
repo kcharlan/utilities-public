@@ -121,6 +121,12 @@ The application intentionally remains one uv-managed Python file:
 - A React 18 SPA, its CSS, and all JSX are embedded in `git_dashboard.py` and served by `GET /`; there is no frontend build or `node_modules`.
 - Hash routes select the Fleet, Analytics, and repository detail views.
 
+React remains on 18 because React 19 does not publish the UMD globals consumed
+by this single-file app. Recharts remains on 2 because the current CDN build
+exposes the `Recharts` global used throughout the embedded JSX, while Recharts
+3 requires module/bundler integration and API migration. Those major upgrades
+belong to a separate frontend build-system change.
+
 The six SQLite tables are:
 
 - `repositories` — registered path, runtime classification, default branch, and scan timestamps
@@ -142,10 +148,9 @@ python3 -m venv .venv
 .venv/bin/python -m pytest tests/ --ignore=tests/test_e2e.py -v
 ```
 
-Install the Playwright add-on and browser to run the E2E suite:
+Install the Playwright browser and run the E2E suite:
 
 ```bash
-.venv/bin/pip install playwright pytest-playwright
 .venv/bin/playwright install chromium
 .venv/bin/python -m pytest tests/test_e2e.py -v
 ```

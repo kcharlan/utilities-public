@@ -13,7 +13,6 @@ standard-library Python script; there is no shared package or repository-wide
 setup step.
 
 Read the target-specific README and migration guide before running it. The
-current Gemini converter modifies skill metadata in the source plugin and uses
-colon-prefixed skill names, which do not conform to the current Agent Skills
-name format. Its command conversion remains useful, but the limitations are
-important when using it with current Gemini CLI releases.
+current Gemini converter validates Agent Skills metadata, leaves the source
+plugin unchanged, links compliant skills by their existing names, and preserves
+Gemini CLI's directory-based command namespacing.

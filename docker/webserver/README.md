@@ -41,14 +41,14 @@ Before you begin, ensure you have the following installed:
 2.  **Start the services:**
     Use the provided shell scripts to manage the services.
     *   `./up.sh`: Pulls the moving Nginx tag, refreshes base images as needed, builds, and starts all services in detached mode.
-    *   `./update.sh`: Performs the explicit dependency refresh: pulls `nginx:stable-alpine`, clean-builds all application images from the current Node 24/Python 3.12 bases and allowed dependency ranges, recreates the stack, waits for health, and smoke-tests the APIs.
+    *   `./update.sh`: Pulls `nginx:stable-alpine`, clean-builds all application images from the current Node 24/Python 3.14 bases and checked-in dependency manifests/locks, recreates the stack, waits for health, and smoke-tests the APIs.
     *   `./up-fresh.sh`: Compatibility alias for `./update.sh`.
     ```bash
     # To start the services for the first time or with a fresh build:
     ./up-fresh.sh
     ```
     This command will:
-    *   Build the `app_py` Docker image (based on `python:3.12-slim`).
+    *   Build the `app_py` Docker image (based on `python:3.14-slim`).
     *   Pull the current `nginx:stable-alpine` and `node:24-alpine` images.
     *   Install Node dependencies while building the images, rather than on every container start, then remove the unused npm CLI from the runtime images.
     *   Start all four services.
@@ -90,7 +90,14 @@ Once the services are running, you can access the web server and APIs:
     ```
 
 *   **Refreshing images and dependencies:**
-    Moving image tags and dependency ranges are intentional in this local stack. Run `update.sh` when you want to pull current upstream versions, clean-build the applications, recreate the containers, and verify their health. Ordinary restarts do not install packages from the network.
+    Moving base-image tags remain intentional in this local stack. Node
+    application dependencies are reproducible through their checked-in lock
+    files. The Python service uses a fully frozen, hashed lock, while both Node
+    services use `npm ci`; refresh and audit those locks explicitly before
+    running `update.sh`.
+    The script pulls current base images, clean-builds the applications,
+    recreates the containers, and verifies their health. Ordinary restarts do
+    not install packages from the network.
 
     ```bash
     ./update.sh
@@ -166,7 +173,14 @@ Use the built-in control panel at `http://localhost:7711/configure` to create or
 
 ### `app_node_Dockerfile`
 
-The `app_node_Dockerfile` builds the Compose `app_node` service. Dependencies and application code are included in the image so restarts do not depend on npm registry availability. The build deliberately uses the semver ranges in `package.json`; `update.sh` is the controlled point for accepting newer compatible packages. npm is removed from the final runtime filesystem after the install because the running service only needs Node.
+The `app_node_Dockerfile` builds the Compose `app_node` service. Dependencies and application code are included in the image so restarts do not depend on npm registry availability. The build installs the checked-in lock with `npm ci --omit=dev`; refresh and audit the lock explicitly when accepting dependency updates. npm is removed from the final runtime filesystem after the install because the running service only needs Node.
+
+### `app_py/Dockerfile`
+
+The Python image installs `app_py/requirements.lock` with pip's
+`--require-hashes` enforcement. `requirements.txt` remains the small direct
+dependency input; regenerate the universal Python 3.14 lock with the command in
+`app_py/README.md`, audit it, and commit both files before rebuilding.
 
 ## Extending and Customization
 

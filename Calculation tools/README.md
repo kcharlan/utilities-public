@@ -37,7 +37,7 @@ Compares the present value of vendor financing at each possible payoff month wit
 - Charts each month's savings as a percentage of the savings at the end of the term.
 - Exports both tables as CSV and the chart as PNG.
 
-"Savings" means `vendor price - present value of the financing scenario`; negative values are displayed as zero. The model assumes the remaining loan balance is paid as a lump sum after the selected number of payments. It does not include payoff penalties, transaction fees, taxes, or other financing charges. Chart.js is loaded from jsDelivr, so chart rendering requires network access unless that dependency is cached.
+"Savings" means `vendor price - present value of the financing scenario`; negative values are displayed as zero. The model assumes the remaining loan balance is paid as a lump sum after the selected number of payments. It does not include payoff penalties, transaction fees, taxes, or other financing charges. Chart.js 4.5.1 is loaded from jsDelivr, so chart rendering requires network access unless that dependency is cached.
 
 ### `lump_sum_calculator.html`
 
@@ -77,6 +77,16 @@ Both calculators use `APR / 12` monthly compounding and round monthly amounts to
 3. Click **Calculate** where provided. `drawdown.html` also recalculates shortly after an input changes.
 4. Use the page's export controls if you need CSV data or, for the early-loan calculator, a PNG chart.
 
-Run the dependency-free Node regression suite with `node --test tests/*.test.js`. It covers drawdown date anchoring, asset-sale tax and liquidation behavior, pin normalization, yearly aggregation, summary output, and CSV schema/rounding. No package installation is required. Pin editing interactions and the other calculators still require browser checks; verify their default scenarios, representative edge cases such as zero interest, and download controls when changing them.
+Run the dependency-free Node regression suite with `node --test tests/*.test.js`. It covers drawdown date anchoring, asset-sale tax and liquidation behavior, pin normalization, yearly aggregation, summary output, and CSV schema/rounding. No package installation is required for that suite.
+
+The Playwright suite loads the Chart.js-backed calculator in Chromium and verifies both the pinned browser dependency and the default calculation:
+
+```sh
+npm ci
+npx playwright install chromium
+npm run test:browser
+```
+
+Run both automated suites with `npm test`. Pin editing interactions and the remaining calculators still require browser checks; verify their default scenarios, representative edge cases such as zero interest, and download controls when changing them.
 
 These tools provide planning estimates, not financial, tax, or investment advice.

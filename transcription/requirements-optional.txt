@@ -1,0 +1,5 @@
+# Optional OpenAI API fallback used only by app.py.
+openai==3.14.1
+
+# Optional duration reader used only by transcribe.py.
+librosa==1.0.0

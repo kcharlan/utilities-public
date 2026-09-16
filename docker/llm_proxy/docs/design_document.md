@@ -193,7 +193,7 @@ proxy's `/v1/models` endpoints.
 - `output/` may be replaced on startup; only its README is tracked.
 - A provider change requires an image rebuild and container recreation.
 - `update.sh` is the explicit clean-refresh path for the moving Python base and
-  allowed dependency ranges; `up.sh` performs a normal pull-aware build.
+  checked-in frozen `uv.lock`; `up.sh` performs a normal pull-aware build.
 - `/health` proves that the process is serving requests, not that either
   external provider is currently healthy or authenticated.
 

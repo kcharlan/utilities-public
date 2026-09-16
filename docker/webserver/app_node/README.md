@@ -7,9 +7,8 @@ This directory contains a simple Node.js application built with Express.js. It s
 *   **`api.js`**: The main application file, defining an Express server with ES module syntax and a single API endpoint.
 - **`package.json`**: Defines project metadata and the Express.js dependency.
   It uses `"type": "module"` for ES module imports.
-- **`package-lock.json`**: Records a resolved dependency graph for local tooling,
-  but the current Dockerfile intentionally installs from the compatible range
-  in `package.json` with `--no-package-lock`.
+- **`package-lock.json`**: Records the audited production dependency graph. The
+  Dockerfile installs it with `npm ci --omit=dev`.
 
 ## Functionality
 

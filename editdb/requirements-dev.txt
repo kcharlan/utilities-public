@@ -7,3 +7,5 @@ pydantic
 # Test-only dependencies.
 pytest>=8.0
 httpx
+playwright>=1.63
+pytest-playwright>=0.9

@@ -17,7 +17,7 @@ block is stored unchanged when its RLE payload would not be smaller.
   fallback is impractical for large blocks. This variant skips the per-block
   round-trip check and has no `selftest` subcommand.
 - `setup.sh` — Deletes and recreates `venv/` with `python3.12`, then installs
-  `pydivsufsort` and `numba`.
+  the exact `pydivsufsort` and `numba` releases tracked in `requirements.txt`.
 
 Both scripts read and write the same block format, so output from either script
 can be inverted by the other.
@@ -70,6 +70,9 @@ python rs.py selftest
 
 The self-test generates 1 MiB of random data, transforms it in 64 KiB blocks,
 inverts it, and compares the result byte-for-byte.
+
+Run that self-test after dependency updates; it is the project's complete
+dependency compatibility check.
 
 ### Transform options
 

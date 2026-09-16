@@ -19,6 +19,7 @@ import json
 import os
 import re
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +37,17 @@ except ImportError:
     )
 
 pytestmark = pytest.mark.e2e
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER = PROJECT_ROOT / "launchmaster"
+
+
+def test_supported_cdn_versions_are_pinned():
+    source = LAUNCHER.read_text()
+    assert "react@18.3.1" in source
+    assert "react-dom@18.3.1" in source
+    assert "@babel/standalone@7.29.8" in source
+    assert "lucide@1.46.0" in source
 
 
 def _put_settings(server, updates):
@@ -484,10 +496,19 @@ class TestFailedPanelActions:
 
 class TestPageLoad:
     def test_page_loads_without_js_errors(self, server, page):
-        """SPA loads with no JavaScript console errors."""
+        """SPA loads without uncaught exceptions or console errors."""
         errors = []
         page.on("pageerror", lambda err: errors.append(str(err)))
+        page.on(
+            "console",
+            lambda message: errors.append(message.text)
+            if message.type == "error"
+            else None,
+        )
         page.goto(server, wait_until="networkidle")
+        page.evaluate("console.error('__console_capture_probe__')")
+        assert errors == ["__console_capture_probe__"]
+        errors.clear()
         assert not errors, f"JavaScript errors on page load: {errors}"
 
     def test_title_is_launchmaster(self, server, page):

@@ -42,6 +42,17 @@ Single-file FastAPI + embedded React SPA (no Node.js build tooling required).
   - Standings: `https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings?season={year}`
   - Teams: `https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/teams`
 
+### Frontend compatibility boundary
+
+The embedded, build-free SPA intentionally stays on the React 18 UMD global
+contract. React 19 does not publish the same UMD artifacts and would require a
+module/bundler migration. Tailwind stays on the classic Play CDN; 3.4.17 is
+the newest version that service actually serves (the 3.4.19 URL returns a
+runtime error). Moving to Tailwind 4 requires replacing the classic CDN path
+and revisiting the inline configuration. Browser smoke coverage protects this
+boundary and the Lucide UMD API. Babel Standalone remains on major 7 for the
+inline `text/babel` transform; major 8 needs a separate transform migration.
+
 ## API Endpoints
 
 ```
@@ -57,5 +68,6 @@ POST /api/refresh                   → Invalidate data cache
 cd /path/to/utilities-public/mls-tracker
 uv venv .venv --python 3.12
 uv pip install --python .venv/bin/python -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
 .venv/bin/python -m pytest -q
 ```

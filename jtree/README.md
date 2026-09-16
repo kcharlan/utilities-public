@@ -107,6 +107,13 @@ Single-file Python script (uv-managed via a PEP 723 header) following the embedd
 - **Frontend**: React 18, Babel Standalone, Tailwind CSS, Lucide Icons, DM Sans + JetBrains Mono fonts (all CDN)
 - **No build step**: No `npm install`, no `node_modules`
 
+The frontend intentionally stays on the React 18 UMD and Tailwind 3
+classic-CDN lines. React 19 does not publish the UMD globals used by this
+single-file app, and Tailwind 4 uses a different browser package and
+configuration model. Either major upgrade requires a build/bundling migration.
+The classic Play CDN is pinned to 3.4.17, its newest published browser
+artifact; it rejects the newer 3.4.19 npm package version as unknown.
+
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`) — manages the Python interpreter and dependencies
@@ -119,5 +126,6 @@ Single-file Python script (uv-managed via a PEP 723 header) following the embedd
 cd jtree
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/playwright install chromium
 .venv/bin/python -m pytest -q
 ```

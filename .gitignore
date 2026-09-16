@@ -46,6 +46,9 @@ pip-delete-this-directory.txt
 
 # Unit test / coverage reports
 htmlcov/
+test-results/
+playwright-report/
+blob-report/
 .tox/
 .nox/
 .coverage
@@ -259,7 +262,6 @@ hysa-excel/*.xlsx
 docker/llm_collector/secret.env
 docker/llm_collector/extension/config.local.js
 docker/webserver/.env
-docker/llm_proxy/uv.lock
 docker/llm_proxy/output/opencode_provider_*.json
 docker/llm_proxy/output/t3chat_bookmarklet.html
 docker/llm_proxy/output/update_opencode_config.sh

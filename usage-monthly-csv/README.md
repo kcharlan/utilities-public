@@ -21,7 +21,7 @@ Standalone Zsh utility that runs the `ccusage claude daily` and `ccusage codex d
 
 - macOS with `zsh` and BSD `date`.
 - One of these report sources:
-  - Preferred: `npx` and `jq` on `PATH`. The script invokes `ccusage@latest`, so `npx` may need network access when the package is not cached.
+  - Preferred: `npx` and `jq` on `PATH`. The script invokes the reproducibly pinned `ccusage@20.0.20`, so `npx` may need network access when that package is not cached.
   - Fallback: both `ccusage_csv` and `cusage_csv`, either on `PATH` or available to interactive Zsh through a startup file such as `~/.zshrc`.
 
 ## Installation

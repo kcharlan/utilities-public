@@ -21,8 +21,8 @@ or clear the structured inputs.
 The page has no backend and does not upload pasted data to this repository. It
 does, however, load the following resources from public CDNs:
 
-- the `@iarna/toml` parser and serializer;
-- `js-yaml`;
+- the `@iarna/toml` 3.0.0 parser and serializer;
+- `js-yaml` 4.1.1;
 - Google Fonts.
 
 Network access is therefore required on first load unless those resources are
@@ -31,7 +31,7 @@ already cached. The selected theme is the only value saved to browser
 
 ### Token counts
 
-Without an API key, the page uses a simple local estimate:
+The page uses a simple local estimate:
 
 ```text
 ceil(number of characters / 4)
@@ -40,23 +40,10 @@ ceil(number of characters / 4)
 This is useful for relative comparisons, but it is not a model tokenizer and
 must not be treated as an exact billable-token count.
 
-If `window.OPENAI_API_KEY` is set, the current implementation first attempts a
-three-second request to the legacy OpenAI Completions endpoint using
-`gpt-3.5-turbo-instruct` and reads `usage.prompt_tokens`. Any missing key,
-request error, rejection, or timeout falls back silently to the local estimate.
-The status chip reports `✅ API` only when that request succeeds and
-`⚙️ Local` otherwise.
-
-To try the API path, set the key in the browser developer console before
-calculating:
-
-```javascript
-window.OPENAI_API_KEY = "YOUR_API_KEY_HERE"; // pragma: allowlist secret
-```
-
-Putting an API key in a browser exposes it to that page and to anyone who can
-inspect the browser session. Use a restricted, disposable key if you enable
-this optional path.
+Token estimation is deliberately local. A former browser-only fallback sent
+rendered content and a browser-exposed key to the legacy OpenAI Completions
+API; that integration was removed because it was not a safe or current
+tokenization contract. The page never reads an API key or uploads pasted data.
 
 ### Web conversion limits
 
@@ -68,8 +55,10 @@ this optional path.
   is converted to JavaScript number/boolean values when parsed.
 - TOML cannot represent `null`; if any converted value is `null`, the
   structured conversion run reports an error.
-- The browser code currently has no automated test suite. The Python tests do
-  not validate the HTML/JavaScript implementation.
+- The browser Playwright smoke test covers dependency initialization, one JSON
+  conversion, local token-source labels, and the no-OpenAI-request privacy
+  contract. The Python tests do not validate the HTML/JavaScript
+  implementation, and the browser suite is not a full interaction matrix.
 
 ## Command-line interface
 
@@ -85,7 +74,9 @@ pip install -r requirements.txt
 ```
 
 `requirements.txt` installs the TOON implementation directly from its GitHub
-repository, so the initial installation requires network access.
+repository at audited commit
+`e475c82e9da03dfaf88c0b277dee6b5d17100b13`, so the initial installation
+requires network access.
 
 ### Usage
 
@@ -143,8 +134,17 @@ python3 -m pytest
 
 The pytest suite covers each Python converter, CLI success/error paths, default
 output naming, and cross-format round trips. TOML pairs containing null values
-are intentionally excluded because TOML has no null value. There are currently
-no automated browser tests.
+are intentionally excluded because TOML has no null value.
+
+The Playwright suite loads the static page in Chromium and verifies that the
+pinned YAML and TOML browser dependencies initialize and perform a structured
+conversion:
+
+```sh
+npm ci
+npx playwright install chromium
+npm run test:browser
+```
 
 ## Design references
 

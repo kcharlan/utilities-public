@@ -4,6 +4,10 @@ launchmaster is a local macOS control center for inspecting and managing
 `launchd` jobs. A single executable Python file serves a FastAPI backend and an
 embedded React interface; there is no frontend build step.
 
+The embedded frontend intentionally stays on React 18 because React 19 does
+not publish the UMD globals consumed directly by this single-file app. Moving
+to React 19 requires a module/bundler migration rather than a CDN URL update.
+
 ## Requirements
 
 - macOS with `launchctl`

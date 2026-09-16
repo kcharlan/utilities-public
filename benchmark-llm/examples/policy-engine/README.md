@@ -86,6 +86,11 @@ This example uses that pattern for a benchmark-specific `mutation_probe` step. I
 The model-facing prompt exposes the hard contract directly.
 It now makes the required CLI entry point, output fields, and blank or missing field handling visible instead of relying on hidden evaluator expectations.
 
+The validation harness creates an isolated workspace environment with
+pytest 9.1.1 and PyYAML 6.0.3 before installing any target repository
+requirements. Pinning the harness-owned tools keeps repeated benchmark runs
+comparable; target requirements remain part of the repository under test.
+
 Primary CLI validation uses:
 
 ```bash

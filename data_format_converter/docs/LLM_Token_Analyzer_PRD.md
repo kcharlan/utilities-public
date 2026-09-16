@@ -1,8 +1,8 @@
 # LLM Token Analyzer & Format Converter — Product Requirements
 
 **Status:** Implemented
-**Version:** 1.2
-**Reviewed:** 2026-07-26
+**Version:** 1.3
+**Reviewed:** 2026-09-16
 
 ## 1. Product summary
 
@@ -40,7 +40,7 @@ The browser UI must:
 - populate every structured panel from a valid source object;
 - show inline errors and clear stale counts/comparison results after a failed
   calculation;
-- show token counts, their source (`API` or `Local`), the smallest and largest
+- show local token estimates, the smallest and largest
   renderings, and percentage differences from the smallest;
 - support system, light, and dark themes and persist only the theme choice;
 - treat raw text as a count-only operation.
@@ -54,9 +54,9 @@ features.
 The default count is `ceil(text.length / 4)`. It is explicitly an estimate, not
 GPT-5 tokenization or a billing measurement.
 
-When a user explicitly exposes an API key as `window.OPENAI_API_KEY`, the page
-may attempt the legacy Completions request implemented in `web/index.html`.
-Failure must fall back to the local estimate without preventing conversion.
+The browser must not read an API-key global or send pasted/rendered content to
+an external model API. Exact model tokenization would require a separately
+designed local tokenizer or backend contract.
 
 ### Browser conversion boundaries
 
@@ -96,18 +96,17 @@ It must:
 - CLI tests must cover success, malformed input, absent input, default output
   naming, TOML null rejection, and meaningful cross-format round trips.
 - Tests and examples must use conspicuously synthetic data.
-- The README must distinguish the browser's heuristic/API behavior from the
-  CLI and document lossy format boundaries.
+- The README must distinguish the browser's local heuristic from the CLI and
+  document lossy format boundaries.
 
-The browser implementation currently has no automated tests; this is a known
-coverage boundary, not a claim that the Python suite validates browser behavior.
+The browser smoke must cover dependency initialization, a representative
+conversion, local token-source labels, and the no-external-model-request
+privacy contract. It is not required to be a full interaction matrix.
 
 ## 6. Privacy and operational constraints
 
-- Structured values stay in the browser unless the optional API path is used.
-- No API key is stored by the application.
-- Users must be warned that setting a key in browser JavaScript exposes it to
-  that browser context.
+- Structured values stay in the browser.
+- No API key is read, stored, or transmitted by the application.
 - The project must not include real keys, private data, or realistic personal
   fixtures.
 

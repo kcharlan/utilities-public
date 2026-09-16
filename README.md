@@ -7,6 +7,10 @@ Use conspicuously synthetic public fixtures. Keep operational configuration and 
 
 Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Seventeen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
 
+The latest repository-wide dependency review, including compatibility holds
+that require follow-on architecture work, is recorded in
+[docs/dependency_modernization_audit_2026_09_16.md](docs/dependency_modernization_audit_2026_09_16.md).
+
 ## Flagship Utilities
 
 The most polished and feature-complete tools in the collection — each is a uv-managed, zero-setup application with a professional-grade web UI.

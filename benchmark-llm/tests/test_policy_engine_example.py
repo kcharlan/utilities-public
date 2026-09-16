@@ -438,7 +438,7 @@ def test_policy_engine_run_checks_allows_missing_requirements_txt() -> None:
         repo_root / "examples" / "policy-engine" / "scripts" / "run_checks.sh"
     ).read_text(encoding="utf-8")
 
-    assert "python -m pip install pytest PyYAML" in script_text
+    assert "python -m pip install pytest==9.1.1 PyYAML==6.0.3" in script_text
     assert "if [ -f requirements.txt ]; then" in script_text
     assert "python -m pip install -r requirements.txt" in script_text
     assert 'python "$BENCH_BENCHMARK_DIR/scripts/run_validation.py"' in script_text

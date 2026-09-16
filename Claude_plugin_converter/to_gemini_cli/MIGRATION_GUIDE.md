@@ -22,7 +22,7 @@ Only immediate child directories of `skills/` and top-level `.md` files in
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) for the Python runtime.
+- [uv](https://docs.astral.sh/uv/) with Python 3.10 or newer for the runtime.
 - Gemini CLI installed and configured.
 - A local Claude-style plugin directory.
 
@@ -30,28 +30,28 @@ Run the converter only after reviewing these side effects:
 
 - The category name is the source directory's basename (`legal` in the
   example).
-- The script changes every processed source `SKILL.md` by replacing its
-  `name:` line with `<category>:<skill>`.
-- An existing `.gemini/skills/<category>:<skill>` directory or symbolic link is
-  removed before the new link is created.
-- If `.gemini/skills/<skill>` is an older, unprefixed symbolic link, it is
-  removed.
+- The script validates each source `SKILL.md` but never modifies it.
+- A valid source skill is linked as `.gemini/skills/<skill>`.
+- A same-named destination is reused only when it already links to that exact
+  source. Any other file, directory, or link is preserved and stops migration.
+- A legacy `.gemini/skills/<category>:<skill>` link is removed only when it
+  points to the same source skill now linked under its compliant name.
 - Existing generated command files with matching names are overwritten.
 - Obsolete generated command files are not pruned.
 
 ### Skill-format compatibility
 
-The script's colon-prefixed skill names predate the current Agent Skills naming
-rules. Current skill names should contain only lowercase letters, numbers, and
-hyphens and should match their directory names. As a result, do not assume the
-generated skill links will be accepted by a current Gemini CLI release.
+Current Agent Skills names contain only lowercase letters, numbers, and single
+hyphens, are at most 64 characters, and match their directory names. The
+converter enforces those rules and links the original directory without
+rewriting its metadata. Gemini CLI also provides `gemini skills link` for
+linking one compliant skill manually.
 
-Gemini CLI's supported development workflow for an already compliant skill is
-`gemini skills link /path/to/skill`. The converter needs a code change before
-it can safely namespace skills in the current format. Command names are
-different: Gemini CLI intentionally derives `/category:command` names from
-subdirectories under `.gemini/commands/`, so the converter's command
-namespacing remains valid.
+Skill names are global within a workspace, so the converter does not prepend
+the plugin category. A collision stops safely instead of deleting or replacing
+the existing destination. Commands are different: Gemini CLI intentionally
+derives `/category:command` names from subdirectories under
+`.gemini/commands/`, so command category namespacing remains valid.
 
 ## Run the converter
 
@@ -70,7 +70,7 @@ For the sample layout, the script attempts to produce:
 ```text
 .gemini/
 ├── skills/
-│   └── legal:contract-review -> /absolute/path/to/legal/skills/contract-review
+│   └── contract-review -> /absolute/path/to/legal/skills/contract-review
 └── commands/
     └── legal/
         └── brief.toml
@@ -79,10 +79,8 @@ For the sample layout, the script attempts to produce:
 The generated command uses the source Markdown body as its `prompt`. If the
 Markdown starts with YAML frontmatter and contains a one-line `description:`,
 that description is used; otherwise the script generates a description from
-the category and filename.
-
-Review the generated TOML before use. A source command body containing `"""`
-will terminate the TOML multi-line string and must be corrected manually.
+the category and filename. Description and prompt values are escaped as TOML
+basic strings, including embedded quotes and newlines.
 
 ## Verify in Gemini CLI
 

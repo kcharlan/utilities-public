@@ -415,6 +415,28 @@ def _poll_tasks_exist(page, session_id: str, *, min_count: int = 1, timeout: flo
     raise TimeoutError(f"Session {session_id}: expected {min_count} tasks in {timeout}s")
 
 
+def _purge_inactive_operable_sessions(page) -> None:
+    """Remove earlier draft/idle sessions before testing bootstrap selection.
+
+    The E2E server is module-scoped, so sessions created by earlier tests remain
+    available. Root bootstrap intentionally prefers any draft over an idle
+    session; timer tests that reload a just-finished run therefore need a clean
+    operable-session set to guarantee they observe the session they created.
+    """
+    failures = page.evaluate("""async () => {
+        const response = await fetch('/api/sessions');
+        const {sessions} = await response.json();
+        const failures = [];
+        for (const session of sessions) {
+            if (!['created', 'idle'].includes(session.status)) continue;
+            const purge = await fetch(`/api/sessions/${session.id}`, {method: 'DELETE'});
+            if (!purge.ok) failures.push(`${session.id}: ${purge.status}`);
+        }
+        return failures;
+    }""")
+    assert failures == [], f"Unable to clear inactive sessions: {failures}"
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -476,6 +498,12 @@ class TestInitialLoad:
     def test_no_console_errors_on_initial_load(self, server_url, page):
         errors = []
         page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.on(
+            "console",
+            lambda message: errors.append(message.text)
+            if message.type == "error"
+            else None,
+        )
         page.goto(server_url)
         page.wait_for_selector("text=Create Session", timeout=SLOW_TIMEOUT)
         page.wait_for_timeout(500)
@@ -1895,6 +1923,7 @@ class TestElapsedTimers:
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         page.goto(server_url)
         page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
+        _purge_inactive_operable_sessions(page)
 
         page.evaluate("""async () => {
             await fetch('/api/sessions', {
@@ -1956,6 +1985,7 @@ class TestElapsedTimers:
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         page.goto(server_url)
         page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
+        _purge_inactive_operable_sessions(page)
 
         page.evaluate("""async () => {
             await fetch('/api/sessions', {

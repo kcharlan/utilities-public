@@ -13,7 +13,7 @@ fi
 mkdir -p "$LLM_COLLECTOR_DATA_DIR"
 cd "$SCRIPT_DIR"
 
-# Force a clean dependency refresh while retaining the moving Python 3.12
+# Force a clean dependency refresh while retaining the moving Python 3.14
 # base tag and the intentionally selected direct dependency versions.
 docker compose build --pull --no-cache
 docker compose up -d --force-recreate --wait --wait-timeout 120

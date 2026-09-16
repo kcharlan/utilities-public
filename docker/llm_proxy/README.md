@@ -106,7 +106,9 @@ Some models on T3.chat require a user-provided API key (BYOK) at higher reasonin
 ## Convenience Scripts
 
 - `up.sh` — Refreshes the moving base image when needed, builds, and starts the container.
-- `update.sh` — Clean-builds from the current Python 3.12 base and allowed dependency ranges, recreates the container, waits for health, and smoke-tests `/health`.
+- `update.sh` — Clean-builds from the current Python 3.14 base and checked-in
+  `uv.lock` with uv 0.12.15, recreates the container, waits for health, and
+  smoke-tests `/health`.
 - `down.sh` — Stops the container (`docker compose down`).
 
 ## Reasoning Content

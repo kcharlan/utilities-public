@@ -129,12 +129,21 @@ def server(tmp_path_factory):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def test_page_loads_without_js_errors(server, page):
-    """Page loads with no JavaScript errors."""
+    """Page loads without uncaught exceptions or console errors."""
     errors = []
     page.on("pageerror", lambda err: errors.append(str(err)))
+    page.on(
+        "console",
+        lambda message: errors.append(message.text)
+        if message.type == "error"
+        else None,
+    )
 
     page.goto(server)
     page.wait_for_load_state("networkidle")
+    page.evaluate("console.error('__console_capture_probe__')")
+    assert errors == ["__console_capture_probe__"]
+    errors.clear()
 
     assert errors == [], f"JavaScript errors on page load: {errors}"
 

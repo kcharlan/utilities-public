@@ -1,5 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-python3 -m venv venv
-venv/bin/python -m pip install pandas streamlit
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+rm -rf "$SCRIPT_DIR/venv"
+python3 -m venv "$SCRIPT_DIR/venv"
+"$SCRIPT_DIR/venv/bin/python" -m pip install -r "$SCRIPT_DIR/requirements.txt"

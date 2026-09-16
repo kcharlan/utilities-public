@@ -3,4 +3,4 @@ pyyaml
 tomli
 tomli_w
 pytest
-git+https://github.com/toon-format/toon-python.git
+git+https://github.com/toon-format/toon-python.git@e475c82e9da03dfaf88c0b277dee6b5d17100b13

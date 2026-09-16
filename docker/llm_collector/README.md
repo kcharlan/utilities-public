@@ -57,7 +57,7 @@ and generated snapshots live in the external directory named by
 `reset_launchd.log` and `reset_launchd.err` files beside the script; they are
 ignored by Git.
 
-To explicitly refresh the moving Python 3.12 base and rebuild every dependency layer from scratch, run `llm_collector_container/update.sh`. The script recreates the collector, waits for Docker health, and verifies both `/health` and the authenticated `/counters` endpoint.
+To explicitly refresh the moving Python 3.14 base and rebuild every dependency layer from scratch, run `llm_collector_container/update.sh`. The script recreates the collector, waits for Docker health, and verifies both `/health` and the authenticated `/counters` endpoint.
 
 ## Updating an Existing Local Install
 

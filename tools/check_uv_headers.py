@@ -76,22 +76,24 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
     "editdb/editdb": (
         "requirements",
         "editdb/requirements-dev.txt",
-        frozenset({"httpx", "pytest"}),
+        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
     ),
     "jtree/jtree": (
         "requirements",
         "jtree/requirements-dev.txt",
-        frozenset({"httpx", "pytest"}),
+        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
     ),
     "harscope/harscope": (
         "requirements",
         "harscope/requirements-dev.txt",
-        frozenset({"anyio", "httpx", "pytest"}),
+        frozenset(
+            {"anyio", "httpx", "playwright", "pytest", "pytest-playwright"}
+        ),
     ),
     "mls-tracker/mls_tracker": (
         "requirements",
         "mls-tracker/requirements-dev.txt",
-        frozenset({"httpx", "pytest"}),
+        frozenset({"httpx", "playwright", "pytest"}),
     ),
     "docpipe/docpipe": (
         "requirements",
@@ -101,27 +103,27 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
     "storage_monitor/storage_monitor": (
         "requirements",
         "storage_monitor/requirements-dev.txt",
-        frozenset({"pytest"}),
+        frozenset({"playwright", "pytest"}),
     ),
     "tax2/tax2": (
         "requirements",
         "tax2/requirements-dev.txt",
-        frozenset({"httpx", "pytest", "typer"}),
+        frozenset({"httpx", "playwright", "pytest", "typer"}),
     ),
     "routerview/routerview": (
         "requirements",
         "routerview/requirements-dev.txt",
-        frozenset({"httpx", "pytest"}),
+        frozenset({"httpx", "playwright", "pytest"}),
     ),
     "expense_dock/expense_dock": (
         "requirements",
         "expense_dock/requirements-dev.txt",
-        frozenset({"pytest"}),
+        frozenset({"playwright", "pytest", "pytest-playwright"}),
     ),
     "git-multirepo-dashboard/git_dashboard.py": (
         "requirements",
         "git-multirepo-dashboard/tests/requirements-test.txt",
-        frozenset({"httpx", "pytest"}),
+        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
     ),
     "launchmaster/launchmaster": (
         "requirements",
