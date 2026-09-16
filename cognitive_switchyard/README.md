@@ -79,11 +79,26 @@ When a session is created with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNIT
 
 The embedded no-build frontend intentionally remains on React 18 UMD and uses
 project-owned CSS embedded in the HTML template; it has no Tailwind runtime.
-At runtime the browser loads Google Fonts plus exact-version React, ReactDOM,
-Babel Standalone, Lucide, and React Flow JavaScript and the React Flow
-stylesheet from CDNs. React 19 no longer publishes UMD builds, so a later React
-migration requires an ESM/import-map or frontend build architecture rather than
-a CDN URL update. Static HTML tests own the exact external script and stylesheet
+At runtime the browser loads Google Fonts plus these exact-version network
+dependencies:
+
+- `https://unpkg.com/react@18.3.1/umd/react.production.min.js`
+- `https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js`
+- `https://unpkg.com/@babel/standalone@7.29.8/babel.min.js`
+- `https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js`
+- `https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js`
+- `https://unpkg.com/@xyflow/react@12.11.6/dist/style.css`
+- `https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap`
+
+React Flow 12's UMD bundle expects the `react/jsx-runtime` peer as the global
+`jsxRuntime`. React 18 does not publish that runtime as UMD, so the template
+provides a frozen `jsx`/`jsxs`/`Fragment` bridge implementing React 18's
+production JSX runtime contract against the one existing production React
+global; it does not load a second React or ReactDOM graph. React 19 no longer
+publishes UMD builds, so a later React migration requires an ESM/import-map or
+frontend build architecture rather than a CDN URL update. That later React
+migration is independent of this React Flow 12 upgrade. Static HTML tests own
+the exact external script and stylesheet
 inventory. Browser E2E tests verify representative styled views and interactions
 while failing on page or unexpected console errors.
 

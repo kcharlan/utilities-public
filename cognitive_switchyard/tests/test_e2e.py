@@ -27,6 +27,7 @@ import json
 import socket
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 from textwrap import dedent
 
@@ -38,6 +39,7 @@ import uvicorn  # noqa: E402
 
 from cognitive_switchyard.config import build_runtime_paths  # noqa: E402
 from cognitive_switchyard.html_template import render_app_html  # noqa: E402
+from cognitive_switchyard.parsers import parse_task_plan  # noqa: E402
 from cognitive_switchyard.server import create_app  # noqa: E402
 from cognitive_switchyard.server import _build_root_bootstrap_payload  # noqa: E402
 from cognitive_switchyard.state import initialize_state_store  # noqa: E402
@@ -1249,7 +1251,7 @@ class TestTaskDetail:
 
 
 class TestDagView:
-    """Verify DAG (dependency graph) API."""
+    """Verify DAG API and the React Flow 12 browser integration."""
 
     def test_dag_returns_tasks(self, server_url, runtime_home, page):
         """DAG endpoint returns task dependency graph."""
@@ -1280,6 +1282,195 @@ class TestDagView:
         task_ids = [t["task_id"] for t in result["tasks"]]
         assert "t001" in task_ids
         assert "t002" in task_ids
+        _poll_session_status(page, "dag-001", {"idle", "completed", "aborted"})
+
+    def test_react_flow_v12_renders_and_supports_dag_interactions(
+        self, server_url, runtime_home, page, request
+    ):
+        errors: list[str] = []
+        page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
+        page.on(
+            "console",
+            lambda message: errors.append(f"console.error: {message.text}")
+            if message.type == "error"
+            else None,
+        )
+
+        runtime_paths = build_runtime_paths(home=runtime_home)
+        store = initialize_state_store(runtime_paths)
+        session_id = "dag-ui-v12-001"
+        store.create_session(
+            session_id=session_id,
+            name="Synthetic React Flow 12 DAG",
+            pack="claude-code",
+            created_at="2026-09-16T12:00:00Z",
+            config_json="{}",
+        )
+        for task_id, dependency in (
+            ("root", "none"),
+            ("middle", "root"),
+            ("leaf", "middle"),
+        ):
+            source = _write_intake_plan(
+                runtime_home, session_id, task_id, depends_on=dependency
+            )
+            plan_text = source.read_text(encoding="utf-8")
+            store.upsert_ready_task_plan(
+                session_id=session_id,
+                plan=parse_task_plan(plan_text, source=source),
+                plan_text=plan_text,
+                created_at="2026-09-16T12:00:01Z",
+            )
+        store.update_session_status(
+            session_id,
+            status="running",
+            started_at="2026-09-16T12:00:01Z",
+        )
+        request.addfinalizer(lambda: store.delete_session(session_id))
+        bootstrap = _build_root_bootstrap_payload(store, runtime_paths=runtime_paths)
+        assert bootstrap["current_session"]["id"] == session_id
+        page.goto(server_url)
+        page.wait_for_selector("button[aria-label='Open DAG']", timeout=SLOW_TIMEOUT)
+
+        dependency_graph = page.evaluate("""() => ({
+            scripts: Array.from(document.querySelectorAll('script[src]'), el => el.src),
+            stylesheets: Array.from(document.querySelectorAll('link[rel~="stylesheet"]'), el => el.href),
+            resources: performance.getEntriesByType('resource').map(entry => entry.name),
+        })""")
+        expected_scripts = [
+            "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+            "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
+            "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
+            "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+            "https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js",
+        ]
+        expected_stylesheets = [
+            "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
+            "https://unpkg.com/@xyflow/react@12.11.6/dist/style.css",
+        ]
+        assert dependency_graph["scripts"] == expected_scripts
+        assert dependency_graph["stylesheets"] == expected_stylesheets
+        external_resources = dependency_graph["resources"]
+        assert all("/reactflow@" not in url for url in external_resources)
+        unpkg_resources = [
+            url for url in external_resources if url.startswith("https://unpkg.com/")
+        ]
+        assert Counter(unpkg_resources) == Counter(
+            expected_scripts + [expected_stylesheets[-1]]
+        )
+
+        runtime_contract = page.evaluate("""() => {
+            function Component() {}
+            Component.defaultProps = {defaulted: 'fallback', retained: 'default'};
+            const inherited = {inheritedOnly: 'must-not-copy'};
+            const props = Object.assign(Object.create(inherited), {
+                key: 'props-key',
+                ref: 'synthetic-ref',
+                defaulted: undefined,
+                retained: 'explicit',
+                constructor: 'constructor-prop',
+                toString: 'to-string-prop',
+                valueOf: 'value-of-prop',
+                children: ['first', 'second'],
+            });
+            const element = window.jsxRuntime.jsx(Component, props, 'argument-key');
+            const plural = window.jsxRuntime.jsxs('section', {children: ['a', 'b']});
+            const fragment = window.jsxRuntime.jsx(
+                window.jsxRuntime.Fragment,
+                {children: 'fragment-child'},
+            );
+            return {
+                frozen: Object.isFrozen(window.jsxRuntime),
+                factoriesEquivalent: window.jsxRuntime.jsx === window.jsxRuntime.jsxs,
+                typePreserved: element.type === Component,
+                key: element.key,
+                ref: element.ref,
+                defaulted: element.props.defaulted,
+                retained: element.props.retained,
+                reservedNames: [
+                    element.props.constructor,
+                    element.props.toString,
+                    element.props.valueOf,
+                ],
+                inheritedCopied: Object.prototype.hasOwnProperty.call(
+                    element.props, 'inheritedOnly'
+                ),
+                children: element.props.children,
+                pluralChildren: plural.props.children,
+                fragmentType: fragment.type === React.Fragment,
+                fragmentChild: fragment.props.children,
+            };
+        }""")
+        assert runtime_contract == {
+            "frozen": True,
+            "factoriesEquivalent": True,
+            "typePreserved": True,
+            "key": "props-key",
+            "ref": "synthetic-ref",
+            "defaulted": "fallback",
+            "retained": "explicit",
+            "reservedNames": [
+                "constructor-prop",
+                "to-string-prop",
+                "value-of-prop",
+            ],
+            "inheritedCopied": False,
+            "children": ["first", "second"],
+            "pluralChildren": ["a", "b"],
+            "fragmentType": True,
+            "fragmentChild": "fragment-child",
+        }
+
+        page.locator("button[aria-label='Open DAG']").click()
+        page.wait_for_selector(".react-flow__node[data-id='root']", timeout=SLOW_TIMEOUT)
+        assert errors == [], f"DAG failed before nodes rendered: {errors}"
+        assert page.locator(".react-flow__node:not([data-id^='group-'])").count() == 3
+        assert page.locator(".react-flow__edge").count() == 2
+        assert page.locator(".react-flow__node[data-id='root']").evaluate(
+            "element => getComputedStyle(element).position"
+        ) == "absolute"
+
+        viewport = page.locator(".react-flow__viewport")
+        fitted_transform = viewport.get_attribute("style")
+        page.locator(".react-flow__controls-zoomin").click()
+        page.wait_for_function(
+            """previous => document.querySelector('.react-flow__viewport')
+                ?.getAttribute('style') !== previous""",
+            arg=fitted_transform,
+            timeout=SLOW_TIMEOUT,
+        )
+        zoomed_transform = viewport.get_attribute("style")
+        assert zoomed_transform != fitted_transform
+        page.locator(".react-flow__controls-fitview").click()
+        page.wait_for_function(
+            """previous => document.querySelector('.react-flow__viewport')
+                ?.getAttribute('style') !== previous""",
+            arg=zoomed_transform,
+            timeout=SLOW_TIMEOUT,
+        )
+        assert viewport.get_attribute("style") != zoomed_transform
+
+        middle_node = page.locator(".react-flow__node[data-id='middle']")
+        middle_node.click()
+        page.wait_for_function(
+            """() => document.querySelector(
+                ".react-flow__node[data-id='middle']"
+            )?.classList.contains('selected')""",
+            timeout=SLOW_TIMEOUT,
+        )
+        middle_node.dblclick()
+        task_heading = page.locator(".split-view .detail-panel h1")
+        task_heading.wait_for(state="visible", timeout=SLOW_TIMEOUT)
+        assert task_heading.inner_text() == "middle"
+        page.locator(".split-view .metadata-grid").wait_for(
+            state="visible", timeout=SLOW_TIMEOUT
+        )
+        page.locator(".split-view .log-panel").wait_for(
+            state="visible", timeout=SLOW_TIMEOUT
+        )
+        page.wait_for_selector(".react-flow", state="detached", timeout=SLOW_TIMEOUT)
+
+        assert errors == [], f"Unexpected browser errors during DAG interaction: {errors}"
 
 
 # ---------------------------------------------------------------------------

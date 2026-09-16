@@ -498,7 +498,8 @@ Resolution output is stored as JSON (not markdown) for reliable parsing:
 
 - **Backend:** Python FastAPI + uvicorn (uv-managed via a PEP 723 header)
 - **Frontend:** Single-file embedded React 18 SPA (CDN-loaded, no npm/node_modules)
-- **CDN dependencies:** React 18, ReactDOM 18, Babel Standalone, Lucide Icons, and React Flow v11 JavaScript (UMD from unpkg), plus the React Flow stylesheet and Google Fonts
+- **CDN dependencies:** Exact-version React 18.3.1, ReactDOM 18.3.1, Babel Standalone 7.29.8, Lucide Icons 1.46.0, and React Flow 12.11.6 (`@xyflow/react`) JavaScript (UMD from unpkg), plus the matching React Flow stylesheet and Google Fonts. The exact URLs are maintained in `README.md` and enforced by static and browser tests.
+- **React Flow UMD peer bridge:** React Flow 12's UMD artifact externalizes `react/jsx-runtime` as `window.jsxRuntime`, but React 18 publishes no JSX-runtime UMD file. The template provides a frozen `jsx`/`jsxs`/`Fragment` bridge implementing the React 18 production JSX runtime contract against the existing React 18.3.1 production UMD global; no second React or ReactDOM resource is loaded.
 - **Styling:** Project-owned CSS embedded in the HTML template; no Tailwind runtime
 - **Real-time:** WebSocket for live state pushes
 - **Port:** Auto-scan from preferred default (e.g., 8100), never hardcoded
@@ -924,7 +925,7 @@ Full-screen overlay (or page navigation) triggered by clicking a worker card or 
 
 Full-page view triggered by clicking the DAG icon in the pipeline strip.
 
-**Technology:** React Flow v11 (UMD via CDN).
+**Technology:** React Flow 12.11.6 (`@xyflow/react`, UMD via CDN) under the existing React 18.3.1 UMD runtime. The adapter uses v12 named exports and immutable node/edge change application. This upgrade does not change the separately documented React 19 migration boundary.
 
 **Layout:**
 - Interactive node graph filling the viewport.

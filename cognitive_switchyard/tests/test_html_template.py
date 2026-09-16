@@ -49,18 +49,19 @@ def test_render_app_html_has_exact_external_dependency_inventory_without_tailwin
     dependencies.feed(html)
 
     assert dependencies.script_sources == [
-        "https://unpkg.com/react@18.3.1/umd/react.development.js",
-        "https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js",
+        "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+        "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
         "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
         "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
-        "https://unpkg.com/reactflow@11.11.4/dist/umd/index.js",
+        "https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js",
     ]
     assert dependencies.stylesheet_hrefs == [
         "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
-        "https://unpkg.com/reactflow@11.11.4/dist/style.css",
+        "https://unpkg.com/@xyflow/react@12.11.6/dist/style.css",
     ]
 
     external_urls = dependencies.script_sources + dependencies.stylesheet_hrefs
+    assert all("/reactflow@" not in url for url in external_urls)
     assert all(
         "tailwind" not in "".join(_normalized_external_url(url)).lower()
         for url in external_urls
@@ -74,6 +75,32 @@ def test_render_app_html_has_exact_external_dependency_inventory_without_tailwin
         executable_javascript,
         flags=re.IGNORECASE,
     ) is None
+
+
+def test_render_app_html_uses_react_flow_v12_named_component_export() -> None:
+    html = render_app_html({"ok": True})
+
+    assert "const ReactFlowLib = window.ReactFlow || null;" in html
+    assert "const ReactFlowComponent = ReactFlowLib?.ReactFlow;" in html
+    assert "ReactFlowLib?.default" not in html
+
+
+def test_render_app_html_loads_react_18_jsx_runtime_before_react_flow_v12() -> None:
+    html = render_app_html({"ok": True})
+
+    react_script = '<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>'
+    runtime_bridge = "window.jsxRuntime = Object.freeze({"
+    react_flow_script = '<script src="https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js"></script>'
+
+    assert html.index(react_script) < html.index(runtime_bridge) < html.index(react_flow_script)
+    assert "jsx: createReactElementFromJsxRuntime" in html
+    assert "jsxs: createReactElementFromJsxRuntime" in html
+    assert "Fragment: React.Fragment" in html
+    assert 'const reactElementType = Symbol.for("react.element");' in html
+    assert "return { $$typeof: reactElementType" in html
+    assert "_store" not in html
+    assert "reactHasOwnProperty.call(reactReservedProps, name)" in html
+    assert "React.createElement(type, elementProps)" not in html
 
 
 def test_render_app_html_includes_required_google_fonts_import_and_design_token_block() -> None:

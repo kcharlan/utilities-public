@@ -105,7 +105,7 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
             <link rel="preconnect" href="https://fonts.googleapis.com">
             <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
             <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-            <link rel="stylesheet" href="https://unpkg.com/reactflow@11.11.4/dist/style.css">
+            <link rel="stylesheet" href="https://unpkg.com/@xyflow/react@12.11.6/dist/style.css">
             <style>
               __DESIGN_TOKENS_BLOCK__
 
@@ -960,11 +960,50 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
           <body>
             <div id="switchyard-app"></div>
             <script id="switchyard-bootstrap" type="application/json">__BOOTSTRAP_JSON__</script>
-            <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
-            <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+            <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+            <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
             <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
             <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
-            <script src="https://unpkg.com/reactflow@11.11.4/dist/umd/index.js"></script>
+            <script>
+              // React 18 production JSX runtime contract for @xyflow/react's UMD peer.
+              const reactElementType = Symbol.for("react.element");
+              const reactHasOwnProperty = Object.prototype.hasOwnProperty;
+              const reactReservedProps = Object.freeze(Object.assign(Object.create(null), {
+                key: true,
+                ref: true,
+                __self: true,
+                __source: true,
+              }));
+              function createReactElementFromJsxRuntime(type, props, key) {
+                const sourceProps = props || {};
+                const elementProps = {};
+                let elementKey = key === undefined ? null : String(key);
+                let elementRef = null;
+                if (sourceProps.key !== undefined) elementKey = String(sourceProps.key);
+                if (sourceProps.ref !== undefined) elementRef = sourceProps.ref;
+                Object.keys(sourceProps).forEach((name) => {
+                  if (
+                    reactHasOwnProperty.call(sourceProps, name)
+                    && !reactHasOwnProperty.call(reactReservedProps, name)
+                  ) {
+                    elementProps[name] = sourceProps[name];
+                  }
+                });
+                if (type && type.defaultProps) {
+                  Object.keys(type.defaultProps).forEach((name) => {
+                    if (elementProps[name] === undefined) elementProps[name] = type.defaultProps[name];
+                  });
+                }
+                return { $$typeof: reactElementType, type, key: elementKey, ref: elementRef, props: elementProps,
+                  _owner: React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner.current };
+              }
+              window.jsxRuntime = Object.freeze({
+                Fragment: React.Fragment,
+                jsx: createReactElementFromJsxRuntime,
+                jsxs: createReactElementFromJsxRuntime,
+              });
+            </script>
+            <script src="https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js"></script>
             <script type="text/babel" data-presets="env,react">
               const bootstrap = JSON.parse(document.getElementById("switchyard-bootstrap").textContent);
               const { useEffect, useMemo, useRef, useState } = React;
@@ -4002,7 +4041,7 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
               }
 
               function DagView({ dag, onBack, onOpenTask }) {
-                const ReactFlowComponent = ReactFlowLib?.default;
+                const ReactFlowComponent = ReactFlowLib?.ReactFlow;
                 const ReactFlowProvider = ReactFlowLib?.ReactFlowProvider;
                 const MiniMap = ReactFlowLib?.MiniMap;
                 const Controls = ReactFlowLib?.Controls;
@@ -4174,6 +4213,9 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                   }))
                 ));
                 const allNodes = [...groupNodes, ...groupLabelNodes, ...graphNodes];
+                const allEdges = [...dependsEdges, ...antiAffinityEdges];
+                const [flowNodes, setFlowNodes] = useState(allNodes);
+                const [flowEdges, setFlowEdges] = useState(allEdges);
                 return (
                   <div className="dag-shell">
                     <div className="page">
@@ -4186,8 +4228,14 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                         <ReactFlowProvider>
                           <ReactFlowComponent
                             fitView
-                            nodes={allNodes}
-                            edges={[...dependsEdges, ...antiAffinityEdges]}
+                            nodes={flowNodes}
+                            edges={flowEdges}
+                            onNodesChange={(changes) => {
+                              setFlowNodes((currentNodes) => ReactFlowLib.applyNodeChanges(changes, currentNodes));
+                            }}
+                            onEdgesChange={(changes) => {
+                              setFlowEdges((currentEdges) => ReactFlowLib.applyEdgeChanges(changes, currentEdges));
+                            }}
                             onNodeDoubleClick={(_, node) => {
                               if (!node.id.startsWith("group-")) onOpenTask(node.id);
                             }}
