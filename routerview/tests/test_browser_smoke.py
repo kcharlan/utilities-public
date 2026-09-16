@@ -11,6 +11,9 @@ from playwright.sync_api import expect, sync_playwright
 import uvicorn
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+README = PROJECT_ROOT / "README.md"
+DESIGN = PROJECT_ROOT / "docs" / "DESIGN.md"
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import ASGISyncClient, load_launcher
@@ -64,11 +67,84 @@ def rendered_plot_bounds(wrapper):
     )
 
 
+def css_alpha(serialized_color):
+    color = serialized_color.strip().lower()
+    if color == "transparent":
+        return 0.0
+
+    slash_alpha = re.search(r"/\s*([0-9]*\.?[0-9]+)(%)?\s*\)$", color)
+    if slash_alpha:
+        alpha = float(slash_alpha.group(1))
+        return alpha / 100 if slash_alpha.group(2) else alpha
+
+    if color.startswith("rgba("):
+        return float(color.removesuffix(")").rsplit(",", 1)[1].strip())
+
+    return 1.0
+
+
+@pytest.mark.parametrize(
+    ("serialized_color", "expected_alpha"),
+    [
+        ("rgba(59, 130, 246, 0.2)", 0.2),
+        ("rgb(59 130 246 / 20%)", 0.2),
+        ("color(srgb 0.231 0.51 0.965 / 0.2)", 0.2),
+        ("transparent", 0.0),
+        ("rgb(59, 130, 246)", 1.0),
+    ],
+)
+def test_css_alpha_accepts_legacy_and_modern_serialization(
+    serialized_color, expected_alpha
+):
+    assert css_alpha(serialized_color) == pytest.approx(expected_alpha)
+
+
+def test_tailwind_v4_contract_and_browser_support_are_documented():
+    module = load_launcher(PROJECT_ROOT / "routerview")
+    source = module.HTML_TEMPLATE
+    assert "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3" in source
+    assert "cdn.tailwindcss.com" not in source
+    assert "tailwind.config" not in source
+    assert '<style type="text/tailwindcss">' in source
+    assert "@custom-variant dark (&:where(.dark, .dark *));" in source
+    assert "--color-surface: #1e293b;" in source
+    assert "--color-surface-dark: #0f172a;" in source
+    assert "--color-card: #334155;" in source
+    assert "bg-card dark:bg-surface" in source
+
+    for legacy_opacity_utility in (
+        "bg-opacity-",
+        "border-opacity-",
+        "divide-opacity-",
+        "placeholder-opacity-",
+        "ring-opacity-",
+        "text-opacity-",
+    ):
+        assert legacy_opacity_utility not in source
+
+    readme = README.read_text()
+    design = DESIGN.read_text()
+    normalized_readme = " ".join(readme.split())
+    for document in (readme, design):
+        assert "@tailwindcss/browser" in document
+        assert "4.3.3" in document
+    assert "not byte-immutable" in readme
+    assert "Playwright" in readme
+    assert "Chromium" in readme
+    assert "Chrome 111" in readme
+    assert "Safari 16.4" in readme
+    assert "Firefox 128" in readme
+    assert (
+        "Safari and Firefox are not covered by the automated browser test"
+        in normalized_readme
+    )
+
+
 def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
     module = load_launcher(Path(__file__).resolve().parents[1] / "routerview")
     assert "react@18.3.1/umd/react.production.min.js" in module.HTML_TEMPLATE
     assert "@babel/standalone@7.29.8/babel.min.js" in module.HTML_TEMPLATE
-    assert "cdn.tailwindcss.com/3.4.17" in module.HTML_TEMPLATE
+    assert "@tailwindcss/browser@4.3.3" in module.HTML_TEMPLATE
     assert "react-is@18.3.1/umd/react-is.production.min.js" in module.HTML_TEMPLATE
     assert "recharts@3.10.1/umd/Recharts.js" in module.HTML_TEMPLATE
     module._db_path = str(tmp_path / "routerview.db")
@@ -86,6 +162,52 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
         page.goto(f"{url}?range=all", wait_until="networkidle")
         page.get_by_text("RouterView", exact=True).wait_for()
         assert errors == []
+
+        script_sources = page.locator("script[src]").evaluate_all(
+            "elements => elements.map(element => element.src)"
+        )
+        assert script_sources == [
+            "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+            "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
+            "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
+            "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
+            "https://unpkg.com/prop-types@15.8.1/prop-types.min.js",
+            "https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js",
+            "https://unpkg.com/recharts@3.10.1/umd/Recharts.js",
+        ]
+        dependency_resources = page.evaluate(
+            """() => performance.getEntriesByType('resource')
+                .map(entry => entry.name)
+                .filter(name =>
+                    name.includes('@tailwindcss/browser') ||
+                    name.includes('@babel/standalone') ||
+                    name.includes('/prop-types@') || name.includes('/prop-types/') ||
+                    name.includes('/recharts@') || name.includes('/recharts/') ||
+                    name.includes('/react@') || name.includes('/react/') ||
+                    name.includes('/react-dom@') || name.includes('/react-dom/') ||
+                    name.includes('/react-is@') || name.includes('/react-is/')
+                )
+                .sort()"""
+        )
+        assert dependency_resources == sorted(script_sources)
+
+        kpi_card = page.locator(".bg-card").first
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.bg-card')).backgroundColor === 'rgb(30, 41, 59)'"
+        )
+        assert kpi_card.evaluate(
+            "element => getComputedStyle(element).backgroundColor"
+        ) == "rgb(30, 41, 59)"
+        page.evaluate("document.documentElement.classList.remove('dark')")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.bg-card')).backgroundColor === 'rgb(51, 65, 85)'"
+        )
+        requests.clear()
+        page.reload(wait_until="networkidle")
+        page.wait_for_function("document.documentElement.classList.contains('dark')")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.bg-card')).backgroundColor === 'rgb(30, 41, 59)'"
+        )
 
         chart_heading = page.get_by_role("heading", name=re.compile(r"Cost over Time\s*by model"))
         chart_heading.wait_for()
@@ -129,6 +251,21 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
         bars.first.click()
         page.get_by_text(re.compile(r"model:(?:alpha|beta)"), exact=False).wait_for()
         expect(page).to_have_url(re.compile(r"[?&]model=(?:alpha|beta)(?:&|$)"))
+        filter_pill = page.locator(".bg-blue-500\\/20").first
+        deadline = time.monotonic() + 5
+        while True:
+            filter_pill_background = filter_pill.evaluate(
+                "element => getComputedStyle(element).backgroundColor"
+            )
+            if css_alpha(filter_pill_background) == pytest.approx(0.2):
+                break
+            if time.monotonic() >= deadline:
+                pytest.fail(
+                    "Tailwind did not compile bg-blue-500/20 within 5 seconds; "
+                    f"last computed background was {filter_pill_background!r}"
+                )
+            page.wait_for_timeout(20)
+        assert css_alpha(filter_pill_background) == pytest.approx(0.2)
 
         page.keyboard.press("?")
         page.get_by_text("Keyboard Shortcuts", exact=True).wait_for()
@@ -151,6 +288,38 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
     ]
     assert requests.count("https://unpkg.com/recharts@3.10.1/umd/Recharts.js") == 1
     assert errors == []
+
+
+def test_dashboard_keeps_native_body_baseline_when_tailwind_cdn_fails(tmp_path):
+    module = load_launcher(PROJECT_ROOT / "routerview")
+    module._db_path = str(tmp_path / "routerview.db")
+    module.init_database(module._db_path)
+
+    page_errors = []
+    console_errors = []
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.on(
+            "console",
+            lambda message: console_errors.append(message.text)
+            if message.type == "error"
+            else None,
+        )
+        page.route(
+            "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
+            lambda route: route.abort(),
+        )
+        page.goto(url, wait_until="domcontentloaded")
+        page.get_by_text("RouterView", exact=True).wait_for()
+        assert page.locator("body").evaluate(
+            "element => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color]"
+        ) == ["rgb(15, 23, 42)", "rgb(241, 245, 249)"]
+        browser.close()
+
+    assert page_errors == []
+    assert console_errors == ["Failed to load resource: net::ERR_FAILED"]
 
 
 def test_linked_crosshair_uses_rendered_plot_bounds_for_many_buckets(tmp_path):

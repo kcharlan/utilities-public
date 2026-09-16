@@ -2169,19 +2169,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
-<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
 <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
 <script src="https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"></script>
 <script src="https://unpkg.com/recharts@3.10.1/umd/Recharts.js"></script>
-<script>
-tailwind.config = {
-  darkMode: 'class',
-  theme: { extend: { colors: {
-    surface: { DEFAULT: '#1e293b', dark: '#0f172a' },
-    card: '#334155'
-  }}}
-}
-</script>
+<style type="text/tailwindcss">
+  @custom-variant dark (&:where(.dark, .dark *));
+
+  @theme {
+    --color-surface: #1e293b;
+    --color-surface-dark: #0f172a;
+    --color-card: #334155;
+  }
+</style>
 <style>
 body { background: #0f172a; color: #f1f5f9; font-family: ui-sans-serif,system-ui,sans-serif; margin:0; }
 ::-webkit-scrollbar { width:6px; height:6px; }
@@ -2371,7 +2371,7 @@ const COST_CYCLES = ['avg','p50','p95','min','max'];
 const LAT_CYCLES  = ['avg','p50','p95','min','max'];
 function KPICard({title,value,subValue,delta,deltaLabel,positive,children}) {
   const deltaColor = delta==null?'text-slate-500':positive===false?'text-red-400':'text-green-400';
-  return <div className="bg-slate-800 rounded-xl p-4 flex flex-col gap-1 min-w-0">
+  return <div className="bg-card dark:bg-surface rounded-xl p-4 flex flex-col gap-1 min-w-0">
     <p className="text-xs text-slate-400 truncate">{title}</p>
     <p className="text-2xl font-bold text-slate-100 truncate">{value}</p>
     {subValue&&<p className="text-xs text-slate-500">{subValue}</p>}
