@@ -194,6 +194,14 @@ def main(
     argv = list(argv or sys.argv[1:])
     env = dict(os.environ)
     env.update(environ or {})
+    runtime_bin = str(Path(sys.executable).parent)
+    configured_path = env["PATH"] if "PATH" in env else os.defpath
+    path_entries = [
+        entry
+        for entry in configured_path.split(os.pathsep)
+        if entry and entry != runtime_bin
+    ]
+    env["PATH"] = os.pathsep.join([runtime_bin, *path_entries])
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
 

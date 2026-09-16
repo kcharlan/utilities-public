@@ -2,6 +2,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -342,6 +343,62 @@ def test_repo_task_requires_output_dir_before_starting_any_model(
     assert "output_dir" in stderr.getvalue()
 
 
+def _capture_repo_task_environ(
+    tmp_path: Path,
+    monkeypatch,
+    environ: dict[str, str],
+) -> dict[str, str]:
+    benchmark_dir = tmp_path / "bench"
+    _write_text(
+        benchmark_dir / "bench.yaml",
+        "\n".join(
+            [
+                "type: repo_task",
+                f"output_dir: {tmp_path / 'results'}",
+            ]
+        )
+        + "\n",
+    )
+    captured: dict[str, str] = {}
+
+    def fake_run_repo_task(*, environ: dict[str, str], **_: object) -> Path:
+        captured.update(environ)
+        return tmp_path / "results" / "fake-run"
+
+    monkeypatch.setattr(cli_module, "run_repo_task", fake_run_repo_task)
+
+    exit_code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model"],
+        environ={"BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"), **environ},
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    return captured
+
+
+def test_repo_task_seeds_absent_path_from_platform_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("PATH", raising=False)
+
+    captured = _capture_repo_task_environ(tmp_path, monkeypatch, {})
+
+    assert captured["PATH"].split(os.pathsep) == [
+        str(Path(sys.executable).parent),
+        *[
+            entry
+            for entry in os.defpath.split(os.pathsep)
+            if entry != str(Path(sys.executable).parent)
+        ],
+    ]
+
+
+def test_repo_task_preserves_explicitly_empty_path(tmp_path: Path, monkeypatch) -> None:
+    captured = _capture_repo_task_environ(tmp_path, monkeypatch, {"PATH": ""})
+
+    assert captured["PATH"] == str(Path(sys.executable).parent)
+
+
 def test_repo_task_writes_run_artifacts_under_configured_output_dir(tmp_path: Path) -> None:
     source_repo = tmp_path / "source-repo"
     source_repo.mkdir()
@@ -364,10 +421,10 @@ def test_repo_task_writes_run_artifacts_under_configured_output_dir(tmp_path: Pa
                 f"  source_repo: {source_repo}",
                 "executor:",
                 "  kind: cli",
-                "  command: ./scripts/invoke_model.sh",
+                "  command: python ./scripts/invoke_model.py",
                 "steps:",
                 "  - name: prepare",
-                "    run: ./scripts/prepare.sh",
+                "    run: python ./scripts/prepare.py",
                 "  - name: execute",
                 "    use_executor: true",
                 "  - name: judge",
@@ -379,13 +436,33 @@ def test_repo_task_writes_run_artifacts_under_configured_output_dir(tmp_path: Pa
         + "\n",
     )
     _write_text(benchmark_dir / "prompt.txt", "Do work.\n")
+    ordinary_executable_path = tmp_path / "ordinary-python.txt"
+    model_executable_path = tmp_path / "model-python.txt"
     _write_text(
-        benchmark_dir / "scripts" / "prepare.sh",
-        "#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p \"$BENCH_WORKSPACE/output\"\n",
+        benchmark_dir / "scripts" / "prepare.py",
+        "\n".join(
+            [
+                "import os",
+                "import sys",
+                "from pathlib import Path",
+                "Path(os.environ['BENCH_WORKSPACE'], 'output').mkdir(parents=True, exist_ok=True)",
+                f"Path({str(ordinary_executable_path)!r}).write_text(sys.executable, encoding='utf-8')",
+            ]
+        )
+        + "\n",
     )
     _write_text(
-        benchmark_dir / "scripts" / "invoke_model.sh",
-        "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'done\\n' > \"$WORKSPACE_ROOT/output/result.txt\"\n",
+        benchmark_dir / "scripts" / "invoke_model.py",
+        "\n".join(
+            [
+                "import os",
+                "import sys",
+                "from pathlib import Path",
+                "Path(os.environ['WORKSPACE_ROOT'], 'output', 'result.txt').write_text('done\\n', encoding='utf-8')",
+                f"Path({str(model_executable_path)!r}).write_text(sys.executable, encoding='utf-8')",
+            ]
+        )
+        + "\n",
     )
     _write_text(
         benchmark_dir / "scripts" / "judge.py",
@@ -403,13 +480,19 @@ def test_repo_task_writes_run_artifacts_under_configured_output_dir(tmp_path: Pa
         )
         + "\n",
     )
-    os.chmod(benchmark_dir / "scripts" / "prepare.sh", 0o755)
-    os.chmod(benchmark_dir / "scripts" / "invoke_model.sh", 0o755)
+
+    hostile_bin = tmp_path / "hostile-bin"
+    hostile_bin.mkdir()
+    _write_text(hostile_bin / "python", "#!/bin/sh\nexit 97\n")
+    os.chmod(hostile_bin / "python", 0o755)
 
     runtime_home = tmp_path / "runtime-home"
     exit_code = main(
         ["run", str(benchmark_dir), "-m", "demo-model"],
-        environ={"BENCH_RUNTIME_HOME": str(runtime_home)},
+        environ={
+            "BENCH_RUNTIME_HOME": str(runtime_home),
+            "PATH": str(hostile_bin),
+        },
         stdout=io.StringIO(),
         stderr=io.StringIO(),
     )
@@ -425,6 +508,8 @@ def test_repo_task_writes_run_artifacts_under_configured_output_dir(tmp_path: Pa
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert Path(manifest["artifacts"]["score"]).parent == run_dir
     assert Path(manifest["artifacts"]["report"]).parent == run_dir
+    assert os.path.samefile(ordinary_executable_path.read_text(encoding="utf-8"), sys.executable)
+    assert os.path.samefile(model_executable_path.read_text(encoding="utf-8"), sys.executable)
 
 
 def test_repo_task_invokes_one_final_summary_after_all_successful_runs(
