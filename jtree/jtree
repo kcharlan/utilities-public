@@ -879,39 +879,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>jtree - {{FILE_NAME}}</title>
-<script src="https://cdn.tailwindcss.com/3.4.17"></script>
-<script>
-tailwind.config = {
-    darkMode: 'class',
-    theme: {
-        extend: {
-            colors: {
-                blueprint: {
-                    bg: '#0a1628',
-                    card: '#0f1f3a',
-                    cardLight: '#f8fafc',
-                    border: '#1a3a5c',
-                    grid: '#0e2240',
-                    text: '#c8d6e5',
-                    textLight: '#1e293b',
-                },
-                nodeType: {
-                    object: '#4fc3f7',
-                    array: '#ab47bc',
-                    string: '#66bb6a',
-                    number: '#ffa726',
-                    boolean: '#ef5350',
-                    null: '#78909c',
-                }
-            },
-            fontFamily: {
-                sans: ['DM Sans', 'sans-serif'],
-                mono: ['JetBrains Mono', 'monospace'],
-            }
-        }
-    }
-};
-</script>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
@@ -919,6 +887,27 @@ tailwind.config = {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style type="text/tailwindcss">
+    @custom-variant dark (&:where(.dark, .dark *));
+
+    @theme {
+        --color-blueprint-bg: #0a1628;
+        --color-blueprint-card: #0f1f3a;
+        --color-blueprint-card-light: #f8fafc;
+        --color-blueprint-border: #1a3a5c;
+        --color-blueprint-grid: #0e2240;
+        --color-blueprint-text: #c8d6e5;
+        --color-blueprint-text-light: #1e293b;
+        --color-node-type-object: #4fc3f7;
+        --color-node-type-array: #ab47bc;
+        --color-node-type-string: #66bb6a;
+        --color-node-type-number: #ffa726;
+        --color-node-type-boolean: #ef5350;
+        --color-node-type-null: #78909c;
+        --font-sans: 'DM Sans', sans-serif;
+        --font-mono: 'JetBrains Mono', monospace;
+    }
+</style>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'DM Sans', sans-serif; overflow: hidden; }
@@ -3511,7 +3500,7 @@ const App = () => {
                      zIndex: 50,
                  }}>
                 <div className="flex items-center gap-3">
-                    <span className="text-base font-semibold" style={{color: '#4fc3f7'}}>jtree</span>
+                    <span className="text-base font-semibold text-node-type-object">jtree</span>
                     <span className="text-xs opacity-40 font-mono">{status?.file || status?.fileName}</span>
                     {(status?.file || status?.fileName) && (
                         <button
@@ -3605,7 +3594,7 @@ const App = () => {
             {noFileLoaded ? (
                 <div className="flex-1 blueprint-grid flex items-center justify-center">
                     <div className="text-center" style={{maxWidth: 400}}>
-                        <div className="text-4xl font-bold mb-3" style={{color: '#4fc3f7'}}>jtree</div>
+                        <div className="text-4xl font-bold mb-3 text-node-type-object">jtree</div>
                         <p className="text-sm opacity-50 mb-6">Interactive JSON Viewer & Editor</p>
                         <button
                             className="btn btn-primary flex items-center gap-2 mx-auto text-base px-6 py-3"
