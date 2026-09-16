@@ -127,6 +127,19 @@ def test_app_loads_without_browser_errors_and_opens_sql_console(server, page):
         "getComputedStyle(document.documentElement).getPropertyValue('--color-brand-dark-50').trim()"
     ) == "#f8fafc"
 
+    external_script_sources = page.locator("script[src]").evaluate_all(
+        """elements => elements
+            .map(element => element.src)
+            .filter(source => new URL(source).origin !== location.origin)"""
+    )
+    assert external_script_sources == [
+        "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
+        "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+        "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
+        "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
+        "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+    ]
+
     dependency_resources = page.evaluate(
         """() => performance.getEntriesByType('resource')
             .map(entry => entry.name)
