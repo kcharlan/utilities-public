@@ -217,6 +217,19 @@ python3 -m venv .venv
 
 The suite contains unit, integration, launcher/CLI, and browser E2E tests. The development requirements install Playwright's Python packages; install the Chromium browser once with `.venv/bin/playwright install chromium`. E2E tests start their own Uvicorn server.
 
+Starlette 1.6.0 still emits the following upstream AnyIO deprecation while its
+test client module is imported:
+
+```text
+DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+```
+
+Keep this warning visible and recheck it when the next stable Starlette release
+is available. The default-warning suite also currently reports
+`ResourceWarning`s from unclosed SQLite connections and existing subprocess or
+stream cleanup paths. Resource-lifecycle cleanup is tracked as a separate
+follow-up rather than being hidden by a global warning filter.
+
 ```bash
 # Run unit/integration tests (fast)
 .venv/bin/python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_cli.py
