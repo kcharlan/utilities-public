@@ -36,12 +36,24 @@ The preferred port is not selected automatically. If it is occupied, choose a
 different port with `--port`.
 
 The build-free frontend intentionally stays on React 18's UMD globals; React
-19 would require a module/bundler migration. It also stays on the classic
-Tailwind Play CDN. Version 3.4.17 is the newest release that CDN actually
-serves—the 3.4.19 URL emits a runtime error—and Tailwind 4 requires a different
-integration. Babel Standalone remains on major 7 for the inline `text/babel`
-transform; major 8 needs a separate transform migration. The browser smoke
-test protects this boundary and the Lucide UMD API.
+19 would require a module/bundler migration. Tailwind uses the exact
+`@tailwindcss/browser` 4.3.3 package with CSS-first `@theme` font tokens and an
+explicit class-based dark-mode variant. The exact URL prevents package-version
+resolution drift, but runtime CDN delivery is not byte-immutable and still
+requires network access when the asset is not cached. Babel Standalone remains
+on major 7 for the inline `text/babel` transform; major 8 needs a separate
+transform migration. The browser smoke test protects these boundaries and the
+Lucide UMD API.
+
+### Browser support
+
+The automated browser suite runs with Playwright Chromium and verifies the
+Tailwind resource graph, custom font and dark-mode computed styles, persisted
+theme selection, tax recomputation, and page/console error cleanliness.
+Tailwind 4's manual client floors for this browser-delivered UI are Chrome 111,
+Safari 16.4, and Firefox 128. Safari and Firefox are not covered by the
+automated browser test, so browser-specific behavior on those clients requires
+manual verification.
 
 ## Web UI
 

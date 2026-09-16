@@ -486,21 +486,16 @@ HTML_TEMPLATE = r"""
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Epilogue:wght@400;500;600;700;800&family=Public+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
     <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontFamily: {
-                        display: ['Epilogue', 'sans-serif'],
-                        mono: ['IBM Plex Mono', 'monospace'],
-                        body: ['Public Sans', 'sans-serif']
-                    }
-                }
-            }
-        };
-    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
+    <style type="text/tailwindcss">
+        @custom-variant dark (&:where(.dark, .dark *));
+
+        @theme {
+            --font-display: 'Epilogue', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+            --font-body: 'Public Sans', sans-serif;
+        }
+    </style>
 
     <!-- React -->
     <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
@@ -1199,7 +1194,7 @@ HTML_TEMPLATE = r"""
             return (
                 <div className="sidebar">
                     <div className="sidebar-header">
-                        <h1 className="app-title">Tax2</h1>
+                        <h1 className="app-title font-display">Tax2</h1>
                         <div className="app-subtitle">Professional Edition</div>
                     </div>
 

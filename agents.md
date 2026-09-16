@@ -70,7 +70,7 @@ Before finalizing changes, verify you haven't:
 - Broken existing functionality in adjacent code
 
 ## Repo Shape (High-Level)
-- Python/CLI/Streamlit tools: `tax2`, `data_format_converter`, `transcription`, `mls-tracker`, `apple-health-extract`, `md-autotax`, `md-json`, `doc_linearizer`, `div_conv`, etc.
+- Python/CLI/local web tools: `tax2`, `data_format_converter`, `transcription`, `mls-tracker`, `apple-health-extract`, `md-autotax`, `md-json`, `doc_linearizer`, `div_conv`, etc.
 - Browser-first single-file apps: `web_games/gorilla`, `web_games/multibody_sim`, `web_games/rps_screen`, plus HTML calculators under `Calculation tools`.
 - Docker stacks and services: `docker/actual-data`, `docker/excalidraw`, `docker/llm_collector`, `docker/mermaid`, `docker/webserver`.
 
@@ -87,8 +87,9 @@ Use this matrix to identify project-specific validation commands after applying 
   - `npm test` (Playwright; config launches local `http-server` on `127.0.0.1:4173`)
 - `tax2`:
   - `python3 -m pytest` (currently minimal coverage)
+  - Run `./tax2 --help`, then start `./tax2 --no-browser --port <free-port>`, request `/` and `/api/status`, and terminate the FastAPI process cleanly.
   - If tax rules/table generation changed, also run `uv run --with-requirements requirements.txt cli.py generate-combined --year 2026` (or target year used by your change).
-- Streamlit apps (`tax2`, `transcription`, `mls-tracker`, `md-autotax`):
+- Streamlit apps (`transcription`, `mls-tracker`, `md-autotax`):
   - smoke-run the app entrypoint after edits (`streamlit run ...` or project `run.sh`/`ui.sh`).
 - Shell utilities (`pdf-split`, `media-dater`, `toggle_wifi`, etc.):
   - run `--help` and at least one safe/dry-run style command when available.
