@@ -122,10 +122,10 @@ The application intentionally remains one uv-managed Python file:
 - Hash routes select the Fleet, Analytics, and repository detail views.
 
 React remains on 18 because React 19 does not publish the UMD globals consumed
-by this single-file app. Recharts remains on 2 because the current CDN build
-exposes the `Recharts` global used throughout the embedded JSX, while Recharts
-3 requires module/bundler integration and API migration. Those major upgrades
-belong to a separate frontend build-system change.
+by this single-file app. Recharts 3 continues to expose the `Recharts` UMD
+global used throughout the embedded JSX; its React peer graph is completed by
+loading the React-18-aligned `react-is` UMD build before Recharts. A later
+React 19 migration will require an ESM integration.
 
 The six SQLite tables are:
 

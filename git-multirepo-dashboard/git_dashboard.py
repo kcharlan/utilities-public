@@ -2634,7 +2634,8 @@ HTML_TEMPLATE = """\
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.29.8/babel.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.15.4/Recharts.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/recharts@3.10.1/umd/Recharts.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -4270,7 +4271,7 @@ HTML_TEMPLATE = """\
         const ins = payload.find(p => p.dataKey === 'insertions');
         const del = payload.find(p => p.dataKey === 'deletions');
         const net = payload.find(p => p.dataKey === 'net');
-        const cmt = payload.find(p => p.dataKey === 'commits');
+        const commits = payload[0]?.payload?.commits ?? 0;
         const rawDel = del ? Math.abs(del.value) : 0;
         const netVal = net ? net.value : 0;
         return (
@@ -4284,7 +4285,7 @@ HTML_TEMPLATE = """\
             <div style={{ color: 'var(--status-green)' }}>+{ins ? ins.value : 0} insertions</div>
             <div style={{ color: 'var(--status-red)' }}>-{rawDel} deletions</div>
             <div style={{ color: 'var(--accent-blue)' }}>net {netVal >= 0 ? '+' : ''}{netVal}</div>
-            <div>{cmt ? cmt.value : 0} commits</div>
+            <div>{commits} commits</div>
           </div>
         );
       }

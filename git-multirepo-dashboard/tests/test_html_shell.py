@@ -43,10 +43,16 @@ def test_html_includes_react_cdn(html_body):
     assert "babel-standalone/7.29.8" in html_body
 
 
-# ── Test 3: Recharts CDN tag ─────────────────────────────────────────────────
+# ── Test 3: Recharts CDN graph ───────────────────────────────────────────────
 
-def test_html_includes_recharts_cdn(html_body):
-    assert "recharts/2.15.4" in html_body
+def test_html_includes_recharts_3_with_aligned_react_is(html_body):
+    react_is_url = "https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"
+    recharts_url = "https://unpkg.com/recharts@3.10.1/umd/Recharts.js"
+
+    assert html_body.count(react_is_url) == 1
+    assert html_body.count(recharts_url) == 1
+    assert html_body.index(react_is_url) < html_body.index(recharts_url)
+    assert "recharts/2.15.4" not in html_body
 
 
 # ── Test 4: Font links ────────────────────────────────────────────────────────

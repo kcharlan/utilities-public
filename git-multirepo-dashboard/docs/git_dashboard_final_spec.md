@@ -37,7 +37,7 @@ git-multirepo-dashboard/
 - packaging
 - pydantic
 
-There is no application-managed virtual environment and no frontend build. uv resolves and caches Python dependencies. The React 18 SPA, CSS, and JSX are embedded in `HTML_TEMPLATE`; ReactDOM, PropTypes, Babel Standalone, Recharts, and fonts load from pinned public CDNs.
+There is no application-managed virtual environment and no frontend build. uv resolves and caches Python dependencies. The React 18 SPA, CSS, and JSX are embedded in `HTML_TEMPLATE`; ReactDOM, PropTypes, Babel Standalone, `react-is` 18, Recharts 3, and fonts load from pinned public CDNs. `react-is` loads before Recharts so the UMD chart bundle uses the same React 18 peer graph as the application.
 
 The FastAPI application binds to `127.0.0.1`. Port 8300 is preferred, but startup probes as many as 20 consecutive ports and uses the first available one. Automatic browser launch can be disabled with `--no-browser`, `GIT_DASHBOARD_NO_BROWSER`, or test mode.
 
