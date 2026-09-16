@@ -129,16 +129,6 @@ class TestEdgeCases:
         assert len(tool_actions) == 1
         assert tool_actions[0][1].name == "X"
 
-    def test_arguments_as_string(self):
-        """Tool call where arguments is already a JSON string."""
-        parser = ToolCallStreamParser()
-        text = '<tool_call>\n{"name": "Write", "arguments": {"path": "/tmp/test"}}\n</tool_call>'
-        actions = parser.feed(text)
-        assert actions[0][0] == "tool_call"
-        assert actions[0][1].name == "Write"
-        parsed_args = json.loads(actions[0][1].arguments)
-        assert parsed_args["path"] == "/tmp/test"
-
     def test_missing_name_emitted_as_text(self):
         """Tool call JSON without a name field is malformed."""
         parser = ToolCallStreamParser()

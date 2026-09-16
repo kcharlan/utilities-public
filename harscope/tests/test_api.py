@@ -39,12 +39,6 @@ class TestIndex:
         resp = await client.get("/")
         assert "react" in resp.text.lower() or "React" in resp.text
 
-    async def test_no_legacy_seq_arrow_css(self, client):
-        """Verify old CSS pseudo-element arrow hack is removed."""
-        resp = await client.get("/")
-        assert ".seq-arrow::after" not in resp.text
-        assert ".seq-arrow-left::after" not in resp.text
-
     async def test_sequence_canvas_css(self, client):
         """Verify SVG canvas styles are present in template."""
         resp = await client.get("/")

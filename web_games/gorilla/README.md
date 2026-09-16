@@ -49,7 +49,6 @@ Settings and session statistics are held in memory and reset when the page reloa
 
 - `index.html`: Complete application (game engine, UI, rendering, audio). Intentionally a single-file app.
 - `docs/Gorilla as delivered PRD.md`: Product and design reference for the delivered game.
-- `package.json` and `package-lock.json`: Development metadata with `@playwright/test` declared as a dev dependency. No automated tests are currently checked in; the existing `npm test` command is a placeholder that exits with an error.
 
 ## Developer Notes
 

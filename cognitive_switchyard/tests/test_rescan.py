@@ -6,8 +6,6 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
-import pytest
-
 from cognitive_switchyard.config import build_runtime_paths
 from cognitive_switchyard.models import TaskPlan
 from cognitive_switchyard.state import StateStore, initialize_state_store

@@ -358,6 +358,8 @@ def test_catalog_snapshot_compare_changed_only_presets_and_sticky_column(page: P
     table_wrap = page.locator(".catalog-table-wrap")
     first_model = page.locator('.catalog-table tbody th[scope="row"]').first
     value_cell = page.locator(".catalog-table tbody td").first
+    expect(first_model).to_be_visible()
+    expect(value_cell).to_be_visible()
     before = first_model.bounding_box(), value_cell.bounding_box()
     table_wrap.evaluate("element => { element.scrollLeft = 400; }")
     after = first_model.bounding_box(), value_cell.bounding_box()

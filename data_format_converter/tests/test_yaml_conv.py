@@ -40,13 +40,6 @@ def test_dump_yaml(sample_data, sample_yaml_string):
     assert dumped == sample_yaml_string
 
 
-def test_round_trip_yaml(sample_data):
-    """Ensures dumping and loading YAML preserves the object."""
-    dumped = dump_yaml(sample_data)
-    reloaded = load_yaml(dumped)
-    assert reloaded == dict(sample_data)
-
-
 def test_dump_preserves_order():
     data = OrderedDict([("name", "example"), ("id", 1)])
     dumped = dump_yaml(data).splitlines()

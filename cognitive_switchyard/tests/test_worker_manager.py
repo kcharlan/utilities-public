@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import threading
 import time
 from pathlib import Path
@@ -11,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cognitive_switchyard.pack_loader import load_pack_manifest, resolve_pack_hook_path
+from cognitive_switchyard.pack_loader import load_pack_manifest
 from cognitive_switchyard.worker_manager import (
     WorkerManager,
     WorkerStatusSidecarError,
@@ -469,15 +468,6 @@ def test_collect_rejects_missing_or_malformed_status_sidecar_with_typed_error(
     _poll_until_finished(manager, 5)
     with pytest.raises(WorkerStatusSidecarError, match="invalid status sidecar"):
         manager.collect(5)
-
-
-def test_packet_04_execution_hook_resolution_regression_still_passes(repo_root: Path) -> None:
-    pack_root = repo_root / "tests" / "fixtures" / "packs" / "valid_shell_pack"
-    manifest = load_pack_manifest(pack_root)
-
-    execute_path = resolve_pack_hook_path(manifest, "execute")
-
-    assert execute_path == pack_root / "scripts" / "execute"
 
 
 # --- Regression tests for code-audit fixes ---

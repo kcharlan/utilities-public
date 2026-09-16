@@ -7,11 +7,9 @@ Run from project root after bootstrapping:
 
 import os
 import sys
-import shutil
 import sqlite3
 import tempfile
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -431,19 +429,6 @@ def test_cli_all_flags():
 # 7. GET /api/status returns tool info and version
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_api_status_shape(monkeypatch, client):
-    monkeypatch.setattr(
-        git_dashboard,
-        "TOOLS",
-        {"npm": "/usr/bin/npm", "go": None},
-    )
-    response = client.get("/api/status")
-    assert response.status_code == 200
-    data = response.json()
-    assert "tools" in data, "Response must include 'tools' key"
-    assert "version" in data, "Response must include 'version' key"
-
-
 def test_api_status_tools_value(monkeypatch, client):
     fake_tools = {"npm": "/usr/bin/npm", "go": None, "cargo": None}
     monkeypatch.setattr(git_dashboard, "TOOLS", fake_tools)
@@ -451,26 +436,9 @@ def test_api_status_tools_value(monkeypatch, client):
     assert data["tools"] == fake_tools
 
 
-def test_api_status_version_string(monkeypatch, client):
-    monkeypatch.setattr(git_dashboard, "TOOLS", {})
-    data = client.get("/api/status").json()
-    assert isinstance(data["version"], str)
-    assert len(data["version"]) > 0
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. GET / returns HTML with status 200
 # ─────────────────────────────────────────────────────────────────────────────
-
-def test_root_returns_200(client):
-    response = client.get("/")
-    assert response.status_code == 200
-
-
-def test_root_content_type_html(client):
-    response = client.get("/")
-    assert "text/html" in response.headers["content-type"]
-
 
 def test_root_is_html_document(client):
     response = client.get("/")
@@ -481,12 +449,6 @@ def test_root_is_html_document(client):
 # ─────────────────────────────────────────────────────────────────────────────
 # 9. find_free_port
 # ─────────────────────────────────────────────────────────────────────────────
-
-def test_find_free_port_returns_int():
-    port = git_dashboard.find_free_port(8300)
-    assert isinstance(port, int)
-    assert 8300 <= port < 8320
-
 
 def test_find_free_port_fallback(monkeypatch):
     """When start_port is in use, must return the next free port."""

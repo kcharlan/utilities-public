@@ -9,11 +9,7 @@ Tests cover:
 
 import json
 import subprocess
-from io import BytesIO
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 import git_dashboard as gd
 

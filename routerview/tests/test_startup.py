@@ -90,7 +90,7 @@ def test_live_routes_are_not_registered():
     assert "/ws" not in routes
 
 
-def test_health_endpoint_reports_zero_connected_clients_without_websocket_manager(tmp_path):
+def test_health_endpoint_reports_database_state_and_private_mode(tmp_path):
     module = load_module()
     db_path = tmp_path / "routerview.db"
     module.init_database(str(db_path))
@@ -100,7 +100,8 @@ def test_health_endpoint_reports_zero_connected_clients_without_websocket_manage
     response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json()["connected_clients"] == 0
+    assert response.json()["status"] == "ok"
+    assert response.json()["total_generations"] == 0
     assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
 
 

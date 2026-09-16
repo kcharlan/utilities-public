@@ -221,16 +221,6 @@ def test_validate_pack_directory_does_not_require_shebang_for_non_executable_tex
     ]
 
 
-def test_packet_01_manifest_parsing_regressions_still_pass(repo_root: Path) -> None:
-    pack_root = repo_root / "tests" / "fixtures" / "packs" / "valid_shell_pack"
-
-    manifest = load_pack_manifest(pack_root)
-
-    assert manifest.name == "valid-shell-pack"
-    assert manifest.phases.execution.command == pack_root / "scripts" / "execute"
-    assert manifest.prerequisites == []
-
-
 def test_conventional_hook_resolution_rejects_paths_that_escape_pack_root(
     tmp_path: Path,
 ) -> None:

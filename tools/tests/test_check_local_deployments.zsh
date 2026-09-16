@@ -75,16 +75,6 @@ assert_status() {
   fi
 }
 
-assert_mode() {
-  local expected="$1"
-  local object_path="$2"
-  local actual
-  actual="$(stat -f '%Mp%Lp' "$object_path")" ||
-    fail "could not read mode for $object_path"
-  [[ "$actual" == "$expected" ]] ||
-    fail "$object_path: expected mode $expected, found $actual"
-}
-
 fixture_counter=0
 FIXTURE_ROOT=
 FIXTURE_REPO=

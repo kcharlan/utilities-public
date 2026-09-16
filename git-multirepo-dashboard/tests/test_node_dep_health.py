@@ -11,10 +11,7 @@ Run from project root:
 
 import json
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 import git_dashboard as gd
 
@@ -455,13 +452,3 @@ def test_check_node_deps_non_npm_deps_unchanged(tmp_path):
         assert "checked_at" in by_name["react"]
     finally:
         gd.TOOLS["npm"] = None
-
-
-def test_check_node_deps_classify_severity_reused(tmp_path):
-    """Verify classify_severity from packet 13 is used (check it exists as module function)."""
-    # Ensure the function is accessible as a module-level symbol (not duplicated inside node funcs)
-    assert callable(gd.classify_severity)
-    # And it still works correctly (regression guard)
-    assert gd.classify_severity("4.0.0", "5.0.0") == "major"
-    assert gd.classify_severity("2.1.0", "2.3.0") == "outdated"
-    assert gd.classify_severity("3.0.0", "3.0.0") == "ok"

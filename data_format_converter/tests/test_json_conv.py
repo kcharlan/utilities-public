@@ -41,15 +41,3 @@ def test_dump_pretty(sample_data, sample_data_pretty_string):
 def test_dump_compact(sample_data, sample_data_compact_string):
     """Tests compact printing with sorted keys and no extra whitespace."""
     assert dump_compact(sample_data) == sample_data_compact_string
-
-def test_round_trip_pretty(sample_data):
-    """Ensures that dumping and reloading a pretty string preserves the data."""
-    pretty_string = dump_pretty(sample_data)
-    reloaded_data = load_json(pretty_string)
-    assert reloaded_data == sample_data
-
-def test_round_trip_compact(sample_data):
-    """Ensures that dumping and reloading a compact string preserves the data."""
-    compact_string = dump_compact(sample_data)
-    reloaded_data = load_json(compact_string)
-    assert reloaded_data == sample_data

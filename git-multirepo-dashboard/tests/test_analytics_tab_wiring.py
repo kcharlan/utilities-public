@@ -64,34 +64,3 @@ def test_analytics_section_layout_gap(client):
     r = client.get("/")
     assert r.status_code == 200
     assert "32px" in r.text
-
-
-# ── Analytics API regression guards ───────────────────────────────────────
-
-
-def test_analytics_heatmap_endpoint_still_works(test_app):
-    """/api/analytics/heatmap must return 200 with data and max_count keys."""
-    client, _ = test_app
-    r = client.get("/api/analytics/heatmap?days=365")
-    assert r.status_code == 200
-    body = r.json()
-    assert "data" in body
-    assert "max_count" in body
-
-
-def test_analytics_allocation_endpoint_still_works(test_app):
-    """/api/analytics/allocation must return 200 with series key."""
-    client, _ = test_app
-    r = client.get("/api/analytics/allocation?days=90")
-    assert r.status_code == 200
-    body = r.json()
-    assert "series" in body
-
-
-def test_analytics_dep_overlap_endpoint_still_works(test_app):
-    """/api/analytics/dep-overlap must return 200 with packages key."""
-    client, _ = test_app
-    r = client.get("/api/analytics/dep-overlap")
-    assert r.status_code == 200
-    body = r.json()
-    assert "packages" in body

@@ -81,17 +81,17 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
     "jtree/jtree": (
         "requirements",
         "jtree/requirements-dev.txt",
-        frozenset({"httpx", "pytest", "pytest-cov"}),
+        frozenset({"httpx", "pytest"}),
     ),
     "harscope/harscope": (
         "requirements",
         "harscope/requirements-dev.txt",
-        frozenset({"anyio", "httpx", "pytest", "pytest-cov"}),
+        frozenset({"anyio", "httpx", "pytest"}),
     ),
     "mls-tracker/mls_tracker": (
         "requirements",
         "mls-tracker/requirements-dev.txt",
-        frozenset({"httpx", "pytest", "pytest-cov"}),
+        frozenset({"httpx", "pytest"}),
     ),
     "docpipe/docpipe": (
         "requirements",

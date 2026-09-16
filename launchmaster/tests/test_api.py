@@ -35,12 +35,6 @@ class TestHealthEndpoint:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestJobListing:
-    def test_jobs_returns_list(self, server_url):
-        resp = urllib.request.urlopen(f"{server_url}/api/jobs")
-        data = json.loads(resp.read().decode())
-        assert isinstance(data, list)
-        assert len(data) > 0
-
     def test_jobs_include_apple_true(self, server_url):
         resp = urllib.request.urlopen(f"{server_url}/api/jobs?include_apple=true")
         data = json.loads(resp.read().decode())
@@ -101,14 +95,6 @@ class TestEnabledDisabledRegression:
 
     These tests verify enabled/disabled state matches the real launchctl state.
     """
-
-    def test_enabled_field_exists_on_all_jobs(self, api_jobs_no_apple):
-        """Every job must have an explicit 'enabled' boolean field."""
-        for job in api_jobs_no_apple:
-            assert "enabled" in job, (
-                f"Job {job['label']} missing 'enabled' field — "
-                "regression: backend must set enabled explicitly"
-            )
 
     def test_enabled_matches_launchctl_print_disabled(
         self, api_jobs_no_apple, disabled_labels

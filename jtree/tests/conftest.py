@@ -17,9 +17,7 @@ from tools.testkit import ASGISyncClient, load_launcher
 _JTREE_PATH = Path(__file__).resolve().parents[1] / "jtree"
 jtree_mod = load_launcher(_JTREE_PATH, "jtree_mod")
 
-# Re-export handy references
 app = jtree_mod.app
-JSONManager = jtree_mod.JSONManager
 
 
 # ---------------------------------------------------------------------------
@@ -50,14 +48,6 @@ def sample_json_file(tmp_path):
     return str(p)
 
 
-@pytest.fixture()
-def readonly_json_file(tmp_path):
-    """Write SAMPLE_DATA to a temp .json file for readonly tests."""
-    p = tmp_path / "readonly.json"
-    p.write_text(json.dumps(SAMPLE_DATA, indent=2))
-    return str(p)
-
-
 @pytest.fixture(autouse=True)
 def _reset_manager():
     """Reset the global json_manager before every test to avoid cross-test leakage."""
@@ -81,8 +71,8 @@ def loaded_client(client, sample_json_file):
 
 
 @pytest.fixture()
-def readonly_client(client, readonly_json_file):
+def readonly_client(client, sample_json_file):
     """A TestClient with a file loaded in readonly mode."""
-    resp = client.post("/api/open", json={"path": readonly_json_file, "readonly": True})
+    resp = client.post("/api/open", json={"path": sample_json_file, "readonly": True})
     assert resp.status_code == 200
     return client

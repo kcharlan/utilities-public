@@ -16,9 +16,5 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "http-server": "^14.1.1"
-  },
-  "dependencies": {
-    "playwright": "^1.58.2",
-    "playwright-core": "^1.58.2"
   }
 }

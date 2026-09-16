@@ -190,8 +190,6 @@ by `exit_with_error`; they propagate as ordinary Python errors.
 - `tomli_w`
 - `toon-format` from its GitHub repository
 - `pytest`
-- `requests` and `tiktoken` (currently installed but not imported by the
-  Python implementation)
 
 Python 3.10+ is supported. Development and test execution must occur in a
 virtual environment.

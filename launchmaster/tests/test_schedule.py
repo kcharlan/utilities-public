@@ -7,12 +7,6 @@ schedule humanizer function against known plist schedule patterns.
 Run:  pytest tests/test_schedule.py -v
 """
 
-import json
-import urllib.request
-
-import pytest
-
-
 class TestScheduleHumanizer:
     """Verify schedule_human strings are correct for known job patterns."""
 
