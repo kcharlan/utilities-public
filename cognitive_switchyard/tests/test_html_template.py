@@ -1,20 +1,79 @@
 from __future__ import annotations
 
+import re
+from html.parser import HTMLParser
 from textwrap import dedent
+from urllib.parse import urlparse
 
 from cognitive_switchyard.html_template import render_app_html
 
 
-def test_render_app_html_pins_required_react18_tailwind_lucide_and_reactflow_cdns() -> None:
-    html = render_app_html({"ok": True})
+class _DependencyCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.script_sources: list[str] = []
+        self.stylesheet_hrefs: list[str] = []
+        self.inline_scripts: list[str] = []
+        self._inside_inline_script = False
 
-    assert "https://unpkg.com/react@18.3.1/umd/react.development.js" in html
-    assert "https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" in html
-    assert "https://cdn.tailwindcss.com/3.4.17" in html
-    assert "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js" in html
-    assert "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js" in html
-    assert "https://unpkg.com/reactflow@11.11.4/dist/umd/index.js" in html
-    assert "https://unpkg.com/reactflow@11.11.4/dist/style.css" in html
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "script":
+            source = attributes.get("src")
+            if source:
+                self.script_sources.append(source)
+            else:
+                self._inside_inline_script = True
+        elif tag == "link" and "stylesheet" in (attributes.get("rel") or "").split():
+            href = attributes.get("href")
+            if href:
+                self.stylesheet_hrefs.append(href)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script":
+            self._inside_inline_script = False
+
+    def handle_data(self, data: str) -> None:
+        if self._inside_inline_script:
+            self.inline_scripts.append(data)
+
+
+def _normalized_external_url(url: str) -> tuple[str, str, str]:
+    parsed = urlparse(url)
+    return parsed.scheme.lower(), parsed.netloc.lower(), parsed.path
+
+
+def test_render_app_html_has_exact_external_dependency_inventory_without_tailwind() -> None:
+    html = render_app_html({"ok": True})
+    dependencies = _DependencyCollector()
+    dependencies.feed(html)
+
+    assert dependencies.script_sources == [
+        "https://unpkg.com/react@18.3.1/umd/react.development.js",
+        "https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js",
+        "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
+        "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+        "https://unpkg.com/reactflow@11.11.4/dist/umd/index.js",
+    ]
+    assert dependencies.stylesheet_hrefs == [
+        "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
+        "https://unpkg.com/reactflow@11.11.4/dist/style.css",
+    ]
+
+    external_urls = dependencies.script_sources + dependencies.stylesheet_hrefs
+    assert all(
+        "tailwind" not in "".join(_normalized_external_url(url)).lower()
+        for url in external_urls
+    )
+
+    executable_javascript = "\n".join(dependencies.inline_scripts)
+    executable_javascript = re.sub(r"/\*.*?\*/", "", executable_javascript, flags=re.DOTALL)
+    executable_javascript = re.sub(r"//[^\n]*", "", executable_javascript)
+    assert re.search(
+        r"\b(?:window\s*\.\s*)?tailwind\s*\.\s*config\s*=",
+        executable_javascript,
+        flags=re.IGNORECASE,
+    ) is None
 
 
 def test_render_app_html_includes_required_google_fonts_import_and_design_token_block() -> None:

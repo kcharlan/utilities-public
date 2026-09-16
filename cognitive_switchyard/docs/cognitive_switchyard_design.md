@@ -498,7 +498,8 @@ Resolution output is stored as JSON (not markdown) for reliable parsing:
 
 - **Backend:** Python FastAPI + uvicorn (uv-managed via a PEP 723 header)
 - **Frontend:** Single-file embedded React 18 SPA (CDN-loaded, no npm/node_modules)
-- **CDN dependencies:** React 18, ReactDOM 18, Babel Standalone, Tailwind CSS, Lucide Icons, React Flow v11 (all UMD from unpkg/jsdelivr)
+- **CDN dependencies:** React 18, ReactDOM 18, Babel Standalone, Lucide Icons, and React Flow v11 JavaScript (UMD from unpkg), plus the React Flow stylesheet and Google Fonts
+- **Styling:** Project-owned CSS embedded in the HTML template; no Tailwind runtime
 - **Real-time:** WebSocket for live state pushes
 - **Port:** Auto-scan from preferred default (e.g., 8100), never hardcoded
 
@@ -1492,7 +1493,7 @@ React 19 dropped UMD builds entirely. Our architecture depends on UMD (script-ta
 
 **Practical risk assessment:** Low for the 12-18 month horizon. React 18 UMD builds are immutable artifacts on CDN (unpkg, jsdelivr) -- they don't disappear when support ends. Security patches to React 18 are unlikely to matter for a locally-hosted, single-user tool that loads no untrusted third-party components. The real risk is ecosystem drift: if React Flow or other dependencies drop React 18 support, we'd be stuck on older versions of those libraries.
 
-**Migration path if needed:** React 19 recommends ESM-based CDNs (esm.sh) for script-tag loading. Migration would require switching CDN URLs and updating any code that uses deprecated React 18 APIs (mostly around `ReactDOM.render` patterns, which we shouldn't be using anyway with React 18's `createRoot`). React Flow v12+ requires React 19 -- so a React upgrade would also mean a React Flow upgrade, which could change APIs.
+**Migration path if needed:** React 19 recommends ESM-based CDNs (esm.sh) for script-tag loading. Migration would require replacing the current React/ReactDOM UMD globals with an ESM/import-map or build-based loading architecture and validating the application against React 19 behavior. React Flow v12 does not force that migration: its published peer boundary is `react >=17` and `react-dom >=17`. A later React 19 migration remains independently motivated by React's removal of UMD builds and the long-term maintenance risk of retaining the React 18 global-script architecture; a React Flow v12 upgrade is a separate compatibility project with its own API and package changes.
 
 **Recommendation:** Build on React 18 now. Pin CDN URLs to exact versions (not `@latest`). Accept the risk. If migration becomes necessary, it is a frontend-only change -- the backend, pack system, and orchestrator are completely unaffected.
 

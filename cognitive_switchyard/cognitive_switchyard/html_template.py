@@ -113,9 +113,27 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                 box-sizing: border-box;
               }
 
+              html {
+                line-height: 1.5;
+              }
+
               html, body {
                 margin: 0;
                 min-height: 100%;
+              }
+
+              h1, h2, h3, h4, h5, h6, p {
+                margin: 0;
+              }
+
+              h1, h2, h3, h4, h5, h6 {
+                font-size: inherit;
+                font-weight: inherit;
+              }
+
+              svg {
+                display: block;
+                vertical-align: middle;
               }
 
               body {
@@ -944,7 +962,6 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
             <script id="switchyard-bootstrap" type="application/json">__BOOTSTRAP_JSON__</script>
             <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
             <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
-            <script src="https://cdn.tailwindcss.com/3.4.17"></script>
             <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
             <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
             <script src="https://unpkg.com/reactflow@11.11.4/dist/umd/index.js"></script>

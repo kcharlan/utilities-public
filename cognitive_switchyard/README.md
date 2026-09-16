@@ -77,12 +77,15 @@ When a session is created with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNIT
 - **State:** SQLite + file-as-state directories
 - **uv-managed:** Single entry point (`switchyard`) with a PEP 723 header; uv resolves dependencies on first run (requires [uv](https://docs.astral.sh/uv/), `brew install uv`)
 
-The embedded no-build frontend intentionally remains on React 18 UMD and the
-Tailwind CSS 3 classic CDN. React 19 no longer publishes UMD builds, and
-Tailwind CSS 4 replaces the classic browser CDN workflow. Moving to either
-latest major therefore requires introducing a frontend build pipeline (or an
-equivalent ESM/import-map and generated-CSS architecture) rather than a CDN URL
-update. The browser E2E suite protects the current global-script contract.
+The embedded no-build frontend intentionally remains on React 18 UMD and uses
+project-owned CSS embedded in the HTML template; it has no Tailwind runtime.
+At runtime the browser loads Google Fonts plus exact-version React, ReactDOM,
+Babel Standalone, Lucide, and React Flow JavaScript and the React Flow
+stylesheet from CDNs. React 19 no longer publishes UMD builds, so a later React
+migration requires an ESM/import-map or frontend build architecture rather than
+a CDN URL update. Static HTML tests own the exact external script and stylesheet
+inventory. Browser E2E tests verify representative styled views and interactions
+while failing on page or unexpected console errors.
 
 ## Quick Start
 

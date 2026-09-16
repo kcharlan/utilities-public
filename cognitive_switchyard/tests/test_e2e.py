@@ -22,6 +22,8 @@ Covers:
 """
 from __future__ import annotations
 
+import copy
+import json
 import socket
 import threading
 import time
@@ -35,7 +37,9 @@ pytest.importorskip("playwright")
 import uvicorn  # noqa: E402
 
 from cognitive_switchyard.config import build_runtime_paths  # noqa: E402
+from cognitive_switchyard.html_template import render_app_html  # noqa: E402
 from cognitive_switchyard.server import create_app  # noqa: E402
+from cognitive_switchyard.server import _build_root_bootstrap_payload  # noqa: E402
 from cognitive_switchyard.state import initialize_state_store  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -481,6 +485,138 @@ def server_url(runtime_home):
 # ---------------------------------------------------------------------------
 # 1. INITIAL LOAD & NAVIGATION
 # ---------------------------------------------------------------------------
+
+
+class TestProjectOwnedBaseStyles:
+    def test_tailwind_preflight_compatible_styles_are_explicit(
+        self, server_url, runtime_home, page
+    ):
+        requested_urls = []
+        page.on("request", lambda request: requested_urls.append(request.url))
+        runtime_paths = build_runtime_paths(home=runtime_home)
+        store = initialize_state_store(runtime_paths)
+        session_id = "base-style-regression-001"
+        store.create_session(
+            session_id=session_id,
+            name="Synthetic Base Style Regression",
+            pack="claude-code",
+            created_at="2026-09-16T12:00:00Z",
+            config_json=json.dumps(
+                {
+                    "environment": {
+                        "COGNITIVE_SWITCHYARD_SOURCE_REPO": "/tmp/synthetic-source",
+                        "COGNITIVE_SWITCHYARD_REPO_ROOT": "/tmp/synthetic-worktree",
+                    }
+                }
+            ),
+        )
+        store.update_session_status(
+            session_id,
+            status="running",
+            started_at="2026-09-16T12:00:01Z",
+        )
+
+        try:
+            active_payload = _build_root_bootstrap_payload(
+                store,
+                runtime_paths=runtime_paths,
+            )
+            assert active_payload["current_session"]["id"] == session_id
+            active_html = render_app_html(active_payload)
+            page.route(
+                f"{server_url}/",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body=active_html,
+                ),
+            )
+            page.goto(server_url)
+            settings_icon_styles = page.evaluate(
+                """() => {
+                    const button = document.querySelector('button[aria-label="Settings"]');
+                    const svg = button.querySelector('svg');
+                    const buttonRect = button.getBoundingClientRect();
+                    const svgStyle = getComputedStyle(svg);
+                    return {
+                        svgDisplay: svgStyle.display,
+                        svgVerticalAlign: svgStyle.verticalAlign,
+                        buttonWidth: buttonRect.width,
+                        buttonHeight: buttonRect.height,
+                    };
+                }"""
+            )
+            assert settings_icon_styles == {
+                "svgDisplay": "block",
+                "svgVerticalAlign": "middle",
+                "buttonWidth": 40,
+                "buttonHeight": 32,
+            }
+            page.locator("button:has-text('Setup')").click()
+            page.wait_for_selector('h1:text-is("Session Active")', timeout=SLOW_TIMEOUT)
+
+            active_styles = page.evaluate(
+                """() => {
+                    const title = document.querySelector('.view-title');
+                    const description = title.nextElementSibling;
+                    const titleStyle = getComputedStyle(title);
+                    const descriptionStyle = getComputedStyle(description);
+                    return {
+                        titleWeight: titleStyle.fontWeight,
+                        titleLineHeight: titleStyle.lineHeight,
+                        descriptionMarginTop: descriptionStyle.marginTop,
+                    };
+                }"""
+            )
+            assert active_styles == {
+                "titleWeight": "400",
+                "titleLineHeight": "36px",
+                "descriptionMarginTop": "0px",
+            }
+
+            completed_payload = copy.deepcopy(active_payload)
+            completed_payload["dashboard"]["session"]["status"] = "completed"
+            store.update_session_status(
+                session_id,
+                status="completed",
+                completed_at="2026-09-16T12:01:00Z",
+            )
+            completed_html = render_app_html(completed_payload)
+            page.unroute(f"{server_url}/")
+            page.route(
+                f"{server_url}/",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body=completed_html,
+                ),
+            )
+            page.goto(server_url)
+            page.wait_for_selector("text=Session Completed", timeout=SLOW_TIMEOUT)
+
+            completion_heading_styles = page.locator(
+                ".completion-card-section h4"
+            ).first.evaluate(
+                """element => {
+                    const style = getComputedStyle(element);
+                    return {
+                        marginTop: style.marginTop,
+                        fontWeight: style.fontWeight,
+                        lineHeight: style.lineHeight,
+                    };
+                }"""
+            )
+            assert completion_heading_styles == {
+                "marginTop": "0px",
+                "fontWeight": "400",
+                "lineHeight": "18px",
+            }
+            assert not [
+                url for url in requested_urls if "tailwind" in url.lower()
+            ]
+        finally:
+            page.unroute(f"{server_url}/")
+            store.delete_session(session_id)
 
 
 class TestInitialLoad:
