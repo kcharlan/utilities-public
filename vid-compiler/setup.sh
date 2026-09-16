@@ -3,5 +3,4 @@
 rm -rf venv
 python3.12 -m venv venv
 source venv/bin/activate
-pip install moviepy numpy tqdm
-
+python -m pip install -r requirements.txt

@@ -1,0 +1,11 @@
+{
+  "name": "data-format-converter-browser-tests",
+  "private": true,
+  "scripts": {
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "http-server": "14.1.1"
+  }
+}

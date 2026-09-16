@@ -77,6 +77,13 @@ When a session is created with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNIT
 - **State:** SQLite + file-as-state directories
 - **uv-managed:** Single entry point (`switchyard`) with a PEP 723 header; uv resolves dependencies on first run (requires [uv](https://docs.astral.sh/uv/), `brew install uv`)
 
+The embedded no-build frontend intentionally remains on React 18 UMD and the
+Tailwind CSS 3 classic CDN. React 19 no longer publishes UMD builds, and
+Tailwind CSS 4 replaces the classic browser CDN workflow. Moving to either
+latest major therefore requires introducing a frontend build pipeline (or an
+equivalent ESM/import-map and generated-CSS architecture) rather than a CDN URL
+update. The browser E2E suite protects the current global-script contract.
+
 ## Quick Start
 
 ```bash

@@ -10,8 +10,9 @@ def test_render_app_html_pins_required_react18_tailwind_lucide_and_reactflow_cdn
 
     assert "https://unpkg.com/react@18.3.1/umd/react.development.js" in html
     assert "https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" in html
-    assert "https://unpkg.com/@babel/standalone@7.28.4/babel.min.js" in html
-    assert "https://unpkg.com/lucide@0.542.0/dist/umd/lucide.min.js" in html
+    assert "https://cdn.tailwindcss.com/3.4.17" in html
+    assert "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js" in html
+    assert "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js" in html
     assert "https://unpkg.com/reactflow@11.11.4/dist/umd/index.js" in html
     assert "https://unpkg.com/reactflow@11.11.4/dist/style.css" in html
 

@@ -15,11 +15,14 @@ in a private CSV tax table.
   file for one income and date.
 - `ui.sh` — Streamlit launcher that works in the project or as a standalone
   copied wrapper.
-- `setup.sh` — Creates or updates `venv/` and installs pandas and Streamlit.
+- `setup.sh` — Recreates the disposable `venv/` and installs the exact pandas
+  and Streamlit releases tracked in `requirements.txt`.
 - `Tax-table.example.csv`, `config.example.json`, and `project-dir.example` —
   deliberately synthetic format examples, not operational data.
 
 ## Setup
+
+Python 3.11 or newer is required by the tracked pandas release.
 
 ```bash
 bash setup.sh
@@ -27,7 +30,9 @@ source venv/bin/activate
 ```
 
 The setup script uses the project-local `venv/` and does not install packages
-into the system or Homebrew Python.
+into the system or Homebrew Python. It removes the old project environment
+first so retired transitive packages cannot survive an upgrade; do not keep
+anything important in `venv/`.
 
 ## Private configuration
 

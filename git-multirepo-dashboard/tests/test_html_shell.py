@@ -37,15 +37,16 @@ def test_get_root_returns_html(client):
 # ── Test 2: React CDN tags ────────────────────────────────────────────────────
 
 def test_html_includes_react_cdn(html_body):
-    assert "react/18.2.0" in html_body
-    assert "react-dom/18.2.0" in html_body
-    assert "babel-standalone/7.23.9" in html_body
+    assert "react/18.3.1" in html_body
+    assert "react-dom/18.3.1" in html_body
+    assert "prop-types/15.8.1" in html_body
+    assert "babel-standalone/7.29.8" in html_body
 
 
 # ── Test 3: Recharts CDN tag ─────────────────────────────────────────────────
 
 def test_html_includes_recharts_cdn(html_body):
-    assert "recharts/2.12.7" in html_body
+    assert "recharts/2.15.4" in html_body
 
 
 # ── Test 4: Font links ────────────────────────────────────────────────────────

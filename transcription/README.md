@@ -25,14 +25,16 @@ Run these commands from this directory:
 source venv/bin/activate
 ```
 
-`setup.sh` deletes and recreates `venv/`, then installs `openai-whisper` and `streamlit`.
+`setup.sh` deletes and recreates `venv/`, then installs the exact
+`openai-whisper`, `streamlit`, and directly imported `pandas` releases tracked
+in `requirements.txt`.
 
 ### Optional OpenAI API fallback
 
 Only `app.py` can fall back to the OpenAI transcription API when local Whisper fails. To enable that fallback, install the OpenAI client in the project virtual environment and provide the key through the environment:
 
 ```bash
-venv/bin/pip install openai
+venv/bin/python -m pip install -r requirements-optional.txt
 export OPENAI_API_KEY="your-key"
 ```
 
@@ -80,6 +82,18 @@ This interface supports:
 - Using `librosa` for duration detection when it is separately installed, with Whisper audio loading as the built-in fallback.
 
 This older interface records a file's detected duration before transcription finishes, so a failed transcription can still increase its counters. It does not use the OpenAI API fallback.
+
+`requirements-optional.txt` pins both optional packages. Neither is installed
+by `setup.sh`; install the optional file only when those features are needed.
+
+## Validation
+
+Verify imports and launch the primary UI through the project environment:
+
+```bash
+venv/bin/python -c 'import pandas, streamlit, whisper; print(pandas.__version__, streamlit.__version__, whisper.__version__)'
+venv/bin/python -m streamlit run app.py --server.headless true
+```
 
 ## Counters and local state
 

@@ -944,8 +944,9 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
             <script id="switchyard-bootstrap" type="application/json">__BOOTSTRAP_JSON__</script>
             <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
             <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
-            <script src="https://unpkg.com/@babel/standalone@7.28.4/babel.min.js"></script>
-            <script src="https://unpkg.com/lucide@0.542.0/dist/umd/lucide.min.js"></script>
+            <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+            <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
+            <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
             <script src="https://unpkg.com/reactflow@11.11.4/dist/umd/index.js"></script>
             <script type="text/babel" data-presets="env,react">
               const bootstrap = JSON.parse(document.getElementById("switchyard-bootstrap").textContent);

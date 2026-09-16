@@ -12,19 +12,40 @@ Utilities for turning an Apple Health export (`export.xml`) into structured CSV 
 
 - `extract_workout_stats.py` – Parses workouts and health records from the export, writes summary and heart-rate detail CSVs.
 - `exercise_bouts.py` – Groups Apple Exercise Time minutes into bouts, labels them against workouts, and writes a bouts CSV.
-- `setup.sh` – Creates a `venv/` and installs dependencies (`pandas` and `tqdm`).
+- `requirements.txt` – Tracked runtime dependency declarations (`pandas` and
+  `tqdm`).
+- `requirements-dev.txt` – Reproduces the runtime graph used by the shell test
+  and safe extraction smokes.
+- `setup.sh` – Creates a `venv/` and installs the tracked runtime requirements.
 - `run.sh` – Runs `extract_workout_stats.py` from the project virtual environment. It works beside the project or as a standalone copy using local project-path configuration.
 - `project-dir.example` – Conspicuously synthetic example of the one-line local path configuration. It is documentation only.
 
 ## Setup
 
-Run the setup script from this directory. It requires `python3` and network access for the initial dependency installation.
+Run the setup script from this directory. It requires Python 3.11 or newer and
+network access for the initial dependency installation. Python 3.11 is the
+minimum supported by the declared pandas 3 line.
 
 ```bash
 ./setup.sh
 ```
 
-This creates `venv/` and installs `pandas` and `tqdm`. The provided commands call `venv/bin/python` directly, so activation is optional. To run the Python scripts by name during an interactive session, activate it with `source venv/bin/activate`.
+This creates `venv/` and installs current compatible releases of `pandas>=3.0`
+and `tqdm>=4.70` from `requirements.txt`. The provided commands call
+`venv/bin/python` directly, so activation is optional. To run the Python
+scripts by name during an interactive session, activate it with
+`source venv/bin/activate`.
+
+For a disposable development environment, create a virtual environment and
+install `requirements-dev.txt`; the project intentionally has no separate
+Python test framework dependency because its tracked automated test is a shell
+wrapper test:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+bash tests/test_run_wrapper.sh
+```
 
 ## Portable Wrapper
 

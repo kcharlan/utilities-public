@@ -5,8 +5,9 @@ This directory contains a simple Python application built with FastAPI. It demon
 ## Overview
 
 *   **`main.py`**: The main application file, defining a FastAPI application and a single API endpoint.
-*   **`Dockerfile`**: Builds the container image from `python:3.12-slim`, installs dependencies from `requirements.txt`, and runs the app with Uvicorn on port 80.
-*   **`requirements.txt`**: Lists Python dependencies (`fastapi`, `uvicorn[standard]`).
+*   **`Dockerfile`**: Builds the container image from `python:3.14-slim`, installs the fully frozen dependency graph from `requirements.lock` with hash verification, and runs the app with Uvicorn on port 80.
+*   **`requirements.txt`**: Lists the direct Python dependencies (`fastapi`, `uvicorn[standard]`) used as lock input.
+*   **`requirements.lock`**: Pins the complete Python 3.14 graph and records accepted distribution hashes for reproducible container installation.
 
 ## Functionality
 
@@ -23,7 +24,7 @@ This service runs on port `80` within its Docker container and is exposed extern
 In `docker-compose.yml`:
 
 *   The `app_py` service is built from the local `Dockerfile` in this directory (`build: ./app_py`).
-*   The Dockerfile uses `python:3.12-slim` as the base image, installs dependencies via pip, and runs `uvicorn main:app --host 0.0.0.0 --port 80`.
+*   The Dockerfile uses `python:3.14-slim`, installs only the hashed versions in `requirements.lock`, and runs `uvicorn main:app --host 0.0.0.0 --port 80`.
 *   It mounts the `./app_py` directory into the container at `/app` (read-only).
 *   Port `80` is exposed internally for Nginx to access.
 
@@ -38,8 +39,14 @@ In `docker-compose.yml`:
             return {"message": "This is a new Python endpoint!"}
         ```
 
-2.  **Add Dependencies:**
-    *   Add new Python packages to `requirements.txt` in this directory. The Dockerfile installs them during the image build.
+2.  **Add or Update Dependencies:**
+    *   Edit the direct requirements in `requirements.txt`, then regenerate the universal Python 3.14 lock from this directory:
+        ```bash
+        uv pip compile --python-version 3.14 --universal --generate-hashes \
+          requirements.txt --output-file requirements.lock
+        uvx pip-audit -r requirements.lock
+        ```
+    *   Review and commit both files together. The Docker build intentionally refuses distributions whose hashes are absent from the lock.
     *   After adding dependencies, rebuild the `app_py` service:
         ```bash
         docker compose up -d --build app_py

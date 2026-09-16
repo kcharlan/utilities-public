@@ -1,12 +1,14 @@
 # harscope Tests
 
-Automated API tests plus an optional real-HAR integration workflow. Neither suite drives the browser UI.
+Automated API tests, a minimal Playwright browser smoke, and an optional
+real-HAR integration workflow.
 
 ## Files
 
 | File | Description |
 |---|---|
 | `test_api.py` | Primary pytest suite for all 26 FastAPI routes, scanner behavior, exports, validation, and robustness cases |
+| `test_e2e.py` | Chromium smoke for CDN loading, page errors, and tab interaction |
 | `conftest.py` | ASGI client, isolated application state, and conspicuously synthetic HAR fixtures |
 | `TEST_PLAN.md` | Durable matrix and failure-mode reference for the optional real-HAR workflow |
 | `run_tests.sh` | Starts a local server and runs eight real-HAR redaction scenarios |
@@ -18,6 +20,7 @@ Automated API tests plus an optional real-HAR integration workflow. Neither suit
 cd harscope
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -r requirements-dev.txt
+.venv/bin/playwright install chromium
 .venv/bin/python -m pytest -q
 ```
 

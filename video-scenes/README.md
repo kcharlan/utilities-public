@@ -19,9 +19,11 @@ cd video-scenes
 source venv/bin/activate
 ```
 
-The script deletes and recreates `video-scenes/venv`, then installs PySceneDetect,
-OpenCV, and the CLI dependencies into it. Do not keep anything important in that
-directory.
+The script deletes and recreates `video-scenes/venv`, then installs the exact
+PySceneDetect, OpenCV, and CLI dependency releases tracked in
+`requirements.txt`. PySceneDetect 0.7.1 no longer publishes an `opencv` extra,
+so OpenCV is declared directly rather than through `scenedetect[opencv]`. Do
+not keep anything important in that directory.
 
 ## Common Commands
 
@@ -51,6 +53,9 @@ scenedetect -i video.mp4 detect-hash -t 0.16 split-video
 - Use `time --start`, `--end`, or `--duration` to restrict the analyzed range.
 - Run `scenedetect --help` for the global options, or
   `scenedetect help <command>` for command-specific options.
+
+The `scenedetect --help` command is also the dependency smoke check after an
+update.
 
 See the [PySceneDetect CLI reference](https://www.scenedetect.com/docs/latest/cli.html)
 for complete command and detector documentation.

@@ -5,8 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Moving tags and dependency ranges are intentional. This command is the
-# explicit maintenance boundary that refreshes all upstream inputs.
+# Moving base-image tags are intentional. Application dependency graphs come
+# from checked-in Python and npm locks; refresh/audit those separately.
 docker compose pull web
 docker compose build --pull --no-cache index app_py app_node
 docker compose up -d --force-recreate --remove-orphans --wait --wait-timeout 120

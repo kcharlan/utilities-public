@@ -1,5 +1,5 @@
 # Minimal, production-grade Python base
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -12,8 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install collector dependencies at image build time so startup stays deterministic.
 COPY collector/requirements.txt /tmp/collector-requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /tmp/collector-requirements.txt && \
+RUN python -m pip install --no-cache-dir -r /tmp/collector-requirements.txt && \
     rm -f /tmp/collector-requirements.txt
 
 # Create a workspace where your host folder will be mounted

@@ -8,3 +8,5 @@ pydantic
 pytest>=7.0
 httpx>=0.24
 anyio>=4.0
+playwright>=1.63
+pytest-playwright>=0.9

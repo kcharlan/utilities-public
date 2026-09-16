@@ -1,8 +1,8 @@
 # LLM Token Analyzer & Format Converter — Technical Specification
 
 **Status:** Current implementation reference
-**Version:** 1.2
-**Reviewed:** 2026-07-26
+**Version:** 1.3
+**Reviewed:** 2026-09-16
 
 ## 1. Architecture
 
@@ -13,8 +13,7 @@ web/index.html
   ├─ inline HTML/CSS/JavaScript
   ├─ CDN: @iarna/toml
   ├─ CDN: js-yaml
-  ├─ CDN: Google Fonts
-  └─ optional OpenAI Completions request
+  └─ CDN: Google Fonts
 
 src/data_convert.py
   └─ src/converters/
@@ -74,31 +73,18 @@ object syntax do not constitute a complete TOON grammar.
 
 `estimateTokens(text)` returns `Math.ceil(text.length / 4)`.
 
-`tokenizeText(text)` checks `window.OPENAI_API_KEY`. When present, it sends a
-request with a three-second abort timeout:
-
-```text
-POST https://api.openai.com/v1/completions
-model: gpt-3.5-turbo-instruct
-prompt: rendered text
-max_tokens: 0
-```
-
-On an HTTP success it reads `usage.prompt_tokens` and reports engine `api`.
-Missing keys, exceptions, timeouts, and non-success responses fall through to
-the character heuristic and report engine `local`.
-
-The local result is not a BPE/tiktoken count. The API path is a legacy
-Completions proxy, not a dedicated tokenization endpoint and not GPT-5.
+`tokenizeText(text)` always returns the character heuristic with engine
+`local`. The result is not a BPE/tiktoken count. The removed legacy
+Completions fallback was neither a dedicated tokenization endpoint nor a safe
+place to expose an API key.
 
 ### 2.4 Browser persistence and network use
 
 The selected theme is stored under the `theme` localStorage key. Input and
 converted data are not persisted by the page.
 
-TOML, YAML, and font resources require CDN access when not cached. The optional
-OpenAI request sends rendered text to OpenAI only when the user has explicitly
-defined `window.OPENAI_API_KEY`.
+TOML, YAML, and font resources require CDN access when not cached. Pasted and
+rendered content remains in the browser and no API-key global is read.
 
 ## 3. Python CLI
 
@@ -207,8 +193,10 @@ Same-format pairs are omitted. Round trips involving TOML and a dataset
 containing `None` are omitted because TOML cannot encode null. XML comparisons
 coerce scalar types to account for `xmltodict` string values.
 
-There are no automated tests for `web/index.html`, its CDN loading, browser
-conversion functions, theme behavior, or the optional API path.
+The Playwright smoke test covers CDN initialization, one JSON conversion, the
+local token-source labels, and the no-OpenAI-request privacy contract. It is
+not a complete interaction matrix for every browser parser, serializer, or
+theme behavior.
 
 ## 6. Known design constraints
 

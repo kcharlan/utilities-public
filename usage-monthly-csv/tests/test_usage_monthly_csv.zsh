@@ -18,7 +18,7 @@ command=$3
 format=$4
 shift 4
 
-[[ "$package" == "ccusage@latest" ]] || { print -u2 -- "unexpected package: $package"; exit 1; }
+[[ "$package" == "ccusage@20.0.20" ]] || { print -u2 -- "unexpected package: $package"; exit 1; }
 [[ "$subcommand" == "claude" || "$subcommand" == "codex" ]] || { print -u2 -- "unexpected subcommand: $subcommand"; exit 1; }
 [[ "$command" == "daily" ]] || { print -u2 -- "unexpected command: $command"; exit 1; }
 [[ "$format" == "--json" ]] || { print -u2 -- "unexpected format: $format"; exit 1; }
@@ -159,7 +159,7 @@ fi
 package=$1
 subcommand=$2
 
-[[ "$package" == "ccusage@latest" ]] || { print -u2 -- "unexpected package: $package"; exit 1; }
+[[ "$package" == "ccusage@20.0.20" ]] || { print -u2 -- "unexpected package: $package"; exit 1; }
 
 case "$subcommand" in
   claude)

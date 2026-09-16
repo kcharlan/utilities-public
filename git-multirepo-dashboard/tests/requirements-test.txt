@@ -5,3 +5,5 @@ uvicorn[standard]
 aiosqlite
 packaging
 pydantic
+playwright>=1.63
+pytest-playwright>=0.9

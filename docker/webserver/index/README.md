@@ -90,6 +90,6 @@ The dynamic index uses inline CSS and a basic HTML structure. To customize its a
 *   `cheerio`: Used for parsing and manipulating HTML, specifically to infer titles from HTML files.
 - `mime`: MIME type lookup for serving correct content types.
 
-`package-lock.json` records a resolved graph for local tooling, but the current
-Dockerfile deliberately installs compatible dependency ranges from
-`package.json` with `--no-package-lock`.
+`package-lock.json` is the production build contract. The Dockerfile uses
+`npm ci --omit=dev`, so container builds install the audited resolved graph
+rather than silently refreshing compatible ranges.

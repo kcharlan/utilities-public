@@ -38,6 +38,14 @@ On first run, uv resolves FastAPI and uvicorn into its shared cache, so that inv
 4. binds to `127.0.0.1`, preferring port 8473 and trying the next 19 ports if necessary; and
 5. opens the dashboard in the default browser.
 
+The build-free frontend intentionally stays on React 18's UMD globals; React
+19 would require a module/bundler migration. It also stays on the classic
+Tailwind Play CDN. Version 3.4.17 is the newest release that CDN actually
+serves—the 3.4.19 URL emits a runtime error—and Tailwind 4 requires a different
+integration. Babel Standalone remains on major 7 for the inline `text/babel`
+transform; major 8 needs a separate transform migration. The browser smoke
+test also verifies the current Lucide UMD API.
+
 Use `--no-browser` to suppress the browser launch or `--port PORT` (`-p PORT`) to choose a different preferred port:
 
 ```zsh
@@ -97,6 +105,7 @@ Create an isolated test environment and run the project suite:
 cd /path/to/utilities-public/storage_monitor
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
 .venv/bin/python -m pytest -q
 ```
 

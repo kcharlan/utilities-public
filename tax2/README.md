@@ -35,6 +35,14 @@ Useful options:
 The preferred port is not selected automatically. If it is occupied, choose a
 different port with `--port`.
 
+The build-free frontend intentionally stays on React 18's UMD globals; React
+19 would require a module/bundler migration. It also stays on the classic
+Tailwind Play CDN. Version 3.4.17 is the newest release that CDN actually
+serves—the 3.4.19 URL emits a runtime error—and Tailwind 4 requires a different
+integration. Babel Standalone remains on major 7 for the inline `text/babel`
+transform; major 8 needs a separate transform migration. The browser smoke
+test protects this boundary and the Lucide UMD API.
+
 ## Web UI
 
 The UI:
@@ -163,6 +171,7 @@ Create an isolated development environment and run the complete project suite:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
 .venv/bin/python -m pytest
 ```
 

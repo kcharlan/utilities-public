@@ -9,13 +9,22 @@ the end of the source video. Multiple input files are processed concurrently.
 - Python 3.12
 - FFmpeg with the `h264_videotoolbox` encoder
 
-The provided setup script recreates `vid-compiler/venv` and installs MoviePy,
-NumPy, and tqdm. Run it from this directory:
+The provided setup script recreates `vid-compiler/venv` and installs the exact
+MoviePy revision, Pillow, NumPy, and tqdm releases tracked in
+`requirements.txt`. Run it from this directory:
 
 ```bash
 ./setup.sh
 source venv/bin/activate
 ```
+
+MoviePy 2.2.1 requires Pillow `<12`, which leaves its resolved Pillow 11.3.0
+with known advisories fixed only in Pillow 12. The requirements therefore pin
+upstream MoviePy commit `211e4b15f6ce4f34a6a9efbfff40590e43a68f77`,
+which removes that upper bound, together with Pillow 12.3.0. This immutable
+pre-release bridge passed the real render smoke below and a clean dependency
+audit. Replace it with the next stable MoviePy release that supports Pillow 12;
+do not change it to a moving branch reference.
 
 `setup.sh` deletes any existing `venv` directory before creating the new
 environment. MoviePy obtains an FFmpeg binary through ImageIO automatically,
@@ -83,3 +92,23 @@ same output path. Use separate runs or output directories to avoid collisions.
 
 Use `--sampling random` for different selections across runs. Reduce
 `--max_workers` if concurrent FFmpeg processes exhaust system resources.
+
+## Validation
+
+After setup, exercise the CLI import path and render a short synthetic source:
+
+```bash
+venv/bin/python video_compiler.py --help
+
+smoke_dir="$(mktemp -d)"
+ffmpeg -hide_banner -loglevel error \
+  -f lavfi -i testsrc=size=160x90:rate=10 -t 2 -pix_fmt yuv420p \
+  "$smoke_dir/synthetic.mp4"
+venv/bin/python video_compiler.py \
+  --input "$smoke_dir/synthetic.mp4" \
+  --output_dir "$smoke_dir/output" \
+  --samples 1 --sample_length 0.5 --tail_length 0.5 --max_workers 1
+ffprobe -v error -show_entries format=duration \
+  -of default=noprint_wrappers=1:nokey=1 \
+  "$smoke_dir/output/synthetic_compilation.mp4"
+```

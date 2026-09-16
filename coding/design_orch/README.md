@@ -32,7 +32,8 @@ generated directories are not part of this snapshot.
 ## Requirements
 
 - zsh
-- Python 3
+- Python 3.10 or newer (the progress parser and embedded helpers are
+  standard-library only)
 - either the `codex` CLI (the default) or Claude command wrappers configured
   through `CLAUDE_SONNET_COMMAND` and `CLAUDE_OPUS_COMMAND`
 - a design document

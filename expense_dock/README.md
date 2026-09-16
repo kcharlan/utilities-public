@@ -50,6 +50,14 @@ expense_dock
 
 Expense Dock runs via uv using a PEP 723 inline-metadata header. On first run it creates its runtime home at `~/.expense_dock/` and writes a default `config.json`; uv resolves the dependencies (fastapi, uvicorn[standard], python-multipart, httpx, msal, openpyxl) into its shared cache — that first invocation may briefly hit the network. No manual `pip install` and no virtual environment in your home directory are required.
 
+The embedded frontend intentionally stays on the React 18 UMD and Tailwind 3
+classic-CDN lines. React 19 does not ship the UMD artifacts used here, and
+Tailwind 4 uses a different browser package and configuration model; either
+major upgrade requires a build/bundling migration rather than a URL-only
+dependency update. The classic Play CDN is pinned to 3.4.17, its latest
+published browser artifact; the endpoint rejects the newer 3.4.19 npm package
+version as unknown.
+
 The preferred port is `8420`. If it is occupied, Expense Dock scans through port `8439` and opens the first free port. Use `--port` to choose a different starting port and `--no-browser` to suppress automatic browser launch.
 
 ## App Interface
@@ -123,6 +131,7 @@ Create the tracked test environment and run the full suite:
 cd /path/to/utilities-public/expense_dock
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/playwright install chromium
 .venv/bin/python -m pytest -q
 ```
 

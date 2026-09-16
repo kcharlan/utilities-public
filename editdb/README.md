@@ -96,9 +96,20 @@ The executable [`editdb`](editdb) contains:
 The frontend has no local build step or `node_modules`. The launcher opens the
 browser automatically unless `UTILITIES_TESTING` is set to a truthy value.
 
-`editdb_setup.sh` is an obsolete pre-uv setup script and should not be used; it
-references the retired `src/editdb.py` layout. It remains only as a legacy
-artifact.
+The embedded frontend intentionally stays on the React 18 UMD and Tailwind 3
+classic-CDN lines. React 19 no longer provides the UMD artifacts this
+single-file application consumes, and Tailwind 4 replaces the classic CDN
+runtime with a different browser package and configuration model. Moving to
+either major therefore requires a frontend build/bundling migration rather
+than a dependency-only update. The classic Play CDN is pinned to 3.4.17, its
+latest published browser artifact; although the npm package has 3.4.19, the
+classic CDN endpoint rejects that version as unknown.
+
+`editdb_setup.sh` is a compatibility notice for the obsolete pre-uv workflow.
+It creates no environment or dependencies; it verifies the current launcher
+can resolve through uv and prints the direct run command. New installs should
+run `editdb` directly. The compatibility script no longer references the
+retired `src/editdb.py` layout.
 
 ## Requirements
 
@@ -115,5 +126,11 @@ Development tests use a project-local virtual environment:
 cd editdb
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
+.venv/bin/playwright install chromium
+.venv/bin/python -m pytest tests --ignore=tests/test_e2e.py -q
+.venv/bin/python -m pytest tests/test_e2e.py -q
 ```
+
+Run the browser smoke separately because Playwright's synchronous event loop
+conflicts with the unit suite's `asyncio.run()`-based ASGI test client when
+both are collected in one process.

@@ -131,6 +131,13 @@ Single-file Python application (uv-managed via a PEP 723 header) with:
 - No build step, no npm, no node_modules
 - Recursive whole-tree scanner with JSON body parsing, base64 decoding, and WebSocket message inspection
 
+The frontend intentionally stays on the React 18 UMD and Tailwind 3
+classic-CDN lines. React 19 does not provide the UMD artifacts used by this
+single-file app, and Tailwind 4 changes the browser package and configuration
+model. Adopting either major requires a separate build/bundling migration. The
+classic Play CDN is pinned to 3.4.17, its newest published browser artifact;
+the endpoint rejects the newer 3.4.19 npm package version as unknown.
+
 ## Testing
 
 The full suite exercises the backend API end-to-end: loading HAR files, scanning, toggling redactions, exporting, and validating EDLs.
@@ -139,10 +146,13 @@ The full suite exercises the backend API end-to-end: loading HAR files, scanning
 cd harscope
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -r requirements-dev.txt
+.venv/bin/playwright install chromium
 .venv/bin/python -m pytest -q
 ```
 
-The optional `tests/run_tests.sh <har-file>` workflow exercises a real HAR fixture. See `tests/README.md` and `tests/TEST_PLAN.md` for details.
+The suite includes a Chromium smoke test for the embedded UI. The optional
+`tests/run_tests.sh <har-file>` workflow exercises a real HAR fixture. See
+`tests/README.md` and `tests/TEST_PLAN.md` for details.
 
 ## Port
 

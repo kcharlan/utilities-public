@@ -5,8 +5,8 @@ setopt errexit nounset pipefail
 
 readonly DEFAULT_OUTPUT_DIR="$HOME/Downloads"
 readonly DEFAULT_BOUNDARY_DAYS=2
-readonly PRIMARY_PACKAGE="ccusage@latest"
-readonly SECONDARY_PACKAGE="ccusage@latest"
+readonly PRIMARY_PACKAGE="ccusage@20.0.20"
+readonly SECONDARY_PACKAGE="ccusage@20.0.20"
 readonly PRIMARY_SUBCOMMAND="claude"
 readonly SECONDARY_SUBCOMMAND="codex"
 readonly PRIMARY_FALLBACK_COMMAND="ccusage_csv"

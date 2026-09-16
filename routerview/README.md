@@ -59,6 +59,17 @@ The dashboard refreshes immediately after a successful CSV import, including the
 - SQLite for storage
 - uv-managed via a PEP 723 header, with no repo-local install step
 
+### Frontend compatibility boundary
+
+The embedded, build-free SPA intentionally uses React 18's UMD globals.
+React 19 would require a module/bundler migration. Recharts remains on the 2.x
+UMD/global contract used by the inline chart code; adopting Recharts 3 requires
+rewiring that loading and API boundary. Tailwind remains on the classic Play
+CDN, whose newest working release is 3.4.17; the 3.4.19 URL emits a runtime
+error, and Tailwind 4 requires a different browser/build integration.
+Babel Standalone remains on major 7 for the inline `text/babel` transform;
+major 8 needs a separate transform migration.
+
 The current design is documented in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Documentation
@@ -84,5 +95,6 @@ Python dependencies are managed by uv (declared in the launcher's PEP 723 header
 cd /path/to/utilities-public/routerview
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
 .venv/bin/python -m pytest -q
 ```

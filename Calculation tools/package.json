@@ -1,0 +1,12 @@
+{
+  "name": "calculation-tools-tests",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js && playwright test",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "http-server": "14.1.1"
+  }
+}
