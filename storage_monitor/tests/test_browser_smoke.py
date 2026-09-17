@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 import re
@@ -6,7 +7,6 @@ import socket
 import sys
 import threading
 import time
-from urllib.parse import urlsplit
 
 import pytest
 from playwright.sync_api import sync_playwright
@@ -162,8 +162,19 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
             ]
             assert_react_esm_graph(
                 dependency_resources,
-                require_react_dom_wrapper=False,
+                react_dom_wrapper_policy="forbidden",
             )
+            non_react_resource_counts = Counter(
+                url
+                for url in external_resources
+                if not is_react_package_resource(url)
+            )
+            for direct_resource in (
+                "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
+                "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
+                "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+            ):
+                assert non_react_resource_counts[direct_resource] == 1
 
             for bad_resource in (
                 "https://esm.sh/react",
@@ -181,48 +192,8 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
                 with pytest.raises(AssertionError):
                     assert_react_esm_graph(
                         [*dependency_resources, bad_resource],
-                        require_react_dom_wrapper=False,
+                        react_dom_wrapper_policy="forbidden",
                     )
-
-            compiled_resources = [
-                url
-                for url in dependency_resources
-                if urlsplit(url).path.endswith(".mjs")
-            ]
-            observed_target_match = re.search(
-                r"/([a-z][a-z0-9_-]*)/"
-                r"(?:react|jsx-runtime|react-dom|client)\.mjs$",
-                urlsplit(compiled_resources[0]).path,
-            )
-            assert observed_target_match is not None
-            observed_target = observed_target_match.group(1)
-            alternate_target = (
-                "es2098" if observed_target == "es2099" else "es2099"
-            )
-            assert_react_esm_graph(
-                [
-                    url.replace(
-                        f"/{observed_target}/",
-                        f"/{alternate_target}/",
-                    )
-                    if url in compiled_resources
-                    else url
-                    for url in dependency_resources
-                ],
-                require_react_dom_wrapper=False,
-            )
-            assert_react_esm_graph(
-                [
-                    url.replace(
-                        f"/{observed_target}/",
-                        "/future_browser_target_with_descriptive_name/",
-                    )
-                    if url in compiled_resources
-                    else url
-                    for url in dependency_resources
-                ],
-                require_react_dom_wrapper=False,
-            )
 
             assert page.evaluate("document.documentElement.dataset.theme") == "light"
             assert page.locator("body").evaluate(

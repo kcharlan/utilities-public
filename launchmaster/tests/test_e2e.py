@@ -21,7 +21,6 @@ import re
 import sys
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import pytest
 
@@ -45,6 +44,7 @@ REPO_ROOT = PROJECT_ROOT.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (
+    REACT_19_IMPORTS,
     assert_react_19_import_map,
     assert_react_esm_graph,
     capture_browser_errors,
@@ -559,11 +559,111 @@ SYNTHETIC_REACT_GRAPH = [
     "https://esm.sh/react@19.3.0/jsx-runtime",
     "https://esm.sh/react-dom@19.3.0?external=react",
     "https://esm.sh/react-dom@19.3.0/client?external=react",
-    "https://esm.sh/react@19.3.0/es2022/react.mjs",
-    "https://esm.sh/react@19.3.0/es2022/jsx-runtime.mjs",
-    "https://esm.sh/react-dom@19.3.0/X-external_react/es2022/react-dom.mjs",
-    "https://esm.sh/react-dom@19.3.0/X-external_react/es2022/client.mjs",
+    "https://esm.sh/react@19.3.0/generated/opaque/react-entry",
+    "https://esm.sh/react-dom@19.3.0/arbitrary/internal/client-entry",
 ]
+
+
+class FakePage:
+    def __init__(self):
+        self.listeners = {"pageerror": [], "console": []}
+
+    def on(self, event_name, listener):
+        self.listeners[event_name].append(listener)
+
+    def remove_listener(self, event_name, listener):
+        self.listeners[event_name].remove(listener)
+
+    def emit(self, event_name, payload):
+        for listener in tuple(self.listeners[event_name]):
+            listener(payload)
+
+
+class FakeConsoleMessage:
+    def __init__(self, message_type, text):
+        self.type = message_type
+        self.text = text
+
+
+def test_react_import_map_validation_is_order_insensitive():
+    source = dict(reversed(tuple(REACT_19_IMPORTS)))
+    assert_react_19_import_map(source)
+
+
+def test_browser_error_guard_detaches_listeners_after_success():
+    page = FakePage()
+    existing_listener = lambda _payload: None
+    page.on("console", existing_listener)
+    with guard_browser_errors(page):
+        assert len(page.listeners["pageerror"]) == 1
+        assert len(page.listeners["console"]) == 2
+    assert page.listeners == {
+        "pageerror": [],
+        "console": [existing_listener],
+    }
+
+
+def test_browser_error_guard_reports_browser_errors():
+    page = FakePage()
+    with pytest.raises(AssertionError, match="Unexpected browser errors"):
+        with guard_browser_errors(page):
+            page.emit("pageerror", RuntimeError("browser failed"))
+    assert page.listeners == {"pageerror": [], "console": []}
+
+
+def test_browser_error_guard_preserves_body_exception_and_traceback():
+    page = FakePage()
+    body_error = RuntimeError("body failed")
+
+    def raise_body_error():
+        raise body_error
+
+    with pytest.raises(RuntimeError) as captured:
+        with guard_browser_errors(page):
+            raise_body_error()
+    assert captured.value is body_error
+    traceback_names = []
+    traceback = captured.tb
+    while traceback is not None:
+        traceback_names.append(traceback.tb_frame.f_code.co_name)
+        traceback = traceback.tb_next
+    assert "raise_body_error" in traceback_names
+    assert page.listeners == {"pageerror": [], "console": []}
+
+
+def test_browser_error_guard_preserves_body_and_browser_failures():
+    page = FakePage()
+    body_error = RuntimeError("body failed")
+    with pytest.raises(ExceptionGroup) as captured:
+        with guard_browser_errors(page):
+            page.emit("console", FakeConsoleMessage("error", "browser failed"))
+            raise body_error
+    assert captured.value.exceptions[0] is body_error
+    assert isinstance(captured.value.exceptions[1], AssertionError)
+    assert page.listeners == {"pageerror": [], "console": []}
+
+
+def test_browser_error_guard_can_reuse_page_without_listener_leaks():
+    page = FakePage()
+    for _ in range(2):
+        with guard_browser_errors(page):
+            page.emit("console", FakeConsoleMessage("log", "allowed"))
+        assert page.listeners == {"pageerror": [], "console": []}
+
+
+def test_browser_error_guard_can_reuse_real_page_without_listener_leaks(browser):
+    page = browser.new_page()
+    try:
+        with guard_browser_errors(page, expected=("__first_guard__",)) as first:
+            page.evaluate("console.error('__first_guard__')")
+        page.evaluate("console.error('__between_guards__')")
+        assert first == ["__first_guard__"]
+
+        with guard_browser_errors(page, expected=("__second_guard__",)) as second:
+            page.evaluate("console.error('__second_guard__')")
+        assert second == ["__second_guard__"]
+    finally:
+        page.close()
 
 
 @pytest.mark.parametrize(
@@ -589,16 +689,14 @@ def test_react_resource_matcher_accepts_bare_and_versioned_packages(resource_url
         (0, "19.3.0", "19.2.0"),
         (0, SYNTHETIC_REACT_GRAPH[0], f"{SYNTHETIC_REACT_GRAPH[0]}?dev"),
         (0, "https://esm.sh", "https://cdn.example.invalid"),
-        (7, "/es2022/client.mjs", "/es2099/client.mjs"),
-        (6, "/X-external_react/", "/"),
+        (4, "19.3.0", "19.2.0"),
     ),
     ids=(
         "bare-root",
         "wrong-version",
         "wrong-query",
         "wrong-origin",
-        "split-target",
-        "missing-externalization",
+        "wrong-generated-version",
     ),
 )
 def test_react_graph_validator_rejects_contract_mutations(index, old, new):
@@ -615,15 +713,66 @@ def test_react_graph_validator_rejects_duplicate_resources():
         )
 
 
-def test_react_graph_validator_allows_opaque_compiled_target_names():
-    assert_react_esm_graph(
-        [
-            url.replace(
-                "/es2022/",
-                "/future_browser_target_with_descriptive_name/",
+@pytest.mark.parametrize("package", ("react", "react-dom"))
+def test_react_graph_validator_requires_generated_package_resources(package):
+    without_generated_package = [
+        url
+        for url in SYNTHETIC_REACT_GRAPH
+        if not (
+            f"/{package}@19.3.0/" in url
+            and (
+                "generated/opaque" in url
+                or f"/{package}@19.3.0/arbitrary/" in url
             )
-            for url in SYNTHETIC_REACT_GRAPH
-        ]
+        )
+    ]
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(without_generated_package)
+
+
+@pytest.mark.parametrize(
+    ("policy", "include_wrapper"),
+    (
+        ("required", True),
+        ("forbidden", False),
+        ("optional", True),
+        ("optional", False),
+    ),
+)
+def test_react_graph_validator_honors_react_dom_wrapper_policy(
+    policy,
+    include_wrapper,
+):
+    resources = [
+        url
+        for url in SYNTHETIC_REACT_GRAPH
+        if include_wrapper or url != "https://esm.sh/react-dom@19.3.0?external=react"
+    ]
+    assert_react_esm_graph(resources, react_dom_wrapper_policy=policy)
+
+
+def test_react_graph_validator_rejects_wrong_react_dom_wrapper_policy():
+    without_wrapper = [
+        url
+        for url in SYNTHETIC_REACT_GRAPH
+        if url != "https://esm.sh/react-dom@19.3.0?external=react"
+    ]
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(
+            without_wrapper,
+            react_dom_wrapper_policy="required",
+        )
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(
+            SYNTHETIC_REACT_GRAPH,
+            react_dom_wrapper_policy="forbidden",
+        )
+
+
+def test_react_graph_validator_accepts_arbitrary_generated_route_layouts():
+    assert_react_esm_graph(
+        SYNTHETIC_REACT_GRAPH,
+        react_dom_wrapper_policy="required",
     )
 
 
@@ -669,7 +818,10 @@ class TestPageLoad:
         dependency_resources = [
             url for url in resource_urls if is_react_package_resource(url)
         ]
-        assert_react_esm_graph(dependency_resources)
+        assert_react_esm_graph(
+            dependency_resources,
+            react_dom_wrapper_policy="required",
+        )
 
         for bad_resource in (
             "https://esm.sh/react",
@@ -690,45 +842,10 @@ class TestPageLoad:
             if "preact" in bad_resource:
                 discovered_resources.append(bad_resource)
             with pytest.raises(AssertionError):
-                assert_react_esm_graph(discovered_resources)
-
-        compiled_resources = [
-            url
-            for url in dependency_resources
-            if urlsplit(url).path.endswith(".mjs")
-        ]
-        observed_targets = {
-            match.group(1)
-            for url in compiled_resources
-            if (
-                match := re.search(
-                    r"/([a-z][a-z0-9_-]*)/"
-                    r"(?:react|jsx-runtime|react-dom|client|react-is)\.mjs$",
-                    urlsplit(url).path,
+                assert_react_esm_graph(
+                    discovered_resources,
+                    react_dom_wrapper_policy="required",
                 )
-            )
-        }
-        assert len(observed_targets) == 1
-        observed_target = observed_targets.pop()
-        alternate_target = (
-            "es2098" if observed_target == "es2099" else "es2099"
-        )
-        alternate_target_resources = [
-            url.replace(
-                f"/{observed_target}/",
-                f"/{alternate_target}/",
-            )
-            if url in compiled_resources
-            else url
-            for url in dependency_resources
-        ]
-        assert alternate_target_resources != dependency_resources
-        assert all(
-            f"/{alternate_target}/" in url
-            for url in alternate_target_resources
-            if urlsplit(url).path.endswith(".mjs")
-        )
-        assert_react_esm_graph(alternate_target_resources)
 
     def test_page_loads_without_js_errors(self, server, page):
         """SPA loads without uncaught exceptions or console errors."""

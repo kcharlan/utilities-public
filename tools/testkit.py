@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
+from typing import Literal
 from urllib.parse import urlsplit
 
 
@@ -36,7 +37,7 @@ REACT_19_IMPORTS = (
 
 def assert_react_19_import_map(imports: Mapping[str, str]) -> None:
     """Require the shared six-entry React 19 import-map contract exactly."""
-    assert tuple(imports.items()) == REACT_19_IMPORTS
+    assert dict(imports) == dict(REACT_19_IMPORTS)
 
 
 def is_react_package_resource(resource_url: str) -> bool:
@@ -51,32 +52,39 @@ def is_react_package_resource(resource_url: str) -> bool:
 def assert_react_esm_graph(
     resource_urls: Sequence[str],
     *,
-    require_react_dom_wrapper: bool = True,
-) -> str:
+    react_dom_wrapper_policy: Literal[
+        "required",
+        "forbidden",
+        "optional",
+    ] = "required",
+) -> None:
     """Validate stable esm.sh React peer-graph boundaries.
 
-    Direct wrappers and compiled React modules are exact and unique. All
-    compiled modules must use one CDN target, and ReactDOM modules must carry
-    the same peer-externalization marker. Unrelated transitive dependencies
-    are deliberately outside this helper's contract.
+    Direct wrappers are exact and unique. Generated resources must stay on
+    the selected package versions, but their CDN-owned route layout is opaque.
+    Unrelated transitive dependencies are deliberately outside this helper's
+    contract.
     """
-    required_wrappers = Counter(
-        {
-            ("/react@19.3.0", ""): 1,
-            ("/react@19.3.0/jsx-runtime", ""): 1,
-            ("/react-dom@19.3.0/client", "external=react"): 1,
-        }
-    )
-    if require_react_dom_wrapper:
-        required_wrappers[("/react-dom@19.3.0", "external=react")] = 1
+    if react_dom_wrapper_policy not in {"required", "forbidden", "optional"}:
+        raise ValueError(
+            "react_dom_wrapper_policy must be required, forbidden, or optional"
+        )
 
-    wrapper_counts: Counter[tuple[str, str]] = Counter()
-    compiled_counts: Counter[str] = Counter()
-    compiled_targets: dict[str, str] = {}
-    react_dom_external_markers: dict[str, str] = {}
-    react_is_seen = False
+    resources = list(resource_urls)
+    assert len(resources) == len(set(resources)), "duplicate React resource request"
 
-    for resource_url in resource_urls:
+    wrapper_queries = {
+        "/react@19.3.0": "",
+        "/react@19.3.0/jsx-runtime": "",
+        "/react@19.3.0/jsx-dev-runtime": "",
+        "/react-dom@19.3.0": "external=react",
+        "/react-dom@19.3.0/client": "external=react",
+        "/react-is@19.3.0": "external=react",
+    }
+    wrapper_counts: Counter[str] = Counter()
+    generated_packages: set[str] = set()
+
+    for resource_url in resources:
         parsed = urlsplit(resource_url)
         assert (parsed.scheme, parsed.netloc, parsed.fragment) == (
             "https",
@@ -84,98 +92,103 @@ def assert_react_esm_graph(
             "",
         ), f"unexpected React resource origin: {resource_url}"
 
-        wrapper_signature = (parsed.path, parsed.query)
-        if wrapper_signature in required_wrappers:
-            wrapper_counts[wrapper_signature] += 1
+        if parsed.path in wrapper_queries:
+            assert parsed.query == wrapper_queries[parsed.path], (
+                f"unexpected direct React wrapper query: {resource_url}"
+            )
+            wrapper_counts[parsed.path] += 1
             continue
-        if wrapper_signature == (
-            "/react-is@19.3.0",
-            "external=react",
-        ):
-            react_is_seen = True
-            wrapper_counts[wrapper_signature] += 1
-            continue
-        if parsed.query:
-            raise AssertionError(f"unexpected React resource: {resource_url}")
 
-        react_match = re.fullmatch(
-            r"/react@19\.3\.0/([A-Za-z0-9][A-Za-z0-9._-]*)/"
-            r"(react|jsx-runtime)\.mjs",
+        package_match = re.match(
+            r"^/(react(?:-dom|-is)?)@([^/]+)(?:/|$)",
             parsed.path,
         )
-        if react_match:
-            target, module_name = react_match.groups()
-            compiled_counts[module_name] += 1
-            compiled_targets[module_name] = target
-            continue
-
-        react_dom_match = re.fullmatch(
-            r"/react-dom@19\.3\.0/(X-[A-Za-z0-9_-]+)/"
-            r"([A-Za-z0-9][A-Za-z0-9._-]*)/(react-dom|client)\.mjs",
-            parsed.path,
+        assert package_match is not None, (
+            f"unexpected React package resource: {resource_url}"
         )
-        if react_dom_match:
-            marker, target, module_name = react_dom_match.groups()
-            compiled_counts[module_name] += 1
-            compiled_targets[module_name] = target
-            react_dom_external_markers[module_name] = marker
-            continue
+        package, version = package_match.groups()
+        assert version == "19.3.0", f"unexpected React version: {resource_url}"
+        generated_packages.add(package)
 
-        react_is_match = re.fullmatch(
-            r"/react-is@19\.3\.0/(X-[A-Za-z0-9_-]+)/"
-            r"([A-Za-z0-9][A-Za-z0-9._-]*)/react-is\.mjs",
-            parsed.path,
-        )
-        if react_is_match:
-            react_is_seen = True
-            compiled_counts["react-is"] += 1
-            compiled_targets["react-is"] = react_is_match.group(2)
-            continue
+    assert wrapper_counts["/react@19.3.0"] == 1
+    assert wrapper_counts["/react@19.3.0/jsx-runtime"] == 1
+    assert wrapper_counts["/react@19.3.0/jsx-dev-runtime"] == 0
+    assert wrapper_counts["/react-dom@19.3.0/client"] == 1
+    assert wrapper_counts["/react-is@19.3.0"] in {0, 1}
 
-        raise AssertionError(f"unexpected React resource: {resource_url}")
+    react_dom_wrapper_count = wrapper_counts["/react-dom@19.3.0"]
+    if react_dom_wrapper_policy == "required":
+        assert react_dom_wrapper_count == 1
+    elif react_dom_wrapper_policy == "forbidden":
+        assert react_dom_wrapper_count == 0
+    else:
+        assert react_dom_wrapper_count in {0, 1}
 
-    expected_wrappers = required_wrappers.copy()
-    expected_compiled = Counter(
-        {"react": 1, "jsx-runtime": 1, "react-dom": 1, "client": 1}
+    assert {"react", "react-dom"} <= generated_packages
+
+
+def _install_browser_error_listeners(page):
+    errors: list[str] = []
+
+    def record_page_error(error) -> None:
+        errors.append(str(error))
+
+    def record_console_error(message) -> None:
+        if message.type == "error":
+            errors.append(message.text)
+
+    listeners = (
+        ("pageerror", record_page_error),
+        ("console", record_console_error),
     )
-    if react_is_seen:
-        expected_wrappers[(
-            "/react-is@19.3.0",
-            "external=react",
-        )] = 1
-        expected_compiled["react-is"] = 1
-
-    assert wrapper_counts == expected_wrappers
-    assert compiled_counts == expected_compiled
-    assert len(set(compiled_targets.values())) == 1
-    assert react_dom_external_markers == {
-        "react-dom": react_dom_external_markers.get("client"),
-        "client": react_dom_external_markers.get("react-dom"),
-    }
-    return next(iter(compiled_targets.values()))
+    for event_name, listener in listeners:
+        page.on(event_name, listener)
+    return errors, listeners
 
 
 def capture_browser_errors(page) -> list[str]:
     """Attach strict console/page error listeners to a Playwright page."""
-    errors: list[str] = []
-    page.on("pageerror", lambda error: errors.append(str(error)))
-    page.on(
-        "console",
-        lambda message: errors.append(message.text)
-        if message.type == "error"
-        else None,
-    )
+    errors, _listeners = _install_browser_error_listeners(page)
     return errors
 
 
 @contextmanager
 def guard_browser_errors(page, expected: Sequence[str] = ()):
     """Fail a browser-test context on any unexpected console/page error."""
-    errors = capture_browser_errors(page)
+    errors, listeners = _install_browser_error_listeners(page)
+
+    def detach() -> None:
+        for event_name, listener in listeners:
+            page.remove_listener(event_name, listener)
+
+    def browser_failure() -> AssertionError | None:
+        if errors == list(expected):
+            return None
+        return AssertionError(
+            f"Unexpected browser errors: {errors}; expected: {list(expected)}"
+        )
+
     try:
         yield errors
-    finally:
-        assert errors == list(expected), f"Unexpected browser errors: {errors}"
+    except BaseException as body_error:
+        detach()
+        captured_browser_failure = browser_failure()
+        if captured_browser_failure is not None:
+            group_type = (
+                ExceptionGroup
+                if isinstance(body_error, Exception)
+                else BaseExceptionGroup
+            )
+            raise group_type(
+                "Guarded browser body and browser error checks both failed",
+                [body_error, captured_browser_failure],
+            ) from None
+        raise
+    else:
+        detach()
+        captured_browser_failure = browser_failure()
+        if captured_browser_failure is not None:
+            raise captured_browser_failure
 
 
 class ASGISyncClient:
