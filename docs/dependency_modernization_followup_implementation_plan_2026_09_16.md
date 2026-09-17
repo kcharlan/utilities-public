@@ -1,5 +1,20 @@
 # Dependency Modernization Follow-up Implementation Plan
 
+## Execution outcome — 2026-09-17
+
+- Tasks 1–9A were implemented and validated. At Task 9B, the user explicitly
+  waived paid comparative runs and directed every maintained
+  `coding/design_orch` and Cognitive Switchyard Codex CLI default to
+  `gpt-5.6-sol`. Task 9C was therefore completed by direct instruction without
+  OpenRouter, API-paid, or live-model evaluation; all documented model
+  overrides were preserved.
+- Task 10 was closed and skipped: Node 26 remains Current and is scheduled to
+  enter LTS on 2026-10-28. Both Docker Webserver Dockerfiles remain on Node 24.
+
+The unchecked boxes below preserve the original execution specification rather
+than serving as a post-hoc completion ledger. These outcomes govern the final
+handoff where they differ from the original conditional path.
+
 > **For agentic workers:** Use `superpowers:executing-plans` to execute this
 > plan with review checkpoints in a separate session.
 > The current user instruction requires a feature branch, forbids worktrees,

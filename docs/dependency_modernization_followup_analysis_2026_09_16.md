@@ -1,5 +1,21 @@
 # Dependency Modernization Follow-up Analysis — 2026-09-16
 
+## Execution outcome — 2026-09-17
+
+- The public-safe `benchmark-llm` harness was implemented and validated with
+  fake executors only. The user explicitly waived the planned paid comparison
+  and directed all maintained `coding/design_orch` and Cognitive Switchyard
+  Codex CLI defaults to `gpt-5.6-sol`. No OpenRouter, API-paid, or live-model
+  evaluation was run; the existing `MODEL_NAME`, phase-local model, and
+  `CODEX_WORKER_MODEL` overrides remain available.
+- The Node 26 gate remained closed. The official Node.js schedule still lists
+  Node 26 as Current, with its LTS transition scheduled for 2026-10-28, so both
+  Docker Webserver images remain on Node 24.
+
+The model-selection discussion below records the evidence and proposed gate as
+it stood on 2026-09-16; the execution outcome above is authoritative for the
+implemented branch.
+
 ## Purpose
 
 This document analyzes every dependency surface that the
