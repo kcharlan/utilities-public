@@ -37,6 +37,12 @@ pytest.importorskip("playwright")
 
 import uvicorn  # noqa: E402
 
+from tools.testkit import (  # noqa: E402
+    assert_react_19_import_map,
+    assert_react_esm_graph,
+    guard_browser_errors,
+    is_react_package_resource,
+)
 from cognitive_switchyard.config import build_runtime_paths  # noqa: E402
 from cognitive_switchyard.html_template import render_app_html  # noqa: E402
 from cognitive_switchyard.parsers import parse_task_plan  # noqa: E402
@@ -49,6 +55,13 @@ from cognitive_switchyard.state import initialize_state_store  # noqa: E402
 # ---------------------------------------------------------------------------
 
 SLOW_TIMEOUT = 15_000  # ms — generous timeout for CI
+
+
+@pytest.fixture
+def browser_error_guard(page):
+    """Reject uncaught browser errors for success-path resource tests."""
+    with guard_browser_errors(page):
+        yield
 
 
 def _find_free_port() -> int:
@@ -1285,17 +1298,8 @@ class TestDagView:
         _poll_session_status(page, "dag-001", {"idle", "completed", "aborted"})
 
     def test_react_flow_v12_renders_and_supports_dag_interactions(
-        self, server_url, runtime_home, page, request
+        self, server_url, runtime_home, page, request, browser_error_guard
     ):
-        errors: list[str] = []
-        page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
-        page.on(
-            "console",
-            lambda message: errors.append(f"console.error: {message.text}")
-            if message.type == "error"
-            else None,
-        )
-
         runtime_paths = build_runtime_paths(home=runtime_home)
         store = initialize_state_store(runtime_paths)
         session_id = "dag-ui-v12-001"
@@ -1329,20 +1333,19 @@ class TestDagView:
         request.addfinalizer(lambda: store.delete_session(session_id))
         bootstrap = _build_root_bootstrap_payload(store, runtime_paths=runtime_paths)
         assert bootstrap["current_session"]["id"] == session_id
-        page.goto(server_url)
+        page.goto(server_url, wait_until="domcontentloaded")
         page.wait_for_selector("button[aria-label='Open DAG']", timeout=SLOW_TIMEOUT)
 
         dependency_graph = page.evaluate("""() => ({
+            importMap: JSON.parse(document.querySelector('script[type="importmap"]').textContent).imports,
             scripts: Array.from(document.querySelectorAll('script[src]'), el => el.src),
             stylesheets: Array.from(document.querySelectorAll('link[rel~="stylesheet"]'), el => el.href),
             resources: performance.getEntriesByType('resource').map(entry => entry.name),
         })""")
+        assert_react_19_import_map(dependency_graph["importMap"])
         expected_scripts = [
-            "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
-            "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
-            "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
+            "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
             "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
-            "https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js",
         ]
         expected_stylesheets = [
             "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
@@ -1350,8 +1353,33 @@ class TestDagView:
         ]
         assert dependency_graph["scripts"] == expected_scripts
         assert dependency_graph["stylesheets"] == expected_stylesheets
-        external_resources = dependency_graph["resources"]
+        external_resources = [
+            url
+            for url in dependency_graph["resources"]
+            if not url.startswith(server_url)
+        ]
         assert all("/reactflow@" not in url for url in external_resources)
+        assert_react_esm_graph(
+            [
+                url
+                for url in external_resources
+                if is_react_package_resource(url) and "/@xyflow/" not in url
+            ]
+        )
+        xyflow_resources = [
+            url for url in external_resources if "/@xyflow/react@" in url
+        ]
+        assert (
+            xyflow_resources.count(
+                "https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom"
+            )
+            == 1
+        )
+        assert all(
+            "/@xyflow/react@12.11.6/" in url
+            or url.endswith("@xyflow/react@12.11.6?external=react,react-dom")
+            for url in xyflow_resources
+        )
         unpkg_resources = [
             url for url in external_resources if url.startswith("https://unpkg.com/")
         ]
@@ -1359,71 +1387,8 @@ class TestDagView:
             expected_scripts + [expected_stylesheets[-1]]
         )
 
-        runtime_contract = page.evaluate("""() => {
-            function Component() {}
-            Component.defaultProps = {defaulted: 'fallback', retained: 'default'};
-            const inherited = {inheritedOnly: 'must-not-copy'};
-            const props = Object.assign(Object.create(inherited), {
-                key: 'props-key',
-                ref: 'synthetic-ref',
-                defaulted: undefined,
-                retained: 'explicit',
-                constructor: 'constructor-prop',
-                toString: 'to-string-prop',
-                valueOf: 'value-of-prop',
-                children: ['first', 'second'],
-            });
-            const element = window.jsxRuntime.jsx(Component, props, 'argument-key');
-            const plural = window.jsxRuntime.jsxs('section', {children: ['a', 'b']});
-            const fragment = window.jsxRuntime.jsx(
-                window.jsxRuntime.Fragment,
-                {children: 'fragment-child'},
-            );
-            return {
-                frozen: Object.isFrozen(window.jsxRuntime),
-                factoriesEquivalent: window.jsxRuntime.jsx === window.jsxRuntime.jsxs,
-                typePreserved: element.type === Component,
-                key: element.key,
-                ref: element.ref,
-                defaulted: element.props.defaulted,
-                retained: element.props.retained,
-                reservedNames: [
-                    element.props.constructor,
-                    element.props.toString,
-                    element.props.valueOf,
-                ],
-                inheritedCopied: Object.prototype.hasOwnProperty.call(
-                    element.props, 'inheritedOnly'
-                ),
-                children: element.props.children,
-                pluralChildren: plural.props.children,
-                fragmentType: fragment.type === React.Fragment,
-                fragmentChild: fragment.props.children,
-            };
-        }""")
-        assert runtime_contract == {
-            "frozen": True,
-            "factoriesEquivalent": True,
-            "typePreserved": True,
-            "key": "props-key",
-            "ref": "synthetic-ref",
-            "defaulted": "fallback",
-            "retained": "explicit",
-            "reservedNames": [
-                "constructor-prop",
-                "to-string-prop",
-                "value-of-prop",
-            ],
-            "inheritedCopied": False,
-            "children": ["first", "second"],
-            "pluralChildren": ["a", "b"],
-            "fragmentType": True,
-            "fragmentChild": "fragment-child",
-        }
-
         page.locator("button[aria-label='Open DAG']").click()
         page.wait_for_selector(".react-flow__node[data-id='root']", timeout=SLOW_TIMEOUT)
-        assert errors == [], f"DAG failed before nodes rendered: {errors}"
         assert page.locator(".react-flow__node:not([data-id^='group-'])").count() == 3
         assert page.locator(".react-flow__edge").count() == 2
         assert page.locator(".react-flow__node[data-id='root']").evaluate(
@@ -1469,9 +1434,6 @@ class TestDagView:
             state="visible", timeout=SLOW_TIMEOUT
         )
         page.wait_for_selector(".react-flow", state="detached", timeout=SLOW_TIMEOUT)
-
-        assert errors == [], f"Unexpected browser errors during DAG interaction: {errors}"
-
 
 # ---------------------------------------------------------------------------
 # 11. SETTINGS CRUD

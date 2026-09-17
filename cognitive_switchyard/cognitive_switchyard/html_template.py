@@ -960,54 +960,35 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
           <body>
             <div id="switchyard-app"></div>
             <script id="switchyard-bootstrap" type="application/json">__BOOTSTRAP_JSON__</script>
-            <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-            <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-            <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
-            <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
-            <script>
-              // React 18 production JSX runtime contract for @xyflow/react's UMD peer.
-              const reactElementType = Symbol.for("react.element");
-              const reactHasOwnProperty = Object.prototype.hasOwnProperty;
-              const reactReservedProps = Object.freeze(Object.assign(Object.create(null), {
-                key: true,
-                ref: true,
-                __self: true,
-                __source: true,
-              }));
-              function createReactElementFromJsxRuntime(type, props, key) {
-                const sourceProps = props || {};
-                const elementProps = {};
-                let elementKey = key === undefined ? null : String(key);
-                let elementRef = null;
-                if (sourceProps.key !== undefined) elementKey = String(sourceProps.key);
-                if (sourceProps.ref !== undefined) elementRef = sourceProps.ref;
-                Object.keys(sourceProps).forEach((name) => {
-                  if (
-                    reactHasOwnProperty.call(sourceProps, name)
-                    && !reactHasOwnProperty.call(reactReservedProps, name)
-                  ) {
-                    elementProps[name] = sourceProps[name];
-                  }
-                });
-                if (type && type.defaultProps) {
-                  Object.keys(type.defaultProps).forEach((name) => {
-                    if (elementProps[name] === undefined) elementProps[name] = type.defaultProps[name];
-                  });
+            <script type="importmap">
+              {
+                "imports": {
+                  "react": "https://esm.sh/react@19.3.0",
+                  "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+                  "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+                  "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+                  "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+                  "react-is": "https://esm.sh/react-is@19.3.0?external=react"
                 }
-                return { $$typeof: reactElementType, type, key: elementKey, ref: elementRef, props: elementProps,
-                  _owner: React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner.current };
               }
-              window.jsxRuntime = Object.freeze({
-                Fragment: React.Fragment,
-                jsx: createReactElementFromJsxRuntime,
-                jsxs: createReactElementFromJsxRuntime,
-              });
             </script>
-            <script src="https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js"></script>
-            <script type="text/babel" data-presets="env,react">
+            <script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
+            <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
+            <script type="text/babel" data-type="module" data-presets="env,react">
+              import * as React from 'react';
+              import * as ReactDOMClient from 'react-dom/client';
+              import {
+                Background,
+                Controls,
+                MiniMap,
+                ReactFlow as ReactFlowComponent,
+                ReactFlowProvider,
+                applyEdgeChanges,
+                applyNodeChanges,
+              } from "https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom";
+
               const bootstrap = JSON.parse(document.getElementById("switchyard-bootstrap").textContent);
               const { useEffect, useMemo, useRef, useState } = React;
-              const ReactFlowLib = window.ReactFlow || null;
               const OPERABLE_STATUSES = new Set(["created", "idle", "running", "paused", "planning", "resolving", "verifying", "auto_fixing"]);
               const ACTIVE_STATUSES = new Set(["running", "idle", "paused", "planning", "resolving", "verifying", "auto_fixing"]);
               const STATUS_COLORS = {
@@ -4041,12 +4022,6 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
               }
 
               function DagView({ dag, onBack, onOpenTask }) {
-                const ReactFlowComponent = ReactFlowLib?.ReactFlow;
-                const ReactFlowProvider = ReactFlowLib?.ReactFlowProvider;
-                const MiniMap = ReactFlowLib?.MiniMap;
-                const Controls = ReactFlowLib?.Controls;
-                const Background = ReactFlowLib?.Background;
-
                 const tasks = dag?.tasks || [];
                 const groups = dag?.groups || [];
 
@@ -4231,10 +4206,10 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                             nodes={flowNodes}
                             edges={flowEdges}
                             onNodesChange={(changes) => {
-                              setFlowNodes((currentNodes) => ReactFlowLib.applyNodeChanges(changes, currentNodes));
+                              setFlowNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
                             }}
                             onEdgesChange={(changes) => {
-                              setFlowEdges((currentEdges) => ReactFlowLib.applyEdgeChanges(changes, currentEdges));
+                              setFlowEdges((currentEdges) => applyEdgeChanges(changes, currentEdges));
                             }}
                             onNodeDoubleClick={(_, node) => {
                               if (!node.id.startsWith("group-")) onOpenTask(node.id);
@@ -4407,7 +4382,7 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                 );
               }
 
-              ReactDOM.createRoot(document.getElementById("switchyard-app")).render(<App />);
+              ReactDOMClient.createRoot(document.getElementById("switchyard-app")).render(<App />);
             </script>
           </body>
         </html>

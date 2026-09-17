@@ -73,34 +73,37 @@ When a session is created with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNIT
 ## Tech Stack
 
 - **Backend:** Python 3.12+, FastAPI, uvicorn, aiosqlite, PyYAML
-- **Frontend:** Single-file embedded React 18 SPA (CDN-loaded, no npm/node_modules)
+- **Frontend:** Single-file embedded React 19 SPA (CDN-loaded ESM, no npm/node_modules)
 - **State:** SQLite + file-as-state directories
 - **uv-managed:** Single entry point (`switchyard`) with a PEP 723 header; uv resolves dependencies on first run (requires [uv](https://docs.astral.sh/uv/), `brew install uv`)
 
-The embedded no-build frontend intentionally remains on React 18 UMD and uses
-project-owned CSS embedded in the HTML template; it has no Tailwind runtime.
-At runtime the browser loads Google Fonts plus these exact-version network
-dependencies:
+The embedded no-build frontend uses React 19.3.0, ReactDOM 19.3.0, and
+react-is 19.3.0 through an exact-version import map, with module-aware inline
+JSX compiled by Babel Standalone 8.0.5. It retains project-owned CSS embedded
+in the HTML template and has no Tailwind runtime. At runtime the browser loads
+Google Fonts plus these direct top-level package versions:
 
-- `https://unpkg.com/react@18.3.1/umd/react.production.min.js`
-- `https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js`
-- `https://unpkg.com/@babel/standalone@7.29.8/babel.min.js`
+- `https://esm.sh/react@19.3.0`
+- `https://esm.sh/react@19.3.0/jsx-runtime`
+- `https://esm.sh/react@19.3.0/jsx-dev-runtime`
+- `https://esm.sh/react-dom@19.3.0?external=react`
+- `https://esm.sh/react-dom@19.3.0/client?external=react`
+- `https://esm.sh/react-is@19.3.0?external=react`
+- `https://unpkg.com/@babel/standalone@8.0.5/babel.min.js`
 - `https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js`
-- `https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js`
+- `https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom`
 - `https://unpkg.com/@xyflow/react@12.11.6/dist/style.css`
 - `https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap`
 
-React Flow 12's UMD bundle expects the `react/jsx-runtime` peer as the global
-`jsxRuntime`. React 18 does not publish that runtime as UMD, so the template
-provides a frozen `jsx`/`jsxs`/`Fragment` bridge implementing React 18's
-production JSX runtime contract against the one existing production React
-global; it does not load a second React or ReactDOM graph. React 19 no longer
-publishes UMD builds, so a later React migration requires an ESM/import-map or
-frontend build architecture rather than a CDN URL update. That later React
-migration is independent of this React Flow 12 upgrade. Static HTML tests own
-the exact external script and stylesheet
-inventory. Browser E2E tests verify representative styled views and interactions
-while failing on page or unexpected console errors.
+The React Flow 12.11.6 ESM URL externalizes React and ReactDOM so its bare peer
+imports, including `react/jsx-runtime`, resolve through that same import map
+instead of creating a second React graph. Exact URLs pin direct dependencies,
+but runtime CDN access remains required: CDN-generated transitive dependencies
+are not fully locked and CDN responses are not byte-immutable. Static HTML
+tests own the exact direct script, stylesheet, and import-map inventory.
+Browser E2E tests run against current Playwright Chromium, validate the
+resolved React peer resource graph and representative DAG interactions, and
+fail on unexpected page or console errors.
 
 ## Quick Start
 

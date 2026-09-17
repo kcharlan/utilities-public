@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 from textwrap import dedent
 from urllib.parse import urlparse
 
 from cognitive_switchyard.html_template import render_app_html
+from tools.testkit import assert_react_19_import_map
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class _DependencyCollector(HTMLParser):
@@ -49,11 +55,8 @@ def test_render_app_html_has_exact_external_dependency_inventory_without_tailwin
     dependencies.feed(html)
 
     assert dependencies.script_sources == [
-        "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
-        "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
-        "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
+        "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
         "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
-        "https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js",
     ]
     assert dependencies.stylesheet_hrefs == [
         "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
@@ -76,31 +79,72 @@ def test_render_app_html_has_exact_external_dependency_inventory_without_tailwin
         flags=re.IGNORECASE,
     ) is None
 
+    import_map_match = re.search(
+        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
+        html,
+        re.DOTALL,
+    )
+    assert import_map_match is not None
+    assert_react_19_import_map(json.loads(import_map_match.group(1))["imports"])
+    assert "react@18.3.1" not in html
+    assert "react-dom@18.3.1" not in html
+    assert "@xyflow/react@12.11.6/dist/umd" not in html
 
-def test_render_app_html_uses_react_flow_v12_named_component_export() -> None:
+
+def test_render_app_html_uses_react_flow_v12_named_esm_exports() -> None:
     html = render_app_html({"ok": True})
 
-    assert "const ReactFlowLib = window.ReactFlow || null;" in html
-    assert "const ReactFlowComponent = ReactFlowLib?.ReactFlow;" in html
-    assert "ReactFlowLib?.default" not in html
+    assert (
+        'from "https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom";'
+        in html
+    )
+    assert "ReactFlow as ReactFlowComponent" in html
+    assert "ReactFlowLib" not in html
+    assert "window.ReactFlow" not in html
 
 
-def test_render_app_html_loads_react_18_jsx_runtime_before_react_flow_v12() -> None:
+def test_render_app_html_uses_module_aware_babel_and_mapped_react_bindings() -> None:
     html = render_app_html({"ok": True})
 
-    react_script = '<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>'
-    runtime_bridge = "window.jsxRuntime = Object.freeze({"
-    react_flow_script = '<script src="https://unpkg.com/@xyflow/react@12.11.6/dist/umd/index.js"></script>'
+    assert (
+        '<script type="text/babel" data-type="module" '
+        'data-presets="env,react">'
+    ) in html
+    assert "import * as React from 'react';" in html
+    assert "import * as ReactDOMClient from 'react-dom/client';" in html
+    assert "ReactDOMClient.createRoot(" in html
+    assert "window.jsxRuntime" not in html
+    assert "createReactElementFromJsxRuntime" not in html
 
-    assert html.index(react_script) < html.index(runtime_bridge) < html.index(react_flow_script)
-    assert "jsx: createReactElementFromJsxRuntime" in html
-    assert "jsxs: createReactElementFromJsxRuntime" in html
-    assert "Fragment: React.Fragment" in html
-    assert 'const reactElementType = Symbol.for("react.element");' in html
-    assert "return { $$typeof: reactElementType" in html
-    assert "_store" not in html
-    assert "reactHasOwnProperty.call(reactReservedProps, name)" in html
-    assert "React.createElement(type, elementProps)" not in html
+
+def test_frontend_dependency_documentation_matches_esm_runtime() -> None:
+    readme = " ".join((PROJECT_ROOT / "README.md").read_text().split())
+    design = " ".join(
+        (PROJECT_ROOT / "docs" / "cognitive_switchyard_design.md")
+        .read_text()
+        .split()
+    )
+
+    for dependency in (
+        "React 19.3.0",
+        "ReactDOM 19.3.0",
+        "react-is 19.3.0",
+        "Babel Standalone 8.0.5",
+        "React Flow 12.11.6",
+    ):
+        assert dependency in readme
+        assert dependency in design
+    for contract in (
+        "exact-version import map",
+        "module-aware inline JSX",
+        "direct top-level package versions",
+        "CDN-generated transitive dependencies are not fully locked",
+        "not byte-immutable",
+        "current Playwright Chromium",
+    ):
+        assert contract in readme
+    assert "React 18 SPA" not in design
+    assert "pinned to React 18" not in design
 
 
 def test_render_app_html_includes_required_google_fonts_import_and_design_token_block() -> None:

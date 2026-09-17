@@ -497,9 +497,9 @@ Resolution output is stored as JSON (not markdown) for reliable parsing:
 ### 6.1 Technology Stack
 
 - **Backend:** Python FastAPI + uvicorn (uv-managed via a PEP 723 header)
-- **Frontend:** Single-file embedded React 18 SPA (CDN-loaded, no npm/node_modules)
-- **CDN dependencies:** Exact-version React 18.3.1, ReactDOM 18.3.1, Babel Standalone 7.29.8, Lucide Icons 1.46.0, and React Flow 12.11.6 (`@xyflow/react`) JavaScript (UMD from unpkg), plus the matching React Flow stylesheet and Google Fonts. The exact URLs are maintained in `README.md` and enforced by static and browser tests.
-- **React Flow UMD peer bridge:** React Flow 12's UMD artifact externalizes `react/jsx-runtime` as `window.jsxRuntime`, but React 18 publishes no JSX-runtime UMD file. The template provides a frozen `jsx`/`jsxs`/`Fragment` bridge implementing the React 18 production JSX runtime contract against the existing React 18.3.1 production UMD global; no second React or ReactDOM resource is loaded.
+- **Frontend:** Single-file embedded React 19 SPA (CDN-loaded ESM, no npm/node_modules)
+- **CDN dependencies:** Exact direct URLs provide React 19.3.0, ReactDOM 19.3.0, react-is 19.3.0, Babel Standalone 8.0.5, Lucide Icons 1.46.0, and React Flow 12.11.6 (`@xyflow/react`) ESM, plus the matching React Flow stylesheet and Google Fonts. The exact URLs are maintained in `README.md` and enforced by static and browser tests. CDN-generated transitive dependencies are not fully locked, CDN responses are not byte-immutable, and startup therefore requires network access.
+- **One React peer graph:** The exact six-entry import map covers React, its production and development JSX-runtime subpaths, ReactDOM, ReactDOM Client, and react-is. React Flow's ESM wrapper externalizes React and ReactDOM, so all of its peer imports resolve through the same mapped React 19 graph.
 - **Styling:** Project-owned CSS embedded in the HTML template; no Tailwind runtime
 - **Real-time:** WebSocket for live state pushes
 - **Port:** Auto-scan from preferred default (e.g., 8100), never hardcoded
@@ -925,7 +925,7 @@ Full-screen overlay (or page navigation) triggered by clicking a worker card or 
 
 Full-page view triggered by clicking the DAG icon in the pipeline strip.
 
-**Technology:** React Flow 12.11.6 (`@xyflow/react`, UMD via CDN) under the existing React 18.3.1 UMD runtime. The adapter uses v12 named exports and immutable node/edge change application. This upgrade does not change the separately documented React 19 migration boundary.
+**Technology:** React Flow 12.11.6 (`@xyflow/react`, ESM via CDN) under the React 19.3.0 exact-version import map. Its CDN wrapper externalizes React and ReactDOM to the mapped peer graph. The adapter imports v12 named exports and uses immutable node/edge change application.
 
 **Layout:**
 - Interactive node graph filling the viewport.
@@ -1480,23 +1480,26 @@ Note: Remote execution (SSH to other machines) is not an orchestrator concern. A
 
 ### Design constraints for implementing agents
 - All frontend code is in a single HTML string (no separate .js/.css files)
-- All CDN deps use UMD builds compatible with React 18 (not React 19+). See "React 18 / UMD Lifecycle" below.
+- React and ReactDOM resolve through the exact six-entry React 19 import map; peer-dependent ESM packages must externalize those mapped peers.
 - Python backend uses only stdlib + fastapi + uvicorn + aiosqlite (minimal deps)
 - No npm install, no node_modules, no webpack/vite
 - Port selection must use the `find_free_port()` pattern (never hardcoded)
 - Self-bootstrapping: single entry point, no separate install step
 
-### React 18 / UMD Lifecycle Risk
+### React 19 / CDN Lifecycle Risk
 
-React 19 dropped UMD builds entirely. Our architecture depends on UMD (script-tag loading, no bundler) so we are pinned to React 18. The risk:
+React 19 no longer publishes UMD builds, so the no-build UI uses browser ESM
+and an import map. Direct dependency URLs are exact-version pins, but esm.sh
+owns generated transitive routes and CDN responses are not byte-immutable.
+Runtime availability therefore still depends on the external CDNs and network.
 
-**Current status (as of March 2026):** React 18 is in security-support-only mode. React 19 has been stable since late 2024. The React team has not announced an end-of-life date for React 18 security patches, but active feature development is exclusively on 19+.
+**Current loading boundary:** React 19 and ReactDOM are loaded through exact-version esm.sh import-map entries, Babel Standalone 8 compiles the inline JSX as a module, and React Flow v12 is imported as ESM with its React peers externalized. This preserves the no-build architecture while accepting a runtime network dependency and the fact that CDN-generated transitive routes and delivered bytes are not fully immutable. Moving to locally built frontend assets remains the migration path if offline startup or byte-reproducible delivery becomes a requirement.
 
-**Practical risk assessment:** Low for the 12-18 month horizon. React 18 UMD builds are immutable artifacts on CDN (unpkg, jsdelivr) -- they don't disappear when support ends. Security patches to React 18 are unlikely to matter for a locally-hosted, single-user tool that loads no untrusted third-party components. The real risk is ecosystem drift: if React Flow or other dependencies drop React 18 support, we'd be stuck on older versions of those libraries.
-
-**Migration path if needed:** React 19 recommends ESM-based CDNs (esm.sh) for script-tag loading. Migration would require replacing the current React/ReactDOM UMD globals with an ESM/import-map or build-based loading architecture and validating the application against React 19 behavior. React Flow v12 does not force that migration: its published peer boundary is `react >=17` and `react-dom >=17`. A later React 19 migration remains independently motivated by React's removal of UMD builds and the long-term maintenance risk of retaining the React 18 global-script architecture; a React Flow v12 upgrade is a separate compatibility project with its own API and package changes.
-
-**Recommendation:** Build on React 18 now. Pin CDN URLs to exact versions (not `@latest`). Accept the risk. If migration becomes necessary, it is a frontend-only change -- the backend, pack system, and orchestrator are completely unaffected.
+**Recommendation:** Keep direct CDN versions exact and maintain browser tests
+that assert a single React peer graph plus representative interactions. If the
+network or reproducibility boundary becomes unacceptable, move to locally
+built and served frontend assets; that remains a frontend-only change, leaving
+the backend, pack system, and orchestrator unaffected.
 
 ### Maintained Delivery Documentation
 
