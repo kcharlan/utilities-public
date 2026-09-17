@@ -250,6 +250,7 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
         page.reload(wait_until="domcontentloaded")
         page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
         page.wait_for_function("document.documentElement.classList.contains('dark')")
+        kpi_card.wait_for(state="visible", timeout=15_000)
         page.wait_for_function(
             "getComputedStyle(document.querySelector('.bg-card')).backgroundColor === 'rgb(30, 41, 59)'"
         )
