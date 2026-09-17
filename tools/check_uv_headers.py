@@ -66,6 +66,7 @@ LAUNCHERS = [
     "etf_montecarlo/etf_montecarlo",
     "benchmark-llm/bench",
     "cognitive_switchyard/switchyard",
+    "vid-compiler/video_compiler.py",
 ]
 
 # Each tracked manifest must contain every launcher dependency and may contain
@@ -159,6 +160,11 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         "requirements",
         "cognitive_switchyard/requirements.txt",
         frozenset(),
+    ),
+    "vid-compiler/video_compiler.py": (
+        "requirements",
+        "vid-compiler/requirements-dev.txt",
+        frozenset({"pytest"}),
     ),
 }
 

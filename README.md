@@ -99,7 +99,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `transcription` – Whisper-backed Streamlit console for bulk transcription with meticulous session/lifetime counters and batching helpers.
 - `trim_last` – FFmpeg-based CLI for trimming a configurable duration from the end of one or more media files.
 - `usage-monthly-csv` – Standalone Zsh utility that runs `ccusage_csv` and `cusage_csv` for the current month, automatically includes the prior month near month boundaries, and writes `MMYY`-suffixed CSV reports to Downloads by default.
-- `vid-compiler` – MoviePy-based sampler that stitches highlight reels and tail segments from long raw footage.
+- `vid-compiler` – uv-managed, FFmpeg-based sampler that stitches highlight reels and tail segments from long raw footage.
 - `video-scenes` – Setup and command reference for PySceneDetect scene-boundary workflows.
 - `web_games/gorilla` – Modern browser remake of the classic QBasic **Gorilla.BAS** artillery game with AI opponents and local multiplayer.
 - `web_games/multibody_sim` – Browser-based N-body gravity sandbox/screensaver with user setup mode, collision merges, trails/leads, and JSON save/load.

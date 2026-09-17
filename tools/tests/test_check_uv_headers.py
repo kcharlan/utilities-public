@@ -127,3 +127,15 @@ def test_git_fleet_browser_test_dependencies_are_manifest_only() -> None:
     assert manifest_type == "requirements"
     assert manifest_path == "git-multirepo-dashboard/tests/requirements-test.txt"
     assert {"playwright", "pytest-playwright"} <= allowed_extras
+
+
+def test_vid_compiler_has_stdlib_runtime_and_pytest_only_dev_policy() -> None:
+    launcher = "vid-compiler/video_compiler.py"
+
+    assert launcher in LAUNCHERS
+    assert DEPENDENCY_MANIFESTS[launcher] == (
+        "requirements",
+        "vid-compiler/requirements-dev.txt",
+        frozenset({"pytest"}),
+    )
+    assert check_dependency_manifest(launcher) == []
