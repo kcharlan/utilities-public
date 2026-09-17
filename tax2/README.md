@@ -35,21 +35,22 @@ Useful options:
 The preferred port is not selected automatically. If it is occupied, choose a
 different port with `--port`.
 
-The build-free frontend intentionally stays on React 18's UMD globals; React
-19 would require a module/bundler migration. Tailwind uses the exact
-`@tailwindcss/browser` 4.3.3 package with CSS-first `@theme` font tokens and an
-explicit class-based dark-mode variant. The exact URL prevents package-version
-resolution drift, but runtime CDN delivery is not byte-immutable and still
-requires network access when the asset is not cached. Babel Standalone remains
-on major 7 for the inline `text/babel` transform; major 8 needs a separate
-transform migration. The browser smoke test protects these boundaries and the
-Lucide UMD API.
+The build-free frontend uses an exact-version import map for React 19.3.0,
+ReactDOM 19.3.0, and react-is 19.3.0, with Babel Standalone 8.0.5 compiling the
+module-aware inline JSX. Tailwind uses the exact `@tailwindcss/browser` 4.3.3
+package with CSS-first `@theme` font tokens and an explicit class-based
+dark-mode variant. The exact URLs pin direct top-level package versions, but
+CDN-generated transitive dependencies are not fully locked, runtime CDN
+delivery is not byte-immutable, and the UI still requires network access when
+the assets are not cached. The browser smoke test protects these boundaries
+and the Lucide UMD API.
 
 ### Browser support
 
-The automated browser suite runs with Playwright Chromium and verifies the
-Tailwind resource graph, custom font and dark-mode computed styles, persisted
-theme selection, tax recomputation, and page/console error cleanliness.
+The automated browser suite runs with current Playwright Chromium and verifies
+the Tailwind resource graph, custom font and dark-mode computed styles,
+persisted theme selection, tax recomputation, and page/console error
+cleanliness.
 Tailwind 4's manual client floors for this browser-delivered UI are Chrome 111,
 Safari 16.4, and Firefox 128. Safari and Firefox are not covered by the
 automated browser test, so browser-specific behavior on those clients requires

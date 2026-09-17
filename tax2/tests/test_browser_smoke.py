@@ -1,5 +1,8 @@
+from collections import Counter
 from contextlib import contextmanager
+import json
 from pathlib import Path
+import re
 import socket
 import sys
 import threading
@@ -15,7 +18,14 @@ README = PROJECT_ROOT / "README.md"
 USAGE_GUIDE = PROJECT_ROOT / "docs" / "Usage.md"
 sys.path.insert(0, str(REPO_ROOT))
 
-from tools.testkit import load_launcher
+from tools.testkit import (
+    assert_react_19_import_map,
+    assert_react_esm_graph,
+    capture_browser_errors,
+    guard_browser_errors,
+    is_react_package_resource,
+    load_launcher,
+)
 
 
 @contextmanager
@@ -72,6 +82,27 @@ def test_tailwind_v4_contract_and_browser_support_are_documented():
     module = load_launcher(PROJECT_ROOT / "tax2")
     source = module.HTML_TEMPLATE
 
+    import_map_match = re.search(
+        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
+        source,
+        re.DOTALL,
+    )
+    assert import_map_match is not None
+    imports = json.loads(import_map_match.group(1))["imports"]
+    assert_react_19_import_map(imports)
+    assert "react@18.3.1" not in source
+    assert "react-dom@18.3.1" not in source
+    assert "/umd/react" not in source
+    assert source.count("@babel/standalone@8.0.5/babel.min.js") == 1
+    assert (
+        '<script type="text/babel" data-type="module" '
+        'data-presets="env,react">'
+    ) in source
+    assert "import * as React from 'react';" in source
+    assert "import * as ReactDOM from 'react-dom';" not in source
+    assert "import * as ReactDOMClient from 'react-dom/client';" in source
+    assert "ReactDOMClient.createRoot(" in source
+
     assert source.count(
         "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"
     ) == 1
@@ -99,8 +130,24 @@ def test_tailwind_v4_contract_and_browser_support_are_documented():
     usage_guide = USAGE_GUIDE.read_text()
     normalized_readme = " ".join(readme.split())
     for document in (readme, usage_guide):
-        assert "@tailwindcss/browser" in document
-        assert "4.3.3" in document
+        normalized_document = " ".join(document.split())
+        assert "@tailwindcss/browser" in normalized_document
+        assert "4.3.3" in normalized_document
+        for dependency in (
+            "React 19.3.0",
+            "ReactDOM 19.3.0",
+            "react-is 19.3.0",
+            "Babel Standalone 8.0.5",
+        ):
+            assert dependency in normalized_document
+        assert "exact-version import map" in normalized_document
+        assert "module-aware inline JSX" in normalized_document
+        assert "direct top-level package versions" in normalized_document
+        assert (
+            "CDN-generated transitive dependencies are not fully locked"
+            in normalized_document
+        )
+        assert "current Playwright Chromium" in normalized_document
     assert "not byte-immutable" in readme
     assert "Playwright" in readme
     assert "Chromium" in readme
@@ -118,64 +165,47 @@ def test_calculator_loads_tailwind_v4_recomputes_and_persists_dark_mode(
 ):
     monkeypatch.setenv("TAX2_HOME", str(tmp_path / "runtime"))
     module = load_launcher(PROJECT_ROOT / "tax2")
-    page_errors = []
-    console_errors = []
-
     with live_server(module.app) as url, sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
         page.emulate_media(color_scheme="light")
-        page.on("pageerror", lambda error: page_errors.append(str(error)))
-        page.on(
-            "console",
-            lambda message: console_errors.append(message.text)
-            if message.type == "error"
-            else None,
-        )
-        page.goto(url, wait_until="networkidle")
-        expect(page.get_by_text("Tax2", exact=True)).to_be_visible()
+        browser_errors = capture_browser_errors(page)
+        expected_error = "Computation error: Error: Synthetic compute failure"
+        page.goto(url, wait_until="domcontentloaded")
+        expect(page.get_by_text("Tax2", exact=True)).to_be_visible(timeout=15_000)
         expect(page.get_by_text("Total Monthly", exact=True)).to_be_visible()
 
         script_sources = page.locator("script[src]").evaluate_all(
             "elements => elements.map(element => element.src)"
         )
-        assert script_sources == [
-            "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
-            "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
-            "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
-            "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
-            "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
-        ]
-        dependency_resources = page.evaluate(
-            """() => performance.getEntriesByType('resource')
-                .map(entry => entry.name)
-                .filter(name =>
-                    name.includes('@tailwindcss/browser') ||
-                    name.includes('@babel/standalone') ||
-                    name.includes('/lucide@') || name.includes('/lucide/') ||
-                    name.includes('/react@') || name.includes('/react/') ||
-                    name.includes('/react-dom@') || name.includes('/react-dom/') ||
-                    name.includes('/react-is@') || name.includes('/react-is/')
-                )
-                .sort()"""
-        )
-        assert dependency_resources == sorted(script_sources)
-        peer_resources = [
-            resource
-            for resource in dependency_resources
-            if "/react@" in resource
-            or "/react/" in resource
-            or "/react-dom@" in resource
-            or "/react-dom/" in resource
-            or "/react-is@" in resource
-            or "/react-is/" in resource
-        ]
-        assert peer_resources == sorted(
+        assert Counter(script_sources) == Counter(
             [
-                "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
-                "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
+                "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
+                "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
+                "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
             ]
         )
+        external_resources = page.evaluate(
+            """() => performance.getEntriesByType('resource')
+                .map(entry => entry.name)
+                .filter(name => !name.startsWith(location.origin))"""
+        )
+        peer_resources = [
+            resource
+            for resource in external_resources
+            if is_react_package_resource(resource)
+        ]
+        assert_react_esm_graph(
+            peer_resources,
+            react_dom_wrapper_policy="forbidden",
+        )
+        non_react_counts = Counter(
+            resource
+            for resource in external_resources
+            if not is_react_package_resource(resource)
+        )
+        for direct_resource in script_sources:
+            assert non_react_counts[direct_resource] == 1
 
         page.wait_for_function(
             "getComputedStyle(document.querySelector('.font-display')).fontFamily.startsWith('Epilogue')"
@@ -221,8 +251,8 @@ def test_calculator_loads_tailwind_v4_recomputes_and_persists_dark_mode(
         page.get_by_role("button", name="Toggle Theme").click()
         page.wait_for_function("document.documentElement.classList.contains('dark')")
         assert page.evaluate("localStorage.getItem('tax2-dark-mode')") == "true"
-        page.reload(wait_until="networkidle")
-        expect(page.get_by_text("Tax2", exact=True)).to_be_visible()
+        page.reload(wait_until="domcontentloaded")
+        expect(page.get_by_text("Tax2", exact=True)).to_be_visible(timeout=15_000)
         assert page.evaluate("document.documentElement.classList.contains('dark')")
         assert page.evaluate("localStorage.getItem('tax2-dark-mode')") == "true"
 
@@ -270,12 +300,9 @@ def test_calculator_loads_tailwind_v4_recomputes_and_persists_dark_mode(
         assert dark_banner_background != light_banner_background
         assert css_alpha(dark_banner_background) == pytest.approx(0.3)
         assert page.evaluate("localStorage.getItem('tax2-dark-mode')") == "true"
+        assert len(browser_errors) == 1
+        assert browser_errors[0].splitlines()[0] == expected_error
         browser.close()
-
-    expected_error = "Computation error: Error: Synthetic compute failure"
-    assert page_errors == []
-    assert len(console_errors) == 1
-    assert console_errors[0].splitlines()[0] == expected_error
 
 
 def test_calculator_keeps_native_styles_when_tailwind_is_unavailable(
@@ -283,29 +310,22 @@ def test_calculator_keeps_native_styles_when_tailwind_is_unavailable(
 ):
     monkeypatch.setenv("TAX2_HOME", str(tmp_path / "runtime"))
     module = load_launcher(PROJECT_ROOT / "tax2")
-    page_errors = []
-    console_errors = []
-
     with live_server(module.app) as url, sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
-        page.on("pageerror", lambda error: page_errors.append(str(error)))
-        page.on(
-            "console",
-            lambda message: console_errors.append(message.text)
-            if message.type == "error"
-            else None,
-        )
-        page.route(
-            "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
-            lambda route: route.abort(),
-        )
-        page.goto(url, wait_until="domcontentloaded")
-        expect(page.get_by_text("Tax2", exact=True)).to_be_visible()
-        assert page.locator("body").evaluate(
-            "element => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color]"
-        ) == ["rgb(250, 250, 249)", "rgb(28, 25, 23)"]
+        with guard_browser_errors(
+            page,
+            expected=("Failed to load resource: net::ERR_FAILED",),
+        ):
+            page.route(
+                "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
+                lambda route: route.abort(),
+            )
+            page.goto(url, wait_until="domcontentloaded")
+            expect(page.get_by_text("Tax2", exact=True)).to_be_visible(
+                timeout=15_000
+            )
+            assert page.locator("body").evaluate(
+                "element => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color]"
+            ) == ["rgb(250, 250, 249)", "rgb(28, 25, 23)"]
         browser.close()
-
-    assert page_errors == []
-    assert console_errors == ["Failed to load resource: net::ERR_FAILED"]
