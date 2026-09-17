@@ -19,6 +19,15 @@ class PluginContext:
 class BenchmarkPlugin:
     benchmark_id: str | None = None
 
+    @classmethod
+    def preflight(
+        cls,
+        benchmark_dir: Path,
+        runtime_home: Path,
+        environ: dict[str, str],
+    ) -> None:
+        """Validate a run before the runtime creates any artifact directories."""
+
     def prepare(self, ctx: PluginContext) -> None:
         """Set up files and context before execution."""
 

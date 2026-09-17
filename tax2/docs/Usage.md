@@ -23,6 +23,18 @@ the launcher's PEP 723 header.
 Tax2 does not scan for a free port. If startup reports that the address is in
 use, rerun it with another `--port` value.
 
+The frontend loads React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an
+exact-version import map; Babel Standalone 8.0.5 compiles the module-aware
+inline JSX. Lucide Icons and exact-version `@tailwindcss/browser` 4.3.3 also
+load from public CDNs, so the browser needs network access unless those assets
+are already cached. The exact URLs pin direct top-level package versions, but
+CDN-generated transitive dependencies are not fully locked and runtime CDN
+delivery is not byte-immutable. Tailwind uses embedded CSS-first font tokens
+and an explicit class-based dark-mode variant. Automated browser coverage runs
+in current Playwright Chromium; the manual compatibility floors are Chrome
+111, Safari 16.4, and Firefox 128. Safari and Firefox are not automated by this
+project.
+
 ## Calculate estimated tax
 
 1. Select a tax year and filing status.

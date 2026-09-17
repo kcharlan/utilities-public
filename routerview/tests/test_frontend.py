@@ -14,6 +14,32 @@ def load_module():
     return load_launcher(SCRIPT_PATH)
 
 
+def test_recharts_3_esm_loads_once_with_externalized_react_peers():
+    module = load_module()
+    html = module.HTML_TEMPLATE
+    recharts_url = (
+        "https://esm.sh/recharts@3.10.1"
+        "?external=react,react-dom,react-is"
+    )
+
+    assert html.count(recharts_url) == 1
+    assert "from 'react';" in html
+    assert "from 'react-dom/client';" in html
+    assert f"from '{recharts_url}';" in html
+    assert "/umd/Recharts.js" not in html
+    assert "recharts@2.15.4" not in html
+
+
+def test_chart_interactions_do_not_read_removed_recharts_2_state():
+    module = load_module()
+    html = module.HTML_TEMPLATE
+
+    assert "activeTooltipIndex" not in html
+    assert "activePayload" not in html
+    assert 'className="rv-main-chart-plot"' in html
+    assert "querySelectorAll('.rv-main-chart-plot')" in html
+
+
 def test_chart_tooltip_includes_bucket_totals_for_additive_metrics():
     module = load_module()
 

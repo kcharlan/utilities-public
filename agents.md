@@ -70,7 +70,7 @@ Before finalizing changes, verify you haven't:
 - Broken existing functionality in adjacent code
 
 ## Repo Shape (High-Level)
-- Python/CLI/Streamlit tools: `tax2`, `data_format_converter`, `transcription`, `mls-tracker`, `apple-health-extract`, `md-autotax`, `md-json`, `doc_linearizer`, `div_conv`, etc.
+- Python/CLI/local web tools: `tax2`, `data_format_converter`, `transcription`, `mls-tracker`, `apple-health-extract`, `md-autotax`, `md-json`, `doc_linearizer`, `div_conv`, etc.
 - Browser-first single-file apps: `web_games/gorilla`, `web_games/multibody_sim`, `web_games/rps_screen`, plus HTML calculators under `Calculation tools`.
 - Docker stacks and services: `docker/actual-data`, `docker/excalidraw`, `docker/llm_collector`, `docker/mermaid`, `docker/webserver`.
 
@@ -86,9 +86,13 @@ Use this matrix to identify project-specific validation commands after applying 
 - `web_games/multibody_sim`:
   - `npm test` (Playwright; config launches local `http-server` on `127.0.0.1:4173`)
 - `tax2`:
-  - `python3 -m pytest` (currently minimal coverage)
+  - `.venv/bin/python -m pytest`
+  - Run `./tax2 --help`, then start `./tax2 --no-browser --port <free-port>`, request `/` and `/api/status`, and terminate the FastAPI process cleanly.
   - If tax rules/table generation changed, also run `uv run --with-requirements requirements.txt cli.py generate-combined --year 2026` (or target year used by your change).
-- Streamlit apps (`tax2`, `transcription`, `mls-tracker`, `md-autotax`):
+- `mls-tracker`:
+  - `.venv/bin/python -m pytest -q`
+  - Run `./mls_tracker --help`, then start `./mls_tracker --no-browser --port <free-port>`, request `/`, and terminate the FastAPI process cleanly.
+- Streamlit apps (`transcription`, `md-autotax`):
   - smoke-run the app entrypoint after edits (`streamlit run ...` or project `run.sh`/`ui.sh`).
 - Shell utilities (`pdf-split`, `media-dater`, `toggle_wifi`, etc.):
   - run `--help` and at least one safe/dry-run style command when available.
@@ -159,12 +163,16 @@ When this does **not** apply:
 ### UI: Embedded React SPA (instead of Streamlit)
 When a project needs a local web UI, prefer the **embedded single-file React SPA** pattern from `editdb` over Streamlit for responsiveness, layout control, and fewer dependencies.
 
-Stack (all loaded via CDN — no `npm install`, no `node_modules`): React 18, ReactDOM 18, Babel Standalone, Tailwind CSS, Lucide Icons (all UMD/CDN from unpkg).
+Stack (all loaded in the browser — no `npm install`, no `node_modules`): React 19 and ReactDOM 19 through an exact-version ESM import map, Babel Standalone 8 for module-aware inline JSX, and exact-version CDN assets such as Lucide. Use Tailwind 4's browser package only when the project actually uses Tailwind.
 
 Architecture:
 - Python backend (FastAPI + uvicorn) serves a single HTML template via `GET /`. All React/JSX, CSS, and Tailwind config are embedded in that HTML string.
+- The import map must pin the complete base contract: `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-dom`, `react-dom/client`, and aligned `react-is`. ReactDOM and library URLs must externalize the mapped React peer.
+- Compile inline JSX with exact-version Babel Standalone 8 using `type="text/babel"`, `data-type="module"`, and explicit `data-presets="env,react"`; import React and ReactDOM bindings from the map rather than relying on UMD globals.
 - Frontend communicates with backend via `fetch()` to `/api/*` JSON endpoints.
-- State via React `useState`/`useEffect` hooks. Dark mode via Tailwind `darkMode: 'class'` with localStorage. `ErrorBoundary` wraps the app.
+- State uses React hooks. For Tailwind projects, define custom tokens with CSS-first `@theme` and class-based dark mode with `@custom-variant dark (&:where(.dark, .dark *));`; persist a user-selectable theme in localStorage when the interface offers one. `ErrorBoundary` wraps the app.
+- Pin every direct CDN package URL exactly, while documenting that runtime CDN access, generated transitive resolution, and byte delivery remain network-dependent and are not fully immutable.
+- Browser tests target current Playwright Chromium, fail on unexpected `pageerror`/`console.error`, and use the shared `tools.testkit` contracts to verify the import map and React peer resources without depending on opaque CDN-generated route layouts.
 
 When this does **not** apply: quick prototypes where Streamlit's speed-to-first-render matters more, or when the user explicitly requests Streamlit.
 

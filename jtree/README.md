@@ -104,15 +104,23 @@ jtree [file.json] [--port 8100] [--readonly]
 Single-file Python script (uv-managed via a PEP 723 header) following the embedded React SPA pattern:
 
 - **Backend**: FastAPI + uvicorn serving REST API and HTML
-- **Frontend**: React 18, Babel Standalone, Tailwind CSS, Lucide Icons, DM Sans + JetBrains Mono fonts (all CDN)
+- **Frontend**: React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map; Babel Standalone 8.0.5 for module-aware inline JSX; Tailwind CSS 4.3.3 through the exact-version `@tailwindcss/browser` package; Lucide Icons 1.46.0; and DM Sans + JetBrains Mono fonts (all CDN)
 - **No build step**: No `npm install`, no `node_modules`
 
-The frontend intentionally stays on the React 18 UMD and Tailwind 3
-classic-CDN lines. React 19 does not publish the UMD globals used by this
-single-file app, and Tailwind 4 uses a different browser package and
-configuration model. Either major upgrade requires a build/bundling migration.
-The classic Play CDN is pinned to 3.4.17, its newest published browser
-artifact; it rejects the newer 3.4.19 npm package version as unknown.
+Tailwind configuration is CSS-first: the embedded `text/tailwindcss` stylesheet
+declares the custom design tokens with `@theme` and registers the class-based
+dark mode through an explicit custom variant. The import map pins the direct
+top-level package versions, while Babel compiles the module-aware inline JSX in
+the browser. CDN-generated transitive dependencies are not fully locked, and
+runtime CDN delivery is not byte-immutable, so the UI still requires network
+access when assets are not cached.
+
+### Browser support
+
+The automated browser suite runs with current Playwright Chromium. Tailwind 4's manual
+client floors for this browser-delivered UI are Chrome 111, Safari 16.4, and
+Firefox 128. Safari and Firefox are not covered by the automated browser test,
+so browser-specific behavior on those clients requires manual verification.
 
 ## Requirements
 

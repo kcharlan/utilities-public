@@ -1,0 +1,8 @@
+{
+  "synthetic_risk": "synthetic-low",
+  "items": [
+    {"id": "test", "after": "patch"},
+    {"id": "inventory", "after": null},
+    {"id": "patch", "after": "inventory"}
+  ]
+}

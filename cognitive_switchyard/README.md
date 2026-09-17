@@ -73,16 +73,37 @@ When a session is created with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNIT
 ## Tech Stack
 
 - **Backend:** Python 3.12+, FastAPI, uvicorn, aiosqlite, PyYAML
-- **Frontend:** Single-file embedded React 18 SPA (CDN-loaded, no npm/node_modules)
+- **Frontend:** Single-file embedded React 19 SPA (CDN-loaded ESM, no npm/node_modules)
 - **State:** SQLite + file-as-state directories
 - **uv-managed:** Single entry point (`switchyard`) with a PEP 723 header; uv resolves dependencies on first run (requires [uv](https://docs.astral.sh/uv/), `brew install uv`)
 
-The embedded no-build frontend intentionally remains on React 18 UMD and the
-Tailwind CSS 3 classic CDN. React 19 no longer publishes UMD builds, and
-Tailwind CSS 4 replaces the classic browser CDN workflow. Moving to either
-latest major therefore requires introducing a frontend build pipeline (or an
-equivalent ESM/import-map and generated-CSS architecture) rather than a CDN URL
-update. The browser E2E suite protects the current global-script contract.
+The embedded no-build frontend uses React 19.3.0, ReactDOM 19.3.0, and
+react-is 19.3.0 through an exact-version import map, with module-aware inline
+JSX compiled by Babel Standalone 8.0.5. It retains project-owned CSS embedded
+in the HTML template and has no Tailwind runtime. At runtime the browser loads
+Google Fonts plus these direct top-level package versions:
+
+- `https://esm.sh/react@19.3.0`
+- `https://esm.sh/react@19.3.0/jsx-runtime`
+- `https://esm.sh/react@19.3.0/jsx-dev-runtime`
+- `https://esm.sh/react-dom@19.3.0?external=react`
+- `https://esm.sh/react-dom@19.3.0/client?external=react`
+- `https://esm.sh/react-is@19.3.0?external=react`
+- `https://unpkg.com/@babel/standalone@8.0.5/babel.min.js`
+- `https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js`
+- `https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom`
+- `https://unpkg.com/@xyflow/react@12.11.6/dist/style.css`
+- `https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap`
+
+The React Flow 12.11.6 ESM URL externalizes React and ReactDOM so its bare peer
+imports, including `react/jsx-runtime`, resolve through that same import map
+instead of creating a second React graph. Exact URLs pin direct dependencies,
+but runtime CDN access remains required: CDN-generated transitive dependencies
+are not fully locked and CDN responses are not byte-immutable. Static HTML
+tests own the exact direct script, stylesheet, and import-map inventory.
+Browser E2E tests run against current Playwright Chromium, validate the
+resolved React peer resource graph and representative DAG interactions, and
+fail on unexpected page or console errors.
 
 ## Quick Start
 
@@ -186,7 +207,7 @@ Session environment values are configured in the Setup view or inherited by the 
 | `COGNITIVE_SWITCHYARD_PACK_ROOT` | Orchestrator | Absolute path to the active runtime pack directory, available to hooks and verification commands. |
 | `COGNITIVE_SWITCHYARD_NO_BROWSER` | Server/operator | Set to a non-empty value to prevent `serve` from opening a browser. |
 | `CLAUDE_CODE_WORKER_MODEL` | Operator (optional) | Overrides the `claude-code` pack's worker model (default `sonnet`). |
-| `CODEX_WORKER_MODEL` | Operator (optional) | Overrides the `codex` and `codex-hybrid` worker model (default `gpt-5.4`). |
+| `CODEX_WORKER_MODEL` | Operator (optional) | Overrides the `codex` and `codex-hybrid` worker model (default `gpt-5.6-sol`). |
 | `CODEX_WORKER_REASONING_EFFORT` | Manifest/orchestrator | Passed to shell execution when `phases.execution.reasoning_effort` is configured. |
 
 ## CLI Reference
@@ -213,6 +234,19 @@ python3 -m venv .venv
 ```
 
 The suite contains unit, integration, launcher/CLI, and browser E2E tests. The development requirements install Playwright's Python packages; install the Chromium browser once with `.venv/bin/playwright install chromium`. E2E tests start their own Uvicorn server.
+
+Starlette 1.6.0 still emits the following upstream AnyIO deprecation while its
+test client module is imported:
+
+```text
+DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+```
+
+Keep this warning visible and recheck it when the next stable Starlette release
+is available. The default-warning suite also currently reports
+`ResourceWarning`s from unclosed SQLite connections and existing subprocess or
+stream cleanup paths. Resource-lifecycle cleanup is tracked as a separate
+follow-up rather than being hidden by a global warning filter.
 
 ```bash
 # Run unit/integration tests (fast)

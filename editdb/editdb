@@ -562,60 +562,40 @@ HTML_TEMPLATE = """
 
         <title>EditDB - {{DB_NAME}}</title>
 
-        <script src="https://cdn.tailwindcss.com/3.4.17"></script>
-        <script>
-
-            tailwind.config = {
-
-                    darkMode: 'class',
-
-                    theme: {
-
-                        extend: {
-
-                            colors: {
-
-                                brandDark: {
-
-                                    50: '#f8fafc',
-
-                                    100: '#f1f5f9',
-
-                                    200: '#e2e8f0',
-
-                                    300: '#cbd5e1',
-
-                                    400: '#94a3b8',
-
-                                    500: '#64748b',
-
-                                    600: '#475569',
-
-                                    700: '#334155',
-
-                                    800: '#1e293b',
-
-                                    900: '#0f172a',
-
-                                    950: '#020617',
-
-                                }
-
-                            }
-
-                        }
-
-                    }
-
-                };
-
+        <script type="importmap">
+        {
+            "imports": {
+                "react": "https://esm.sh/react@19.3.0",
+                "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+                "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+                "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+                "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+                "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+            }
+        }
         </script>
 
-        <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+        <script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
 
-        <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
 
-    <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
+        <style type="text/tailwindcss">
+            @custom-variant dark (&:where(.dark, .dark *));
+
+            @theme {
+                --color-brand-dark-50: #f8fafc;
+                --color-brand-dark-100: #f1f5f9;
+                --color-brand-dark-200: #e2e8f0;
+                --color-brand-dark-300: #cbd5e1;
+                --color-brand-dark-400: #94a3b8;
+                --color-brand-dark-500: #64748b;
+                --color-brand-dark-600: #475569;
+                --color-brand-dark-700: #334155;
+                --color-brand-dark-800: #1e293b;
+                --color-brand-dark-900: #0f172a;
+                --color-brand-dark-950: #020617;
+            }
+        </style>
 
     <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
 
@@ -684,7 +664,10 @@ HTML_TEMPLATE = """
 
 
 
-    <script type="text/babel">
+    <script type="text/babel" data-type="module" data-presets="env,react">
+
+        import * as React from 'react';
+        import * as ReactDOMClient from 'react-dom/client';
 
         /**
          * EditDB Frontend
@@ -1590,7 +1573,7 @@ HTML_TEMPLATE = """
 
             return (
 
-                <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-200">
+                <div className="flex h-screen overflow-hidden bg-brand-dark-50 dark:bg-brand-dark-950 transition-colors duration-200">
 
                     {/* Sidebar */}
 
@@ -2507,7 +2490,7 @@ HTML_TEMPLATE = """
             );
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
+        const root = ReactDOMClient.createRoot(document.getElementById('root'));
         root.render(
             <ErrorBoundary>
                 <App />

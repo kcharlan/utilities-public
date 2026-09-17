@@ -176,7 +176,7 @@ def test_codex_cli_runner_builds_planner_invocation_with_reasoning_config_and_co
     runtime = CodexCliRuntime(command="codex", subprocess_runner=fake_runner)
 
     result = runtime.run_planner(
-        model="gpt-5.4",
+        model="gpt-5.6-sol",
         prompt_path=prompt_path,
         intake_path=intake_path,
         intake_text=intake_path.read_text(encoding="utf-8"),
@@ -193,7 +193,7 @@ def test_codex_cli_runner_builds_planner_invocation_with_reasoning_config_and_co
         "--dangerously-bypass-approvals-and-sandbox",
         "--json",
         "-m",
-        "gpt-5.4",
+        "gpt-5.6-sol",
         "-C",
         str(session_root),
         "-c",

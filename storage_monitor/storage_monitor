@@ -3596,10 +3596,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Storage Monitor</title>
-  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
-  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@19.3.0",
+      "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+      "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+      "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+      "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+      "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+    }
+  }
+  </script>
+  <script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
   <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
   <style>
     :root {
@@ -3705,6 +3715,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
+  <style type="text/tailwindcss">
+    @source inline("min-h-screen w-full");
+  </style>
   <script>
     // Theme initialization (runs before React)
     (function() {
@@ -3721,8 +3734,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </script>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/babel">
+  <div id="root" class="min-h-screen w-full"></div>
+  <script type="text/babel" data-type="module" data-presets="env,react">
+    import * as React from 'react';
+    import * as ReactDOMClient from 'react-dom/client';
+
     const { useCallback, useEffect, useMemo, useRef, useState } = React;
 
     // ── Utilities ──────────────────────────────────────────
@@ -4963,7 +4979,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    ReactDOMClient.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
 </html>

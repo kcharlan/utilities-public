@@ -4,9 +4,11 @@ launchmaster is a local macOS control center for inspecting and managing
 `launchd` jobs. A single executable Python file serves a FastAPI backend and an
 embedded React interface; there is no frontend build step.
 
-The embedded frontend intentionally stays on React 18 because React 19 does
-not publish the UMD globals consumed directly by this single-file app. Moving
-to React 19 requires a module/bundler migration rather than a CDN URL update.
+The embedded frontend uses React 19.3.0 and ReactDOM 19.3.0 through an
+exact-version import map, including the aligned react-is 19.3.0 peer. Babel
+Standalone 8.0.5 compiles the module-aware inline JSX in the browser, so the
+single-file application still has no frontend build step. The maintained
+automated browser target is current Playwright Chromium.
 
 ## Requirements
 
@@ -14,6 +16,13 @@ to React 19 requires a module/bundler migration rather than a CDN URL update.
 - [uv](https://docs.astral.sh/uv/)
 - A browser with internet access to load the React, Babel, Lucide, and font
   assets referenced by the embedded interface
+
+The direct top-level package versions in the import map and script URLs are
+exact. This prevents drift in those requested versions, but CDN-generated
+transitive dependencies are not fully locked, and the interface still requires
+the network at runtime. Exact pins are not byte-immutable delivery guarantees;
+offline or byte-for-byte reproducible use would require a separate vendoring or
+release-artifact flow.
 
 launchmaster runs with the permissions of the user who started it. Reading or
 changing jobs under `/Library` or `/System/Library` may fail unless that user

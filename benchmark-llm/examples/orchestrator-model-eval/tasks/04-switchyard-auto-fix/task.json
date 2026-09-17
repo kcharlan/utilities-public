@@ -1,0 +1,10 @@
+{
+  "id": "switchyard-auto-fix",
+  "cell": "switchyard.auto_fix",
+  "context": "Synthetic repair packet for a deliberately broken two-number calculator.",
+  "prompt": "Repair calculator.py so synthetic_total returns the sum of its two integer inputs. Preserve the public function signature and remove the deliberately wrong behavior.",
+  "expected": {
+    "path": "calculator.py",
+    "content": "def synthetic_total(left: int, right: int) -> int:\n    return left + right\n"
+  }
+}

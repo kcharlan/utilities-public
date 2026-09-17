@@ -22,9 +22,12 @@ Covers:
 """
 from __future__ import annotations
 
+import copy
+import json
 import socket
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 from textwrap import dedent
 
@@ -34,8 +37,17 @@ pytest.importorskip("playwright")
 
 import uvicorn  # noqa: E402
 
+from tools.testkit import (  # noqa: E402
+    assert_react_19_import_map,
+    assert_react_esm_graph,
+    guard_browser_errors,
+    is_react_package_resource,
+)
 from cognitive_switchyard.config import build_runtime_paths  # noqa: E402
+from cognitive_switchyard.html_template import render_app_html  # noqa: E402
+from cognitive_switchyard.parsers import parse_task_plan  # noqa: E402
 from cognitive_switchyard.server import create_app  # noqa: E402
+from cognitive_switchyard.server import _build_root_bootstrap_payload  # noqa: E402
 from cognitive_switchyard.state import initialize_state_store  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -43,6 +55,13 @@ from cognitive_switchyard.state import initialize_state_store  # noqa: E402
 # ---------------------------------------------------------------------------
 
 SLOW_TIMEOUT = 15_000  # ms — generous timeout for CI
+
+
+@pytest.fixture
+def browser_error_guard(page):
+    """Reject uncaught browser errors for success-path resource tests."""
+    with guard_browser_errors(page):
+        yield
 
 
 def _find_free_port() -> int:
@@ -481,6 +500,138 @@ def server_url(runtime_home):
 # ---------------------------------------------------------------------------
 # 1. INITIAL LOAD & NAVIGATION
 # ---------------------------------------------------------------------------
+
+
+class TestProjectOwnedBaseStyles:
+    def test_tailwind_preflight_compatible_styles_are_explicit(
+        self, server_url, runtime_home, page
+    ):
+        requested_urls = []
+        page.on("request", lambda request: requested_urls.append(request.url))
+        runtime_paths = build_runtime_paths(home=runtime_home)
+        store = initialize_state_store(runtime_paths)
+        session_id = "base-style-regression-001"
+        store.create_session(
+            session_id=session_id,
+            name="Synthetic Base Style Regression",
+            pack="claude-code",
+            created_at="2026-09-16T12:00:00Z",
+            config_json=json.dumps(
+                {
+                    "environment": {
+                        "COGNITIVE_SWITCHYARD_SOURCE_REPO": "/tmp/synthetic-source",
+                        "COGNITIVE_SWITCHYARD_REPO_ROOT": "/tmp/synthetic-worktree",
+                    }
+                }
+            ),
+        )
+        store.update_session_status(
+            session_id,
+            status="running",
+            started_at="2026-09-16T12:00:01Z",
+        )
+
+        try:
+            active_payload = _build_root_bootstrap_payload(
+                store,
+                runtime_paths=runtime_paths,
+            )
+            assert active_payload["current_session"]["id"] == session_id
+            active_html = render_app_html(active_payload)
+            page.route(
+                f"{server_url}/",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body=active_html,
+                ),
+            )
+            page.goto(server_url)
+            settings_icon_styles = page.evaluate(
+                """() => {
+                    const button = document.querySelector('button[aria-label="Settings"]');
+                    const svg = button.querySelector('svg');
+                    const buttonRect = button.getBoundingClientRect();
+                    const svgStyle = getComputedStyle(svg);
+                    return {
+                        svgDisplay: svgStyle.display,
+                        svgVerticalAlign: svgStyle.verticalAlign,
+                        buttonWidth: buttonRect.width,
+                        buttonHeight: buttonRect.height,
+                    };
+                }"""
+            )
+            assert settings_icon_styles == {
+                "svgDisplay": "block",
+                "svgVerticalAlign": "middle",
+                "buttonWidth": 40,
+                "buttonHeight": 32,
+            }
+            page.locator("button:has-text('Setup')").click()
+            page.wait_for_selector('h1:text-is("Session Active")', timeout=SLOW_TIMEOUT)
+
+            active_styles = page.evaluate(
+                """() => {
+                    const title = document.querySelector('.view-title');
+                    const description = title.nextElementSibling;
+                    const titleStyle = getComputedStyle(title);
+                    const descriptionStyle = getComputedStyle(description);
+                    return {
+                        titleWeight: titleStyle.fontWeight,
+                        titleLineHeight: titleStyle.lineHeight,
+                        descriptionMarginTop: descriptionStyle.marginTop,
+                    };
+                }"""
+            )
+            assert active_styles == {
+                "titleWeight": "400",
+                "titleLineHeight": "36px",
+                "descriptionMarginTop": "0px",
+            }
+
+            completed_payload = copy.deepcopy(active_payload)
+            completed_payload["dashboard"]["session"]["status"] = "completed"
+            store.update_session_status(
+                session_id,
+                status="completed",
+                completed_at="2026-09-16T12:01:00Z",
+            )
+            completed_html = render_app_html(completed_payload)
+            page.unroute(f"{server_url}/")
+            page.route(
+                f"{server_url}/",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body=completed_html,
+                ),
+            )
+            page.goto(server_url)
+            page.wait_for_selector("text=Session Completed", timeout=SLOW_TIMEOUT)
+
+            completion_heading_styles = page.locator(
+                ".completion-card-section h4"
+            ).first.evaluate(
+                """element => {
+                    const style = getComputedStyle(element);
+                    return {
+                        marginTop: style.marginTop,
+                        fontWeight: style.fontWeight,
+                        lineHeight: style.lineHeight,
+                    };
+                }"""
+            )
+            assert completion_heading_styles == {
+                "marginTop": "0px",
+                "fontWeight": "400",
+                "lineHeight": "18px",
+            }
+            assert not [
+                url for url in requested_urls if "tailwind" in url.lower()
+            ]
+        finally:
+            page.unroute(f"{server_url}/")
+            store.delete_session(session_id)
 
 
 class TestInitialLoad:
@@ -1113,7 +1264,7 @@ class TestTaskDetail:
 
 
 class TestDagView:
-    """Verify DAG (dependency graph) API."""
+    """Verify DAG API and the React Flow 12 browser integration."""
 
     def test_dag_returns_tasks(self, server_url, runtime_home, page):
         """DAG endpoint returns task dependency graph."""
@@ -1144,7 +1295,145 @@ class TestDagView:
         task_ids = [t["task_id"] for t in result["tasks"]]
         assert "t001" in task_ids
         assert "t002" in task_ids
+        _poll_session_status(page, "dag-001", {"idle", "completed", "aborted"})
 
+    def test_react_flow_v12_renders_and_supports_dag_interactions(
+        self, server_url, runtime_home, page, request, browser_error_guard
+    ):
+        runtime_paths = build_runtime_paths(home=runtime_home)
+        store = initialize_state_store(runtime_paths)
+        session_id = "dag-ui-v12-001"
+        store.create_session(
+            session_id=session_id,
+            name="Synthetic React Flow 12 DAG",
+            pack="claude-code",
+            created_at="2026-09-16T12:00:00Z",
+            config_json="{}",
+        )
+        for task_id, dependency in (
+            ("root", "none"),
+            ("middle", "root"),
+            ("leaf", "middle"),
+        ):
+            source = _write_intake_plan(
+                runtime_home, session_id, task_id, depends_on=dependency
+            )
+            plan_text = source.read_text(encoding="utf-8")
+            store.upsert_ready_task_plan(
+                session_id=session_id,
+                plan=parse_task_plan(plan_text, source=source),
+                plan_text=plan_text,
+                created_at="2026-09-16T12:00:01Z",
+            )
+        store.update_session_status(
+            session_id,
+            status="running",
+            started_at="2026-09-16T12:00:01Z",
+        )
+        request.addfinalizer(lambda: store.delete_session(session_id))
+        bootstrap = _build_root_bootstrap_payload(store, runtime_paths=runtime_paths)
+        assert bootstrap["current_session"]["id"] == session_id
+        page.goto(server_url, wait_until="domcontentloaded")
+        page.wait_for_selector("button[aria-label='Open DAG']", timeout=SLOW_TIMEOUT)
+
+        dependency_graph = page.evaluate("""() => ({
+            importMap: JSON.parse(document.querySelector('script[type="importmap"]').textContent).imports,
+            scripts: Array.from(document.querySelectorAll('script[src]'), el => el.src),
+            stylesheets: Array.from(document.querySelectorAll('link[rel~="stylesheet"]'), el => el.href),
+            resources: performance.getEntriesByType('resource').map(entry => entry.name),
+        })""")
+        assert_react_19_import_map(dependency_graph["importMap"])
+        expected_scripts = [
+            "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
+            "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+        ]
+        expected_stylesheets = [
+            "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
+            "https://unpkg.com/@xyflow/react@12.11.6/dist/style.css",
+        ]
+        assert dependency_graph["scripts"] == expected_scripts
+        assert dependency_graph["stylesheets"] == expected_stylesheets
+        external_resources = [
+            url
+            for url in dependency_graph["resources"]
+            if not url.startswith(server_url)
+        ]
+        assert all("/reactflow@" not in url for url in external_resources)
+        assert_react_esm_graph(
+            [
+                url
+                for url in external_resources
+                if is_react_package_resource(url) and "/@xyflow/" not in url
+            ]
+        )
+        xyflow_resources = [
+            url for url in external_resources if "/@xyflow/react@" in url
+        ]
+        assert (
+            xyflow_resources.count(
+                "https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom"
+            )
+            == 1
+        )
+        assert all(
+            "/@xyflow/react@12.11.6/" in url
+            or url.endswith("@xyflow/react@12.11.6?external=react,react-dom")
+            for url in xyflow_resources
+        )
+        unpkg_resources = [
+            url for url in external_resources if url.startswith("https://unpkg.com/")
+        ]
+        assert Counter(unpkg_resources) == Counter(
+            expected_scripts + [expected_stylesheets[-1]]
+        )
+
+        page.locator("button[aria-label='Open DAG']").click()
+        page.wait_for_selector(".react-flow__node[data-id='root']", timeout=SLOW_TIMEOUT)
+        assert page.locator(".react-flow__node:not([data-id^='group-'])").count() == 3
+        assert page.locator(".react-flow__edge").count() == 2
+        assert page.locator(".react-flow__node[data-id='root']").evaluate(
+            "element => getComputedStyle(element).position"
+        ) == "absolute"
+
+        viewport = page.locator(".react-flow__viewport")
+        fitted_transform = viewport.get_attribute("style")
+        page.locator(".react-flow__controls-zoomin").click()
+        page.wait_for_function(
+            """previous => document.querySelector('.react-flow__viewport')
+                ?.getAttribute('style') !== previous""",
+            arg=fitted_transform,
+            timeout=SLOW_TIMEOUT,
+        )
+        zoomed_transform = viewport.get_attribute("style")
+        assert zoomed_transform != fitted_transform
+        page.locator(".react-flow__controls-fitview").click()
+        page.wait_for_function(
+            """previous => document.querySelector('.react-flow__viewport')
+                ?.getAttribute('style') !== previous""",
+            arg=zoomed_transform,
+            timeout=SLOW_TIMEOUT,
+        )
+        assert viewport.get_attribute("style") != zoomed_transform
+
+        middle_node = page.locator(".react-flow__node[data-id='middle']")
+        middle_node.click()
+        page.wait_for_function(
+            """() => document.querySelector(
+                ".react-flow__node[data-id='middle']"
+            )?.classList.contains('selected')""",
+            timeout=SLOW_TIMEOUT,
+        )
+        middle_node.dblclick()
+        task_heading = page.locator(".split-view .detail-panel h1")
+        task_heading.wait_for(state="visible", timeout=SLOW_TIMEOUT)
+        assert task_heading.inner_text() == "middle"
+        page.locator(".split-view .metadata-grid").wait_for(
+            state="visible", timeout=SLOW_TIMEOUT
+        )
+        page.locator(".split-view .log-panel").wait_for(
+            state="visible", timeout=SLOW_TIMEOUT
+        )
+        page.wait_for_selector(".react-flow", state="detached", timeout=SLOW_TIMEOUT)
 
 # ---------------------------------------------------------------------------
 # 11. SETTINGS CRUD

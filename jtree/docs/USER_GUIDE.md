@@ -29,7 +29,13 @@ If that port is occupied, jtree tries the next 19 ports and logs the address it 
 
 jtree requires [uv](https://docs.astral.sh/uv/) (`brew install uv`). Its PEP 723 metadata asks uv for Python 3.12+ and the FastAPI, uvicorn, and Pydantic dependencies. The first launch may use the network while uv resolves and caches them; later launches reuse uv's shared cache. jtree does not create `~/.jtree_venv` or another tool-specific virtual environment.
 
-**Requirements:** uv and a modern web browser. The browser loads React, Babel Standalone, Tailwind CSS, Lucide Icons, and fonts from CDNs, so the UI needs network access unless those resources are already cached.
+**Requirements:** uv and a modern web browser. The browser loads React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map; Babel Standalone 8.0.5 for module-aware inline JSX; Tailwind CSS 4.3.3 through the exact-version `@tailwindcss/browser` package; Lucide Icons 1.46.0; and fonts from CDNs. The UI therefore needs network access unless those resources are already cached. Tailwind's custom design tokens and class-based dark mode are declared through its CSS-first configuration.
+
+The import map pins the direct top-level package versions, but CDN-generated
+transitive dependencies are not fully locked and runtime CDN delivery is not
+byte-immutable. Automated browser coverage uses current Playwright Chromium. The manual client floors
+for Tailwind 4 are Chrome 111, Safari 16.4, and Firefox 128; Safari and Firefox
+are not exercised by the automated browser suite.
 
 ### Welcome Screen
 

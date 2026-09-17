@@ -318,7 +318,7 @@ The orchestrator currently supports two CLI families:
 
 Codex stages use:
 
-- `MODEL_NAME`
+- `MODEL_NAME` (default: `gpt-5.6-sol`)
 - `SERVICE_TIER`
 - per-stage reasoning effort variables such as `PLANNER_EFFORT`, `VALIDATOR_EFFORT`, `AUDIT_EFFORT`
 - `PROFILE_STAGES`

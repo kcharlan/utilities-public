@@ -18,6 +18,7 @@ Requires:
 import json
 import os
 import re
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -39,15 +40,74 @@ except ImportError:
 pytestmark = pytest.mark.e2e
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = PROJECT_ROOT.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from tools.testkit import (
+    REACT_19_IMPORTS,
+    assert_react_19_import_map,
+    assert_react_esm_graph,
+    capture_browser_errors,
+    guard_browser_errors,
+    is_react_package_resource,
+)
+
 LAUNCHER = PROJECT_ROOT / "launchmaster"
+README = PROJECT_ROOT / "README.md"
+
+
+@pytest.fixture(autouse=True)
+def fail_on_unexpected_browser_errors(request):
+    """Make every Playwright page test reject uncaught browser errors."""
+    if "page" not in request.fixturenames:
+        yield
+        return
+
+    page = request.getfixturevalue("page")
+    with guard_browser_errors(page):
+        yield
 
 
 def test_supported_cdn_versions_are_pinned():
     source = LAUNCHER.read_text()
-    assert "react@18.3.1" in source
-    assert "react-dom@18.3.1" in source
-    assert "@babel/standalone@7.29.8" in source
+    import_map_match = re.search(
+        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
+        source,
+        re.DOTALL,
+    )
+    assert import_map_match is not None
+    import_map = json.loads(import_map_match.group(1))
+    assert_react_19_import_map(import_map["imports"])
+    assert "react@18.3.1" not in source
+    assert "react-dom@18.3.1" not in source
+    assert "@babel/standalone@8.0.5" in source
     assert "lucide@1.46.0" in source
+    assert (
+        '<script type="text/babel" data-type="module" '
+        'data-presets="env,react">'
+    ) in source
+    assert "import * as React from 'react';" in source
+    assert "import * as ReactDOM from 'react-dom';" in source
+    assert "import * as ReactDOMClient from 'react-dom/client';" in source
+    assert "ReactDOMClient.createRoot(" in source
+
+    readme = " ".join(README.read_text().split())
+    for dependency in (
+        "React 19.3.0",
+        "ReactDOM 19.3.0",
+        "Babel Standalone 8.0.5",
+        "react-is 19.3.0",
+    ):
+        assert dependency in readme
+    assert "exact-version import map" in readme
+    assert "module-aware inline JSX" in readme
+    assert "not byte-immutable" in readme
+    assert "direct top-level package versions" in readme
+    assert (
+        "CDN-generated transitive dependencies are not fully locked"
+        in readme
+    )
+    assert "current Playwright Chromium" in readme
 
 
 def _put_settings(server, updates):
@@ -494,22 +554,338 @@ class TestFailedPanelActions:
 # 1. Page Load & CDN Dependencies
 # ═══════════════════════════════════════════════════════════════════════════════
 
+SYNTHETIC_REACT_GRAPH = [
+    "https://esm.sh/react@19.3.0",
+    "https://esm.sh/react@19.3.0/jsx-runtime",
+    "https://esm.sh/react-dom@19.3.0?external=react",
+    "https://esm.sh/react-dom@19.3.0/client?external=react",
+    "https://esm.sh/react@19.3.0/generated/opaque/react-entry",
+    "https://esm.sh/react-dom@19.3.0/arbitrary/internal/client-entry",
+]
+
+
+class FakePage:
+    def __init__(self):
+        self.listeners = {"pageerror": [], "console": []}
+
+    def on(self, event_name, listener):
+        self.listeners[event_name].append(listener)
+
+    def remove_listener(self, event_name, listener):
+        self.listeners[event_name].remove(listener)
+
+    def emit(self, event_name, payload):
+        for listener in tuple(self.listeners[event_name]):
+            listener(payload)
+
+
+class FakeConsoleMessage:
+    def __init__(self, message_type, text):
+        self.type = message_type
+        self.text = text
+
+
+def test_react_import_map_validation_is_order_insensitive():
+    source = dict(reversed(tuple(REACT_19_IMPORTS)))
+    assert_react_19_import_map(source)
+
+
+def test_browser_error_guard_detaches_listeners_after_success():
+    page = FakePage()
+    existing_listener = lambda _payload: None
+    page.on("console", existing_listener)
+    with guard_browser_errors(page):
+        assert len(page.listeners["pageerror"]) == 1
+        assert len(page.listeners["console"]) == 2
+    assert page.listeners == {
+        "pageerror": [],
+        "console": [existing_listener],
+    }
+
+
+def test_browser_error_guard_reports_browser_errors():
+    page = FakePage()
+    with pytest.raises(AssertionError, match="Unexpected browser errors"):
+        with guard_browser_errors(page):
+            page.emit("pageerror", RuntimeError("browser failed"))
+    assert page.listeners == {"pageerror": [], "console": []}
+
+
+def test_browser_error_guard_preserves_body_exception_and_traceback():
+    page = FakePage()
+    body_error = RuntimeError("body failed")
+
+    def raise_body_error():
+        raise body_error
+
+    with pytest.raises(RuntimeError) as captured:
+        with guard_browser_errors(page):
+            raise_body_error()
+    assert captured.value is body_error
+    traceback_names = []
+    traceback = captured.tb
+    while traceback is not None:
+        traceback_names.append(traceback.tb_frame.f_code.co_name)
+        traceback = traceback.tb_next
+    assert "raise_body_error" in traceback_names
+    assert page.listeners == {"pageerror": [], "console": []}
+
+
+def test_browser_error_guard_preserves_body_and_browser_failures():
+    page = FakePage()
+    body_error = RuntimeError("body failed")
+    with pytest.raises(ExceptionGroup) as captured:
+        with guard_browser_errors(page):
+            page.emit("console", FakeConsoleMessage("error", "browser failed"))
+            raise body_error
+    assert captured.value.exceptions[0] is body_error
+    assert isinstance(captured.value.exceptions[1], AssertionError)
+    assert page.listeners == {"pageerror": [], "console": []}
+
+
+def test_browser_error_guard_can_reuse_page_without_listener_leaks():
+    page = FakePage()
+    for _ in range(2):
+        with guard_browser_errors(page):
+            page.emit("console", FakeConsoleMessage("log", "allowed"))
+        assert page.listeners == {"pageerror": [], "console": []}
+
+
+def test_browser_error_guard_can_reuse_real_page_without_listener_leaks(browser):
+    page = browser.new_page()
+    try:
+        with guard_browser_errors(page, expected=("__first_guard__",)) as first:
+            page.evaluate("console.error('__first_guard__')")
+        page.evaluate("console.error('__between_guards__')")
+        assert first == ["__first_guard__"]
+
+        with guard_browser_errors(page, expected=("__second_guard__",)) as second:
+            page.evaluate("console.error('__second_guard__')")
+        assert second == ["__second_guard__"]
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize(
+    "resource_url",
+    (
+        "https://esm.sh/react",
+        "https://esm.sh/react/jsx-runtime",
+        "https://esm.sh/react@19.3.0",
+        "https://esm.sh/react-dom",
+        "https://esm.sh/react-dom@19.3.0/client?external=react",
+        "https://esm.sh/react-is",
+        "https://esm.sh/react-is@19.3.0?external=react",
+    ),
+)
+def test_react_resource_matcher_accepts_bare_and_versioned_packages(resource_url):
+    assert is_react_package_resource(resource_url)
+
+
+@pytest.mark.parametrize(
+    ("index", "old", "new"),
+    (
+        (0, "react@19.3.0", "react"),
+        (0, "19.3.0", "19.2.0"),
+        (0, SYNTHETIC_REACT_GRAPH[0], f"{SYNTHETIC_REACT_GRAPH[0]}?dev"),
+        (0, "https://esm.sh", "https://cdn.example.invalid"),
+        (4, "19.3.0", "19.2.0"),
+    ),
+    ids=(
+        "bare-root",
+        "wrong-version",
+        "wrong-query",
+        "wrong-origin",
+        "wrong-generated-version",
+    ),
+)
+def test_react_graph_validator_rejects_contract_mutations(index, old, new):
+    mutated = list(SYNTHETIC_REACT_GRAPH)
+    mutated[index] = mutated[index].replace(old, new)
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(mutated)
+
+
+def test_react_graph_validator_rejects_duplicate_resources():
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(
+            [*SYNTHETIC_REACT_GRAPH, SYNTHETIC_REACT_GRAPH[0]]
+        )
+
+
+def test_react_graph_validator_allows_no_generated_react_or_react_dom_resources():
+    assert_react_esm_graph(
+        SYNTHETIC_REACT_GRAPH[:4],
+        react_dom_wrapper_policy="required",
+    )
+
+
+@pytest.mark.parametrize("query_suffix", ("?dev", "?"), ids=("value", "bare"))
+def test_react_graph_validator_rejects_query_bearing_generated_resource(
+    query_suffix,
+):
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(
+            [
+                *SYNTHETIC_REACT_GRAPH,
+                f"https://esm.sh/react@19.3.0/opaque/generated{query_suffix}",
+            ]
+        )
+
+
+def test_react_graph_validator_rejects_trailing_query_on_direct_wrapper():
+    resources = list(SYNTHETIC_REACT_GRAPH)
+    resources[0] = f"{resources[0]}?"
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(resources)
+
+
+def test_react_graph_validator_accepts_matching_react_is_wrapper_and_resource():
+    assert_react_esm_graph(
+        [
+            *SYNTHETIC_REACT_GRAPH,
+            "https://esm.sh/react-is@19.3.0?external=react",
+            "https://esm.sh/react-is@19.3.0/opaque/generated",
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "react_is_resource",
+    (
+        "https://esm.sh/react-is@19.3.0?external=react",
+        "https://esm.sh/react-is@19.3.0/opaque/generated",
+    ),
+    ids=("wrapper-without-generated", "generated-without-wrapper"),
+)
+def test_react_graph_validator_rejects_unpaired_react_is_resources(
+    react_is_resource,
+):
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph([*SYNTHETIC_REACT_GRAPH, react_is_resource])
+
+
+@pytest.mark.parametrize(
+    ("policy", "include_wrapper"),
+    (
+        ("required", True),
+        ("forbidden", False),
+        ("optional", True),
+        ("optional", False),
+    ),
+)
+def test_react_graph_validator_honors_react_dom_wrapper_policy(
+    policy,
+    include_wrapper,
+):
+    resources = [
+        url
+        for url in SYNTHETIC_REACT_GRAPH
+        if include_wrapper or url != "https://esm.sh/react-dom@19.3.0?external=react"
+    ]
+    assert_react_esm_graph(resources, react_dom_wrapper_policy=policy)
+
+
+def test_react_graph_validator_rejects_wrong_react_dom_wrapper_policy():
+    without_wrapper = [
+        url
+        for url in SYNTHETIC_REACT_GRAPH
+        if url != "https://esm.sh/react-dom@19.3.0?external=react"
+    ]
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(
+            without_wrapper,
+            react_dom_wrapper_policy="required",
+        )
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(
+            SYNTHETIC_REACT_GRAPH,
+            react_dom_wrapper_policy="forbidden",
+        )
+
+
+def test_react_graph_validator_accepts_arbitrary_generated_route_layouts():
+    assert_react_esm_graph(
+        SYNTHETIC_REACT_GRAPH,
+        react_dom_wrapper_policy="required",
+    )
+
+
 class TestPageLoad:
+    def test_browser_error_capture_observes_console_and_page_errors(
+        self, browser
+    ):
+        unguarded_page = browser.new_page()
+        try:
+            errors = capture_browser_errors(unguarded_page)
+            unguarded_page.evaluate(
+                "console.error('__console_error_capture__')"
+            )
+            with unguarded_page.expect_event("pageerror"):
+                unguarded_page.evaluate(
+                    "setTimeout(() => { "
+                    "throw new Error('__page_error_capture__'); "
+                    "}, 0)"
+                )
+
+            assert errors == [
+                "__console_error_capture__",
+                "__page_error_capture__",
+            ]
+        finally:
+            unguarded_page.close()
+
+    def test_react_esm_resource_graph_is_single_version(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        expect(page.locator(".topbar-brand")).to_be_visible()
+
+        assert page.locator("script[src]").evaluate_all(
+            "elements => elements.map(element => element.src)"
+        ) == [
+            "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
+            "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+        ]
+
+        resource_urls = page.evaluate(
+            """() => performance.getEntriesByType('resource')
+                .map(entry => entry.name)"""
+        )
+        dependency_resources = [
+            url for url in resource_urls if is_react_package_resource(url)
+        ]
+        assert_react_esm_graph(
+            dependency_resources,
+            react_dom_wrapper_policy="required",
+        )
+
+        for bad_resource in (
+            "https://esm.sh/react",
+            "https://esm.sh/react-dom",
+            "https://esm.sh/react-is",
+            "https://esm.sh/preact@19.3.0",
+            "https://esm.sh/react@19.2.0",
+            "https://esm.sh/react@19.3.0?dev",
+            "https://cdn.example.invalid/react@19.3.0",
+            dependency_resources[0],
+        ):
+            mutated_resources = [*resource_urls, bad_resource]
+            discovered_resources = [
+                url
+                for url in mutated_resources
+                if is_react_package_resource(url)
+            ]
+            if "preact" in bad_resource:
+                discovered_resources.append(bad_resource)
+            with pytest.raises(AssertionError):
+                assert_react_esm_graph(
+                    discovered_resources,
+                    react_dom_wrapper_policy="required",
+                )
+
     def test_page_loads_without_js_errors(self, server, page):
         """SPA loads without uncaught exceptions or console errors."""
-        errors = []
-        page.on("pageerror", lambda err: errors.append(str(err)))
-        page.on(
-            "console",
-            lambda message: errors.append(message.text)
-            if message.type == "error"
-            else None,
-        )
         page.goto(server, wait_until="networkidle")
-        page.evaluate("console.error('__console_capture_probe__')")
-        assert errors == ["__console_capture_probe__"]
-        errors.clear()
-        assert not errors, f"JavaScript errors on page load: {errors}"
+        expect(page.locator(".topbar-brand")).to_be_visible()
 
     def test_title_is_launchmaster(self, server, page):
         page.goto(server, wait_until="networkidle")

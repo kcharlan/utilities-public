@@ -2629,12 +2629,20 @@ HTML_TEMPLATE = """\
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
-  <!-- CDN dependencies (pinned versions per spec §5.1) -->
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.29.8/babel.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.15.4/Recharts.min.js"></script>
+  <!-- CDN dependencies (exact direct versions; CDN-generated ESM is network-resolved) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@19.3.0",
+      "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+      "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+      "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+      "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+      "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+    }
+  }
+  </script>
+  <script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -2883,7 +2891,11 @@ HTML_TEMPLATE = """\
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel">
+  <script type="text/babel" data-type="module" data-presets="env,react">
+    import * as React from 'react';
+    import * as ReactDOMClient from 'react-dom/client';
+    import * as Recharts from 'https://esm.sh/recharts@3.10.1?external=react,react-dom,react-is';
+
     const { useState, useEffect, useRef, useLayoutEffect, useMemo } = React;
 
     // ── ErrorBoundary ────────────────────────────────────────────────────────
@@ -4222,6 +4234,11 @@ HTML_TEMPLATE = """\
       data.forEach(d => { map[d.date] = d; });
       const result = [];
       const today = new Date();
+      const localDateKey = d => [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, '0'),
+        String(d.getDate()).padStart(2, '0'),
+      ].join('-');
       const limit = days >= 9999 ? (data.length > 0 ? null : 90) : days;
       if (limit === null) {
         // "All" mode: just return sorted data without gap filling beyond first date
@@ -4231,7 +4248,7 @@ HTML_TEMPLATE = """\
         const start = new Date(earliest + 'T00:00:00');
         const end = new Date();
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-          const dateStr = d.toISOString().slice(0, 10);
+          const dateStr = localDateKey(d);
           result.push(map[dateStr] || { date: dateStr, commits: 0, insertions: 0, deletions: 0, files_changed: 0 });
         }
         return result;
@@ -4239,7 +4256,7 @@ HTML_TEMPLATE = """\
       for (let i = limit - 1; i >= 0; i--) {
         const d = new Date(today);
         d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().slice(0, 10);
+        const dateStr = localDateKey(d);
         result.push(map[dateStr] || { date: dateStr, commits: 0, insertions: 0, deletions: 0, files_changed: 0 });
       }
       return result;
@@ -4270,7 +4287,7 @@ HTML_TEMPLATE = """\
         const ins = payload.find(p => p.dataKey === 'insertions');
         const del = payload.find(p => p.dataKey === 'deletions');
         const net = payload.find(p => p.dataKey === 'net');
-        const cmt = payload.find(p => p.dataKey === 'commits');
+        const commits = payload[0]?.payload?.commits ?? 0;
         const rawDel = del ? Math.abs(del.value) : 0;
         const netVal = net ? net.value : 0;
         return (
@@ -4284,7 +4301,7 @@ HTML_TEMPLATE = """\
             <div style={{ color: 'var(--status-green)' }}>+{ins ? ins.value : 0} insertions</div>
             <div style={{ color: 'var(--status-red)' }}>-{rawDel} deletions</div>
             <div style={{ color: 'var(--accent-blue)' }}>net {netVal >= 0 ? '+' : ''}{netVal}</div>
-            <div>{cmt ? cmt.value : 0} commits</div>
+            <div>{commits} commits</div>
           </div>
         );
       }
@@ -5773,7 +5790,7 @@ HTML_TEMPLATE = """\
     }
 
     // ── Mount ────────────────────────────────────────────────────────────────
-    ReactDOM.createRoot(document.getElementById('root')).render(
+    ReactDOMClient.createRoot(document.getElementById('root')).render(
       <ErrorBoundary>
         <App />
       </ErrorBoundary>

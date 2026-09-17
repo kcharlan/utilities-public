@@ -35,7 +35,7 @@ Typical operator prerequisites:
 
 ## Worker Model
 
-The default worker model is `gpt-5.4`. Override with the `CODEX_WORKER_MODEL` environment variable:
+The default worker model is `gpt-5.6-sol`. Override with the `CODEX_WORKER_MODEL` environment variable:
 
 ```bash
 CODEX_WORKER_MODEL=o3 ./switchyard start --session demo --pack codex-hybrid

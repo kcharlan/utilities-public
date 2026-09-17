@@ -879,46 +879,45 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>jtree - {{FILE_NAME}}</title>
-<script src="https://cdn.tailwindcss.com/3.4.17"></script>
-<script>
-tailwind.config = {
-    darkMode: 'class',
-    theme: {
-        extend: {
-            colors: {
-                blueprint: {
-                    bg: '#0a1628',
-                    card: '#0f1f3a',
-                    cardLight: '#f8fafc',
-                    border: '#1a3a5c',
-                    grid: '#0e2240',
-                    text: '#c8d6e5',
-                    textLight: '#1e293b',
-                },
-                nodeType: {
-                    object: '#4fc3f7',
-                    array: '#ab47bc',
-                    string: '#66bb6a',
-                    number: '#ffa726',
-                    boolean: '#ef5350',
-                    null: '#78909c',
-                }
-            },
-            fontFamily: {
-                sans: ['DM Sans', 'sans-serif'],
-                mono: ['JetBrains Mono', 'monospace'],
-            }
-        }
-    }
-};
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@19.3.0",
+    "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+    "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+    "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+    "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+    "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+  }
+}
 </script>
-<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
 <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style type="text/tailwindcss">
+    @custom-variant dark (&:where(.dark, .dark *));
+
+    @theme {
+        --color-blueprint-bg: #0a1628;
+        --color-blueprint-card: #0f1f3a;
+        --color-blueprint-card-light: #f8fafc;
+        --color-blueprint-border: #1a3a5c;
+        --color-blueprint-grid: #0e2240;
+        --color-blueprint-text: #c8d6e5;
+        --color-blueprint-text-light: #1e293b;
+        --color-node-type-object: #4fc3f7;
+        --color-node-type-array: #ab47bc;
+        --color-node-type-string: #66bb6a;
+        --color-node-type-number: #ffa726;
+        --color-node-type-boolean: #ef5350;
+        --color-node-type-null: #78909c;
+        --font-sans: 'DM Sans', sans-serif;
+        --font-mono: 'JetBrains Mono', monospace;
+    }
+</style>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'DM Sans', sans-serif; overflow: hidden; }
@@ -1285,7 +1284,10 @@ tailwind.config = {
 <body>
 <div id="root"></div>
 
-<script type="text/babel">
+<script type="text/babel" data-type="module" data-presets="env,react">
+import * as React from 'react';
+import * as ReactDOMClient from 'react-dom/client';
+
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 // --- Utilities ---
@@ -2914,60 +2916,6 @@ const App = () => {
         setContextMenu({ x: e.clientX, y: e.clientY, node });
     }, []);
 
-    // Context menu actions
-    const handleContextAction = useCallback((action, node) => {
-        switch (action) {
-            case 'toggleExpand':
-                toggleExpand(node.path);
-                break;
-            case 'expandAll':
-                expandAll(node.path);
-                break;
-            case 'collapseAll':
-                collapseAll(node.path);
-                break;
-            case 'addChild':
-                setModal({ type: 'addChild', node });
-                break;
-            case 'delete':
-                if (node.childCount > 0) {
-                    setModal({ type: 'delete', node });
-                } else {
-                    handleDelete(node.path);
-                }
-                break;
-            case 'rename':
-                setModal({ type: 'rename', node });
-                break;
-            case 'editValue':
-                setModal({ type: 'edit', node });
-                break;
-            case 'moveUp': {
-                const parts = node.path.split('.');
-                const idx = parseInt(parts.pop(), 10);
-                const parentPath = parts.join('.');
-                if (idx > 0) handleMoveChild(parentPath, idx, idx - 1);
-                break;
-            }
-            case 'moveDown': {
-                const parts = node.path.split('.');
-                const idx = parseInt(parts.pop(), 10);
-                const parentPath = parts.join('.');
-                handleMoveChild(parentPath, idx, idx + 1);
-                break;
-            }
-            case 'moveTo':
-                setModal({ type: 'moveTo', node });
-                break;
-            case 'copyNode':
-                handleCopy(node.path);
-                break;
-            case 'paste':
-                handlePaste(node.path);
-                break;
-        }
-    }, [toggleExpand, expandAll, collapseAll, handleMoveChild, handleCopy, handlePaste]);
-
     // Mutations
     const handleEditSave = useCallback(async (path, value) => {
         try {
@@ -3200,6 +3148,70 @@ const App = () => {
             setToast(`Error: ${e.message}`);
         }
     }, [clipboard, refreshTree]);
+
+    // Context menu actions depend on the mutation callbacks above. Keep this
+    // declaration after them so native module scoping never reads a callback
+    // while its const binding is still in the temporal dead zone.
+    const handleContextAction = useCallback((action, node) => {
+        switch (action) {
+            case 'toggleExpand':
+                toggleExpand(node.path);
+                break;
+            case 'expandAll':
+                expandAll(node.path);
+                break;
+            case 'collapseAll':
+                collapseAll(node.path);
+                break;
+            case 'addChild':
+                setModal({ type: 'addChild', node });
+                break;
+            case 'delete':
+                if (node.childCount > 0) {
+                    setModal({ type: 'delete', node });
+                } else {
+                    handleDelete(node.path);
+                }
+                break;
+            case 'rename':
+                setModal({ type: 'rename', node });
+                break;
+            case 'editValue':
+                setModal({ type: 'edit', node });
+                break;
+            case 'moveUp': {
+                const parts = node.path.split('.');
+                const idx = parseInt(parts.pop(), 10);
+                const parentPath = parts.join('.');
+                if (idx > 0) handleMoveChild(parentPath, idx, idx - 1);
+                break;
+            }
+            case 'moveDown': {
+                const parts = node.path.split('.');
+                const idx = parseInt(parts.pop(), 10);
+                const parentPath = parts.join('.');
+                handleMoveChild(parentPath, idx, idx + 1);
+                break;
+            }
+            case 'moveTo':
+                setModal({ type: 'moveTo', node });
+                break;
+            case 'copyNode':
+                handleCopy(node.path);
+                break;
+            case 'paste':
+                handlePaste(node.path);
+                break;
+        }
+    }, [
+        toggleExpand,
+        expandAll,
+        collapseAll,
+        handleDelete,
+        handleMoveChild,
+        handleCopy,
+        handlePaste,
+    ]);
 
     // Export current view
     const [showExportMenu, setShowExportMenu] = useState(false);
@@ -3511,7 +3523,7 @@ const App = () => {
                      zIndex: 50,
                  }}>
                 <div className="flex items-center gap-3">
-                    <span className="text-base font-semibold" style={{color: '#4fc3f7'}}>jtree</span>
+                    <span className="text-base font-semibold text-node-type-object">jtree</span>
                     <span className="text-xs opacity-40 font-mono">{status?.file || status?.fileName}</span>
                     {(status?.file || status?.fileName) && (
                         <button
@@ -3605,7 +3617,7 @@ const App = () => {
             {noFileLoaded ? (
                 <div className="flex-1 blueprint-grid flex items-center justify-center">
                     <div className="text-center" style={{maxWidth: 400}}>
-                        <div className="text-4xl font-bold mb-3" style={{color: '#4fc3f7'}}>jtree</div>
+                        <div className="text-4xl font-bold mb-3 text-node-type-object">jtree</div>
                         <p className="text-sm opacity-50 mb-6">Interactive JSON Viewer & Editor</p>
                         <button
                             className="btn btn-primary flex items-center gap-2 mx-auto text-base px-6 py-3"
@@ -3740,7 +3752,7 @@ const App = () => {
     );
 };
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const root = ReactDOMClient.createRoot(document.getElementById('root'));
 root.render(
     <ErrorBoundary>
         <App />

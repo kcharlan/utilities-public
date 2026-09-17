@@ -289,11 +289,13 @@ def test_builtin_codex_and_codex_hybrid_pack_manifests_capture_runtime_split(
 
     assert strict.name == "codex"
     assert strict.phases.planning.runtime == "codex"
-    assert strict.phases.planning.model == "gpt-5.4"
+    assert strict.phases.planning.model == "gpt-5.6-sol"
     assert strict.phases.planning.reasoning_effort == "xhigh"
     assert strict.phases.resolution.runtime == "codex"
+    assert strict.phases.resolution.model == "gpt-5.6-sol"
     assert strict.phases.execution.reasoning_effort == "high"
     assert strict.auto_fix.runtime == "codex"
+    assert strict.auto_fix.model == "gpt-5.6-sol"
     assert strict.auto_fix.reasoning_effort == "high"
 
     assert hybrid.name == "codex-hybrid"
@@ -301,3 +303,27 @@ def test_builtin_codex_and_codex_hybrid_pack_manifests_capture_runtime_split(
     assert hybrid.phases.resolution.runtime == "claude"
     assert hybrid.phases.execution.reasoning_effort == "high"
     assert hybrid.auto_fix.runtime == "claude"
+
+
+def test_codex_cli_scripts_default_to_sol_and_preserve_operator_overrides(
+    repo_root: Path,
+) -> None:
+    strict_execute = (
+        repo_root / "cognitive_switchyard" / "builtin_packs" / "codex" / "scripts" / "execute"
+    ).read_text()
+    hybrid_execute = (
+        repo_root
+        / "cognitive_switchyard"
+        / "builtin_packs"
+        / "codex-hybrid"
+        / "scripts"
+        / "execute"
+    ).read_text()
+    packet_loop = (repo_root / "scripts" / "codex_packet_loop.zsh").read_text()
+
+    for execute_script in (strict_execute, hybrid_execute):
+        assert 'MODEL="${CODEX_WORKER_MODEL:-gpt-5.6-sol}"' in execute_script
+        assert '-m "$MODEL"' in execute_script
+
+    assert 'MODEL_NAME="${MODEL_NAME:-gpt-5.6-sol}"' in packet_loop
+    assert '-m "$MODEL_NAME"' in packet_loop

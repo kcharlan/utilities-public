@@ -6,11 +6,11 @@ The bundled `codex` pack is the strict OpenAI Codex CLI runner pack shipped with
 
 | Phase | Details |
 |-------|---------|
-| planning | agent executor, Codex runtime, `gpt-5.4`, `xhigh`, max 3 concurrent planners |
-| resolution | agent executor, Codex runtime, `gpt-5.4`, `xhigh` |
+| planning | agent executor, Codex runtime, `gpt-5.6-sol`, `xhigh`, max 3 concurrent planners |
+| resolution | agent executor, Codex runtime, `gpt-5.6-sol`, `xhigh` |
 | execution | shell executor, max 3 workers (Codex CLI, `high` reasoning effort) |
 | verification | enabled, interval 4, command: `scripts/verify` |
-| auto-fix | enabled, max 2 attempts, Codex runtime, `gpt-5.4`, `high` |
+| auto-fix | enabled, max 2 attempts, Codex runtime, `gpt-5.6-sol`, `high` |
 | isolation | `git-worktree` (setup: `scripts/isolate_start`, teardown: `scripts/isolate_end`) |
 
 Timeouts: task_idle 300s, task_max unlimited, session_max 14400s (4 hours).
@@ -33,7 +33,7 @@ Typical operator prerequisites:
 
 ## Worker Model
 
-The default worker model is `gpt-5.4`. Override with the `CODEX_WORKER_MODEL` environment variable:
+The default worker model is `gpt-5.6-sol`. Override with the `CODEX_WORKER_MODEL` environment variable:
 
 ```bash
 CODEX_WORKER_MODEL=o3 ./switchyard start --session demo --pack codex

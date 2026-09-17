@@ -1,20 +1,150 @@
 from __future__ import annotations
 
+import json
+import re
+from html.parser import HTMLParser
+from pathlib import Path
 from textwrap import dedent
+from urllib.parse import urlparse
 
 from cognitive_switchyard.html_template import render_app_html
+from tools.testkit import assert_react_19_import_map
 
 
-def test_render_app_html_pins_required_react18_tailwind_lucide_and_reactflow_cdns() -> None:
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class _DependencyCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.script_sources: list[str] = []
+        self.stylesheet_hrefs: list[str] = []
+        self.inline_scripts: list[str] = []
+        self._inside_inline_script = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "script":
+            source = attributes.get("src")
+            if source:
+                self.script_sources.append(source)
+            else:
+                self._inside_inline_script = True
+        elif tag == "link" and "stylesheet" in (attributes.get("rel") or "").split():
+            href = attributes.get("href")
+            if href:
+                self.stylesheet_hrefs.append(href)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script":
+            self._inside_inline_script = False
+
+    def handle_data(self, data: str) -> None:
+        if self._inside_inline_script:
+            self.inline_scripts.append(data)
+
+
+def _normalized_external_url(url: str) -> tuple[str, str, str]:
+    parsed = urlparse(url)
+    return parsed.scheme.lower(), parsed.netloc.lower(), parsed.path
+
+
+def test_render_app_html_has_exact_external_dependency_inventory_without_tailwind() -> None:
+    html = render_app_html({"ok": True})
+    dependencies = _DependencyCollector()
+    dependencies.feed(html)
+
+    assert dependencies.script_sources == [
+        "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
+        "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+    ]
+    assert dependencies.stylesheet_hrefs == [
+        "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
+        "https://unpkg.com/@xyflow/react@12.11.6/dist/style.css",
+    ]
+
+    external_urls = dependencies.script_sources + dependencies.stylesheet_hrefs
+    assert all("/reactflow@" not in url for url in external_urls)
+    assert all(
+        "tailwind" not in "".join(_normalized_external_url(url)).lower()
+        for url in external_urls
+    )
+
+    executable_javascript = "\n".join(dependencies.inline_scripts)
+    executable_javascript = re.sub(r"/\*.*?\*/", "", executable_javascript, flags=re.DOTALL)
+    executable_javascript = re.sub(r"//[^\n]*", "", executable_javascript)
+    assert re.search(
+        r"\b(?:window\s*\.\s*)?tailwind\s*\.\s*config\s*=",
+        executable_javascript,
+        flags=re.IGNORECASE,
+    ) is None
+
+    import_map_match = re.search(
+        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
+        html,
+        re.DOTALL,
+    )
+    assert import_map_match is not None
+    assert_react_19_import_map(json.loads(import_map_match.group(1))["imports"])
+    assert "react@18.3.1" not in html
+    assert "react-dom@18.3.1" not in html
+    assert "@xyflow/react@12.11.6/dist/umd" not in html
+
+
+def test_render_app_html_uses_react_flow_v12_named_esm_exports() -> None:
     html = render_app_html({"ok": True})
 
-    assert "https://unpkg.com/react@18.3.1/umd/react.development.js" in html
-    assert "https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" in html
-    assert "https://cdn.tailwindcss.com/3.4.17" in html
-    assert "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js" in html
-    assert "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js" in html
-    assert "https://unpkg.com/reactflow@11.11.4/dist/umd/index.js" in html
-    assert "https://unpkg.com/reactflow@11.11.4/dist/style.css" in html
+    assert (
+        'from "https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom";'
+        in html
+    )
+    assert "ReactFlow as ReactFlowComponent" in html
+    assert "ReactFlowLib" not in html
+    assert "window.ReactFlow" not in html
+
+
+def test_render_app_html_uses_module_aware_babel_and_mapped_react_bindings() -> None:
+    html = render_app_html({"ok": True})
+
+    assert (
+        '<script type="text/babel" data-type="module" '
+        'data-presets="env,react">'
+    ) in html
+    assert "import * as React from 'react';" in html
+    assert "import * as ReactDOMClient from 'react-dom/client';" in html
+    assert "ReactDOMClient.createRoot(" in html
+    assert "window.jsxRuntime" not in html
+    assert "createReactElementFromJsxRuntime" not in html
+
+
+def test_frontend_dependency_documentation_matches_esm_runtime() -> None:
+    readme = " ".join((PROJECT_ROOT / "README.md").read_text().split())
+    design = " ".join(
+        (PROJECT_ROOT / "docs" / "cognitive_switchyard_design.md")
+        .read_text()
+        .split()
+    )
+
+    for dependency in (
+        "React 19.3.0",
+        "ReactDOM 19.3.0",
+        "react-is 19.3.0",
+        "Babel Standalone 8.0.5",
+        "React Flow 12.11.6",
+    ):
+        assert dependency in readme
+        assert dependency in design
+    for contract in (
+        "exact-version import map",
+        "module-aware inline JSX",
+        "direct top-level package versions",
+        "CDN-generated transitive dependencies are not fully locked",
+        "not byte-immutable",
+        "current Playwright Chromium",
+    ):
+        assert contract in readme
+    assert "React 18 SPA" not in design
+    assert "pinned to React 18" not in design
 
 
 def test_render_app_html_includes_required_google_fonts_import_and_design_token_block() -> None:

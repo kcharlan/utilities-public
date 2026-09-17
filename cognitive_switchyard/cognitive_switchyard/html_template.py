@@ -105,7 +105,7 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
             <link rel="preconnect" href="https://fonts.googleapis.com">
             <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
             <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-            <link rel="stylesheet" href="https://unpkg.com/reactflow@11.11.4/dist/style.css">
+            <link rel="stylesheet" href="https://unpkg.com/@xyflow/react@12.11.6/dist/style.css">
             <style>
               __DESIGN_TOKENS_BLOCK__
 
@@ -113,9 +113,27 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                 box-sizing: border-box;
               }
 
+              html {
+                line-height: 1.5;
+              }
+
               html, body {
                 margin: 0;
                 min-height: 100%;
+              }
+
+              h1, h2, h3, h4, h5, h6, p {
+                margin: 0;
+              }
+
+              h1, h2, h3, h4, h5, h6 {
+                font-size: inherit;
+                font-weight: inherit;
+              }
+
+              svg {
+                display: block;
+                vertical-align: middle;
               }
 
               body {
@@ -942,16 +960,35 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
           <body>
             <div id="switchyard-app"></div>
             <script id="switchyard-bootstrap" type="application/json">__BOOTSTRAP_JSON__</script>
-            <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
-            <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
-            <script src="https://cdn.tailwindcss.com/3.4.17"></script>
-            <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
+            <script type="importmap">
+              {
+                "imports": {
+                  "react": "https://esm.sh/react@19.3.0",
+                  "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+                  "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+                  "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+                  "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+                  "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+                }
+              }
+            </script>
+            <script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
             <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
-            <script src="https://unpkg.com/reactflow@11.11.4/dist/umd/index.js"></script>
-            <script type="text/babel" data-presets="env,react">
+            <script type="text/babel" data-type="module" data-presets="env,react">
+              import * as React from 'react';
+              import * as ReactDOMClient from 'react-dom/client';
+              import {
+                Background,
+                Controls,
+                MiniMap,
+                ReactFlow as ReactFlowComponent,
+                ReactFlowProvider,
+                applyEdgeChanges,
+                applyNodeChanges,
+              } from "https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom";
+
               const bootstrap = JSON.parse(document.getElementById("switchyard-bootstrap").textContent);
               const { useEffect, useMemo, useRef, useState } = React;
-              const ReactFlowLib = window.ReactFlow || null;
               const OPERABLE_STATUSES = new Set(["created", "idle", "running", "paused", "planning", "resolving", "verifying", "auto_fixing"]);
               const ACTIVE_STATUSES = new Set(["running", "idle", "paused", "planning", "resolving", "verifying", "auto_fixing"]);
               const STATUS_COLORS = {
@@ -3985,12 +4022,6 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
               }
 
               function DagView({ dag, onBack, onOpenTask }) {
-                const ReactFlowComponent = ReactFlowLib?.default;
-                const ReactFlowProvider = ReactFlowLib?.ReactFlowProvider;
-                const MiniMap = ReactFlowLib?.MiniMap;
-                const Controls = ReactFlowLib?.Controls;
-                const Background = ReactFlowLib?.Background;
-
                 const tasks = dag?.tasks || [];
                 const groups = dag?.groups || [];
 
@@ -4157,6 +4188,9 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                   }))
                 ));
                 const allNodes = [...groupNodes, ...groupLabelNodes, ...graphNodes];
+                const allEdges = [...dependsEdges, ...antiAffinityEdges];
+                const [flowNodes, setFlowNodes] = useState(allNodes);
+                const [flowEdges, setFlowEdges] = useState(allEdges);
                 return (
                   <div className="dag-shell">
                     <div className="page">
@@ -4169,8 +4203,14 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                         <ReactFlowProvider>
                           <ReactFlowComponent
                             fitView
-                            nodes={allNodes}
-                            edges={[...dependsEdges, ...antiAffinityEdges]}
+                            nodes={flowNodes}
+                            edges={flowEdges}
+                            onNodesChange={(changes) => {
+                              setFlowNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
+                            }}
+                            onEdgesChange={(changes) => {
+                              setFlowEdges((currentEdges) => applyEdgeChanges(changes, currentEdges));
+                            }}
                             onNodeDoubleClick={(_, node) => {
                               if (!node.id.startsWith("group-")) onOpenTask(node.id);
                             }}
@@ -4342,7 +4382,7 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                 );
               }
 
-              ReactDOM.createRoot(document.getElementById("switchyard-app")).render(<App />);
+              ReactDOMClient.createRoot(document.getElementById("switchyard-app")).render(<App />);
             </script>
           </body>
         </html>

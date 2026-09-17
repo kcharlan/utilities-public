@@ -6,12 +6,15 @@ import re
 import socket
 import subprocess
 import time
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from textwrap import dedent
 
 import pytest
+import starlette.testclient as starlette_testclient
 from fastapi.testclient import TestClient
+from starlette.exceptions import StarletteDeprecationWarning
 
 from cognitive_switchyard.config import GlobalConfig, build_runtime_paths, write_global_config
 from cognitive_switchyard.models import BackendRuntimeEvent, PackManifest, TaskPlan
@@ -397,6 +400,28 @@ def test_serve_command_scans_to_next_free_port_and_starts_app(tmp_path: Path) ->
         assert resolved > occupied_port
     finally:
         occupied.close()
+
+
+def test_testclient_construction_and_request_do_not_use_deprecated_httpx_fallback(tmp_path: Path) -> None:
+    store, runtime_paths = _build_store(tmp_path)
+    app = create_app(store=store, runtime_paths=runtime_paths)
+
+    assert starlette_testclient.httpx.__name__ == "httpx2"
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with TestClient(app) as client:
+            response = client.get("/")
+
+    assert response.status_code == 200
+    fallback_warnings = [
+        warning
+        for warning in caught
+        if warning.category is StarletteDeprecationWarning
+        and str(warning.message)
+        == "Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead."
+    ]
+    assert fallback_warnings == []
 
 
 def test_get_packs_and_pack_detail_serialize_runtime_manifests(tmp_path: Path) -> None:

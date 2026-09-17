@@ -24,7 +24,7 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
 
-The pytest suite imports the FastAPI application in-process and uses `httpx.AsyncClient` with `ASGITransport`, so it does not open a network port. Fixtures reset the launcher’s process-global state around every test.
+The pytest suite imports the FastAPI application in-process and uses `httpx.AsyncClient` with `ASGITransport`, so it does not open a network port. Fixtures reset the launcher’s process-global state around every test. The browser UI uses React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map, with Babel Standalone 8.0.5 compiling module-aware inline JSX and Tailwind CSS 4.3.3. The direct top-level package versions are pinned, but CDN-generated transitive dependencies are not fully locked and CDN delivery is not byte-immutable. The current Playwright Chromium coverage verifies the React peer graph, exact direct scripts, representative CSS-first theme and dark-variant output, a key tab interaction, and browser/console error cleanliness. Tailwind's manual client floors are Chrome 111, Safari 16.4, and Firefox 128; Safari and Firefox are not covered by the automated browser test.
 
 ## Optional Real-HAR Workflow
 

@@ -31,6 +31,9 @@ To discover and register Git repositories below a directory before startup:
 - [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS)
 - Git in `PATH`
 - Network access on first launch and when loading the browser UI, which uses pinned React, Babel, Recharts, and font CDN assets
+- A browser with native import-map and ES-module support; Babel Standalone 8
+  compiles the module-aware inline JSX in the browser. The maintained
+  automated browser target is current Playwright Chromium.
 
 Git Fleet also requires at least one installed dependency-analysis tool from the ecosystems below. It starts when some tools are missing and shows their availability in the UI; it exits if none of the primary tools or `pip-audit` can be found.
 
@@ -118,14 +121,16 @@ The application intentionally remains one uv-managed Python file:
 - FastAPI and uvicorn provide the local HTTP server.
 - aiosqlite provides asynchronous database access.
 - Git commands use asynchronous subprocesses without shell interpolation.
-- A React 18 SPA, its CSS, and all JSX are embedded in `git_dashboard.py` and served by `GET /`; there is no frontend build or `node_modules`.
+- A React 19.3.0 SPA, its CSS, and all JSX are embedded in `git_dashboard.py` and served by `GET /`; there is no frontend build or `node_modules`.
 - Hash routes select the Fleet, Analytics, and repository detail views.
 
-React remains on 18 because React 19 does not publish the UMD globals consumed
-by this single-file app. Recharts remains on 2 because the current CDN build
-exposes the `Recharts` global used throughout the embedded JSX, while Recharts
-3 requires module/bundler integration and API migration. Those major upgrades
-belong to a separate frontend build-system change.
+The frontend uses an exact six-entry import map for React, ReactDOM, their JSX
+runtime subpaths, and `react-is`, plus Babel Standalone 8.0.5 for module-aware
+inline JSX. Recharts 3.10.1 loads as ESM with its React peers externalized to
+that map, so the application and charts share one React graph. The direct
+top-level package versions are pinned, but CDN-generated transitive module
+resolution and delivered bytes remain network-dependent and are not fully
+immutable.
 
 The six SQLite tables are:
 

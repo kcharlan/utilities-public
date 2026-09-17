@@ -36,6 +36,7 @@ generated directories are not part of this snapshot.
   standard-library only)
 - either the `codex` CLI (the default) or Claude command wrappers configured
   through `CLAUDE_SONNET_COMMAND` and `CLAUDE_OPUS_COMMAND`
+- `gpt-5.6-sol` is the default Codex model; override it with `MODEL_NAME`
 - a design document
 - a test environment matching `FULL_TEST_COMMAND` (default:
   `.venv/bin/python -m pytest tests -v`)

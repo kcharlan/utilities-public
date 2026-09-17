@@ -1,4 +1,4 @@
-"""Shared helpers for tests that import extensionless Python launchers."""
+"""Shared test helpers for utility launchers and embedded browser apps."""
 
 from __future__ import annotations
 
@@ -6,12 +6,187 @@ import asyncio
 import importlib.machinery
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import uuid
+from collections import Counter
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
+from typing import Literal
+from urllib.parse import urlsplit
+
+
+REACT_19_IMPORTS = (
+    ("react", "https://esm.sh/react@19.3.0"),
+    ("react/jsx-runtime", "https://esm.sh/react@19.3.0/jsx-runtime"),
+    (
+        "react/jsx-dev-runtime",
+        "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+    ),
+    ("react-dom", "https://esm.sh/react-dom@19.3.0?external=react"),
+    (
+        "react-dom/client",
+        "https://esm.sh/react-dom@19.3.0/client?external=react",
+    ),
+    ("react-is", "https://esm.sh/react-is@19.3.0?external=react"),
+)
+
+
+def assert_react_19_import_map(imports: Mapping[str, str]) -> None:
+    """Require the shared six-entry React 19 import-map contract exactly."""
+    assert dict(imports) == dict(REACT_19_IMPORTS)
+
+
+def is_react_package_resource(resource_url: str) -> bool:
+    """Match bare and versioned React-family package URL path segments."""
+    path = urlsplit(resource_url).path
+    return re.search(
+        r"(?:^|/)(?:react|react-dom|react-is)(?:@[^/]+)?(?:/|$)",
+        path,
+    ) is not None
+
+
+def assert_react_esm_graph(
+    resource_urls: Sequence[str],
+    *,
+    react_dom_wrapper_policy: Literal[
+        "required",
+        "forbidden",
+        "optional",
+    ] = "required",
+) -> None:
+    """Validate stable esm.sh React peer-graph boundaries.
+
+    Direct wrappers are exact and unique. Generated resources must stay on
+    the selected package versions, but their CDN-owned route layout is opaque.
+    Unrelated transitive dependencies are deliberately outside this helper's
+    contract.
+    """
+    if react_dom_wrapper_policy not in {"required", "forbidden", "optional"}:
+        raise ValueError(
+            "react_dom_wrapper_policy must be required, forbidden, or optional"
+        )
+
+    resources = list(resource_urls)
+    assert len(resources) == len(set(resources)), "duplicate React resource request"
+
+    wrapper_urls = {
+        urlsplit(resource_url).path: resource_url
+        for _specifier, resource_url in REACT_19_IMPORTS
+    }
+    wrapper_counts: Counter[str] = Counter()
+    generated_packages: set[str] = set()
+
+    for resource_url in resources:
+        parsed = urlsplit(resource_url)
+        assert (parsed.scheme, parsed.netloc, parsed.fragment) == (
+            "https",
+            "esm.sh",
+            "",
+        ), f"unexpected React resource origin: {resource_url}"
+
+        if parsed.path in wrapper_urls:
+            assert resource_url == wrapper_urls[parsed.path], (
+                f"unexpected direct React wrapper URL: {resource_url}"
+            )
+            wrapper_counts[parsed.path] += 1
+            continue
+
+        package_match = re.match(
+            r"^/(react(?:-dom|-is)?)@([^/]+)(?:/|$)",
+            parsed.path,
+        )
+        assert package_match is not None, (
+            f"unexpected React package resource: {resource_url}"
+        )
+        package, version = package_match.groups()
+        assert version == "19.3.0", f"unexpected React version: {resource_url}"
+        assert "?" not in resource_url, (
+            f"unexpected generated React resource query: {resource_url}"
+        )
+        generated_packages.add(package)
+
+    assert wrapper_counts["/react@19.3.0"] == 1
+    assert wrapper_counts["/react@19.3.0/jsx-runtime"] == 1
+    assert wrapper_counts["/react@19.3.0/jsx-dev-runtime"] == 0
+    assert wrapper_counts["/react-dom@19.3.0/client"] == 1
+    react_is_wrapper_present = wrapper_counts["/react-is@19.3.0"] == 1
+    assert react_is_wrapper_present == ("react-is" in generated_packages)
+
+    react_dom_wrapper_count = wrapper_counts["/react-dom@19.3.0"]
+    if react_dom_wrapper_policy == "required":
+        assert react_dom_wrapper_count == 1
+    elif react_dom_wrapper_policy == "forbidden":
+        assert react_dom_wrapper_count == 0
+    else:
+        assert react_dom_wrapper_count in {0, 1}
+
+
+def _install_browser_error_listeners(page):
+    errors: list[str] = []
+
+    def record_page_error(error) -> None:
+        errors.append(str(error))
+
+    def record_console_error(message) -> None:
+        if message.type == "error":
+            errors.append(message.text)
+
+    listeners = (
+        ("pageerror", record_page_error),
+        ("console", record_console_error),
+    )
+    for event_name, listener in listeners:
+        page.on(event_name, listener)
+    return errors, listeners
+
+
+def capture_browser_errors(page) -> list[str]:
+    """Attach strict console/page error listeners to a Playwright page."""
+    errors, _listeners = _install_browser_error_listeners(page)
+    return errors
+
+
+@contextmanager
+def guard_browser_errors(page, expected: Sequence[str] = ()):
+    """Fail a browser-test context on any unexpected console/page error."""
+    errors, listeners = _install_browser_error_listeners(page)
+
+    def detach() -> None:
+        for event_name, listener in listeners:
+            page.remove_listener(event_name, listener)
+
+    def browser_failure() -> AssertionError | None:
+        if errors == list(expected):
+            return None
+        return AssertionError(
+            f"Unexpected browser errors: {errors}; expected: {list(expected)}"
+        )
+
+    try:
+        yield errors
+    except BaseException as body_error:
+        detach()
+        captured_browser_failure = browser_failure()
+        if captured_browser_failure is not None:
+            group_type = (
+                ExceptionGroup
+                if isinstance(body_error, Exception)
+                else BaseExceptionGroup
+            )
+            raise group_type(
+                "Guarded browser body and browser error checks both failed",
+                [body_error, captured_browser_failure],
+            ) from None
+        raise
+    else:
+        detach()
+        captured_browser_failure = browser_failure()
+        if captured_browser_failure is not None:
+            raise captured_browser_failure
 
 
 class ASGISyncClient:

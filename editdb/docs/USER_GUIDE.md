@@ -25,7 +25,19 @@ EditDB starts a local web server on `127.0.0.1` and opens your browser automatic
 
 EditDB is a uv-managed script. Install [uv](https://docs.astral.sh/uv/), then run `editdb`; there is no manual virtual-environment or `pip` setup. On first invocation, uv may download a compatible Python 3.12+ interpreter and the dependencies declared in the script. Later launches reuse uv's cache.
 
-**Requirements:** uv and a modern web browser. The UI loads React, Tailwind CSS, Babel, Lucide, and Inter from CDNs, so the browser needs network access whenever those resources are not already cached.
+**Requirements:** uv and a Tailwind 4-compatible browser. The UI uses React
+19.3.0 and ReactDOM 19.3.0 through an exact-version import map whose six direct
+entries also pin react-is 19.3.0 and the JSX runtime subpaths. Babel Standalone
+8.0.5 compiles the module-aware inline JSX, and Tailwind CSS 4.3.3 loads through
+the exact-version `@tailwindcss/browser` package. Lucide and Inter are also
+loaded from CDNs, so the browser needs network access whenever those resources
+are not already cached.
+
+The direct top-level package versions are exact, but CDN-generated transitive
+dependencies are not fully locked, and exact pins are not byte-immutable
+delivery guarantees. Tailwind 4's manual-client minimums are Chrome 111,
+Safari 16.4, and Firefox 128. Automated browser coverage uses the current
+Playwright Chromium; Safari and Firefox are not part of that automated run.
 
 ### Security
 
@@ -58,7 +70,10 @@ The sidebar shows:
 
 ### Dark / Light Mode
 
-Click the sun/moon icon in the sidebar header. EditDB auto-detects your OS preference on first visit and saves your choice to localStorage.
+Click the sun/moon icon in the sidebar header. EditDB auto-detects your OS
+preference on first visit and saves your choice to localStorage. The embedded
+Tailwind 4 theme uses CSS-first color tokens and a class-based dark variant;
+the saved preference adds or removes the `dark` class on the document.
 
 ### Empty State
 

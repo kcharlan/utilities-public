@@ -51,7 +51,7 @@ HAR (HTTP Archive) file analyzer and sanitizer. Combines rich visualization with
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`) — manages the Python interpreter and dependencies
-- Internet connection to resolve Python dependencies on first run and to load browser assets from CDNs when they are not already cached
+- Internet connection to resolve Python dependencies on first run and to load browser assets from CDNs when they are not already cached.
 
 ## First-Time Setup
 
@@ -127,16 +127,30 @@ Validation checks:
 
 Single-file Python application (uv-managed via a PEP 723 header) with:
 - FastAPI backend with 26 REST routes
-- Embedded React 18 SPA (CDN: React, Babel, Tailwind, Lucide Icons, Google Fonts)
+- Embedded React SPA using React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map; Babel Standalone 8.0.5 compiles the module-aware inline JSX, with Tailwind CSS 4.3.3, Lucide Icons, and Google Fonts loaded from exact-version CDN URLs
 - No build step, no npm, no node_modules
 - Recursive whole-tree scanner with JSON body parsing, base64 decoding, and WebSocket message inspection
 
-The frontend intentionally stays on the React 18 UMD and Tailwind 3
-classic-CDN lines. React 19 does not provide the UMD artifacts used by this
-single-file app, and Tailwind 4 changes the browser package and configuration
-model. Adopting either major requires a separate build/bundling migration. The
-classic Play CDN is pinned to 3.4.17, its newest published browser artifact;
-the endpoint rejects the newer 3.4.19 npm package version as unknown.
+Tailwind configuration is CSS-first: custom design tokens live in an embedded
+`@theme` block, and the class-based dark mode uses an explicit custom variant.
+The import map pins the complete six-entry React peer/subpath contract while
+the JSX module imports only React and ReactDOM Client bindings needed at
+runtime.
+
+The direct top-level package versions in the import map and script URLs are
+exact, which prevents drift in those requested versions. CDN-generated
+transitive dependencies are not fully locked, however, and the interface still
+requires network access at runtime. Exact pins are not byte-immutable delivery
+guarantees; offline or byte-for-byte reproducible use would require a separate
+vendoring and integrity strategy.
+
+### Browser support
+
+The automated browser suite uses current Playwright Chromium. Tailwind 4's manual
+client floors for this browser-delivered UI are Chrome 111, Safari 16.4, and
+Firefox 128. Safari and Firefox are not covered by the automated browser test,
+so those clients require manual verification when browser-specific behavior is
+important.
 
 ## Testing
 

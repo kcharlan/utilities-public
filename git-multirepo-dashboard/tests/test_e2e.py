@@ -21,11 +21,13 @@ Requires:
 
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
 import sys
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -43,7 +45,62 @@ except ImportError:
 pytestmark = pytest.mark.e2e
 
 PROJECT_ROOT = Path(__file__).parent.parent
+REPO_ROOT = PROJECT_ROOT.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from tools.testkit import (  # noqa: E402
+    assert_react_esm_graph,
+    capture_browser_errors,
+    guard_browser_errors,
+    is_react_package_resource,
+)
+
 GIT_DASHBOARD = PROJECT_ROOT / "git_dashboard.py"
+
+
+@pytest.fixture(autouse=True)
+def fail_on_unexpected_browser_errors(page, request):
+    """Fail on browser errors, except exact HTTP failures a test intentionally causes."""
+    errors = capture_browser_errors(page)
+    error_responses = []
+    page.on(
+        "response",
+        lambda response: error_responses.append((response.status, response.url))
+        if response.status >= 400
+        else None,
+    )
+    yield
+    expected_http_errors = []
+    for marker in request.node.iter_markers("allows_http_error"):
+        status, count, endpoint_pattern = marker.args
+        pattern = re.compile(
+            rf"Failed to load resource: the server responded "
+            rf"with a status of {status} \([^\n]+\)"
+        )
+        matches = [error for error in errors if pattern.fullmatch(error)]
+        assert len(matches) == count, (
+            f"Expected {count} browser HTTP {status} errors, got {len(matches)}: {errors}"
+        )
+        response_matches = [
+            (response_status, url)
+            for response_status, url in error_responses
+            if response_status == status and re.search(endpoint_pattern, url)
+        ]
+        assert len(response_matches) == count, (
+            f"Expected {count} HTTP {status} responses matching {endpoint_pattern!r}, "
+            f"got {response_matches}; all error responses: {error_responses}"
+        )
+        expected_http_errors.extend(matches)
+    unexpected = errors.copy()
+    for expected in expected_http_errors:
+        unexpected.remove(expected)
+    assert unexpected == [], "Unexpected browser errors:\n" + "\n".join(unexpected)
+
+
+def _open_app(page, url):
+    """Navigate without CDN-idle heuristics and wait for the mounted shell."""
+    page.goto(url, wait_until="domcontentloaded")
+    expect(page.locator("header")).to_be_visible()
 
 
 def _find_free_port():
@@ -130,22 +187,7 @@ def server(tmp_path_factory):
 
 def test_page_loads_without_js_errors(server, page):
     """Page loads without uncaught exceptions or console errors."""
-    errors = []
-    page.on("pageerror", lambda err: errors.append(str(err)))
-    page.on(
-        "console",
-        lambda message: errors.append(message.text)
-        if message.type == "error"
-        else None,
-    )
-
-    page.goto(server)
-    page.wait_for_load_state("networkidle")
-    page.evaluate("console.error('__console_capture_probe__')")
-    assert errors == ["__console_capture_probe__"]
-    errors.clear()
-
-    assert errors == [], f"JavaScript errors on page load: {errors}"
+    _open_app(page, server)
 
 
 def test_cdn_resources_load(server, page):
@@ -155,17 +197,36 @@ def test_cdn_resources_load(server, page):
         f"{req.method} {req.url}: {req.failure}"
     ))
 
-    page.goto(server)
-    page.wait_for_load_state("networkidle")
+    _open_app(page, server)
 
-    cdn_failures = [r for r in failed_requests if "cdnjs" in r or "unpkg" in r or "fonts" in r]
+    cdn_failures = [
+        failure
+        for failure in failed_requests
+        if any(host in failure for host in ("esm.sh", "unpkg", "fonts"))
+    ]
     assert cdn_failures == [], f"CDN resources failed to load: {cdn_failures}"
+
+
+def test_react_peer_resource_graph_is_single_and_aligned(server, page):
+    """The ESM page loads one aligned React peer graph for Recharts 3."""
+    requests = []
+    page.on("request", lambda request: requests.append(request.url))
+
+    _open_app(page, server)
+
+    react_resources = [
+        url for url in requests if is_react_package_resource(url)
+    ]
+    assert_react_esm_graph(react_resources, react_dom_wrapper_policy="required")
+    assert requests.count(
+        "https://esm.sh/recharts@3.10.1?external=react,react-dom,react-is"
+    ) == 1
+    assert not any("umd/Recharts.js" in url for url in requests)
 
 
 def test_react_app_mounts(server, page):
     """React app mounts successfully — the root div has content."""
-    page.goto(server)
-    page.wait_for_load_state("networkidle")
+    _open_app(page, server)
 
     root = page.locator("#root")
     assert root.inner_html() != "", "React app did not mount — #root is empty"
@@ -462,6 +523,9 @@ def test_directory_browser_overlay_click_closes_modal(server, page):
         "Modal still visible after clicking overlay"
 
 
+@pytest.mark.allows_http_error(
+    400, 1, r"/api/browse\?path=%2Fnonexistent%2Fpath%2Fthat%2Fdoes%2Fnot%2Fexist$"
+)
 def test_directory_browser_invalid_path_shows_error(server, page):
     """Entering a non-existent path shows an error in the modal."""
     page.goto(server)
@@ -887,6 +951,215 @@ def test_analytics_tab_has_sections(server, page):
     assert "Dependency Overlap" in main_text, "Dependency Overlap section missing"
 
 
+def test_repo_sparkline_renders_responsively(server, page):
+    """The fleet sparkline draws a real area path within its card."""
+    page.route(
+        "**/api/fleet",
+        lambda route: route.fulfill(json={
+            "repos": [{
+                "id": "synthetic-repo",
+                "name": "Synthetic Repo",
+                "path": "/tmp/synthetic-repo",
+                "path_exists": True,
+                "current_branch": "main",
+                "last_commit_date": date.today().isoformat(),
+                "sparkline": [0, 2, 1, 4, 3, 5, 2, 6, 4, 7, 3, 8, 5],
+            }],
+            "kpis": {"total_repos": 1},
+        }),
+    )
+
+    page.goto(server)
+    card = page.locator(".project-card")
+    card.wait_for()
+    card.hover()
+
+    chart = card.locator(".recharts-wrapper")
+    area = card.locator("path.recharts-area-area")
+    chart.wait_for(state="visible")
+    chart_box = chart.bounding_box()
+    card_box = card.bounding_box()
+    assert chart_box and chart_box["width"] > 0 and chart_box["height"] > 0
+    assert card_box and chart_box["width"] <= card_box["width"] + 1
+    assert area.get_attribute("d"), "Sparkline area path was not drawn"
+
+
+def test_activity_chart_renders_signed_areas_axes_and_custom_tooltip(server, page):
+    """Activity chart plots both signs and exposes its custom hover details."""
+    today = date.today()
+    history = [
+        {"date": (today - timedelta(days=2)).isoformat(), "commits": 2,
+         "insertions": 12, "deletions": 3, "files_changed": 2},
+        {"date": (today - timedelta(days=1)).isoformat(), "commits": 1,
+         "insertions": 5, "deletions": 9, "files_changed": 1},
+        {"date": today.isoformat(), "commits": 3,
+         "insertions": 10, "deletions": 4, "files_changed": 3},
+    ]
+    page.route(
+        "**/api/repos/synthetic-repo",
+        lambda route: route.fulfill(json={
+            "id": "synthetic-repo", "name": "Synthetic Repo",
+            "path": "/tmp/synthetic-repo", "path_exists": True,
+            "runtime": "python", "default_branch": "main",
+            "working_state": {"current_branch": "main"},
+        }),
+    )
+    page.route(
+        "**/api/repos/synthetic-repo/history*",
+        lambda route: route.fulfill(json={
+            "repo_id": "synthetic-repo", "days": 90, "data": history,
+        }),
+    )
+
+    page.goto(server + "#/repo/synthetic-repo")
+    chart = page.locator(".detail-content .recharts-wrapper")
+    chart.wait_for(state="visible")
+
+    container_box = page.locator(".detail-content .recharts-responsive-container").bounding_box()
+    chart_box = chart.bounding_box()
+    assert container_box and chart_box
+    assert abs(container_box["width"] - chart_box["width"]) <= 2
+
+    area_paths = chart.locator("path.recharts-area-area")
+    assert area_paths.count() >= 2
+    assert all(area_paths.nth(i).get_attribute("d") for i in range(2))
+    axis_labels = [label for label in chart.locator("svg text").all_text_contents() if label]
+    assert any(re.fullmatch(r"\d{4}-\d{2}-\d{2}", label) for label in axis_labels)
+    assert any(re.fullmatch(r"-?\d+", label) for label in axis_labels)
+
+    zero_line = chart.locator(".recharts-reference-line-line").bounding_box()
+    positive = area_paths.nth(0).bounding_box()
+    negative = area_paths.nth(1).bounding_box()
+    assert zero_line and positive and negative
+    assert positive["y"] < zero_line["y"]
+    assert negative["y"] + negative["height"] > zero_line["y"]
+
+    page.mouse.move(chart_box["x"] + chart_box["width"] - 8,
+                    chart_box["y"] + chart_box["height"] / 2)
+    tooltip = page.locator(".recharts-tooltip-wrapper")
+    tooltip.wait_for(state="visible")
+    tooltip_text = tooltip.inner_text()
+    assert today.isoformat() in tooltip_text
+    assert "+10 insertions" in tooltip_text
+    assert "-4 deletions" in tooltip_text
+    assert "net +6" in tooltip_text
+    assert "3 commits" in tooltip_text
+
+
+def test_activity_gap_fill_uses_browser_local_calendar_day(server, browser):
+    """Late UTC hours must not add a synthetic next-local-day data point."""
+    context = browser.new_context(timezone_id="America/New_York")
+    page = context.new_page()
+    try:
+        page.add_init_script("""
+            const NativeDate = Date;
+            const fixedNow = NativeDate.parse('2026-09-17T02:30:00Z');
+            class FixedDate extends NativeDate {
+                constructor(...args) {
+                    super(...(args.length ? args : [fixedNow]));
+                }
+                static now() { return fixedNow; }
+            }
+            window.Date = FixedDate;
+        """)
+        page.route(
+            "**/api/repos/synthetic-boundary",
+            lambda route: route.fulfill(json={
+                "id": "synthetic-boundary",
+                "name": "Synthetic Boundary Repo",
+                "path": "/tmp/synthetic-boundary",
+                "path_exists": True,
+                "runtime": "python",
+                "default_branch": "main",
+                "working_state": {"current_branch": "main"},
+            }),
+        )
+        page.route(
+            "**/api/repos/synthetic-boundary/history*",
+            lambda route: route.fulfill(json={
+                "repo_id": "synthetic-boundary",
+                "days": 90,
+                "data": [{
+                    "date": "2026-09-16",
+                    "commits": 3,
+                    "insertions": 10,
+                    "deletions": 4,
+                    "files_changed": 3,
+                }],
+            }),
+        )
+
+        with guard_browser_errors(page):
+            _open_app(page, server + "#/repo/synthetic-boundary")
+            chart = page.locator(".detail-content .recharts-wrapper")
+            chart.wait_for(state="visible")
+            chart_box = chart.bounding_box()
+            assert chart_box
+            page.mouse.move(
+                chart_box["x"] + chart_box["width"] - 8,
+                chart_box["y"] + chart_box["height"] / 2,
+            )
+            tooltip = page.locator(".recharts-tooltip-wrapper")
+            tooltip.wait_for(state="visible")
+            assert "2026-09-16" in tooltip.inner_text()
+            assert "2026-09-17" not in tooltip.inner_text()
+    finally:
+        context.close()
+
+
+def test_time_allocation_chart_renders_stack_axes_and_tooltip(server, page):
+    """Time allocation draws stacked areas and labels its hover payload."""
+    today = date.today()
+    active_week = (today - timedelta(days=today.weekday())).isoformat()
+    dates = [(today - timedelta(days=offset)).isoformat() for offset in (21, 14, 7, 0)]
+    page.route(
+        "**/api/analytics/allocation*",
+        lambda route: route.fulfill(json={"series": [
+            {"repo_id": "alpha", "name": "Synthetic Alpha", "data": [
+                {"date": day, "commits": commits}
+                for day, commits in zip(dates, (2, 5, 3, 7))
+            ]},
+            {"repo_id": "beta", "name": "Synthetic Beta", "data": [
+                {"date": day, "commits": commits}
+                for day, commits in zip(dates, (1, 2, 4, 3))
+            ]},
+        ]}),
+    )
+
+    page.goto(server + "#/analytics")
+    heading = page.get_by_role("heading", name="Time Allocation")
+    chart = heading.locator("xpath=../following-sibling::*[1]").locator(".recharts-wrapper")
+    chart.wait_for(state="visible")
+    assert chart.locator("path.recharts-area-area").count() == 2
+    curves = chart.locator("path.recharts-area-curve")
+    assert curves.count() == 2
+    curve_endpoints = curves.evaluate_all("""
+        paths => paths.map(path => {
+            const length = path.getTotalLength();
+            const point = path.getPointAtLength(length);
+            return { x: point.x, y: point.y };
+        })
+    """)
+    assert curve_endpoints[0]["x"] == pytest.approx(curve_endpoints[1]["x"], abs=1)
+    assert curve_endpoints[1]["y"] < curve_endpoints[0]["y"], (
+        "Synthetic Beta's final value (3) must render above Synthetic Alpha's "
+        "final value (7), proving the second area uses the cumulative stacked value (10)"
+    )
+    axis_labels = [label for label in chart.locator("svg text").all_text_contents() if label]
+    assert any(re.fullmatch(r"\d{4}-\d{2}-\d{2}", label) for label in axis_labels)
+    assert any(re.fullmatch(r"\d+", label) for label in axis_labels)
+
+    box = chart.bounding_box()
+    assert box and box["width"] > 200 and box["height"] == pytest.approx(260, abs=2)
+    page.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] / 2)
+    tooltip = page.locator(".recharts-tooltip-wrapper")
+    tooltip.wait_for(state="visible")
+    tooltip_text = tooltip.inner_text()
+    assert active_week in tooltip_text
+    assert re.search(r"Synthetic Alpha\s*:\s*7(?:\D|$)", tooltip_text)
+    assert re.search(r"Synthetic Beta\s*:\s*3(?:\D|$)", tooltip_text)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 10. Dependencies Tab
 # ═════════════════════════════════════════════════════════════════════════════
@@ -988,6 +1261,7 @@ def test_api_browse_default_path(server, page):
     assert isinstance(result["body"]["dirs"], list)
 
 
+@pytest.mark.allows_http_error(400, 1, r"/api/browse\?path=/nonexistent/path$")
 def test_api_browse_invalid_path(server, page):
     """/api/browse with invalid path returns 400."""
     page.goto(server)
@@ -1000,6 +1274,7 @@ def test_api_browse_invalid_path(server, page):
     assert result["status"] == 400
 
 
+@pytest.mark.allows_http_error(400, 1, r"/api/repos$")
 def test_api_repos_post_invalid_path(server, page):
     """POST /api/repos with nonexistent path returns 400."""
     page.goto(server)
@@ -1016,6 +1291,7 @@ def test_api_repos_post_invalid_path(server, page):
     assert result["status"] == 400
 
 
+@pytest.mark.allows_http_error(404, 1, r"/api/repos/nonexistent_id_12345$")
 def test_api_delete_nonexistent_repo(server, page):
     """DELETE /api/repos/{id} with nonexistent ID returns 404."""
     page.goto(server)
@@ -1162,9 +1438,6 @@ def test_header_has_highest_z_index(server, page):
 
 def test_invalid_hash_route_does_not_crash(server, page):
     """Navigating to an invalid hash route doesn't crash the app."""
-    errors = []
-    page.on("pageerror", lambda err: errors.append(str(err)))
-
     page.goto(server + "#/nonexistent/route")
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(500)
@@ -1172,16 +1445,13 @@ def test_invalid_hash_route_does_not_crash(server, page):
     # Should fall back to fleet view, not crash
     root = page.locator("#root")
     assert root.inner_html() != "", "App crashed on invalid route"
-    # Filter out any Recharts/non-critical errors
-    critical_errors = [e for e in errors if "ReferenceError" in e or "TypeError" in e]
-    assert critical_errors == [], f"Critical JS errors on invalid route: {critical_errors}"
 
 
+@pytest.mark.allows_http_error(
+    404, 2, r"/api/repos/does_not_exist_12345(?:$|/history\?days=90$)"
+)
 def test_nonexistent_repo_detail_does_not_crash(server, page):
     """Navigating to a nonexistent repo ID doesn't crash."""
-    errors = []
-    page.on("pageerror", lambda err: errors.append(str(err)))
-
     page.goto(server + "#/repo/does_not_exist_12345")
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(1000)

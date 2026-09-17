@@ -1,0 +1,10 @@
+{
+  "id": "design-orch",
+  "cell": "design_orch.orchestration",
+  "context": "Synthetic orchestration packet for a fictional lantern service with three ordered phases.",
+  "prompt": "Read REQUEST.md. Produce a compact plan.json that orders the requested phases and assigns the fictional orchestrator owner. Do not modify REQUEST.md.",
+  "expected": {
+    "path": "plan.json",
+    "content": "{\"stages\":[\"inspect\",\"implement\",\"verify\"],\"owner\":\"synthetic-orchestrator\"}\n"
+  }
+}
