@@ -720,14 +720,24 @@ def test_react_graph_validator_allows_no_generated_react_or_react_dom_resources(
     )
 
 
-def test_react_graph_validator_rejects_query_bearing_generated_resource():
+@pytest.mark.parametrize("query_suffix", ("?dev", "?"), ids=("value", "bare"))
+def test_react_graph_validator_rejects_query_bearing_generated_resource(
+    query_suffix,
+):
     with pytest.raises(AssertionError):
         assert_react_esm_graph(
             [
                 *SYNTHETIC_REACT_GRAPH,
-                "https://esm.sh/react@19.3.0/opaque/generated?dev",
+                f"https://esm.sh/react@19.3.0/opaque/generated{query_suffix}",
             ]
         )
+
+
+def test_react_graph_validator_rejects_trailing_query_on_direct_wrapper():
+    resources = list(SYNTHETIC_REACT_GRAPH)
+    resources[0] = f"{resources[0]}?"
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph(resources)
 
 
 def test_react_graph_validator_accepts_matching_react_is_wrapper_and_resource():

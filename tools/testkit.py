@@ -73,13 +73,9 @@ def assert_react_esm_graph(
     resources = list(resource_urls)
     assert len(resources) == len(set(resources)), "duplicate React resource request"
 
-    wrapper_queries = {
-        "/react@19.3.0": "",
-        "/react@19.3.0/jsx-runtime": "",
-        "/react@19.3.0/jsx-dev-runtime": "",
-        "/react-dom@19.3.0": "external=react",
-        "/react-dom@19.3.0/client": "external=react",
-        "/react-is@19.3.0": "external=react",
+    wrapper_urls = {
+        urlsplit(resource_url).path: resource_url
+        for _specifier, resource_url in REACT_19_IMPORTS
     }
     wrapper_counts: Counter[str] = Counter()
     generated_packages: set[str] = set()
@@ -92,9 +88,9 @@ def assert_react_esm_graph(
             "",
         ), f"unexpected React resource origin: {resource_url}"
 
-        if parsed.path in wrapper_queries:
-            assert parsed.query == wrapper_queries[parsed.path], (
-                f"unexpected direct React wrapper query: {resource_url}"
+        if parsed.path in wrapper_urls:
+            assert resource_url == wrapper_urls[parsed.path], (
+                f"unexpected direct React wrapper URL: {resource_url}"
             )
             wrapper_counts[parsed.path] += 1
             continue
@@ -108,7 +104,7 @@ def assert_react_esm_graph(
         )
         package, version = package_match.groups()
         assert version == "19.3.0", f"unexpected React version: {resource_url}"
-        assert parsed.query == "", (
+        assert "?" not in resource_url, (
             f"unexpected generated React resource query: {resource_url}"
         )
         generated_packages.add(package)
