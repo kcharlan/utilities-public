@@ -33,7 +33,8 @@ The expense workbook is an Excel file with five worksheets. A schema template is
 Prerequisites:
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
-- A browser that can reach the frontend CDNs used by the embedded UI (unpkg, Tailwind's CDN, and Google Fonts)
+- A browser that can reach the frontend CDNs used by the embedded UI (esm.sh,
+  unpkg, Tailwind's CDN, and Google Fonts)
 
 From this project directory, run the entrypoint directly:
 
@@ -50,15 +51,24 @@ expense_dock
 
 Expense Dock runs via uv using a PEP 723 inline-metadata header. On first run it creates its runtime home at `~/.expense_dock/` and writes a default `config.json`; uv resolves the dependencies (fastapi, uvicorn[standard], python-multipart, httpx, msal, openpyxl) into its shared cache — that first invocation may briefly hit the network. No manual `pip install` and no virtual environment in your home directory are required.
 
-The embedded frontend uses React 18 UMD and the exact-version
-`@tailwindcss/browser` 4.3.3 runtime from CDNs. Tailwind configuration is
-CSS-first: project theme tokens and the class-based dark variant live in a
-`text/tailwindcss` block, while the app's ordinary first-party CSS remains
-native browser CSS. The versioned CDN URL is pinned for dependency-graph
-stability, but it is not byte-immutable; the browser needs network access when
-the runtime and other frontend dependencies are not cached.
+The build-free embedded frontend uses React 19.3.0 and ReactDOM 19.3.0 through
+an exact-version import map. Its six direct ESM entries pin `react`, both JSX
+runtime subpaths, `react-dom`, `react-dom/client`, and react-is 19.3.0;
+ReactDOM and react-is externalize the shared React peer. Babel Standalone 8.0.5
+compiles the module-aware inline JSX. Tailwind CSS 4.3.3 loads through the
+exact-version `@tailwindcss/browser` package, and Lucide 1.46.0 remains an
+exact-version direct script. Tailwind configuration is CSS-first: project
+theme tokens and the class-based dark variant live in a `text/tailwindcss`
+block, while the app's ordinary first-party CSS remains native browser CSS.
 
-Automated browser coverage uses Playwright with its installed Chromium and
+The direct top-level package versions in the import map and script URLs are
+exact, which prevents drift in those requested versions. CDN-generated
+transitive dependencies are not fully locked, however, and the interface still
+requires network access at runtime. Exact pins are not byte-immutable delivery
+guarantees; offline or byte-for-byte reproducible use would require a separate
+vendoring or release-artifact flow.
+
+Automated browser coverage uses current Playwright Chromium and
 checks the pinned script graph, a generated custom-theme style, dark-mode
 styling and persistence, a primary navigation interaction, and page/console
 cleanliness. For manual clients, Tailwind 4 requires Chrome 111 or newer,
