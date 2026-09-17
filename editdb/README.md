@@ -25,9 +25,9 @@ your `PATH`.
 
 The first invocation may access the network while uv resolves a compatible
 Python 3.12+ interpreter and the dependencies declared in the launcher's PEP
-723 header. The browser UI also loads React, Babel, Lucide, Inter, and the
-exact-version `@tailwindcss/browser` 4.3.3 runtime from CDNs, so those
-resources must be available when they are not already cached.
+723 header. The browser UI also loads React, Babel, Tailwind CSS, Lucide, and
+Inter from CDNs, so those resources must be available when they are not
+already cached.
 
 ## Features
 
@@ -96,12 +96,22 @@ The executable [`editdb`](editdb) contains:
 The frontend has no local build step or `node_modules`. The launcher opens the
 browser automatically unless `UTILITIES_TESTING` is set to a truthy value.
 
-The embedded frontend currently uses React 18 UMD and the Tailwind 4 browser
-package. Tailwind configuration lives in the HTML as CSS-first `@theme`
-variables plus a class-based `dark` custom variant; first-party scrollbar and
-animation rules remain ordinary browser CSS. React 19 no longer provides the
-UMD artifacts this single-file application consumes, so that separate upgrade
-requires an ESM or bundling migration.
+The build-free frontend uses React 19.3.0 and ReactDOM 19.3.0 through an
+exact-version import map. Its six direct ESM entries pin `react`, both JSX
+runtime subpaths, `react-dom`, `react-dom/client`, and react-is 19.3.0;
+ReactDOM and react-is externalize the shared React peer. Babel Standalone 8.0.5
+compiles the module-aware inline JSX. Tailwind CSS 4.3.3 loads through the
+exact-version `@tailwindcss/browser` package. Tailwind configuration lives in
+the HTML as CSS-first `@theme` variables plus a class-based `dark` custom
+variant; first-party scrollbar and animation rules remain ordinary browser
+CSS.
+
+The direct top-level package versions in the import map and script URLs are
+exact, which prevents drift in those requested versions. CDN-generated
+transitive dependencies are not fully locked, however, and the interface still
+requires network access at runtime. Exact pins are not byte-immutable delivery
+guarantees; offline or byte-for-byte reproducible use would require a separate
+vendoring or release-artifact flow.
 
 `editdb_setup.sh` is a compatibility notice for the obsolete pre-uv workflow.
 It creates no environment or dependencies; it verifies the current launcher
@@ -114,9 +124,10 @@ retired `src/editdb.py` layout.
 - [uv](https://docs.astral.sh/uv/)
 - A browser supported by Tailwind 4 with access to the UI's CDN dependencies
 
-The automated browser suite uses Playwright with Chromium. For manual clients,
-Tailwind 4 requires Chrome 111 or newer, Safari 16.4 or newer, or Firefox 128
-or newer. Safari and Firefox are not covered by the automated browser test.
+The automated browser suite covers the current Playwright Chromium. For manual
+clients, Tailwind 4 requires Chrome 111 or newer, Safari 16.4 or newer, or
+Firefox 128 or newer. Safari and Firefox are not covered by the automated
+browser test.
 
 No manual runtime virtual environment or global `pip` installation is needed.
 

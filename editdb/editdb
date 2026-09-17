@@ -562,6 +562,21 @@ HTML_TEMPLATE = """
 
         <title>EditDB - {{DB_NAME}}</title>
 
+        <script type="importmap">
+        {
+            "imports": {
+                "react": "https://esm.sh/react@19.3.0",
+                "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+                "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+                "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+                "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+                "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+            }
+        }
+        </script>
+
+        <script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
+
         <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
 
         <style type="text/tailwindcss">
@@ -581,12 +596,6 @@ HTML_TEMPLATE = """
                 --color-brand-dark-950: #020617;
             }
         </style>
-
-        <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-
-        <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-
-    <script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
 
     <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
 
@@ -655,7 +664,10 @@ HTML_TEMPLATE = """
 
 
 
-    <script type="text/babel">
+    <script type="text/babel" data-type="module" data-presets="env,react">
+
+        import * as React from 'react';
+        import * as ReactDOMClient from 'react-dom/client';
 
         /**
          * EditDB Frontend
@@ -2478,7 +2490,7 @@ HTML_TEMPLATE = """
             );
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
+        const root = ReactDOMClient.createRoot(document.getElementById('root'));
         root.render(
             <ErrorBoundary>
                 <App />
