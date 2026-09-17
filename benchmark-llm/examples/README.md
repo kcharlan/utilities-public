@@ -6,5 +6,6 @@ This folder holds runnable and reference benchmark packages for each authoring r
 - `cron-eval/` is a deterministic repo-task benchmark with a 100-case hidden conformance suite and narrative adjudication.
 - `policy-engine/` is a repo-task reference benchmark adapted from the policy-engine evaluation package and report shape.
 - `plugin-advanced/` is a small Python plugin benchmark that shows the escape hatch for custom orchestration.
+- `orchestrator-model-eval/` is a public-safe, fake-testable plugin harness for a separately approved paired model-default evaluation; its raw artifacts must remain in an external runtime home.
 
 Both repo-task examples are configured for three breadth-ordered runs per model. Before running one, follow its README to configure a source repository and a writable output directory.

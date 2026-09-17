@@ -1,0 +1,10 @@
+{
+  "id": "codex-worker",
+  "cell": "codex.worker_execution",
+  "context": "Synthetic direct-worker packet implementing an isolated silver-acorn slug helper.",
+  "prompt": "Implement synthetic_slug in slugger.py. It must lowercase the input, split on arbitrary whitespace, and join words with one hyphen. Keep the supplied type signature.",
+  "expected": {
+    "path": "slugger.py",
+    "content": "def synthetic_slug(value: str) -> str:\n    return \"-\".join(value.lower().split())\n"
+  }
+}

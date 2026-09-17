@@ -1,0 +1,10 @@
+{
+  "id": "codex-hybrid-worker",
+  "cell": "codex_hybrid.worker_execution",
+  "context": "Synthetic hybrid-worker packet with a fictional upstream planner handoff for a teal card renderer.",
+  "prompt": "Follow HANDOFF.md and implement render_synthetic_card in renderer.py. Preserve the handoff's exact wrapper shape and trim only the supplied label's surrounding whitespace.",
+  "expected": {
+    "path": "renderer.py",
+    "content": "def render_synthetic_card(label: str) -> str:\n    return f\"<card>{label.strip()}</card>\"\n"
+  }
+}

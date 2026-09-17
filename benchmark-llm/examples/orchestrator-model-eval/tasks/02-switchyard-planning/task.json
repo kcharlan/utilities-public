@@ -1,0 +1,10 @@
+{
+  "id": "switchyard-planning",
+  "cell": "switchyard.planning",
+  "context": "Synthetic planning packet for a fictional cobalt kite workflow with ordered backlog gates.",
+  "prompt": "Read BACKLOG.json. Write plan.json with the ordered step identifiers and the declared synthetic risk classification. Keep the response machine-readable and compact.",
+  "expected": {
+    "path": "plan.json",
+    "content": "{\"steps\":[\"inventory\",\"patch\",\"test\"],\"risk\":\"synthetic-low\"}\n"
+  }
+}

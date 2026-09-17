@@ -1,0 +1,5 @@
+[
+  {"id": "amber-fast", "safe": false, "deterministic": true},
+  {"id": "amber-safe", "safe": true, "deterministic": true},
+  {"id": "amber-random", "safe": true, "deterministic": false}
+]

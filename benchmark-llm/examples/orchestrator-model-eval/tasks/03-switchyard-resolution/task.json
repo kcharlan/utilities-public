@@ -1,0 +1,10 @@
+{
+  "id": "switchyard-resolution",
+  "cell": "switchyard.resolution",
+  "context": "Synthetic conflict-resolution packet for fictional amber gears with explicit constraints.",
+  "prompt": "Read CANDIDATES.json and CONSTRAINTS.md. Select the only fictional candidate satisfying every constraint and record the choice and concise reason in resolution.json.",
+  "expected": {
+    "path": "resolution.json",
+    "content": "{\"choice\":\"amber-safe\",\"reason\":\"meets-all-synthetic-constraints\"}\n"
+  }
+}

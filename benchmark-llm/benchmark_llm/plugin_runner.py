@@ -23,6 +23,15 @@ def _load_plugin_class(plugin_file: Path) -> type[BenchmarkPlugin]:
     raise LookupError(f"No BenchmarkPlugin subclass found in {plugin_file}")
 
 
+def preflight_plugin_benchmark(
+    benchmark_dir: Path,
+    runtime_home: Path,
+    environ: dict[str, str],
+) -> None:
+    plugin_class = _load_plugin_class(benchmark_dir / "bench.py")
+    plugin_class.preflight(benchmark_dir, runtime_home, dict(environ))
+
+
 def _run_plugin_phase(
     ctx: PluginContext,
     phase: str,

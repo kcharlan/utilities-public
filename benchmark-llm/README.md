@@ -202,6 +202,10 @@ Use `benchsdk.BenchmarkPlugin` when a benchmark needs custom control flow:
 from benchsdk import BenchmarkPlugin
 
 class MyBenchmark(BenchmarkPlugin):
+    @classmethod
+    def preflight(cls, benchmark_dir, runtime_home, environ):
+        ...  # Validate artifact placement before the runtime creates directories.
+
     def prepare(self, ctx):
         ...
 
@@ -214,6 +218,10 @@ class MyBenchmark(BenchmarkPlugin):
             "checks": [{"name": "example", "passed": True}],
         }
 ```
+
+`preflight` is optional. Plugin runs call it before creating the runtime layout or run
+directory, so plugins with strict placement requirements can reject unsafe paths without
+leaving artifacts behind. The other plugin phases run after the runtime layout exists.
 
 ## Repo-task Manifest
 

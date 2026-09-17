@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable, TextIO
 
 from .discovery import detect_benchmark_mode
-from .plugin_runner import run_plugin_benchmark
+from .plugin_runner import preflight_plugin_benchmark, run_plugin_benchmark
 from .prompt_batch import run_prompt_batch
 from .repo_task import (
     expand_repo_task_models,
@@ -208,11 +208,17 @@ def main(
     parser = _build_parser()
     args = parser.parse_args(argv)
     runtime_home = runtime_home_from_environ(env)
-    ensure_runtime_layout(runtime_home)
 
     if args.command == "run":
         benchmark_dir = Path(args.benchmark_dir).resolve()
         mode = detect_benchmark_mode(benchmark_dir)
+        if mode == "plugin":
+            try:
+                preflight_plugin_benchmark(benchmark_dir, runtime_home, env)
+            except Exception as exc:
+                stderr.write(f"{str(exc).rstrip()}\n")
+                return 1
+        ensure_runtime_layout(runtime_home)
         models = _resolve_models(parser, args.models, args.models_file)
         repo_task_config = None
         if mode == "repo_task":
@@ -307,10 +313,12 @@ def main(
         return 1 if failed else 0
 
     if args.command == "list":
+        ensure_runtime_layout(runtime_home)
         _print_runs(list_runs(runtime_home), stdout)
         return 0
 
     if args.command == "report":
+        ensure_runtime_layout(runtime_home)
         row = get_run(runtime_home, args.run_id)
         stdout.write(Path(str(row["report_path"])).read_text(encoding="utf-8"))
         return 0
