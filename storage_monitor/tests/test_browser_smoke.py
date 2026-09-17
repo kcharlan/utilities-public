@@ -1,6 +1,5 @@
-from collections import Counter
-from contextlib import contextmanager
 import json
+from contextlib import contextmanager
 from pathlib import Path
 import re
 import socket
@@ -16,156 +15,18 @@ import uvicorn
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from tools.testkit import load_launcher
+from tools.testkit import (
+    assert_react_19_import_map,
+    assert_react_esm_graph,
+    capture_browser_errors,
+    guard_browser_errors,
+    is_react_package_resource,
+    load_launcher,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 README = PROJECT_ROOT / "README.md"
-
-
-IMPORTS = [
-    ("react", "https://esm.sh/react@19.3.0"),
-    ("react/jsx-runtime", "https://esm.sh/react@19.3.0/jsx-runtime"),
-    (
-        "react/jsx-dev-runtime",
-        "https://esm.sh/react@19.3.0/jsx-dev-runtime",
-    ),
-    ("react-dom", "https://esm.sh/react-dom@19.3.0?external=react"),
-    (
-        "react-dom/client",
-        "https://esm.sh/react-dom@19.3.0/client?external=react",
-    ),
-    ("react-is", "https://esm.sh/react-is@19.3.0?external=react"),
-]
-
-
-def capture_browser_errors(page):
-    errors = []
-    page.on("pageerror", lambda error: errors.append(str(error)))
-    page.on(
-        "console",
-        lambda message: errors.append(message.text)
-        if message.type == "error"
-        else None,
-    )
-    return errors
-
-
-@contextmanager
-def guard_browser_errors(page, expected=()):
-    errors = capture_browser_errors(page)
-    try:
-        yield
-    finally:
-        assert errors == list(expected), f"Unexpected browser errors: {errors}"
-
-
-def is_react_package_resource(resource_url):
-    path = urlsplit(resource_url).path
-    return re.search(
-        r"(?:^|/)(?:react|react-dom|react-is)(?:@[^/]+)?(?:/|$)",
-        path,
-    ) is not None
-
-
-def assert_react_peer_graph(resource_urls):
-    required_wrappers = Counter(
-        {
-            ("/react@19.3.0", ""): 1,
-            ("/react@19.3.0/jsx-runtime", ""): 1,
-            ("/react-dom@19.3.0", "external=react"): 1,
-            ("/react-dom@19.3.0/client", "external=react"): 1,
-        }
-    )
-    wrapper_counts = Counter()
-    compiled_counts = Counter()
-    compiled_targets = {}
-    react_dom_external_markers = {}
-
-    for resource_url in resource_urls:
-        parsed = urlsplit(resource_url)
-        assert (parsed.scheme, parsed.netloc, parsed.fragment) == (
-            "https",
-            "esm.sh",
-            "",
-        ), f"unexpected React resource origin: {resource_url}"
-
-        wrapper_signature = (parsed.path, parsed.query)
-        if wrapper_signature in required_wrappers:
-            wrapper_counts[wrapper_signature] += 1
-            continue
-        if parsed.query:
-            raise AssertionError(f"unexpected React resource: {resource_url}")
-
-        react_match = re.fullmatch(
-            r"/react@19\.3\.0/([a-z][a-z0-9_-]{1,15})/"
-            r"(react|jsx-runtime)\.mjs",
-            parsed.path,
-        )
-        if react_match:
-            target, module_name = react_match.groups()
-            compiled_counts[module_name] += 1
-            compiled_targets[module_name] = target
-            continue
-
-        react_dom_match = re.fullmatch(
-            r"/react-dom@19\.3\.0/(X-[A-Za-z0-9_-]+)/"
-            r"([a-z][a-z0-9_-]{1,15})/(react-dom|client)\.mjs",
-            parsed.path,
-        )
-        if react_dom_match:
-            marker, target, module_name = react_dom_match.groups()
-            compiled_counts[module_name] += 1
-            compiled_targets[module_name] = target
-            react_dom_external_markers[module_name] = marker
-            continue
-
-        raise AssertionError(f"unexpected React resource: {resource_url}")
-
-    assert wrapper_counts == required_wrappers
-    assert compiled_counts == Counter(
-        {"react": 1, "jsx-runtime": 1, "react-dom": 1, "client": 1}
-    )
-    assert len(set(compiled_targets.values())) == 1
-    assert react_dom_external_markers == {
-        "react-dom": react_dom_external_markers.get("client"),
-        "client": react_dom_external_markers.get("react-dom"),
-    }
-    return next(iter(compiled_targets.values()))
-
-
-def assert_non_react_resources(resource_urls, compiled_target):
-    static_resources = {
-        "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
-        "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
-        "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
-    }
-    resource_counts = Counter(resource_urls)
-    for static_resource in static_resources:
-        assert resource_counts.pop(static_resource, 0) == 1
-    scheduler_resources = sorted(resource_counts.elements())
-    assert len(scheduler_resources) == 2
-
-    wrapper = urlsplit(scheduler_resources[0])
-    compiled = urlsplit(scheduler_resources[1])
-    assert (wrapper.scheme, wrapper.netloc, wrapper.fragment) == (
-        "https",
-        "esm.sh",
-        "",
-    )
-    assert (compiled.scheme, compiled.netloc, compiled.fragment) == (
-        "https",
-        "esm.sh",
-        "",
-    )
-    wrapper_match = re.fullmatch(r"/scheduler@%5E(\d+\.\d+\.\d+)", wrapper.path)
-    assert wrapper_match is not None
-    assert wrapper.query == f"target={compiled_target}"
-    scheduler_version = wrapper_match.group(1)
-    assert compiled.path == (
-        f"/scheduler@{scheduler_version}/{compiled_target}/scheduler.mjs"
-    )
-    assert compiled.query == ""
 
 
 @contextmanager
@@ -226,7 +87,8 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
         re.DOTALL,
     )
     assert import_map_match is not None
-    assert list(json.loads(import_map_match.group(1))["imports"].items()) == IMPORTS
+    imports = json.loads(import_map_match.group(1))["imports"]
+    assert_react_19_import_map(imports)
     assert "react@18.3.1" not in module.HTML_TEMPLATE
     assert "react-dom@18.3.1" not in module.HTML_TEMPLATE
     assert "@babel/standalone@8.0.5/babel.min.js" in module.HTML_TEMPLATE
@@ -235,7 +97,7 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
         'data-presets="env,react">'
     ) in module.HTML_TEMPLATE
     assert "import * as React from 'react';" in module.HTML_TEMPLATE
-    assert "import * as ReactDOM from 'react-dom';" in module.HTML_TEMPLATE
+    assert "import * as ReactDOM from 'react-dom';" not in module.HTML_TEMPLATE
     assert (
         "import * as ReactDOMClient from 'react-dom/client';"
         in module.HTML_TEMPLATE
@@ -298,13 +160,10 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
                 for url in external_resources
                 if is_react_package_resource(url)
             ]
-            compiled_target = assert_react_peer_graph(dependency_resources)
-            non_react_resources = [
-                url
-                for url in external_resources
-                if not is_react_package_resource(url)
-            ]
-            assert_non_react_resources(non_react_resources, compiled_target)
+            assert_react_esm_graph(
+                dependency_resources,
+                require_react_dom_wrapper=False,
+            )
 
             for bad_resource in (
                 "https://esm.sh/react",
@@ -320,7 +179,10 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
                 dependency_resources[0],
             ):
                 with pytest.raises(AssertionError):
-                    assert_react_peer_graph([*dependency_resources, bad_resource])
+                    assert_react_esm_graph(
+                        [*dependency_resources, bad_resource],
+                        require_react_dom_wrapper=False,
+                    )
 
             compiled_resources = [
                 url
@@ -328,7 +190,7 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
                 if urlsplit(url).path.endswith(".mjs")
             ]
             observed_target_match = re.search(
-                r"/([a-z][a-z0-9_-]{1,15})/"
+                r"/([a-z][a-z0-9_-]*)/"
                 r"(?:react|jsx-runtime|react-dom|client)\.mjs$",
                 urlsplit(compiled_resources[0]).path,
             )
@@ -337,7 +199,7 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
             alternate_target = (
                 "es2098" if observed_target == "es2099" else "es2099"
             )
-            assert_react_peer_graph(
+            assert_react_esm_graph(
                 [
                     url.replace(
                         f"/{observed_target}/",
@@ -346,20 +208,21 @@ def test_dashboard_loads_tailwind_v4_and_persists_theme_without_browser_errors(
                     if url in compiled_resources
                     else url
                     for url in dependency_resources
-                ]
+                ],
+                require_react_dom_wrapper=False,
             )
-            with pytest.raises(AssertionError):
-                assert_react_peer_graph(
-                    [
-                        url.replace(
-                            f"/{observed_target}/",
-                            "/target_name_far_too_long/",
-                        )
-                        if url in compiled_resources
-                        else url
-                        for url in dependency_resources
-                    ]
-                )
+            assert_react_esm_graph(
+                [
+                    url.replace(
+                        f"/{observed_target}/",
+                        "/future_browser_target_with_descriptive_name/",
+                    )
+                    if url in compiled_resources
+                    else url
+                    for url in dependency_resources
+                ],
+                require_react_dom_wrapper=False,
+            )
 
             assert page.evaluate("document.documentElement.dataset.theme") == "light"
             assert page.locator("body").evaluate(

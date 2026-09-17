@@ -3737,7 +3737,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div id="root" class="min-h-screen w-full"></div>
   <script type="text/babel" data-type="module" data-presets="env,react">
     import * as React from 'react';
-    import * as ReactDOM from 'react-dom';
     import * as ReactDOMClient from 'react-dom/client';
 
     const { useCallback, useEffect, useMemo, useRef, useState } = React;
