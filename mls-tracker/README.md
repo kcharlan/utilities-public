@@ -10,7 +10,7 @@ A local dashboard for exploring MLS playoff races across both conferences. It pu
 
 Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`); the launcher uses a PEP 723 inline-metadata header. The first run resolves its dependencies (fastapi, uvicorn, requests) into uv's shared cache — that invocation may briefly hit the network; subsequent runs are fast. A browser tab opens automatically to `http://127.0.0.1:8501`.
 
-The dashboard also needs internet access while running: the backend calls ESPN, and the frontend loads React, Babel, exact-version `@tailwindcss/browser` 4.3.3, Lucide Icons, and Google Fonts from CDNs.
+The dashboard also needs internet access while running: the backend calls ESPN, and the frontend loads React 19.3.0, ReactDOM 19.3.0, react-is 19.3.0, Babel Standalone 8.0.5, exact-version `@tailwindcss/browser` 4.3.3, Lucide Icons, and Google Fonts from CDNs.
 
 ### Options
 
@@ -37,25 +37,27 @@ The scenario model assumes a 34-game season and projects only the team currently
 Single-file FastAPI + embedded React SPA (no Node.js build tooling required).
 
 - **Backend**: FastAPI + uvicorn serving JSON API endpoints and an HTML template.
-- **Frontend**: React 18 + `@tailwindcss/browser` 4.3.3 + Lucide Icons, all loaded via CDN with in-browser Babel JSX transpilation.
+- **Frontend**: React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version ESM import map; Babel Standalone 8.0.5 for module-aware inline JSX; `@tailwindcss/browser` 4.3.3; and Lucide Icons, all loaded from CDNs without a Node.js build.
 - **Data sources**:
   - Standings: `https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings?season={year}`
   - Teams: `https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/teams`
 
 ### Frontend compatibility boundary
 
-The embedded, build-free SPA intentionally stays on the React 18 UMD global
-contract. React 19 does not publish the same UMD artifacts and would require a
-module/bundler migration. Tailwind uses the exact `@tailwindcss/browser` 4.3.3
+The embedded, build-free SPA uses an exact-version import map for the complete
+six-entry React peer contract: `react`, both JSX runtime subpaths,
+`react-dom`, `react-dom/client`, and `react-is`. ReactDOM and react-is URLs
+externalize the mapped React peer so the page loads one aligned React graph.
+Babel Standalone 8.0.5 compiles the inline JSX as a module with explicit
+`env,react` presets. Tailwind uses the exact `@tailwindcss/browser` 4.3.3
 package and CSS-first `@theme` tokens, with an explicit class-based dark-mode
-variant. The exact URL prevents package-version resolution drift, but runtime
-CDN delivery is not byte-immutable and still requires network access when the
-asset is not cached. Babel Standalone remains on major 7 for the inline
-`text/babel` transform; major 8 needs a separate transform migration.
+variant. The direct top-level package versions are pinned, but CDN-generated
+transitive dependencies are not fully locked. Runtime CDN delivery is not byte-immutable
+and still requires network access when an asset is not cached.
 
 ### Browser support
 
-The automated browser suite runs with Playwright Chromium and verifies the
+The automated browser suite runs with current Playwright Chromium and verifies the
 Tailwind resource graph, representative computed styles, dark-mode
 persistence, refresh behavior, and page/console error cleanliness. Tailwind
 4's manual client floors for this browser-delivered UI are Chrome 111, Safari 16.4,
