@@ -15,10 +15,15 @@ No UI interaction is needed — everything is tested through the backend API end
 - HAR files with WebSocket messages are needed to test WS-specific redaction
 - The current runner assumes no info-only findings: scanner defaults keep info findings, while Tests 7 and 8 assert that every remaining finding is redacted and a rescan produces zero findings
 
-The separate Playwright Chromium test in `test_e2e.py` covers the browser UI,
-including the exact `@tailwindcss/browser` 4.3.3 dependency, custom theme
-output, class-based dark styling, interaction, and page/console errors. It does
-not automate Safari or Firefox.
+The browser UI uses React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through
+an exact-version import map, with Babel Standalone 8.0.5 compiling module-aware
+inline JSX and Tailwind CSS 4.3.3. The direct top-level package versions are
+exact, but CDN-generated transitive dependencies are not fully locked and CDN
+delivery is not byte-immutable. The separate current Playwright Chromium test
+in `test_e2e.py` covers the complete React peer graph, exact direct scripts,
+custom theme output, class-based dark styling, interaction, and page/console
+errors. Tailwind's manual client floors are Chrome 111, Safari 16.4, and
+Firefox 128; Safari and Firefox are not covered by the automated browser test.
 
 ## Test Matrix
 
