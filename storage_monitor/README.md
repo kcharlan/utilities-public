@@ -38,16 +38,22 @@ On first run, uv resolves FastAPI and uvicorn into its shared cache, so that inv
 4. binds to `127.0.0.1`, preferring port 8473 and trying the next 19 ports if necessary; and
 5. opens the dashboard in the default browser.
 
-The build-free frontend intentionally stays on React 18's UMD globals; React
-19 requires a separate module-loader migration. Tailwind CSS is loaded through
-the exact-version `@tailwindcss/browser` 4.3.3 package. A minimal
-`text/tailwindcss` block declares the generated utilities, while first-party
-theme and component rules remain in a normal stylesheet so the dashboard keeps
-its core styling if the Tailwind CDN is unavailable. Babel Standalone remains
-on major 7 for the inline `text/babel` transform; major 8 needs a separate
-transform migration. These exact CDN version pins prevent package resolution
-drift, but the app still requires network access at runtime and CDN responses
-are not byte-immutable.
+The build-free frontend uses React 19.3.0 and ReactDOM 19.3.0 through an
+exact-version import map. Its six direct ESM entries pin `react`, both JSX
+runtime subpaths, `react-dom`, `react-dom/client`, and react-is 19.3.0;
+ReactDOM and react-is externalize the shared React peer. Babel Standalone 8.0.5
+compiles the module-aware inline JSX. Tailwind CSS 4.3.3 is loaded through the
+exact-version `@tailwindcss/browser` package. A minimal `text/tailwindcss`
+block declares the generated utilities, while first-party theme and component
+rules remain in a normal stylesheet so the dashboard keeps its core styling if
+the Tailwind CDN is unavailable.
+
+The direct top-level package versions in the import map and script URLs are
+exact, which prevents drift in those requested versions. CDN-generated
+transitive dependencies are not fully locked, however, and the interface still
+requires network access at runtime. Exact pins are not byte-immutable delivery
+guarantees; offline or byte-for-byte reproducible use would require a separate
+vendoring or release-artifact flow.
 
 The automated browser smoke covers the current Playwright Chromium only. For
 manual clients, Tailwind 4 requires Chrome 111 or newer, Safari 16.4 or newer,
