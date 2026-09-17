@@ -20,6 +20,6 @@ execution, verification, and auto-fix.
   virtualenv for compatible worktree sessions, and otherwise bootstraps a
   session-scoped verification env under the session root. It never falls back
   to the switchyard bootstrap venv or naked PATH/Homebrew pytest.
-- Default worker model is `gpt-5.4` (override with `CODEX_WORKER_MODEL` env var).
+- Default worker model is `gpt-5.6-sol` (override with `CODEX_WORKER_MODEL` env var).
 - Default reasoning effort is `xhigh` for planning/resolution and `high` for
   execution/auto-fix.
