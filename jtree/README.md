@@ -104,19 +104,20 @@ jtree [file.json] [--port 8100] [--readonly]
 Single-file Python script (uv-managed via a PEP 723 header) following the embedded React SPA pattern:
 
 - **Backend**: FastAPI + uvicorn serving REST API and HTML
-- **Frontend**: React 18, Babel Standalone, exact-version `@tailwindcss/browser` 4.3.3, Lucide Icons, DM Sans + JetBrains Mono fonts (all CDN)
+- **Frontend**: React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map; Babel Standalone 8.0.5 for module-aware inline JSX; Tailwind CSS 4.3.3 through the exact-version `@tailwindcss/browser` package; Lucide Icons 1.46.0; and DM Sans + JetBrains Mono fonts (all CDN)
 - **No build step**: No `npm install`, no `node_modules`
 
 Tailwind configuration is CSS-first: the embedded `text/tailwindcss` stylesheet
 declares the custom design tokens with `@theme` and registers the class-based
-dark mode through an explicit custom variant. React remains on its pinned UMD
-line independently of the Tailwind migration. Exact CDN versions prevent
-package-resolution drift, but runtime CDN delivery is not byte-immutable and
-still requires network access when assets are not cached.
+dark mode through an explicit custom variant. The import map pins the direct
+top-level package versions, while Babel compiles the module-aware inline JSX in
+the browser. CDN-generated transitive dependencies are not fully locked, and
+runtime CDN delivery is not byte-immutable, so the UI still requires network
+access when assets are not cached.
 
 ### Browser support
 
-The automated browser suite runs with Playwright Chromium. Tailwind 4's manual
+The automated browser suite runs with current Playwright Chromium. Tailwind 4's manual
 client floors for this browser-delivered UI are Chrome 111, Safari 16.4, and
 Firefox 128. Safari and Firefox are not covered by the automated browser test,
 so browser-specific behavior on those clients requires manual verification.

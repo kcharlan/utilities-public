@@ -879,10 +879,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>jtree - {{FILE_NAME}}</title>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@19.3.0",
+    "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+    "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+    "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+    "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+    "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+  }
+}
+</script>
+<script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
-<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
 <script src="https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1274,7 +1284,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div id="root"></div>
 
-<script type="text/babel">
+<script type="text/babel" data-type="module" data-presets="env,react">
+import * as React from 'react';
+import * as ReactDOMClient from 'react-dom/client';
+
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 // --- Utilities ---
@@ -2903,60 +2916,6 @@ const App = () => {
         setContextMenu({ x: e.clientX, y: e.clientY, node });
     }, []);
 
-    // Context menu actions
-    const handleContextAction = useCallback((action, node) => {
-        switch (action) {
-            case 'toggleExpand':
-                toggleExpand(node.path);
-                break;
-            case 'expandAll':
-                expandAll(node.path);
-                break;
-            case 'collapseAll':
-                collapseAll(node.path);
-                break;
-            case 'addChild':
-                setModal({ type: 'addChild', node });
-                break;
-            case 'delete':
-                if (node.childCount > 0) {
-                    setModal({ type: 'delete', node });
-                } else {
-                    handleDelete(node.path);
-                }
-                break;
-            case 'rename':
-                setModal({ type: 'rename', node });
-                break;
-            case 'editValue':
-                setModal({ type: 'edit', node });
-                break;
-            case 'moveUp': {
-                const parts = node.path.split('.');
-                const idx = parseInt(parts.pop(), 10);
-                const parentPath = parts.join('.');
-                if (idx > 0) handleMoveChild(parentPath, idx, idx - 1);
-                break;
-            }
-            case 'moveDown': {
-                const parts = node.path.split('.');
-                const idx = parseInt(parts.pop(), 10);
-                const parentPath = parts.join('.');
-                handleMoveChild(parentPath, idx, idx + 1);
-                break;
-            }
-            case 'moveTo':
-                setModal({ type: 'moveTo', node });
-                break;
-            case 'copyNode':
-                handleCopy(node.path);
-                break;
-            case 'paste':
-                handlePaste(node.path);
-                break;
-        }
-    }, [toggleExpand, expandAll, collapseAll, handleMoveChild, handleCopy, handlePaste]);
-
     // Mutations
     const handleEditSave = useCallback(async (path, value) => {
         try {
@@ -3189,6 +3148,70 @@ const App = () => {
             setToast(`Error: ${e.message}`);
         }
     }, [clipboard, refreshTree]);
+
+    // Context menu actions depend on the mutation callbacks above. Keep this
+    // declaration after them so native module scoping never reads a callback
+    // while its const binding is still in the temporal dead zone.
+    const handleContextAction = useCallback((action, node) => {
+        switch (action) {
+            case 'toggleExpand':
+                toggleExpand(node.path);
+                break;
+            case 'expandAll':
+                expandAll(node.path);
+                break;
+            case 'collapseAll':
+                collapseAll(node.path);
+                break;
+            case 'addChild':
+                setModal({ type: 'addChild', node });
+                break;
+            case 'delete':
+                if (node.childCount > 0) {
+                    setModal({ type: 'delete', node });
+                } else {
+                    handleDelete(node.path);
+                }
+                break;
+            case 'rename':
+                setModal({ type: 'rename', node });
+                break;
+            case 'editValue':
+                setModal({ type: 'edit', node });
+                break;
+            case 'moveUp': {
+                const parts = node.path.split('.');
+                const idx = parseInt(parts.pop(), 10);
+                const parentPath = parts.join('.');
+                if (idx > 0) handleMoveChild(parentPath, idx, idx - 1);
+                break;
+            }
+            case 'moveDown': {
+                const parts = node.path.split('.');
+                const idx = parseInt(parts.pop(), 10);
+                const parentPath = parts.join('.');
+                handleMoveChild(parentPath, idx, idx + 1);
+                break;
+            }
+            case 'moveTo':
+                setModal({ type: 'moveTo', node });
+                break;
+            case 'copyNode':
+                handleCopy(node.path);
+                break;
+            case 'paste':
+                handlePaste(node.path);
+                break;
+        }
+    }, [
+        toggleExpand,
+        expandAll,
+        collapseAll,
+        handleDelete,
+        handleMoveChild,
+        handleCopy,
+        handlePaste,
+    ]);
 
     // Export current view
     const [showExportMenu, setShowExportMenu] = useState(false);
@@ -3729,7 +3752,7 @@ const App = () => {
     );
 };
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const root = ReactDOMClient.createRoot(document.getElementById('root'));
 root.render(
     <ErrorBoundary>
         <App />
