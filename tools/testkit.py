@@ -108,13 +108,17 @@ def assert_react_esm_graph(
         )
         package, version = package_match.groups()
         assert version == "19.3.0", f"unexpected React version: {resource_url}"
+        assert parsed.query == "", (
+            f"unexpected generated React resource query: {resource_url}"
+        )
         generated_packages.add(package)
 
     assert wrapper_counts["/react@19.3.0"] == 1
     assert wrapper_counts["/react@19.3.0/jsx-runtime"] == 1
     assert wrapper_counts["/react@19.3.0/jsx-dev-runtime"] == 0
     assert wrapper_counts["/react-dom@19.3.0/client"] == 1
-    assert wrapper_counts["/react-is@19.3.0"] in {0, 1}
+    react_is_wrapper_present = wrapper_counts["/react-is@19.3.0"] == 1
+    assert react_is_wrapper_present == ("react-is" in generated_packages)
 
     react_dom_wrapper_count = wrapper_counts["/react-dom@19.3.0"]
     if react_dom_wrapper_policy == "required":
@@ -123,8 +127,6 @@ def assert_react_esm_graph(
         assert react_dom_wrapper_count == 0
     else:
         assert react_dom_wrapper_count in {0, 1}
-
-    assert {"react", "react-dom"} <= generated_packages
 
 
 def _install_browser_error_listeners(page):

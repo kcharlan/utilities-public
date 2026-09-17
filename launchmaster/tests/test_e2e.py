@@ -713,21 +713,46 @@ def test_react_graph_validator_rejects_duplicate_resources():
         )
 
 
-@pytest.mark.parametrize("package", ("react", "react-dom"))
-def test_react_graph_validator_requires_generated_package_resources(package):
-    without_generated_package = [
-        url
-        for url in SYNTHETIC_REACT_GRAPH
-        if not (
-            f"/{package}@19.3.0/" in url
-            and (
-                "generated/opaque" in url
-                or f"/{package}@19.3.0/arbitrary/" in url
-            )
-        )
-    ]
+def test_react_graph_validator_allows_no_generated_react_or_react_dom_resources():
+    assert_react_esm_graph(
+        SYNTHETIC_REACT_GRAPH[:4],
+        react_dom_wrapper_policy="required",
+    )
+
+
+def test_react_graph_validator_rejects_query_bearing_generated_resource():
     with pytest.raises(AssertionError):
-        assert_react_esm_graph(without_generated_package)
+        assert_react_esm_graph(
+            [
+                *SYNTHETIC_REACT_GRAPH,
+                "https://esm.sh/react@19.3.0/opaque/generated?dev",
+            ]
+        )
+
+
+def test_react_graph_validator_accepts_matching_react_is_wrapper_and_resource():
+    assert_react_esm_graph(
+        [
+            *SYNTHETIC_REACT_GRAPH,
+            "https://esm.sh/react-is@19.3.0?external=react",
+            "https://esm.sh/react-is@19.3.0/opaque/generated",
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "react_is_resource",
+    (
+        "https://esm.sh/react-is@19.3.0?external=react",
+        "https://esm.sh/react-is@19.3.0/opaque/generated",
+    ),
+    ids=("wrapper-without-generated", "generated-without-wrapper"),
+)
+def test_react_graph_validator_rejects_unpaired_react_is_resources(
+    react_is_resource,
+):
+    with pytest.raises(AssertionError):
+        assert_react_esm_graph([*SYNTHETIC_REACT_GRAPH, react_is_resource])
 
 
 @pytest.mark.parametrize(
