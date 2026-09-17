@@ -2166,13 +2166,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RouterView</title>
-<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.8/babel.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@19.3.0",
+    "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+    "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
+    "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+    "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+    "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+  }
+}
+</script>
+<script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
-<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
-<script src="https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"></script>
-<script src="https://unpkg.com/recharts@3.10.1/umd/Recharts.js"></script>
 <style type="text/tailwindcss">
   @custom-variant dark (&:where(.dark, .dark *));
 
@@ -2196,10 +2203,16 @@ body { background: #0f172a; color: #f1f5f9; font-family: ui-sans-serif,system-ui
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel">
+<script type="text/babel" data-type="module" data-presets="env,react">
+import * as React from 'react';
+import * as ReactDOMClient from 'react-dom/client';
+import {
+  AreaChart,Area,LineChart,Line,BarChart,Bar,PieChart,Pie,Cell,Rectangle,
+  XAxis,YAxis,CartesianGrid,Tooltip,Legend,ResponsiveContainer,ReferenceLine
+} from 'https://esm.sh/recharts@3.10.1?external=react,react-dom,react-is';
+
 const { useState, useEffect, useCallback, useRef, useMemo, memo } = React;
 const COLORS = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#22c55e','#06b6d4','#f97316','#a855f7','#14b8a6','#ef4444','#84cc16','#64748b'];
-const { AreaChart,Area,LineChart,Line,BarChart,Bar,PieChart,Pie,Cell,Rectangle,XAxis,YAxis,CartesianGrid,Tooltip,Legend,ResponsiveContainer,ReferenceLine } = Recharts;
 
 // Inline SVG icons — no CDN dependency
 const _i = (d,extra='') => ({size=14,className='',...p}) =>
@@ -3448,7 +3461,7 @@ function App() {
 }
 
 // ── Mount ─────────────────────────────────────────────────────────────────────
-ReactDOM.createRoot(document.getElementById('root')).render(
+ReactDOMClient.createRoot(document.getElementById('root')).render(
   React.createElement(ErrorBoundary, null, React.createElement(App))
 );
 </script>

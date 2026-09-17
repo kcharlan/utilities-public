@@ -1,4 +1,6 @@
 from contextlib import contextmanager
+from collections import Counter
+import json
 from pathlib import Path
 import re
 import socket
@@ -16,7 +18,14 @@ README = PROJECT_ROOT / "README.md"
 DESIGN = PROJECT_ROOT / "docs" / "DESIGN.md"
 sys.path.insert(0, str(REPO_ROOT))
 
-from tools.testkit import ASGISyncClient, load_launcher
+from tools.testkit import (
+    ASGISyncClient,
+    assert_react_19_import_map,
+    assert_react_esm_graph,
+    capture_browser_errors,
+    is_react_package_resource,
+    load_launcher,
+)
 
 
 @contextmanager
@@ -128,6 +137,19 @@ def test_tailwind_v4_contract_and_browser_support_are_documented():
     for document in (readme, design):
         assert "@tailwindcss/browser" in document
         assert "4.3.3" in document
+        normalized = " ".join(document.split())
+        for dependency in (
+            "React 19.3.0",
+            "ReactDOM 19.3.0",
+            "react-is 19.3.0",
+            "Recharts 3.10.1",
+            "Babel Standalone 8.0.5",
+        ):
+            assert dependency in normalized
+        assert "exact-version import map" in normalized
+        assert "module-aware inline JSX" in normalized
+        assert "direct top-level package versions" in normalized
+        assert "CDN-generated transitive dependencies are not fully locked" in normalized
     assert "not byte-immutable" in readme
     assert "Playwright" in readme
     assert "Chromium" in readme
@@ -142,39 +164,52 @@ def test_tailwind_v4_contract_and_browser_support_are_documented():
 
 def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
     module = load_launcher(Path(__file__).resolve().parents[1] / "routerview")
-    assert "react@18.3.1/umd/react.production.min.js" in module.HTML_TEMPLATE
-    assert "@babel/standalone@7.29.8/babel.min.js" in module.HTML_TEMPLATE
+    import_map_match = re.search(
+        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
+        module.HTML_TEMPLATE,
+        re.DOTALL,
+    )
+    assert import_map_match is not None
+    assert_react_19_import_map(json.loads(import_map_match.group(1))["imports"])
+    assert "react@18.3.1" not in module.HTML_TEMPLATE
+    assert "/umd/react" not in module.HTML_TEMPLATE
+    assert "@babel/standalone@8.0.5/babel.min.js" in module.HTML_TEMPLATE
     assert "@tailwindcss/browser@4.3.3" in module.HTML_TEMPLATE
-    assert "react-is@18.3.1/umd/react-is.production.min.js" in module.HTML_TEMPLATE
-    assert "recharts@3.10.1/umd/Recharts.js" in module.HTML_TEMPLATE
+    recharts_url = (
+        "https://esm.sh/recharts@3.10.1"
+        "?external=react,react-dom,react-is"
+    )
+    assert module.HTML_TEMPLATE.count(recharts_url) == 1
+    assert "recharts@3.10.1/umd/Recharts.js" not in module.HTML_TEMPLATE
+    assert (
+        '<script type="text/babel" data-type="module" '
+        'data-presets="env,react">'
+    ) in module.HTML_TEMPLATE
+    assert "import * as React from 'react';" in module.HTML_TEMPLATE
+    assert "import * as ReactDOMClient from 'react-dom/client';" in module.HTML_TEMPLATE
+    assert f"from '{recharts_url}';" in module.HTML_TEMPLATE
     module._db_path = str(tmp_path / "routerview.db")
     module.init_database(module._db_path)
     seed_synthetic_dashboard(module)
 
-    errors = []
     requests = []
     with live_server(module.app) as url, sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
-        page.on("pageerror", lambda error: errors.append(str(error)))
-        page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+        errors = capture_browser_errors(page)
         page.on("request", lambda request: requests.append(request.url))
-        page.goto(f"{url}?range=all", wait_until="networkidle")
-        page.get_by_text("RouterView", exact=True).wait_for()
-        assert errors == []
+        page.goto(f"{url}?range=all", wait_until="domcontentloaded")
+        page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
 
         script_sources = page.locator("script[src]").evaluate_all(
             "elements => elements.map(element => element.src)"
         )
-        assert script_sources == [
-            "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
-            "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
-            "https://unpkg.com/@babel/standalone@7.29.8/babel.min.js",
-            "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
-            "https://unpkg.com/prop-types@15.8.1/prop-types.min.js",
-            "https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js",
-            "https://unpkg.com/recharts@3.10.1/umd/Recharts.js",
-        ]
+        assert Counter(script_sources) == Counter(
+            {
+                "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js": 1,
+                "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3": 1,
+            }
+        )
         dependency_resources = page.evaluate(
             """() => performance.getEntriesByType('resource')
                 .map(entry => entry.name)
@@ -187,9 +222,18 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
                     name.includes('/react-dom@') || name.includes('/react-dom/') ||
                     name.includes('/react-is@') || name.includes('/react-is/')
                 )
-                .sort()"""
+                """
         )
-        assert dependency_resources == sorted(script_sources)
+        react_resources = [
+            resource
+            for resource in dependency_resources
+            if is_react_package_resource(resource)
+        ]
+        assert_react_esm_graph(react_resources)
+        dependency_counts = Counter(dependency_resources)
+        assert dependency_counts[recharts_url] == 1
+        for direct_resource in script_sources:
+            assert dependency_counts[direct_resource] == 1
 
         kpi_card = page.locator(".bg-card").first
         page.wait_for_function(
@@ -203,7 +247,8 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
             "getComputedStyle(document.querySelector('.bg-card')).backgroundColor === 'rgb(51, 65, 85)'"
         )
         requests.clear()
-        page.reload(wait_until="networkidle")
+        page.reload(wait_until="domcontentloaded")
+        page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
         page.wait_for_function("document.documentElement.classList.contains('dark')")
         page.wait_for_function(
             "getComputedStyle(document.querySelector('.bg-card')).backgroundColor === 'rgb(30, 41, 59)'"
@@ -272,21 +317,7 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
         assert browser.version
         browser.close()
 
-    package_requests = [
-        request
-        for request in requests
-        if re.search(r"/(react(?:-dom|-is)?)(?:/|@)", request)
-    ]
-    assert [request for request in package_requests if re.search(r"/react(?:/|@)", request)] == [
-        "https://unpkg.com/react@18.3.1/umd/react.production.min.js"
-    ]
-    assert [request for request in package_requests if re.search(r"/react-dom(?:/|@)", request)] == [
-        "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
-    ]
-    assert [request for request in package_requests if re.search(r"/react-is(?:/|@)", request)] == [
-        "https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"
-    ]
-    assert requests.count("https://unpkg.com/recharts@3.10.1/umd/Recharts.js") == 1
+    assert recharts_url in requests
     assert errors == []
 
 
@@ -356,7 +387,8 @@ def test_linked_crosshair_uses_rendered_plot_bounds_for_many_buckets(tmp_path):
             "**/api/timeseries*",
             lambda route: route.fulfill(json=timeseries),
         )
-        page.goto(url, wait_until="networkidle")
+        page.goto(url, wait_until="domcontentloaded")
+        page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
 
         heading = page.get_by_role(
             "heading", name=re.compile(r"Cost over Time\s*by model")
@@ -435,7 +467,8 @@ def test_bar_crosshair_snaps_to_band_boundaries(tmp_path):
             else None,
         )
         page.route("**/api/timeseries*", lambda route: route.fulfill(json=timeseries))
-        page.goto(url, wait_until="networkidle")
+        page.goto(url, wait_until="domcontentloaded")
+        page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
         page.locator('select:has(option[value="bar"])').select_option("bar")
 
         heading = page.get_by_role(
@@ -500,7 +533,8 @@ def test_one_bucket_crosshair_links_to_first_bucket_and_clears_outside_plot(tmp_
             else None,
         )
         page.route("**/api/timeseries*", lambda route: route.fulfill(json=timeseries))
-        page.goto(url, wait_until="networkidle")
+        page.goto(url, wait_until="domcontentloaded")
+        page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
 
         heading = page.get_by_role(
             "heading", name=re.compile(r"Cost over Time\s*by model")
@@ -561,7 +595,8 @@ def test_dimensional_bar_filter_is_keyboard_accessible(tmp_path, activation_key)
             if message.type == "error"
             else None,
         )
-        page.goto(f"{url}?range=all", wait_until="networkidle")
+        page.goto(f"{url}?range=all", wait_until="domcontentloaded")
+        page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
 
         bar = page.get_by_role(
             "button", name=re.compile(r"Filter by model (?:alpha|beta)")

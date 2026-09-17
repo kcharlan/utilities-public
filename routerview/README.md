@@ -14,7 +14,10 @@ RouterView runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using a
 
 On first run RouterView creates its runtime home at `~/.routerview/`; uv resolves the dependencies (fastapi, uvicorn[standard], aiosqlite, python-multipart) into its shared cache — that first invocation may briefly hit the network. No virtual environment is written to your home directory.
 
-The dashboard loads React, Babel, exact-version `@tailwindcss/browser` 4.3.3, PropTypes, React Is, and Recharts from public CDNs, so the browser needs network access unless those assets are already cached.
+The dashboard loads React 19.3.0, ReactDOM 19.3.0, react-is 19.3.0,
+Recharts 3.10.1, Babel Standalone 8.0.5, and exact-version
+`@tailwindcss/browser` 4.3.3 from public CDNs, so the browser needs network
+access unless those assets are already cached.
 
 To make `routerview` available on your `PATH`, create an optional symlink from this directory:
 
@@ -61,23 +64,25 @@ The dashboard refreshes immediately after a successful CSV import, including the
 
 ### Frontend compatibility boundary
 
-The embedded, build-free SPA intentionally uses React 18's UMD globals.
-React 19 would require a module/bundler migration. Recharts 3.10.1 uses its UMD
-global and loads after the React-18-aligned React Is 18.3.1 peer. Chart
+The embedded, build-free SPA uses an exact-version import map for React 19.3.0,
+ReactDOM 19.3.0, and react-is 19.3.0. Babel Standalone 8.0.5 compiles the
+module-aware inline JSX, and Recharts 3.10.1 is loaded as ESM while
+externalizing those mapped peers so the page has one React graph. Chart
 interactions use public tooltip, legend, shape, and cell callbacks rather than
 Recharts 2 chart-state fields. Tailwind uses the exact `@tailwindcss/browser`
 4.3.3 package with CSS-first `@theme` tokens and an explicit class-based
-dark-mode variant. The exact URL prevents package-version resolution drift,
-but runtime CDN delivery is not byte-immutable and still requires network
-access when the asset is not cached.
-Babel Standalone remains on major 7 for the inline `text/babel` transform;
-major 8 needs a separate transform migration.
+dark-mode variant. These pins lock direct top-level package versions, but
+runtime CDN delivery is not byte-immutable and CDN-generated transitive
+dependencies are not fully locked; uncached startup still requires network
+access.
 
 ### Browser support
 
-The automated browser suite runs with Playwright Chromium and verifies the
-Tailwind resource graph, custom-theme and dark-mode computed styles, dark-mode
-restoration, chart/filter interactions, and page/console error cleanliness.
+The automated browser suite runs with current Playwright Chromium and verifies
+the React/Recharts peer resource graph, Tailwind resource graph, custom-theme
+and dark-mode computed styles, dark-mode restoration, chart/filter
+interactions, and page/console error cleanliness. The ESM frontend requires a
+browser with import-map and JavaScript-module support.
 Tailwind 4's manual client floors for this browser-delivered UI are Chrome 111,
 Safari 16.4, and Firefox 128. Safari and Firefox are not covered by the
 automated browser test, so browser-specific behavior on those clients requires
