@@ -5,6 +5,8 @@ Run from project root:
     .venv/bin/python -m pytest tests/test_html_shell.py -v
 """
 
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,6 +26,7 @@ except ImportError:
     )
 
 import git_dashboard  # noqa: E402
+from tools.testkit import assert_react_19_import_map  # noqa: E402
 
 
 # ── Test 1: Basic response ────────────────────────────────────────────────────
@@ -36,22 +39,38 @@ def test_get_root_returns_html(client):
 
 # ── Test 2: React CDN tags ────────────────────────────────────────────────────
 
-def test_html_includes_react_cdn(html_body):
-    assert "react/18.3.1" in html_body
-    assert "react-dom/18.3.1" in html_body
-    assert "prop-types/15.8.1" in html_body
-    assert "babel-standalone/7.29.8" in html_body
+def test_html_includes_react_19_esm_contract(html_body):
+    import_map_match = re.search(
+        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
+        html_body,
+        re.DOTALL,
+    )
+    assert import_map_match is not None
+    import_map = json.loads(import_map_match.group(1))
+    assert_react_19_import_map(import_map["imports"])
+    assert "react@18.3.1" not in html_body
+    assert "react-dom@18.3.1" not in html_body
+    assert "@babel/standalone@8.0.5" in html_body
+    assert (
+        '<script type="text/babel" data-type="module" '
+        'data-presets="env,react">'
+    ) in html_body
+    assert "import * as React from 'react';" in html_body
+    assert "import * as ReactDOMClient from 'react-dom/client';" in html_body
+    assert "ReactDOMClient.createRoot(" in html_body
 
 
 # ── Test 3: Recharts CDN graph ───────────────────────────────────────────────
 
-def test_html_includes_recharts_3_with_aligned_react_is(html_body):
-    react_is_url = "https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"
-    recharts_url = "https://unpkg.com/recharts@3.10.1/umd/Recharts.js"
+def test_html_includes_recharts_3_esm_with_externalized_react_peers(html_body):
+    recharts_url = (
+        "https://esm.sh/recharts@3.10.1"
+        "?external=react,react-dom,react-is"
+    )
 
-    assert html_body.count(react_is_url) == 1
     assert html_body.count(recharts_url) == 1
-    assert html_body.index(react_is_url) < html_body.index(recharts_url)
+    assert f"import * as Recharts from '{recharts_url}';" in html_body
+    assert "umd/Recharts.js" not in html_body
     assert "recharts/2.15.4" not in html_body
 
 

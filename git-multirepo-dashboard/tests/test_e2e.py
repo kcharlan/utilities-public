@@ -45,25 +45,28 @@ except ImportError:
 pytestmark = pytest.mark.e2e
 
 PROJECT_ROOT = Path(__file__).parent.parent
+REPO_ROOT = PROJECT_ROOT.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from tools.testkit import (  # noqa: E402
+    assert_react_esm_graph,
+    capture_browser_errors,
+    guard_browser_errors,
+    is_react_package_resource,
+)
+
 GIT_DASHBOARD = PROJECT_ROOT / "git_dashboard.py"
 
 
 @pytest.fixture(autouse=True)
 def fail_on_unexpected_browser_errors(page, request):
     """Fail on browser errors, except exact HTTP failures a test intentionally causes."""
-    errors = []
+    errors = capture_browser_errors(page)
     error_responses = []
-    page.on("pageerror", lambda error: errors.append(f"pageerror: {error}"))
     page.on(
         "response",
         lambda response: error_responses.append((response.status, response.url))
         if response.status >= 400
-        else None,
-    )
-    page.on(
-        "console",
-        lambda message: errors.append(f"console.error: {message.text}")
-        if message.type == "error"
         else None,
     )
     yield
@@ -71,7 +74,7 @@ def fail_on_unexpected_browser_errors(page, request):
     for marker in request.node.iter_markers("allows_http_error"):
         status, count, endpoint_pattern = marker.args
         pattern = re.compile(
-            rf"console\.error: Failed to load resource: the server responded "
+            rf"Failed to load resource: the server responded "
             rf"with a status of {status} \([^\n]+\)"
         )
         matches = [error for error in errors if pattern.fullmatch(error)]
@@ -92,6 +95,12 @@ def fail_on_unexpected_browser_errors(page, request):
     for expected in expected_http_errors:
         unexpected.remove(expected)
     assert unexpected == [], "Unexpected browser errors:\n" + "\n".join(unexpected)
+
+
+def _open_app(page, url):
+    """Navigate without CDN-idle heuristics and wait for the mounted shell."""
+    page.goto(url, wait_until="domcontentloaded")
+    expect(page.locator("header")).to_be_visible()
 
 
 def _find_free_port():
@@ -178,8 +187,7 @@ def server(tmp_path_factory):
 
 def test_page_loads_without_js_errors(server, page):
     """Page loads without uncaught exceptions or console errors."""
-    page.goto(server)
-    page.wait_for_load_state("networkidle")
+    _open_app(page, server)
 
 
 def test_cdn_resources_load(server, page):
@@ -189,45 +197,36 @@ def test_cdn_resources_load(server, page):
         f"{req.method} {req.url}: {req.failure}"
     ))
 
-    page.goto(server)
-    page.wait_for_load_state("networkidle")
+    _open_app(page, server)
 
-    cdn_failures = [r for r in failed_requests if "cdnjs" in r or "unpkg" in r or "fonts" in r]
+    cdn_failures = [
+        failure
+        for failure in failed_requests
+        if any(host in failure for host in ("esm.sh", "unpkg", "fonts"))
+    ]
     assert cdn_failures == [], f"CDN resources failed to load: {cdn_failures}"
 
 
 def test_react_peer_resource_graph_is_single_and_aligned(server, page):
-    """The UMD page loads one aligned React peer graph for Recharts 3."""
+    """The ESM page loads one aligned React peer graph for Recharts 3."""
     requests = []
     page.on("request", lambda request: requests.append(request.url))
 
-    page.goto(server)
-    page.wait_for_load_state("networkidle")
+    _open_app(page, server)
 
-    package_requests = [
-        url for url in requests
-        if re.search(r"/(react(?:-dom|-is)?)(?:/|@)", url)
+    react_resources = [
+        url for url in requests if is_react_package_resource(url)
     ]
-    react = [url for url in package_requests if re.search(r"/react(?:/|@)", url)]
-    react_dom = [url for url in package_requests if re.search(r"/react-dom(?:/|@)", url)]
-    react_is = [url for url in package_requests if re.search(r"/react-is(?:/|@)", url)]
-
-    assert react == [
-        "https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"
-    ]
-    assert react_dom == [
-        "https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"
-    ]
-    assert react_is == [
-        "https://unpkg.com/react-is@18.3.1/umd/react-is.production.min.js"
-    ]
-    assert requests.count("https://unpkg.com/recharts@3.10.1/umd/Recharts.js") == 1
+    assert_react_esm_graph(react_resources, react_dom_wrapper_policy="required")
+    assert requests.count(
+        "https://esm.sh/recharts@3.10.1?external=react,react-dom,react-is"
+    ) == 1
+    assert not any("umd/Recharts.js" in url for url in requests)
 
 
 def test_react_app_mounts(server, page):
     """React app mounts successfully — the root div has content."""
-    page.goto(server)
-    page.wait_for_load_state("networkidle")
+    _open_app(page, server)
 
     root = page.locator("#root")
     assert root.inner_html() != "", "React app did not mount — #root is empty"
@@ -1045,6 +1044,67 @@ def test_activity_chart_renders_signed_areas_axes_and_custom_tooltip(server, pag
     assert "-4 deletions" in tooltip_text
     assert "net +6" in tooltip_text
     assert "3 commits" in tooltip_text
+
+
+def test_activity_gap_fill_uses_browser_local_calendar_day(server, browser):
+    """Late UTC hours must not add a synthetic next-local-day data point."""
+    context = browser.new_context(timezone_id="America/New_York")
+    page = context.new_page()
+    try:
+        page.add_init_script("""
+            const NativeDate = Date;
+            const fixedNow = NativeDate.parse('2026-09-17T02:30:00Z');
+            class FixedDate extends NativeDate {
+                constructor(...args) {
+                    super(...(args.length ? args : [fixedNow]));
+                }
+                static now() { return fixedNow; }
+            }
+            window.Date = FixedDate;
+        """)
+        page.route(
+            "**/api/repos/synthetic-boundary",
+            lambda route: route.fulfill(json={
+                "id": "synthetic-boundary",
+                "name": "Synthetic Boundary Repo",
+                "path": "/tmp/synthetic-boundary",
+                "path_exists": True,
+                "runtime": "python",
+                "default_branch": "main",
+                "working_state": {"current_branch": "main"},
+            }),
+        )
+        page.route(
+            "**/api/repos/synthetic-boundary/history*",
+            lambda route: route.fulfill(json={
+                "repo_id": "synthetic-boundary",
+                "days": 90,
+                "data": [{
+                    "date": "2026-09-16",
+                    "commits": 3,
+                    "insertions": 10,
+                    "deletions": 4,
+                    "files_changed": 3,
+                }],
+            }),
+        )
+
+        with guard_browser_errors(page):
+            _open_app(page, server + "#/repo/synthetic-boundary")
+            chart = page.locator(".detail-content .recharts-wrapper")
+            chart.wait_for(state="visible")
+            chart_box = chart.bounding_box()
+            assert chart_box
+            page.mouse.move(
+                chart_box["x"] + chart_box["width"] - 8,
+                chart_box["y"] + chart_box["height"] / 2,
+            )
+            tooltip = page.locator(".recharts-tooltip-wrapper")
+            tooltip.wait_for(state="visible")
+            assert "2026-09-16" in tooltip.inner_text()
+            assert "2026-09-17" not in tooltip.inner_text()
+    finally:
+        context.close()
 
 
 def test_time_allocation_chart_renders_stack_axes_and_tooltip(server, page):
