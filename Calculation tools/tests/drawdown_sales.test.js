@@ -1,46 +1,11 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const test = require('node:test');
-const vm = require('node:vm');
-
-const calculatorPath = path.join(__dirname, '..', 'drawdown.html');
-const calculatorHtml = fs.readFileSync(calculatorPath, 'utf8');
-const scriptMatch = calculatorHtml.match(/<script>\s*([\s\S]*?)<\/script>/);
-
-assert.ok(scriptMatch, 'drawdown.html must contain an inline script');
+const { calculatorHtml, loadDrawdownApi: loadApi } = require('./helpers/load_drawdown');
 
 function loadDrawdownApi(documentOverrides = {}) {
-  const context = {
-    document: {
-      addEventListener() {},
-      ...documentOverrides,
-    },
-  };
-  vm.createContext(context);
-  vm.runInContext(
-    `${scriptMatch[1]}
-globalThis.__drawdownApi = {
-  state,
-  PARAM_DEFS,
-  simulate,
-  aggregateForView,
-  renderStats,
-  calculateAssetSale: typeof calculateAssetSale === 'function' ? calculateAssetSale : undefined,
-  normalizeTaxPercent: typeof normalizeTaxPercent === 'function' ? normalizeTaxPercent : undefined,
-  readNormalizedTaxRate: typeof readNormalizedTaxRate === 'function' ? readNormalizedTaxRate : undefined,
-  readPinFieldValue: typeof readPinFieldValue === 'function' ? readPinFieldValue : undefined,
-  collectPinOverrides: typeof collectPinOverrides === 'function' ? collectPinOverrides : undefined,
-  renderPinEditor: typeof renderPinEditor === 'function' ? renderPinEditor : undefined,
-  toRoundedCents: typeof toRoundedCents === 'function' ? toRoundedCents : undefined,
-  formatCents: typeof formatCents === 'function' ? formatCents : undefined,
-  buildCsvText: typeof buildCsvText === 'function' ? buildCsvText : undefined,
-};`,
-    context,
-  );
-  return context.__drawdownApi;
+  return loadApi({ document: documentOverrides });
 }
 
 function assertClose(actual, expected, tolerance = 1e-9) {
@@ -603,7 +568,7 @@ test('[simulation] records zero sale flows without a shortfall', () => {
   assert.equal(row.net_sale_proceeds, 0);
 });
 
-test('[simulation] depletes insufficient investments after tax', () => {
+test('[simulation] reports reserve failure when investments cannot fund the shortfall', () => {
   const { state, simulate } = loadDrawdownApi();
   Object.assign(state.params, {
     buffer_initial: 0,
@@ -629,7 +594,9 @@ test('[simulation] depletes insufficient investments after tax', () => {
   assert.equal(row.net_sale_proceeds, 85);
   assert.equal(row.buffer, -15);
   assert.equal(row.insolvency, true);
-  assert.equal(result.terminatedReason, 'depleted');
+  assert.equal(result.terminatedReason, 'reserve_failure');
+  assert.equal(result.terminatedAtMonth, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.issues)), []);
 });
 
 test('[simulation] stays finite at 100% sale tax', () => {
