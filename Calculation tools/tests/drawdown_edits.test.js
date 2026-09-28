@@ -30,6 +30,8 @@ test('pin drafts validate fields and normalize taxes against baselines', () => {
   assert.equal(valid.value.overrides.tax_rate, 0.25);
   assert.equal(valid.value.overrides.sale_tax_rate, 1);
   assert.equal(validatePinDraft({ at_month: 1, overrides: { investments: 0, investment_income: 1 } }, { baseline }).ok, false);
+  assert.equal(validatePinDraft({ at_month: 1, overrides: { investments: 0 } },
+    { baseline: { investments: 100, investment_income: 2 } }).ok, true);
 });
 
 test('blank pin money remains invalid through collection', () => {
@@ -126,7 +128,7 @@ test('invalid pin transaction leaves the accepted scenario and revision intact',
   Object.assign(state.params, { investments_initial: 100, investment_income: 2, num_periods: 2 });
   const previous = JSON.stringify(state.pins);
   const revision = state.revision;
-  const result = tryAcceptPins([{ at_month: 1, overrides: { investments: 0 } }]);
+  const result = tryAcceptPins([{ at_month: 1, overrides: { investments: 0, investment_income: 1 } }]);
   assert.equal(result.ok, false);
   assert.ok(result.issues.some(issue => issue.field === 'investment_income'));
   assert.equal(JSON.stringify(state.pins), previous);

@@ -458,13 +458,13 @@ test('[helper] calculateAssetSale sells all principal when 15% tax leaves a shor
   assert.equal(result.unfundedDeficit, 575);
 });
 
-test('[helper] calculateAssetSale treats a 100% rate as consuming the entire sale', () => {
+test('[helper] calculateAssetSale preserves principal at a 100% rate', () => {
   const { calculateAssetSale } = loadDrawdownApi();
   const result = calculateAssetSale(1000, 600, 1);
 
   assertSaleInvariants(result, 1000, 600);
-  assert.equal(result.grossSold, 600);
-  assert.equal(result.saleTaxPaid, 600);
+  assert.equal(result.grossSold, 0);
+  assert.equal(result.saleTaxPaid, 0);
   assert.equal(result.netSaleProceeds, 0);
   assert.equal(result.unfundedDeficit, 1000);
 });
@@ -480,6 +480,13 @@ test('[helper] calculateAssetSale stays finite just below 100% when maximum net 
   assertClose(result.saleTaxPaid, 600 - expectedNet);
   assert.equal(result.netSaleProceeds, expectedNet);
   assert.equal(result.unfundedDeficit, 1000 - expectedNet);
+});
+
+test('[helper] sale funds a material subcent deficit while ignoring binary roundoff', () => {
+  const { calculateAssetSale } = loadDrawdownApi();
+  assert.equal(calculateAssetSale(0.000001, 1, 0).netSaleProceeds, 0.000001);
+  const tiny = calculateAssetSale(1e-14, 1, 0);
+  assert.equal(tiny.grossSold, 0);
 });
 
 test('[simulation] defaults asset-sale tax to 15%', () => {
@@ -592,14 +599,18 @@ test('[simulation] reports reserve failure when investments cannot fund the shor
   assert.equal(row.sold, 100);
   assert.equal(row.sale_tax_paid, 15);
   assert.equal(row.net_sale_proceeds, 85);
-  assert.equal(row.buffer, -15);
+  assert.equal(row.buffer, 85);
+  assert.equal(row.expense_paid, 0);
+  assert.equal(row.unfunded_expense, 100);
+  assert.equal(row.unfunded_reserve, 15);
+  assert.equal(row.unfunded_deficit, 115);
   assert.equal(row.insolvency, true);
   assert.equal(result.terminatedReason, 'reserve_failure');
   assert.equal(result.terminatedAtMonth, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(result.issues)), []);
 });
 
-test('[simulation] stays finite at 100% sale tax', () => {
+test('[simulation] retains principal and reports unpaid expense at 100% sale tax', () => {
   const { state, simulate } = loadDrawdownApi();
   Object.assign(state.params, {
     buffer_initial: 0,
@@ -622,9 +633,13 @@ test('[simulation] stays finite at 100% sale tax', () => {
   for (const field of ['sold', 'sale_tax_paid', 'net_sale_proceeds', 'buffer', 'investments']) {
     assert.equal(Number.isFinite(row[field]), true, `${field} must be finite`);
   }
-  assert.equal(row.sold, 100);
-  assert.equal(row.sale_tax_paid, 100);
+  assert.equal(row.sold, 0);
+  assert.equal(row.sale_tax_paid, 0);
   assert.equal(row.net_sale_proceeds, 0);
+  assert.equal(row.investments, 100);
+  assert.equal(row.expense_paid, 0);
+  assert.equal(row.unfunded_expense, 100);
+  assert.equal(row.unfunded_reserve, 100);
   assert.equal(row.insolvency, true);
 });
 

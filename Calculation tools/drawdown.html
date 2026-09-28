@@ -1116,7 +1116,7 @@
       <span class="sep">·</span>
       <strong>Tax.</strong> The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.
       <span class="sep">·</span>
-      <strong>Decay.</strong> Gross liquidation—not net proceeds—drives principal reduction and sell-off decay. Investment income reduction is permanent and cumulative; each sale subtracts <em>(modifier × percent of original principal sold)</em> from a running coefficient. The modifier in force at the time of sale is locked in — later modifier changes never re-evaluate past sales.
+      <strong>Decay.</strong> Gross liquidation—not net proceeds—drives principal reduction and sell-off decay. Each principal change adjusts the running investment-income ledger by <em>modifier × income yield × principal change</em>. The modifier in force at that event is locked in; a later income edit resets the yield and running income.
       <span class="sep">·</span>
       <strong>Pins.</strong> Click the <em>+</em> in the left gutter of any row to attach an override. Pins apply forward from the pinned period; past rows are immutable.
       <span class="sep">·</span>
@@ -1291,8 +1291,7 @@ function validatePinDraft(draft, context = {}) {
     }
   }
   const principal = overrides.investments ?? context.baseline?.investments;
-  const income = overrides.investment_income ?? context.baseline?.investment_income;
-  if (principal === 0 && income > 0) {
+  if (principal === 0 && 'investment_income' in overrides && overrides.investment_income > 0) {
     issues.push(issue('investment_income', 'Investment income must be zero when principal is zero.', { month }));
   }
   return issues.length
@@ -1306,19 +1305,19 @@ function validatePinDraft(draft, context = {}) {
    ============================================================ */
 
 function calculateAssetSale(deficit, availableInvestments, saleTaxRate) {
-  if (deficit <= 0 || availableInvestments <= 0) {
+  if (deficit <= moneyTolerance(deficit) || availableInvestments <= 0) {
     return {
       grossSold: 0,
       saleTaxPaid: 0,
       netSaleProceeds: 0,
-      unfundedDeficit: Math.max(0, deficit),
+      unfundedDeficit: deficit > moneyTolerance(deficit) ? deficit : 0,
     };
   }
 
   if (saleTaxRate >= 1) {
     return {
-      grossSold: availableInvestments,
-      saleTaxPaid: availableInvestments,
+      grossSold: 0,
+      saleTaxPaid: 0,
       netSaleProceeds: 0,
       unfundedDeficit: deficit,
     };
@@ -1345,6 +1344,31 @@ function calculateAssetSale(deficit, availableInvestments, saleTaxRate) {
     netSaleProceeds,
     unfundedDeficit: Math.max(0, deficit - netSaleProceeds),
   };
+}
+
+function moneyTolerance(...amounts) {
+  return Math.max(1e-9, 16 * Number.EPSILON * Math.max(1, ...amounts.map(Math.abs)));
+}
+
+function createIncomeLedger(principal, income) {
+  return { principal, rawIncome: income, yieldRate: principal === 0 ? 0 : income / principal };
+}
+
+function effectiveIncome(ledger) {
+  return ledger.principal === 0 ? 0 : Math.max(0, ledger.rawIncome);
+}
+
+function applyPrincipalEvent(ledger, change, modifier) {
+  ledger.rawIncome += modifier * ledger.yieldRate * change;
+  ledger.principal += change;
+}
+
+function resetIncomeLedger(ledger, income) {
+  if (ledger.principal === 0 && income > 0) {
+    throw new RangeError('Investment income must be zero at zero principal.');
+  }
+  ledger.rawIncome = income;
+  ledger.yieldRate = ledger.principal === 0 ? 0 : income / ledger.principal;
 }
 
 function simulate(params = state.params, pins = state.pins, options = {}) {
@@ -1386,10 +1410,7 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
 
   const sim = {
     buffer: p.buffer_initial,
-    investments: p.investments_initial,
-    cumulative_reduction: 0,
-    baseline_principal: p.investments_initial,
-    baseline_income: p.investment_income,
+    ledger: createIncomeLedger(p.investments_initial, p.investment_income),
     current_expense: p.expense,
     current_external: p.external_income,
     current_tax: p.tax_rate,
@@ -1398,6 +1419,9 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
     current_floor: p.floor,
     current_monthly_inflation: monthlyInflation,
   };
+  if (!Object.values(sim.ledger).every(Number.isFinite)) {
+    return invalidResult([issue('model', 'The investment income yield exceeds the supported numerical range.')], plannedLastMonth);
+  }
 
   const monthLimit = Math.min(plannedLastMonth, throughMonth);
   if (!Number.isFinite(dateForMonth(monthLimit, dateAnchor).getTime())) {
@@ -1425,22 +1449,18 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
       const ov = { ...pin.overrides };
       if ('tax_rate' in ov) ov.tax_rate = normalizedTaxRate(raw.tax_rate, sim.current_tax);
       if ('sale_tax_rate' in ov) ov.sale_tax_rate = normalizedTaxRate(raw.sale_tax_rate, sim.current_sale_tax);
-      const principal = ov.investments ?? sim.investments;
-      const income = ov.investment_income ??
-        sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
-      if (principal === 0 && income > 0) {
+      const principal = ov.investments ?? sim.ledger.principal;
+      if (principal === 0 && 'investment_income' in ov && ov.investment_income > 0) {
         return invalidResult([issue('investment_income', 'Investment income must be zero when principal is zero.', { month: m, origin: 'adjustment' })], plannedLastMonth);
       }
       pinAppliedAtThisMonth = { ...pin, overrides: { ...ov } };
       pinOverridesApplied = { ...ov };
 
       // ----- ABSOLUTE STATE overrides -----
-      // Track whether investments or investment_income changed (need epoch reset)
       const investmentsChanged = 'investments' in ov;
       const incomeChanged = 'investment_income' in ov;
 
       if ('buffer' in ov) sim.buffer = ov.buffer;
-      if ('investments' in ov) sim.investments = ov.investments;
 
       // ----- PARAMETER overrides -----
       if ('modifier' in ov) sim.current_modifier = ov.modifier;
@@ -1453,60 +1473,71 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
         sim.current_monthly_inflation = Math.pow(1 + ov.inflation, 1 / 12) - 1;
       }
 
-      // ----- EPOCH RESET for investment income relationship -----
-      // If either investments or income baseline is overridden, redefine the epoch:
-      //  - new baseline_principal = current investments (after override)
-      //  - new baseline_income = pin.investment_income (if set), else current effective income
-      //  - cumulative_reduction = 0
-      if (investmentsChanged || incomeChanged) {
-        // Current effective income before reset
-        const currentEffectiveIncome = sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
-        sim.baseline_principal = sim.investments;
-        sim.baseline_income = incomeChanged ? ov.investment_income : currentEffectiveIncome;
-        sim.cumulative_reduction = 0;
+      if (investmentsChanged) {
+        applyPrincipalEvent(sim.ledger, ov.investments - sim.ledger.principal, sim.current_modifier);
+        // A pin is an absolute target; adding a rounded delta can miss a small target.
+        sim.ledger.principal = ov.investments;
+        if (!Object.values(sim.ledger).every(Number.isFinite)) {
+          return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+        }
+      }
+      if (incomeChanged) resetIncomeLedger(sim.ledger, ov.investment_income);
+      if (!Object.values(sim.ledger).every(Number.isFinite)) {
+        return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
       }
 
       pinIdx++;
     }
 
     // ------- Compute this month -------
-    const investment_income = sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
+    const investment_income = effectiveIncome(sim.ledger);
     const total_pretax = investment_income + sim.current_external;
     const net_income = total_pretax * (1 - sim.current_tax);
     const income_tax_paid = total_pretax * sim.current_tax;
     const expense_this_month = sim.current_expense;
     const delta = net_income - expense_this_month;
 
-    sim.buffer += delta;
-
     let sold = 0;
     let sale_tax_paid = 0;
     let net_sale_proceeds = 0;
-    let hitFloor = false;
-    let insolvency = false;
-
-    if (sim.buffer < sim.current_floor && sim.investments > 0) {
-      hitFloor = true;
-      const deficit = sim.current_floor - sim.buffer;
-      const sale = calculateAssetSale(deficit, sim.investments, sim.current_sale_tax);
+    const openingCash = sim.buffer;
+    const openingPrincipal = sim.ledger.principal;
+    const tolerance = moneyTolerance(openingCash, net_income, expense_this_month, sim.current_floor);
+    if (!Number.isFinite(tolerance) || tolerance > 0.0001) {
+      return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+    }
+    const deficit = Math.max(0, sim.current_floor + expense_this_month - (openingCash + net_income));
+    const hitFloor = deficit > tolerance && openingPrincipal > 0 && sim.current_sale_tax < 1;
+    if (hitFloor) {
+      const sale = calculateAssetSale(deficit, openingPrincipal, sim.current_sale_tax);
       sold = sale.grossSold;
       sale_tax_paid = sale.saleTaxPaid;
       net_sale_proceeds = sale.netSaleProceeds;
-      sim.investments -= sold;
-      sim.buffer += net_sale_proceeds;
-      if (sim.baseline_principal > 0) {
-        const pct_of_baseline = sold / sim.baseline_principal;
-        sim.cumulative_reduction += sim.current_modifier * pct_of_baseline;
+      if (sold > 0 && openingPrincipal - sold === openingPrincipal) {
+        return invalidResult([issue('model', `The principal sale is below the supported numerical precision at month ${m}.`, { month: m })], plannedLastMonth);
       }
-      if (sale.unfundedDeficit > 0) insolvency = true;
-    } else if (sim.buffer < sim.current_floor) {
-      insolvency = true;
+      applyPrincipalEvent(sim.ledger, -sold, sim.current_modifier);
+      if (!Object.values(sim.ledger).every(Number.isFinite)) {
+        return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+      }
     }
+    const availableCash = openingCash + net_income + net_sale_proceeds;
+    const expense_paid = Math.min(expense_this_month, Math.max(0, availableCash - sim.current_floor));
+    sim.buffer = availableCash - expense_paid;
+    const unfunded_expense = expense_this_month - expense_paid;
+    const reserveGap = Math.max(0, sim.current_floor - sim.buffer);
+    const unfunded_reserve = reserveGap;
+    const unfunded_deficit = unfunded_expense + unfunded_reserve;
+    const insolvency = unfunded_deficit > tolerance;
 
     const row = {
       month: m,
       date: dateForMonth(m, dateAnchor),
       expense: expense_this_month,
+      expense_paid,
+      unfunded_expense,
+      unfunded_reserve,
+      unfunded_deficit,
       investment_income,
       external_income: sim.current_external,
       income_tax_paid,
@@ -1515,7 +1546,7 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
       net_income,
       delta,
       buffer: sim.buffer,
-      investments: sim.investments,
+      investments: sim.ledger.principal,
       sold,
       net_sale_proceeds,
       hitFloor,
@@ -1532,15 +1563,13 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
     }
     rows.push(row);
 
-    // Inflate expense for next month
-    sim.current_expense *= (1 + sim.current_monthly_inflation);
-
-    // Termination check
-    if (sim.investments <= 0 && sim.buffer <= sim.current_floor) {
+    if (insolvency) {
       terminatedReason = 'reserve_failure';
       terminatedAtMonth = m;
       break;
     }
+    // Inflate expense for next month only after the current month settles.
+    sim.current_expense *= (1 + sim.current_monthly_inflation);
   }
 
   if (!terminatedReason) {
@@ -1561,8 +1590,8 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
 function snapshotPreState(sim) {
   return {
     buffer: sim.buffer,
-    investments: sim.investments,
-    investment_income: sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction),
+    investments: sim.ledger.principal,
+    investment_income: effectiveIncome(sim.ledger),
     modifier: sim.current_modifier,
     floor: sim.current_floor,
     external_income: sim.current_external,
@@ -1576,7 +1605,7 @@ function snapshotPreState(sim) {
 function snapshotEffectiveState(sim, expense, income) {
   return {
     buffer: sim.buffer,
-    investments: sim.investments,
+    investments: sim.ledger.principal,
     investment_income: income,
     modifier: sim.current_modifier,
     floor: sim.current_floor,

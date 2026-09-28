@@ -22,7 +22,8 @@ function loadDrawdownApi({ document = {}, today = [2026, 6, 30] } = {}) {
   vm.runInContext(`${script}\nglobalThis.__api = {
     state, TODAY, PARAM_DEFS, dateForMonth, simulate, validateParams, validatePinDraft,
     readParams, recalc, rerender, exportCsv, acceptPins, tryAcceptPins, aggregateForView, renderStats,
-    calculateAssetSale, normalizeTaxPercent, readNormalizedTaxRate,
+    calculateAssetSale, createIncomeLedger, applyPrincipalEvent, resetIncomeLedger, effectiveIncome,
+    normalizeTaxPercent, readNormalizedTaxRate,
     readPinFieldValue, collectPinOverrides, renderPinEditor,
     toRoundedCents, formatCents, buildCsvText,
   };`, context);
