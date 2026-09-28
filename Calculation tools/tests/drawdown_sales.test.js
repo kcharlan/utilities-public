@@ -115,8 +115,8 @@ test('[ui] pin field uses tax baseline for invalid input', () => {
 });
 
 test('[ui] pin field collector persists only normalized dirty changes', () => {
-  const { collectPinOverrides } = loadDrawdownApi();
-  assert.equal(typeof collectPinOverrides, 'function');
+  const { collectPinFields } = loadDrawdownApi();
+  assert.equal(typeof collectPinFields, 'function');
 
   function fieldInput(key, fmt, baseline, value) {
     const attrs = { 'data-fmt': fmt, 'data-baseline': String(baseline) };
@@ -130,7 +130,7 @@ test('[ui] pin field collector persists only normalized dirty changes', () => {
   const incomeTax = fieldInput('tax_rate', 'pct', 0.25, '30');
   const saleTax = fieldInput('sale_tax_rate', 'pct', 0.15, '');
   const untouchedExpense = fieldInput('expense', 'money', 5000, '6000');
-  const overrides = collectPinOverrides(
+  const overrides = collectPinFields(
     [incomeTax, saleTax, untouchedExpense],
     new Set(['tax_rate', 'sale_tax_rate']),
   );
@@ -147,7 +147,7 @@ test('[ui] pin field render normalizes tax bounds without clamping inflation', (
   const baseline = Object.fromEntries(PARAM_DEFS_FOR_RENDER().map(def => [def.key, def.value]));
   const html = renderPinEditor(
     { month: 1 },
-    [{ month: 1, pre_state: baseline }],
+    [{ month: 1, pre_start_state: baseline, natural_end_state: baseline }],
   );
 
   assert.match(html, /data-key="tax_rate"[\s\S]*?<input[^>]*data-key="tax_rate"[^>]*min="0" max="100"/);
@@ -190,10 +190,9 @@ test('[aggregate] yearly view sums every sale and tax flow from monthly rows', (
     hitFloor: index === 2,
     insolvency: false,
     surplus: false,
-    pinned_at_this_row: null,
-    overrides_applied: null,
-    pre_state: { marker: index },
-    effective_state: { marker: index + 1 },
+    adjustment_application: null,
+    pre_start_state: { marker: index },
+    end_state: { marker: index + 1 },
   }));
 
   const [year] = aggregateForView(rows, 'years');
@@ -313,7 +312,7 @@ test('[CSV] keeps the original schema and appends the asset-sale breakdown', () 
 
 test('[CSV] derives combined tax and net proceeds from rounded component cents', () => {
   const { state, buildCsvText } = loadDrawdownApi();
-  state.pins = [{ at_month: 1, overrides: { buffer: 999999 } }];
+  state.pins = [{ id: 'cash-1', at_month: 1, start: {}, end: { buffer: 999999 } }];
   const rows = [{
     period: 1,
     month: 1,
@@ -333,7 +332,7 @@ test('[CSV] derives combined tax and net proceeds from rounded component cents',
     net_sale_proceeds: 0.998,
     hitFloor: true,
     insolvency: false,
-    pinned_at_this_row: { at_month: 1 },
+    adjustment_application: { id: 'cash-1', at_month: 1, start_applied: false, end_applied: true },
   }];
 
   const csv = buildCsvText(rows, 'months', []);
@@ -379,17 +378,17 @@ test('[CSV] preserves yearly labels and deterministic quoted pin overrides', () 
     net_sale_proceeds: 94,
     hitFloor: false,
     insolvency: false,
-    pinned_at_this_row: { at_month: 2 },
+    adjustment_applications: [{ id: 'tax-2', at_month: 2, start_applied: true, end_applied: false }],
   }];
   const pins = [
-    { at_month: 8, overrides: { tax_rate: 0.3, expense: 1234 } },
-    { at_month: 2, overrides: { sale_tax_rate: 0.2 } },
+    { id: 'tax-8', at_month: 8, start: { tax_rate: 0.3, expense: 1234 }, end: {} },
+    { id: 'tax-2', at_month: 2, start: { sale_tax_rate: 0.2 }, end: {} },
   ];
 
   const cells = buildCsvText(rows, 'years', pins).split('\n')[1].split(',');
 
   assert.equal(cells[1], '"2027"');
-  assert.equal(cells[14], '"sale_tax_rate=0.2; expense=1234; tax_rate=0.3"');
+  assert.equal(cells[14], '"month 2 start.sale_tax_rate=0.2; month 8 start.expense=1234; month 8 start.tax_rate=0.3"');
 });
 
 test('[helper] calculateAssetSale returns zeros when no sale can or needs to occur', () => {
@@ -683,14 +682,14 @@ test('[simulation] applies pinned sale tax prospectively', () => {
     unit: 'months',
     num_periods: 3,
   });
-  state.pins = [{ at_month: 2, overrides: { sale_tax_rate: 0.25 } }];
+  state.pins = [{ id: 'tax-2', at_month: 2, start: { sale_tax_rate: 0.25 }, end: {} }];
 
   const rows = simulate().rows;
 
   assert.equal(rows[0].sold, 100);
   assertClose(rows[1].sold, 133.3333333333);
   assertClose(rows[2].sold, 133.3333333333);
-  assert.equal(rows[1].pre_state.sale_tax_rate, 0);
-  assert.equal(rows[1].effective_state.sale_tax_rate, 0.25);
-  assert.equal(rows[2].pre_state.sale_tax_rate, 0.25);
+  assert.equal(rows[1].pre_start_state.sale_tax_rate, 0);
+  assert.equal(rows[1].post_start_state.sale_tax_rate, 0.25);
+  assert.equal(rows[2].pre_start_state.sale_tax_rate, 0.25);
 });

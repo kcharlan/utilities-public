@@ -13,11 +13,106 @@ function scenario(overrides = {}) {
   };
 }
 
+test('phased closing valuation follows sales and does not change tax or cash', () => {
+  const { simulate } = loadDrawdownApi();
+  const params = scenario({ buffer_initial: 100, floor: 100, investments_initial: 1000,
+    investment_income: 100, expense: 200, modifier: 1, num_periods: 2 });
+  const [first, second] = simulate(params, [{ id: 'valuation', at_month: 1,
+    start: {}, end: { investments: 800 } }]).rows;
+  assert.equal(first.sold, 100);
+  assert.equal(first.natural_end_state.investments, 900);
+  assert.equal(first.investments, 800);
+  assert.equal(first.valuation_adjustment, -100);
+  assert.equal(first.cash_adjustment, 0);
+  assert.equal(first.buffer, 100);
+  assert.equal(first.tax_paid, 0);
+  assert.equal(first.investment_income, 100);
+  assert.equal(second.investment_income, 80);
+  for (const phase of ['pre_start_state', 'post_start_state', 'natural_end_state', 'end_state']) {
+    assert.equal(typeof first[phase].income_raw, 'number');
+    assert.equal(typeof first[phase].income_yield, 'number');
+  }
+  assert.notStrictEqual(first.pre_start_state, first.post_start_state);
+  assert.notStrictEqual(first.natural_end_state, first.end_state);
+});
+
+test('closing cash is a separate adjustment and cannot fall below floor', () => {
+  const { simulate } = loadDrawdownApi();
+  const params = scenario({ buffer_initial: 100, floor: 100, investments_initial: 0, num_periods: 2 });
+  const pin = { id: 'cash', at_month: 1, start: {}, end: { buffer: 150 } };
+  const result = simulate(params, [pin]);
+  assert.equal(result.rows[0].cash_adjustment, 50);
+  assert.equal(result.rows[0].net_income, 0);
+  assert.equal(result.rows[0].tax_paid, 0);
+  assert.equal(result.rows[1].pre_start_state.buffer, 150);
+  const invalid = simulate(params, [{ ...pin, end: { buffer: 99 } }]);
+  assert.equal(invalid.terminatedReason, 'invalid');
+  assert.ok(invalid.issues.some(item => item.field === 'buffer' && item.phase === 'end'));
+});
+
+test('end income reset follows closing principal and affects the next receipt', () => {
+  const { simulate } = loadDrawdownApi();
+  const params = scenario({ investments_initial: 1000, investment_income: 100,
+    buffer_initial: 100, floor: 100, expense: 200, num_periods: 2 });
+  const [first, second] = simulate(params, [{ id: 'both', at_month: 1,
+    start: { modifier: 2 }, end: { investments: 800, investment_income: 40 } }]).rows;
+  assert.equal(first.investment_income, 100);
+  assert.equal(first.sold, 100);
+  assert.equal(first.valuation_adjustment, -100);
+  assert.equal(first.end_state.income_yield, 0.05);
+  assert.equal(second.investment_income, 40);
+});
+
+test('start income reset determines this receipt before ending principal valuation', () => {
+  const { simulate } = loadDrawdownApi();
+  const params = scenario({ investments_initial: 1000, investment_income: 100,
+    buffer_initial: 100, floor: 100, expense: 0, num_periods: 2 });
+  const [first, second] = simulate(params, [{ id: 'both-phases', at_month: 1,
+    start: { investment_income: 50 }, end: { investments: 800 } }]).rows;
+  assert.equal(first.investment_income, 50);
+  assert.equal(first.end_state.income_raw, 40);
+  assert.equal(second.investment_income, 40);
+});
+
+test('failed operating month applies start but skips same-month and later end recovery', () => {
+  const { simulate } = loadDrawdownApi();
+  const result = simulate(scenario({ buffer_initial: 100, floor: 100,
+    investments_initial: 0, expense: 10, num_periods: 3 }), [
+    { id: 'same', at_month: 1, start: { expense: 10 }, end: { buffer: 1000, investments: 1000 } },
+    { id: 'later', at_month: 2, start: {}, end: { buffer: 1000 } },
+  ]);
+  assert.equal(result.terminatedReason, 'reserve_failure');
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.rows[0].adjustment_application)),
+    { id: 'same', at_month: 1, start_applied: true, end_applied: false });
+  assert.equal(result.rows[0].buffer, 100);
+  assert.equal(result.rows[0].investments, 0);
+  assert.equal(result.rows[0].cash_adjustment, 0);
+});
+
+test('explicit reset to displayed zero clears hidden raw loss while no-op preserves it', () => {
+  const { simulate } = loadDrawdownApi();
+  const params = scenario({ investments_initial: 1000, investment_income: 10,
+    modifier: 2, num_periods: 3 });
+  const base = [{ id: 'loss', at_month: 1, start: {}, end: { investments: 400 } },
+    { id: 'recovery', at_month: 2, start: {}, end: { investments: 550 } }];
+  const ordinary = simulate(params, base).rows;
+  assert.equal(ordinary[0].end_state.income_raw, -2);
+  assert.equal(ordinary[1].investment_income, 0);
+  assert.equal(ordinary[1].end_state.income_raw, 1);
+  assert.equal(ordinary[2].investment_income, 1);
+  const reset = simulate(params, [{ ...base[0] },
+    { ...base[1], start: { investment_income: 0 } }]).rows;
+  assert.equal(reset[1].investment_income, 0);
+  assert.equal(reset[1].end_state.income_raw, 0);
+  assert.equal(reset[2].investment_income, 0);
+});
+
 test('explicit simulation has its own scenario, cap, and independent snapshots', () => {
   const { state, simulate } = loadDrawdownApi();
   const params = Object.freeze(scenario({ num_periods: 2 }));
-  const overrides = Object.freeze({ expense: 1 });
-  const pins = Object.freeze([Object.freeze({ at_month: 2, overrides })]);
+  const start = Object.freeze({ expense: 1 });
+  const pins = Object.freeze([Object.freeze({ id: 'expense-2', at_month: 2, start, end: {} })]);
   const previousState = JSON.stringify(state.params);
   const result = simulate(params, pins);
   assert.equal(result.plannedLastMonth, 2);
@@ -28,10 +123,10 @@ test('explicit simulation has its own scenario, cap, and independent snapshots',
   assert.equal(result.rows[1].date.getMonth(), 8);
   assert.equal(JSON.stringify(state.params), previousState);
   assert.equal(params.expense, 0);
-  assert.equal(pins[0].overrides.expense, 1);
-  assert.notStrictEqual(result.rows[0].pre_state, result.rows[0].effective_state);
-  assert.notStrictEqual(result.rows[0].effective_state, result.rows[1].pre_state);
-  assert.notStrictEqual(result.rows[1].overrides_applied, overrides);
+  assert.equal(pins[0].start.expense, 1);
+  assert.notStrictEqual(result.rows[0].pre_start_state, result.rows[0].post_start_state);
+  assert.notStrictEqual(result.rows[0].end_state, result.rows[1].pre_start_state);
+  assert.notStrictEqual(result.rows[1].post_start_state, start);
 });
 
 test('zero horizon reaches the 1200-month cap; fixed horizons are capped', () => {
@@ -88,7 +183,7 @@ test('symbols and invalid date anchors return field issues without throwing', ()
     [() => simulate(scenario({ modifier: Symbol('invalid-modifier') }), []), 'modifier'],
     [() => simulate(scenario({ inflation: Symbol('invalid-inflation') }), []), 'inflation'],
     [() => simulate(scenario({ num_periods: Symbol('invalid-horizon') }), []), 'num_periods'],
-    [() => simulate(scenario(), [{ at_month: Symbol('invalid-month'), overrides: {} }]), 'at_month'],
+    [() => simulate(scenario(), [{ id: 'bad', at_month: Symbol('invalid-month'), start: {}, end: {} }]), 'at_month'],
     [() => simulate(scenario(), [], { throughMonth: Symbol('invalid-trial') }), 'throughMonth'],
     [() => simulate(scenario(), [], { dateAnchor: null }), 'dateAnchor'],
   ];
@@ -114,7 +209,7 @@ test('date overflow returns an invalid result without partial rows', () => {
 test('invalid pin month and zero-principal income are structured input failures', () => {
   const { simulate } = loadDrawdownApi();
   for (const month of [0, 0.5, 1201, Infinity]) {
-    const result = simulate(scenario(), [{ at_month: month, overrides: { expense: 1 } }]);
+    const result = simulate(scenario(), [{ id: 'bad-month', at_month: month, start: { expense: 1 }, end: {} }]);
     assert.equal(result.terminatedReason, 'invalid');
     assert.ok(result.issues.some(issue => issue.field === 'at_month'));
   }
@@ -123,25 +218,26 @@ test('invalid pin month and zero-principal income are structured input failures'
   assert.ok(result.issues.some(issue => issue.field === 'investment_income'));
 });
 
-test('a principal pin at zero gates retained income without clearing its ledger', () => {
+test('an ending principal adjustment at zero gates retained income without clearing its ledger', () => {
   const { simulate } = loadDrawdownApi();
   const result = simulate(scenario({ investments_initial: 100, investment_income: 2 }), [
-    { at_month: 1, overrides: { investments: 0 } },
-    { at_month: 2, overrides: { investments: 100 } },
+    { id: 'zero', at_month: 1, start: {}, end: { investments: 0 } },
+    { id: 'restore', at_month: 2, start: {}, end: { investments: 100 } },
   ]);
   assert.equal(result.terminatedReason, 'horizon');
-  assert.equal(result.rows[0].investment_income, 0);
-  assert.equal(result.rows[1].investment_income, 2);
+  assert.equal(result.rows[0].investment_income, 2);
+  assert.equal(result.rows[1].investment_income, 0);
+  assert.equal(result.rows[1].end_state.investment_income, 2);
 });
 
 test('an invalid pin tax inherits the active rate at its own month', () => {
   const { simulate } = loadDrawdownApi();
   const rows = simulate(scenario({ num_periods: 3, external_income: 10 }), [
-    { at_month: 1, overrides: { tax_rate: 0.5 } },
-    { at_month: 2, overrides: { tax_rate: 'Infinity' } },
+    { id: 'tax-1', at_month: 1, start: { tax_rate: 0.5 }, end: {} },
+    { id: 'tax-2', at_month: 2, start: { tax_rate: 'Infinity' }, end: {} },
   ]).rows;
-  assert.equal(rows[1].effective_state.tax_rate, 0.5);
-  assert.equal(rows[1].overrides_applied.tax_rate, 0.5);
+  assert.equal(rows[1].post_start_state.tax_rate, 0.5);
+  assert.equal(rows[1].adjustment_application.start_applied, true);
 });
 
 test('a reserve shortfall is a scenario outcome rather than malformed input', () => {
@@ -170,7 +266,7 @@ test('surplus and zero-expense months may continue after principal reaches zero'
   const { simulate } = loadDrawdownApi();
   const result = simulate(scenario({ buffer_initial: 100, floor: 100, investments_initial: 0,
     external_income: 10, expense: 0, num_periods: 3 }), [
-    { at_month: 2, overrides: { external_income: 0 } },
+    { id: 'external-2', at_month: 2, start: { external_income: 0 }, end: {} },
   ]);
   assert.equal(result.terminatedReason, 'horizon');
   assert.deepEqual(Array.from(result.rows, row => row.buffer), [110, 110, 110]);
@@ -203,7 +299,7 @@ test('initially underfunded or raised floor reports the actual reserve gap', () 
 
   const raised = simulate(scenario({ buffer_initial: 100, floor: 50,
     investments_initial: 0, expense: 0 }), [
-    { at_month: 1, overrides: { floor: 120 } },
+    { id: 'floor-1', at_month: 1, start: { floor: 120 }, end: {} },
   ]);
   assert.equal(raised.rows[0].buffer, 100);
   assert.equal(raised.rows[0].unfunded_reserve, 20);
@@ -214,7 +310,7 @@ test('an exact final sale can exhaust principal without causing failure', () => 
   const { simulate } = loadDrawdownApi();
   const result = simulate(scenario({ buffer_initial: 100, floor: 100,
     investments_initial: 10, expense: 10, num_periods: 2 }), [
-    { at_month: 2, overrides: { expense: 0 } },
+    { id: 'expense-2', at_month: 2, start: { expense: 0 }, end: {} },
   ]);
   assert.equal(result.rows[0].investments, 0);
   assert.equal(result.rows[0].unfunded_deficit, 0);
@@ -277,11 +373,11 @@ test('sale income reduction locks the modifier in effect at each sale', () => {
   const { simulate } = loadDrawdownApi();
   const params = scenario({ buffer_initial: 100, floor: 100, investments_initial: 1000,
     investment_income: 10, expense: 110, modifier: 2, num_periods: 2 });
-  const rows = simulate(params, [{ at_month: 2, overrides: { modifier: 1, expense: 0 } }]).rows;
+  const rows = simulate(params, [{ id: 'change-2', at_month: 2, start: { modifier: 1, expense: 0 }, end: {} }]).rows;
   assert.equal(rows[0].sold, 100);
   assert.equal(rows[1].investment_income, 8);
   const one = simulate({ ...params, modifier: 1 }, [
-    { at_month: 2, overrides: { expense: 0 } },
+    { id: 'expense-2', at_month: 2, start: { expense: 0 }, end: {} },
   ]).rows;
   assert.equal(one[1].investment_income, 9);
 });
@@ -332,7 +428,7 @@ test('same-pin income reset cannot hide an overflowing principal event', () => {
   const result = simulate(scenario({ buffer_initial: 100, floor: 100,
     investments_initial: 1, investment_income: 1e100,
     modifier: 1e308, expense: 0, num_periods: 1 }), [
-    { at_month: 1, overrides: { investments: 0, investment_income: 0 } },
+    { id: 'zero-1', at_month: 1, start: {}, end: { investments: 0, investment_income: 0 } },
   ]);
   assert.equal(result.terminatedReason, 'invalid');
   assert.equal(result.rows.length, 0);
@@ -344,7 +440,7 @@ test('absolute principal pin lands on its exact target despite a large prior bal
   const result = simulate(scenario({ buffer_initial: 100, floor: 100,
     investments_initial: 1e20, investment_income: 0,
     expense: 0, num_periods: 1 }), [
-    { at_month: 1, overrides: { investments: 1 } },
+    { id: 'principal-1', at_month: 1, start: {}, end: { investments: 1 } },
   ]);
   assert.equal(result.terminatedReason, 'horizon');
   assert.equal(result.rows[0].investments, 1);

@@ -194,6 +194,16 @@
     flex-shrink: 0;
   }
   .adj-remove:hover { color: var(--oxblood); }
+  .adj-phase-statuses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 8px;
+    margin: 3px 0 5px;
+  }
+  .adj-phase-status {
+    font-size: 10px;
+    color: var(--ink-soft);
+  }
   .adj-field {
     display: flex;
     justify-content: space-between;
@@ -1118,11 +1128,11 @@
       <span class="sep">·</span>
       <strong>Decay.</strong> Gross liquidation—not net proceeds—drives principal reduction and sell-off decay. Each principal change adjusts the running investment-income ledger by <em>modifier × income yield × principal change</em>. The modifier in force at that event is locked in; a later income edit resets the yield and running income.
       <span class="sep">·</span>
-      <strong>Pins.</strong> Click the <em>+</em> in the left gutter of any row to attach an override. Pins apply forward from the pinned period; past rows are immutable.
+      <strong>Adjustments.</strong> Click <em>+</em> to edit beginning assumptions or ending balances. Closing principal is a valuation, and closing cash is a separate adjustment; neither is a sale or recurring income.
       <span class="sep">·</span>
       <strong>Export.</strong> CSV <code>tax_paid</code> is combined tax; <code>income_tax_paid</code>, <code>sale_tax_paid</code>, and <code>net_sale_proceeds</code> are appended.
       <span class="sep">·</span>
-      <strong>Termination.</strong> The simulation ends when investments reach zero and the buffer is at or below its floor (or at the period cap, whichever comes first).
+      <strong>Termination.</strong> The projection stops when monthly expenses or the protected reserve cannot be funded, or at the period cap.
       <span class="sep">·</span>
       <strong>Scope.</strong> This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.
     </p>
@@ -1169,7 +1179,7 @@ const state = {
     unit: 'months',
     num_periods: 120,
   },
-  pins: [], // [{ at_month, overrides: { ... } }]
+  pins: [], // [{ id, at_month, start: { ... }, end: { ... }, annual_edits? }]
   editing: null, // month being edited (if any)
   revision: 0,
   stale: false,
@@ -1181,8 +1191,20 @@ const state = {
 const MAX_MONTHS = 1200; // 100 years
 
 function acceptPins(pins) {
-  state.pins = pins.map(pin => ({ ...pin, overrides: { ...pin.overrides } }));
+  state.pins = pins.map(clonePin);
   state.revision++;
+}
+
+let nextPinId = 1;
+function newPinId(pins = state.pins) {
+  let id;
+  do { id = `adjustment-${nextPinId++}`; } while (pins.some(pin => pin.id === id));
+  return id;
+}
+function clonePin(pin) {
+  return { ...pin, start: { ...pin.start }, end: { ...pin.end },
+    ...(pin.annual_edits ? { annual_edits: Object.fromEntries(Object.entries(pin.annual_edits)
+      .map(([key, value]) => [key, { ...value }])) } : {}) };
 }
 
 function tryAcceptPins(pins) {
@@ -1193,8 +1215,10 @@ function tryAcceptPins(pins) {
 }
 
 const MONEY_PARAM_KEYS = ['buffer_initial', 'floor', 'external_income', 'investments_initial', 'investment_income', 'expense'];
+const START_PIN_KEYS = new Set(['investment_income', 'modifier', 'floor', 'external_income',
+  'expense', 'inflation', 'tax_rate', 'sale_tax_rate']);
+const END_PIN_KEYS = new Set(['buffer', 'investments', 'investment_income']);
 const MONEY_PIN_KEYS = ['buffer', 'investments', 'investment_income', 'floor', 'external_income', 'expense'];
-const PIN_KEYS = new Set(PARAM_DEFS.map(def => def.key));
 
 function issue(field, message, extra = {}) {
   return { field, message, ...extra };
@@ -1269,34 +1293,125 @@ function validatePinDraft(draft, context = {}) {
   if (!Number.isInteger(month) || month < 1 || month > MAX_MONTHS) {
     issues.push(issue('at_month', 'Choose a whole month from 1 through 1200.'));
   }
-  const source = draft?.overrides;
-  if (!source || typeof source !== 'object' || Array.isArray(source)) {
-    issues.push(issue('overrides', 'Provide adjustment fields for this month.', { month }));
-  }
-  const overrides = {};
-  for (const [field, raw] of Object.entries(source && typeof source === 'object' && !Array.isArray(source) ? source : {})) {
-    if (!PIN_KEYS.has(field)) {
-      issues.push(issue(field, 'This adjustment field is not supported.', { month }));
-    } else if (MONEY_PIN_KEYS.includes(field) || field === 'modifier') {
-      const count = issues.length;
-      overrides[field] = parseFiniteNonnegative(raw, field, issues);
-      if (issues.length > count) issues[issues.length - 1].month = month;
-    } else if (field === 'inflation') {
-      const count = issues.length;
-      overrides[field] = parseInflation(raw, issues, { month });
-      if (issues.length > count) issues[issues.length - 1].month = month;
-    } else {
-      overrides[field] = normalizedTaxRate(raw, context.baseline?.[field] ??
-        (field === 'tax_rate' ? DEFAULT_INCOME_TAX_RATE : DEFAULT_SALE_TAX_RATE));
+  if (typeof draft?.id !== 'string' || !draft.id) issues.push(issue('id', 'Adjustment needs a stable id.', { month }));
+  const phases = {};
+  for (const [phase, allowed] of [['start', START_PIN_KEYS], ['end', END_PIN_KEYS]]) {
+    const source = draft?.[phase];
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      issues.push(issue(phase, 'Provide adjustment fields for this phase.', { month, phase }));
+      phases[phase] = {};
+      continue;
     }
+    const fields = {};
+    for (const [field, raw] of Object.entries(source)) {
+      if (!allowed.has(field)) issues.push(issue(field, 'This adjustment field is not supported in this phase.', { month, phase }));
+      else if (MONEY_PIN_KEYS.includes(field) || field === 'modifier') {
+        const count = issues.length;
+        fields[field] = parseFiniteNonnegative(raw, field, issues);
+        if (issues.length > count) Object.assign(issues[issues.length - 1], { month, phase });
+      } else if (field === 'inflation') fields[field] = parseInflation(raw, issues, { month, phase });
+      else fields[field] = normalizedTaxRate(raw, context.baseline?.[phase]?.[field] ??
+        context.baseline?.[field] ?? (field === 'tax_rate' ? DEFAULT_INCOME_TAX_RATE : DEFAULT_SALE_TAX_RATE));
+    }
+    phases[phase] = fields;
   }
-  const principal = overrides.investments ?? context.baseline?.investments;
-  if (principal === 0 && 'investment_income' in overrides && overrides.investment_income > 0) {
-    issues.push(issue('investment_income', 'Investment income must be zero when principal is zero.', { month }));
+  if (draft?.annual_edits !== undefined) {
+    if (!draft.annual_edits || typeof draft.annual_edits !== 'object' || Array.isArray(draft.annual_edits)) {
+      issues.push(issue('annual_edits', 'Provide valid annual edit metadata.', { month }));
+    } else for (const [field, metadata] of Object.entries(draft.annual_edits)) {
+      if (!['expense', 'investment_income'].includes(field) || !metadata || typeof metadata !== 'object' ||
+          !['target_total', 'first_month', 'last_month', 'resolved_monthly_value'].every(key => Number.isFinite(metadata[key]))) {
+        issues.push(issue('annual_edits', 'Provide valid annual edit metadata.', { month }));
+      }
+    }
   }
   return issues.length
     ? { ok: false, issues: issues.map(entry => ({ ...entry, origin: 'adjustment', month: Number.isInteger(month) ? month : null })) }
-    : { ok: true, value: { ...draft, at_month: month, overrides }, issues: [] };
+    : { ok: true, value: { ...clonePin({ ...draft, ...phases }), at_month: month }, issues: [] };
+}
+
+function pinPhase(field) { return END_PIN_KEYS.has(field) && field !== 'investment_income' ? 'end' : 'start'; }
+
+function prepareCellEdit(rowSpan, field, scenario) {
+  const qualified = field.includes('.') ? field.split('.') : null;
+  const phase = qualified ? qualified[0] : (field === 'buffer' || field === 'investments' ? 'end' : 'start');
+  field = qualified ? qualified[1] : field;
+  const month = phase === 'end' ? (rowSpan.last_month ?? rowSpan.month) : (rowSpan.first_month ?? rowSpan.month);
+  const row = rowSpan.source_rows?.find(item => item.month === month) ?? rowSpan;
+  const pin = scenario.pins.find(item => item.at_month === month);
+  const snapshot = phase === 'start' ? row.pre_start_state : row.natural_end_state;
+  const currentExactValue = pin && field in pin[phase] ? pin[phase][field] :
+    (phase === 'end' ? row.end_state?.[field] : row.post_start_state?.[field]);
+  let noOverrideBaseline = snapshot?.[field];
+  if (pin && field in pin[phase]) {
+    const trialPins = scenario.pins.map(clonePin);
+    const trialPin = trialPins.find(item => item.id === pin.id);
+    delete trialPin[phase][field];
+    const trial = simulate(scenario.params, trialPins, { throughMonth: month });
+    const baselineRow = trial.rows.find(item => item.month === month);
+    if (baselineRow) noOverrideBaseline = phase === 'start'
+      ? baselineRow.post_start_state[field] : baselineRow.end_state[field];
+  } else if (phase === 'end' && field === 'investment_income' && pin?.end?.investments !== undefined) {
+    const trial = simulate(scenario.params, scenario.pins, { throughMonth: month });
+    noOverrideBaseline = trial.rows.find(item => item.month === month)?.end_state.investment_income;
+  }
+  return { phase, month, first_month: rowSpan.first_month ?? month,
+    last_month: rowSpan.last_month ?? month, field, pinId: pin?.id ?? null,
+    currentExactValue, displayedValue: currentExactValue === undefined ? null : Math.round(currentExactValue * 100) / 100,
+    noOverrideBaseline, revision: scenario.revision ?? 0 };
+}
+
+function applyEditTransaction(scenario, edit) {
+  const pins = (scenario.pins || []).map(clonePin);
+  const params = { ...scenario.params };
+  const target = edit.id ? pins.find(pin => pin.id === edit.id) : pins.find(pin => pin.at_month === edit.at_month);
+  const fail = (field, message) => ({ ok: false, issues: [issue(field, message, { origin: 'adjustment', month: edit.at_month ?? target?.at_month })] });
+  if (edit.id && !target) return fail('id', 'Adjustment was not found.');
+  const operation = edit.type ?? 'set';
+  if (operation === 'remove') {
+    if (!target) return fail('id', 'Adjustment was not found.');
+    pins.splice(pins.indexOf(target), 1);
+  } else if (operation === 'move') {
+    if (!target) return fail('id', 'Adjustment was not found.');
+    if (pins.some(pin => pin !== target && pin.at_month === edit.at_month)) return fail('at_month', 'Another adjustment already occupies that month.');
+    if (target.at_month !== edit.at_month) {
+      target.at_month = edit.at_month;
+      delete target.annual_edits;
+    }
+  } else if (operation === 'replace' || operation === 'create') {
+    if (operation === 'replace' && !target) return fail('id', 'Adjustment was not found.');
+    if (operation === 'create' && target) return fail('at_month', 'Another adjustment already occupies that month.');
+    const index = operation === 'replace' ? pins.indexOf(target) : pins.length;
+    pins[index] = clonePin({ ...edit.pin, id: target?.id ?? edit.pin.id ?? newPinId(pins) });
+    if (target && pins[index].at_month !== target.at_month) delete pins[index].annual_edits;
+    if (pins.some((pin, idx) => idx !== index && pin.at_month === pins[index].at_month)) return fail('at_month', 'Another adjustment already occupies that month.');
+  } else if (operation === 'set' || operation === 'remove-field') {
+    const phase = edit.phase;
+    if (!['start', 'end'].includes(phase)) return fail('phase', 'Choose the beginning or end of the month.');
+    if (!(phase === 'start' ? START_PIN_KEYS : END_PIN_KEYS).has(edit.field)) return fail(edit.field, 'Field is not available in this phase.');
+    let pin = target;
+    if (!pin && operation === 'set') {
+      pin = { id: newPinId(pins), at_month: edit.at_month, start: {}, end: {} };
+      pins.push(pin);
+    }
+    if (pin) {
+      const previous = pin[phase][edit.field];
+      if (operation === 'set') pin[phase][edit.field] = edit.value;
+      else delete pin[phase][edit.field];
+      if (phase === 'start' && ['expense', 'investment_income'].includes(edit.field) && pin.annual_edits &&
+          (operation === 'remove-field' || !Object.is(previous, edit.value))) {
+        delete pin.annual_edits[edit.field];
+        if (!Object.keys(pin.annual_edits).length) delete pin.annual_edits;
+      }
+    }
+  } else return fail('edit', 'Unsupported adjustment edit.');
+  for (let index = pins.length - 1; index >= 0; index--) {
+    const pin = pins[index];
+    if (!Object.keys(pin.start).length && !Object.keys(pin.end).length) pins.splice(index, 1);
+  }
+  const trial = simulate(params, pins);
+  if (trial.terminatedReason === 'invalid') return { ok: false, issues: trial.issues };
+  return { ok: true, scenario: { ...scenario, params, pins, revision: (scenario.revision ?? 0) + 1 }, issues: [], result: trial };
 }
 
 /* ============================================================
@@ -1428,8 +1543,16 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
     return invalidResult([issue('dateAnchor', 'The projection extends beyond the supported calendar range.')], plannedLastMonth);
   }
 
-  const sortedPins = pinChecks.map((check, index) => ({ pin: check.value, raw: pins[index].overrides }))
-    .sort((a, b) => a.pin.at_month - b.pin.at_month);
+  const ids = new Set();
+  const months = new Set();
+  for (const { value: pin } of pinChecks) {
+    if (ids.has(pin.id)) return invalidResult([issue('id', 'Adjustment ids must be unique.', { month: pin.at_month, origin: 'adjustment' })], plannedLastMonth);
+    if (months.has(pin.at_month)) return invalidResult([issue('at_month', 'Only one adjustment may occupy a month.', { month: pin.at_month, origin: 'adjustment' })], plannedLastMonth);
+    ids.add(pin.id);
+    months.add(pin.at_month);
+  }
+  const sortedPins = pinChecks.map((check, index) => ({ ...check.value, rawStart: pins[index].start }))
+    .sort((a, b) => a.at_month - b.at_month);
   let pinIdx = 0;
 
   const rows = [];
@@ -1438,56 +1561,23 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
 
   for (let m = 1; m <= monthLimit; m++) {
     // ------- Pin application BEFORE computing this month -------
-    let pinAppliedAtThisMonth = null;
-    let pinOverridesApplied = null;
-
-    // Snapshot the "pre-pin" state at start of this month so the editor can show baselines
-    const preState = snapshotPreState(sim);
-
-    while (pinIdx < sortedPins.length && sortedPins[pinIdx].pin.at_month === m) {
-      const { pin, raw } = sortedPins[pinIdx];
-      const ov = { ...pin.overrides };
-      if ('tax_rate' in ov) ov.tax_rate = normalizedTaxRate(raw.tax_rate, sim.current_tax);
-      if ('sale_tax_rate' in ov) ov.sale_tax_rate = normalizedTaxRate(raw.sale_tax_rate, sim.current_sale_tax);
-      const principal = ov.investments ?? sim.ledger.principal;
-      if (principal === 0 && 'investment_income' in ov && ov.investment_income > 0) {
-        return invalidResult([issue('investment_income', 'Investment income must be zero when principal is zero.', { month: m, origin: 'adjustment' })], plannedLastMonth);
+    const preStartState = snapshotState(sim);
+    const pin = sortedPins[pinIdx]?.at_month === m ? sortedPins[pinIdx++] : null;
+    const start = pin?.start || {};
+    if ('modifier' in start) sim.current_modifier = start.modifier;
+    if ('floor' in start) sim.current_floor = start.floor;
+    if ('external_income' in start) sim.current_external = start.external_income;
+    if ('tax_rate' in start) sim.current_tax = normalizedTaxRate(pin.rawStart.tax_rate, sim.current_tax);
+    if ('sale_tax_rate' in start) sim.current_sale_tax = normalizedTaxRate(pin.rawStart.sale_tax_rate, sim.current_sale_tax);
+    if ('expense' in start) sim.current_expense = start.expense;
+    if ('inflation' in start) sim.current_monthly_inflation = Math.pow(1 + start.inflation, 1 / 12) - 1;
+    if ('investment_income' in start) {
+      if (sim.ledger.principal === 0 && start.investment_income > 0) {
+        return invalidResult([issue('investment_income', 'Investment income must be zero when principal is zero.', { month: m, phase: 'start', origin: 'adjustment' })], plannedLastMonth);
       }
-      pinAppliedAtThisMonth = { ...pin, overrides: { ...ov } };
-      pinOverridesApplied = { ...ov };
-
-      // ----- ABSOLUTE STATE overrides -----
-      const investmentsChanged = 'investments' in ov;
-      const incomeChanged = 'investment_income' in ov;
-
-      if ('buffer' in ov) sim.buffer = ov.buffer;
-
-      // ----- PARAMETER overrides -----
-      if ('modifier' in ov) sim.current_modifier = ov.modifier;
-      if ('floor' in ov) sim.current_floor = ov.floor;
-      if ('external_income' in ov) sim.current_external = ov.external_income;
-      if ('tax_rate' in ov) sim.current_tax = ov.tax_rate;
-      if ('sale_tax_rate' in ov) sim.current_sale_tax = ov.sale_tax_rate;
-      if ('expense' in ov) sim.current_expense = ov.expense;
-      if ('inflation' in ov) {
-        sim.current_monthly_inflation = Math.pow(1 + ov.inflation, 1 / 12) - 1;
-      }
-
-      if (investmentsChanged) {
-        applyPrincipalEvent(sim.ledger, ov.investments - sim.ledger.principal, sim.current_modifier);
-        // A pin is an absolute target; adding a rounded delta can miss a small target.
-        sim.ledger.principal = ov.investments;
-        if (!Object.values(sim.ledger).every(Number.isFinite)) {
-          return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
-        }
-      }
-      if (incomeChanged) resetIncomeLedger(sim.ledger, ov.investment_income);
-      if (!Object.values(sim.ledger).every(Number.isFinite)) {
-        return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
-      }
-
-      pinIdx++;
+      resetIncomeLedger(sim.ledger, start.investment_income);
     }
+    const postStartState = snapshotState(sim);
 
     // ------- Compute this month -------
     const investment_income = effectiveIncome(sim.ledger);
@@ -1507,8 +1597,8 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
       return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
     }
     const deficit = Math.max(0, sim.current_floor + expense_this_month - (openingCash + net_income));
-    const hitFloor = deficit > tolerance && openingPrincipal > 0 && sim.current_sale_tax < 1;
-    if (hitFloor) {
+    const hitFloor = deficit > tolerance;
+    if (hitFloor && openingPrincipal > 0 && sim.current_sale_tax < 1) {
       const sale = calculateAssetSale(deficit, openingPrincipal, sim.current_sale_tax);
       sold = sale.grossSold;
       sale_tax_paid = sale.saleTaxPaid;
@@ -1529,6 +1619,36 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
     const unfunded_reserve = reserveGap;
     const unfunded_deficit = unfunded_expense + unfunded_reserve;
     const insolvency = unfunded_deficit > tolerance;
+    const naturalEndState = snapshotState(sim);
+    let valuation_adjustment = 0;
+    let cash_adjustment = 0;
+    if (!insolvency && pin) {
+      const end = pin.end;
+      if ('investments' in end) {
+        valuation_adjustment = end.investments - sim.ledger.principal;
+        applyPrincipalEvent(sim.ledger, valuation_adjustment, sim.current_modifier);
+        sim.ledger.principal = end.investments;
+        if (!Object.values(sim.ledger).every(Number.isFinite)) {
+          return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+        }
+      }
+      if ('investment_income' in end) {
+        if (sim.ledger.principal === 0 && end.investment_income > 0) {
+          return invalidResult([issue('investment_income', 'Investment income must be zero when principal is zero.', { month: m, phase: 'end', origin: 'adjustment' })], plannedLastMonth);
+        }
+        resetIncomeLedger(sim.ledger, end.investment_income);
+      }
+      if ('buffer' in end) {
+        if (end.buffer + moneyTolerance(end.buffer, sim.current_floor) < sim.current_floor) {
+          return invalidResult([issue('buffer', 'Closing buffer cannot be below the effective floor.', { month: m, phase: 'end', origin: 'adjustment' })], plannedLastMonth);
+        }
+        cash_adjustment = end.buffer - sim.buffer;
+        sim.buffer = end.buffer;
+      }
+    }
+    const endState = snapshotState(sim);
+    const adjustment_application = pin ? { id: pin.id, at_month: m,
+      start_applied: Object.keys(start).length > 0, end_applied: !insolvency && Object.keys(pin.end).length > 0 } : null;
 
     const row = {
       month: m,
@@ -1549,16 +1669,20 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
       investments: sim.ledger.principal,
       sold,
       net_sale_proceeds,
+      valuation_adjustment,
+      cash_adjustment,
       hitFloor,
       insolvency,
       surplus: delta > 0,
-      pinned_at_this_row: pinAppliedAtThisMonth,
-      overrides_applied: pinOverridesApplied,
-      pre_state: preState, // for pin editor baselines
-      effective_state: snapshotEffectiveState(sim, expense_this_month, investment_income),
+      adjustment_application,
+      pre_start_state: preStartState,
+      post_start_state: postStartState,
+      natural_end_state: naturalEndState,
+      end_state: endState,
     };
     if (Object.values(row).some(value => typeof value === 'number' && !Number.isFinite(value)) ||
-        Object.values(row.effective_state).some(value => typeof value === 'number' && !Number.isFinite(value))) {
+        [preStartState, postStartState, naturalEndState, endState].some(snapshot =>
+          Object.values(snapshot).some(value => typeof value === 'number' && !Number.isFinite(value)))) {
       return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
     }
     rows.push(row);
@@ -1587,30 +1711,17 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
   return { rows, plannedLastMonth, terminatedReason, terminatedAtMonth, issues: [] };
 }
 
-function snapshotPreState(sim) {
+function snapshotState(sim) {
   return {
     buffer: sim.buffer,
     investments: sim.ledger.principal,
+    income_yield: sim.ledger.yieldRate,
+    income_raw: sim.ledger.rawIncome,
     investment_income: effectiveIncome(sim.ledger),
     modifier: sim.current_modifier,
     floor: sim.current_floor,
     external_income: sim.current_external,
     expense: sim.current_expense,
-    inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
-    tax_rate: sim.current_tax,
-    sale_tax_rate: sim.current_sale_tax,
-  };
-}
-
-function snapshotEffectiveState(sim, expense, income) {
-  return {
-    buffer: sim.buffer,
-    investments: sim.ledger.principal,
-    investment_income: income,
-    modifier: sim.current_modifier,
-    floor: sim.current_floor,
-    external_income: sim.current_external,
-    expense: expense,
     inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
     tax_rate: sim.current_tax,
     sale_tax_rate: sim.current_sale_tax,
@@ -1703,14 +1814,15 @@ function aggregateForView(rows, unit) {
       hitFloor: slice.some(r => r.hitFloor),
       insolvency: slice.some(r => r.insolvency),
       surplus: slice.every(r => r.surplus),
-      pinned_at_this_row: slice.find(r => r.pinned_at_this_row)?.pinned_at_this_row || null,
-      overrides_applied: slice.find(r => r.overrides_applied)?.overrides_applied || null,
+      adjustment_applications: slice.map(r => r.adjustment_application).filter(Boolean),
       months_in_period: slice.length,
       first_month: first.month,
       last_month: last.month,
       source_rows: slice,
-      pre_state: first.pre_state, // pre-pin state at start of year
-      effective_state: last.effective_state,
+      pre_start_state: first.pre_start_state,
+      post_start_state: first.post_start_state,
+      natural_end_state: last.natural_end_state,
+      end_state: last.end_state,
     });
   }
   return groups;
@@ -1880,16 +1992,19 @@ function renderTable(viewRows, baseRows, result) {
   let html = '';
   for (let idx = 0; idx < viewRows.length; idx++) {
     const r = viewRows[idx];
-    const isPinned = r.pinned_at_this_row !== null && r.pinned_at_this_row !== undefined;
+    const rowPins = state.pins.filter(pin => pin.at_month >= (r.first_month ?? r.month) && pin.at_month <= (r.last_month ?? r.month));
+    const isPinned = rowPins.length > 0;
     const isInsolvent = r.insolvency;
-    const editing = state.editing && state.editing.month === (unit === 'years' ? r.last_month - 11 : r.month);
-    // Pin period for editor: in months mode, the row's month. In years mode, first month of that year.
+    // A yearly row can contain several exact-month adjustments.
     const pinMonth = unit === 'years' ? r.first_month : r.month;
-    const editorActive = state.editing && state.editing.month === pinMonth;
+    const editorActive = state.editing && state.editing.month >= (r.first_month ?? r.month) && state.editing.month <= (r.last_month ?? r.month);
 
     // The pin (if any) at this row's target month drives the overridden-cell markers.
-    const pinAtMonth = state.pins.find(pn => pn.at_month === pinMonth);
-    const ovKeys = new Set(pinAtMonth ? Object.keys(pinAtMonth.overrides) : []);
+    const startPin = state.pins.find(pn => pn.at_month === pinMonth);
+    const closingMonth = r.last_month ?? r.month;
+    const endPin = state.pins.find(pn => pn.at_month === closingMonth);
+    const startKeys = new Set(startPin ? Object.keys(startPin.start) : []);
+    const endKeys = new Set(endPin ? Object.keys(endPin.end) : []);
 
     const trClasses = [
       isPinned ? 'is-pinned' : '',
@@ -1901,13 +2016,7 @@ function renderTable(viewRows, baseRows, result) {
 
     const notes = [];
     if (isPinned) {
-      const ov = r.overrides_applied || {};
-      const keys = Object.keys(ov);
-      if (keys.length > 0) {
-        notes.push(`<span class="marker-dot pinned"></span><em>pinned</em> ${keys.length === 1 ? PARAM_DEFS.find(d => d.key === keys[0])?.label.toLowerCase() : `${keys.length} overrides`}`);
-      } else {
-        notes.push(`<span class="marker-dot pinned"></span><em>pinned</em>`);
-      }
+      notes.push(`<span class="marker-dot pinned"></span><em>adjusted</em> ${rowPins.map(pin => `month ${pin.at_month}`).join(', ')}`);
     }
     if (r.hitFloor) notes.push(`<span class="marker-dot floor"></span>${unit === 'years' ? 'floor reached' : 'sold from principal'}`);
     if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--oxblood)">depletion</strong>`);
@@ -1920,15 +2029,15 @@ function renderTable(viewRows, baseRows, result) {
 
     html += `
       <tr class="${trClasses}" data-month="${pinMonth}" style="animation-delay:${Math.min(idx * 5, 200)}ms">
-        <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="${isPinned ? 'Edit pin' : 'Pin overrides here'}">${isPinned ? '✎' : '+'}</span></td>
+        <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="Add adjustment">+</span>${rowPins.map(pin => `<span class="pin-action" data-id="${pin.id}" data-month="${pin.at_month}" title="Edit month ${pin.at_month}">✎</span>`).join('')}</td>
         <td class="col-period">${periodLabel}</td>
         <td class="col-date">${dateLabel}</td>
-        ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_state.expense, ovKeys.has('expense'))}
-        ${editableCellHtml(fmtMoney(r.investment_income), 'investment_income', pinMonth, unit, r.pre_state.investment_income, ovKeys.has('investment_income'))}
+        ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_start_state.expense, startKeys.has('expense'))}
+        ${editableCellHtml(fmtMoney(r.investment_income), 'investment_income', pinMonth, unit, r.pre_start_state.investment_income, startKeys.has('investment_income'))}
         <td>${fmtMoney(r.net_income)}</td>
         <td class="${deltaClass}">${deltaStr}</td>
-        ${editableCellHtml(fmtMoney(r.buffer), 'buffer', pinMonth, unit, r.pre_state.buffer, ovKeys.has('buffer'))}
-        ${editableCellHtml(fmtMoney(r.investments), 'investments', pinMonth, unit, r.pre_state.investments, ovKeys.has('investments'))}
+        ${editableCellHtml(fmtMoney(r.buffer), 'buffer', closingMonth, unit, r.natural_end_state.buffer, endKeys.has('buffer'))}
+        ${editableCellHtml(fmtMoney(r.investments), 'investments', closingMonth, unit, r.natural_end_state.investments, endKeys.has('investments'))}
         <td class="${r.sold > 0 ? 'col-sold' : 'col-sold-zero'}">${r.sold > 0 ? fmtMoney(r.sold) : '—'}</td>
         <td class="col-notes">${notes.join(' &nbsp; ')}</td>
       </tr>
@@ -1946,7 +2055,7 @@ function renderTable(viewRows, baseRows, result) {
   tbody.querySelectorAll('.pin-action').forEach(el => {
     el.addEventListener('click', (e) => {
       const month = +el.getAttribute('data-month');
-      togglePinEditor(month);
+      togglePinEditor(month, el.getAttribute('data-id'));
     });
   });
 
@@ -1973,53 +2082,57 @@ function renderTable(viewRows, baseRows, result) {
 }
 
 function renderPinEditor(row, baseRows) {
-  // Find the underlying monthly row to use for pre-state
-  // For years view, this is the first month of the year (row.first_month).
-  // For months view, just the row.month.
   const unit = state.params.unit;
-  const editorMonth = unit === 'years' ? row.first_month : row.month;
+  const editorMonth = state.editing?.month ?? (unit === 'years' ? row.first_month : row.month);
   const sourceRow = baseRows.find(br => br.month === editorMonth);
-  if (!sourceRow) return '';
-
-  const baseline = sourceRow.pre_state;
   const existingPin = state.pins.find(pn => pn.at_month === editorMonth);
-  const overrides = existingPin ? existingPin.overrides : {};
+  if (!sourceRow && !existingPin) return '';
 
-  // Build fields
   let fieldsHtml = '';
-  for (const def of PARAM_DEFS) {
-    const baseVal = baseline[def.key];
-    const isOverridden = def.key in overrides;
-    const value = isOverridden ? overrides[def.key] : baseVal;
+  for (const [phase, defs] of [['start', PARAM_DEFS.filter(def => START_PIN_KEYS.has(def.key))],
+    ['end', PARAM_DEFS.filter(def => END_PIN_KEYS.has(def.key))]]) {
+    fieldsHtml += `<h4>${phase === 'start' ? 'Beginning of selected month' : 'End of selected month'}</h4>`;
+    for (const def of defs) {
+    const baseline = phase === 'start' ? sourceRow?.pre_start_state : sourceRow?.natural_end_state;
+    const baseVal = phase === 'end' && def.key === 'investment_income' && sourceRow
+      ? prepareCellEdit(sourceRow, 'end.investment_income', { params: state.params, pins: state.pins, revision: state.revision }).noOverrideBaseline
+      : baseline?.[def.key];
+    const isOverridden = existingPin ? def.key in existingPin[phase] : false;
+    const value = isOverridden ? existingPin[phase][def.key] : baseVal;
 
     let displayValue, baselineDisplay;
-    if (def.fmt === 'money') {
-      displayValue = Math.round(value);
-      baselineDisplay = fmtMoney(baseVal);
+    if (value === undefined) {
+      displayValue = '';
+      baselineDisplay = 'unreachable';
+    } else if (def.fmt === 'money') {
+      displayValue = value.toFixed(2);
+      baselineDisplay = baseVal === undefined ? 'unreachable' : fmtMoney(baseVal);
     } else if (def.fmt === 'pct') {
       displayValue = (value * 100).toFixed(2);
-      baselineDisplay = fmtPct(baseVal, 2);
+      baselineDisplay = baseVal === undefined ? 'unreachable' : fmtPct(baseVal, 2);
     } else {
       displayValue = value;
-      baselineDisplay = (+baseVal).toFixed(2);
+      baselineDisplay = baseVal === undefined ? 'unreachable' : (+baseVal).toFixed(2);
     }
 
     const inputAttrs = def.fmt === 'pct'
       ? `step="0.1" min="${def.min * 100}" max="${def.max * 100}"`
       : def.fmt === 'money'
-        ? `step="100"`
+        ? `step="0.01"`
         : `step="0.1" min="0"`;
 
     const prefix = def.fmt === 'money' ? '<span class="prefix">$</span>' : '';
     const suffix = def.fmt === 'pct' ? '<span class="suffix">%</span>' : '';
 
     fieldsHtml += `
-      <div class="pin-editor-field ${isOverridden ? 'changed' : ''}" data-key="${def.key}" data-fmt="${def.fmt}" data-baseline="${baseVal}">
-        <label>${def.label}${def.absolute ? ' <em style="color:var(--ochre); font-style:italic;">·</em>' : ''}</label>
-        <span class="input-wrap">${prefix}<input type="number" class="pin-field-input" data-key="${def.key}" value="${displayValue}" ${inputAttrs}>${suffix}</span>
+      <div class="pin-editor-field ${isOverridden ? 'changed' : ''}" data-phase="${phase}" data-key="${def.key}" data-fmt="${def.fmt}" data-baseline="${baseVal ?? ''}">
+        <label>${phase === 'end' && def.key === 'investment_income' ? "Next month's investment income" : def.label}</label>
+        <span class="input-wrap">${prefix}<input type="number" class="pin-field-input" data-phase="${phase}" data-key="${def.key}" data-original="${displayValue}" value="${displayValue}" ${inputAttrs}>${suffix}</span>
         <span class="baseline">baseline: ${baselineDisplay}</span>
+        ${isOverridden ? `<button type="button" class="pin-reset-field" data-phase="${phase}" data-key="${def.key}">Reset this field</button>` : ''}
       </div>
     `;
+    }
   }
 
   const periodLabel = unit === 'years'
@@ -2033,11 +2146,13 @@ function renderPinEditor(row, baseRows) {
           <div class="pin-editor-header">
             <div>
               <div class="pin-editor-title">${existingPin ? 'Editing' : 'Pinning'} <em>${periodLabel}</em></div>
-              <div class="pin-editor-sub">Change any parameter. Past rows are immutable; only this row forward will reflect your edits.</div>
+              <div class="pin-editor-sub">Beginning assumptions affect this month's flow. Ending balances and next-month income apply after its expenses and sales.</div>
             </div>
           </div>
           <div class="pin-editor-grid">${fieldsHtml}</div>
+          <label>Adjustment month <input id="pin-month" type="number" min="1" max="1200" step="1" value="${editorMonth}"></label>
           <div class="pin-editor-actions">
+            <button class="pin-btn" id="pin-reset-income">Set new income baseline</button>
             <button class="reset" id="pin-reset-all">Reset all to baseline</button>
             ${existingPin ? `<button class="pin-btn remove-btn" id="pin-remove">Remove pin</button>` : ''}
             <button class="pin-btn" id="pin-cancel">Cancel</button>
@@ -2053,84 +2168,109 @@ function attachPinEditorEvents(viewRows, baseRows) {
   if (!state.editing) return;
   const editorMonth = state.editing.month;
   const sourceRow = baseRows.find(br => br.month === editorMonth);
-  if (!sourceRow) return;
-  const baseline = sourceRow.pre_state;
-
-  // Seed the per-session dirty set: an existing pin's overrides are genuine prior
-  // user choices, so they start dirty; every other field starts clean. This set is
-  // re-derived every time the editor (re)opens and never survives close/cancel.
   const existingPin = state.pins.find(pn => pn.at_month === editorMonth);
-  state.editing.dirty = new Set(existingPin ? Object.keys(existingPin.overrides) : []);
-
-  // Track input changes: a field becomes dirty the moment the user edits it. The
-  // `changed` highlight follows dirty AND value != baseline, so an untouched field
-  // with a fractional baseline is never highlighted, and a dirty field restored to
-  // its baseline value loses the highlight (but stays dirty, so save drops it).
+  state.editing.dirty = new Set();
+  state.editing.resetFields = new Set();
   document.querySelectorAll('.pin-field-input').forEach(inp => {
     inp.addEventListener('input', () => {
       const key = inp.getAttribute('data-key');
+      const phase = inp.getAttribute('data-phase');
       const fieldEl = inp.closest('.pin-editor-field');
       const fmt = fieldEl.getAttribute('data-fmt');
-      const baseVal = +fieldEl.getAttribute('data-baseline');
+      const baselineText = fieldEl.getAttribute('data-baseline');
+      const baseVal = baselineText === '' ? undefined : Number(baselineText);
       let value = +inp.value;
       if (fmt === 'pct') value = value / 100;
-      state.editing.dirty.add(key);
-      fieldEl.classList.toggle('changed', !floatsEqual(value, baseVal));
+      state.editing.dirty.add(`${phase}.${key}`);
+      state.editing.resetFields.delete(`${phase}.${key}`);
+      fieldEl.classList.toggle('changed', baseVal === undefined || !floatsEqual(value, baseVal));
+    });
+  });
+  document.querySelectorAll('.pin-reset-field').forEach(button => {
+    button.addEventListener('click', () => {
+      const phase = button.getAttribute('data-phase');
+      const key = button.getAttribute('data-key');
+      state.editing.resetFields.add(`${phase}.${key}`);
+      button.closest('.pin-editor-field').classList.remove('changed');
     });
   });
 
   const saveBtn = document.getElementById('pin-save');
-  if (saveBtn) saveBtn.addEventListener('click', () => savePinFromEditor(editorMonth, baseline));
+  if (saveBtn) saveBtn.addEventListener('click', () => savePinFromEditor(editorMonth));
+  const incomeReset = document.getElementById('pin-reset-income');
+  if (incomeReset) incomeReset.addEventListener('click', () => {
+    const input = document.querySelector('.pin-field-input[data-phase="start"][data-key="investment_income"]');
+    if (input) {
+      state.editing.dirty.add('start.investment_income');
+      state.editing.forceIncomeReset = true;
+    }
+  });
 
   const cancelBtn = document.getElementById('pin-cancel');
   if (cancelBtn) cancelBtn.addEventListener('click', () => { state.editing = null; rerender(); });
 
   const removeBtn = document.getElementById('pin-remove');
   if (removeBtn) removeBtn.addEventListener('click', () => {
-    acceptPins(state.pins.filter(p => p.at_month !== editorMonth));
+    acceptPins(state.pins.filter(p => p.id !== existingPin?.id));
     state.editing = null;
     rerender();
   });
 
   const resetBtn = document.getElementById('pin-reset-all');
   if (resetBtn) resetBtn.addEventListener('click', () => {
-    // Reset all inputs to baseline and clear every dirty flag, so a save right
-    // after reset produces zero overrides (and therefore prunes the pin).
     document.querySelectorAll('.pin-field-input').forEach(inp => {
       const fieldEl = inp.closest('.pin-editor-field');
       const fmt = fieldEl.getAttribute('data-fmt');
-      const baseVal = +fieldEl.getAttribute('data-baseline');
-      if (fmt === 'pct') inp.value = (baseVal * 100).toFixed(2);
-      else if (fmt === 'money') inp.value = Math.round(baseVal);
+      const baselineText = fieldEl.getAttribute('data-baseline');
+      const baseVal = baselineText === '' ? undefined : Number(baselineText);
+      if (baseVal === undefined) inp.value = '';
+      else if (fmt === 'pct') inp.value = (baseVal * 100).toFixed(2);
+      else if (fmt === 'money') inp.value = baseVal.toFixed(2);
       else inp.value = (+baseVal).toFixed(2);
       fieldEl.classList.remove('changed');
     });
-    if (state.editing) state.editing.dirty = new Set();
+    if (state.editing) { state.editing.dirty = new Set(); state.editing.resetAll = true; }
   });
 }
 
-function savePinFromEditor(editorMonth, baseline) {
-  // Persist only fields the user actually touched (dirty) AND that differ from the
-  // baseline. Untouched fields are never saved, even when their displayed baseline
-  // rounds away a fractional value — this is the phantom-override fix.
-  const dirty = (state.editing && state.editing.dirty) || new Set();
-  const overrides = collectPinOverrides(document.querySelectorAll('.pin-field-input'), dirty);
-
-  const checked = validatePinDraft({ at_month: editorMonth, overrides }, { baseline });
-  if (!checked.ok) {
-    showScenarioStatus(checked.issues, false);
-    return;
+function savePinFromEditor(editorMonth) {
+  const existing = state.pins.find(pin => pin.at_month === editorMonth);
+  const draft = existing ? clonePin(existing) : { id: newPinId(), at_month: editorMonth, start: {}, end: {} };
+  const targetMonth = Number(document.getElementById('pin-month')?.value ?? editorMonth);
+  draft.at_month = targetMonth;
+  if (state.editing.resetAll) { draft.start = {}; draft.end = {}; delete draft.annual_edits; }
+  for (const input of document.querySelectorAll('.pin-field-input')) {
+    const phase = input.getAttribute('data-phase');
+    const key = input.getAttribute('data-key');
+    if (state.editing.resetFields?.has(`${phase}.${key}`)) {
+      delete draft[phase][key];
+      if (phase === 'start' && draft.annual_edits?.[key]) delete draft.annual_edits[key];
+      continue;
+    }
+    if (!state.editing.dirty.has(`${phase}.${key}`)) continue;
+    const originalText = input.getAttribute('data-original');
+    if (!(state.editing.forceIncomeReset && phase === 'start' && key === 'investment_income') &&
+        originalText.trim() !== '' && input.value.trim() !== '' &&
+        Number(input.value) === Number(originalText)) continue;
+    const field = input.closest('.pin-editor-field');
+    // The rendered baseline is field-specific. End income includes any closing
+    // principal valuation from this same adjustment, unlike natural_end_state.
+    const baselineText = field.getAttribute('data-baseline');
+    const baseline = baselineText === '' ? undefined : Number(baselineText);
+    const value = readPinFieldValue(input, key, field.getAttribute('data-fmt'), baseline);
+    // Once a displayed value changes, it is an explicit replacement. The user
+    // removes a stored value through "Reset this field"; a stale counterfactual
+    // cannot silently discard simultaneous principal and income edits.
+    draft[phase][key] = value;
+    if (phase === 'start' && draft.annual_edits?.[key]) delete draft.annual_edits[key];
   }
-
-  // Remove any existing pin at this month
-  const nextPins = state.pins.filter(p => p.at_month !== editorMonth);
-  if (Object.keys(overrides).length > 0) nextPins.push(checked.value);
-  const transaction = tryAcceptPins(nextPins);
+  const transaction = applyEditTransaction({ params: state.params, pins: state.pins, revision: state.revision },
+    existing ? { type: 'replace', id: existing.id, pin: draft } : { type: 'create', at_month: targetMonth, pin: draft });
   if (!transaction.ok) {
     showScenarioStatus(transaction.issues, false);
     return;
   }
-
+  acceptPins(transaction.scenario.pins);
   state.editing = null;
   rerender();
 }
@@ -2167,8 +2307,8 @@ function readPinFieldValue(input, key, fmt, baseline) {
   return fmt === 'pct' ? value / 100 : value;
 }
 
-function collectPinOverrides(fieldInputs, dirtyKeys) {
-  const overrides = {};
+function collectPinFields(fieldInputs, dirtyKeys) {
+  const fields = {};
   fieldInputs.forEach(input => {
     const key = input.getAttribute('data-key');
     if (!dirtyKeys.has(key)) return;
@@ -2176,16 +2316,16 @@ function collectPinOverrides(fieldInputs, dirtyKeys) {
     const fmt = fieldEl.getAttribute('data-fmt');
     const baseline = +fieldEl.getAttribute('data-baseline');
     const value = readPinFieldValue(input, key, fmt, baseline);
-    if (value === '' || !Number.isFinite(value) || !floatsEqual(value, baseline)) overrides[key] = value;
+    if (value === '' || !Number.isFinite(value) || !floatsEqual(value, baseline)) fields[key] = value;
   });
-  return overrides;
+  return fields;
 }
 
-function togglePinEditor(month) {
-  if (state.editing && state.editing.month === month) {
+function togglePinEditor(month, id = null) {
+  if (state.editing && state.editing.month === month && state.editing.id === id) {
     state.editing = null;
   } else {
-    state.editing = { month };
+    state.editing = { month, id };
   }
   rerender();
 }
@@ -2195,21 +2335,17 @@ let cellEditor = null; // the currently-open inline cell editor, if any
 
 function openCellEditor(cell, month, key) {
   closeCellEditor(); // only one inline editor open at a time
-  // Compare and prune against the display-rounded baseline: money cells only
-  // accept whole dollars, so a blur/Enter that leaves the pre-filled baseline
-  // untouched must not manufacture a spurious override.
-  const baselineRounded = Math.round(+cell.dataset.baseline);
+  const phase = key === 'buffer' || key === 'investments' ? 'end' : 'start';
+  const baselineRounded = Math.round(+cell.dataset.baseline * 100) / 100;
   const pin = state.pins.find(p => p.at_month === month);
-  const overridden = pin && key in pin.overrides;
-  // Pre-fill with the existing override value if present, else the pre-state
-  // baseline (start-of-month for the absolute buffer/investments fields).
-  const prefill = Math.round(overridden ? pin.overrides[key] : baselineRounded);
+  const overridden = pin && key in pin[phase];
+  const prefill = overridden ? pin[phase][key] : baselineRounded;
   const originalHTML = cell.innerHTML;
 
   const input = document.createElement('input');
   input.type = 'number';
   input.className = 'cell-edit-input';
-  input.step = '100';
+  input.step = '0.01';
   input.value = prefill;
 
   let settled = false;
@@ -2242,28 +2378,19 @@ function closeCellEditor() {
 }
 
 function commitCellEdit(month, key, value, baselineRounded) {
-  let nextPins = state.pins.map(p => ({ ...p, overrides: { ...p.overrides } }));
-  const nextPin = nextPins.find(p => p.at_month === month);
-  if (floatsEqual(value, baselineRounded)) {
-    // Committing the baseline back clears this field's override; prune empty pins.
-    if (nextPin && key in nextPin.overrides) {
-      delete nextPin.overrides[key];
-      if (Object.keys(nextPin.overrides).length === 0) {
-        nextPins = nextPins.filter(p => p !== nextPin);
-      }
-    }
-  } else if (nextPin) {
-    nextPin.overrides[key] = value;
-  } else {
-    nextPins.push({ at_month: month, overrides: { [key]: value } });
+  const phase = key === 'buffer' || key === 'investments' ? 'end' : 'start';
+  const pin = state.pins.find(item => item.at_month === month);
+  const existing = pin?.[phase]?.[key];
+  if (Math.round(value * 100) === Math.round((existing ?? baselineRounded) * 100)) return;
+  const transaction = applyEditTransaction({ params: state.params, pins: state.pins, revision: state.revision },
+    Math.round(value * 100) === Math.round(baselineRounded * 100)
+      ? { type: 'remove-field', id: pin?.id, at_month: month, phase, field: key }
+      : { type: 'set', id: pin?.id, at_month: month, phase, field: key, value });
+  if (!transaction.ok) {
+    showScenarioStatus(transaction.issues, false);
+    return;
   }
-  if (JSON.stringify(nextPins) !== JSON.stringify(state.pins)) {
-    const transaction = tryAcceptPins(nextPins);
-    if (!transaction.ok) {
-      showScenarioStatus(transaction.issues, false);
-      return;
-    }
-  }
+  acceptPins(transaction.scenario.pins);
   rerender();
 }
 
@@ -2279,42 +2406,57 @@ function renderAdjustments() {
   let html = '';
   for (const pin of pins) {
     const dateStr = fmtDate(dateForMonth(pin.at_month), 'months');
-    // orderedOverrides gives a stable field order with the display labels + formats.
-    const fieldsHtml = orderedOverrides(pin.overrides)
-      .map(({ def, value }) => `<div class="adj-field"><span class="adj-field-label">${def.label}</span><span class="adj-field-val">${fmtVal(value, def.fmt)}</span></div>`)
+    const result = state.acceptedResult;
+    const row = result?.rows.find(item => item.month === pin.at_month);
+    const phaseNote = (phase) => {
+      if (!Object.keys(pin[phase]).length) return '';
+      const applied = row?.adjustment_application?.[`${phase}_applied`] === true;
+      let reason = '';
+      if (!applied) {
+        if (pin.at_month > result?.plannedLastMonth) reason = ' · outside horizon';
+        else if (!row) reason = ' · projection stopped before month';
+        else if (phase === 'end' && row.insolvency) reason = ' · operating month failed';
+      }
+      return `<span class="adj-phase-status">${phase === 'start' ? 'Beginning' : 'End'} ${applied ? 'applied' : 'unapplied'}${reason}</span>`;
+    };
+    const fieldsHtml = [['start', pin.start], ['end', pin.end]]
+      .flatMap(([phase, fields]) => orderedOverrides(fields).map(({ def, value }) =>
+        `<div class="adj-field"><span class="adj-field-label">${phase === 'start' ? 'Beginning' : 'End'} · ${def.label}</span><span class="adj-field-val">${fmtVal(value, def.fmt)}</span></div>`))
       .join('');
     html += `
-      <div class="adj-entry" data-month="${pin.at_month}">
+      <div class="adj-entry" data-id="${pin.id}" data-month="${pin.at_month}">
         <div class="adj-entry-head">
           <span class="adj-entry-when">Month ${pin.at_month} · ${dateStr}</span>
-          <button class="adj-remove" data-month="${pin.at_month}" title="Remove this adjustment">remove</button>
+          <button class="adj-remove" data-id="${pin.id}" title="Remove this adjustment">remove</button>
         </div>
+        <div class="adj-phase-statuses">${phaseNote('start')}${phaseNote('end')}</div>
         ${fieldsHtml}
       </div>`;
+  }
+  if (state.editing?.id && !state.acceptedResult?.rows.some(row => row.month === state.editing.month)) {
+    html += `<table><tbody>${renderPinEditor({ month: state.editing.month }, state.acceptedResult?.rows ?? [])}</tbody></table>`;
   }
   container.innerHTML = html;
 
   container.querySelectorAll('.adj-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also fire the entry's jump-to-row
-      const m = +btn.getAttribute('data-month');
-      acceptPins(state.pins.filter(p => p.at_month !== m));
-      if (state.editing && state.editing.month === m) state.editing = null; // close editor if open on it
+      const id = btn.getAttribute('data-id');
+      acceptPins(state.pins.filter(p => p.id !== id));
+      if (state.editing && state.editing.id === id) state.editing = null;
       rerender();
     });
   });
   container.querySelectorAll('.adj-entry').forEach(entry => {
-    entry.addEventListener('click', () => jumpToPin(+entry.getAttribute('data-month')));
+    entry.addEventListener('click', () => jumpToPin(entry.getAttribute('data-id')));
   });
 }
 
-function jumpToPin(month) {
-  // Open the pin's editor and scroll its row into view. In years view the editor
-  // lives on the year's first-month row, so map the pin's month to that row.
-  const editorMonth = state.params.unit === 'years'
-    ? Math.floor((month - 1) / 12) * 12 + 1
-    : month;
-  state.editing = { month: editorMonth };
+function jumpToPin(id) {
+  const pin = state.pins.find(item => item.id === id);
+  if (!pin) return;
+  const editorMonth = state.params.unit === 'years' ? Math.floor((pin.at_month - 1) / 12) * 12 + 1 : pin.at_month;
+  state.editing = { month: pin.at_month, id };
   rerender(); // rebuilds the tbody...
   const row = document.querySelector(`tr[data-month="${editorMonth}"]`);
   if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' }); // ...so scroll afterwards
@@ -2390,8 +2532,8 @@ function rerender() {
   renderStats(result.rows, result);
   renderChart(result.rows);
   renderTable(viewRows, result.rows, result);
-  attachPinEditorEvents(viewRows, result.rows);
   renderAdjustments();
+  attachPinEditorEvents(viewRows, result.rows);
   return result;
 }
 
@@ -2429,7 +2571,10 @@ function buildCsvText(viewRows, unit, pins) {
     pins
       .filter(p => p.at_month >= startM && p.at_month <= endM)
       .sort((a, b) => a.at_month - b.at_month)
-      .forEach(pin => orderedOverrides(pin.overrides).forEach(({ def, value }) => pairs.push(`${def.key}=${value}`)));
+      .forEach(pin => {
+        for (const phase of ['start', 'end']) orderedOverrides(pin[phase]).forEach(({ def, value }) =>
+          pairs.push(`month ${pin.at_month} ${phase}.${def.key}=${value}`));
+      });
     const overridesField = pairs.length ? `"${pairs.join('; ')}"` : '';
     const grossSaleCents = toRoundedCents(r.sold);
     const saleTaxCents = toRoundedCents(r.sale_tax_paid);
@@ -2450,7 +2595,8 @@ function buildCsvText(viewRows, unit, pins) {
       formatCents(grossSaleCents),
       r.hitFloor ? 'yes' : '',
       r.insolvency ? 'yes' : '',
-      r.pinned_at_this_row ? 'yes' : '',
+      (r.adjustment_application?.start_applied || r.adjustment_application?.end_applied ||
+        r.adjustment_applications?.some(item => item.start_applied || item.end_applied)) ? 'yes' : '',
       overridesField,
       formatCents(incomeTaxCents),
       formatCents(saleTaxCents),
