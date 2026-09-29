@@ -39,6 +39,15 @@
     --series-floor: var(--accent);
     --focus-ring: var(--accent-strong);
     --on-strong: var(--surface);
+    --fs-2xs: 11px;
+    --fs-xs: 12px;
+    --fs-sm: 13px;
+    --fs-base: 14px;
+    --fs-md: 16px;
+    --fs-lg: 20px;
+    --fs-xl: 28px;
+    --fs-2xl: 40px;
+    --fs-display: clamp(36px, 7vw, 62px);
   }
   :root[data-theme="light"] { color-scheme: light; }
   :root[data-theme="dark"] { color-scheme: dark; }
@@ -66,7 +75,7 @@
     font-family: 'Hanken Grotesk', system-ui, sans-serif;
     background: var(--surface);
     color: var(--text);
-    font-size: 14px;
+    font-size: var(--fs-base);
     line-height: 1.45;
     min-height: 100vh;
     background-image:
@@ -109,7 +118,7 @@
   .brand .mark {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9, "SOFT" 100;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.22em;
     color: var(--text-subtle);
@@ -119,7 +128,7 @@
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 144, "SOFT" 30;
     font-weight: 400;
-    font-size: 36px;
+    font-size: var(--fs-2xl);
     line-height: 0.95;
     letter-spacing: -0.025em;
     color: var(--text);
@@ -133,7 +142,7 @@
   .brand .tagline {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
+    font-size: var(--fs-xs);
     color: var(--text-muted);
     margin-top: 6px;
     letter-spacing: 0.005em;
@@ -146,7 +155,7 @@
   .group-label {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.2em;
     color: var(--text-muted);
@@ -159,7 +168,7 @@
   }
   .group-label .ordinal {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     color: var(--text-subtle);
     letter-spacing: 0.05em;
   }
@@ -172,13 +181,13 @@
     gap: 12px;
   }
   .field label {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     color: var(--text);
     flex: 1;
   }
   .field label .hint {
     display: block;
-    font-size: 10.5px;
+    font-size: var(--fs-2xs);
     color: var(--text-subtle);
     font-style: italic;
     font-family: 'Fraunces', serif;
@@ -200,7 +209,7 @@
   .adj-empty {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
+    font-size: var(--fs-xs);
     color: var(--text-subtle);
   }
   .adj-entry {
@@ -219,7 +228,7 @@
   .adj-open {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
+    font-size: var(--fs-xs);
     color: var(--accent-strong);
     background: none;
     border: 0;
@@ -230,7 +239,7 @@
   .adj-remove {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     color: var(--text-subtle);
     background: transparent;
     border: none;
@@ -248,21 +257,21 @@
     margin: 3px 0 5px;
   }
   .adj-phase-status {
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     color: var(--text-muted);
   }
   .adj-field {
     display: flex;
     justify-content: space-between;
     gap: 10px;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     padding: 1px 0;
   }
   .adj-field-label { color: var(--text-muted); }
   .adj-field-val {
     color: var(--text);
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
   }
 
   .input-wrap {
@@ -280,14 +289,14 @@
   .input-wrap .suffix {
     color: var(--text-subtle);
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     padding: 0 4px;
   }
   .input-wrap .prefix { padding-left: 7px; }
   .input-wrap .suffix { padding-right: 7px; }
   .input-wrap input {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     background: transparent;
     border: none;
     outline: none;
@@ -316,7 +325,7 @@
     background: transparent;
     border: none;
     font-family: 'Hanken Grotesk', sans-serif;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     cursor: pointer;
     color: var(--text-muted);
     letter-spacing: 0.06em;
@@ -343,7 +352,7 @@
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 24, "SOFT" 50;
     font-weight: 400;
-    font-size: 14px;
+    font-size: var(--fs-base);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
@@ -361,7 +370,7 @@
     color: var(--negative);
     background: var(--surface-raised);
     box-shadow: 0 3px 8px var(--shadow);
-    font-size: 12px;
+    font-size: var(--fs-xs);
     line-height: 1.45;
   }
   .scenario-status[data-tone="pending"] {
@@ -403,7 +412,7 @@
   .header .eyebrow {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.24em;
     color: var(--negative);
@@ -413,7 +422,7 @@
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 144, "SOFT" 40, "wght" 350;
     font-weight: 350;
-    font-size: 62px;
+    font-size: var(--fs-display);
     line-height: 0.96;
     letter-spacing: -0.035em;
     color: var(--text);
@@ -428,7 +437,7 @@
     font-family: 'Fraunces', serif;
     font-style: italic;
     font-variation-settings: "opsz" 24, "SOFT" 50;
-    font-size: 15px;
+    font-size: var(--fs-md);
     color: var(--text-muted);
     margin-top: 10px;
     letter-spacing: 0.005em;
@@ -436,7 +445,7 @@
   }
   .header .today-stamp {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10.5px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.18em;
     color: var(--text-subtle);
@@ -465,7 +474,7 @@
   .stat-label {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 9.5px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.2em;
     color: var(--text-muted);
@@ -473,7 +482,7 @@
   }
   .stat-value {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 19px;
+    font-size: var(--fs-lg);
     font-weight: 500;
     color: var(--text);
     letter-spacing: -0.015em;
@@ -484,7 +493,7 @@
   .stat-detail {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     color: var(--text-subtle);
     margin-top: 4px;
   }
@@ -518,7 +527,7 @@
   .chart-title {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 10.5px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.2em;
     color: var(--text-muted);
@@ -526,7 +535,7 @@
   .chart-legend {
     display: flex;
     gap: 18px;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     color: var(--text-muted);
     font-family: 'Hanken Grotesk', system-ui, sans-serif;
   }
@@ -556,7 +565,7 @@
     transform: translateY(-50%);
     white-space: nowrap;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 9.5px;
+    font-size: var(--fs-2xs);
     color: var(--text-subtle);
     background: var(--label-halo);
     padding: 0 4px;
@@ -573,13 +582,13 @@
   .chart-pin-line { stroke: var(--accent); stroke-width: 0.8; stroke-dasharray: 2 3; opacity: 0.6; }
   .chart-pin-dot { fill: var(--accent); }
   .chart-failure-line { stroke: var(--negative); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0.7; }
-  .chart-failure-label { fill: var(--negative); font-family: 'Fraunces', Georgia, serif; font-style: italic; font-size: 11px; }
+  .chart-failure-label { fill: var(--negative); font-family: 'Fraunces', Georgia, serif; font-style: italic; font-size: var(--fs-2xs); }
   .chart-x-labels {
     display: flex;
     justify-content: space-between;
     padding: 6px 0 0;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     color: var(--text-subtle);
   }
 
@@ -607,7 +616,7 @@
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 72, "SOFT" 30;
     font-weight: 400;
-    font-size: 26px;
+    font-size: var(--fs-xl);
     letter-spacing: -0.015em;
     color: var(--text);
   }
@@ -621,7 +630,7 @@
   .table-hint {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     color: var(--text-subtle);
     letter-spacing: 0.01em;
   }
@@ -630,7 +639,7 @@
   .table-actions .pin-count {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
+    font-size: var(--fs-xs);
     color: var(--accent-strong);
     margin-right: 4px;
   }
@@ -639,7 +648,7 @@
     background: var(--surface);
     border: 1px solid var(--control-border);
     font-family: 'Hanken Grotesk', sans-serif;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     cursor: pointer;
     color: var(--text-muted);
     letter-spacing: 0.06em;
@@ -656,7 +665,7 @@
     width: 100%;
     border-collapse: collapse;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     font-feature-settings: "tnum";
   }
   .amort thead {
@@ -670,7 +679,7 @@
     padding: 11px 10px 9px;
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9, "SOFT" 30;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.16em;
     color: var(--text-muted);
@@ -710,7 +719,7 @@
     padding: 6px 8px;
     white-space: normal;
     text-align: left;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     line-height: 1.4;
     color: var(--text);
     background: var(--surface-raised);
@@ -730,12 +739,12 @@
 
   .amort .col-period {
     color: var(--text-subtle);
-    font-size: 10.5px;
+    font-size: var(--fs-2xs);
   }
   .amort .col-date {
     color: var(--text-muted);
     font-family: 'Fraunces', serif;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     font-style: italic;
     letter-spacing: 0.01em;
   }
@@ -748,7 +757,7 @@
   .amort .col-notes {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     color: var(--text-muted);
     letter-spacing: 0.01em;
     padding-right: 10px;
@@ -801,7 +810,7 @@
     border: 0;
     padding: 0;
     color: var(--text-subtle);
-    font-size: 16px;
+    font-size: var(--fs-md);
     font-family: 'Fraunces', serif;
     line-height: 1;
     transition: color 0.15s, transform 0.15s, opacity 0.15s;
@@ -889,7 +898,7 @@
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 36, "SOFT" 30;
     font-weight: 400;
-    font-size: 16px;
+    font-size: var(--fs-md);
     color: var(--text);
     letter-spacing: -0.005em;
   }
@@ -901,7 +910,7 @@
   .pin-editor-sub {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     color: var(--text-subtle);
     margin-top: 2px;
   }
@@ -915,7 +924,7 @@
     padding-bottom: 5px;
     border-bottom: 1px solid var(--rule-fine);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -925,7 +934,7 @@
     display: block;
     margin-bottom: 5px;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -942,14 +951,14 @@
   .pin-editor-field label {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 9.5px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.16em;
     color: var(--text-muted);
   }
   .pin-editor-field .baseline {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     color: var(--text-subtle);
     margin-top: 2px;
     font-style: italic;
@@ -982,7 +991,7 @@
     margin-right: auto;
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
+    font-size: var(--fs-xs);
     color: var(--text-subtle);
     background: transparent;
     border: none;
@@ -1002,12 +1011,12 @@
     white-space: normal;
     max-width: 260px;
   }
-  .cell-edit-details { color: var(--text-subtle); font-size: 11px; }
+  .cell-edit-details { color: var(--text-subtle); font-size: var(--fs-2xs); }
   .cell-edit-feedback { color: var(--negative); }
   .pin-editor-actions .pin-btn {
     padding: 8px 16px;
     font-family: 'Hanken Grotesk', sans-serif;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     cursor: pointer;
     border: 1px solid var(--control-border);
     background: var(--surface);
@@ -1052,7 +1061,7 @@
     font-family: 'Fraunces', serif;
     font-style: italic;
     font-variation-settings: "opsz" 24, "SOFT" 50;
-    font-size: 14px;
+    font-size: var(--fs-base);
     color: var(--text-muted);
     border-bottom: 1px solid var(--rule);
   }
@@ -1060,7 +1069,7 @@
   .table-footer .footer-stat {
     font-family: 'JetBrains Mono', monospace;
     font-style: normal;
-    font-size: 12px;
+    font-size: var(--fs-xs);
     color: var(--text);
     margin-left: 6px;
   }
@@ -1069,7 +1078,7 @@
     font-family: 'Fraunces', serif;
     font-style: italic;
     font-variation-settings: "opsz" 9;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     color: var(--text-subtle);
     margin-top: 28px;
     max-width: 760px;

@@ -78,3 +78,28 @@ test('renderTable contains no empty surplus branch', () => {
 test('named font declarations include a fallback', () => {
   assert.doesNotMatch(calculatorHtml, /font-family:\s*'[^']+'\s*;/);
 });
+
+test('root defines the nine-step font scale with an 11px minimum', () => {
+  const expected = new Map([
+    ['2xs', '11px'], ['xs', '12px'], ['sm', '13px'], ['base', '14px'],
+    ['md', '16px'], ['lg', '20px'], ['xl', '28px'], ['2xl', '40px'],
+    ['display', 'clamp(36px, 7vw, 62px)'],
+  ]);
+  const actual = new Map([...root.matchAll(/--fs-([a-z0-9]+):\s*([^;]+);/g)]
+    .map(([, name, value]) => [name, value.trim()]));
+  assert.deepEqual(actual, expected);
+  assert.ok(actual.size <= 9);
+  for (const [name, value] of actual) {
+    const pxValues = [...value.matchAll(/([\d.]+)px/g)].map(([, size]) => Number(size));
+    assert.ok(pxValues.length > 0, `${name} has no pixel size`);
+    assert.ok(Math.min(...pxValues) >= 11, `${name} falls below 11px`);
+  }
+});
+
+test('font sizes outside root use scale tokens', () => {
+  const style = calculatorHtml.match(/<style>([\s\S]*?)<\/style>/);
+  assert.ok(style);
+  const outsideRoot = style[1].replace(root, '');
+  assert.doesNotMatch(outsideRoot, /font-size:\s*[\d.]+px/);
+  assert.doesNotMatch(calculatorHtml, /font-size="/);
+});
