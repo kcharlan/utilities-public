@@ -10,6 +10,83 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('header leads with the date of the default reserve verdict', async ({ page }) => {
+  const endDate = await page.evaluate(() => fmtDate(dateForMonth(120), 'months'));
+  await expect(page.locator('.header .eyebrow')).toHaveText('The verdict');
+  await expect(page.locator('#verdict')).toHaveText(`Reserve holds through ${endDate}`);
+  await expect(page.locator('#verdict')).not.toHaveClass(/is-failure|is-stale/);
+  await expect(page.locator('#verdict-note')).toBeHidden();
+});
+
+test('header marks a reserve failure with its failure month', async ({ page }) => {
+  const firstDate = await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 10, floor: 10, investments_initial: 100,
+      investment_income: 0, external_income: 0, expense: 1, sale_tax_rate: 1,
+      tax_rate: 0, num_periods: 12, unit: 'months' });
+    acceptPins([]);
+    rerender();
+    return fmtDate(dateForMonth(1), 'months');
+  });
+  await expect(page.locator('#verdict')).toHaveText(`Reserve fails ${firstDate}`);
+  await expect(page.locator('#verdict')).toHaveClass(/is-failure/);
+  await expect(page.locator('#verdict em')).toHaveText(firstDate);
+});
+
+test('header names the 100-year cap when a reserve survives it', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 100, floor: 0, investments_initial: 0,
+      investment_income: 0, external_income: 0, expense: 0, inflation: 0,
+      num_periods: 0, unit: 'months' });
+    acceptPins([]);
+    rerender();
+  });
+  await expect(page.locator('#verdict')).toHaveText('Reserve holds through the 100-year cap');
+  await expect(page.locator('#verdict')).not.toHaveClass(/is-failure/);
+});
+
+test('invalid input dims the last verdict and recovery restores it', async ({ page }) => {
+  const verdict = page.locator('#verdict');
+  await page.locator('#expense').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(verdict).toHaveClass(/is-stale/);
+  await expect(page.locator('#verdict-note')).toBeVisible();
+  const colors = await page.evaluate(() => {
+    const heading = document.getElementById('verdict');
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--text-subtle)';
+    document.body.append(probe);
+    const subtle = getComputedStyle(probe).color;
+    probe.remove();
+    return { heading: getComputedStyle(heading).color,
+      emphasis: getComputedStyle(heading.querySelector('em')).color,
+      subtle };
+  });
+  expect(colors.heading).toBe(colors.emphasis);
+  expect(colors.heading).toBe(colors.subtle);
+  await page.locator('#expense').fill('5000');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(verdict).not.toHaveClass(/is-stale/);
+  await expect(page.locator('#verdict-note')).toBeHidden();
+});
+
+test('pending input leaves the verdict current until validation finishes', async ({ page }) => {
+  const pending = await page.evaluate(() => {
+    const input = document.getElementById('expense');
+    input.value = '5100';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return { tone: document.getElementById('scenario-status').getAttribute('data-tone'),
+      stale: document.getElementById('verdict').classList.contains('is-stale'),
+      noteHidden: document.getElementById('verdict-note').hidden };
+  });
+  expect(pending).toEqual({ tone: 'pending', stale: false, noteHidden: true });
+});
+
+test('direct empty verdict reports projection unavailable', async ({ page }) => {
+  await page.evaluate(() => renderVerdict([], { terminatedReason: 'invalid' }));
+  await expect(page.locator('#verdict')).toHaveText('Projection unavailable');
+  await expect(page.locator('#verdict')).not.toHaveClass(/is-failure/);
+});
+
 test('pending status is quiet and does not move sidebar inputs', async ({ page }) => {
   const pending = await page.evaluate(() => {
     const input = document.getElementById('expense');

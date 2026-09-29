@@ -418,7 +418,7 @@
     color: var(--negative);
     margin-bottom: 6px;
   }
-  .header h2 {
+  .header .verdict {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 144, "SOFT" 40, "wght" 350;
     font-weight: 350;
@@ -427,11 +427,19 @@
     letter-spacing: -0.035em;
     color: var(--text);
   }
-  .header h2 em {
+  .header .verdict em {
     font-style: italic;
     font-weight: 300;
     color: var(--text-muted);
     font-variation-settings: "opsz" 144, "SOFT" 80, "wght" 300;
+  }
+  .header .verdict.is-failure em { color: var(--negative); }
+  .header .verdict.is-stale,
+  .header .verdict.is-stale em { color: var(--text-subtle); }
+  .header .verdict-note {
+    font-size: var(--fs-xs);
+    font-style: italic;
+    color: var(--text-subtle);
   }
   .header .subtitle {
     font-family: 'Fraunces', serif;
@@ -1228,10 +1236,11 @@
   <main class="main">
     <header class="header">
       <div class="header-meta">
-        <div class="eyebrow">A study in patience &amp; principal</div>
+        <div class="eyebrow">The verdict</div>
         <div class="today-stamp">From <strong id="today-stamp"></strong></div>
       </div>
-      <h2>Investment <em>Drawdown</em></h2>
+      <h2 id="verdict" class="verdict">Projection pending</h2>
+      <p id="verdict-note" class="verdict-note" hidden>Showing the last valid projection while inputs are corrected.</p>
       <p class="subtitle">A month-by-month projection of cash, principal, and income until the protected reserve cannot be maintained or the horizon ends.</p>
     </header>
 
@@ -2488,6 +2497,22 @@ function renderStats(rows, result) {
   document.getElementById('stats').innerHTML = html;
 }
 
+function renderVerdict(rows, result) {
+  const el = document.getElementById('verdict');
+  if (!el) return;
+  el.classList.remove('is-failure');
+  if (!rows.length) {
+    el.textContent = 'Projection unavailable';
+  } else if (result.terminatedReason === 'reserve_failure') {
+    el.innerHTML = `Reserve fails <em>${fmtDate(dateForMonth(result.terminatedAtMonth), 'months')}</em>`;
+    el.classList.add('is-failure');
+  } else if (result.terminatedReason === 'cap') {
+    el.innerHTML = 'Reserve holds through <em>the 100-year cap</em>';
+  } else {
+    el.innerHTML = `Reserve holds through <em>${fmtDate(rows.at(-1).date, 'months')}</em>`;
+  }
+}
+
 let lastChartRows = null;
 let chartGeometry = null;
 
@@ -3411,6 +3436,7 @@ function rerender(validated = false) {
   if (validated) showScenarioStatus([], false);
   const viewRows = aggregateForView(result.rows, state.params.unit, result.plannedLastMonth, state.pins);
   renderStats(result.rows, result);
+  renderVerdict(result.rows, result);
   renderChart(result.rows);
   renderTable(viewRows, result.rows, result);
   renderAdjustments();
