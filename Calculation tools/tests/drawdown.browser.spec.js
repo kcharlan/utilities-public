@@ -466,6 +466,16 @@ test('phone layout stacks the sidebar and keeps content inside the viewport', as
   await expect(page.locator('.cell-edit-input')).toHaveCount(0);
 });
 
+test('method appendix fits a 320px viewport without page overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await expect.poll(() => page.evaluate(() => {
+    const item = document.querySelector('.method-item').getBoundingClientRect();
+    return document.documentElement.scrollWidth <= innerWidth
+      && item.left >= 0
+      && item.right <= innerWidth;
+  })).toBe(true);
+});
+
 test('tablet layout keeps stat labels compact without page overflow', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 800 });
   await expect.poll(() => page.evaluate(() =>
