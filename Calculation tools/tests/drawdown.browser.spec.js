@@ -99,6 +99,31 @@ test('Clear pins does not restore focus to a surviving unsaved Add action', asyn
   await expect(page.locator('#calc-button')).toBeFocused();
 });
 
+test('removing an unreachable pin from its editor focuses Recalculate', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-unreachable-pin', at_month: 121,
+      start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  await page.locator('.adj-entry[data-id="synthetic-unreachable-pin"] .adj-open').click();
+  await page.locator('#pin-remove').click();
+  await expect(page.locator('#calc-button')).toBeFocused();
+  await expect(page.locator('#adjustments-list .adj-entry')).toHaveCount(0);
+});
+
+test('direct keyboard removal from adjustments focuses Recalculate', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-direct-pin', at_month: 2,
+      start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  const remove = page.locator('.adj-entry[data-id="synthetic-direct-pin"] .adj-remove');
+  await remove.focus();
+  await remove.press('Enter');
+  await expect(page.locator('#calc-button')).toBeFocused();
+  await expect(remove).toHaveCount(0);
+});
+
 test('sidebar controls have associated names and described hints', async ({ page }) => {
   await expect(page.getByLabel('Starting cash', { exact: true })).toHaveId('buffer-initial');
   await expect(page.getByLabel('Expenses, monthly', { exact: true })).toHaveId('expense');

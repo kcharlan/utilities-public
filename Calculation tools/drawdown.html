@@ -3255,6 +3255,13 @@ function removePinFromUI(id, errorElement = null) {
     pinEditorOpener = `#amort-body .pin-action[data-month="${state.editing.month}"]:not([data-id])`;
     pinEditorFallback = null;
     state.editing = null;
+  } else {
+    // A sidebar Remove button is rebuilt with the list; move focus to a stable control.
+    pendingFocus = '#calc-button';
+    if (!state.editing) {
+      pinEditorOpener = null;
+      pinEditorFallback = null;
+    }
   }
   rerender(true);
   return true;
@@ -3351,7 +3358,8 @@ function rerender(validated = false) {
   renderAdjustments();
   attachPinEditorEvents(viewRows, result.rows);
   if (!state.editing && pinEditorOpener) {
-    pendingFocus = document.querySelector(pinEditorOpener) ? pinEditorOpener : pinEditorFallback;
+    pendingFocus = [pinEditorOpener, pinEditorFallback, '#calc-button']
+      .find(selector => selector && document.querySelector(selector));
     pinEditorOpener = null;
     pinEditorFallback = null;
   }
