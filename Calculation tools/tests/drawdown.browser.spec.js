@@ -401,10 +401,12 @@ test('sidebar money readout formats the starting cash value as it changes', asyn
 
 test('sidebar input boxes align on one left edge', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  const leftEdges = await page.locator('.sidebar .field .input-wrap').evaluateAll(wrappers =>
-    wrappers.map(wrapper => wrapper.getBoundingClientRect().left));
-  expect(leftEdges).toHaveLength(11);
-  expect(Math.max(...leftEdges) - Math.min(...leftEdges)).toBeLessThanOrEqual(1);
+  const wrappers = page.locator('.sidebar .field .input-wrap');
+  await expect(wrappers).toHaveCount(11);
+  await expect.poll(() => wrappers.evaluateAll(elements => {
+    const leftEdges = elements.map(element => element.getBoundingClientRect().left);
+    return Math.max(...leftEdges) - Math.min(...leftEdges);
+  })).toBeLessThanOrEqual(1);
 });
 
 test('editing an assumption does not replay table row animations', async ({ page }) => {
