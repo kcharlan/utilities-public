@@ -13,6 +13,7 @@ test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); }
 test('ledger groups flows, balances, and sales without changing column labels', async ({ page }) => {
   const groups = page.locator('.amort thead .col-groups th');
   await expect(groups).toHaveCount(5);
+  expect(await groups.evaluateAll(cells => cells.every(cell => cell.className === 'col-group'))).toBe(true);
   expect(await groups.evaluateAll(cells => cells.map(cell => [cell.colSpan, cell.textContent.trim()])))
     .toEqual([[3, ''], [4, 'Flows'], [2, 'Balances'], [1, 'Sales'], [1, '']]);
   const headings = page.locator('.amort thead .col-heads th');
