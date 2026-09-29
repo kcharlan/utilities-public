@@ -124,6 +124,7 @@
     margin-top: 6px;
     letter-spacing: 0.005em;
   }
+  .theme-switching * { transition: none !important; }
 
   .group { margin-bottom: 20px; }
   .group:last-of-type { margin-bottom: 16px; }
@@ -272,13 +273,13 @@
     margin: 0;
   }
 
-  .toggle {
+  .toggle, .theme-toggle {
     display: flex;
     background: var(--surface);
     border: 1px solid var(--control-border);
     overflow: hidden;
   }
-  .toggle button {
+  .toggle button, .theme-toggle button {
     flex: 1;
     padding: 7px 10px;
     background: transparent;
@@ -291,14 +292,16 @@
     text-transform: uppercase;
     transition: all 0.15s;
   }
-  .toggle button:not(.active):hover {
+  .toggle button:not(.active):hover, .theme-toggle button:not(.active):hover {
     background: var(--surface-raised);
     color: var(--text);
   }
-  .toggle button.active {
+  .toggle button.active, .theme-toggle button.active {
     background: var(--text);
     color: var(--on-strong);
   }
+  .theme-toggle { margin-top: 12px; display: inline-flex; }
+  .theme-toggle button { flex: 0 0 auto; padding: 4px 9px; }
 
   .calc-button {
     width: 100%;
@@ -1000,6 +1003,11 @@
       <div class="mark">A Parametric Solvency Study</div>
       <h1>Draw<em>down</em></h1>
       <div class="tagline">when the bucket runs dry — and what slows it</div>
+      <div class="theme-toggle" role="group" aria-label="Color theme">
+        <button type="button" id="theme-auto" data-theme-choice="auto" title="Follow the system setting" class="active" aria-pressed="true">Auto</button>
+        <button type="button" id="theme-light" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" id="theme-dark" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
     </div>
 
     <div class="group">
@@ -1065,8 +1073,8 @@
     <div class="group">
       <div class="group-label"><span>Horizon</span><span class="ordinal">§ 06</span></div>
       <div class="toggle" style="margin-bottom: 10px;">
-        <button id="unit-months" class="active">Months</button>
-        <button id="unit-years">Years</button>
+        <button type="button" id="unit-months" class="active" aria-pressed="true">Months</button>
+        <button type="button" id="unit-years" aria-pressed="false">Years</button>
       </div>
       <div class="field">
         <label>Periods<span class="hint">0 = run until reserve failure or cap</span></label>
@@ -3283,6 +3291,25 @@ function exportCsv() {
    INIT
    ============================================================ */
 
+function setPressed(buttons, activeButton) {
+  buttons.forEach(button => {
+    const isActive = button === activeButton;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
+}
+
+function applyTheme(choice) {
+  if (!['auto', 'light', 'dark'].includes(choice)) return;
+  const root = document.documentElement;
+  root.classList.add('theme-switching');
+  if (choice === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', choice);
+  setPressed(document.querySelectorAll('.theme-toggle button'),
+    document.querySelector(`.theme-toggle button[data-theme-choice="${choice}"]`));
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')));
+}
+
 function init() {
   // Today stamp
   document.getElementById('today-stamp').textContent = TODAY.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -3299,13 +3326,16 @@ function init() {
     });
   });
 
+  document.querySelectorAll('.theme-toggle button').forEach(button => {
+    button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
+  });
+
   // Unit toggle
   document.getElementById('unit-months').addEventListener('click', () => {
     cancelActiveSolve();
     closeCellEditor();
     state.draftUnit = 'months';
-    document.getElementById('unit-months').classList.add('active');
-    document.getElementById('unit-years').classList.remove('active');
+    setPressed(document.querySelectorAll('.toggle button'), document.getElementById('unit-months'));
     document.getElementById('periods').value = '120';
     recalc();
   });
@@ -3313,8 +3343,7 @@ function init() {
     cancelActiveSolve();
     closeCellEditor();
     state.draftUnit = 'years';
-    document.getElementById('unit-years').classList.add('active');
-    document.getElementById('unit-months').classList.remove('active');
+    setPressed(document.querySelectorAll('.toggle button'), document.getElementById('unit-years'));
     document.getElementById('periods').value = '10';
     recalc();
   });

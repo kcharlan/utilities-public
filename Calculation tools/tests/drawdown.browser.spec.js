@@ -36,6 +36,67 @@ test.describe('theme token rendering', () => {
   });
 });
 
+test.describe('theme control', () => {
+  const pressed = async page => Promise.all(['auto', 'light', 'dark'].map(choice =>
+    page.locator(`#theme-${choice}`).getAttribute('aria-pressed')));
+
+  test('Auto follows live system changes without an override', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    await expect(page.locator('html')).not.toHaveAttribute('data-theme');
+    await expect(page.locator('#theme-auto')).toHaveAttribute('aria-pressed', 'true');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+  });
+
+  test('Dark overrides a light system for body and chart without recalculating', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    const before = await page.evaluate(() => state.acceptedResult);
+    await page.locator('#theme-dark').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    await expect(page.locator('#chart path[data-series="cash"]')).toHaveCSS('stroke', 'rgb(140, 194, 168)');
+    expect(await pressed(page)).toEqual(['false', 'false', 'true']);
+    expect(await page.evaluate(() => state.acceptedResult)).toEqual(before);
+  });
+
+  test('Light overrides a dark system and Auto restores following', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.locator('#theme-light').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+    expect(await pressed(page)).toEqual(['false', 'true', 'false']);
+    await page.locator('#theme-auto').click();
+    await expect(page.locator('html')).not.toHaveAttribute('data-theme');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    expect(await pressed(page)).toEqual(['true', 'false', 'false']);
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+  });
+
+  test('theme choice resets to Auto on reload without browser storage', async ({ page }) => {
+    await page.locator('#theme-dark').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.reload();
+    await expect(page.locator('html')).not.toHaveAttribute('data-theme');
+    expect(await pressed(page)).toEqual(['true', 'false', 'false']);
+    expect(await page.evaluate(() => [localStorage.length, sessionStorage.length, document.cookie])).toEqual([0, 0, '']);
+  });
+
+  test('Space activates the focused Dark button', async ({ page }) => {
+    await page.locator('#theme-dark').focus();
+    await page.keyboard.press('Space');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('#theme-dark')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('unit buttons update their pressed states', async ({ page }) => {
+    await page.locator('#unit-years').click();
+    await expect(page.locator('#unit-years')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#unit-months')).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
 test('fresh projection keeps its last valid rows during invalid input and restores CSV export', async ({ page }) => {
   const firstRow = page.locator('#amort-body tr').first();
   await expect(firstRow).toBeVisible();
