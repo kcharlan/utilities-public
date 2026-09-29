@@ -81,6 +81,33 @@ test('pending input leaves the verdict current until validation finishes', async
   expect(pending).toEqual({ tone: 'pending', stale: false, noteHidden: true });
 });
 
+test('pending edits keep an already stale verdict marked until validation', async ({ page }) => {
+  await page.locator('#expense').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(page.locator('#verdict')).toHaveClass(/is-stale/);
+  const pendingStates = await page.evaluate(() => {
+    const input = document.getElementById('expense');
+    const read = () => ({
+      tone: document.getElementById('scenario-status').getAttribute('data-tone'),
+      stale: document.getElementById('verdict').classList.contains('is-stale'),
+      noteHidden: document.getElementById('verdict-note').hidden,
+    });
+    input.value = '5000';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const first = read();
+    input.value = '5100';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return [first, read()];
+  });
+  expect(pendingStates).toEqual([
+    { tone: 'pending', stale: true, noteHidden: false },
+    { tone: 'pending', stale: true, noteHidden: false },
+  ]);
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(page.locator('#verdict')).not.toHaveClass(/is-stale/);
+  await expect(page.locator('#verdict-note')).toBeHidden();
+});
+
 test('direct empty verdict reports projection unavailable', async ({ page }) => {
   await page.evaluate(() => renderVerdict([], { terminatedReason: 'invalid' }));
   await expect(page.locator('#verdict')).toHaveText('Projection unavailable');

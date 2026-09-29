@@ -3380,9 +3380,11 @@ function showScenarioStatus(issues, stale) {
         }).join(' ')}`
       : '';
     const verdict = document.getElementById('verdict');
-    if (verdict) verdict.classList?.toggle('is-stale', tone === 'error');
+    const verdictIsStale = tone === 'error' ||
+      (stale && tone === 'pending' && verdict?.classList.contains('is-stale'));
+    if (verdict) verdict.classList.toggle('is-stale', verdictIsStale);
     const verdictNote = document.getElementById('verdict-note');
-    if (verdictNote) verdictNote.hidden = tone !== 'error';
+    if (verdictNote) verdictNote.hidden = !verdictIsStale;
   }
   const exportButton = document.getElementById('export-csv');
   if (exportButton) exportButton.disabled = stale;
