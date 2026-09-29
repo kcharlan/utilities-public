@@ -528,7 +528,7 @@
     gap: 18px;
     font-size: 11px;
     color: var(--text-muted);
-    font-family: 'Hanken Grotesk';
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
   }
   .legend-swatch {
     display: inline-block;
@@ -770,9 +770,6 @@
   }
   .amort tr.is-pinned td {
     border-top: 1px solid var(--accent);
-  }
-  .amort tr.is-pinned + tr td {
-    /* avoid double border */
   }
   .amort tr.is-pinned td:first-child {
     position: relative;
@@ -2652,9 +2649,6 @@ function renderTable(viewRows, baseRows, result) {
     }
     if (r.hitFloor) notes.push(`<span class="marker-dot floor"></span>reserve funding needed`);
     if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--negative)">reserve cannot be maintained</strong>`);
-    if (r.surplus && !isPinned && !r.hitFloor) {
-      // suppress for cleaner table - only show notes when something interesting
-    }
 
     const periodLabel = unit === 'years' ? `Y ${r.period}` : `${r.month}`;
     const dateLabel = unit === 'years' ? r.label : fmtDate(r.date, 'months');

@@ -65,3 +65,16 @@ test('old colour names, browser storage, and extra scripts are absent', () => {
   assert.doesNotMatch(calculatorHtml, /localStorage|sessionStorage|indexedDB|document\.cookie/);
   assert.equal((calculatorHtml.match(/<script\b/g) || []).length, 1);
 });
+
+test('retired drawdown presentation hooks stay removed', () => {
+  assert.doesNotMatch(calculatorHtml, /pull-quote|pq-mark|marker-dot\.surplus/);
+  assert.doesNotMatch(calculatorHtml, /\.amort tr\.is-pinned \+ tr td\s*\{\s*(?:\/\*[^*]*\*\/\s*)?\}/);
+});
+
+test('renderTable contains no empty surplus branch', () => {
+  assert.doesNotMatch(calculatorHtml, /if \(r\.surplus[^)]*\)\s*\{\s*(\/\/[^\n]*\n\s*)?\}/);
+});
+
+test('named font declarations include a fallback', () => {
+  assert.doesNotMatch(calculatorHtml, /font-family:\s*'[^']+'\s*;/);
+});
