@@ -46,6 +46,27 @@ test('invalid sidebar status stays visible and identifies the input', async ({ p
   expect(Math.abs(edges.status - edges.sidebar)).toBeLessThanOrEqual(4);
 });
 
+test('narrow layout keeps the full status visible while the sidebar is in view', async ({ page }) => {
+  for (const width of [800, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.locator('#buffer-initial').fill('');
+    await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+    const bounds = await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = 'auto';
+      window.scrollTo(0, 100);
+      const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
+      const status = document.getElementById('scenario-status').getBoundingClientRect();
+      return { scrollY, sidebarTop: sidebar.top, sidebarBottom: sidebar.bottom,
+        statusTop: status.top, statusBottom: status.bottom, viewportHeight: innerHeight };
+    });
+    expect(bounds.scrollY, `${width}px scroll`).toBe(100);
+    expect(bounds.sidebarTop, `${width}px sidebar top`).toBeLessThan(bounds.viewportHeight);
+    expect(bounds.sidebarBottom, `${width}px sidebar bottom`).toBeGreaterThan(0);
+    expect(bounds.statusTop, `${width}px status top`).toBeGreaterThanOrEqual(0);
+    expect(bounds.statusBottom, `${width}px status bottom`).toBeLessThanOrEqual(bounds.viewportHeight);
+  }
+});
+
 test('keyboard pin and cell editors return focus to their openers', async ({ page }) => {
   const add = page.getByRole('button', { name: 'Add adjustment at month 2', exact: true });
   await add.focus();

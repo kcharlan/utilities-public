@@ -1103,6 +1103,7 @@
 
   @media (max-width: 900px) {
     .layout { grid-template-columns: minmax(0, 1fr); }
+    .sidebar-status-anchor { transform: none; }
     .sidebar {
       position: static;
       max-height: none;
@@ -1115,7 +1116,6 @@
 
   @media (max-width: 560px) {
     .sidebar { padding: 20px 16px 28px; }
-    .sidebar-status-anchor { transform: translateY(-20px); }
     .table-head { flex-wrap: wrap; gap: 12px; }
     .table-actions { width: 100%; flex-wrap: wrap; }
   }
