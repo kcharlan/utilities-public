@@ -390,6 +390,23 @@ test('sidebar controls have associated names and described hints', async ({ page
   await expect(page.locator('#periods-hint')).toContainText('0 = run until reserve failure or cap');
 });
 
+test('sidebar money readout formats the starting cash value as it changes', async ({ page }) => {
+  const readout = page.locator('.field-readout[for="buffer-initial"]');
+  await expect(readout).toHaveText('$270,000');
+  await page.locator('#buffer-initial').fill('1234567');
+  await expect(readout).toHaveText('$1,234,567');
+  await page.locator('#buffer-initial').fill('');
+  await expect(readout).toBeEmpty();
+});
+
+test('sidebar input boxes align on one left edge', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const leftEdges = await page.locator('.sidebar .field .input-wrap').evaluateAll(wrappers =>
+    wrappers.map(wrapper => wrapper.getBoundingClientRect().left));
+  expect(leftEdges).toHaveLength(11);
+  expect(Math.max(...leftEdges) - Math.min(...leftEdges)).toBeLessThanOrEqual(1);
+});
+
 test('editing an assumption does not replay table row animations', async ({ page }) => {
   await page.evaluate(() => {
     window.tableRowAnimations = 0;
