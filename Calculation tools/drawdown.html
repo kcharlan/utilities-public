@@ -1541,10 +1541,12 @@ function encloseAnnualIncomeCandidates(context, domain) {
   let total = q(0), possibleFunded = true, singular = false;
   for (let month = span.first_month; month <= span.last_month; month++) {
     const pin = pins.get(month), start = pin?.start ?? {};
-    for (const [key, property] of [['external_income','external'], ['floor','floor'], ['tax_rate','tax'],
-      ['sale_tax_rate','saleTax'], ['modifier','modifier'], ['inflation','inflation']]) {
+    for (const [key, property] of [['external_income','external'], ['floor','floor'],
+      ['modifier','modifier'], ['inflation','inflation']]) {
       if (key in start) s[property] = start[key];
     }
+    if ('tax_rate' in start) s.tax = normalizedTaxRate(start.tax_rate,s.tax);
+    if ('sale_tax_rate' in start) s.saleTax = normalizedTaxRate(start.sale_tax_rate,s.saleTax);
     if ('expense' in start) s.expense = q(start.expense);
     if (month === span.first_month || 'investment_income' in start) {
       s.raw = month === span.first_month ? domain : q(start.investment_income);

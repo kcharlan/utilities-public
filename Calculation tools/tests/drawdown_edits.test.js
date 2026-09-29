@@ -506,6 +506,29 @@ test('deterministic scalar sweep stays inside model enclosures across narrow sal
   }
 });
 
+test('income enclosure and inversion use scalar normalization for later tax pins', async () => {
+  const { annualIncomeContext,evaluateAnnualIncomeCandidate,encloseAnnualIncomeCandidates,
+    solveAnnualTarget } = loadDrawdownApi();
+  for (const field of ['tax_rate','sale_tax_rate']) for (const raw of [-1,2,100,' ','Infinity']) {
+    const scenario = annualScenario({buffer_initial:0,investments_initial:1000,
+      investment_income:0,expense:12,modifier:1,tax_rate:0,sale_tax_rate:0},[
+      {id:'tax',at_month:2,start:{[field]:raw},end:{}},
+    ]);
+    const span = {first_month:1,last_month:12};
+    const x = field === 'sale_tax_rate' && raw > 1 ? 12 : 8;
+    const context = annualIncomeContext(scenario,span,0);
+    const scalar = evaluateAnnualIncomeCandidate(context,x);
+    assert.equal(scalar.funded,true,`${field}=${raw}`);
+    const interval = encloseAnnualIncomeCandidates(context,[x,x]);
+    assert.equal(interval.possibleFunded,true,`${field}=${raw}`);
+    assert.ok(interval.total[0] <= scalar.total && scalar.total <= interval.total[1],
+      `${field}=${raw}: ${scalar.total} outside ${interval.total}`);
+    const solved = await solveAnnualTarget(scenario,span,'investment_income',scalar.total);
+    assert.equal(solved.status,'solved',`${field}=${raw}: ${JSON.stringify(solved)}`);
+    assert.ok(Math.abs(solved.verifiedTotal-scalar.total)<=1e-6,`${field}=${raw}`);
+  }
+});
+
 test('interval arithmetic encloses signed products, safe division, clamps, and unions', () => {
   const { intervalArithmetic: I } = loadDrawdownApi();
   for (const [a, b] of [ [[-3,2],[-5,7]], [[1e-300,2e-300],[-4,9]], [[-8,-2],[-4,-0.1]] ]) {
