@@ -13,6 +13,40 @@ function scenario(overrides = {}) {
   };
 }
 
+test('annual aggregation retains planned span and sums unrounded flows before formatting', () => {
+  const { simulate, aggregateForView } = loadDrawdownApi();
+  const params = scenario({ buffer_initial: 10, floor: 10, investments_initial: 0,
+    expense: 0, external_income: 0.004, num_periods: 12 });
+  const result = simulate(params, [{ id: 'late', at_month: 12,
+    start: { floor: 12 }, end: {} }]);
+  const [year] = aggregateForView(result.rows, 'years', result.plannedLastMonth);
+  assert.equal(year.first_month, 1);
+  assert.equal(year.last_month, 12);
+  assert.equal(year.planned_last_month, 12);
+  assert.equal(year.months_in_period, 12);
+  assert.equal(year.external_income, result.rows.reduce((sum, row) => sum + row.external_income, 0));
+  assert.equal(year.floor, 12);
+
+  const late = [{ id: 'late', at_month: 12, start: { expense: 2 }, end: {} }];
+  const failed = simulate(scenario({ buffer_initial: 10, floor: 10, investments_initial: 0,
+    expense: 1, num_periods: 12 }), late);
+  const [partial] = aggregateForView(failed.rows, 'years', failed.plannedLastMonth, late);
+  assert.equal(partial.last_month, 1);
+  assert.equal(partial.planned_last_month, 12);
+  assert.equal(partial.first_failure_month, 1);
+  assert.equal(partial.unfunded_expense, 1);
+  assert.equal(partial.adjustment_applications.length, 0);
+  assert.equal(partial.adjustments.length, 1);
+  assert.equal(partial.adjustments[0].id, 'late');
+  assert.equal(partial.adjustments[0].start_applied, false);
+  const eightMonths = simulate(scenario({ num_periods: 8 }), []);
+  const [requested] = aggregateForView(eightMonths.rows, 'years', eightMonths.plannedLastMonth);
+  assert.equal(requested.last_month, 8);
+  assert.equal(requested.planned_last_month, 8);
+  assert.equal(requested.label, `${requested.source_rows[0].date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}–${requested.source_rows.at(-1).date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`);
+  assert.equal(aggregateForView.length, 3);
+});
+
 test('phased closing valuation follows sales and does not change tax or cash', () => {
   const { simulate } = loadDrawdownApi();
   const params = scenario({ buffer_initial: 100, floor: 100, investments_initial: 1000,

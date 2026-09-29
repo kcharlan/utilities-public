@@ -55,7 +55,7 @@ test('yearly edit context routes flows to first month and balances to last month
     investment_income: 0, expense: 0, external_income: 0, inflation: 0,
     tax_rate: 0, sale_tax_rate: 0, num_periods: 1, unit: 'years' });
   const monthly = simulate(state.params, []).rows;
-  const year = aggregateForView(monthly, 'years')[0];
+  const year = aggregateForView(monthly, 'years', 12)[0];
   assert.equal(prepareCellEdit(year, 'expense', { params: state.params, pins: [] }).month, 1);
   assert.equal(prepareCellEdit(year, 'investment_income', { params: state.params, pins: [] }).month, 1);
   assert.equal(prepareCellEdit(year, 'buffer', { params: state.params, pins: [] }).month, 12);

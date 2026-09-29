@@ -615,6 +615,30 @@
   .amort td:nth-child(3),
   .amort td:nth-child(11) { text-align: left; }
   .amort td:first-child { text-align: center; padding: 7px 6px; }
+  .amort td[data-money-detail]:focus {
+    position: relative;
+    z-index: 20;
+    outline: 2px solid var(--ochre);
+    outline-offset: -2px;
+  }
+  .amort td[data-money-detail]:focus::after {
+    content: attr(data-money-detail);
+    position: absolute;
+    top: calc(100% + 3px);
+    right: 0;
+    min-width: 180px;
+    max-width: 280px;
+    padding: 6px 8px;
+    white-space: normal;
+    text-align: left;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--ink);
+    background: var(--paper-warm);
+    border: 1px solid var(--ochre);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+    pointer-events: none;
+  }
 
   .amort tbody tr {
     position: relative;
@@ -1044,7 +1068,7 @@
         <button id="unit-years">Years</button>
       </div>
       <div class="field">
-        <label>Periods<span class="hint">0 = run to depletion</span></label>
+        <label>Periods<span class="hint">0 = run until reserve failure or cap</span></label>
         <span class="input-wrap"><input type="number" id="periods" value="120" step="1" min="0"></span>
       </div>
     </div>
@@ -1132,7 +1156,7 @@
       <span class="sep">·</span>
       <strong>Export.</strong> CSV <code>tax_paid</code> is combined tax; <code>income_tax_paid</code>, <code>sale_tax_paid</code>, and <code>net_sale_proceeds</code> are appended.
       <span class="sep">·</span>
-      <strong>Termination.</strong> The projection stops when monthly expenses or the protected reserve cannot be funded, or at the period cap.
+      <strong>Projection limit.</strong> The projection stops when monthly expenses or the protected reserve cannot be funded, or at the period cap.
       <span class="sep">·</span>
       <strong>Scope.</strong> This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.
     </p>
@@ -2120,6 +2144,16 @@ function fmtMoneyCompact(v) {
   return `${neg}$${abs.toFixed(0)}`;
 }
 
+function moneyDetail(value) {
+  const sign = value < 0 ? '−' : '';
+  const absolute = Math.abs(value);
+  return `Rounded to cents ${sign}$${formatCents(toRoundedCents(absolute))} · Model value ${sign}$${absolute.toString()}`;
+}
+
+function moneyStat(value) {
+  return `<span title="${moneyDetail(value)}" aria-label="${moneyDetail(value)}" tabindex="0">${fmtMoneyCompact(value)}</span>`;
+}
+
 function fmtPct(v, digits = 1) {
   return (v * 100).toFixed(digits) + '%';
 }
@@ -2149,8 +2183,29 @@ function orderedOverrides(overrides) {
    AGGREGATION (for year-view)
    ============================================================ */
 
-function aggregateForView(rows, unit) {
-  if (unit === 'months') return rows.map(r => ({ ...r, label: fmtDate(r.date, 'months'), period: r.month, source_rows: [r] }));
+function adjustmentsForSpan(rows, pins, firstMonth, plannedLastMonth) {
+  return pins.filter(pin => pin.at_month >= firstMonth && pin.at_month <= plannedLastMonth)
+    .sort((a, b) => a.at_month - b.at_month || String(a.id).localeCompare(String(b.id)))
+    .map(pin => {
+      const application = rows.find(row => row.month === pin.at_month)?.adjustment_application;
+      return { id: pin.id, at_month: pin.at_month, start: pin.start, end: pin.end,
+        annual_edits: pin.annual_edits ?? {},
+        start_applied: application?.start_applied === true,
+        end_applied: application?.end_applied === true };
+    });
+}
+
+function aggregateForView(rows, unit, plannedLastMonth, pins = []) {
+  if (!Number.isInteger(plannedLastMonth) || plannedLastMonth < 0 ||
+      (rows.length && plannedLastMonth < rows.at(-1).month)) {
+    throw new TypeError('aggregateForView requires a valid plannedLastMonth');
+  }
+  if (unit === 'months') return rows.map(r => ({ ...r, label: fmtDate(r.date, 'months'), period: r.month,
+    floor: r.end_state?.floor ?? r.floor, first_month: r.month, last_month: r.month,
+    planned_last_month: r.month, months_in_period: 1,
+    first_failure_month: r.insolvency ? r.month : null,
+    adjustments: adjustmentsForSpan([r], pins, r.month, r.month),
+    adjustment_applications: r.adjustment_application ? [r.adjustment_application] : [], source_rows: [r] }));
 
   // Years: group every 12 months into one row
   const groups = [];
@@ -2160,23 +2215,21 @@ function aggregateForView(rows, unit) {
     const last = slice[slice.length - 1];
     const first = slice[0];
     const yearIdx = Math.floor(i / 12) + 1;
+    const plannedEnd = Math.min(plannedLastMonth, first.month + 11);
+    const flowKeys = ['expense', 'expense_paid', 'unfunded_expense', 'unfunded_reserve',
+      'unfunded_deficit', 'investment_income', 'external_income', 'income_tax_paid',
+      'sale_tax_paid', 'tax_paid', 'net_income', 'delta', 'sold', 'net_sale_proceeds',
+      'cash_adjustment', 'valuation_adjustment'];
+    const totals = Object.fromEntries(flowKeys.map(key => [key, slice.reduce((sum, row) => sum + (row[key] ?? 0), 0)]));
     groups.push({
+      ...totals,
       month: last.month,
       date: last.date,
-      label: fmtDate(last.date, 'years'),
+      label: `${fmtDate(first.date, 'months')}–${fmtDate(last.date, 'months')}`,
       period: yearIdx,
-      expense: slice.reduce((s, r) => s + r.expense, 0),
-      investment_income: slice.reduce((s, r) => s + r.investment_income, 0),
-      external_income: slice.reduce((s, r) => s + r.external_income, 0),
-      income_tax_paid: slice.reduce((s, r) => s + r.income_tax_paid, 0),
-      sale_tax_paid: slice.reduce((s, r) => s + r.sale_tax_paid, 0),
-      tax_paid: slice.reduce((s, r) => s + r.tax_paid, 0),
-      net_income: slice.reduce((s, r) => s + r.net_income, 0),
-      delta: slice.reduce((s, r) => s + r.delta, 0),
       buffer: last.buffer,
       investments: last.investments,
-      sold: slice.reduce((s, r) => s + r.sold, 0),
-      net_sale_proceeds: slice.reduce((s, r) => s + r.net_sale_proceeds, 0),
+      floor: last.end_state?.floor ?? last.floor,
       hitFloor: slice.some(r => r.hitFloor),
       insolvency: slice.some(r => r.insolvency),
       surplus: slice.every(r => r.surplus),
@@ -2184,6 +2237,9 @@ function aggregateForView(rows, unit) {
       months_in_period: slice.length,
       first_month: first.month,
       last_month: last.month,
+      planned_last_month: plannedEnd,
+      first_failure_month: slice.find(r => r.insolvency)?.month ?? null,
+      adjustments: adjustmentsForSpan(slice, pins, first.month, plannedEnd),
       source_rows: slice,
       pre_start_state: first.pre_start_state,
       post_start_state: first.post_start_state,
@@ -2201,6 +2257,10 @@ function aggregateForView(rows, unit) {
 function renderStats(rows, result) {
   const p = state.params;
   const lastRow = rows[rows.length - 1];
+  if (!lastRow) {
+    document.getElementById('stats').innerHTML = '<div class="stat"><div class="stat-label">Projection unavailable</div><div class="stat-detail">Check the scenario inputs and try again.</div></div>';
+    return;
+  }
   const totalSold = rows.reduce((s, r) => s + r.sold, 0);
   const totalIncomeTax = rows.reduce((s, r) => s + r.income_tax_paid, 0);
   const totalSaleTax = rows.reduce((s, r) => s + r.sale_tax_paid, 0);
@@ -2211,9 +2271,9 @@ function renderStats(rows, result) {
     ? (p.unit === 'years' ? `${(months / 12).toFixed(1)} yrs` : `${months}`)
     : (p.unit === 'years' ? `${(months / 12).toFixed(0)}` : `${months}`);
   const horizonDetail = result.terminatedReason === 'reserve_failure'
-    ? `depleted ${p.unit === 'years' ? `at year ${Math.ceil(months / 12)}` : `at month ${months}`}`
+    ? `Reserve cannot be maintained at month ${result.terminatedAtMonth ?? months}`
     : result.terminatedReason === 'cap'
-      ? 'no depletion (capped)'
+      ? 'projection capped'
       : (p.unit === 'years' ? 'years displayed' : 'months displayed');
   const horizonClass = result.terminatedReason === 'reserve_failure' ? 'warning' : '';
 
@@ -2225,23 +2285,23 @@ function renderStats(rows, result) {
     </div>
     <div class="stat">
       <div class="stat-label">Ending buffer</div>
-      <div class="stat-value">${fmtMoneyCompact(lastRow.buffer)}</div>
-      <div class="stat-detail">floor at ${fmtMoneyCompact(p.floor)}</div>
+      <div class="stat-value">${moneyStat(lastRow.buffer)}</div>
+      <div class="stat-detail">floor at ${moneyStat(lastRow.end_state?.floor ?? lastRow.floor ?? p.floor)}</div>
     </div>
     <div class="stat">
       <div class="stat-label">Ending principal</div>
-      <div class="stat-value">${fmtMoneyCompact(lastRow.investments)}</div>
-      <div class="stat-detail">from ${fmtMoneyCompact(p.investments_initial)}</div>
+      <div class="stat-value">${moneyStat(lastRow.investments)}</div>
+      <div class="stat-detail">from ${moneyStat(p.investments_initial)}</div>
     </div>
     <div class="stat">
       <div class="stat-label">Total liquidated</div>
-      <div class="stat-value">${fmtMoneyCompact(totalSold)}</div>
+      <div class="stat-value">${moneyStat(totalSold)}</div>
       <div class="stat-detail">gross sales across projection</div>
     </div>
     <div class="stat">
       <div class="stat-label">Total tax paid</div>
-      <div class="stat-value">${fmtMoneyCompact(totalTax)}</div>
-      <div class="stat-detail">Income tax ${fmtMoneyCompact(totalIncomeTax)} · Asset sale tax ${fmtMoneyCompact(totalSaleTax)}</div>
+      <div class="stat-value">${moneyStat(totalTax)}</div>
+      <div class="stat-detail">Income tax ${moneyStat(totalIncomeTax)} · Asset sale tax ${moneyStat(totalSaleTax)}</div>
     </div>
   `;
   document.getElementById('stats').innerHTML = html;
@@ -2255,15 +2315,19 @@ function renderChart(rows) {
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
-  if (rows.length === 0) { svg.innerHTML = ''; return; }
+  if (rows.length === 0) {
+    svg.innerHTML = '';
+    document.getElementById('chart-y-labels').innerHTML = '';
+    document.getElementById('chart-x-labels').innerHTML = '';
+    return;
+  }
 
-  // Y scale: from 0 to max(initial buffer + investments, ever total)
+  const floorOf = row => row.end_state?.floor ?? row.floor ?? p.floor;
   const maxY = Math.max(
-    p.buffer_initial + p.investments_initial,
-    p.floor,
-    ...rows.map(r => r.buffer + r.investments),
+    p.buffer_initial, p.investments_initial, p.floor,
     ...rows.map(r => r.buffer),
     ...rows.map(r => r.investments),
+    ...rows.map(floorOf),
   );
   const safeMax = maxY > 0 ? maxY * 1.05 : 1;
 
@@ -2271,15 +2335,8 @@ function renderChart(rows) {
   const xOf = (i) => padL + (n > 1 ? i / (n - 1) : 0.5) * innerW;
   const yOf = (v) => padT + (1 - Math.max(0, v) / safeMax) * innerH;
 
-  // Areas: stacked. Investments occupies 0..investments, buffer stacked on top investments..investments+buffer.
-  // Visually: buffer is the upper band, investments lower band. They sum to total stack.
-
-  // For aesthetic: draw INVESTMENTS area at bottom (0 to investments), BUFFER area stacked (investments to investments+buffer)
-  const invPathTop = rows.map((r, i) => `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(r.investments)}`).join(' ');
-  const invPath = `M ${xOf(0)} ${yOf(0)} ${invPathTop} L ${xOf(n - 1)} ${yOf(0)} Z`;
-
-  const totalPathTop = rows.map((r, i) => `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(r.investments + r.buffer)}`).join(' ');
-  const totalPath = `M ${xOf(0)} ${yOf(0)} ${totalPathTop} L ${xOf(n - 1)} ${yOf(0)} Z`;
+  const linePath = getter => rows.map((r, i) =>
+    `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(getter(r))}`).join(' ');
 
   // Pin x positions
   const pinXs = state.pins
@@ -2290,37 +2347,25 @@ function renderChart(rows) {
     })
     .filter(x => x !== null);
 
-  const floorY = yOf(p.floor);
-
   // Insolvency marker
   const insolvencyIdx = rows.findIndex(r => r.insolvency);
   const insolvencyX = insolvencyIdx >= 0 ? xOf(insolvencyIdx) : null;
 
   svg.innerHTML = `
-    <defs>
-      <linearGradient id="grad-inv" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#6B4423" stop-opacity="0.75"/>
-        <stop offset="100%" stop-color="#6B4423" stop-opacity="0.45"/>
-      </linearGradient>
-      <linearGradient id="grad-buf" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2C4A3E" stop-opacity="0.85"/>
-        <stop offset="100%" stop-color="#2C4A3E" stop-opacity="0.6"/>
-      </linearGradient>
-    </defs>
-    <path d="${totalPath}" fill="url(#grad-buf)"/>
-    <path d="${invPath}" fill="url(#grad-inv)"/>
-    <line x1="${padL}" y1="${floorY}" x2="${W - padR}" y2="${floorY}" stroke="#B8862A" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.85"/>
+    <path data-series="cash" d="${linePath(r => r.buffer)}" fill="none" stroke="#2C4A3E" stroke-width="2"/>
+    <path data-series="principal" d="${linePath(r => r.investments)}" fill="none" stroke="#6B4423" stroke-width="2"/>
+    <path data-series="floor" d="${linePath(floorOf)}" fill="none" stroke="#B8862A" stroke-width="1.5" stroke-dasharray="5 4"/>
     ${pinXs.map(x => `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" stroke="#B8862A" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.6"/>
       <circle cx="${x}" cy="${padT + 4}" r="3" fill="#B8862A"/>`).join('')}
     ${insolvencyX !== null ? `<line x1="${insolvencyX}" y1="${padT}" x2="${insolvencyX}" y2="${H - padB}" stroke="#7A2A1F" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.7"/>
-      <text x="${insolvencyX - 4}" y="${H - padB - 4}" font-family="Fraunces" font-style="italic" font-size="11" fill="#7A2A1F" text-anchor="end">depleted</text>` : ''}
+      <text x="${insolvencyX - 4}" y="${H - padB - 4}" font-family="Fraunces" font-style="italic" font-size="11" fill="#7A2A1F" text-anchor="end">reserve failure</text>` : ''}
   `;
 
-  // Y labels (just two: top and floor)
+  // The floor line can change during the projection, so label its final value.
   const yWrap = document.getElementById('chart-y-labels');
   yWrap.innerHTML = `
     <div class="chart-y-label" style="top: ${padT - 5}px; left: 0;">${fmtMoneyCompact(safeMax)}</div>
-    <div class="chart-y-label" style="top: ${floorY - 5}px; left: 0; color: #B8862A;">floor ${fmtMoneyCompact(p.floor)}</div>
+    <div class="chart-y-label" style="top: ${yOf(floorOf(rows.at(-1))) - 5}px; left: 0; color: #B8862A;">floor ${fmtMoneyCompact(floorOf(rows.at(-1)))}</div>
     <div class="chart-y-label" style="top: ${innerH + padT - 8}px; left: 0;">$0</div>
   `;
 
@@ -2340,15 +2385,22 @@ function renderChart(rows) {
 // Builds one editable value cell. The four editable columns (expense,
 // investment_income, buffer, investments) map to pin fields; clicking a cell
 // opens an inline editor wired via tbody event delegation (see init()).
-function editableCellHtml(displayValue, key, pinMonth, unit, baselineVal, overridden) {
+function editableCellHtml(displayValue, key, pinMonth, unit, baselineVal, overridden, actualValue) {
   const flavor = (key === 'buffer' || key === 'investments')
     ? 'Sets the balance at this month'
     : 'Changes this value going forward';
-  const title = unit === 'years'
+  const timing = unit === 'years'
     ? `${flavor} · applies at ${fmtDate(dateForMonth(pinMonth), 'months')}`
     : flavor;
+  const detail = moneyDetail(actualValue);
+  const title = `${timing} · ${detail}`;
   const cls = 'editable-cell' + (overridden ? ' is-overridden' : '');
-  return `<td class="${cls}" data-month="${pinMonth}" data-key="${key}" data-baseline="${baselineVal}" title="${title}">${displayValue}</td>`;
+  return `<td class="${cls}" data-month="${pinMonth}" data-key="${key}" data-baseline="${baselineVal}" data-money-detail="${title}" tabindex="0" title="${title}" aria-label="${title}">${displayValue}</td>`;
+}
+
+function monetaryCell(value, className = '', display = fmtMoney(value), hint = '') {
+  const detail = `${hint ? `${hint} · ` : ''}${moneyDetail(value)}`;
+  return `<td${className ? ` class="${className}"` : ''} data-money-detail="${detail}" tabindex="0" title="${detail}" aria-label="${detail}">${display}</td>`;
 }
 
 function renderTable(viewRows, baseRows, result) {
@@ -2359,7 +2411,7 @@ function renderTable(viewRows, baseRows, result) {
   for (let idx = 0; idx < viewRows.length; idx++) {
     const r = viewRows[idx];
     const rowStart = r.first_month ?? r.month;
-    const rowEnd = unit === 'years' ? Math.min(MAX_MONTHS, rowStart + 11) : r.month;
+    const rowEnd = r.planned_last_month ?? (unit === 'years' ? Math.min(MAX_MONTHS, rowStart + 11) : r.month);
     const rowPins = state.pins.filter(pin => pin.at_month >= rowStart && pin.at_month <= rowEnd);
     const isPinned = rowPins.length > 0;
     const isInsolvent = r.insolvency;
@@ -2390,8 +2442,8 @@ function renderTable(viewRows, baseRows, result) {
         return `<em>${applied ? 'adjusted' : 'unapplied'}</em> month ${pin.at_month}`;
       }).join(', ')}`);
     }
-    if (r.hitFloor) notes.push(`<span class="marker-dot floor"></span>${unit === 'years' ? 'floor reached' : 'sold from principal'}`);
-    if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--oxblood)">depletion</strong>`);
+    if (r.hitFloor) notes.push(`<span class="marker-dot floor"></span>reserve funding needed`);
+    if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--oxblood)">reserve cannot be maintained</strong>`);
     if (r.surplus && !isPinned && !r.hitFloor) {
       // suppress for cleaner table - only show notes when something interesting
     }
@@ -2404,13 +2456,13 @@ function renderTable(viewRows, baseRows, result) {
         <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="Add adjustment">+</span>${rowPins.map(pin => `<span class="pin-action" data-id="${pin.id}" data-month="${pin.at_month}" title="Edit month ${pin.at_month}">✎</span>`).join('')}</td>
         <td class="col-period">${periodLabel}</td>
         <td class="col-date">${dateLabel}</td>
-        ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_start_state.expense, startKeys.has('expense'))}
-        ${editableCellHtml(fmtMoney(r.investment_income), 'investment_income', pinMonth, unit, r.pre_start_state.investment_income, startKeys.has('investment_income'))}
-        <td>${fmtMoney(r.net_income)}</td>
-        <td class="${deltaClass}">${deltaStr}</td>
-        ${r.insolvency ? `<td title="Closing balance cannot be edited in an unfunded month">${fmtMoney(r.buffer)}</td>` : editableCellHtml(fmtMoney(r.buffer), 'buffer', closingMonth, unit, r.natural_end_state.buffer, endKeys.has('buffer'))}
-        ${r.insolvency ? `<td title="Closing balance cannot be edited in an unfunded month">${fmtMoney(r.investments)}</td>` : editableCellHtml(fmtMoney(r.investments), 'investments', closingMonth, unit, r.natural_end_state.investments, endKeys.has('investments'))}
-        <td class="${r.sold > 0 ? 'col-sold' : 'col-sold-zero'}">${r.sold > 0 ? fmtMoney(r.sold) : '—'}</td>
+        ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_start_state.expense, startKeys.has('expense'), r.expense)}
+        ${editableCellHtml(fmtMoney(r.investment_income), 'investment_income', pinMonth, unit, r.pre_start_state.investment_income, startKeys.has('investment_income'), r.investment_income)}
+        ${monetaryCell(r.net_income)}
+        ${monetaryCell(r.delta, deltaClass, deltaStr)}
+        ${r.insolvency ? monetaryCell(r.buffer, '', fmtMoney(r.buffer), 'Closing balance cannot be edited in an unfunded month') : editableCellHtml(fmtMoney(r.buffer), 'buffer', closingMonth, unit, r.natural_end_state.buffer, endKeys.has('buffer'), r.buffer)}
+        ${r.insolvency ? monetaryCell(r.investments, '', fmtMoney(r.investments), 'Closing balance cannot be edited in an unfunded month') : editableCellHtml(fmtMoney(r.investments), 'investments', closingMonth, unit, r.natural_end_state.investments, endKeys.has('investments'), r.investments)}
+        ${monetaryCell(r.sold, r.sold > 0 ? 'col-sold' : 'col-sold-zero', r.sold > 0 ? fmtMoney(r.sold) : '—')}
         <td class="col-notes">${notes.join(' &nbsp; ')}</td>
       </tr>
     `;
@@ -2436,11 +2488,12 @@ function renderTable(viewRows, baseRows, result) {
   if (result.terminatedReason === 'reserve_failure') {
     const m = result.terminatedAtMonth;
     const dateStr = fmtDate(dateForMonth(m), 'months');
+    const failed = baseRows.find(row => row.month === m);
     footer.className = 'table-footer depleted';
-    footer.innerHTML = `Funds <em>terminate</em> at month <span class="footer-stat">${m}</span> &mdash; <span class="footer-stat">${dateStr}</span>`;
+    footer.innerHTML = `Last fully funded month <span class="footer-stat">${m - 1}</span>; reserve cannot be maintained in month <span class="footer-stat">${m}</span> &mdash; ${dateStr}. Required expense ${fmtMoney(failed.expense)}, funded expense ${fmtMoney(failed.expense_paid)}, unmet expense ${fmtMoney(failed.unfunded_expense)}, unmet reserve ${fmtMoney(failed.unfunded_reserve)}.`;
   } else if (result.terminatedReason === 'cap') {
     footer.className = 'table-footer';
-    footer.innerHTML = `<em>No depletion within</em> ${baseRows.length} months — projection capped at the 100-year horizon`;
+    footer.innerHTML = `Projection capped at ${baseRows.length} months (100-year horizon)`;
   } else {
     footer.className = 'table-footer';
     footer.innerHTML = `End of requested horizon — ${baseRows.length} months projected`;
@@ -2794,8 +2847,13 @@ function openCellEditor(cell, month, key) {
   const pin = state.pins.find(p => p.at_month === month);
   const overridden = pin && key in pin[phase];
   const annualFlow = state.params.unit === 'years' && phase === 'start';
+  const annualRow = annualFlow
+    ? aggregateForView(state.acceptedResult.rows, 'years', state.acceptedResult.plannedLastMonth, state.pins)
+      .find(row => row.first_month === month)
+    : null;
+  const plannedEnd = annualRow?.planned_last_month ?? month;
   const exact = annualFlow
-    ? aggregateForView(state.acceptedResult.rows, 'years').find(row => row.first_month === month)?.[key]
+    ? annualRow?.[key]
     : overridden ? pin[phase][key] : Number(cell.dataset.baseline);
   const prefill = Number(exact).toFixed(2);
   const originalHTML = cell.innerHTML;
@@ -2808,7 +2866,7 @@ function openCellEditor(cell, month, key) {
   const details = document.createElement('div');
   details.className = 'cell-edit-details';
   details.textContent = annualFlow
-    ? `Annual total · ${fmtDate(dateForMonth(month), 'months')}–${fmtDate(dateForMonth(month + 11), 'months')}`
+    ? `${plannedEnd - month + 1 === 12 ? 'Annual total' : `${plannedEnd - month + 1}-month total`} · ${fmtDate(dateForMonth(month), 'months')}–${fmtDate(dateForMonth(plannedEnd), 'months')}`
     : `${phase === 'start' ? 'Beginning' : 'End'} of month ${month} · ${fmtDate(dateForMonth(month), 'months')}`;
   const reset = document.createElement('button');
   reset.type = 'button';
@@ -2849,7 +2907,7 @@ function openCellEditor(cell, month, key) {
     input.disabled = true;
     saving = true;
     const ok = await commitCellEdit(month, key, value, { annualFlow, resetField,
-      span: { first_month: month, last_month: month + 11 }, feedback });
+      span: { first_month: month, last_month: plannedEnd }, feedback });
     if (ok) { settled = true; cellEditor = null; }
     else input.disabled = false;
     saving = false;
@@ -3056,7 +3114,7 @@ function rerender() {
     return result;
   }
   state.acceptedResult = result;
-  const viewRows = aggregateForView(result.rows, state.params.unit);
+  const viewRows = aggregateForView(result.rows, state.params.unit, result.plannedLastMonth, state.pins);
   renderStats(result.rows, result);
   renderChart(result.rows);
   renderTable(viewRows, result.rows, result);
@@ -3090,22 +3148,48 @@ function formatCents(cents) {
 }
 
 function buildCsvText(viewRows, unit, pins) {
-  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides', 'income_tax_paid', 'sale_tax_paid', 'net_sale_proceeds'];
+  const rawKeys = ['expense', 'investment_income', 'external_income', 'tax_paid', 'net_income',
+    'delta', 'buffer', 'investments', 'sold', 'income_tax_paid', 'sale_tax_paid',
+    'net_sale_proceeds', 'expense_paid', 'cash_adjustment', 'valuation_adjustment',
+    'unfunded_expense', 'unfunded_reserve', 'unfunded_deficit', 'floor'];
+  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides', 'income_tax_paid', 'sale_tax_paid', 'net_sale_proceeds',
+    'expense_paid', 'cash_adjustment', 'valuation_adjustment', 'unfunded_expense',
+    'unfunded_reserve', 'unfunded_deficit', 'floor', 'first_month', 'last_month',
+    'planned_last_month', 'adjustments_json', ...rawKeys.map(key => `${key}_raw`)];
+  const csvCell = value => {
+    const string = String(value ?? '');
+    return /[",\r\n]/.test(string) ? `"${string.replaceAll('"', '""')}"` : string;
+  };
+  const rawNumber = value => String(Object.is(value, -0) ? 0 : value ?? 0);
+  const readable = value => formatCents(toRoundedCents(value ?? 0));
   const lines = [headers.join(',')];
   for (const r of viewRows) {
-    // Aggregate every pin whose month falls within this row's span (a single
-    // month in months view, the whole year in years view) as raw key=value pairs.
     const startM = r.first_month !== undefined ? r.first_month : r.month;
-    const endM = r.last_month !== undefined ? r.last_month : r.month;
+    const endM = r.planned_last_month ?? r.last_month ?? r.month;
     const pairs = [];
-    pins
+    const adjustments = pins
       .filter(p => p.at_month >= startM && p.at_month <= endM)
-      .sort((a, b) => a.at_month - b.at_month)
-      .forEach(pin => {
-        for (const phase of ['start', 'end']) orderedOverrides(pin[phase]).forEach(({ def, value }) =>
-          pairs.push(`month ${pin.at_month} ${phase}.${def.key}=${value}`));
+      .sort((a, b) => a.at_month - b.at_month || String(a.id).localeCompare(String(b.id)))
+      .map(pin => {
+        const application = r.source_rows?.find(row => row.month === pin.at_month)?.adjustment_application
+          ?? r.adjustment_applications?.find(item => item.id === pin.id)
+          ?? (r.adjustment_application?.id === pin.id ? r.adjustment_application : null);
+        const phases = {};
+        for (const phase of ['start', 'end']) {
+          const fields = Object.fromEntries(orderedOverrides(pin[phase] ?? {}).map(({ def, value }) => [def.key, value]));
+          phases[phase] = { fields, applied: application?.[`${phase}_applied`] === true };
+          for (const [key, value] of Object.entries(fields)) {
+            pairs.push(`month ${pin.at_month} ${phase}.${key}=${rawNumber(value)} (${phases[phase].applied ? 'applied' : 'unapplied'})`);
+          }
+        }
+        const annual_edits = Object.fromEntries(Object.entries(pin.annual_edits ?? {})
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([field, metadata]) => [field, Object.fromEntries(Object.entries(metadata)
+            .sort(([a], [b]) => a.localeCompare(b)))]));
+        return { id: pin.id, month: pin.at_month, start: phases.start,
+          end: phases.end, annual_edits };
       });
-    const overridesField = pairs.length ? `"${pairs.join('; ')}"` : '';
+    const overridesField = pairs.join('; ');
     const grossSaleCents = toRoundedCents(r.sold);
     const saleTaxCents = toRoundedCents(r.sale_tax_paid);
     const netSaleCents = grossSaleCents - saleTaxCents;
@@ -3113,26 +3197,33 @@ function buildCsvText(viewRows, unit, pins) {
     const combinedTaxCents = incomeTaxCents + saleTaxCents;
     const row = [
       r.period,
-      `"${unit === 'years' ? r.label : fmtDate(r.date, 'months')}"`,
-      r.expense.toFixed(2),
-      r.investment_income.toFixed(2),
-      r.external_income.toFixed(2),
+      unit === 'years' ? r.label : fmtDate(r.date, 'months'),
+      readable(r.expense),
+      readable(r.investment_income),
+      readable(r.external_income),
       formatCents(combinedTaxCents),
-      r.net_income.toFixed(2),
-      r.delta.toFixed(2),
-      r.buffer.toFixed(2),
-      r.investments.toFixed(2),
+      readable(r.net_income),
+      readable(r.delta),
+      readable(r.buffer),
+      readable(r.investments),
       formatCents(grossSaleCents),
       r.hitFloor ? 'yes' : '',
       r.insolvency ? 'yes' : '',
-      (r.adjustment_application?.start_applied || r.adjustment_application?.end_applied ||
-        r.adjustment_applications?.some(item => item.start_applied || item.end_applied)) ? 'yes' : '',
+      adjustments.some(item => item.start.applied || item.end.applied) ? 'yes' : '',
       overridesField,
       formatCents(incomeTaxCents),
       formatCents(saleTaxCents),
       formatCents(netSaleCents),
+      ...['expense_paid', 'cash_adjustment', 'valuation_adjustment', 'unfunded_expense',
+        'unfunded_reserve', 'unfunded_deficit', 'floor'].map(key => readable(r[key])),
+      startM,
+      r.last_month ?? r.month,
+      endM,
+      JSON.stringify(adjustments),
+      ...rawKeys.map(key => rawNumber(r[key])),
     ];
-    lines.push(row.join(','));
+    lines.push(row.map((value, index) => index === 1 || (index === 14 && value)
+      ? `"${String(value).replaceAll('"', '""')}"` : csvCell(value)).join(','));
   }
   return lines.join('\n');
 }
@@ -3147,7 +3238,7 @@ function exportCsv() {
     return;
   }
   const unit = state.params.unit;
-  const viewRows = aggregateForView(result.rows, unit);
+  const viewRows = aggregateForView(result.rows, unit, result.plannedLastMonth, state.pins);
   const csvText = buildCsvText(viewRows, unit, state.pins);
   const blob = new Blob([csvText], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);

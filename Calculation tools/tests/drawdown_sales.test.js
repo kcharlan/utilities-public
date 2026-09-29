@@ -15,6 +15,21 @@ function assertClose(actual, expected, tolerance = 1e-9) {
   );
 }
 
+function csvRecords(text) {
+  const records = [];
+  let row = [], cell = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (quoted && char === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+    else if (char === '"') quoted = !quoted;
+    else if (!quoted && char === ',') { row.push(cell); cell = ''; }
+    else if (!quoted && char === '\n') { row.push(cell); records.push(row); row = []; cell = ''; }
+    else cell += char;
+  }
+  row.push(cell); records.push(row);
+  return records;
+}
+
 function assertSaleInvariants(result, deficit, availableInvestments) {
   const keys = JSON.parse(JSON.stringify(Object.keys(result)));
   assert.deepEqual(keys, [
@@ -195,7 +210,7 @@ test('[aggregate] yearly view sums every sale and tax flow from monthly rows', (
     end_state: { marker: index + 1 },
   }));
 
-  const [year] = aggregateForView(rows, 'years');
+  const [year] = aggregateForView(rows, 'years', 12);
 
   assert.equal(year.income_tax_paid, 78);
   assert.equal(year.sale_tax_paid, 156);
@@ -243,8 +258,8 @@ test('[summary] reports summed gross sales and both tax components in five cards
   assert.match(stats.innerHTML, /Total liquidated[\s\S]*?\$350[\s\S]*?gross sales across projection/);
   assert.doesNotMatch(stats.innerHTML, /% of principal/);
   assert.match(stats.innerHTML, /Total tax paid[\s\S]*?\$50/);
-  assert.match(stats.innerHTML, /Income tax[^<]*\$30/);
-  assert.match(stats.innerHTML, /Asset sale tax[^<]*\$20/);
+  assert.match(stats.innerHTML, /Income tax <span title="Rounded to cents \$30\.00 · Model value \$30"[^>]*>\$30/);
+  assert.match(stats.innerHTML, /Asset sale tax <span title="Rounded to cents \$20\.00 · Model value \$20"[^>]*>\$20/);
 });
 
 test('[Gross sold] table renames only the visible sale heading', () => {
@@ -278,7 +293,7 @@ test('[layout] amortization uses a bounded two-axis scroll region for sticky hea
   assert.match(calculatorHtml, /<div class="table-scroll">\s*<table class="amort">[\s\S]*?<\/table>\s*<\/div>/);
 });
 
-test('[CSV] keeps the original schema and appends the asset-sale breakdown', () => {
+test('[CSV] keeps the original schema and appends readable and precise fields', () => {
   const { buildCsvText, toRoundedCents, formatCents } = loadDrawdownApi();
   assert.equal(typeof buildCsvText, 'function');
   assert.equal(typeof toRoundedCents, 'function');
@@ -307,6 +322,13 @@ test('[CSV] keeps the original schema and appends the asset-sale breakdown', () 
     'income_tax_paid',
     'sale_tax_paid',
     'net_sale_proceeds',
+    'expense_paid', 'cash_adjustment', 'valuation_adjustment', 'unfunded_expense',
+    'unfunded_reserve', 'unfunded_deficit', 'floor', 'first_month', 'last_month',
+    'planned_last_month', 'adjustments_json',
+    ...['expense', 'investment_income', 'external_income', 'tax_paid', 'net_income',
+      'delta', 'buffer', 'investments', 'sold', 'income_tax_paid', 'sale_tax_paid',
+      'net_sale_proceeds', 'expense_paid', 'cash_adjustment', 'valuation_adjustment',
+      'unfunded_expense', 'unfunded_reserve', 'unfunded_deficit', 'floor'].map(key => `${key}_raw`),
   ]);
 });
 
@@ -388,7 +410,70 @@ test('[CSV] preserves yearly labels and deterministic quoted pin overrides', () 
   const cells = buildCsvText(rows, 'years', pins).split('\n')[1].split(',');
 
   assert.equal(cells[1], '"2027"');
-  assert.equal(cells[14], '"month 2 start.sale_tax_rate=0.2; month 8 start.expense=1234; month 8 start.tax_rate=0.3"');
+  assert.equal(cells[14], '"month 2 start.sale_tax_rate=0.2 (applied); month 8 start.expense=1234 (unapplied); month 8 start.tax_rate=0.3 (unapplied)"');
+});
+
+test('[CSV] exports exact monthly and annual Numbers with stable applied provenance', () => {
+  const { simulate, aggregateForView, buildCsvText } = loadDrawdownApi();
+  const params = { buffer_initial: 10, floor: 0, external_income: 0.004,
+    investments_initial: 100, investment_income: 0, modifier: 1, expense: 0,
+    inflation: 0, tax_rate: 0, sale_tax_rate: 0, unit: 'months', num_periods: 12 };
+  const pins = [
+    { id: 'b', at_month: 4, start: { external_income: 0.004 }, end: { buffer: 9 } },
+    { id: 'a', at_month: 1, start: { floor: 1, expense: 0 }, end: { investments: 90 },
+      annual_edits: { expense: { target_total: 0, first_month: 1, last_month: 12,
+        resolved_monthly_value: 0 } } },
+  ];
+  const result = simulate(params, pins);
+  assert.notEqual(result.terminatedReason, 'invalid');
+  const monthly = csvRecords(buildCsvText(aggregateForView(result.rows, 'months', 12), 'months', pins));
+  const yearly = csvRecords(buildCsvText(aggregateForView(result.rows, 'years', 12), 'years', pins));
+  const mh = monthly[0], yh = yearly[0];
+  const val = (headers, row, key) => row[headers.indexOf(key)];
+  assert.equal(val(mh, monthly[1], 'external_income'), '0.00');
+  assert.equal(Number(val(mh, monthly[1], 'external_income_raw')), result.rows[0].external_income);
+  assert.equal(val(yh, yearly[1], 'external_income'), '0.05');
+  assert.equal(Number(val(yh, yearly[1], 'external_income_raw')),
+    result.rows.reduce((sum, row) => sum + row.external_income, 0));
+  assert.equal(val(yh, yearly[1], 'cash_adjustment_raw'), result.rows.reduce((sum, row) => sum + row.cash_adjustment, 0).toString());
+  assert.ok(Number(val(yh, yearly[1], 'cash_adjustment_raw')) < 0);
+  assert.equal(val(yh, yearly[1], 'valuation_adjustment_raw'), '-10');
+  assert.equal(val(yh, yearly[1], 'pinned'), 'yes');
+  const provenance = JSON.parse(val(yh, yearly[1], 'adjustments_json'));
+  assert.deepEqual(provenance.map(item => item.id), ['a', 'b']);
+  assert.equal(provenance[0].start.applied, true);
+  assert.equal(provenance[0].end.applied, true);
+  assert.equal(provenance[0].annual_edits.expense.target_total, 0);
+  assert.equal((val(yh, yearly[1], 'overrides').match(/start\.floor/g) ?? []).length, 1);
+  const moved = [pins[0], { ...pins[1], at_month: 5, annual_edits: undefined }];
+  const movedRecords = csvRecords(buildCsvText(aggregateForView(result.rows, 'years', 12, moved), 'years', moved));
+  const movedProvenance = JSON.parse(val(movedRecords[0], movedRecords[1], 'adjustments_json'));
+  assert.deepEqual(movedProvenance.map(item => item.month), [4, 5]);
+  assert.equal(movedProvenance[1].annual_edits.expense, undefined);
+});
+
+test('[CSV] includes unapplied future and failed-month end adjustments without claiming a pin applied', () => {
+  const { simulate, aggregateForView, buildCsvText } = loadDrawdownApi();
+  const params = { buffer_initial: 10, floor: 10, external_income: 0,
+    investments_initial: 100, investment_income: 0, modifier: 1, expense: 1,
+    inflation: 0, tax_rate: 0, sale_tax_rate: 1, unit: 'years', num_periods: 1 };
+  const pins = [
+    { id: 'failed-end', at_month: 1, start: {}, end: { buffer: 100 } },
+    { id: 'future', at_month: 8, start: { expense: 2 }, end: {} },
+  ];
+  const result = simulate(params, pins);
+  const records = csvRecords(buildCsvText(aggregateForView(result.rows, 'years', result.plannedLastMonth), 'years', pins));
+  const row = Object.fromEntries(records[0].map((key, index) => [key, records[1][index]]));
+  assert.equal(row.last_month, '1');
+  assert.equal(row.planned_last_month, '12');
+  assert.equal(row.pinned, '');
+  assert.equal(row.unfunded_expense_raw, '1');
+  assert.equal(row.unfunded_reserve_raw, '0');
+  assert.equal(row.investments_raw, '100');
+  const provenance = JSON.parse(row.adjustments_json);
+  assert.deepEqual(provenance.map(item => item.id), ['failed-end', 'future']);
+  assert.equal(provenance[0].end.applied, false);
+  assert.equal(provenance[1].start.applied, false);
 });
 
 test('[helper] calculateAssetSale returns zeros when no sale can or needs to occur', () => {
