@@ -10,6 +10,70 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('table pin editor keeps Save visible while the table scrolls horizontally', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.locator('#expense').fill('12000');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await page.locator('#amort-body tr[data-month="3"] .pin-action').click();
+
+  const geometry = () => page.evaluate(() => {
+    const scroller = document.querySelector('.table-scroll');
+    const editor = document.querySelector('.pin-editor');
+    const cell = document.querySelector('.pin-editor-row > td');
+    const save = document.getElementById('pin-save');
+    return {
+      scrollerLeft: scroller.getBoundingClientRect().left,
+      scrollerRight: scroller.getBoundingClientRect().right,
+      editorLeft: editor.getBoundingClientRect().left,
+      saveRight: save.getBoundingClientRect().right,
+      textAlign: getComputedStyle(cell).textAlign,
+    };
+  });
+  let position = await geometry();
+  expect(position.saveRight).toBeLessThanOrEqual(position.scrollerRight + 1);
+  expect(position.textAlign).toBe('left');
+
+  await page.locator('.table-scroll').evaluate(node => { node.scrollLeft = node.scrollWidth; });
+  position = await geometry();
+  expect(Math.abs(position.editorLeft - position.scrollerLeft)).toBeLessThanOrEqual(1);
+  expect(position.saveRight).toBeLessThanOrEqual(position.scrollerRight + 1);
+});
+
+test('narrow table pin editor wraps its explanation and keeps Save visible', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#amort-body tr[data-month="2"] .pin-action').click();
+  const geometry = await page.evaluate(() => ({
+    subHeight: document.querySelector('.pin-editor-sub').getBoundingClientRect().height,
+    saveRight: document.getElementById('pin-save').getBoundingClientRect().right,
+    scrollerRight: document.querySelector('.table-scroll').getBoundingClientRect().right,
+  }));
+  expect(geometry.subHeight).toBeGreaterThan(20);
+  expect(geometry.saveRight).toBeLessThanOrEqual(geometry.scrollerRight + 1);
+});
+
+test('sidebar recovery pin editor fits and Save is directly clickable', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-late', at_month: 100, start: { expense: 6000 }, end: {} }]);
+    rerender();
+  });
+  await page.locator('#periods').fill('50');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await page.locator('.adj-entry[data-id="synthetic-late"]').click();
+  const geometry = await page.evaluate(() => {
+    const sidebar = document.querySelector('.sidebar');
+    return {
+      scrollWidth: sidebar.scrollWidth,
+      clientWidth: sidebar.clientWidth,
+      saveRight: document.getElementById('pin-save').getBoundingClientRect().right,
+      sidebarRight: sidebar.getBoundingClientRect().right,
+    };
+  });
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
+  expect(geometry.saveRight).toBeLessThanOrEqual(geometry.sidebarRight + 1);
+  await page.locator('#pin-save').click();
+  expect(await page.evaluate(() => state.pins[0].at_month)).toBe(100);
+});
+
 test.describe('theme token rendering', () => {
   test('system scheme changes body, chart, halo, and texture without reload', async ({ page }) => {
     const cash = page.locator('#chart path[data-series="cash"]');

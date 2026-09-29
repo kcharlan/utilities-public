@@ -553,6 +553,7 @@
     max-width: 100%;
     max-height: calc(100vh - 24px);
     overflow: auto;
+    container-type: inline-size;
   }
   .table-head {
     display: flex;
@@ -815,9 +816,26 @@
     border-bottom: 1px solid var(--accent) !important;
     border-top: 2px solid var(--accent) !important;
   }
+  .amort tr.pin-editor-row > td { text-align: left; }
   .pin-editor {
+    position: sticky;
+    left: 0;
+    width: 100cqw;
+    box-sizing: border-box;
+    white-space: normal;
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
     padding: 20px 24px 18px;
     background: linear-gradient(180deg, var(--surface-raised) 0%, var(--surface-sunken) 100%);
+  }
+  .pin-editor-host--sidebar {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+  }
+  .pin-editor-host--sidebar .pin-editor {
+    position: static;
+    width: auto;
+    padding: 14px 12px;
   }
   .pin-editor-header {
     display: flex;
@@ -849,9 +867,33 @@
   }
   .pin-editor-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
     gap: 14px 28px;
   }
+  .pin-editor-section {
+    grid-column: 1 / -1;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--rule-fine);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .pin-editor-move { margin-top: 16px; }
+  .pin-editor-move label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .pin-editor-move .input-wrap { max-width: 210px; }
+  #pin-effective-date { display: block; margin-top: 5px; color: var(--text-subtle); }
+  #pin-move-note { color: var(--text-subtle); font-style: italic; }
+  #pin-editor-error { margin-top: 8px; color: var(--negative); }
   .pin-editor-field {
     display: flex;
     flex-direction: column;
@@ -888,12 +930,15 @@
   }
   .pin-editor-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
     margin-top: 18px;
     justify-content: flex-end;
     align-items: center;
   }
-  .pin-editor-actions .reset {
+  .pin-editor-actions .reset,
+  .pin-reset-field,
+  .cell-reset-field {
     margin-right: auto;
     font-family: 'Fraunces', serif;
     font-style: italic;
@@ -907,9 +952,18 @@
     text-underline-offset: 3px;
     padding: 6px 4px;
   }
-  .pin-editor-actions .reset:hover {
+  .pin-editor-actions .reset:hover,
+  .pin-reset-field:hover,
+  .cell-reset-field:hover {
     color: var(--text);
   }
+  .cell-edit-details,
+  .cell-edit-feedback {
+    white-space: normal;
+    max-width: 260px;
+  }
+  .cell-edit-details { color: var(--text-subtle); font-size: 11px; }
+  .cell-edit-feedback { color: var(--negative); }
   .pin-editor-actions .pin-btn {
     padding: 8px 16px;
     font-family: 'Hanken Grotesk', sans-serif;
@@ -1005,6 +1059,10 @@
   }
   .pin-editor-row {
     animation: fadein 0.18s ease-out;
+  }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
   }
 
 </style>
@@ -2575,7 +2633,7 @@ function renderPinEditor(row, baseRows) {
   let fieldsHtml = '';
   for (const [phase, defs] of [['start', PARAM_DEFS.filter(def => START_PIN_KEYS.has(def.key))],
     ['end', PARAM_DEFS.filter(def => END_PIN_KEYS.has(def.key))]]) {
-    fieldsHtml += `<h4>${phase === 'start' ? 'Beginning of selected month' : 'End of selected month'}</h4>`;
+    fieldsHtml += `<h4 class="pin-editor-section">${phase === 'start' ? 'Beginning of selected month' : 'End of selected month'}</h4>`;
     for (const def of defs) {
     const identity = `${phase}.${def.key}`;
     const baseVal = sourceRow
@@ -2636,8 +2694,11 @@ function renderPinEditor(row, baseRows) {
             </div>
           </div>
           <div class="pin-editor-grid">${fieldsHtml}</div>
-          <label>Effective month <input id="pin-month" type="number" min="1" max="1200" step="1" value="${selectedMonth}"></label>
-          <span id="pin-effective-date">${Number.isInteger(Number(selectedMonth)) && Number(selectedMonth) >= 1 && Number(selectedMonth) <= MAX_MONTHS ? fmtDate(dateForMonth(Number(selectedMonth)), 'months') : 'Choose month 1–1200'}</span>
+          <div class="pin-editor-move">
+            <label for="pin-month">Effective month</label>
+            <span class="input-wrap"><input id="pin-month" type="number" min="1" max="1200" step="1" value="${selectedMonth}"></span>
+            <span id="pin-effective-date">${Number.isInteger(Number(selectedMonth)) && Number(selectedMonth) >= 1 && Number(selectedMonth) <= MAX_MONTHS ? fmtDate(dateForMonth(Number(selectedMonth)), 'months') : 'Choose month 1–1200'}</span>
+          </div>
           <div id="pin-move-note">${existingPin?.annual_edits && Number(selectedMonth) !== editorMonth ? 'Moving this adjustment converts its annual target to a monthly assumption.' : ''}</div>
           <div id="pin-editor-error" role="alert"></div>
           <div class="pin-editor-actions">
@@ -3081,7 +3142,7 @@ function renderAdjustments() {
       </div>`;
   }
   if (state.editing && !state.acceptedResult?.rows.some(row => row.month === state.editing.month)) {
-    html += `<table><tbody>${renderPinEditor({ month: state.editing.month }, state.acceptedResult?.rows ?? [])}</tbody></table>`;
+    html += `<table class="pin-editor-host--sidebar"><tbody>${renderPinEditor({ month: state.editing.month }, state.acceptedResult?.rows ?? [])}</tbody></table>`;
   }
   container.innerHTML = html;
 
