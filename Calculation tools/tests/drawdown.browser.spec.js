@@ -255,6 +255,63 @@ test('chart uses each effective floor and includes a raised floor in its bounds'
   await expect(page.locator('#chart-y-labels')).toContainText('floor $900K');
 });
 
+test('chart axis labels align with plotted pixel coordinates', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const positions = await page.evaluate(() => {
+    const svg = document.getElementById('chart');
+    const svgBox = svg.getBoundingClientRect();
+    const labels = [...document.querySelectorAll('.chart-y-label')];
+    const centres = labels.map(label => {
+      const box = label.getBoundingClientRect();
+      return { y: box.top + box.height / 2, left: box.left, height: box.height };
+    });
+    return {
+      svgTop: svgBox.top, svgLeft: svgBox.left,
+      maxY: chartGeometry.padT,
+      floorY: chartGeometry.yOf(chartGeometry.floorOf(lastChartRows.at(-1))),
+      zeroY: chartGeometry.H - chartGeometry.padB,
+      centres,
+    };
+  });
+  expect(positions.centres).toHaveLength(3);
+  for (const [index, y] of [positions.maxY, positions.floorY, positions.zeroY].entries()) {
+    expect(Math.abs(positions.centres[index].y - positions.svgTop - y)).toBeLessThanOrEqual(2);
+  }
+  for (const label of positions.centres) {
+    expect(label.left).toBeGreaterThanOrEqual(positions.svgLeft);
+    expect(label.height).toBeLessThan(18);
+  }
+});
+
+test('spreadLabels separates and clamps positions without changing input', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const first = [{ key: 'a', y: 50 }, { key: 'b', y: 52 }];
+    const second = [{ key: 'a', y: 195 }, { key: 'b', y: 198 }];
+    const low = [{ key: 'a', y: -5 }];
+    return {
+      first: spreadLabels(first, 14, 0, 200),
+      second: spreadLabels(second, 14, 0, 200),
+      low: spreadLabels(low, 14, 0, 200),
+      originals: [first, second, low],
+    };
+  });
+  expect(result.first).toEqual([{ key: 'a', y: 50 }, { key: 'b', y: 64 }]);
+  expect(result.second).toEqual([{ key: 'a', y: 186 }, { key: 'b', y: 200 }]);
+  expect(result.low).toEqual([{ key: 'a', y: 0 }]);
+  expect(result.originals).toEqual([
+    [{ key: 'a', y: 50 }, { key: 'b', y: 52 }],
+    [{ key: 'a', y: 195 }, { key: 'b', y: 198 }],
+    [{ key: 'a', y: -5 }],
+  ]);
+});
+
+test('chart viewBox follows its resized SVG width', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await expect.poll(() => page.locator('#chart').evaluate(svg =>
+    svg.viewBox.baseVal.width === Math.round(svg.getBoundingClientRect().width))).toBe(true);
+});
+
 test('reserve failure names funded expense and retains principal with full sale tax', async ({ page }) => {
   await page.evaluate(() => {
     Object.assign(state.params, { buffer_initial: 10, floor: 10, investments_initial: 100,

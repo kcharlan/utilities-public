@@ -506,14 +506,16 @@
   }
   .chart-y-labels {
     position: absolute;
-    left: 22px;
-    top: 38px;
+    left: 0;
+    top: 0;
     height: 200px;
     pointer-events: none;
-    width: 60px;
+    width: auto;
   }
   .chart-y-label {
     position: absolute;
+    transform: translateY(-50%);
+    white-space: nowrap;
     font-family: 'JetBrains Mono', monospace;
     font-size: 9.5px;
     color: var(--text-subtle);
@@ -1122,7 +1124,7 @@
         </div>
       </div>
       <div style="position: relative;">
-        <svg class="chart-svg" id="chart" viewBox="0 0 1000 200" preserveAspectRatio="none"></svg>
+        <svg class="chart-svg" id="chart" viewBox="0 0 1000 200"></svg>
         <div class="chart-y-labels" id="chart-y-labels"></div>
       </div>
       <div class="chart-x-labels" id="chart-x-labels"></div>
@@ -2327,15 +2329,41 @@ function renderStats(rows, result) {
   document.getElementById('stats').innerHTML = html;
 }
 
+let lastChartRows = null;
+let chartGeometry = null;
+
+function spreadLabels(items, minGap, lo, hi) {
+  const sorted = items.map((item, index) => ({ ...item, index })).sort((a, b) => a.y - b.y);
+  if (sorted.length === 0) return [];
+  sorted[0].y = Math.max(sorted[0].y, lo);
+  for (let i = 1; i < sorted.length; i++) {
+    sorted[i].y = Math.max(sorted[i].y, sorted[i - 1].y + minGap);
+  }
+  if (sorted.at(-1).y > hi) {
+    sorted.at(-1).y = hi;
+    for (let i = sorted.length - 2; i >= 0; i--) {
+      sorted[i].y = Math.min(sorted[i].y, sorted[i + 1].y - minGap);
+    }
+  }
+  return sorted.map(item => ({ ...item, y: Math.min(hi, Math.max(lo, item.y)) }))
+    .sort((a, b) => a.index - b.index)
+    .map(({ index, ...item }) => item);
+}
+
 function renderChart(rows) {
   const p = state.params;
   const svg = document.getElementById('chart');
-  const W = 1000, H = 200;
+  const box = svg.getBoundingClientRect();
+  const W = Math.round(box.width) || 1000;
+  const H = Math.round(box.height) || 200;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   const padL = 0, padR = 0, padT = 8, padB = 8;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
   if (rows.length === 0) {
+    lastChartRows = null;
+    chartGeometry = null;
     svg.innerHTML = '';
     document.getElementById('chart-y-labels').innerHTML = '';
     document.getElementById('chart-x-labels').innerHTML = '';
@@ -2354,9 +2382,11 @@ function renderChart(rows) {
   const n = rows.length;
   const xOf = (i) => padL + (n > 1 ? i / (n - 1) : 0.5) * innerW;
   const yOf = (v) => padT + (1 - Math.max(0, v) / safeMax) * innerH;
+  lastChartRows = rows;
+  chartGeometry = { W, H, padL, padR, padT, padB, innerW, innerH, n, safeMax, xOf, yOf, floorOf };
 
   const linePath = getter => rows.map((r, i) =>
-    `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(getter(r))}`).join(' ');
+    `${i === 0 ? 'M' : 'L'} ${xOf(i).toFixed(2)} ${yOf(getter(r)).toFixed(2)}`).join(' ');
 
   // Pin x positions
   const pinXs = state.pins
@@ -2375,18 +2405,23 @@ function renderChart(rows) {
     <path data-series="cash" d="${linePath(r => r.buffer)}"/>
     <path data-series="principal" d="${linePath(r => r.investments)}"/>
     <path data-series="floor" d="${linePath(floorOf)}"/>
-    ${pinXs.map(x => `<line class="chart-pin-line" x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}"/>
-      <circle class="chart-pin-dot" cx="${x}" cy="${padT + 4}" r="3"/>`).join('')}
-    ${insolvencyX !== null ? `<line class="chart-failure-line" x1="${insolvencyX}" y1="${padT}" x2="${insolvencyX}" y2="${H - padB}"/>
-      <text class="chart-failure-label" x="${insolvencyX - 4}" y="${H - padB - 4}" text-anchor="end">reserve failure</text>` : ''}
+    ${pinXs.map(x => `<line class="chart-pin-line" x1="${x.toFixed(2)}" y1="${padT.toFixed(2)}" x2="${x.toFixed(2)}" y2="${(H - padB).toFixed(2)}"/>
+      <circle class="chart-pin-dot" cx="${x.toFixed(2)}" cy="${(padT + 4).toFixed(2)}" r="3"/>`).join('')}
+    ${insolvencyX !== null ? `<line class="chart-failure-line" x1="${insolvencyX.toFixed(2)}" y1="${padT.toFixed(2)}" x2="${insolvencyX.toFixed(2)}" y2="${(H - padB).toFixed(2)}"/>
+      <text class="chart-failure-label" x="${(insolvencyX - 4).toFixed(2)}" y="${(H - padB - 4).toFixed(2)}" text-anchor="end">reserve failure</text>` : ''}
   `;
 
   // The floor line can change during the projection, so label its final value.
   const yWrap = document.getElementById('chart-y-labels');
+  const labels = spreadLabels([
+    { key: 'max', y: padT },
+    { key: 'floor', y: yOf(floorOf(rows.at(-1))) },
+    { key: 'zero', y: H - padB },
+  ], 14, padT, H - padB);
   yWrap.innerHTML = `
-    <div class="chart-y-label" style="top: ${padT - 5}px; left: 0;">${fmtMoneyCompact(safeMax)}</div>
-    <div class="chart-y-label chart-y-label--floor" style="top: ${yOf(floorOf(rows.at(-1))) - 5}px; left: 0;">floor ${fmtMoneyCompact(floorOf(rows.at(-1)))}</div>
-    <div class="chart-y-label" style="top: ${innerH + padT - 8}px; left: 0;">$0</div>
+    <div class="chart-y-label" style="top: ${labels[0].y.toFixed(2)}px; left: 0;">${fmtMoneyCompact(safeMax)}</div>
+    <div class="chart-y-label chart-y-label--floor" style="top: ${labels[1].y.toFixed(2)}px; left: 0;">floor ${fmtMoneyCompact(floorOf(rows.at(-1)))}</div>
+    <div class="chart-y-label" style="top: ${labels[2].y.toFixed(2)}px; left: 0;">$0</div>
   `;
 
   // X labels
@@ -3338,6 +3373,17 @@ function init() {
       sidebarTimers.set(el, setTimeout(recalc, 220));
     });
   });
+
+  if (typeof ResizeObserver === 'function') {
+    let chartFrame = null;
+    new ResizeObserver(() => {
+      if (chartFrame !== null) return;
+      chartFrame = requestAnimationFrame(() => {
+        chartFrame = null;
+        if (lastChartRows) renderChart(lastChartRows);
+      });
+    }).observe(document.getElementById('chart'));
+  }
 
   document.querySelectorAll('.theme-toggle button').forEach(button => {
     button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
