@@ -10,6 +10,73 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('ledger groups flows, balances, and sales without changing column labels', async ({ page }) => {
+  const groups = page.locator('.amort thead .col-groups th');
+  await expect(groups).toHaveCount(5);
+  expect(await groups.evaluateAll(cells => cells.map(cell => [cell.colSpan, cell.textContent.trim()])))
+    .toEqual([[3, ''], [4, 'Flows'], [2, 'Balances'], [1, 'Sales'], [1, '']]);
+  const headings = page.locator('.amort thead .col-heads th');
+  await expect(headings).toHaveCount(11);
+  await expect(headings.nth(9)).toHaveText('Gross sold');
+  expect(await headings.evaluateAll(cells => cells.every(cell => cell.attributes.length === 0))).toBe(true);
+  expect(await page.locator('.amort colgroup col').evaluateAll(cols => cols.map(col => col.style.width)))
+    .toEqual(['48px', '52px', '150px', '', '', '', '', '', '', '', '']);
+});
+
+test('ledger anchors the identity columns and keeps row treatments aligned while scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await page.evaluate(() => {
+    const scroller = document.querySelector('.table-scroll');
+    scroller.scrollLeft = 200;
+  });
+  const geometry = await page.evaluate(() => {
+    const scroller = document.querySelector('.table-scroll');
+    const first = document.querySelector('#amort-body tr[data-month="1"]');
+    const second = document.querySelector('#amort-body tr[data-month="2"]');
+    const date = first.querySelector('.col-date');
+    const group = document.querySelector('.col-groups th');
+    return {
+      scrollLeft: scroller.scrollLeft,
+      scrollerLeft: scroller.getBoundingClientRect().left,
+      dateLeft: date.getBoundingClientRect().left,
+      groupLeft: group.getBoundingClientRect().left,
+      datePosition: getComputedStyle(date).position,
+      firstBackground: getComputedStyle(first).backgroundImage,
+      secondBackground: getComputedStyle(second).backgroundImage,
+    };
+  });
+  expect(geometry.scrollLeft).toBe(200);
+  expect(Math.abs(geometry.dateLeft - geometry.scrollerLeft - 100)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.groupLeft - geometry.scrollerLeft)).toBeLessThanOrEqual(1);
+  expect(geometry.datePosition).toBe('sticky');
+  expect(geometry.firstBackground).not.toBe(geometry.secondBackground);
+
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-ledger-pin', at_month: 2, start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  const pinned = page.locator('#amort-body tr[data-month="2"]');
+  const pinnedStyle = await pinned.evaluate(row => ({
+    background: getComputedStyle(row).backgroundImage,
+    gutterPosition: getComputedStyle(row.querySelector('.col-gutter')).position,
+    gutterBackground: getComputedStyle(row.querySelector('.col-gutter')).backgroundImage,
+    expectedAccent: (() => {
+      const probe = document.createElement('div');
+      probe.style.background = 'linear-gradient(var(--accent-tint) 0 0), var(--surface)';
+      document.body.append(probe);
+      const image = getComputedStyle(probe).backgroundImage;
+      probe.remove();
+      return image;
+    })(),
+  }));
+  expect(pinnedStyle.background).toBe(pinnedStyle.expectedAccent);
+  expect(pinnedStyle.background).not.toBe(geometry.secondBackground);
+  expect(pinnedStyle.gutterPosition).toBe('sticky');
+  expect(pinnedStyle.gutterBackground).toBe(pinnedStyle.background);
+  await pinned.locator('.pin-action[data-id="synthetic-ledger-pin"]').click();
+  await expect(page.locator('.pin-editor-row > td')).toHaveCSS('position', 'static');
+});
+
 test('header leads with the date of the default reserve verdict', async ({ page }) => {
   const endDate = await page.evaluate(() => fmtDate(dateForMonth(120), 'months'));
   await expect(page.locator('.header .eyebrow')).toHaveText('The verdict');

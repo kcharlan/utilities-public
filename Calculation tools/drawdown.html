@@ -613,7 +613,6 @@
     white-space: nowrap;
   }
   .chart-tooltip[hidden] { display: none; }
-  #amort-body tr.is-chart-hover { background: var(--negative-tint); }
   .chart-x-labels {
     display: flex;
     justify-content: space-between;
@@ -694,7 +693,8 @@
 
   .amort {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     font-family: 'JetBrains Mono', monospace;
     font-size: var(--fs-xs);
     font-feature-settings: "tnum";
@@ -718,10 +718,21 @@
     border-bottom: 1px solid var(--rule);
     white-space: nowrap;
   }
-  .amort th:nth-child(2),
-  .amort th:nth-child(3),
-  .amort th:nth-child(11) { text-align: left; }
-  .amort th:first-child { width: 28px; text-align: center; padding: 11px 6px 9px; }
+  .amort thead .col-heads th:nth-child(2),
+  .amort thead .col-heads th:nth-child(3),
+  .amort thead .col-heads th:nth-child(11) { text-align: left; }
+  .amort th:first-child { text-align: center; padding: 11px 6px 9px; }
+  .amort thead .col-groups th { text-align: center; }
+  .amort thead .col-heads th:nth-child(-n+3),
+  .amort thead .col-groups th:first-child {
+    position: sticky;
+    background: var(--surface);
+    z-index: 1;
+  }
+  .amort thead .col-heads th:nth-child(1),
+  .amort thead .col-groups th:first-child { left: 0; }
+  .amort thead .col-heads th:nth-child(2) { left: 48px; }
+  .amort thead .col-heads th:nth-child(3) { left: 100px; }
 
   .amort td {
     padding: 7px 10px;
@@ -761,11 +772,31 @@
 
   .amort tbody tr {
     position: relative;
+    --row-bg: var(--surface);
+    background: var(--row-bg);
     transition: background 0.1s;
   }
-  .amort tbody tr:hover {
-    background: linear-gradient(90deg, var(--surface-raised), transparent 90%);
+  .amort tbody tr:where(:nth-child(even of :not(.pin-editor-row))) {
+    --row-bg: linear-gradient(var(--band-tint) 0 0), var(--surface);
   }
+  .amort tbody tr:hover,
+  .amort tbody tr.is-pinned {
+    --row-bg: linear-gradient(var(--accent-tint) 0 0), var(--surface);
+  }
+  .amort tbody tr.is-insolvent {
+    --row-bg: linear-gradient(var(--negative-tint) 0 0), var(--surface);
+  }
+  .amort tbody tr.is-chart-hover {
+    --row-bg: linear-gradient(var(--accent-tint-strong) 0 0), var(--surface);
+  }
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(-n+3) {
+    position: sticky;
+    background: var(--row-bg);
+    z-index: 2;
+  }
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(1) { left: 0; }
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(2) { left: 48px; }
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(3) { left: 100px; }
   .amort tbody tr:hover .pin-action { color: var(--accent-strong); }
 
   .amort .col-period {
@@ -805,14 +836,8 @@
   .amort .marker-dot.pinned { background: var(--accent); }
   .amort .marker-dot.insolvency { background: var(--negative); box-shadow: 0 0 0 2px var(--negative-halo); }
 
-  .amort tr.is-pinned {
-    background: linear-gradient(90deg, var(--accent-tint), transparent 80%);
-  }
   .amort tr.is-pinned td {
-    border-top: 1px solid var(--accent);
-  }
-  .amort tr.is-pinned td:first-child {
-    position: relative;
+    box-shadow: inset 0 1px 0 var(--accent);
   }
   .amort tr.is-pinned td:first-child::before {
     content: '';
@@ -822,9 +847,6 @@
     bottom: 0;
     width: 3px;
     background: var(--accent);
-  }
-  .amort tr.is-insolvent {
-    background: var(--negative-tint);
   }
   .amort tr.is-insolvent td {
     color: var(--negative);
@@ -1302,8 +1324,19 @@
 
       <div class="table-scroll">
         <table class="amort">
+          <colgroup>
+            <col style="width: 48px"><col style="width: 52px"><col style="width: 150px">
+            <col><col><col><col><col><col><col><col>
+          </colgroup>
           <thead>
-            <tr>
+            <tr class="col-groups">
+              <th colspan="3"></th>
+              <th colspan="4">Flows</th>
+              <th colspan="2">Balances</th>
+              <th colspan="1">Sales</th>
+              <th colspan="1"></th>
+            </tr>
+            <tr class="col-heads">
               <th></th>
               <th>#</th>
               <th>Date</th>
