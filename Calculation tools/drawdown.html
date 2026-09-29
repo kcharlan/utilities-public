@@ -46,6 +46,11 @@
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
+  :where(button, [tabindex]):focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
   html { scroll-behavior: smooth; }
 
   body {
@@ -243,7 +248,8 @@
     transition: border-color 0.15s;
   }
   .input-wrap:focus-within {
-    border-color: var(--text);
+    border-color: var(--focus-ring);
+    box-shadow: 0 0 0 1px var(--focus-ring);
   }
   .input-wrap .prefix,
   .input-wrap .suffix {
@@ -292,7 +298,7 @@
     text-transform: uppercase;
     transition: all 0.15s;
   }
-  .toggle button:not(.active):hover, .theme-toggle button:not(.active):hover {
+  .toggle button:not(.active):not(:disabled):hover, .theme-toggle button:not(.active):not(:disabled):hover {
     background: var(--surface-raised);
     color: var(--text);
   }
@@ -321,7 +327,7 @@
     position: relative;
     overflow: hidden;
   }
-  .calc-button:hover { background: var(--negative); }
+  .calc-button:not(:disabled):hover { background: var(--negative); }
   .scenario-status {
     margin-top: 14px;
     padding: 10px 12px;
@@ -342,7 +348,7 @@
     display: inline-block;
     transition: transform 0.2s;
   }
-  .calc-button:hover .arrow { transform: translateX(3px); }
+  .calc-button:not(:disabled):hover .arrow { transform: translateX(3px); }
 
   /* ============ MAIN ============ */
   .main {
@@ -598,7 +604,7 @@
     text-transform: uppercase;
     transition: all 0.15s;
   }
-  .table-actions button:hover {
+  .table-actions button:not(:disabled):hover {
     background: var(--text);
     color: var(--on-strong);
     border-color: var(--text);
@@ -649,7 +655,7 @@
   .amort td[data-money-detail]:focus {
     position: relative;
     z-index: 20;
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus-ring);
     outline-offset: -2px;
   }
   .amort td[data-money-detail]:focus::after {
@@ -678,7 +684,7 @@
   .amort tbody tr:hover {
     background: linear-gradient(90deg, var(--surface-raised), transparent 90%);
   }
-  .amort tbody tr:hover .pin-action { opacity: 1; color: var(--accent-strong); }
+  .amort tbody tr:hover .pin-action { color: var(--accent-strong); }
 
   .amort .col-period {
     color: var(--text-subtle);
@@ -750,7 +756,6 @@
   }
 
   .pin-action {
-    opacity: 0.35;
     cursor: pointer;
     color: var(--text-subtle);
     font-size: 16px;
@@ -799,7 +804,7 @@
     color: var(--text);
     border-radius: 2px;
   }
-  .amort input.cell-edit-input:focus { outline: none; box-shadow: 0 0 0 2px var(--accent-tint); }
+  .amort input.cell-edit-input:focus { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
 
   /* ============ PIN EDITOR ============ */
   .pin-editor-row td {
@@ -915,7 +920,7 @@
     text-transform: uppercase;
     transition: all 0.15s;
   }
-  .pin-editor-actions .pin-btn:hover {
+  .pin-editor-actions .pin-btn:not(:disabled):hover {
     background: var(--text-muted);
     color: var(--on-strong);
     border-color: var(--text-muted);
@@ -925,7 +930,7 @@
     color: var(--on-strong);
     border-color: var(--accent-strong);
   }
-  .pin-editor-actions .save-btn:hover {
+  .pin-editor-actions .save-btn:not(:disabled):hover {
     background: var(--negative);
     border-color: var(--negative);
   }
@@ -934,9 +939,15 @@
     color: var(--negative);
     border-color: var(--negative-soft);
   }
-  .pin-editor-actions .remove-btn:hover {
+  .pin-editor-actions .remove-btn:not(:disabled):hover {
     background: var(--negative);
     color: var(--on-strong);
+  }
+
+  button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transition: opacity 0.15s ease 0.25s;
   }
 
   .table-footer {
@@ -2513,6 +2524,8 @@ function renderTable(viewRows, baseRows, result) {
   document.getElementById('pin-count').textContent = pinCount > 0
     ? `${pinCount} pin${pinCount === 1 ? '' : 's'} active`
     : '';
+  const clearPins = document.getElementById('clear-pins');
+  if (clearPins) clearPins.disabled = pinCount === 0;
 }
 
 function renderPinEditor(row, baseRows) {

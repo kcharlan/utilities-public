@@ -97,6 +97,37 @@ test.describe('theme control', () => {
   });
 });
 
+test('keyboard navigation shows a visible theme-button focus ring', async ({ page }) => {
+  for (let press = 0; press < 40; press++) {
+    await page.keyboard.press('Tab');
+    if (await page.evaluate(() => document.activeElement.id === 'theme-light')) break;
+  }
+  await expect(page.locator('#theme-light')).toBeFocused();
+  await expect(page.locator('#theme-light')).toHaveCSS('outline-style', 'solid');
+});
+
+test('Clear pins is disabled until an adjustment exists', async ({ page }) => {
+  await expect(page.locator('#clear-pins')).toBeDisabled();
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic', at_month: 1, start: { expense: 5001 }, end: {} }]);
+    rerender();
+  });
+  await expect(page.locator('#clear-pins')).toBeEnabled();
+});
+
+test('disabled CSV export stays muted while hovered', async ({ page }) => {
+  await page.locator('#expense').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  const exportButton = page.locator('#export-csv');
+  await expect(exportButton).toBeDisabled();
+  await expect(exportButton).toHaveCSS('opacity', '0.45');
+  const restingFill = await exportButton.evaluate(button => getComputedStyle(button).backgroundColor);
+  await exportButton.hover({ force: true });
+  await page.waitForTimeout(200); // Let the button's 150 ms hover transition finish.
+  await expect.poll(() => exportButton.evaluate(button => getComputedStyle(button).backgroundColor))
+    .toBe(restingFill);
+});
+
 test('fresh projection keeps its last valid rows during invalid input and restores CSV export', async ({ page }) => {
   const firstRow = page.locator('#amort-body tr').first();
   await expect(firstRow).toBeVisible();
