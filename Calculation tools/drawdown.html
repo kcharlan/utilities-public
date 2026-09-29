@@ -1503,6 +1503,28 @@ const intervalArithmetic = (() => {
   return { adjacent, down, up, point, hull, add, sub, mul, div, min, max };
 })();
 
+const scalarArithmetic = {
+  point: value => value,
+  add: (a,b) => a+b,
+  sub: (a,b) => a-b,
+  mul: (a,b) => a*b,
+  max: Math.max,
+};
+
+// The same arithmetic expression graph drives the ordinary month and an
+// interval trial. The interval version substitutes outward-rounded operators.
+function monthlyFlowEquations(A, income, external, tax, expense, cash, floor) {
+  const pretax = A.add(income,A.point(external));
+  const net = A.mul(pretax,A.point(1-tax));
+  return { pretax, net, incomeTax:A.mul(pretax,A.point(tax)),
+    delta:A.sub(net,expense),
+    deficit:A.max(A.point(0),A.sub(A.add(A.point(floor),expense),A.add(cash,net))) };
+}
+
+function principalIncomeEquation(A, raw, modifier, yieldRate, change) {
+  return A.add(raw,A.mul(A.mul(A.point(modifier),yieldRate),change));
+}
+
 // These interval transitions mirror the sale, income-ledger, and inflation events in
 // simulate(). Ambiguous branches are joined after each monthly transition.
 function encloseAnnualIncomeCandidates(context, domain) {
@@ -1541,9 +1563,7 @@ function encloseAnnualIncomeCandidates(context, domain) {
     const income = s.principal[1] <= 0 ? q(0) :
       s.principal[0] > 0 ? payable : I.hull(q(0), payable);
     total = I.add(total, income);
-    const pretax = I.add(income, q(s.external));
-    const net = I.mul(pretax, q(1-s.tax));
-    const deficit = I.max(q(0), I.sub(I.add(q(s.floor),s.expense),I.add(s.cash,net)));
+    const { net, deficit } = monthlyFlowEquations(I,income,s.external,s.tax,s.expense,s.cash,s.floor);
     let sale = q(0), proceeds = q(0), certainFullSale = false;
     if (s.saleTax < 1 && s.principal[1] > 0 && deficit[1] > 0) {
       const principal = I.max(q(0),s.principal);
@@ -1583,13 +1603,13 @@ function encloseAnnualIncomeCandidates(context, domain) {
       s.cash = [s.floor-rounding,s.floor+rounding];
     }
     const change = I.sub(q(0),sale);
-    s.raw = I.add(s.raw,I.mul(I.mul(q(s.modifier),s.yield),change));
+    s.raw = principalIncomeEquation(I,s.raw,s.modifier,s.yield,change);
     s.principal = I.add(s.principal,change);
     if (pin?.end) {
       const end = pin.end;
       if ('investments' in end) {
         const valuation = I.sub(q(end.investments),s.principal);
-        s.raw = I.add(s.raw,I.mul(I.mul(q(s.modifier),s.yield),valuation));
+        s.raw = principalIncomeEquation(I,s.raw,s.modifier,s.yield,valuation);
         s.principal = q(end.investments);
       }
       if ('investment_income' in end) {
@@ -1807,7 +1827,7 @@ function effectiveIncome(ledger) {
 }
 
 function applyPrincipalEvent(ledger, change, modifier) {
-  ledger.rawIncome += modifier * ledger.yieldRate * change;
+  ledger.rawIncome = principalIncomeEquation(scalarArithmetic,ledger.rawIncome,modifier,ledger.yieldRate,change);
   ledger.principal += change;
 }
 
@@ -1923,11 +1943,12 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
 
     // ------- Compute this month -------
     const investment_income = effectiveIncome(sim.ledger);
-    const total_pretax = investment_income + sim.current_external;
-    const net_income = total_pretax * (1 - sim.current_tax);
-    const income_tax_paid = total_pretax * sim.current_tax;
     const expense_this_month = sim.current_expense;
-    const delta = net_income - expense_this_month;
+    const flow = monthlyFlowEquations(scalarArithmetic,investment_income,sim.current_external,
+      sim.current_tax,expense_this_month,sim.buffer,sim.current_floor);
+    const net_income = flow.net;
+    const income_tax_paid = flow.incomeTax;
+    const delta = flow.delta;
 
     let sold = 0;
     let sale_tax_paid = 0;
@@ -1938,7 +1959,7 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
     if (!Number.isFinite(tolerance) || tolerance > 0.0001) {
       return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
     }
-    const deficit = Math.max(0, sim.current_floor + expense_this_month - (openingCash + net_income));
+    const deficit = flow.deficit;
     const hitFloor = deficit > tolerance;
     if (hitFloor && openingPrincipal > 0 && sim.current_sale_tax < 1) {
       const sale = calculateAssetSale(deficit, openingPrincipal, sim.current_sale_tax);
