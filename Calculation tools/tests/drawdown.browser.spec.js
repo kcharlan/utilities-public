@@ -10,6 +10,32 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test.describe('theme token rendering', () => {
+  test('system scheme changes body, chart, halo, and texture without reload', async ({ page }) => {
+    const cash = page.locator('#chart path[data-series="cash"]');
+    const label = page.locator('.chart-y-label').first();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    await expect(cash).toHaveCSS('stroke', 'rgb(140, 194, 168)');
+    await expect(label).toHaveCSS('background-color', 'rgba(29, 25, 19, 0.85)');
+    await expect.poll(() => page.locator('body').evaluate(node => getComputedStyle(node).backgroundImage))
+      .toContain('rgba(236, 228, 212, 0.035)');
+
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+    await expect(cash).toHaveCSS('stroke', 'rgb(44, 74, 62)');
+    await expect.poll(() => page.locator('body').evaluate(node => getComputedStyle(node).backgroundImage))
+      .toContain('rgba(26, 24, 20, 0.035)');
+  });
+
+  test('print uses light colours under a dark system scheme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    await page.emulateMedia({ media: 'print', colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+  });
+});
+
 test('fresh projection keeps its last valid rows during invalid input and restores CSV export', async ({ page }) => {
   const firstRow = page.locator('#amort-body tr').first();
   await expect(firstRow).toBeVisible();
