@@ -568,9 +568,11 @@ test('generic search resolves tangent root without sign change', async () => {
     enclose: ([lo,hi]) => ({ total: [lo<=3&&hi>=3 ? 0 : Math.min((lo-3)**2,(hi-3)**2),
       Math.max((lo-3)**2,(hi-3)**2)], possibleFunded: true }), domain: [0,8], current: 0, target: 0 });
   assert.equal(tangent.status, 'solved');
-  assert.ok(Math.abs(tangent.x-3) < 1e-4);
-  const optimum = 3-Math.sqrt(1e-9);
-  assert.ok(tangent.x <= optimum+1e-9);
+  const rho = 1e-9, tau = 1e-9;
+  const nearestFeasible = 3-Math.sqrt(rho);
+  assert.ok(Math.abs(tangent.total) <= rho);
+  assert.ok(Math.abs(tangent.x-nearestFeasible) <= tau,
+    `${tangent.x} is farther than tau from the analytic feasible-band endpoint ${nearestFeasible}`);
 });
 
 test('generic search handles a flat feasible interval', async () => {
