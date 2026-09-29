@@ -2984,6 +2984,7 @@ function collectPinFields(fieldInputs, dirtyKeys) {
 
 let pendingFocus = null;
 let pinEditorOpener = null;
+let pinEditorFallback = null;
 function restorePendingFocus() {
   if (pendingFocus) document.querySelector(pendingFocus)?.focus({ preventScroll: true });
   pendingFocus = null;
@@ -2999,6 +3000,7 @@ function togglePinEditor(month, id = null) {
     pinEditorOpener = id
       ? `#amort-body .pin-action[data-id="${CSS.escape(id)}"]`
       : `#amort-body .pin-action[data-month="${month}"]:not([data-id])`;
+    pinEditorFallback = id ? `.adj-entry[data-id="${CSS.escape(id)}"] .adj-open` : null;
     pendingFocus = '.pin-editor .pin-field-input';
   }
   rerender();
@@ -3251,6 +3253,7 @@ function removePinFromUI(id, errorElement = null) {
   if (state.editing?.id === id) {
     // The removed pin's opener disappears, so return to that month's add button.
     pinEditorOpener = `#amort-body .pin-action[data-month="${state.editing.month}"]:not([data-id])`;
+    pinEditorFallback = null;
     state.editing = null;
   }
   rerender(true);
@@ -3265,6 +3268,7 @@ function jumpToPin(id) {
   const editorMonth = state.params.unit === 'years' ? Math.floor((pin.at_month - 1) / 12) * 12 + 1 : pin.at_month;
   state.editing = { month: pin.at_month, id };
   pinEditorOpener = `.adj-entry[data-id="${CSS.escape(id)}"] .adj-open`;
+  pinEditorFallback = null;
   pendingFocus = '.pin-editor .pin-field-input';
   rerender(); // rebuilds the tbody...
   const row = document.querySelector(`tr[data-month="${editorMonth}"]`);
@@ -3347,8 +3351,9 @@ function rerender(validated = false) {
   renderAdjustments();
   attachPinEditorEvents(viewRows, result.rows);
   if (!state.editing && pinEditorOpener) {
-    pendingFocus = pinEditorOpener;
+    pendingFocus = document.querySelector(pinEditorOpener) ? pinEditorOpener : pinEditorFallback;
     pinEditorOpener = null;
+    pinEditorFallback = null;
   }
   restorePendingFocus();
   return result;
@@ -3566,6 +3571,9 @@ function init() {
     if (!checked.ok) return;
     acceptPins([]);
     state.editing = null;
+    pinEditorOpener = null;
+    pinEditorFallback = null;
+    pendingFocus = '#calc-button';
     rerender(true);
   });
 

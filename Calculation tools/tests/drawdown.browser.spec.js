@@ -64,6 +64,41 @@ test('Enter commits an inline cell and returns focus to the cell', async ({ page
   await expect(cell).toContainText('$12,346');
 });
 
+test('moving a table-opened pin beyond the horizon focuses its sidebar action', async ({ page }) => {
+  const add = page.getByRole('button', { name: 'Add adjustment at month 2', exact: true });
+  await add.click();
+  await page.locator('.pin-field-input[data-phase="start"][data-key="expense"]').fill('12345.67');
+  await page.locator('#pin-save').click();
+  await page.getByRole('button', { name: 'Edit adjustment at month 2', exact: true }).click();
+  await page.locator('#pin-month').fill('121');
+  await page.locator('#pin-save').click();
+
+  const moved = page.locator('#adjustments-list .adj-entry[data-month="121"] .adj-open');
+  await expect(moved).toBeFocused();
+  await expect(page.locator('#amort-body .pin-action[data-id]')).toHaveCount(0);
+});
+
+test('Clear pins while editing returns focus to Recalculate', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-pin', at_month: 2, start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  await page.getByRole('button', { name: 'Edit adjustment at month 2', exact: true }).click();
+  await page.locator('#clear-pins').click();
+  await expect(page.locator('#calc-button')).toBeFocused();
+  await expect(page.locator('#clear-pins')).toBeDisabled();
+});
+
+test('Clear pins does not restore focus to a surviving unsaved Add action', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-pin', at_month: 2, start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  await page.getByRole('button', { name: 'Add adjustment at month 2', exact: true }).click();
+  await page.locator('#clear-pins').click();
+  await expect(page.locator('#calc-button')).toBeFocused();
+});
+
 test('sidebar controls have associated names and described hints', async ({ page }) => {
   await expect(page.getByLabel('Starting cash', { exact: true })).toHaveId('buffer-initial');
   await expect(page.getByLabel('Expenses, monthly', { exact: true })).toHaveId('expense');
