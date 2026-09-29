@@ -360,6 +360,13 @@
     margin-bottom: 32px;
     position: relative;
   }
+  .header-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
   .header .eyebrow {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
@@ -395,9 +402,6 @@
     max-width: 540px;
   }
   .header .today-stamp {
-    position: absolute;
-    top: 8px;
-    right: 0;
     font-family: 'JetBrains Mono', monospace;
     font-size: 10.5px;
     text-transform: uppercase;
@@ -413,18 +417,18 @@
 
   .stats {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 0;
+    overflow: hidden;
     border-top: 1.5px solid var(--text);
     border-bottom: 1px solid var(--rule);
     margin-bottom: 28px;
   }
   .stat {
     padding: 14px 16px 14px;
-    border-right: 1px solid var(--rule);
+    box-shadow: 1px 0 0 var(--rule), 0 1px 0 var(--rule);
     position: relative;
   }
-  .stat:last-child { border-right: none; }
   .stat-label {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
@@ -474,6 +478,8 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 16px;
     margin-bottom: 10px;
   }
   .chart-title {
@@ -1063,6 +1069,20 @@
 
   @media (max-width: 900px) {
     .layout { grid-template-columns: minmax(0, 1fr); }
+    .sidebar {
+      position: static;
+      max-height: none;
+      overflow: visible;
+      border-right: 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    .main { padding: 24px 16px 40px; }
+  }
+
+  @media (max-width: 560px) {
+    .sidebar { padding: 20px 16px 28px; }
+    .table-head { flex-wrap: wrap; gap: 12px; }
+    .table-actions { width: 100%; flex-wrap: wrap; }
   }
 
 </style>
@@ -1164,10 +1184,12 @@
 
   <main class="main">
     <header class="header">
-      <div class="eyebrow">A study in patience &amp; principal</div>
+      <div class="header-meta">
+        <div class="eyebrow">A study in patience &amp; principal</div>
+        <div class="today-stamp">From <strong id="today-stamp"></strong></div>
+      </div>
       <h2>Investment <em>Drawdown</em></h2>
       <p class="subtitle">A month-by-month projection of cash, principal, and income until the protected reserve cannot be maintained or the horizon ends.</p>
-      <div class="today-stamp">From <strong id="today-stamp"></strong></div>
     </header>
 
     <div class="stats" id="stats"></div>

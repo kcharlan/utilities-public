@@ -10,6 +10,34 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('phone layout stacks the sidebar and keeps content inside the viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => {
+    const rect = selector => document.querySelector(selector).getBoundingClientRect();
+    const stamp = rect('.today-stamp');
+    const heading = rect('.header h2');
+    const titles = rect('.table-head-titles');
+    const actions = rect('.table-actions');
+    return document.documentElement.scrollWidth <= innerWidth
+      && ['#chart', '.stats', '.table-scroll'].every(selector => rect(selector).width >= 300)
+      && rect('.sidebar').bottom <= rect('.main').top
+      && (stamp.right <= heading.left || heading.right <= stamp.left
+        || stamp.bottom <= heading.top || heading.bottom <= stamp.top)
+      && actions.top >= titles.bottom;
+  })).toBe(true);
+  await page.locator('#amort-body tr[data-month="1"] td[data-key="expense"]').click();
+  await page.locator('#today-stamp').click();
+  await expect(page.locator('.cell-edit-input')).toHaveCount(0);
+});
+
+test('tablet layout keeps stat labels compact without page overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= innerWidth
+      && [...document.querySelectorAll('.stat-label')].every(label => label.getBoundingClientRect().height < 30)
+  )).toBe(true);
+});
+
 test('table pin editor keeps Save visible while the table scrolls horizontally', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.locator('#expense').fill('12000');
