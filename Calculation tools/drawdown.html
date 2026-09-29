@@ -9,40 +9,79 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=Hanken+Grotesk:wght@300..800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --paper: #F2ECE0;
-    --paper-warm: #EAE3D5;
-    --paper-deep: #E3DAC8;
-    --ink: #1A1814;
-    --ink-soft: #5C544A;
-    --ink-fade: #9A9085;
-    --oxblood: #7A2A1F;
-    --oxblood-soft: #B85D4F;
-    --forest: #2C4A3E;
-    --forest-soft: #6B9080;
-    --ochre: #B8862A;
-    --ochre-soft: #DBB76D;
-    --ochre-pale: rgba(184, 134, 42, 0.08);
-    --umber: #6B4423;
-    --rule: #CDC1AD;
-    --rule-soft: #DCD2C0;
-    --rule-fine: #E6DDC9;
+    color-scheme: light dark;
+    --surface: light-dark(#F2ECE0, #16130E);
+    --surface-raised: light-dark(#EAE3D5, #1D1913);
+    --surface-sunken: light-dark(#E3DAC8, #25201A);
+    --text: light-dark(#1A1814, #ECE4D4);
+    --text-muted: light-dark(#4E473E, #BDB19E);
+    --text-subtle: light-dark(#645B4F, #9C907D);
+    --accent: light-dark(#946A1C, #DDAE52);
+    --accent-strong: light-dark(#7A5516, #DDAE52);
+    --negative: light-dark(#7A2A1F, #E48A78);
+    --negative-soft: light-dark(#B85D4F, #C9705F);
+    --positive: light-dark(#2C4A3E, #8CC2A8);
+    --series-principal: light-dark(#6B4423, #C08A5C);
+    --rule: light-dark(#CDC1AD, #3B3429);
+    --rule-fine: light-dark(#E6DDC9, #2A251D);
+    --control-border: light-dark(#7F7361, #7C7060);
+    --accent-tint: light-dark(rgba(148,106,28,0.09), rgba(221,174,82,0.10));
+    --accent-tint-strong: light-dark(rgba(148,106,28,0.14), rgba(221,174,82,0.12));
+    --negative-tint: light-dark(rgba(122,42,31,0.06), rgba(228,138,120,0.10));
+    --negative-halo: light-dark(rgba(122,42,31,0.2), rgba(228,138,120,0.25));
+    --band-tint: light-dark(rgba(26,24,20,0.03), rgba(236,228,212,0.03));
+    --label-halo: light-dark(rgba(234,227,213,0.85), rgba(29,25,19,0.85));
+    --texture-dot: light-dark(rgba(26,24,20,0.035), rgba(236,228,212,0.035));
+    --glow-warm: light-dark(rgba(184,134,42,0.04), rgba(221,174,82,0.035));
+    --glow-cool: light-dark(rgba(44,74,62,0.04), rgba(140,194,168,0.03));
+    --shadow: light-dark(rgba(0,0,0,0.12), rgba(0,0,0,0.5));
+    --series-cash: var(--positive);
+    --series-floor: var(--accent);
+    --focus-ring: var(--accent-strong);
+    --on-strong: var(--surface);
+    --fs-2xs: 11px;
+    --fs-xs: 12px;
+    --fs-sm: 13px;
+    --fs-base: 14px;
+    --fs-md: 16px;
+    --fs-lg: 20px;
+    --fs-xl: 28px;
+    --fs-2xl: 40px;
+    --fs-display: clamp(36px, 7vw, 62px);
   }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  @media print { :root, :root[data-theme] { color-scheme: light; } }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
-  html { scroll-behavior: smooth; }
+  :where(button, [tabindex]):focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 
   body {
     font-family: 'Hanken Grotesk', system-ui, sans-serif;
-    background: var(--paper);
-    color: var(--ink);
-    font-size: 14px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--fs-base);
     line-height: 1.45;
     min-height: 100vh;
     background-image:
-      radial-gradient(circle at 1px 1px, rgba(26,24,20,0.035) 1px, transparent 0),
-      radial-gradient(ellipse at top left, rgba(184,134,42,0.04), transparent 50%),
-      radial-gradient(ellipse at bottom right, rgba(44,74,62,0.04), transparent 50%);
+      radial-gradient(circle at 1px 1px, var(--texture-dot) 1px, transparent 0),
+      radial-gradient(ellipse at top left, var(--glow-warm), transparent 50%),
+      radial-gradient(ellipse at bottom right, var(--glow-cool), transparent 50%);
     background-size: 22px 22px, 100% 100%, 100% 100%;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -56,7 +95,7 @@
 
   /* ============ SIDEBAR ============ */
   .sidebar {
-    background: var(--paper-warm);
+    background: var(--surface-raised);
     border-right: 1px solid var(--rule);
     padding: 32px 26px 40px;
     position: sticky;
@@ -66,10 +105,10 @@
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-width: thin;
-    scrollbar-color: var(--rule) transparent;
+    scrollbar-color: var(--control-border) transparent;
   }
   .sidebar::-webkit-scrollbar { width: 6px; }
-  .sidebar::-webkit-scrollbar-thumb { background: var(--rule); }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--control-border); }
 
   .brand {
     margin-bottom: 28px;
@@ -79,35 +118,36 @@
   .brand .mark {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9, "SOFT" 100;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.22em;
-    color: var(--ink-fade);
+    color: var(--text-subtle);
     margin-bottom: 4px;
   }
   .brand h1 {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 144, "SOFT" 30;
     font-weight: 400;
-    font-size: 36px;
+    font-size: var(--fs-2xl);
     line-height: 0.95;
     letter-spacing: -0.025em;
-    color: var(--ink);
+    color: var(--text);
   }
   .brand h1 em {
     font-style: italic;
     font-weight: 300;
-    color: var(--oxblood);
+    color: var(--negative);
     font-variation-settings: "opsz" 144, "SOFT" 50;
   }
   .brand .tagline {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
-    color: var(--ink-soft);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
     margin-top: 6px;
     letter-spacing: 0.005em;
   }
+  .theme-switching * { transition: none !important; }
 
   .group { margin-bottom: 20px; }
   .group:last-of-type { margin-bottom: 16px; }
@@ -115,10 +155,10 @@
   .group-label {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.2em;
-    color: var(--ink-soft);
+    color: var(--text-muted);
     margin-bottom: 11px;
     padding-bottom: 5px;
     border-bottom: 1px solid var(--rule);
@@ -128,8 +168,8 @@
   }
   .group-label .ordinal {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 9px;
-    color: var(--ink-fade);
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
     letter-spacing: 0.05em;
   }
 
@@ -141,25 +181,36 @@
     gap: 12px;
   }
   .field label {
-    font-size: 12.5px;
-    color: var(--ink);
+    font-size: var(--fs-sm);
+    color: var(--text);
     flex: 1;
   }
   .field label .hint {
     display: block;
-    font-size: 10.5px;
-    color: var(--ink-fade);
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
     font-style: italic;
     font-family: 'Fraunces', serif;
     margin-top: 1px;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   /* Adjustments panel — read-only list of pins in the sidebar */
   .adj-empty {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
-    color: var(--ink-fade);
+    font-size: var(--fs-xs);
+    color: var(--text-subtle);
   }
   .adj-entry {
     padding: 8px 0;
@@ -174,17 +225,22 @@
     gap: 10px;
     margin-bottom: 3px;
   }
-  .adj-entry-when {
+  .adj-open {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
-    color: var(--ochre);
+    font-size: var(--fs-xs);
+    color: var(--accent-strong);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
   }
   .adj-remove {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11px;
-    color: var(--ink-fade);
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
     background: transparent;
     border: none;
     cursor: pointer;
@@ -193,7 +249,7 @@
     padding: 0;
     flex-shrink: 0;
   }
-  .adj-remove:hover { color: var(--oxblood); }
+  .adj-remove:hover { color: var(--negative); }
   .adj-phase-statuses {
     display: flex;
     flex-wrap: wrap;
@@ -201,54 +257,72 @@
     margin: 3px 0 5px;
   }
   .adj-phase-status {
-    font-size: 10px;
-    color: var(--ink-soft);
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
   }
   .adj-field {
     display: flex;
     justify-content: space-between;
     gap: 10px;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     padding: 1px 0;
   }
-  .adj-field-label { color: var(--ink-soft); }
+  .adj-field-label { color: var(--text-muted); }
   .adj-field-val {
-    color: var(--ink);
+    color: var(--text);
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
   }
 
   .input-wrap {
     display: inline-flex;
     align-items: center;
-    background: var(--paper);
-    border: 1px solid var(--rule);
+    background: var(--surface);
+    border: 1px solid var(--control-border);
     transition: border-color 0.15s;
   }
   .input-wrap:focus-within {
-    border-color: var(--ink);
+    border-color: var(--focus-ring);
+    box-shadow: 0 0 0 1px var(--focus-ring);
+  }
+  .field .input-wrap { width: 128px; }
+  .field-control {
+    display: grid;
+    justify-items: end;
+    gap: 2px;
+  }
+  .field-readout {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
   }
   .input-wrap .prefix,
   .input-wrap .suffix {
-    color: var(--ink-fade);
+    color: var(--text-subtle);
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     padding: 0 4px;
   }
   .input-wrap .prefix { padding-left: 7px; }
   .input-wrap .suffix { padding-right: 7px; }
   .input-wrap input {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     background: transparent;
     border: none;
     outline: none;
     padding: 6px 4px;
     width: 88px;
     text-align: right;
-    color: var(--ink);
+    color: var(--text);
     font-feature-settings: "tnum";
     -moz-appearance: textfield;
+  }
+  .field .input-wrap input,
+  .pin-editor-field .input-wrap input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
   }
   .input-wrap input::-webkit-outer-spin-button,
   .input-wrap input::-webkit-inner-spin-button {
@@ -256,64 +330,74 @@
     margin: 0;
   }
 
-  .toggle {
+  .toggle, .theme-toggle {
     display: flex;
-    background: var(--paper);
-    border: 1px solid var(--rule);
+    background: var(--surface);
+    border: 1px solid var(--control-border);
     overflow: hidden;
   }
-  .toggle button {
+  .toggle button, .theme-toggle button {
     flex: 1;
     padding: 7px 10px;
     background: transparent;
     border: none;
     font-family: 'Hanken Grotesk', sans-serif;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     cursor: pointer;
-    color: var(--ink-soft);
+    color: var(--text-muted);
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    transition: all 0.15s;
+    transition: background-color 0.15s, color 0.15s;
   }
-  .toggle button:not(.active):hover {
-    background: var(--paper-warm);
-    color: var(--ink);
+  .toggle button:not(.active):not(:disabled):hover, .theme-toggle button:not(.active):not(:disabled):hover {
+    background: var(--surface-raised);
+    color: var(--text);
   }
-  .toggle button.active {
-    background: var(--ink);
-    color: var(--paper);
+  .toggle button.active, .theme-toggle button.active {
+    background: var(--text);
+    color: var(--on-strong);
   }
+  .theme-toggle { margin-top: 12px; display: inline-flex; }
+  .theme-toggle button { flex: 0 0 auto; padding: 4px 9px; }
 
   .calc-button {
     width: 100%;
     padding: 11px;
-    background: var(--ink);
-    color: var(--paper);
-    border: none;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--control-border);
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 24, "SOFT" 50;
     font-weight: 400;
-    font-size: 14px;
+    font-size: var(--fs-base);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
     margin-top: 18px;
-    transition: all 0.2s;
+    transition: background-color 0.2s;
     position: relative;
     overflow: hidden;
   }
-  .calc-button:hover { background: var(--oxblood); }
+  .calc-button:not(:disabled):hover { background: var(--text); color: var(--on-strong); }
+  .sidebar-status-anchor { position: sticky; top: 0; height: 0; z-index: 4; transform: translateY(-32px); }
+  .sidebar-status-anchor > #scenario-status { position: absolute; top: 0; left: 0; right: 0; }
   .scenario-status {
-    margin-top: 14px;
     padding: 10px 12px;
-    border: 1px solid var(--oxblood);
-    color: var(--oxblood);
-    background: var(--paper-warm);
-    font-size: 12px;
+    border: 1px solid var(--negative);
+    color: var(--negative);
+    background: var(--surface-raised);
+    box-shadow: 0 3px 8px var(--shadow);
+    font-size: var(--fs-xs);
     line-height: 1.45;
   }
+  .scenario-status[data-tone="pending"] {
+    color: var(--text-muted);
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
   .scenario-status[hidden] { display: none; }
-  .field input[aria-invalid="true"] { outline: 2px solid var(--oxblood); outline-offset: 2px; }
+  .field input[aria-invalid="true"] { outline: 2px solid var(--negative); outline-offset: 2px; }
   .calc-button:active { transform: translateY(1px); }
   .calc-button .arrow {
     font-family: 'Fraunces', serif;
@@ -323,7 +407,7 @@
     display: inline-block;
     transition: transform 0.2s;
   }
-  .calc-button:hover .arrow { transform: translateX(3px); }
+  .calc-button:not(:disabled):hover .arrow { transform: translateX(3px); }
 
   /* ============ MAIN ============ */
   .main {
@@ -335,102 +419,114 @@
     margin-bottom: 32px;
     position: relative;
   }
+  .header-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
   .header .eyebrow {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.24em;
-    color: var(--oxblood);
+    color: var(--negative);
     margin-bottom: 6px;
   }
-  .header h2 {
+  .header .verdict {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 144, "SOFT" 40, "wght" 350;
     font-weight: 350;
-    font-size: 62px;
+    font-size: var(--fs-display);
     line-height: 0.96;
     letter-spacing: -0.035em;
-    color: var(--ink);
+    color: var(--text);
   }
-  .header h2 em {
+  .header .verdict em {
     font-style: italic;
     font-weight: 300;
-    color: var(--ink-soft);
+    color: var(--text-muted);
     font-variation-settings: "opsz" 144, "SOFT" 80, "wght" 300;
+  }
+  .header .verdict.is-failure em { color: var(--negative); }
+  .header .verdict.is-stale,
+  .header .verdict.is-stale em { color: var(--text-subtle); }
+  .header .verdict-note {
+    font-size: var(--fs-xs);
+    font-style: italic;
+    color: var(--text-subtle);
   }
   .header .subtitle {
     font-family: 'Fraunces', serif;
     font-style: italic;
     font-variation-settings: "opsz" 24, "SOFT" 50;
-    font-size: 15px;
-    color: var(--ink-soft);
+    font-size: var(--fs-md);
+    color: var(--text-muted);
     margin-top: 10px;
     letter-spacing: 0.005em;
     max-width: 540px;
   }
   .header .today-stamp {
-    position: absolute;
-    top: 8px;
-    right: 0;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10.5px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.18em;
-    color: var(--ink-fade);
+    color: var(--text-subtle);
     border-left: 1px solid var(--rule);
     padding-left: 12px;
   }
   .header .today-stamp strong {
-    color: var(--ink);
+    color: var(--text);
     font-weight: 500;
   }
 
   .stats {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 0;
-    border-top: 1.5px solid var(--ink);
+    overflow: hidden;
+    border-top: 1.5px solid var(--text);
     border-bottom: 1px solid var(--rule);
     margin-bottom: 28px;
   }
   .stat {
     padding: 14px 16px 14px;
-    border-right: 1px solid var(--rule);
+    box-shadow: 1px 0 0 var(--rule), 0 1px 0 var(--rule);
     position: relative;
   }
-  .stat:last-child { border-right: none; }
   .stat-label {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 9.5px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.2em;
-    color: var(--ink-soft);
+    color: var(--text-muted);
     margin-bottom: 7px;
   }
   .stat-value {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 19px;
+    font-size: var(--fs-lg);
     font-weight: 500;
-    color: var(--ink);
+    color: var(--text);
     letter-spacing: -0.015em;
     font-feature-settings: "tnum";
     line-height: 1.05;
   }
-  .stat-value.warning { color: var(--oxblood); }
+  .stat-value.warning { color: var(--negative); }
   .stat-detail {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11px;
-    color: var(--ink-fade);
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
     margin-top: 4px;
   }
 
   /* ============ CHART ============ */
   .chart-container {
     margin-bottom: 32px;
-    background: var(--paper-warm);
+    background: var(--surface-raised);
     padding: 18px 22px 14px;
     border: 1px solid var(--rule);
     position: relative;
@@ -442,67 +538,105 @@
     left: -1px;
     right: -1px;
     height: 3px;
-    background: linear-gradient(90deg, var(--forest), var(--ochre), var(--oxblood));
+    background: linear-gradient(90deg, var(--positive), var(--accent), var(--negative));
     opacity: 0.4;
   }
   .chart-head {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 16px;
     margin-bottom: 10px;
   }
   .chart-title {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 10.5px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.2em;
-    color: var(--ink-soft);
+    color: var(--text-muted);
   }
   .chart-legend {
     display: flex;
     gap: 18px;
-    font-size: 11px;
-    color: var(--ink-soft);
-    font-family: 'Hanken Grotesk';
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
   }
   .legend-swatch {
     display: inline-block;
-    width: 12px;
-    height: 12px;
+    width: 18px;
+    height: 0;
+    border-top: 2px solid;
     vertical-align: -2px;
     margin-right: 6px;
   }
   .chart-svg {
     width: 100%;
-    height: 200px;
+    height: 280px;
     display: block;
     overflow: visible;
   }
   .chart-y-labels {
     position: absolute;
-    left: 22px;
-    top: 38px;
-    height: 200px;
+    left: 0;
+    top: 0;
+    height: 280px;
     pointer-events: none;
-    width: 60px;
+    width: auto;
   }
   .chart-y-label {
     position: absolute;
+    transform: translateY(-50%);
+    white-space: nowrap;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 9.5px;
-    color: var(--ink-fade);
-    background: rgba(234,227,213,0.85);
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
+    background: var(--label-halo);
     padding: 0 4px;
     letter-spacing: -0.01em;
   }
+  .chart-y-label--floor { color: var(--accent-strong); }
+  .legend-swatch--cash { border-color: var(--series-cash); }
+  .legend-swatch--principal { border-color: var(--series-principal); }
+  .legend-swatch--floor { border-color: var(--series-floor); border-style: dashed; }
+  #chart path[data-series] { fill: none; }
+  .chart-grid { stroke: var(--rule-fine); stroke-width: 1; }
+  .chart-reserve-band { fill: var(--negative-tint); stroke: none; }
+  #chart path[data-series="cash"] { stroke: var(--series-cash); stroke-width: 2; }
+  #chart path[data-series="principal"] { stroke: var(--series-principal); stroke-width: 2; }
+  #chart path[data-series="floor"] { stroke: var(--series-floor); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .chart-pin-line { stroke: var(--accent); stroke-width: 0.8; stroke-dasharray: 2 3; opacity: 0.6; }
+  .chart-pin-dot { fill: var(--accent); }
+  .chart-failure-line { stroke: var(--negative); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0.7; }
+  .chart-failure-label { fill: var(--negative); font-family: 'Fraunces', Georgia, serif; font-style: italic; font-size: var(--fs-2xs); }
+  .chart-end-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-2xs); }
+  .chart-end-label--cash { fill: var(--series-cash); }
+  .chart-end-label--principal { fill: var(--series-principal); }
+  .chart-crosshair { stroke: var(--text-subtle); stroke-width: 1; }
+  .chart-hover-dot--cash { fill: var(--series-cash); }
+  .chart-hover-dot--principal { fill: var(--series-principal); }
+  .chart-hover-dot--floor { fill: var(--series-floor); }
+  .chart-tooltip {
+    position: absolute;
+    z-index: 2;
+    background: var(--surface-raised);
+    border: 1px solid var(--control-border);
+    box-shadow: 0 3px 8px var(--shadow);
+    padding: 8px 10px;
+    font-size: var(--fs-xs);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .chart-tooltip[hidden] { display: none; }
   .chart-x-labels {
     display: flex;
     justify-content: space-between;
     padding: 6px 0 0;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    color: var(--ink-fade);
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
   }
 
   /* ============ TABLE ============ */
@@ -514,13 +648,14 @@
     max-width: 100%;
     max-height: calc(100vh - 24px);
     overflow: auto;
+    container-type: inline-size;
   }
   .table-head {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     padding: 14px 0 12px;
-    border-top: 1.5px solid var(--ink);
+    border-top: 1.5px solid var(--text);
     border-bottom: 1px solid var(--rule);
     margin-bottom: 0;
   }
@@ -528,13 +663,13 @@
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 72, "SOFT" 30;
     font-weight: 400;
-    font-size: 26px;
+    font-size: var(--fs-xl);
     letter-spacing: -0.015em;
-    color: var(--ink);
+    color: var(--text);
   }
   .table-head h3 em {
     font-style: italic;
-    color: var(--ink-soft);
+    color: var(--text-muted);
     font-weight: 300;
     font-variation-settings: "opsz" 72, "SOFT" 50, "wght" 300;
   }
@@ -542,48 +677,49 @@
   .table-hint {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11.5px;
-    color: var(--ink-fade);
+    font-size: var(--fs-xs);
+    color: var(--text-subtle);
     letter-spacing: 0.01em;
   }
-  .table-hint em { font-style: italic; color: var(--ochre); font-weight: 500; }
+  .table-hint em { font-style: italic; color: var(--accent-strong); font-weight: 500; }
   .table-actions { display: flex; gap: 8px; align-items: center; }
   .table-actions .pin-count {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
-    color: var(--ochre);
+    font-size: var(--fs-xs);
+    color: var(--accent-strong);
     margin-right: 4px;
   }
   .table-actions button {
     padding: 6px 12px;
-    background: var(--paper);
-    border: 1px solid var(--rule);
+    background: var(--surface);
+    border: 1px solid var(--control-border);
     font-family: 'Hanken Grotesk', sans-serif;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     cursor: pointer;
-    color: var(--ink-soft);
+    color: var(--text-muted);
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    transition: all 0.15s;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
   }
-  .table-actions button:hover {
-    background: var(--ink);
-    color: var(--paper);
-    border-color: var(--ink);
+  .table-actions button:not(:disabled):hover {
+    background: var(--text);
+    color: var(--on-strong);
+    border-color: var(--text);
   }
 
   .amort {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     font-feature-settings: "tnum";
   }
   .amort thead {
     position: sticky;
     top: 0;
-    background: var(--paper);
+    background: var(--surface);
     z-index: 5;
   }
   .amort th {
@@ -591,24 +727,41 @@
     padding: 11px 10px 9px;
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9, "SOFT" 30;
-    font-size: 10px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.16em;
-    color: var(--ink-soft);
+    color: var(--text-muted);
     font-weight: 500;
     border-bottom: 1px solid var(--rule);
     white-space: nowrap;
   }
-  .amort th:nth-child(2),
-  .amort th:nth-child(3),
-  .amort th:nth-child(11) { text-align: left; }
-  .amort th:first-child { width: 28px; text-align: center; padding: 11px 6px 9px; }
+  .amort thead .col-heads th:nth-child(2),
+  .amort thead .col-heads th:nth-child(3),
+  .amort thead .col-heads th:nth-child(11) { text-align: left; }
+  .amort th:first-child { text-align: center; padding: 11px 6px 9px; }
+  .amort thead .col-groups th { text-align: center; }
+  .amort thead .col-heads th:nth-child(-n+3),
+  .amort thead .col-groups th:first-child {
+    position: sticky;
+    background: var(--surface);
+    z-index: 1;
+  }
+  .amort thead .col-heads th:nth-child(1),
+  .amort thead .col-groups th:first-child { left: 0; }
+  .amort thead .col-heads th:nth-child(2) { left: 48px; }
+  .amort thead .col-heads th:nth-child(3) { left: 100px; }
+  .amort thead .col-heads th:nth-child(1),
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(1) { min-width: 48px; }
+  .amort thead .col-heads th:nth-child(2),
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(2) { min-width: 52px; }
+  .amort thead .col-heads th:nth-child(3),
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(3) { min-width: 150px; }
 
   .amort td {
     padding: 7px 10px;
     text-align: right;
     border-bottom: 1px solid var(--rule-fine);
-    color: var(--ink);
+    color: var(--text);
     white-space: nowrap;
   }
   .amort td:nth-child(2),
@@ -618,7 +771,7 @@
   .amort td[data-money-detail]:focus {
     position: relative;
     z-index: 20;
-    outline: 2px solid var(--ochre);
+    outline: 2px solid var(--focus-ring);
     outline-offset: -2px;
   }
   .amort td[data-money-detail]:focus::after {
@@ -631,46 +784,66 @@
     padding: 6px 8px;
     white-space: normal;
     text-align: left;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     line-height: 1.4;
-    color: var(--ink);
-    background: var(--paper-warm);
-    border: 1px solid var(--ochre);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+    color: var(--text);
+    background: var(--surface-raised);
+    border: 1px solid var(--accent);
+    box-shadow: 0 3px 8px var(--shadow);
     pointer-events: none;
   }
 
   .amort tbody tr {
     position: relative;
+    --row-bg: var(--surface);
+    background: var(--row-bg);
     transition: background 0.1s;
   }
-  .amort tbody tr:hover {
-    background: linear-gradient(90deg, var(--paper-warm), transparent 90%);
+  .amort tbody tr:where(:nth-child(even of :not(.pin-editor-row))) {
+    --row-bg: linear-gradient(var(--band-tint) 0 0), var(--surface);
   }
-  .amort tbody tr:hover .pin-action { opacity: 1; color: var(--ochre); }
+  .amort tbody tr:hover,
+  .amort tbody tr.is-pinned {
+    --row-bg: linear-gradient(var(--accent-tint) 0 0), var(--surface);
+  }
+  .amort tbody tr.is-insolvent {
+    --row-bg: linear-gradient(var(--negative-tint) 0 0), var(--surface);
+  }
+  .amort tbody tr.is-chart-hover {
+    --row-bg: linear-gradient(var(--accent-tint-strong) 0 0), var(--surface);
+  }
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(-n+3) {
+    position: sticky;
+    background: var(--row-bg);
+    z-index: 2;
+  }
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(1) { left: 0; }
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(2) { left: 48px; }
+  .amort tbody tr:not(.pin-editor-row) td:nth-child(3) { left: 100px; }
+  .amort tbody tr:hover .pin-action { color: var(--accent-strong); }
 
   .amort .col-period {
-    color: var(--ink-fade);
-    font-size: 10.5px;
+    color: var(--text-subtle);
+    font-size: var(--fs-2xs);
   }
   .amort .col-date {
-    color: var(--ink-soft);
+    color: var(--text-muted);
     font-family: 'Fraunces', serif;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     font-style: italic;
     letter-spacing: 0.01em;
   }
-  .amort .delta-pos { color: var(--forest); }
-  .amort .delta-neg { color: var(--oxblood); }
+  .amort .delta-pos { color: var(--positive); }
+  .amort .delta-neg { color: var(--negative); }
   .amort .col-sold {
-    color: var(--umber);
+    color: var(--series-principal);
   }
-  .amort .col-sold-zero { color: var(--ink-fade); }
+  .amort .col-sold-zero { color: var(--text-subtle); }
   .amort .col-notes {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11.5px;
-    color: var(--ink-soft);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
     letter-spacing: 0.01em;
     padding-right: 10px;
   }
@@ -682,22 +855,12 @@
     margin-right: 5px;
     vertical-align: middle;
   }
-  .amort .marker-dot.floor { background: var(--oxblood-soft); }
-  .amort .marker-dot.pinned { background: var(--ochre); }
-  .amort .marker-dot.surplus { background: var(--forest-soft); }
-  .amort .marker-dot.insolvency { background: var(--oxblood); box-shadow: 0 0 0 2px rgba(122,42,31,0.2); }
+  .amort .marker-dot.floor { background: var(--negative-soft); }
+  .amort .marker-dot.pinned { background: var(--accent); }
+  .amort .marker-dot.insolvency { background: var(--negative); box-shadow: 0 0 0 2px var(--negative-halo); }
 
-  .amort tr.is-pinned {
-    background: linear-gradient(90deg, var(--ochre-pale), transparent 80%);
-  }
   .amort tr.is-pinned td {
-    border-top: 1px solid var(--ochre);
-  }
-  .amort tr.is-pinned + tr td {
-    /* avoid double border */
-  }
-  .amort tr.is-pinned td:first-child {
-    position: relative;
+    box-shadow: inset 0 1px 0 var(--accent);
   }
   .amort tr.is-pinned td:first-child::before {
     content: '';
@@ -706,41 +869,41 @@
     top: -1px;
     bottom: 0;
     width: 3px;
-    background: var(--ochre);
-  }
-  .amort tr.is-insolvent {
-    background: rgba(122,42,31,0.06);
+    background: var(--accent);
   }
   .amort tr.is-insolvent td {
-    color: var(--oxblood);
+    color: var(--negative);
   }
   .amort tr.is-insolvent .col-date,
   .amort tr.is-insolvent .col-notes {
-    color: var(--oxblood);
+    color: var(--negative);
   }
 
+  .gutter-actions { display: inline-flex; flex-wrap: wrap; gap: 2px; }
   .pin-action {
-    opacity: 0.35;
     cursor: pointer;
-    color: var(--ink-fade);
-    font-size: 16px;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--text-subtle);
+    font-size: var(--fs-md);
     font-family: 'Fraunces', serif;
     line-height: 1;
-    transition: all 0.15s;
+    transition: color 0.15s, transform 0.15s, opacity 0.15s;
     user-select: none;
     display: inline-block;
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
     text-align: center;
-    line-height: 18px;
+    line-height: 24px;
   }
   .pin-action:hover {
-    color: var(--ochre);
+    color: var(--accent-strong);
     transform: scale(1.2);
   }
   tr.is-pinned .pin-action {
     opacity: 1;
-    color: var(--ochre);
+    color: var(--accent-strong);
   }
 
   /* ============ EDITABLE CELLS ============ */
@@ -751,36 +914,53 @@
     position: absolute;
     left: 8px; right: 8px; bottom: 4px;
     height: 2px;
-    background: var(--ink-fade);
+    background: var(--text-subtle);
     opacity: 0;
     transition: opacity 0.12s;
   }
   .amort td.editable-cell:hover::after { opacity: 0.5; }
   /* Persistent ochre underline marks a cell whose field is overridden by a pin. */
-  .amort td.editable-cell.is-overridden::after { background: var(--ochre); opacity: 1; }
+  .amort td.editable-cell.is-overridden::after { background: var(--accent); opacity: 1; }
   .amort input.cell-edit-input {
     width: 88px;
     max-width: 100%;
     font: inherit;
     text-align: right;
     padding: 3px 5px;
-    border: 1px solid var(--ochre);
-    background: var(--paper);
-    color: var(--ink);
+    border: 1px solid var(--accent);
+    background: var(--surface);
+    color: var(--text);
     border-radius: 2px;
   }
-  .amort input.cell-edit-input:focus { outline: none; box-shadow: 0 0 0 2px var(--ochre-pale); }
+  .amort input.cell-edit-input:focus { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
 
   /* ============ PIN EDITOR ============ */
   .pin-editor-row td {
     padding: 0 !important;
-    background: var(--paper-warm) !important;
-    border-bottom: 1px solid var(--ochre) !important;
-    border-top: 2px solid var(--ochre) !important;
+    background: var(--surface-raised) !important;
+    border-bottom: 1px solid var(--accent) !important;
+    border-top: 2px solid var(--accent) !important;
   }
+  .amort tr.pin-editor-row > td { text-align: left; }
   .pin-editor {
+    position: sticky;
+    left: 0;
+    width: 100cqw;
+    box-sizing: border-box;
+    white-space: normal;
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
     padding: 20px 24px 18px;
-    background: linear-gradient(180deg, var(--paper-warm) 0%, var(--paper-deep) 100%);
+    background: linear-gradient(180deg, var(--surface-raised) 0%, var(--surface-sunken) 100%);
+  }
+  .pin-editor-host--sidebar {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+  }
+  .pin-editor-host--sidebar .pin-editor {
+    position: static;
+    width: auto;
+    padding: 14px 12px;
   }
   .pin-editor-header {
     display: flex;
@@ -794,27 +974,51 @@
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 36, "SOFT" 30;
     font-weight: 400;
-    font-size: 16px;
-    color: var(--ink);
+    font-size: var(--fs-md);
+    color: var(--text);
     letter-spacing: -0.005em;
   }
   .pin-editor-title em {
     font-style: italic;
-    color: var(--ochre);
+    color: var(--accent-strong);
     font-weight: 500;
   }
   .pin-editor-sub {
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 11.5px;
-    color: var(--ink-fade);
+    font-size: var(--fs-xs);
+    color: var(--text-subtle);
     margin-top: 2px;
   }
   .pin-editor-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
     gap: 14px 28px;
   }
+  .pin-editor-section {
+    grid-column: 1 / -1;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--rule-fine);
+    color: var(--text-muted);
+    font-size: var(--fs-2xs);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .pin-editor-move { margin-top: 16px; }
+  .pin-editor-move label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--text-muted);
+    font-size: var(--fs-2xs);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .pin-editor-move .input-wrap { max-width: 210px; }
+  #pin-effective-date { display: block; margin-top: 5px; color: var(--text-subtle); }
+  #pin-move-note { color: var(--text-subtle); font-style: italic; }
+  #pin-editor-error { margin-top: 8px; color: var(--negative); }
   .pin-editor-field {
     display: flex;
     flex-direction: column;
@@ -823,45 +1027,44 @@
   .pin-editor-field label {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 9;
-    font-size: 9.5px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.16em;
-    color: var(--ink-soft);
+    color: var(--text-muted);
   }
   .pin-editor-field .baseline {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    color: var(--ink-fade);
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
     margin-top: 2px;
     font-style: italic;
   }
   .pin-editor-field .input-wrap {
     width: 100%;
   }
-  .pin-editor-field .input-wrap input {
-    flex: 1;
-    width: auto;
-  }
   .pin-editor-field.changed .input-wrap {
-    border-color: var(--ochre);
-    background: rgba(184,134,42,0.05);
+    border-color: var(--accent-strong);
+    background: var(--accent-tint);
   }
   .pin-editor-field.changed label {
-    color: var(--ochre);
+    color: var(--accent-strong);
   }
   .pin-editor-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
     margin-top: 18px;
     justify-content: flex-end;
     align-items: center;
   }
-  .pin-editor-actions .reset {
+  .pin-editor-actions .reset,
+  .pin-reset-field,
+  .cell-reset-field {
     margin-right: auto;
     font-family: 'Fraunces', serif;
     font-style: italic;
-    font-size: 12px;
-    color: var(--ink-fade);
+    font-size: var(--fs-xs);
+    color: var(--text-subtle);
     background: transparent;
     border: none;
     cursor: pointer;
@@ -870,43 +1073,58 @@
     text-underline-offset: 3px;
     padding: 6px 4px;
   }
-  .pin-editor-actions .reset:hover {
-    color: var(--ink);
+  .pin-editor-actions .reset:hover,
+  .pin-reset-field:hover,
+  .cell-reset-field:hover {
+    color: var(--text);
   }
+  .cell-edit-details,
+  .cell-edit-feedback {
+    white-space: normal;
+    max-width: 260px;
+  }
+  .cell-edit-details { color: var(--text-subtle); font-size: var(--fs-2xs); }
+  .cell-edit-feedback { color: var(--negative); }
   .pin-editor-actions .pin-btn {
     padding: 8px 16px;
     font-family: 'Hanken Grotesk', sans-serif;
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     cursor: pointer;
-    border: 1px solid var(--rule);
-    background: var(--paper);
-    color: var(--ink-soft);
+    border: 1px solid var(--control-border);
+    background: var(--surface);
+    color: var(--text-muted);
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    transition: all 0.15s;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
   }
-  .pin-editor-actions .pin-btn:hover {
-    background: var(--ink-soft);
-    color: var(--paper);
-    border-color: var(--ink-soft);
+  .pin-editor-actions .pin-btn:not(:disabled):hover {
+    background: var(--text-muted);
+    color: var(--on-strong);
+    border-color: var(--text-muted);
   }
   .pin-editor-actions .save-btn {
-    background: var(--ochre);
-    color: var(--paper);
-    border-color: var(--ochre);
+    background: var(--accent-strong);
+    color: var(--on-strong);
+    border-color: var(--accent-strong);
   }
-  .pin-editor-actions .save-btn:hover {
-    background: var(--oxblood);
-    border-color: var(--oxblood);
+  .pin-editor-actions .save-btn:not(:disabled):hover {
+    background: var(--negative);
+    border-color: var(--negative);
   }
   .pin-editor-actions .remove-btn {
-    background: var(--paper);
-    color: var(--oxblood);
-    border-color: var(--oxblood-soft);
+    background: var(--surface);
+    color: var(--negative);
+    border-color: var(--negative-soft);
   }
-  .pin-editor-actions .remove-btn:hover {
-    background: var(--oxblood);
-    color: var(--paper);
+  .pin-editor-actions .remove-btn:not(:disabled):hover {
+    background: var(--negative);
+    color: var(--on-strong);
+  }
+
+  button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transition: opacity 0.15s ease 0.25s;
   }
 
   .table-footer {
@@ -915,41 +1133,52 @@
     font-family: 'Fraunces', serif;
     font-style: italic;
     font-variation-settings: "opsz" 24, "SOFT" 50;
-    font-size: 14px;
-    color: var(--ink-soft);
+    font-size: var(--fs-base);
+    color: var(--text-muted);
     border-bottom: 1px solid var(--rule);
   }
-  .table-footer.depleted { color: var(--oxblood); }
+  .table-footer.depleted { color: var(--negative); }
   .table-footer .footer-stat {
     font-family: 'JetBrains Mono', monospace;
     font-style: normal;
-    font-size: 12px;
-    color: var(--ink);
+    font-size: var(--fs-xs);
+    color: var(--text);
     margin-left: 6px;
   }
 
-  .footnote {
-    font-family: 'Fraunces', serif;
-    font-style: italic;
-    font-variation-settings: "opsz" 9;
-    font-size: 11.5px;
-    color: var(--ink-fade);
+  .method {
     margin-top: 28px;
-    max-width: 760px;
-    line-height: 1.7;
-    letter-spacing: 0.005em;
-    column-count: 1;
+    max-width: 1100px;
   }
-  .footnote strong {
-    font-style: normal;
-    color: var(--ink-soft);
-    font-weight: 500;
+  .method h3 {
     font-family: 'Fraunces', serif;
-    font-variation-settings: "opsz" 9, "SOFT" 30;
+    font-variation-settings: "opsz" 72, "SOFT" 30;
+    font-weight: 400;
+    font-size: var(--fs-xl);
+    color: var(--text);
+    margin-bottom: 20px;
   }
-  .footnote .sep {
-    margin: 0 8px;
-    color: var(--rule);
+  .method h3 em {
+    color: var(--text-muted);
+    font-weight: 300;
+  }
+  .method-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px 32px;
+  }
+  .method-item dt {
+    font-size: var(--fs-xs);
+    font-variant: small-caps;
+    letter-spacing: 0.12em;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .method-item dd {
+    font-size: var(--fs-sm);
+    font-style: normal;
+    line-height: 1.6;
+    color: var(--text-muted);
   }
 
   /* ============ ANIMATIONS ============ */
@@ -957,94 +1186,97 @@
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
   }
-  .amort tbody tr {
-    animation: fadein 0.2s ease-out backwards;
-  }
-  .pin-editor-row {
+  .pin-editor-row.is-entering {
     animation: fadein 0.18s ease-out;
   }
 
-  /* fine print pull-quote treatment */
-  .pull-quote {
-    font-family: 'Fraunces', serif;
-    font-style: italic;
-    font-variation-settings: "opsz" 144, "SOFT" 80, "wght" 300;
-    font-size: 17px;
-    color: var(--ink-soft);
-    line-height: 1.4;
-    padding: 18px 22px;
-    border-left: 2px solid var(--ochre);
-    background: rgba(184,134,42,0.04);
-    margin: 0 0 22px;
-    max-width: 720px;
-    letter-spacing: 0.005em;
+  @media (max-width: 900px) {
+    .chart-svg, .chart-y-labels { height: 220px; }
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .sidebar-status-anchor { transform: none; }
+    .sidebar {
+      position: static;
+      max-height: none;
+      overflow: visible;
+      border-right: 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    .main { padding: 24px 16px 40px; }
   }
-  .pull-quote .pq-mark {
-    display: block;
-    font-family: 'Fraunces', serif;
-    font-variation-settings: "opsz" 9, "SOFT" 30;
-    font-style: normal;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.22em;
-    color: var(--ochre);
-    margin-bottom: 6px;
+
+  @media (max-width: 560px) {
+    .sidebar { padding: 20px 16px 28px; }
+    .table-head { flex-wrap: wrap; gap: 12px; }
+    .table-actions { width: 100%; flex-wrap: wrap; }
   }
+
+  @media (max-width: 351px) {
+    .method-list { grid-template-columns: minmax(0, 1fr); }
+  }
+
 </style>
 </head>
 <body>
 <div class="layout">
   <aside class="sidebar">
+    <div class="sidebar-status-anchor">
+      <div id="scenario-status" class="scenario-status" role="status" aria-live="polite" hidden></div>
+    </div>
     <div class="brand">
       <div class="mark">A Parametric Solvency Study</div>
       <h1>Draw<em>down</em></h1>
       <div class="tagline">when the bucket runs dry — and what slows it</div>
+      <div class="theme-toggle" role="group" aria-label="Color theme">
+        <button type="button" id="theme-auto" data-theme-choice="auto" title="Follow the system setting" class="active" aria-pressed="true">Auto</button>
+        <button type="button" id="theme-light" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" id="theme-dark" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
     </div>
 
     <div class="group">
       <div class="group-label"><span>Buffer Fund</span><span class="ordinal">§ 01</span></div>
       <div class="field">
-        <label>Starting cash</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="buffer-initial" value="270000" step="1000"></span>
+        <label for="buffer-initial">Starting cash</label>
+        <span class="field-control"><span class="input-wrap"><span class="prefix">$</span><input type="number" id="buffer-initial" value="270000" step="1000"></span><output class="field-readout" for="buffer-initial" aria-hidden="true"></output></span>
       </div>
       <div class="field">
-        <label>Floor</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="floor" value="100000" step="1000"></span>
+        <label for="floor">Floor</label>
+        <span class="field-control"><span class="input-wrap"><span class="prefix">$</span><input type="number" id="floor" value="100000" step="1000"></span><output class="field-readout" for="floor" aria-hidden="true"></output></span>
       </div>
     </div>
 
     <div class="group">
       <div class="group-label"><span>External Income</span><span class="ordinal">§ 02</span></div>
       <div class="field">
-        <label>Monthly</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="external-income" value="2000" step="100"></span>
+        <label for="external-income"><span class="sr-only">External income, </span>Monthly</label>
+        <span class="field-control"><span class="input-wrap"><span class="prefix">$</span><input type="number" id="external-income" value="2000" step="100" aria-label="External income, monthly"></span><output class="field-readout" for="external-income" aria-hidden="true"></output></span>
       </div>
     </div>
 
     <div class="group">
       <div class="group-label"><span>Investments</span><span class="ordinal">§ 03</span></div>
       <div class="field">
-        <label>Principal</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="investments-initial" value="600000" step="1000"></span>
+        <label for="investments-initial">Principal</label>
+        <span class="field-control"><span class="input-wrap"><span class="prefix">$</span><input type="number" id="investments-initial" value="600000" step="1000"></span><output class="field-readout" for="investments-initial" aria-hidden="true"></output></span>
       </div>
       <div class="field">
-        <label>Monthly income</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="investment-income" value="6000" step="100"></span>
+        <label for="investment-income"><span class="sr-only">Investments, </span>Monthly income</label>
+        <span class="field-control"><span class="input-wrap"><span class="prefix">$</span><input type="number" id="investment-income" value="6000" step="100" aria-label="Investments, monthly income"></span><output class="field-readout" for="investment-income" aria-hidden="true"></output></span>
       </div>
       <div class="field">
-        <label>Income modifier<span class="hint">income drop ÷ principal drop</span></label>
-        <span class="input-wrap"><input type="number" id="modifier" value="1" step="0.1" min="0"></span>
+        <label for="modifier">Income modifier<span class="hint" id="modifier-hint" aria-hidden="true">income drop ÷ principal drop</span></label>
+        <span class="input-wrap"><input type="number" id="modifier" value="1" step="0.1" min="0" aria-label="Income modifier" aria-describedby="modifier-hint"></span>
       </div>
     </div>
 
     <div class="group">
       <div class="group-label"><span>Expenses</span><span class="ordinal">§ 04</span></div>
       <div class="field">
-        <label>Monthly</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="expense" value="5000" step="100"></span>
+        <label for="expense"><span class="sr-only">Expenses, </span>Monthly</label>
+        <span class="field-control"><span class="input-wrap"><span class="prefix">$</span><input type="number" id="expense" value="5000" step="100" aria-label="Expenses, monthly"></span><output class="field-readout" for="expense" aria-hidden="true"></output></span>
       </div>
       <div class="field">
-        <label>Annual inflation</label>
+        <label for="inflation">Annual inflation</label>
         <span class="input-wrap"><input type="number" id="inflation" value="3" step="0.1"><span class="suffix">% APY</span></span>
       </div>
     </div>
@@ -1052,24 +1284,24 @@
     <div class="group">
       <div class="group-label"><span>Tax</span><span class="ordinal">§ 05</span></div>
       <div class="field">
-        <label>Income effective rate<span class="hint">applied to recurring income</span></label>
-        <span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
+        <label for="tax-rate">Income effective rate<span class="hint" id="tax-rate-hint" aria-hidden="true">applied to recurring income</span></label>
+        <span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0.5" min="0" max="100" aria-label="Income effective rate" aria-describedby="tax-rate-hint"><span class="suffix">%</span></span>
       </div>
       <div class="field">
-        <label>Asset sale effective rate<span class="hint">applied to gross sale proceeds</span></label>
-        <span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
+        <label for="sale-tax-rate">Asset sale effective rate<span class="hint" id="sale-tax-rate-hint" aria-hidden="true">applied to gross sale proceeds</span></label>
+        <span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0.5" min="0" max="100" aria-label="Asset sale effective rate" aria-describedby="sale-tax-rate-hint"><span class="suffix">%</span></span>
       </div>
     </div>
 
     <div class="group">
       <div class="group-label"><span>Horizon</span><span class="ordinal">§ 06</span></div>
       <div class="toggle" style="margin-bottom: 10px;">
-        <button id="unit-months" class="active">Months</button>
-        <button id="unit-years">Years</button>
+        <button type="button" id="unit-months" class="active" aria-pressed="true">Months</button>
+        <button type="button" id="unit-years" aria-pressed="false">Years</button>
       </div>
       <div class="field">
-        <label>Periods<span class="hint">0 = run until reserve failure or cap</span></label>
-        <span class="input-wrap"><input type="number" id="periods" value="120" step="1" min="0"></span>
+        <label for="periods">Periods<span class="hint" id="periods-hint" aria-hidden="true">0 = run until reserve failure or cap</span></label>
+        <span class="input-wrap"><input type="number" id="periods" value="120" step="1" min="0" aria-label="Periods" aria-describedby="periods-hint"></span>
       </div>
     </div>
 
@@ -1078,16 +1310,18 @@
       <div id="adjustments-list"></div>
     </div>
 
-    <div id="scenario-status" class="scenario-status" role="status" aria-live="polite" hidden></div>
     <button class="calc-button" id="calc-button">Recalculate<span class="arrow">→</span></button>
   </aside>
 
   <main class="main">
     <header class="header">
-      <div class="eyebrow">A study in patience &amp; principal</div>
-      <h2>Investment <em>Drawdown</em></h2>
+      <div class="header-meta">
+        <div class="eyebrow">The verdict</div>
+        <div class="today-stamp">From <strong id="today-stamp"></strong></div>
+      </div>
+      <h2 id="verdict" class="verdict">Projection pending</h2>
+      <p id="verdict-note" class="verdict-note" hidden>Showing the last valid projection while inputs are corrected.</p>
       <p class="subtitle">A month-by-month projection of cash, principal, and income until the protected reserve cannot be maintained or the horizon ends.</p>
-      <div class="today-stamp">From <strong id="today-stamp"></strong></div>
     </header>
 
     <div class="stats" id="stats"></div>
@@ -1096,14 +1330,15 @@
       <div class="chart-head">
         <div class="chart-title">Trajectory</div>
         <div class="chart-legend">
-          <span><span class="legend-swatch" style="background:#2C4A3E"></span>Buffer</span>
-          <span><span class="legend-swatch" style="background:#6B4423"></span>Investments</span>
-          <span><span class="legend-swatch" style="background:#B8862A; opacity:0.7"></span>Floor</span>
+          <span><span class="legend-swatch legend-swatch--cash"></span>Buffer</span>
+          <span><span class="legend-swatch legend-swatch--principal"></span>Investments</span>
+          <span><span class="legend-swatch legend-swatch--floor"></span>Floor</span>
         </div>
       </div>
-      <div style="position: relative;">
-        <svg class="chart-svg" id="chart" viewBox="0 0 1000 200" preserveAspectRatio="none"></svg>
+      <div class="chart-plot" style="position: relative;">
+        <svg class="chart-svg" id="chart" viewBox="0 0 1000 280" role="img"></svg>
         <div class="chart-y-labels" id="chart-y-labels"></div>
+        <div id="chart-tooltip" class="chart-tooltip" hidden></div>
       </div>
       <div class="chart-x-labels" id="chart-x-labels"></div>
     </div>
@@ -1123,8 +1358,19 @@
 
       <div class="table-scroll">
         <table class="amort">
+          <colgroup>
+            <col style="width: 48px"><col style="width: 52px"><col style="width: 150px">
+            <col><col><col><col><col><col><col><col>
+          </colgroup>
           <thead>
-            <tr>
+            <tr class="col-groups">
+              <th class="col-group" colspan="3"></th>
+              <th class="col-group" colspan="4">Flows</th>
+              <th class="col-group" colspan="2">Balances</th>
+              <th class="col-group" colspan="1">Sales</th>
+              <th class="col-group" colspan="1"></th>
+            </tr>
+            <tr class="col-heads">
               <th></th>
               <th>#</th>
               <th>Date</th>
@@ -1145,21 +1391,39 @@
       <div class="table-footer" id="table-footer"></div>
     </section>
 
-    <p class="footnote">
-      <strong>Method.</strong> Inflation compounds monthly from the annual effective rate. Expenses are funded only from cash above the protected floor; sales seek enough net proceeds to fund expenses and restore it. Required and funded expense, unmet expense, and unmet reserve are reported separately.
-      <span class="sep">·</span>
-      <strong>Tax.</strong> The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.
-      <span class="sep">·</span>
-      <strong>Income ledger.</strong> Gross sales reduce principal. Sales and closing-principal valuations adjust raw investment income by <em>modifier × income yield × principal change</em>, using the modifier in force at each event. Later principal changes can raise or lower that ledger. At zero principal, payable investment income is zero even if raw income remains; an explicit income edit resets raw income and yield.
-      <span class="sep">·</span>
-      <strong>Pins.</strong> Beginning assumptions affect the selected month; ending cash and principal are exact closing balances after its expenses and sales, and ending income becomes the next month's baseline. Closing principal is a valuation, and closing cash is a separate adjustment; neither is a sale or recurring income. Move a pin to an unoccupied month or use the Adjustments panel to recover an unreachable pin. Yearly flow edits solve an exact target for the planned group when saved; the saved target is provenance, not a live constraint.
-      <span class="sep">·</span>
-      <strong>Export.</strong> The table rounds money to whole dollars with cents and exact values in cell detail. CSV provides readable cents and exact <code>*_raw</code> Number columns, date/span and start/end application provenance. Readable <code>tax_paid</code> reconciles with its two tax parts; gross <code>sold</code> reconciles with sale tax and net proceeds. Invalid edits keep the last valid view and disable export until corrected.
-      <span class="sep">·</span>
-      <strong>Termination.</strong> The projection stops with reserve failure when an expense or the protected reserve cannot be funded; zero principal or touching the floor alone is not failure. Otherwise it ends at the requested horizon or the 1,200-month cap. A yearly row may cover fewer than 12 actual months if failure occurs or the requested horizon is partial.
-      <span class="sep">·</span>
-      <strong>Scope.</strong> This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.
-    </p>
+    <section class="method" aria-labelledby="method-title">
+      <h3 id="method-title">Method <em>&amp; scope</em></h3>
+      <dl class="method-list">
+        <div class="method-item">
+          <dt>Method</dt>
+          <dd>Inflation compounds monthly from the annual effective rate. Expenses are funded only from cash above the protected floor; sales seek enough net proceeds to fund expenses and restore it. Required and funded expense, unmet expense, and unmet reserve are reported separately.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Tax</dt>
+          <dd>The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Income ledger</dt>
+          <dd>Gross sales reduce principal. Sales and closing-principal valuations adjust raw investment income by <em>modifier × income yield × principal change</em>, using the modifier in force at each event. Later principal changes can raise or lower that ledger. At zero principal, payable investment income is zero even if raw income remains; an explicit income edit resets raw income and yield.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Pins</dt>
+          <dd>Beginning assumptions affect the selected month; ending cash and principal are exact closing balances after its expenses and sales, and ending income becomes the next month's baseline. Closing principal is a valuation, and closing cash is a separate adjustment; neither is a sale or recurring income. Move a pin to an unoccupied month or use the Adjustments panel to recover an unreachable pin. Yearly flow edits solve an exact target for the planned group when saved; the saved target is provenance, not a live constraint.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Export</dt>
+          <dd>The table rounds money to whole dollars with cents and exact values in cell detail. CSV provides readable cents and exact <code>*_raw</code> Number columns, date/span and start/end application provenance. Readable <code>tax_paid</code> reconciles with its two tax parts; gross <code>sold</code> reconciles with sale tax and net proceeds. Invalid edits keep the last valid view and disable export until corrected.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Termination</dt>
+          <dd>The projection stops with reserve failure when an expense or the protected reserve cannot be funded; zero principal or touching the floor alone is not failure. Otherwise it ends at the requested horizon or the 1,200-month cap. A yearly row may cover fewer than 12 actual months if failure occurs or the requested horizon is partial.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Scope</dt>
+          <dd>This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.</dd>
+        </div>
+      </dl>
+    </section>
   </main>
 </div>
 
@@ -1187,6 +1451,42 @@ const PARAM_DEFS = [
   { key: 'tax_rate',        label: 'Tax rate',            fmt: 'pct', min: 0, max: 1       },
   { key: 'sale_tax_rate',   label: 'Asset sale tax rate', fmt: 'pct', min: 0, max: 1       },
 ];
+
+const SIDEBAR_FIELDS = {
+  buffer_initial: { id: 'buffer-initial', label: 'Starting cash' },
+  floor: { id: 'floor', label: 'Floor' },
+  external_income: { id: 'external-income', label: 'External income, monthly' },
+  investments_initial: { id: 'investments-initial', label: 'Principal' },
+  investment_income: { id: 'investment-income', label: 'Investments, monthly income' },
+  modifier: { id: 'modifier', label: 'Income modifier' },
+  expense: { id: 'expense', label: 'Expenses, monthly' },
+  inflation: { id: 'inflation', label: 'Annual inflation' },
+  tax_rate: { id: 'tax-rate', label: 'Income effective rate' },
+  sale_tax_rate: { id: 'sale-tax-rate', label: 'Asset sale effective rate' },
+  num_periods: { id: 'periods', label: 'Periods' },
+};
+
+const ISSUE_LABELS = {
+  unit: 'Horizon unit', at_month: 'Effective month', id: 'Adjustment',
+  start: 'Beginning of month', end: 'End of month', annual_edits: 'Annual target',
+  pins: 'Adjustments', dateAnchor: 'Projection dates',
+  params: '', options: '', model: '', throughMonth: '', startMonth: '', draft: '',
+};
+
+function pinFieldLabel(phase, key) {
+  const def = PARAM_DEFS.find(item => item.key === key);
+  const label = phase === 'end' && key === 'investment_income'
+    ? "Next month's investment income" : def.label;
+  return label + (['expense', 'external_income', 'investment_income'].includes(key) ? ' (monthly)' : '');
+}
+
+function issueLabel(item) {
+  if (Object.hasOwn(ISSUE_LABELS, item.field)) return ISSUE_LABELS[item.field];
+  if (item.origin === 'adjustment' && PARAM_DEFS.some(def => def.key === item.field)) {
+    return pinFieldLabel(item.phase ?? 'start', item.field);
+  }
+  return SIDEBAR_FIELDS[item.field]?.label ?? item.field;
+}
 
 const state = {
   params: {
@@ -2135,6 +2435,13 @@ function fmtMoney(v, withSign = false) {
   return (isNeg ? '−$' : '$') + s;
 }
 
+function updateFieldReadout(input) {
+  const readout = input.closest('.field-control')?.querySelector('.field-readout');
+  if (!readout) return;
+  const value = Number(input.value);
+  readout.textContent = input.value.trim() !== '' && Number.isFinite(value) ? fmtMoney(value) : '';
+}
+
 function fmtMoneyCompact(v) {
   if (!isFinite(v)) return '—';
   const abs = Math.abs(v);
@@ -2307,18 +2614,62 @@ function renderStats(rows, result) {
   document.getElementById('stats').innerHTML = html;
 }
 
+function renderVerdict(rows, result) {
+  const el = document.getElementById('verdict');
+  if (!el) return;
+  el.classList.remove('is-failure');
+  if (!rows.length) {
+    el.textContent = 'Projection unavailable';
+  } else if (result.terminatedReason === 'reserve_failure') {
+    el.innerHTML = `Reserve fails <em>${fmtDate(dateForMonth(result.terminatedAtMonth), 'months')}</em>`;
+    el.classList.add('is-failure');
+  } else if (result.terminatedReason === 'cap') {
+    el.innerHTML = 'Reserve holds through <em>the 100-year cap</em>';
+  } else {
+    el.innerHTML = `Reserve holds through <em>${fmtDate(rows.at(-1).date, 'months')}</em>`;
+  }
+}
+
+let lastChartRows = null;
+let chartGeometry = null;
+
+function spreadLabels(items, minGap, lo, hi) {
+  const sorted = items.map((item, index) => ({ ...item, index })).sort((a, b) => a.y - b.y);
+  if (sorted.length === 0) return [];
+  sorted[0].y = Math.max(sorted[0].y, lo);
+  for (let i = 1; i < sorted.length; i++) {
+    sorted[i].y = Math.max(sorted[i].y, sorted[i - 1].y + minGap);
+  }
+  if (sorted.at(-1).y > hi) {
+    sorted.at(-1).y = hi;
+    for (let i = sorted.length - 2; i >= 0; i--) {
+      sorted[i].y = Math.min(sorted[i].y, sorted[i + 1].y - minGap);
+    }
+  }
+  return sorted.map(item => ({ ...item, y: Math.min(hi, Math.max(lo, item.y)) }))
+    .sort((a, b) => a.index - b.index)
+    .map(({ index, ...item }) => item);
+}
+
 function renderChart(rows) {
   const p = state.params;
   const svg = document.getElementById('chart');
-  const W = 1000, H = 200;
-  const padL = 0, padR = 0, padT = 8, padB = 8;
+  const box = svg.getBoundingClientRect();
+  const W = Math.round(box.width) || 1000;
+  const H = Math.round(box.height) || 200;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const padL = 0, padR = W >= 600 ? 112 : 56, padT = 8, padB = 8;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
   if (rows.length === 0) {
+    lastChartRows = null;
+    chartGeometry = null;
     svg.innerHTML = '';
     document.getElementById('chart-y-labels').innerHTML = '';
     document.getElementById('chart-x-labels').innerHTML = '';
+    document.getElementById('chart-tooltip').hidden = true;
+    document.querySelectorAll('#amort-body tr.is-chart-hover').forEach(tr => tr.classList.remove('is-chart-hover'));
     return;
   }
 
@@ -2334,9 +2685,11 @@ function renderChart(rows) {
   const n = rows.length;
   const xOf = (i) => padL + (n > 1 ? i / (n - 1) : 0.5) * innerW;
   const yOf = (v) => padT + (1 - Math.max(0, v) / safeMax) * innerH;
+  lastChartRows = rows;
+  chartGeometry = { W, H, padL, padR, padT, padB, innerW, innerH, n, safeMax, xOf, yOf, floorOf };
 
   const linePath = getter => rows.map((r, i) =>
-    `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(getter(r))}`).join(' ');
+    `${i === 0 ? 'M' : 'L'} ${xOf(i).toFixed(2)} ${yOf(getter(r)).toFixed(2)}`).join(' ');
 
   // Pin x positions
   const pinXs = state.pins
@@ -2350,27 +2703,51 @@ function renderChart(rows) {
   // Insolvency marker
   const insolvencyIdx = rows.findIndex(r => r.insolvency);
   const insolvencyX = insolvencyIdx >= 0 ? xOf(insolvencyIdx) : null;
+  const last = rows.at(-1);
+  const endLabels = spreadLabels([
+    { key: 'cash', y: yOf(last.buffer), value: last.buffer },
+    { key: 'principal', y: yOf(last.investments), value: last.investments },
+  ], 14, padT, H - padB);
+  const bandPath = `${linePath(floorOf)} L ${xOf(n - 1).toFixed(2)} ${(H - padB).toFixed(2)} L ${xOf(0).toFixed(2)} ${(H - padB).toFixed(2)} Z`;
 
   svg.innerHTML = `
-    <path data-series="cash" d="${linePath(r => r.buffer)}" fill="none" stroke="#2C4A3E" stroke-width="2"/>
-    <path data-series="principal" d="${linePath(r => r.investments)}" fill="none" stroke="#6B4423" stroke-width="2"/>
-    <path data-series="floor" d="${linePath(floorOf)}" fill="none" stroke="#B8862A" stroke-width="1.5" stroke-dasharray="5 4"/>
-    ${pinXs.map(x => `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" stroke="#B8862A" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.6"/>
-      <circle cx="${x}" cy="${padT + 4}" r="3" fill="#B8862A"/>`).join('')}
-    ${insolvencyX !== null ? `<line x1="${insolvencyX}" y1="${padT}" x2="${insolvencyX}" y2="${H - padB}" stroke="#7A2A1F" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.7"/>
-      <text x="${insolvencyX - 4}" y="${H - padB - 4}" font-family="Fraunces" font-style="italic" font-size="11" fill="#7A2A1F" text-anchor="end">reserve failure</text>` : ''}
+    ${[0.25, 0.5, 0.75].map(fraction => `<line class="chart-grid" x1="${padL}" y1="${(padT + fraction * innerH).toFixed(2)}" x2="${(padL + innerW).toFixed(2)}" y2="${(padT + fraction * innerH).toFixed(2)}"/>`).join('')}
+    <path class="chart-reserve-band" d="${bandPath}"/>
+    <path data-series="cash" d="${linePath(r => r.buffer)}"/>
+    <path data-series="principal" d="${linePath(r => r.investments)}"/>
+    <path data-series="floor" d="${linePath(floorOf)}"/>
+    ${pinXs.map(x => `<line class="chart-pin-line" x1="${x.toFixed(2)}" y1="${padT.toFixed(2)}" x2="${x.toFixed(2)}" y2="${(H - padB).toFixed(2)}"/>
+      <circle class="chart-pin-dot" cx="${x.toFixed(2)}" cy="${(padT + 4).toFixed(2)}" r="3"/>`).join('')}
+    ${insolvencyX !== null ? `<line class="chart-failure-line" x1="${insolvencyX.toFixed(2)}" y1="${padT.toFixed(2)}" x2="${insolvencyX.toFixed(2)}" y2="${(H - padB).toFixed(2)}"/>
+      <text class="chart-failure-label" x="${(insolvencyX - 4).toFixed(2)}" y="${(H - padB - 4).toFixed(2)}" text-anchor="end">reserve failure</text>` : ''}
+    ${endLabels.map(label => `<text class="chart-end-label chart-end-label--${label.key}" x="${(padL + innerW + 8).toFixed(2)}" y="${label.y.toFixed(2)}" dominant-baseline="middle">${W >= 600 ? (label.key === 'cash' ? 'Buffer ' : 'Investments ') : ''}${fmtMoneyCompact(label.value)}</text>`).join('')}
+    <g class="chart-hover" visibility="hidden">
+      <line class="chart-crosshair" y1="${padT}" y2="${(H - padB).toFixed(2)}"/>
+      <circle class="chart-hover-dot--cash" data-hover-series="cash" r="4"/>
+      <circle class="chart-hover-dot--principal" data-hover-series="principal" r="4"/>
+      <circle class="chart-hover-dot--floor" data-hover-series="floor" r="4"/>
+    </g>
   `;
+  svg.setAttribute('aria-label', `Trajectory of buffer, investments, and floor from ${fmtDate(rows[0].date, 'months')} to ${fmtDate(last.date, 'months')}`);
+  document.getElementById('chart-tooltip').hidden = true;
+  document.querySelectorAll('#amort-body tr.is-chart-hover').forEach(tr => tr.classList.remove('is-chart-hover'));
 
   // The floor line can change during the projection, so label its final value.
   const yWrap = document.getElementById('chart-y-labels');
+  const labels = spreadLabels([
+    { key: 'max', y: padT },
+    { key: 'floor', y: yOf(floorOf(rows.at(-1))) },
+    { key: 'zero', y: H - padB },
+  ], 14, padT, H - padB);
   yWrap.innerHTML = `
-    <div class="chart-y-label" style="top: ${padT - 5}px; left: 0;">${fmtMoneyCompact(safeMax)}</div>
-    <div class="chart-y-label" style="top: ${yOf(floorOf(rows.at(-1))) - 5}px; left: 0; color: #B8862A;">floor ${fmtMoneyCompact(floorOf(rows.at(-1)))}</div>
-    <div class="chart-y-label" style="top: ${innerH + padT - 8}px; left: 0;">$0</div>
+    <div class="chart-y-label" style="top: ${labels[0].y.toFixed(2)}px; left: 0;">${fmtMoneyCompact(safeMax)}</div>
+    <div class="chart-y-label chart-y-label--floor" style="top: ${labels[1].y.toFixed(2)}px; left: 0;">floor ${fmtMoneyCompact(floorOf(rows.at(-1)))}</div>
+    <div class="chart-y-label" style="top: ${labels[2].y.toFixed(2)}px; left: 0;">$0</div>
   `;
 
   // X labels
   const xWrap = document.getElementById('chart-x-labels');
+  xWrap.style.paddingRight = `${padR}px`;
   const firstD = rows[0].date;
   const lastD = rows[rows.length - 1].date;
   const midIdx = Math.floor(rows.length / 2);
@@ -2443,17 +2820,14 @@ function renderTable(viewRows, baseRows, result) {
       }).join(', ')}`);
     }
     if (r.hitFloor) notes.push(`<span class="marker-dot floor"></span>reserve funding needed`);
-    if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--oxblood)">reserve cannot be maintained</strong>`);
-    if (r.surplus && !isPinned && !r.hitFloor) {
-      // suppress for cleaner table - only show notes when something interesting
-    }
+    if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--negative)">reserve cannot be maintained</strong>`);
 
     const periodLabel = unit === 'years' ? `Y ${r.period}` : `${r.month}`;
     const dateLabel = unit === 'years' ? r.label : fmtDate(r.date, 'months');
 
     html += `
-      <tr class="${trClasses}" data-month="${pinMonth}" style="animation-delay:${Math.min(idx * 5, 200)}ms">
-        <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="Add adjustment">+</span>${rowPins.map(pin => `<span class="pin-action" data-id="${pin.id}" data-month="${pin.at_month}" title="Edit month ${pin.at_month}">✎</span>`).join('')}</td>
+      <tr class="${trClasses}" data-month="${pinMonth}">
+        <td class="col-gutter"><span class="gutter-actions"><button type="button" class="pin-action" data-month="${pinMonth}" aria-label="Add adjustment at month ${pinMonth}" title="Add adjustment">+</button>${rowPins.map(pin => `<button type="button" class="pin-action" data-id="${pin.id}" data-month="${pin.at_month}" aria-label="Edit adjustment at month ${pin.at_month}" title="Edit month ${pin.at_month}">✎</button>`).join('')}</span></td>
         <td class="col-period">${periodLabel}</td>
         <td class="col-date">${dateLabel}</td>
         ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_start_state.expense, startKeys.has('expense'), r.expense)}
@@ -2504,9 +2878,12 @@ function renderTable(viewRows, baseRows, result) {
   document.getElementById('pin-count').textContent = pinCount > 0
     ? `${pinCount} pin${pinCount === 1 ? '' : 's'} active`
     : '';
+  const clearPins = document.getElementById('clear-pins');
+  if (clearPins) clearPins.disabled = pinCount === 0;
 }
 
 function renderPinEditor(row, baseRows) {
+  const enteringClass = pendingFocus === '.pin-editor .pin-field-input' ? ' is-entering' : '';
   const unit = state.params.unit;
   const editorMonth = state.editing?.month ?? (unit === 'years' ? row.first_month : row.month);
   const sourceRow = baseRows.find(br => br.month === editorMonth);
@@ -2518,7 +2895,7 @@ function renderPinEditor(row, baseRows) {
   let fieldsHtml = '';
   for (const [phase, defs] of [['start', PARAM_DEFS.filter(def => START_PIN_KEYS.has(def.key))],
     ['end', PARAM_DEFS.filter(def => END_PIN_KEYS.has(def.key))]]) {
-    fieldsHtml += `<h4>${phase === 'start' ? 'Beginning of selected month' : 'End of selected month'}</h4>`;
+    fieldsHtml += `<h4 class="pin-editor-section">${phase === 'start' ? 'Beginning of selected month' : 'End of selected month'}</h4>`;
     for (const def of defs) {
     const identity = `${phase}.${def.key}`;
     const baseVal = sourceRow
@@ -2556,7 +2933,7 @@ function renderPinEditor(row, baseRows) {
 
     fieldsHtml += `
       <div class="pin-editor-field ${isOverridden || state.editing?.dirty?.has(identity) ? 'changed' : ''}" data-phase="${phase}" data-key="${def.key}" data-fmt="${def.fmt}" data-baseline="${baseVal ?? ''}">
-        <label>${phase === 'end' && def.key === 'investment_income' ? "Next month's investment income" : def.label}${['expense', 'external_income', 'investment_income'].includes(def.key) ? ' (monthly)' : ''}</label>
+        <label>${pinFieldLabel(phase, def.key)}</label>
         <span class="input-wrap">${prefix}<input type="number" class="pin-field-input" data-phase="${phase}" data-key="${def.key}" data-original="${originalDisplay}" value="${displayValue}" ${inputAttrs}>${suffix}</span>
         <span class="baseline">baseline: ${baselineDisplay}</span>
         ${isOverridden ? `<button type="button" class="pin-reset-field" data-phase="${phase}" data-key="${def.key}">Reset this field</button>` : ''}
@@ -2569,7 +2946,7 @@ function renderPinEditor(row, baseRows) {
   const selectedMonth = state.editing?.monthDraft ?? editorMonth;
 
   return `
-    <tr class="pin-editor-row">
+    <tr class="pin-editor-row${enteringClass}">
       <td colspan="11">
         <div class="pin-editor">
           <div class="pin-editor-header">
@@ -2579,8 +2956,11 @@ function renderPinEditor(row, baseRows) {
             </div>
           </div>
           <div class="pin-editor-grid">${fieldsHtml}</div>
-          <label>Effective month <input id="pin-month" type="number" min="1" max="1200" step="1" value="${selectedMonth}"></label>
-          <span id="pin-effective-date">${Number.isInteger(Number(selectedMonth)) && Number(selectedMonth) >= 1 && Number(selectedMonth) <= MAX_MONTHS ? fmtDate(dateForMonth(Number(selectedMonth)), 'months') : 'Choose month 1–1200'}</span>
+          <div class="pin-editor-move">
+            <label for="pin-month">Effective month</label>
+            <span class="input-wrap"><input id="pin-month" type="number" min="1" max="1200" step="1" value="${selectedMonth}"></span>
+            <span id="pin-effective-date">${Number.isInteger(Number(selectedMonth)) && Number(selectedMonth) >= 1 && Number(selectedMonth) <= MAX_MONTHS ? fmtDate(dateForMonth(Number(selectedMonth)), 'months') : 'Choose month 1–1200'}</span>
+          </div>
           <div id="pin-move-note">${existingPin?.annual_edits && Number(selectedMonth) !== editorMonth ? 'Moving this adjustment converts its annual target to a monthly assumption.' : ''}</div>
           <div id="pin-editor-error" role="alert"></div>
           <div class="pin-editor-actions">
@@ -2815,6 +3195,14 @@ function collectPinFields(fieldInputs, dirtyKeys) {
   return fields;
 }
 
+let pendingFocus = null;
+let pinEditorOpener = null;
+let pinEditorFallback = null;
+function restorePendingFocus() {
+  if (pendingFocus) document.querySelector(pendingFocus)?.focus({ preventScroll: true });
+  pendingFocus = null;
+}
+
 function togglePinEditor(month, id = null) {
   cancelActiveSolve();
   closeCellEditor();
@@ -2822,6 +3210,11 @@ function togglePinEditor(month, id = null) {
     state.editing = null;
   } else {
     state.editing = { month, id };
+    pinEditorOpener = id
+      ? `#amort-body .pin-action[data-id="${CSS.escape(id)}"]`
+      : `#amort-body .pin-action[data-month="${month}"]:not([data-id])`;
+    pinEditorFallback = id ? `.adj-entry[data-id="${CSS.escape(id)}"] .adj-open` : null;
+    pendingFocus = '.pin-editor .pin-field-input';
   }
   rerender();
 }
@@ -2855,6 +3248,7 @@ function openCellEditor(cell, month, key) {
     : overridden ? pin[phase][key] : Number(cell.dataset.baseline);
   const prefill = Number(exact).toFixed(2);
   const originalHTML = cell.innerHTML;
+  const cellSelector = `#amort-body td.editable-cell[data-month="${month}"][data-key="${key}"]`;
 
   const input = document.createElement('input');
   input.type = 'number';
@@ -2877,9 +3271,14 @@ function openCellEditor(cell, month, key) {
 
   let settled = false;
   let saving = false;
+  let restoreFocusOnCommit = false;
   const finish = async (commit, resetField = false) => {
     if (settled) return;
-    if (!commit) { settled = true; cellEditor = null; cancelActiveSolve(); cell.innerHTML = originalHTML; return; }
+    if (!commit) {
+      settled = true; cellEditor = null; cancelActiveSolve(); cell.innerHTML = originalHTML;
+      restorePendingFocus();
+      return;
+    }
     if (saving) return;
     const raw = input.value.trim();
     const value = Number(raw);
@@ -2894,26 +3293,29 @@ function openCellEditor(cell, month, key) {
         if (!checked.ok) { feedback.textContent = checked.issues.map(item => item.message).join(' '); return; }
         settled = true;
         cellEditor = null;
+        if (restoreFocusOnCommit) pendingFocus = cellSelector;
         rerender(true);
       } else {
         settled = true;
         cellEditor = null;
         cell.innerHTML = originalHTML;
+        if (restoreFocusOnCommit) { pendingFocus = cellSelector; restorePendingFocus(); }
       }
       return;
     }
     input.disabled = true;
     saving = true;
     const ok = await commitCellEdit(month, key, value, { annualFlow, resetField,
-      span: { first_month: month, last_month: plannedEnd }, feedback });
+      span: { first_month: month, last_month: plannedEnd }, feedback,
+      restoreFocus: restoreFocusOnCommit ? cellSelector : null });
     if (ok) { settled = true; cellEditor = null; }
     else input.disabled = false;
     saving = false;
   };
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); finish(false); } // Escape never commits
+    if (e.key === 'Enter') { e.preventDefault(); restoreFocusOnCommit = true; finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); pendingFocus = cellSelector; finish(false); } // Escape never commits
   });
   input.addEventListener('blur', event => {
     if (event.relatedTarget !== reset && !annualFlow) finish(true);
@@ -2932,6 +3334,10 @@ function openCellEditor(cell, month, key) {
 
 function closeCellEditor() {
   if (cellEditor) cellEditor.finish(false);
+}
+
+function openCellFromElement(cell) {
+  openCellEditor(cell, +cell.dataset.month, cell.dataset.key);
 }
 
 async function commitCellEdit(month, key, value, context) {
@@ -2957,6 +3363,7 @@ async function commitCellEdit(month, key, value, context) {
       return false;
     }
     acceptPins(answer.scenario.pins);
+    if (context.restoreFocus) pendingFocus = context.restoreFocus;
     rerender(true);
     return true;
   }
@@ -2970,6 +3377,7 @@ async function commitCellEdit(month, key, value, context) {
     return false;
   }
   acceptPins(transaction.scenario.pins);
+  if (context.restoreFocus) pendingFocus = context.restoreFocus;
   rerender(true);
   return true;
 }
@@ -3016,7 +3424,7 @@ function renderAdjustments() {
     html += `
       <div class="adj-entry" data-id="${pin.id}" data-month="${pin.at_month}">
         <div class="adj-entry-head">
-          <span class="adj-entry-when">Month ${pin.at_month} · ${dateStr}</span>
+          <button type="button" class="adj-open">Month ${pin.at_month} · ${dateStr}</button>
           <button class="adj-remove" data-id="${pin.id}" title="Remove this adjustment">remove</button>
         </div>
         <div class="adj-phase-statuses">${phaseNote('start')}${phaseNote('end')}</div>
@@ -3024,7 +3432,7 @@ function renderAdjustments() {
       </div>`;
   }
   if (state.editing && !state.acceptedResult?.rows.some(row => row.month === state.editing.month)) {
-    html += `<table><tbody>${renderPinEditor({ month: state.editing.month }, state.acceptedResult?.rows ?? [])}</tbody></table>`;
+    html += `<table class="pin-editor-host--sidebar"><tbody>${renderPinEditor({ month: state.editing.month }, state.acceptedResult?.rows ?? [])}</tbody></table>`;
   }
   container.innerHTML = html;
 
@@ -3055,7 +3463,19 @@ function removePinFromUI(id, errorElement = null) {
     return false;
   }
   acceptPins(transaction.scenario.pins);
-  if (state.editing?.id === id) state.editing = null;
+  if (state.editing?.id === id) {
+    // The removed pin's opener disappears, so return to that month's add button.
+    pinEditorOpener = `#amort-body .pin-action[data-month="${state.editing.month}"]:not([data-id])`;
+    pinEditorFallback = null;
+    state.editing = null;
+  } else {
+    // A sidebar Remove button is rebuilt with the list; move focus to a stable control.
+    pendingFocus = '#calc-button';
+    if (!state.editing) {
+      pinEditorOpener = null;
+      pinEditorFallback = null;
+    }
+  }
   rerender(true);
   return true;
 }
@@ -3067,9 +3487,12 @@ function jumpToPin(id) {
   if (!pin) return;
   const editorMonth = state.params.unit === 'years' ? Math.floor((pin.at_month - 1) / 12) * 12 + 1 : pin.at_month;
   state.editing = { month: pin.at_month, id };
+  pinEditorOpener = `.adj-entry[data-id="${CSS.escape(id)}"] .adj-open`;
+  pinEditorFallback = null;
+  pendingFocus = '.pin-editor .pin-field-input';
   rerender(); // rebuilds the tbody...
   const row = document.querySelector(`tr[data-month="${editorMonth}"]`);
-  if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' }); // ...so scroll afterwards
+  if (row) row.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' }); // ...so scroll afterwards
 }
 
 /* ============================================================
@@ -3081,27 +3504,32 @@ function showScenarioStatus(issues, stale) {
   state.stale = stale;
   const status = document.getElementById('scenario-status');
   if (status) {
+    const tone = issues.length ? (issues.every(item => item.field === 'draft') ? 'pending' : 'error') : null;
+    if (tone) status.setAttribute?.('data-tone', tone);
+    else status.removeAttribute?.('data-tone');
     status.hidden = issues.length === 0;
     status.textContent = issues.length
       ? `${stale ? 'Showing the last valid projection. ' : ''}${issues.map(item => {
           const location = item.origin === 'adjustment'
             ? `Adjustment${Number.isInteger(item.month) ? ` at month ${item.month}` : ''} — `
             : '';
-          return `${location}${item.field}: ${item.message}`;
+          const label = issueLabel(item);
+          return `${location}${label ? `${label}: ` : ''}${item.message}`;
         }).join(' ')}`
       : '';
+    const verdict = document.getElementById('verdict');
+    const verdictIsStale = tone === 'error' ||
+      (stale && tone === 'pending' && verdict?.classList.contains('is-stale'));
+    if (verdict) verdict.classList.toggle('is-stale', verdictIsStale);
+    const verdictNote = document.getElementById('verdict-note');
+    if (verdictNote) verdictNote.hidden = !verdictIsStale;
   }
   const exportButton = document.getElementById('export-csv');
   if (exportButton) exportButton.disabled = stale;
 }
 
 function readParams(pins = state.pins) {
-  const ids = {
-    buffer_initial: 'buffer-initial', floor: 'floor', external_income: 'external-income',
-    investments_initial: 'investments-initial', investment_income: 'investment-income',
-    modifier: 'modifier', expense: 'expense', inflation: 'inflation',
-    tax_rate: 'tax-rate', sale_tax_rate: 'sale-tax-rate', num_periods: 'periods',
-  };
+  const ids = Object.fromEntries(Object.entries(SIDEBAR_FIELDS).map(([key, field]) => [key, field.id]));
   const controls = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, document.getElementById(id)]));
   const draft = { ...state.params, unit: state.draftUnit ?? state.params.unit };
   for (const [key, control] of Object.entries(controls)) {
@@ -3117,8 +3545,13 @@ function readParams(pins = state.pins) {
   const issues = trial?.terminatedReason === 'invalid' ? trial.issues : checked.issues;
   const byField = new Set(issues.filter(item => item.origin !== 'adjustment').map(item => item.field));
   for (const [key, control] of Object.entries(controls)) {
-    if (byField.has(key)) control.setAttribute?.('aria-invalid', 'true');
-    else control.removeAttribute?.('aria-invalid');
+    if (byField.has(key)) {
+      control.setAttribute?.('aria-invalid', 'true');
+      control.setAttribute?.('aria-errormessage', 'scenario-status');
+    } else {
+      control.removeAttribute?.('aria-invalid');
+      control.removeAttribute?.('aria-errormessage');
+    }
   }
   if (issues.length) {
     showScenarioStatus(issues, true);
@@ -3143,10 +3576,18 @@ function rerender(validated = false) {
   if (validated) showScenarioStatus([], false);
   const viewRows = aggregateForView(result.rows, state.params.unit, result.plannedLastMonth, state.pins);
   renderStats(result.rows, result);
+  renderVerdict(result.rows, result);
   renderChart(result.rows);
   renderTable(viewRows, result.rows, result);
   renderAdjustments();
   attachPinEditorEvents(viewRows, result.rows);
+  if (!state.editing && pinEditorOpener) {
+    pendingFocus = [pinEditorOpener, pinEditorFallback, '#calc-button']
+      .find(selector => selector && document.querySelector(selector));
+    pinEditorOpener = null;
+    pinEditorFallback = null;
+  }
+  restorePendingFocus();
   return result;
 }
 
@@ -3282,6 +3723,25 @@ function exportCsv() {
    INIT
    ============================================================ */
 
+function setPressed(buttons, activeButton) {
+  buttons.forEach(button => {
+    const isActive = button === activeButton;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
+}
+
+function applyTheme(choice) {
+  if (!['auto', 'light', 'dark'].includes(choice)) return;
+  const root = document.documentElement;
+  root.classList.add('theme-switching');
+  if (choice === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', choice);
+  setPressed(document.querySelectorAll('.theme-toggle button'),
+    document.querySelector(`.theme-toggle button[data-theme-choice="${choice}"]`));
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')));
+}
+
 function init() {
   // Today stamp
   document.getElementById('today-stamp').textContent = TODAY.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -3291,11 +3751,68 @@ function init() {
   inputs.forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener('input', () => {
+      updateFieldReadout(el);
       cancelActiveSolve();
       clearTimeout(sidebarTimers.get(el));
-      showScenarioStatus([issue('draft', 'Input changed; projection will update after validation.')], true);
+      showScenarioStatus([issue('draft', 'Updating after your change…')], true);
       sidebarTimers.set(el, setTimeout(recalc, 220));
     });
+  });
+  inputs.forEach(id => updateFieldReadout(document.getElementById(id)));
+
+  const chart = document.getElementById('chart');
+  const chartTooltip = document.getElementById('chart-tooltip');
+  const clearChartHover = () => {
+    chart.querySelector('.chart-hover')?.setAttribute('visibility', 'hidden');
+    chartTooltip.hidden = true;
+    document.querySelectorAll('#amort-body tr.is-chart-hover').forEach(tr => tr.classList.remove('is-chart-hover'));
+  };
+  chart.addEventListener('pointermove', event => {
+    if (!chartGeometry || !lastChartRows?.length) return;
+    const { padL, padT, padB, H, innerW, n, xOf, yOf, floorOf } = chartGeometry;
+    const px = event.clientX - chart.getBoundingClientRect().left;
+    const index = n === 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round((px - padL) / innerW * (n - 1))));
+    const row = lastChartRows[index];
+    const x = xOf(index);
+    const hover = chart.querySelector('.chart-hover');
+    hover.setAttribute('visibility', 'visible');
+    const crosshair = hover.querySelector('.chart-crosshair');
+    crosshair.setAttribute('x1', x);
+    crosshair.setAttribute('x2', x);
+    crosshair.setAttribute('y1', padT);
+    crosshair.setAttribute('y2', H - padB);
+    for (const [series, value] of [['cash', row.buffer], ['principal', row.investments], ['floor', floorOf(row)]]) {
+      const dot = hover.querySelector(`[data-hover-series="${series}"]`);
+      dot.setAttribute('cx', x);
+      dot.setAttribute('cy', yOf(value));
+    }
+    chartTooltip.innerHTML = `<strong>${fmtDate(row.date, 'months')}</strong><br>Buffer ${fmtMoney(row.buffer)}<br>Investments ${fmtMoney(row.investments)}<br>Floor ${fmtMoney(floorOf(row))}`;
+    chartTooltip.hidden = false;
+    const wrapperWidth = chart.parentElement.getBoundingClientRect().width;
+    chartTooltip.style.left = `${x + 12 + chartTooltip.offsetWidth > wrapperWidth ? x - chartTooltip.offsetWidth - 12 : x + 12}px`;
+    chartTooltip.style.top = `${padT + 8}px`;
+    document.querySelectorAll('#amort-body tr.is-chart-hover').forEach(tr => tr.classList.remove('is-chart-hover'));
+    const tableRows = [...document.querySelectorAll('#amort-body tr[data-month]')];
+    const target = state.params.unit === 'years'
+      ? tableRows.filter(tr => Number(tr.dataset.month) <= row.month).at(-1)
+      : tableRows.find(tr => Number(tr.dataset.month) === row.month);
+    target?.classList.add('is-chart-hover');
+  });
+  chart.addEventListener('pointerleave', clearChartHover);
+
+  if (typeof ResizeObserver === 'function') {
+    let chartFrame = null;
+    new ResizeObserver(() => {
+      if (chartFrame !== null) return;
+      chartFrame = requestAnimationFrame(() => {
+        chartFrame = null;
+        if (lastChartRows) renderChart(lastChartRows);
+      });
+    }).observe(document.getElementById('chart'));
+  }
+
+  document.querySelectorAll('.theme-toggle button').forEach(button => {
+    button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
   });
 
   // Unit toggle
@@ -3303,8 +3820,7 @@ function init() {
     cancelActiveSolve();
     closeCellEditor();
     state.draftUnit = 'months';
-    document.getElementById('unit-months').classList.add('active');
-    document.getElementById('unit-years').classList.remove('active');
+    setPressed(document.querySelectorAll('.toggle button'), document.getElementById('unit-months'));
     document.getElementById('periods').value = '120';
     recalc();
   });
@@ -3312,8 +3828,7 @@ function init() {
     cancelActiveSolve();
     closeCellEditor();
     state.draftUnit = 'years';
-    document.getElementById('unit-years').classList.add('active');
-    document.getElementById('unit-months').classList.remove('active');
+    setPressed(document.querySelectorAll('.toggle button'), document.getElementById('unit-years'));
     document.getElementById('periods').value = '10';
     recalc();
   });
@@ -3330,6 +3845,9 @@ function init() {
     if (!checked.ok) return;
     acceptPins([]);
     state.editing = null;
+    pinEditorOpener = null;
+    pinEditorFallback = null;
+    pendingFocus = '#calc-button';
     rerender(true);
   });
 
@@ -3342,7 +3860,12 @@ function init() {
     if (e.target.tagName === 'INPUT') return; // click landed inside the open editor
     const cell = e.target.closest('.editable-cell');
     if (!cell) return;
-    openCellEditor(cell, +cell.dataset.month, cell.dataset.key);
+    openCellFromElement(cell);
+  });
+  document.getElementById('amort-body').addEventListener('keydown', (e) => {
+    if (!e.target.matches('td.editable-cell') || !['Enter', ' '].includes(e.key)) return;
+    e.preventDefault();
+    openCellFromElement(e.target);
   });
 
   // Initial run

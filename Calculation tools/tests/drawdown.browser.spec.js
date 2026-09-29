@@ -10,6 +10,662 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('ledger groups flows, balances, and sales without changing column labels', async ({ page }) => {
+  const groups = page.locator('.amort thead .col-groups th');
+  await expect(groups).toHaveCount(5);
+  expect(await groups.evaluateAll(cells => cells.every(cell => cell.className === 'col-group'))).toBe(true);
+  expect(await groups.evaluateAll(cells => cells.map(cell => [cell.colSpan, cell.textContent.trim()])))
+    .toEqual([[3, ''], [4, 'Flows'], [2, 'Balances'], [1, 'Sales'], [1, '']]);
+  const headings = page.locator('.amort thead .col-heads th');
+  await expect(headings).toHaveCount(11);
+  await expect(headings.nth(9)).toHaveText('Gross sold');
+  expect(await headings.evaluateAll(cells => cells.every(cell => cell.attributes.length === 0))).toBe(true);
+  expect(await page.locator('.amort colgroup col').evaluateAll(cols => cols.map(col => col.style.width)))
+    .toEqual(['48px', '52px', '150px', '', '', '', '', '', '', '', '']);
+});
+
+test('ledger anchors the identity columns and keeps row treatments aligned while scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await page.evaluate(() => {
+    const scroller = document.querySelector('.table-scroll');
+    scroller.scrollLeft = 200;
+  });
+  const geometry = await page.evaluate(() => {
+    const scroller = document.querySelector('.table-scroll');
+    const first = document.querySelector('#amort-body tr[data-month="1"]');
+    const second = document.querySelector('#amort-body tr[data-month="2"]');
+    const date = first.querySelector('.col-date');
+    const group = document.querySelector('.col-groups th');
+    return {
+      scrollLeft: scroller.scrollLeft,
+      scrollerLeft: scroller.getBoundingClientRect().left,
+      dateLeft: date.getBoundingClientRect().left,
+      groupLeft: group.getBoundingClientRect().left,
+      datePosition: getComputedStyle(date).position,
+      firstBackground: getComputedStyle(first).backgroundImage,
+      secondBackground: getComputedStyle(second).backgroundImage,
+    };
+  });
+  expect(geometry.scrollLeft).toBe(200);
+  expect(Math.abs(geometry.dateLeft - geometry.scrollerLeft - 100)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.groupLeft - geometry.scrollerLeft)).toBeLessThanOrEqual(1);
+  expect(geometry.datePosition).toBe('sticky');
+  expect(geometry.firstBackground).not.toBe(geometry.secondBackground);
+
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-ledger-pin', at_month: 2, start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  const pinned = page.locator('#amort-body tr[data-month="2"]');
+  const pinnedStyle = await pinned.evaluate(row => ({
+    background: getComputedStyle(row).backgroundImage,
+    gutterPosition: getComputedStyle(row.querySelector('.col-gutter')).position,
+    gutterBackground: getComputedStyle(row.querySelector('.col-gutter')).backgroundImage,
+    expectedAccent: (() => {
+      const probe = document.createElement('div');
+      probe.style.background = 'linear-gradient(var(--accent-tint) 0 0), var(--surface)';
+      document.body.append(probe);
+      const image = getComputedStyle(probe).backgroundImage;
+      probe.remove();
+      return image;
+    })(),
+  }));
+  expect(pinnedStyle.background).toBe(pinnedStyle.expectedAccent);
+  expect(pinnedStyle.background).not.toBe(geometry.secondBackground);
+  expect(pinnedStyle.gutterPosition).toBe('sticky');
+  expect(pinnedStyle.gutterBackground).toBe(pinnedStyle.background);
+  await pinned.locator('.pin-action[data-id="synthetic-ledger-pin"]').click();
+  await expect(page.locator('.pin-editor-row > td')).toHaveCSS('position', 'static');
+});
+
+test('ledger sticky cells meet without gaps at narrow and tablet widths', async ({ page }) => {
+  for (const width of [390, 1024]) {
+    await page.setViewportSize({ width, height: 800 });
+    const edges = await page.evaluate(() => {
+      const scroller = document.querySelector('.table-scroll');
+      scroller.scrollLeft = 200;
+      const boxes = selector => [...document.querySelectorAll(selector)]
+        .slice(0, 3).map(cell => cell.getBoundingClientRect());
+      return {
+        scrollLeft: scroller.scrollLeft,
+        pageOverflow: document.documentElement.scrollWidth > innerWidth,
+        data: boxes('#amort-body tr[data-month="1"] > td'),
+        headers: boxes('.amort thead .col-heads > th'),
+        group: document.querySelector('.amort thead .col-groups > th').getBoundingClientRect(),
+      };
+    });
+    expect(edges.scrollLeft).toBe(200);
+    expect(edges.pageOverflow).toBe(false);
+    for (const cells of [edges.data, edges.headers]) {
+      expect(Math.abs(cells[0].right - cells[1].left), `${width}px first edge`).toBeLessThanOrEqual(1);
+      expect(Math.abs(cells[1].right - cells[2].left), `${width}px second edge`).toBeLessThanOrEqual(1);
+    }
+    expect(Math.abs(edges.group.right - edges.headers[2].right), `${width}px group edge`)
+      .toBeLessThanOrEqual(1);
+  }
+});
+
+test('header leads with the date of the default reserve verdict', async ({ page }) => {
+  const endDate = await page.evaluate(() => fmtDate(dateForMonth(120), 'months'));
+  await expect(page.locator('.header .eyebrow')).toHaveText('The verdict');
+  await expect(page.locator('#verdict')).toHaveText(`Reserve holds through ${endDate}`);
+  await expect(page.locator('#verdict')).not.toHaveClass(/is-failure|is-stale/);
+  await expect(page.locator('#verdict-note')).toBeHidden();
+});
+
+test('header marks a reserve failure with its failure month', async ({ page }) => {
+  const firstDate = await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 10, floor: 10, investments_initial: 100,
+      investment_income: 0, external_income: 0, expense: 1, sale_tax_rate: 1,
+      tax_rate: 0, num_periods: 12, unit: 'months' });
+    acceptPins([]);
+    rerender();
+    return fmtDate(dateForMonth(1), 'months');
+  });
+  await expect(page.locator('#verdict')).toHaveText(`Reserve fails ${firstDate}`);
+  await expect(page.locator('#verdict')).toHaveClass(/is-failure/);
+  await expect(page.locator('#verdict em')).toHaveText(firstDate);
+});
+
+test('header names the 100-year cap when a reserve survives it', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 100, floor: 0, investments_initial: 0,
+      investment_income: 0, external_income: 0, expense: 0, inflation: 0,
+      num_periods: 0, unit: 'months' });
+    acceptPins([]);
+    rerender();
+  });
+  await expect(page.locator('#verdict')).toHaveText('Reserve holds through the 100-year cap');
+  await expect(page.locator('#verdict')).not.toHaveClass(/is-failure/);
+});
+
+test('invalid input dims the last verdict and recovery restores it', async ({ page }) => {
+  const verdict = page.locator('#verdict');
+  await page.locator('#expense').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(verdict).toHaveClass(/is-stale/);
+  await expect(page.locator('#verdict-note')).toBeVisible();
+  const colors = await page.evaluate(() => {
+    const heading = document.getElementById('verdict');
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--text-subtle)';
+    document.body.append(probe);
+    const subtle = getComputedStyle(probe).color;
+    probe.remove();
+    return { heading: getComputedStyle(heading).color,
+      emphasis: getComputedStyle(heading.querySelector('em')).color,
+      subtle };
+  });
+  expect(colors.heading).toBe(colors.emphasis);
+  expect(colors.heading).toBe(colors.subtle);
+  await page.locator('#expense').fill('5000');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(verdict).not.toHaveClass(/is-stale/);
+  await expect(page.locator('#verdict-note')).toBeHidden();
+});
+
+test('pending input leaves the verdict current until validation finishes', async ({ page }) => {
+  const pending = await page.evaluate(() => {
+    const input = document.getElementById('expense');
+    input.value = '5100';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return { tone: document.getElementById('scenario-status').getAttribute('data-tone'),
+      stale: document.getElementById('verdict').classList.contains('is-stale'),
+      noteHidden: document.getElementById('verdict-note').hidden };
+  });
+  expect(pending).toEqual({ tone: 'pending', stale: false, noteHidden: true });
+});
+
+test('pending edits keep an already stale verdict marked until validation', async ({ page }) => {
+  await page.locator('#expense').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(page.locator('#verdict')).toHaveClass(/is-stale/);
+  const pendingStates = await page.evaluate(() => {
+    const input = document.getElementById('expense');
+    const read = () => ({
+      tone: document.getElementById('scenario-status').getAttribute('data-tone'),
+      stale: document.getElementById('verdict').classList.contains('is-stale'),
+      noteHidden: document.getElementById('verdict-note').hidden,
+    });
+    input.value = '5000';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const first = read();
+    input.value = '5100';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return [first, read()];
+  });
+  expect(pendingStates).toEqual([
+    { tone: 'pending', stale: true, noteHidden: false },
+    { tone: 'pending', stale: true, noteHidden: false },
+  ]);
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(page.locator('#verdict')).not.toHaveClass(/is-stale/);
+  await expect(page.locator('#verdict-note')).toBeHidden();
+});
+
+test('direct empty verdict reports projection unavailable', async ({ page }) => {
+  await page.evaluate(() => renderVerdict([], { terminatedReason: 'invalid' }));
+  await expect(page.locator('#verdict')).toHaveText('Projection unavailable');
+  await expect(page.locator('#verdict')).not.toHaveClass(/is-failure/);
+});
+
+test('pending status is quiet and does not move sidebar inputs', async ({ page }) => {
+  const pending = await page.evaluate(() => {
+    const input = document.getElementById('expense');
+    const beforeTop = document.getElementById('buffer-initial').getBoundingClientRect().top;
+    input.value = '5100';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const status = document.getElementById('scenario-status');
+    return { tone: status.getAttribute('data-tone'), text: status.textContent,
+      hidden: status.hidden, beforeTop,
+      duringTop: document.getElementById('buffer-initial').getBoundingClientRect().top };
+  });
+  expect(pending.tone).toBe('pending');
+  expect(pending.text).toContain('Showing the last valid projection');
+  expect(pending.text).toContain('Updating after your change…');
+  expect(pending.text).not.toContain('draft');
+  expect(pending.hidden).toBe(false);
+  expect(pending.duringTop).toBe(pending.beforeTop);
+});
+
+test('invalid sidebar status stays visible and identifies the input', async ({ page }) => {
+  await page.locator('#buffer-initial').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  const status = page.locator('#scenario-status');
+  await expect(status).toHaveAttribute('data-tone', 'error');
+  await expect(status).toContainText('Starting cash:');
+  await expect(status).not.toContainText('buffer_initial');
+  await expect(page.locator('#buffer-initial')).toHaveAttribute('aria-errormessage', 'scenario-status');
+  const edges = await page.evaluate(() => {
+    const sidebar = document.querySelector('.sidebar');
+    sidebar.scrollTop = sidebar.scrollHeight;
+    return { status: document.getElementById('scenario-status').getBoundingClientRect().top,
+      sidebar: sidebar.getBoundingClientRect().top };
+  });
+  expect(Math.abs(edges.status - edges.sidebar)).toBeLessThanOrEqual(4);
+});
+
+test('narrow layout keeps the full status visible while the sidebar is in view', async ({ page }) => {
+  for (const width of [800, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.locator('#buffer-initial').fill('');
+    await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+    const bounds = await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = 'auto';
+      window.scrollTo(0, 100);
+      const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
+      const status = document.getElementById('scenario-status').getBoundingClientRect();
+      return { scrollY, sidebarTop: sidebar.top, sidebarBottom: sidebar.bottom,
+        statusTop: status.top, statusBottom: status.bottom, viewportHeight: innerHeight };
+    });
+    expect(bounds.scrollY, `${width}px scroll`).toBe(100);
+    expect(bounds.sidebarTop, `${width}px sidebar top`).toBeLessThan(bounds.viewportHeight);
+    expect(bounds.sidebarBottom, `${width}px sidebar bottom`).toBeGreaterThan(0);
+    expect(bounds.statusTop, `${width}px status top`).toBeGreaterThanOrEqual(0);
+    expect(bounds.statusBottom, `${width}px status bottom`).toBeLessThanOrEqual(bounds.viewportHeight);
+  }
+});
+
+test('keyboard pin and cell editors return focus to their openers', async ({ page }) => {
+  const add = page.getByRole('button', { name: 'Add adjustment at month 2', exact: true });
+  await add.focus();
+  await add.press('Enter');
+  await expect(page.locator('.pin-field-input').first()).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(add).toBeFocused();
+
+  const expense = page.locator('#amort-body td.editable-cell[data-month="2"][data-key="expense"]');
+  await expense.focus();
+  await expense.press('Enter');
+  await expect(page.locator('.cell-edit-input')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(expense).toBeFocused();
+  await expense.press('Space');
+  await expect(page.locator('.cell-edit-input')).toBeFocused();
+});
+
+test('adjustment list opens by keyboard and Cancel returns focus', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-pin', at_month: 2, start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  const opener = page.locator('.adj-entry[data-id="synthetic-pin"] .adj-open');
+  await opener.focus();
+  await opener.press('Enter');
+  await expect(page.locator('.pin-field-input').first()).toBeFocused();
+  await page.locator('#pin-cancel').click();
+  await expect(opener).toBeFocused();
+});
+
+test('saving and removing a pin return focus to a month action', async ({ page }) => {
+  const add = page.getByRole('button', { name: 'Add adjustment at month 2', exact: true });
+  await add.press('Enter');
+  await page.locator('.pin-field-input[data-phase="start"][data-key="expense"]').fill('12345.67');
+  await page.locator('#pin-save').click();
+  await expect(add).toBeFocused();
+  const edit = page.getByRole('button', { name: 'Edit adjustment at month 2', exact: true });
+  await edit.press('Enter');
+  await expect(page.locator('.pin-field-input').first()).toBeFocused();
+  await page.locator('#pin-remove').click();
+  await expect(edit).toHaveCount(0);
+  await expect(add).toBeFocused();
+});
+
+test('Enter commits an inline cell and returns focus to the cell', async ({ page }) => {
+  const cell = page.locator('#amort-body td.editable-cell[data-month="2"][data-key="expense"]');
+  await cell.press('Enter');
+  await page.locator('.cell-edit-input').fill('12345.67');
+  await page.locator('.cell-edit-input').press('Enter');
+  await expect(cell).toBeFocused();
+  await expect(cell).toContainText('$12,346');
+});
+
+test('moving a table-opened pin beyond the horizon focuses its sidebar action', async ({ page }) => {
+  const add = page.getByRole('button', { name: 'Add adjustment at month 2', exact: true });
+  await add.click();
+  await page.locator('.pin-field-input[data-phase="start"][data-key="expense"]').fill('12345.67');
+  await page.locator('#pin-save').click();
+  await page.getByRole('button', { name: 'Edit adjustment at month 2', exact: true }).click();
+  await page.locator('#pin-month').fill('121');
+  await page.locator('#pin-save').click();
+
+  const moved = page.locator('#adjustments-list .adj-entry[data-month="121"] .adj-open');
+  await expect(moved).toBeFocused();
+  await expect(page.locator('#amort-body .pin-action[data-id]')).toHaveCount(0);
+});
+
+test('Clear pins while editing returns focus to Recalculate', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-pin', at_month: 2, start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  await page.getByRole('button', { name: 'Edit adjustment at month 2', exact: true }).click();
+  await page.locator('#clear-pins').click();
+  await expect(page.locator('#calc-button')).toBeFocused();
+  await expect(page.locator('#clear-pins')).toBeDisabled();
+});
+
+test('Clear pins does not restore focus to a surviving unsaved Add action', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-pin', at_month: 2, start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  await page.getByRole('button', { name: 'Add adjustment at month 2', exact: true }).click();
+  await page.locator('#clear-pins').click();
+  await expect(page.locator('#calc-button')).toBeFocused();
+});
+
+test('removing an unreachable pin from its editor focuses Recalculate', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-unreachable-pin', at_month: 121,
+      start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  await page.locator('.adj-entry[data-id="synthetic-unreachable-pin"] .adj-open').click();
+  await page.locator('#pin-remove').click();
+  await expect(page.locator('#calc-button')).toBeFocused();
+  await expect(page.locator('#adjustments-list .adj-entry')).toHaveCount(0);
+});
+
+test('direct keyboard removal from adjustments focuses Recalculate', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-direct-pin', at_month: 2,
+      start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  const remove = page.locator('.adj-entry[data-id="synthetic-direct-pin"] .adj-remove');
+  await remove.focus();
+  await remove.press('Enter');
+  await expect(page.locator('#calc-button')).toBeFocused();
+  await expect(remove).toHaveCount(0);
+});
+
+test('sidebar controls have associated names and described hints', async ({ page }) => {
+  await expect(page.getByLabel('Starting cash', { exact: true })).toHaveId('buffer-initial');
+  await expect(page.getByLabel('Expenses, monthly', { exact: true })).toHaveId('expense');
+  await expect(page.getByLabel('Periods', { exact: true })).toHaveId('periods');
+  await expect(page.getByLabel('External income, monthly', { exact: true })).toHaveId('external-income');
+  await expect(page.getByLabel('Investments, monthly income', { exact: true })).toHaveId('investment-income');
+  await expect(page.locator('#periods')).toHaveAttribute('aria-describedby', 'periods-hint');
+  await expect(page.locator('#periods-hint')).toContainText('0 = run until reserve failure or cap');
+});
+
+test('sidebar money readout formats the starting cash value as it changes', async ({ page }) => {
+  const readout = page.locator('.field-readout[for="buffer-initial"]');
+  await expect(readout).toHaveText('$270,000');
+  await page.locator('#buffer-initial').fill('1234567');
+  await expect(readout).toHaveText('$1,234,567');
+  await page.locator('#buffer-initial').fill('');
+  await expect(readout).toBeEmpty();
+});
+
+test('sidebar input boxes align on one left edge', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const wrappers = page.locator('.sidebar .field .input-wrap');
+  await expect(wrappers).toHaveCount(11);
+  await expect.poll(() => wrappers.evaluateAll(elements => {
+    const leftEdges = elements.map(element => element.getBoundingClientRect().left);
+    return Math.max(...leftEdges) - Math.min(...leftEdges);
+  })).toBeLessThanOrEqual(1);
+});
+
+test('editing an assumption does not replay table row animations', async ({ page }) => {
+  await page.evaluate(() => {
+    window.tableRowAnimations = 0;
+    document.addEventListener('animationstart', event => {
+      if (event.target.matches('#amort-body tr[data-month]')) window.tableRowAnimations++;
+    }, true);
+  });
+  await page.locator('#expense').fill('5100');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await page.waitForTimeout(250);
+  expect(await page.evaluate(() => window.tableRowAnimations)).toBe(0);
+});
+
+test('pin editor fades when opened but not when rerendered', async ({ page }) => {
+  await page.locator('#amort-body tr[data-month="2"] .pin-action').click();
+  await expect(page.locator('.pin-editor-row')).toHaveClass(/is-entering/);
+  const count = await page.evaluate(async () => {
+    let animations = 0;
+    document.addEventListener('animationstart', event => {
+      if (event.target.matches('.pin-editor-row')) animations++;
+    }, true);
+    rerender();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return animations;
+  });
+  expect(count).toBe(0);
+  await expect(page.locator('.pin-editor-row')).not.toHaveClass(/is-entering/);
+});
+
+test('reduced motion shortens the pin editor fade', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#amort-body tr[data-month="2"] .pin-action').click();
+  const duration = await page.locator('.pin-editor-row').evaluate(node =>
+    parseFloat(getComputedStyle(node).animationDuration));
+  expect(duration).toBeLessThan(0.001);
+});
+
+test('phone layout stacks the sidebar and keeps content inside the viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => {
+    const rect = selector => document.querySelector(selector).getBoundingClientRect();
+    const stamp = rect('.today-stamp');
+    const heading = rect('.header h2');
+    const titles = rect('.table-head-titles');
+    const actions = rect('.table-actions');
+    return document.documentElement.scrollWidth <= innerWidth
+      && ['#chart', '.stats', '.table-scroll'].every(selector => rect(selector).width >= 300)
+      && rect('.sidebar').bottom <= rect('.main').top
+      && (stamp.right <= heading.left || heading.right <= stamp.left
+        || stamp.bottom <= heading.top || heading.bottom <= stamp.top)
+      && actions.top >= titles.bottom;
+  })).toBe(true);
+  await page.locator('#amort-body tr[data-month="1"] td[data-key="expense"]').click();
+  await page.locator('#today-stamp').click();
+  await expect(page.locator('.cell-edit-input')).toHaveCount(0);
+});
+
+test('method appendix fits a 320px viewport without page overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await expect.poll(() => page.evaluate(() => {
+    const item = document.querySelector('.method-item').getBoundingClientRect();
+    return document.documentElement.scrollWidth <= innerWidth
+      && item.left >= 0
+      && item.right <= innerWidth;
+  })).toBe(true);
+});
+
+test('tablet layout keeps stat labels compact without page overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= innerWidth
+      && [...document.querySelectorAll('.stat-label')].every(label => label.getBoundingClientRect().height < 30)
+  )).toBe(true);
+});
+
+test('table pin editor keeps Save visible while the table scrolls horizontally', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.locator('#expense').fill('12000');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await page.locator('#amort-body tr[data-month="3"] .pin-action').click();
+
+  const geometry = () => page.evaluate(() => {
+    const scroller = document.querySelector('.table-scroll');
+    const editor = document.querySelector('.pin-editor');
+    const cell = document.querySelector('.pin-editor-row > td');
+    const save = document.getElementById('pin-save');
+    return {
+      scrollerLeft: scroller.getBoundingClientRect().left,
+      scrollerRight: scroller.getBoundingClientRect().right,
+      editorLeft: editor.getBoundingClientRect().left,
+      saveRight: save.getBoundingClientRect().right,
+      textAlign: getComputedStyle(cell).textAlign,
+    };
+  });
+  let position = await geometry();
+  expect(position.saveRight).toBeLessThanOrEqual(position.scrollerRight + 1);
+  expect(position.textAlign).toBe('left');
+
+  await page.locator('.table-scroll').evaluate(node => { node.scrollLeft = node.scrollWidth; });
+  position = await geometry();
+  expect(Math.abs(position.editorLeft - position.scrollerLeft)).toBeLessThanOrEqual(1);
+  expect(position.saveRight).toBeLessThanOrEqual(position.scrollerRight + 1);
+});
+
+test('narrow table pin editor wraps its explanation and keeps Save visible', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#amort-body tr[data-month="2"] .pin-action').click();
+  const geometry = await page.evaluate(() => ({
+    subHeight: document.querySelector('.pin-editor-sub').getBoundingClientRect().height,
+    saveRight: document.getElementById('pin-save').getBoundingClientRect().right,
+    scrollerRight: document.querySelector('.table-scroll').getBoundingClientRect().right,
+  }));
+  expect(geometry.subHeight).toBeGreaterThan(20);
+  expect(geometry.saveRight).toBeLessThanOrEqual(geometry.scrollerRight + 1);
+});
+
+test('sidebar recovery pin editor fits and Save is directly clickable', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-late', at_month: 100, start: { expense: 6000 }, end: {} }]);
+    rerender();
+  });
+  await page.locator('#periods').fill('50');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await page.locator('.adj-entry[data-id="synthetic-late"]').click();
+  const geometry = await page.evaluate(() => {
+    const sidebar = document.querySelector('.sidebar');
+    return {
+      scrollWidth: sidebar.scrollWidth,
+      clientWidth: sidebar.clientWidth,
+      saveRight: document.getElementById('pin-save').getBoundingClientRect().right,
+      sidebarRight: sidebar.getBoundingClientRect().right,
+    };
+  });
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
+  expect(geometry.saveRight).toBeLessThanOrEqual(geometry.sidebarRight + 1);
+  await page.locator('#pin-save').click();
+  expect(await page.evaluate(() => state.pins[0].at_month)).toBe(100);
+});
+
+test.describe('theme token rendering', () => {
+  test('system scheme changes body, chart, halo, and texture without reload', async ({ page }) => {
+    const cash = page.locator('#chart path[data-series="cash"]');
+    const label = page.locator('.chart-y-label').first();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    await expect(cash).toHaveCSS('stroke', 'rgb(140, 194, 168)');
+    await expect(label).toHaveCSS('background-color', 'rgba(29, 25, 19, 0.85)');
+    await expect.poll(() => page.locator('body').evaluate(node => getComputedStyle(node).backgroundImage))
+      .toContain('rgba(236, 228, 212, 0.035)');
+
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+    await expect(cash).toHaveCSS('stroke', 'rgb(44, 74, 62)');
+    await expect.poll(() => page.locator('body').evaluate(node => getComputedStyle(node).backgroundImage))
+      .toContain('rgba(26, 24, 20, 0.035)');
+  });
+
+  test('print uses light colours under a dark system scheme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    await page.emulateMedia({ media: 'print', colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+  });
+});
+
+test.describe('theme control', () => {
+  const pressed = async page => Promise.all(['auto', 'light', 'dark'].map(choice =>
+    page.locator(`#theme-${choice}`).getAttribute('aria-pressed')));
+
+  test('Auto follows live system changes without an override', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    await expect(page.locator('html')).not.toHaveAttribute('data-theme');
+    await expect(page.locator('#theme-auto')).toHaveAttribute('aria-pressed', 'true');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+  });
+
+  test('Dark overrides a light system for body and chart without recalculating', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    const before = await page.evaluate(() => state.acceptedResult);
+    await page.locator('#theme-dark').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    await expect(page.locator('#chart path[data-series="cash"]')).toHaveCSS('stroke', 'rgb(140, 194, 168)');
+    expect(await pressed(page)).toEqual(['false', 'false', 'true']);
+    expect(await page.evaluate(() => state.acceptedResult)).toEqual(before);
+  });
+
+  test('Light overrides a dark system and Auto restores following', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.locator('#theme-light').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+    expect(await pressed(page)).toEqual(['false', 'true', 'false']);
+    await page.locator('#theme-auto').click();
+    await expect(page.locator('html')).not.toHaveAttribute('data-theme');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 19, 14)');
+    expect(await pressed(page)).toEqual(['true', 'false', 'false']);
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 236, 224)');
+  });
+
+  test('theme choice resets to Auto on reload without browser storage', async ({ page }) => {
+    await page.locator('#theme-dark').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.reload();
+    await expect(page.locator('html')).not.toHaveAttribute('data-theme');
+    expect(await pressed(page)).toEqual(['true', 'false', 'false']);
+    expect(await page.evaluate(() => [localStorage.length, sessionStorage.length, document.cookie])).toEqual([0, 0, '']);
+  });
+
+  test('Space activates the focused Dark button', async ({ page }) => {
+    await page.locator('#theme-dark').focus();
+    await page.keyboard.press('Space');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('#theme-dark')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('unit buttons update their pressed states', async ({ page }) => {
+    await page.locator('#unit-years').click();
+    await expect(page.locator('#unit-years')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#unit-months')).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+test('keyboard navigation shows a visible theme-button focus ring', async ({ page }) => {
+  for (let press = 0; press < 40; press++) {
+    await page.keyboard.press('Tab');
+    if (await page.evaluate(() => document.activeElement.id === 'theme-light')) break;
+  }
+  await expect(page.locator('#theme-light')).toBeFocused();
+  await expect(page.locator('#theme-light')).toHaveCSS('outline-style', 'solid');
+});
+
+test('Clear pins is disabled until an adjustment exists', async ({ page }) => {
+  await expect(page.locator('#clear-pins')).toBeDisabled();
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic', at_month: 1, start: { expense: 5001 }, end: {} }]);
+    rerender();
+  });
+  await expect(page.locator('#clear-pins')).toBeEnabled();
+});
+
+test('disabled CSV export stays muted while hovered', async ({ page }) => {
+  await page.locator('#expense').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  const exportButton = page.locator('#export-csv');
+  await expect(exportButton).toBeDisabled();
+  await expect(exportButton).toHaveCSS('opacity', '0.45');
+  const restingFill = await exportButton.evaluate(button => getComputedStyle(button).backgroundColor);
+  await exportButton.hover({ force: true });
+  await page.waitForTimeout(200); // Let the button's 150 ms hover transition finish.
+  await expect.poll(() => exportButton.evaluate(button => getComputedStyle(button).backgroundColor))
+    .toBe(restingFill);
+});
+
 test('fresh projection keeps its last valid rows during invalid input and restores CSV export', async ({ page }) => {
   const firstRow = page.locator('#amort-body tr').first();
   await expect(firstRow).toBeVisible();
@@ -135,6 +791,122 @@ test('chart uses each effective floor and includes a raised floor in its bounds'
   expect(new Set(ys).size).toBeGreaterThan(1);
   expect(Math.min(...ys)).toBeGreaterThanOrEqual(8);
   await expect(page.locator('#chart-y-labels')).toContainText('floor $900K');
+});
+
+test('chart renders reserve band, guides, and end labels', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator('#chart .chart-reserve-band')).toHaveCount(1);
+  await expect(page.locator('#chart .chart-grid')).toHaveCount(3);
+  await expect(page.locator('#chart .chart-end-label')).toHaveCount(2);
+  await expect(page.locator('#chart .chart-end-label').first()).toContainText('Buffer');
+  await expect(page.locator('#chart .chart-end-label').last()).toContainText('Investments');
+  await expect(page.locator('#chart')).toHaveAttribute('role', 'img');
+});
+
+test('chart separates equal end values and shortens labels on narrow screens', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 100000, investments_initial: 100000,
+      floor: 0, external_income: 0, investment_income: 0, expense: 0, inflation: 0,
+      num_periods: 12, unit: 'months' });
+    acceptPins([]);
+    rerender();
+  });
+  const ys = await page.locator('#chart .chart-end-label').evaluateAll(labels =>
+    labels.map(label => Number(label.getAttribute('y'))));
+  expect(ys).toHaveLength(2);
+  expect(Math.abs(ys[0] - ys[1])).toBeGreaterThanOrEqual(14);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.locator('#chart .chart-end-label').first().textContent()).toMatch(/^\$/);
+  const narrowLabels = await page.locator('#chart .chart-end-label').allTextContents();
+  expect(narrowLabels.join(' ')).not.toContain('Buffer');
+  expect(narrowLabels.join(' ')).not.toContain('Investments');
+});
+
+test('chart hover shows projection details and highlights one monthly table row', async ({ page }) => {
+  const target = await page.evaluate(() => {
+    const i = Math.round((lastChartRows.length - 1) / 2);
+    const row = lastChartRows[i];
+    return { x: chartGeometry.xOf(i), y: chartGeometry.H / 2,
+      date: fmtDate(row.date, 'months'), month: row.month };
+  });
+  const box = await page.locator('#chart').boundingBox();
+  await page.mouse.move(box.x + target.x, box.y + target.y);
+  await expect(page.locator('#chart-tooltip')).toBeVisible();
+  await expect(page.locator('#chart-tooltip')).toContainText(target.date);
+  for (const label of ['Buffer', 'Investments', 'Floor']) {
+    await expect(page.locator('#chart-tooltip')).toContainText(label);
+  }
+  await expect(page.locator('#chart .chart-hover')).toHaveAttribute('visibility', 'visible');
+  await expect(page.locator('#amort-body tr.is-chart-hover')).toHaveCount(1);
+  await expect(page.locator('#amort-body tr.is-chart-hover')).toHaveAttribute('data-month', String(target.month));
+  await page.mouse.move(box.x - 20, box.y - 20);
+  await expect(page.locator('#chart-tooltip')).toBeHidden();
+  await expect(page.locator('#amort-body tr.is-chart-hover')).toHaveCount(0);
+});
+
+test('chart hover highlights exactly one yearly row', async ({ page }) => {
+  await page.locator('#unit-years').click();
+  const position = await page.evaluate(() => ({ x: chartGeometry.xOf(4), y: chartGeometry.H / 2 }));
+  const box = await page.locator('#chart').boundingBox();
+  await page.mouse.move(box.x + position.x, box.y + position.y);
+  await expect(page.locator('#amort-body tr.is-chart-hover')).toHaveCount(1);
+});
+
+test('chart axis labels align with plotted pixel coordinates', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const positions = await page.evaluate(() => {
+    const svg = document.getElementById('chart');
+    const svgBox = svg.getBoundingClientRect();
+    const labels = [...document.querySelectorAll('.chart-y-label')];
+    const centres = labels.map(label => {
+      const box = label.getBoundingClientRect();
+      return { y: box.top + box.height / 2, left: box.left, height: box.height };
+    });
+    return {
+      svgTop: svgBox.top, svgLeft: svgBox.left,
+      maxY: chartGeometry.padT,
+      floorY: chartGeometry.yOf(chartGeometry.floorOf(lastChartRows.at(-1))),
+      zeroY: chartGeometry.H - chartGeometry.padB,
+      centres,
+    };
+  });
+  expect(positions.centres).toHaveLength(3);
+  for (const [index, y] of [positions.maxY, positions.floorY, positions.zeroY].entries()) {
+    expect(Math.abs(positions.centres[index].y - positions.svgTop - y)).toBeLessThanOrEqual(2);
+  }
+  for (const label of positions.centres) {
+    expect(label.left).toBeGreaterThanOrEqual(positions.svgLeft);
+    expect(label.height).toBeLessThan(18);
+  }
+});
+
+test('spreadLabels separates and clamps positions without changing input', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const first = [{ key: 'a', y: 50 }, { key: 'b', y: 52 }];
+    const second = [{ key: 'a', y: 195 }, { key: 'b', y: 198 }];
+    const low = [{ key: 'a', y: -5 }];
+    return {
+      first: spreadLabels(first, 14, 0, 200),
+      second: spreadLabels(second, 14, 0, 200),
+      low: spreadLabels(low, 14, 0, 200),
+      originals: [first, second, low],
+    };
+  });
+  expect(result.first).toEqual([{ key: 'a', y: 50 }, { key: 'b', y: 64 }]);
+  expect(result.second).toEqual([{ key: 'a', y: 186 }, { key: 'b', y: 200 }]);
+  expect(result.low).toEqual([{ key: 'a', y: 0 }]);
+  expect(result.originals).toEqual([
+    [{ key: 'a', y: 50 }, { key: 'b', y: 52 }],
+    [{ key: 'a', y: 195 }, { key: 'b', y: 198 }],
+    [{ key: 'a', y: -5 }],
+  ]);
+});
+
+test('chart viewBox follows its resized SVG width', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await expect.poll(() => page.locator('#chart').evaluate(svg =>
+    svg.viewBox.baseVal.width === Math.round(svg.getBoundingClientRect().width))).toBe(true);
 });
 
 test('reserve failure names funded expense and retains principal with full sale tax', async ({ page }) => {

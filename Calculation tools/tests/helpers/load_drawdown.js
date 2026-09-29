@@ -25,7 +25,7 @@ function loadDrawdownApi({ document = {}, today = [2026, 6, 30] } = {}) {
     readParams, recalc, rerender, exportCsv, acceptPins, tryAcceptPins, aggregateForView, renderStats,
     calculateAssetSale, createIncomeLedger, applyPrincipalEvent, resetIncomeLedger, effectiveIncome,
     normalizeTaxPercent, readNormalizedTaxRate,
-    readPinFieldValue, collectPinFields, renderPinEditor,
+    readPinFieldValue, collectPinFields, renderPinEditor, issueLabel, pinFieldLabel,
     toRoundedCents, formatCents, buildCsvText,
     solveAnnualTarget, evaluateAnnualIncomeCandidate, encloseAnnualIncomeCandidates,
     searchAnnualIncome, intervalArithmetic, annualIncomeContext,

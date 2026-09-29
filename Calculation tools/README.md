@@ -18,6 +18,11 @@ Projects monthly cash flow and investment principal until the requested horizon,
 - Supports one identified adjustment per month. Beginning assumptions affect that month's flow; ending cash, principal valuation, and income baseline apply after expenses and sales. Closing cash is a separate cash adjustment, not recurring income. Only explicitly changed fields are stored. Pins can be moved to another unoccupied month, edited, reset, or removed. An unreachable pin remains visible with unapplied phase status for recovery; a failure-month ending phase does not apply.
 - Expense and investment-income table cells edit the selected month's opening assumption; buffer and investment cells set its exact closing balance. In yearly view, flow cells set a target for the planned group by solving the first month's monthly assumption, while closing balance cells target the last simulated month. Annual targets are verified when saved and their target, resolved monthly value, and span are kept as provenance, not as a constraint automatically re-solved after later edits. Moving an annual pin preserves its monthly assumption but clears annual-target provenance.
 - Lists adjustments in the **Adjustments** panel, where each can be opened at its exact month or removed. Changes compose chronologically and remain in page memory only.
+- Offers Auto, Light, and Dark themes. Auto is selected on every load and follows the operating system's color setting; a Light or Dark override lasts only until reload. No theme choice is stored. Printing always uses the light theme.
+- Leads the results with a verdict headline for the current projection. Hovering over the chart highlights the matching table row.
+- Provides keyboard-accessible **+** and **✎** edit buttons, Enter or Space to open an editable table cell, and buttons for entries in **Adjustments**. Focus returns to a useful control after an editor closes.
+- Stacks the sidebar above the results below 900px. Validation and updating status appear in an overlay near the top of the sidebar. Six money inputs have formatted readouts alongside their numeric controls, and **Clear pins** is disabled when no pins exist.
+- Explains the projection's assumptions and boundaries in the structured **Method & scope** appendix.
 - Shows summary statistics, a trajectory chart, a detailed table, and CSV export. Table money is rounded to whole dollars for display; hover or keyboard focus reveals cents and, on editable cells, the exact model value. CSV has readable cents columns and exact JavaScript Number `*_raw` columns. Its date, `first_month`, `last_month`, `planned_last_month`, `overrides`, and `adjustments_json` fields preserve row spans and applied/unapplied start/end provenance. Readable tax and sale columns reconcile at cents (`tax_paid = income_tax_paid + sale_tax_paid`; `sold = sale_tax_paid + net_sale_proceeds`), while raw columns retain the unrounded computation.
 - Treats a period count of `0` as a run until reserve failure or the 1,200-month (100-year) safety cap. Invalid inputs show a recoverable status and keep the last valid projection visible; CSV export is disabled while it is stale and revalidates before download. Unreachable adjustments remain in the Adjustments panel for correction or removal.
 
@@ -72,14 +77,14 @@ Both calculators use `APR / 12` monthly compounding and round monthly amounts to
 
 ## Usage
 
-1. Open the desired `.html` file in Chrome, Safari, Firefox, or another modern browser.
+1. Open the desired `.html` file in Chrome or Edge 123+, Firefox 120+, or Safari 17.5+. Older versions do not render `drawdown.html` correctly.
 2. Enter a scenario.
 3. Click **Calculate** where provided. `drawdown.html` also recalculates shortly after an input changes.
 4. Use the page's export controls if you need CSV data or, for the early-loan calculator, a PNG chart.
 
-Run the dependency-free Node regression suite with `node --test tests/*.test.js`. It covers drawdown dates, protected-reserve settlement, sales and income-ledger changes, adjustments, yearly aggregation and targets, and CSV schema and precision. No package installation is required for that suite.
+Run the dependency-free Node regression suite with `node --test tests/*.test.js`. It covers drawdown dates, protected-reserve settlement, sales and income-ledger changes, adjustments, yearly aggregation and targets, and CSV schema and precision. A theme-token guard checks contrast, styling without color literals, absence of browser storage, and the single-script structure. No package installation is required for that suite.
 
-The Playwright suite covers the drawdown editor, yearly target workflow, validation and stale-export recovery, and CSV download, as well as the Chart.js-backed financing calculator in Chromium:
+The Playwright suite covers the drawdown editor, yearly target workflow, validation and stale-export recovery, CSV download, theme modes and print styling, responsive layout, chart interaction, keyboard editing, and focus recovery, as well as the Chart.js-backed financing calculator in Chromium:
 
 ```sh
 npm ci
