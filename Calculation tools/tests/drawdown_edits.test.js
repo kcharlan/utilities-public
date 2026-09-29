@@ -2,7 +2,33 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { loadDrawdownApi } = require('./helpers/load_drawdown');
+const { calculatorHtml, loadDrawdownApi } = require('./helpers/load_drawdown');
+
+test('sidebar field ids stay wired to markup and input listeners', () => {
+  const fieldMap = calculatorHtml.match(/const SIDEBAR_FIELDS = \{([\s\S]*?)\n\};/)?.[1];
+  assert.ok(fieldMap);
+  const inputs = calculatorHtml.match(/const inputs = \[([^\]]+)\];/)?.[1];
+  assert.ok(inputs);
+  const ids = [...fieldMap.matchAll(/\bid:\s*'([^']+)'/g)].map(match => match[1]);
+  assert.equal(ids.length, 11);
+  for (const id of ids) {
+    assert.match(inputs, new RegExp(`'${id}'`));
+    assert.ok(calculatorHtml.includes(`id="${id}"`), `missing control ${id}`);
+  }
+});
+
+test('validation issues use sidebar and adjustment labels', () => {
+  const { issueLabel, pinFieldLabel } = loadDrawdownApi();
+  assert.equal(issueLabel({ field: 'buffer_initial' }), 'Starting cash');
+  assert.equal(issueLabel({ field: 'buffer', origin: 'adjustment', month: 3 }), 'Buffer (set to)');
+  assert.equal(issueLabel({ field: 'investment_income', origin: 'adjustment', phase: 'end' }),
+    "Next month's investment income (monthly)");
+  assert.equal(issueLabel({ field: 'at_month', origin: 'adjustment' }), 'Effective month');
+  assert.equal(issueLabel({ field: 'model' }), '');
+  assert.equal(issueLabel({ field: 'draft' }), '');
+  assert.equal(issueLabel({ field: 'mystery' }), 'mystery');
+  assert.equal(pinFieldLabel('start', 'expense'), 'Expense (base) (monthly)');
+});
 
 test('transactions retain identity and unrelated fields while moving or editing', () => {
   const { state, applyEditTransaction } = loadDrawdownApi();

@@ -10,6 +10,42 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('pending status is quiet and does not move sidebar inputs', async ({ page }) => {
+  const pending = await page.evaluate(() => {
+    const input = document.getElementById('expense');
+    const beforeTop = document.getElementById('buffer-initial').getBoundingClientRect().top;
+    input.value = '5100';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const status = document.getElementById('scenario-status');
+    return { tone: status.getAttribute('data-tone'), text: status.textContent,
+      hidden: status.hidden, beforeTop,
+      duringTop: document.getElementById('buffer-initial').getBoundingClientRect().top };
+  });
+  expect(pending.tone).toBe('pending');
+  expect(pending.text).toContain('Showing the last valid projection');
+  expect(pending.text).toContain('Updating after your change…');
+  expect(pending.text).not.toContain('draft');
+  expect(pending.hidden).toBe(false);
+  expect(pending.duringTop).toBe(pending.beforeTop);
+});
+
+test('invalid sidebar status stays visible and identifies the input', async ({ page }) => {
+  await page.locator('#buffer-initial').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  const status = page.locator('#scenario-status');
+  await expect(status).toHaveAttribute('data-tone', 'error');
+  await expect(status).toContainText('Starting cash:');
+  await expect(status).not.toContainText('buffer_initial');
+  await expect(page.locator('#buffer-initial')).toHaveAttribute('aria-errormessage', 'scenario-status');
+  const edges = await page.evaluate(() => {
+    const sidebar = document.querySelector('.sidebar');
+    sidebar.scrollTop = sidebar.scrollHeight;
+    return { status: document.getElementById('scenario-status').getBoundingClientRect().top,
+      sidebar: sidebar.getBoundingClientRect().top };
+  });
+  expect(Math.abs(edges.status - edges.sidebar)).toBeLessThanOrEqual(4);
+});
+
 test('keyboard pin and cell editors return focus to their openers', async ({ page }) => {
   const add = page.getByRole('button', { name: 'Add adjustment at month 2', exact: true });
   await add.focus();

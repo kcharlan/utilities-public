@@ -353,14 +353,22 @@
     overflow: hidden;
   }
   .calc-button:not(:disabled):hover { background: var(--negative); }
+  .sidebar-status-anchor { position: sticky; top: 0; height: 0; z-index: 4; transform: translateY(-32px); }
+  .sidebar-status-anchor > #scenario-status { position: absolute; top: 0; left: 0; right: 0; }
   .scenario-status {
-    margin-top: 14px;
     padding: 10px 12px;
     border: 1px solid var(--negative);
     color: var(--negative);
     background: var(--surface-raised);
+    box-shadow: 0 3px 8px var(--shadow);
     font-size: 12px;
     line-height: 1.45;
+  }
+  .scenario-status[data-tone="pending"] {
+    color: var(--text-muted);
+    border: 0;
+    background: transparent;
+    box-shadow: none;
   }
   .scenario-status[hidden] { display: none; }
   .field input[aria-invalid="true"] { outline: 2px solid var(--negative); outline-offset: 2px; }
@@ -1107,6 +1115,7 @@
 
   @media (max-width: 560px) {
     .sidebar { padding: 20px 16px 28px; }
+    .sidebar-status-anchor { transform: translateY(-20px); }
     .table-head { flex-wrap: wrap; gap: 12px; }
     .table-actions { width: 100%; flex-wrap: wrap; }
   }
@@ -1116,6 +1125,9 @@
 <body>
 <div class="layout">
   <aside class="sidebar">
+    <div class="sidebar-status-anchor">
+      <div id="scenario-status" class="scenario-status" role="status" aria-live="polite" hidden></div>
+    </div>
     <div class="brand">
       <div class="mark">A Parametric Solvency Study</div>
       <h1>Draw<em>down</em></h1>
@@ -1204,7 +1216,6 @@
       <div id="adjustments-list"></div>
     </div>
 
-    <div id="scenario-status" class="scenario-status" role="status" aria-live="polite" hidden></div>
     <button class="calc-button" id="calc-button">Recalculate<span class="arrow">→</span></button>
   </aside>
 
@@ -1315,6 +1326,42 @@ const PARAM_DEFS = [
   { key: 'tax_rate',        label: 'Tax rate',            fmt: 'pct', min: 0, max: 1       },
   { key: 'sale_tax_rate',   label: 'Asset sale tax rate', fmt: 'pct', min: 0, max: 1       },
 ];
+
+const SIDEBAR_FIELDS = {
+  buffer_initial: { id: 'buffer-initial', label: 'Starting cash' },
+  floor: { id: 'floor', label: 'Floor' },
+  external_income: { id: 'external-income', label: 'External income, monthly' },
+  investments_initial: { id: 'investments-initial', label: 'Principal' },
+  investment_income: { id: 'investment-income', label: 'Investments, monthly income' },
+  modifier: { id: 'modifier', label: 'Income modifier' },
+  expense: { id: 'expense', label: 'Expenses, monthly' },
+  inflation: { id: 'inflation', label: 'Annual inflation' },
+  tax_rate: { id: 'tax-rate', label: 'Income effective rate' },
+  sale_tax_rate: { id: 'sale-tax-rate', label: 'Asset sale effective rate' },
+  num_periods: { id: 'periods', label: 'Periods' },
+};
+
+const ISSUE_LABELS = {
+  unit: 'Horizon unit', at_month: 'Effective month', id: 'Adjustment',
+  start: 'Beginning of month', end: 'End of month', annual_edits: 'Annual target',
+  pins: 'Adjustments', dateAnchor: 'Projection dates',
+  params: '', options: '', model: '', throughMonth: '', startMonth: '', draft: '',
+};
+
+function pinFieldLabel(phase, key) {
+  const def = PARAM_DEFS.find(item => item.key === key);
+  const label = phase === 'end' && key === 'investment_income'
+    ? "Next month's investment income" : def.label;
+  return label + (['expense', 'external_income', 'investment_income'].includes(key) ? ' (monthly)' : '');
+}
+
+function issueLabel(item) {
+  if (Object.hasOwn(ISSUE_LABELS, item.field)) return ISSUE_LABELS[item.field];
+  if (item.origin === 'adjustment' && PARAM_DEFS.some(def => def.key === item.field)) {
+    return pinFieldLabel(item.phase ?? 'start', item.field);
+  }
+  return SIDEBAR_FIELDS[item.field]?.label ?? item.field;
+}
 
 const state = {
   params: {
@@ -2720,7 +2767,7 @@ function renderPinEditor(row, baseRows) {
 
     fieldsHtml += `
       <div class="pin-editor-field ${isOverridden || state.editing?.dirty?.has(identity) ? 'changed' : ''}" data-phase="${phase}" data-key="${def.key}" data-fmt="${def.fmt}" data-baseline="${baseVal ?? ''}">
-        <label>${phase === 'end' && def.key === 'investment_income' ? "Next month's investment income" : def.label}${['expense', 'external_income', 'investment_income'].includes(def.key) ? ' (monthly)' : ''}</label>
+        <label>${pinFieldLabel(phase, def.key)}</label>
         <span class="input-wrap">${prefix}<input type="number" class="pin-field-input" data-phase="${phase}" data-key="${def.key}" data-original="${originalDisplay}" value="${displayValue}" ${inputAttrs}>${suffix}</span>
         <span class="baseline">baseline: ${baselineDisplay}</span>
         ${isOverridden ? `<button type="button" class="pin-reset-field" data-phase="${phase}" data-key="${def.key}">Reset this field</button>` : ''}
@@ -3291,27 +3338,30 @@ function showScenarioStatus(issues, stale) {
   state.stale = stale;
   const status = document.getElementById('scenario-status');
   if (status) {
+    const tone = issues.length ? (issues.every(item => item.field === 'draft') ? 'pending' : 'error') : null;
+    if (tone) status.setAttribute?.('data-tone', tone);
+    else status.removeAttribute?.('data-tone');
     status.hidden = issues.length === 0;
     status.textContent = issues.length
       ? `${stale ? 'Showing the last valid projection. ' : ''}${issues.map(item => {
           const location = item.origin === 'adjustment'
             ? `Adjustment${Number.isInteger(item.month) ? ` at month ${item.month}` : ''} — `
             : '';
-          return `${location}${item.field}: ${item.message}`;
+          const label = issueLabel(item);
+          return `${location}${label ? `${label}: ` : ''}${item.message}`;
         }).join(' ')}`
       : '';
+    const verdict = document.getElementById('verdict');
+    if (verdict) verdict.classList?.toggle('is-stale', tone === 'error');
+    const verdictNote = document.getElementById('verdict-note');
+    if (verdictNote) verdictNote.hidden = tone !== 'error';
   }
   const exportButton = document.getElementById('export-csv');
   if (exportButton) exportButton.disabled = stale;
 }
 
 function readParams(pins = state.pins) {
-  const ids = {
-    buffer_initial: 'buffer-initial', floor: 'floor', external_income: 'external-income',
-    investments_initial: 'investments-initial', investment_income: 'investment-income',
-    modifier: 'modifier', expense: 'expense', inflation: 'inflation',
-    tax_rate: 'tax-rate', sale_tax_rate: 'sale-tax-rate', num_periods: 'periods',
-  };
+  const ids = Object.fromEntries(Object.entries(SIDEBAR_FIELDS).map(([key, field]) => [key, field.id]));
   const controls = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, document.getElementById(id)]));
   const draft = { ...state.params, unit: state.draftUnit ?? state.params.unit };
   for (const [key, control] of Object.entries(controls)) {
@@ -3327,8 +3377,13 @@ function readParams(pins = state.pins) {
   const issues = trial?.terminatedReason === 'invalid' ? trial.issues : checked.issues;
   const byField = new Set(issues.filter(item => item.origin !== 'adjustment').map(item => item.field));
   for (const [key, control] of Object.entries(controls)) {
-    if (byField.has(key)) control.setAttribute?.('aria-invalid', 'true');
-    else control.removeAttribute?.('aria-invalid');
+    if (byField.has(key)) {
+      control.setAttribute?.('aria-invalid', 'true');
+      control.setAttribute?.('aria-errormessage', 'scenario-status');
+    } else {
+      control.removeAttribute?.('aria-invalid');
+      control.removeAttribute?.('aria-errormessage');
+    }
   }
   if (issues.length) {
     showScenarioStatus(issues, true);
@@ -3529,7 +3584,7 @@ function init() {
     el.addEventListener('input', () => {
       cancelActiveSolve();
       clearTimeout(sidebarTimers.get(el));
-      showScenarioStatus([issue('draft', 'Input changed; projection will update after validation.')], true);
+      showScenarioStatus([issue('draft', 'Updating after your change…')], true);
       sidebarTimers.set(el, setTimeout(recalc, 220));
     });
   });
