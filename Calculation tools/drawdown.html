@@ -1146,28 +1146,39 @@
     margin-left: 6px;
   }
 
-  .footnote {
-    font-family: 'Fraunces', serif;
-    font-style: italic;
-    font-variation-settings: "opsz" 9;
-    font-size: var(--fs-xs);
-    color: var(--text-subtle);
+  .method {
     margin-top: 28px;
-    max-width: 760px;
-    line-height: 1.7;
-    letter-spacing: 0.005em;
-    column-count: 1;
+    max-width: 1100px;
   }
-  .footnote strong {
-    font-style: normal;
-    color: var(--text-muted);
-    font-weight: 500;
+  .method h3 {
     font-family: 'Fraunces', serif;
-    font-variation-settings: "opsz" 9, "SOFT" 30;
+    font-variation-settings: "opsz" 72, "SOFT" 30;
+    font-weight: 400;
+    font-size: var(--fs-xl);
+    color: var(--text);
+    margin-bottom: 20px;
   }
-  .footnote .sep {
-    margin: 0 8px;
-    color: var(--rule);
+  .method h3 em {
+    color: var(--text-muted);
+    font-weight: 300;
+  }
+  .method-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px 32px;
+  }
+  .method-item dt {
+    font-size: var(--fs-xs);
+    font-variant: small-caps;
+    letter-spacing: 0.12em;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .method-item dd {
+    font-size: var(--fs-sm);
+    font-style: normal;
+    line-height: 1.6;
+    color: var(--text-muted);
   }
 
   /* ============ ANIMATIONS ============ */
@@ -1376,21 +1387,39 @@
       <div class="table-footer" id="table-footer"></div>
     </section>
 
-    <p class="footnote">
-      <strong>Method.</strong> Inflation compounds monthly from the annual effective rate. Expenses are funded only from cash above the protected floor; sales seek enough net proceeds to fund expenses and restore it. Required and funded expense, unmet expense, and unmet reserve are reported separately.
-      <span class="sep">·</span>
-      <strong>Tax.</strong> The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.
-      <span class="sep">·</span>
-      <strong>Income ledger.</strong> Gross sales reduce principal. Sales and closing-principal valuations adjust raw investment income by <em>modifier × income yield × principal change</em>, using the modifier in force at each event. Later principal changes can raise or lower that ledger. At zero principal, payable investment income is zero even if raw income remains; an explicit income edit resets raw income and yield.
-      <span class="sep">·</span>
-      <strong>Pins.</strong> Beginning assumptions affect the selected month; ending cash and principal are exact closing balances after its expenses and sales, and ending income becomes the next month's baseline. Closing principal is a valuation, and closing cash is a separate adjustment; neither is a sale or recurring income. Move a pin to an unoccupied month or use the Adjustments panel to recover an unreachable pin. Yearly flow edits solve an exact target for the planned group when saved; the saved target is provenance, not a live constraint.
-      <span class="sep">·</span>
-      <strong>Export.</strong> The table rounds money to whole dollars with cents and exact values in cell detail. CSV provides readable cents and exact <code>*_raw</code> Number columns, date/span and start/end application provenance. Readable <code>tax_paid</code> reconciles with its two tax parts; gross <code>sold</code> reconciles with sale tax and net proceeds. Invalid edits keep the last valid view and disable export until corrected.
-      <span class="sep">·</span>
-      <strong>Termination.</strong> The projection stops with reserve failure when an expense or the protected reserve cannot be funded; zero principal or touching the floor alone is not failure. Otherwise it ends at the requested horizon or the 1,200-month cap. A yearly row may cover fewer than 12 actual months if failure occurs or the requested horizon is partial.
-      <span class="sep">·</span>
-      <strong>Scope.</strong> This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.
-    </p>
+    <section class="method" aria-labelledby="method-title">
+      <h3 id="method-title">Method <em>&amp; scope</em></h3>
+      <dl class="method-list">
+        <div class="method-item">
+          <dt>Method</dt>
+          <dd>Inflation compounds monthly from the annual effective rate. Expenses are funded only from cash above the protected floor; sales seek enough net proceeds to fund expenses and restore it. Required and funded expense, unmet expense, and unmet reserve are reported separately.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Tax</dt>
+          <dd>The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Income ledger</dt>
+          <dd>Gross sales reduce principal. Sales and closing-principal valuations adjust raw investment income by <em>modifier × income yield × principal change</em>, using the modifier in force at each event. Later principal changes can raise or lower that ledger. At zero principal, payable investment income is zero even if raw income remains; an explicit income edit resets raw income and yield.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Pins</dt>
+          <dd>Beginning assumptions affect the selected month; ending cash and principal are exact closing balances after its expenses and sales, and ending income becomes the next month's baseline. Closing principal is a valuation, and closing cash is a separate adjustment; neither is a sale or recurring income. Move a pin to an unoccupied month or use the Adjustments panel to recover an unreachable pin. Yearly flow edits solve an exact target for the planned group when saved; the saved target is provenance, not a live constraint.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Export</dt>
+          <dd>The table rounds money to whole dollars with cents and exact values in cell detail. CSV provides readable cents and exact <code>*_raw</code> Number columns, date/span and start/end application provenance. Readable <code>tax_paid</code> reconciles with its two tax parts; gross <code>sold</code> reconciles with sale tax and net proceeds. Invalid edits keep the last valid view and disable export until corrected.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Termination</dt>
+          <dd>The projection stops with reserve failure when an expense or the protected reserve cannot be funded; zero principal or touching the floor alone is not failure. Otherwise it ends at the requested horizon or the 1,200-month cap. A yearly row may cover fewer than 12 actual months if failure occurs or the requested horizon is partial.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Scope</dt>
+          <dd>This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.</dd>
+        </div>
+      </dl>
+    </section>
   </main>
 </div>
 

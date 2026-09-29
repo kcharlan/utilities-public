@@ -68,6 +68,7 @@ test('old colour names, browser storage, and extra scripts are absent', () => {
 
 test('retired drawdown presentation hooks stay removed', () => {
   assert.doesNotMatch(calculatorHtml, /pull-quote|pq-mark|marker-dot\.surplus/);
+  assert.doesNotMatch(calculatorHtml, /class="footnote"/);
   assert.doesNotMatch(calculatorHtml, /\.amort tr\.is-pinned \+ tr td\s*\{\s*(?:\/\*[^*]*\*\/\s*)?\}/);
 });
 

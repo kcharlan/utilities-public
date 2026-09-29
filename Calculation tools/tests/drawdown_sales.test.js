@@ -270,8 +270,9 @@ test('[Gross sold] table renames only the visible sale heading', () => {
 });
 
 test('[methodology] explains tax, principal events, reserve failure, and income reset', () => {
-  const footnote = calculatorHtml.match(/<p class="footnote">([\s\S]*?)<\/p>/)?.[1] ?? '';
-  const text = footnote
+  // Keep the content checks scoped to the structured method appendix.
+  const method = calculatorHtml.match(/<section class="method"[^>]*>([\s\S]*?)<\/section>/)?.[1] ?? '';
+  const text = method
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
