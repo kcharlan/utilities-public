@@ -1414,6 +1414,339 @@ function applyEditTransaction(scenario, edit) {
   return { ok: true, scenario: { ...scenario, params, pins, revision: (scenario.revision ?? 0) + 1 }, issues: [], result: trial };
 }
 
+/* Exact annual flow edits are proposals. Nothing in this section writes to state. */
+function annualSpan(scenario, span) {
+  const checked = validateParams(scenario?.params);
+  if (!checked.ok) return null;
+  const planned = Math.min(checked.value.num_periods === 0 ? MAX_MONTHS :
+    checked.value.num_periods * (checked.value.unit === 'years' ? 12 : 1), MAX_MONTHS);
+  const first = span?.first_month, last = span?.last_month;
+  if (!Number.isInteger(first) || first < 1 || first > planned ||
+      last !== Math.min(first + 11, planned) || (first - 1) % 12 !== 0) return null;
+  return { first_month: first, last_month: last };
+}
+
+function annualCandidateScenario(scenario, span, field, value, target) {
+  const pins = scenario.pins.map(clonePin);
+  let pin = pins.find(item => item.at_month === span.first_month);
+  if (!pin) {
+    const stem = `annual-target-${span.first_month}`;
+    let id = stem, suffix = 1;
+    while (pins.some(item => item.id === id)) id = `${stem}-${suffix++}`;
+    pin = { id, at_month: span.first_month, start: {}, end: {} };
+    pins.push(pin);
+  }
+  pin.start[field] = value;
+  pin.annual_edits = { ...pin.annual_edits,
+    [field]: { target_total: target, first_month: span.first_month,
+      last_month: span.last_month, resolved_monthly_value: value } };
+  return { ...scenario, params: { ...scenario.params }, pins,
+    revision: (scenario.revision ?? 0) + 1 };
+}
+
+function annualTrial(scenario, span, field, value, target, resumeState = null) {
+  const candidate = annualCandidateScenario(scenario, span, field, value, target);
+  const result = simulate(candidate.params, candidate.pins, { throughMonth: span.last_month,
+    ...(resumeState ? { startMonth: span.first_month, resumeState } : {}) });
+  const rows = result.rows.filter(row => row.month >= span.first_month && row.month <= span.last_month);
+  return { candidate, result, total: rows.reduce((sum, row) => sum + row[field], 0),
+    simulatedMonths: result.rows.length,
+    funded: result.terminatedReason !== 'invalid' && rows.length === span.last_month - span.first_month + 1 &&
+      rows.every(row => !row.insolvency) };
+}
+
+function annualIncomeContext(scenario, span, target) {
+  const prefix = simulate(scenario.params, scenario.pins,
+    { throughMonth: span.first_month, captureBeforeMonth: span.first_month });
+  const row = prefix.rows.find(item => item.month === span.first_month);
+  return { scenario, span, target, opening: row?.pre_start_state ?? null,
+    current: row?.post_start_state?.investment_income ?? null,
+    resumeState: prefix.capturedState ?? null };
+}
+
+function evaluateAnnualIncomeCandidate(context, x) {
+  if (!Number.isFinite(x) || x < 0 || !context.opening) return { total: NaN, funded: false, invalid: true };
+  const trial = annualTrial(context.scenario, context.span, 'investment_income', x, context.target, context.resumeState);
+  return { total: trial.total, funded: trial.funded, invalid: trial.result.terminatedReason === 'invalid',
+    scenario: trial.candidate, simulatedMonths: trial.simulatedMonths };
+}
+
+const intervalArithmetic = (() => {
+  const bits = new DataView(new ArrayBuffer(8));
+  function adjacent(value, direction) {
+    if (Number.isNaN(value)) return NaN;
+    if (value === (direction > 0 ? Infinity : -Infinity)) return value;
+    if (value === 0) return direction > 0 ? Number.MIN_VALUE : -Number.MIN_VALUE;
+    bits.setFloat64(0, value);
+    let code = bits.getBigUint64(0);
+    code += (value > 0) === (direction > 0) ? 1n : -1n;
+    bits.setBigUint64(0, code);
+    return bits.getFloat64(0);
+  }
+  const down = value => adjacent(value, -1);
+  const up = value => adjacent(value, 1);
+  const point = value => [value, value];
+  const hull = (a, b) => [Math.min(a[0], b[0]), Math.max(a[1], b[1])];
+  const add = (a, b) => [down(a[0] + b[0]), up(a[1] + b[1])];
+  const sub = (a, b) => [down(a[0] - b[1]), up(a[1] - b[0])];
+  function mul(a, b) {
+    const products = [a[0]*b[0], a[0]*b[1], a[1]*b[0], a[1]*b[1]];
+    if (products.some(Number.isNaN)) return [-Infinity, Infinity];
+    return [down(Math.min(...products)), up(Math.max(...products))];
+  }
+  function div(a, b) {
+    if (b[0] <= 0 && b[1] >= 0) return null;
+    return mul(a, [down(1/b[1]), up(1/b[0])]);
+  }
+  const max = (a,b) => [Math.max(a[0],b[0]), Math.max(a[1],b[1])];
+  const min = (a,b) => [Math.min(a[0],b[0]), Math.min(a[1],b[1])];
+  return { adjacent, down, up, point, hull, add, sub, mul, div, min, max };
+})();
+
+// These interval transitions mirror the sale, income-ledger, and inflation events in
+// simulate(). Ambiguous branches are joined after each monthly transition.
+function encloseAnnualIncomeCandidates(context, domain) {
+  const I = intervalArithmetic, q = I.point, { opening, scenario, span } = context;
+  if (!opening || !Array.isArray(domain) || domain.length !== 2 ||
+      domain[0] < 0 || domain[1] < domain[0]) return { total: [-Infinity, Infinity], possibleFunded: false, singular: true };
+  const pins = new Map(scenario.pins.map(pin => [pin.at_month, pin]));
+  let s = {
+    cash: q(opening.buffer), principal: q(opening.investments), raw: q(opening.income_raw),
+    yield: q(opening.income_yield), expense: q(opening.expense), external: opening.external_income,
+    floor: opening.floor, tax: opening.tax_rate, saleTax: opening.sale_tax_rate,
+    modifier: opening.modifier, inflation: opening.inflation,
+  };
+  let total = q(0), possibleFunded = true, singular = false;
+  for (let month = span.first_month; month <= span.last_month; month++) {
+    const pin = pins.get(month), start = pin?.start ?? {};
+    for (const [key, property] of [['external_income','external'], ['floor','floor'], ['tax_rate','tax'],
+      ['sale_tax_rate','saleTax'], ['modifier','modifier'], ['inflation','inflation']]) {
+      if (key in start) s[property] = start[key];
+    }
+    if ('expense' in start) s.expense = q(start.expense);
+    if (month === span.first_month || 'investment_income' in start) {
+      s.raw = month === span.first_month ? domain : q(start.investment_income);
+      const yieldRange = I.div(s.raw, s.principal);
+      if (!yieldRange) {
+        singular = true;
+        s.yield = [-Infinity, Infinity];
+      } else s.yield = yieldRange;
+      if (s.principal[0] === 0 && s.principal[1] === 0 && s.raw[0] === 0 && s.raw[1] === 0) {
+        s.yield = q(0); singular = false;
+      }
+    }
+    const payable = I.max(q(0), s.raw);
+    // The ledger keeps raw income through a zero-principal period, while the
+    // monthly payment is gated by principal exactly as in effectiveIncome().
+    const income = s.principal[1] <= 0 ? q(0) :
+      s.principal[0] > 0 ? payable : I.hull(q(0), payable);
+    total = I.add(total, income);
+    const pretax = I.add(income, q(s.external));
+    const net = I.mul(pretax, q(1-s.tax));
+    const deficit = I.max(q(0), I.sub(I.add(q(s.floor),s.expense),I.add(s.cash,net)));
+    let sale = q(0), proceeds = q(0), certainFullSale = false;
+    if (s.saleTax < 1 && s.principal[1] > 0 && deficit[1] > 0) {
+      const principal = I.max(q(0),s.principal);
+      const toleranceUpper = moneyTolerance(s.cash[0],s.cash[1],net[0],net[1],
+        s.expense[0],s.expense[1],s.floor);
+      const possibleNoSale = deficit[0] <= toleranceUpper || principal[0] <= 0;
+      const netFraction = q(1-s.saleTax);
+      const maximumNet = I.mul(principal,netFraction);
+      const fullPossible = maximumNet[1] >= deficit[0];
+      const partialPossible = maximumNet[0] < deficit[1];
+      const branches = [];
+      if (possibleNoSale) branches.push({ sale:q(0), proceeds:q(0) });
+      if (fullPossible) branches.push({
+        sale:I.min(principal,I.div(deficit,netFraction) ?? [0,Infinity]),
+        proceeds:deficit, // scalar funded sale uses the exact deficit
+      });
+      if (partialPossible) branches.push({sale:principal,proceeds:maximumNet});
+      if (branches.length) {
+        sale = branches.map(branch => branch.sale).reduce(I.hull);
+        proceeds = branches.map(branch => branch.proceeds).reduce(I.hull);
+        certainFullSale = branches.length === 1 && fullPossible && !possibleNoSale && !partialPossible;
+      }
+    }
+    const available = I.add(I.add(s.cash,net),proceeds);
+    const spendable = I.max(q(0),I.sub(available,q(s.floor)));
+    const paid = I.min(s.expense,spendable);
+    const gap = I.sub(s.expense,paid);
+    if (gap[0] > moneyTolerance(s.expense[1], available[1]) ||
+        I.sub(q(s.floor), I.sub(available,paid))[0] > moneyTolerance(s.floor,available[1])) possibleFunded = false;
+    s.cash = I.sub(available,paid);
+    if (certainFullSale) {
+      // Full gross-up gives net proceeds equal to the deficit. The scalar
+      // settlement therefore returns to the floor, modulo its bounded
+      // floating-point equality tolerance. Reconstructing that invariant
+      // removes cancellation dependency from the interval cash state.
+      const rounding = moneyTolerance(s.floor,s.expense[1],available[1]);
+      s.cash = [s.floor-rounding,s.floor+rounding];
+    }
+    const change = I.sub(q(0),sale);
+    s.raw = I.add(s.raw,I.mul(I.mul(q(s.modifier),s.yield),change));
+    s.principal = I.add(s.principal,change);
+    if (pin?.end) {
+      const end = pin.end;
+      if ('investments' in end) {
+        const valuation = I.sub(q(end.investments),s.principal);
+        s.raw = I.add(s.raw,I.mul(I.mul(q(s.modifier),s.yield),valuation));
+        s.principal = q(end.investments);
+      }
+      if ('investment_income' in end) {
+        s.raw = q(end.investment_income);
+        s.yield = I.div(s.raw,s.principal) ?? [-Infinity,Infinity];
+        if (s.principal[0] <= 0 && s.principal[1] >= 0) singular = true;
+        if (s.principal[0] === 0 && s.principal[1] === 0 && end.investment_income === 0) s.yield = q(0);
+      }
+      if ('buffer' in end) s.cash = q(end.buffer);
+    }
+    const factor = Math.pow(1+s.inflation,1/12);
+    s.expense = I.mul(s.expense,q(factor));
+  }
+  return { total, possibleFunded, singular };
+}
+
+function annualExpenseValue(scenario, span, target) {
+  const prior = simulate(scenario.params, scenario.pins, { throughMonth: span.first_month });
+  const first = prior.rows.find(row => row.month === span.first_month);
+  if (!first) return null;
+  const pins = new Map(scenario.pins.map(pin => [pin.at_month,pin]));
+  let a = 1, b = 0, inflation = first.post_start_state.inflation;
+  let A = 0, B = 0;
+  for (let month = span.first_month; month <= span.last_month; month++) {
+    const start = pins.get(month)?.start ?? {};
+    if (month > span.first_month && 'expense' in start) { a = 0; b = start.expense; }
+    if ('inflation' in start) inflation = start.inflation;
+    A += a; B += b;
+    const factor = Math.pow(1+inflation,1/12);
+    a *= factor; b *= factor;
+  }
+  return (target-B)/A;
+}
+
+function annualVerifiedResult(scenario, span, field, target, value) {
+  const trial = annualTrial(scenario, span, field, value, target);
+  if (trial.result.terminatedReason === 'invalid') return { status: 'invalid', issues: trial.result.issues };
+  if (!trial.funded || Math.abs(trial.total-target) > Math.min(1e-6,moneyTolerance(target))) return { status: 'infeasible' };
+  const full = simulate(trial.candidate.params, trial.candidate.pins);
+  if (full.terminatedReason === 'invalid') return { status: 'invalid', issues: full.issues };
+  return { status: 'solved', monthlyValue: value, verifiedTotal: trial.total,
+    scenario: trial.candidate, candidateRevision: trial.candidate.revision,
+    changedPinField: { month: span.first_month, phase: 'start', field, value },
+    result: full };
+}
+
+async function searchAnnualIncome({ evaluate, enclose, domain, current, target, options = {} }) {
+  const tau = Math.max(1e-9,16*Number.EPSILON*Math.max(1,Math.abs(target)));
+  const h = tau/2;
+  const rho = Math.min(1e-6, moneyTolerance(target));
+  const cancelled = () => options.signal?.aborted || options.cancelled?.();
+  const distance = x => Math.abs(x-current);
+  let dBest = Infinity, selected = null, evaluations = 0, enclosures = 0, subdivisions = 0;
+  const verified = [], cache = new Map(), unresolved = [];
+  function select() {
+    selected = verified.filter(candidate => distance(candidate.x) <= dBest+h)
+      .reduce((lowest,candidate) => !lowest || candidate.x < lowest.x ? candidate : lowest,null);
+  }
+  function sample(x) {
+    if (!Number.isFinite(x) || x < domain[0] || x > domain[1]) return null;
+    if (cache.has(x)) return cache.get(x);
+    const result = evaluate(x); evaluations++; cache.set(x,result);
+    if (result.funded && Number.isFinite(result.total) && Math.abs(result.total-target) <= rho) {
+      const candidate = { x, total: result.total };
+      verified.push(candidate);
+      dBest = Math.min(dBest,distance(x));
+      select();
+    }
+    return result;
+  }
+  const preferred = Math.max(domain[0],Math.min(domain[1],current));
+  sample(preferred); sample(domain[0]); sample(domain[1]);
+  const counts = () => ({ evaluations, enclosures, subdivisions });
+  if (cancelled()) return { status: 'cancelled', ...counts() };
+  const queue = domain[0] === domain[1] ? [] : [
+    ...(domain[0] < preferred ? [{lo:domain[0],hi:preferred,depth:0}] : []),
+    ...(preferred < domain[1] ? [{lo:preferred,hi:domain[1],depth:0}] : []),
+  ];
+  const minDistance = box => box.lo <= current && current <= box.hi ? 0 :
+    Math.min(distance(box.lo),distance(box.hi));
+  const relevant = box => !selected || minDistance(box) < dBest-h ||
+    (minDistance(box) <= dBest+h && box.lo < selected.x-h);
+  while (queue.length) {
+    if (cancelled()) return { status: 'cancelled', ...counts() };
+    queue.sort((a,b) => minDistance(a)-minDistance(b) || a.lo-b.lo);
+    const box = queue.shift();
+    if (!relevant(box)) continue;
+    const bound = enclose([box.lo,box.hi]); enclosures++;
+    if (!bound.possibleFunded || bound.total[0] > target+rho ||
+        bound.total[1] < target-rho) continue;
+    const mid = box.lo+(box.hi-box.lo)/2;
+    if (!(mid > box.lo && mid < box.hi)) {
+      sample(box.lo); sample(box.hi);
+      continue; // No representable candidate exists between the tested endpoints.
+    }
+    const left = sample(box.lo), right = sample(box.hi);
+    sample(mid);
+    if (left && right && Number.isFinite(left.total) && Number.isFinite(right.total) &&
+        left.total !== right.total) {
+      const secant = box.lo+(target-left.total)*(box.hi-box.lo)/(right.total-left.total);
+      if (secant > box.lo && secant < box.hi) sample(secant);
+    }
+    if (!relevant(box)) continue;
+    if (box.depth >= (options.maxDepth ?? 64) ||
+        subdivisions >= (options.maxSubdivisions ?? 8192)) {
+      unresolved.push(box);
+      if (subdivisions >= (options.maxSubdivisions ?? 8192)) break;
+      continue;
+    }
+    queue.push({lo:box.lo,hi:mid,depth:box.depth+1}, {lo:mid,hi:box.hi,depth:box.depth+1});
+    subdivisions++;
+    if (subdivisions % 128 === 0) {
+      if (typeof setTimeout === 'function') await new Promise(resolve => setTimeout(resolve,0));
+      else await Promise.resolve();
+    }
+  }
+  if ([...unresolved,...queue].some(relevant)) return { status: 'unresolved', ...counts() };
+  return selected ? { status: 'solved', ...selected, ...counts() } :
+    { status: 'infeasible', ...counts() };
+}
+
+async function solveAnnualTarget(scenario, span, field, target, options = {}) {
+  if (options.signal?.aborted || options.cancelled?.()) return { status:'cancelled' };
+  const fixed = annualSpan(scenario,span);
+  if (!fixed || !['expense','investment_income'].includes(field) ||
+      !Number.isFinite(target) || target < 0 ||
+      (options.throughMonth !== undefined && options.throughMonth < fixed.last_month)) {
+    return { status: 'invalid', issues: [issue(field,'Choose a valid annual target and planned span.')] };
+  }
+  if (moneyTolerance(target) > 0.0001) return { status:'invalid',
+    issues:[issue(field,'The annual target exceeds the supported numerical range.')] };
+  const checked = simulate(scenario.params, scenario.pins, { throughMonth: fixed.first_month });
+  if (checked.terminatedReason === 'invalid') return { status: 'invalid', issues: checked.issues };
+  const first = checked.rows.find(row => row.month === fixed.first_month);
+  if (!first) return { status: 'infeasible' };
+  if (field === 'expense') {
+    const value = annualExpenseValue(scenario,fixed,target);
+    if (!Number.isFinite(value)) return { status: 'invalid', issues: [issue('expense','The target exceeds the supported numerical range.')] };
+    if (value < -moneyTolerance(target)) return { status: 'infeasible' };
+    return annualVerifiedResult(scenario,fixed,field,target,Math.max(0,value));
+  }
+  const context = annualIncomeContext(scenario,fixed,target);
+  if (!context.opening) return { status: 'infeasible' };
+  if (context.opening.investments === 0) return annualVerifiedResult(scenario,fixed,field,target,0);
+  const distanceTolerance = Math.max(1e-9,16*Number.EPSILON*Math.max(1,target));
+  const answer = await searchAnnualIncome({
+    evaluate: x => evaluateAnnualIncomeCandidate(context,x),
+    enclose: interval => encloseAnnualIncomeCandidates(context,interval),
+    domain: [0,target+Math.min(1e-6,moneyTolerance(target))], current: context.current ?? 0,
+    target, options,
+  });
+  if (answer.status !== 'solved') return answer;
+  const verified = annualVerifiedResult(scenario,fixed,field,target,answer.x);
+  return { ...verified, evaluations: answer.evaluations, subdivisions: answer.subdivisions,
+    candidateDistanceTolerance: distanceTolerance };
+}
+
 /* ============================================================
    SIMULATION
    The simulation always runs MONTHLY internally. Year-mode is a display aggregation.
@@ -1523,7 +1856,8 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
   }
   const monthlyInflation = Math.pow(1 + p.inflation, 1 / 12) - 1;
 
-  const sim = {
+  const sim = options.resumeState ? { ...options.resumeState,
+    ledger: { ...options.resumeState.ledger } } : {
     buffer: p.buffer_initial,
     ledger: createIncomeLedger(p.investments_initial, p.investment_income),
     current_expense: p.expense,
@@ -1539,6 +1873,11 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
   }
 
   const monthLimit = Math.min(plannedLastMonth, throughMonth);
+  const startMonth = options.startMonth ?? 1;
+  if (!Number.isInteger(startMonth) || startMonth < 1 || startMonth > monthLimit ||
+      (startMonth > 1 && !options.resumeState)) {
+    return invalidResult([issue('startMonth','Provide a valid trial checkpoint.')],plannedLastMonth);
+  }
   if (!Number.isFinite(dateForMonth(monthLimit, dateAnchor).getTime())) {
     return invalidResult([issue('dateAnchor', 'The projection extends beyond the supported calendar range.')], plannedLastMonth);
   }
@@ -1554,12 +1893,15 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
   const sortedPins = pinChecks.map((check, index) => ({ ...check.value, rawStart: pins[index].start }))
     .sort((a, b) => a.at_month - b.at_month);
   let pinIdx = 0;
+  while (pinIdx < sortedPins.length && sortedPins[pinIdx].at_month < startMonth) pinIdx++;
 
   const rows = [];
   let terminatedReason = null;
   let terminatedAtMonth = null;
+  let capturedState = null;
 
-  for (let m = 1; m <= monthLimit; m++) {
+  for (let m = startMonth; m <= monthLimit; m++) {
+    if (m === options.captureBeforeMonth) capturedState = { ...sim, ledger: { ...sim.ledger } };
     // ------- Pin application BEFORE computing this month -------
     const preStartState = snapshotState(sim);
     const pin = sortedPins[pinIdx]?.at_month === m ? sortedPins[pinIdx++] : null;
@@ -1697,7 +2039,7 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
   }
 
   if (!terminatedReason) {
-    if (rows.length === monthLimit) {
+    if (rows.at(-1)?.month === monthLimit) {
       // A trial cutoff is not evidence that the planned horizon was reached.
       // Solvers must verify the last row reaches their target span before accepting a trial.
       terminatedReason = throughMonth < plannedLastMonth
@@ -1708,7 +2050,7 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
     }
   }
 
-  return { rows, plannedLastMonth, terminatedReason, terminatedAtMonth, issues: [] };
+  return { rows, plannedLastMonth, terminatedReason, terminatedAtMonth, issues: [], capturedState };
 }
 
 function snapshotState(sim) {

@@ -27,6 +27,8 @@ function loadDrawdownApi({ document = {}, today = [2026, 6, 30] } = {}) {
     normalizeTaxPercent, readNormalizedTaxRate,
     readPinFieldValue, collectPinFields, renderPinEditor,
     toRoundedCents, formatCents, buildCsvText,
+    solveAnnualTarget, evaluateAnnualIncomeCandidate, encloseAnnualIncomeCandidates,
+    searchAnnualIncome, intervalArithmetic, annualIncomeContext,
   };`, context);
   return context.__api;
 }
