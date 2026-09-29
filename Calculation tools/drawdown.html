@@ -194,6 +194,16 @@
     flex-shrink: 0;
   }
   .adj-remove:hover { color: var(--oxblood); }
+  .adj-phase-statuses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 8px;
+    margin: 3px 0 5px;
+  }
+  .adj-phase-status {
+    font-size: 10px;
+    color: var(--ink-soft);
+  }
   .adj-field {
     display: flex;
     justify-content: space-between;
@@ -293,6 +303,17 @@
     overflow: hidden;
   }
   .calc-button:hover { background: var(--oxblood); }
+  .scenario-status {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--oxblood);
+    color: var(--oxblood);
+    background: var(--paper-warm);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .scenario-status[hidden] { display: none; }
+  .field input[aria-invalid="true"] { outline: 2px solid var(--oxblood); outline-offset: 2px; }
   .calc-button:active { transform: translateY(1px); }
   .calc-button .arrow {
     font-family: 'Fraunces', serif;
@@ -594,6 +615,30 @@
   .amort td:nth-child(3),
   .amort td:nth-child(11) { text-align: left; }
   .amort td:first-child { text-align: center; padding: 7px 6px; }
+  .amort td[data-money-detail]:focus {
+    position: relative;
+    z-index: 20;
+    outline: 2px solid var(--ochre);
+    outline-offset: -2px;
+  }
+  .amort td[data-money-detail]:focus::after {
+    content: attr(data-money-detail);
+    position: absolute;
+    top: calc(100% + 3px);
+    right: 0;
+    min-width: 180px;
+    max-width: 280px;
+    padding: 6px 8px;
+    white-space: normal;
+    text-align: left;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--ink);
+    background: var(--paper-warm);
+    border: 1px solid var(--ochre);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+    pointer-events: none;
+  }
 
   .amort tbody tr {
     position: relative;
@@ -1023,7 +1068,7 @@
         <button id="unit-years">Years</button>
       </div>
       <div class="field">
-        <label>Periods<span class="hint">0 = run to depletion</span></label>
+        <label>Periods<span class="hint">0 = run until reserve failure or cap</span></label>
         <span class="input-wrap"><input type="number" id="periods" value="120" step="1" min="0"></span>
       </div>
     </div>
@@ -1033,6 +1078,7 @@
       <div id="adjustments-list"></div>
     </div>
 
+    <div id="scenario-status" class="scenario-status" role="status" aria-live="polite" hidden></div>
     <button class="calc-button" id="calc-button">Recalculate<span class="arrow">→</span></button>
   </aside>
 
@@ -1040,7 +1086,7 @@
     <header class="header">
       <div class="eyebrow">A study in patience &amp; principal</div>
       <h2>Investment <em>Drawdown</em></h2>
-      <p class="subtitle">A month-by-month projection of buffer, principal, and income, traced until the wells run dry — or until you adjust the headwaters.</p>
+      <p class="subtitle">A month-by-month projection of cash, principal, and income until the protected reserve cannot be maintained or the horizon ends.</p>
       <div class="today-stamp">From <strong id="today-stamp"></strong></div>
     </header>
 
@@ -1066,7 +1112,7 @@
       <div class="table-head">
         <div class="table-head-titles">
           <h3>The <em>Amortization</em></h3>
-          <div class="table-hint">Click <em>+</em> on any row to change assumptions from that month forward.</div>
+          <div class="table-hint">Click <em>+</em> to edit beginning assumptions or ending balances at an exact month. Table amounts show whole dollars; focus a cell for detail.</div>
         </div>
         <div class="table-actions">
           <span class="pin-count" id="pin-count"></span>
@@ -1100,17 +1146,17 @@
     </section>
 
     <p class="footnote">
-      <strong>Method.</strong> Inflation compounds at the user's annual rate, converted to an effective periodic rate (APY).
+      <strong>Method.</strong> Inflation compounds monthly from the annual effective rate. Expenses are funded only from cash above the protected floor; sales seek enough net proceeds to fund expenses and restore it. Required and funded expense, unmet expense, and unmet reserve are reported separately.
       <span class="sep">·</span>
       <strong>Tax.</strong> The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.
       <span class="sep">·</span>
-      <strong>Decay.</strong> Gross liquidation—not net proceeds—drives principal reduction and sell-off decay. Investment income reduction is permanent and cumulative; each sale subtracts <em>(modifier × percent of original principal sold)</em> from a running coefficient. The modifier in force at the time of sale is locked in — later modifier changes never re-evaluate past sales.
+      <strong>Income ledger.</strong> Gross sales reduce principal. Sales and closing-principal valuations adjust raw investment income by <em>modifier × income yield × principal change</em>, using the modifier in force at each event. Later principal changes can raise or lower that ledger. At zero principal, payable investment income is zero even if raw income remains; an explicit income edit resets raw income and yield.
       <span class="sep">·</span>
-      <strong>Pins.</strong> Click the <em>+</em> in the left gutter of any row to attach an override. Pins apply forward from the pinned period; past rows are immutable.
+      <strong>Pins.</strong> Beginning assumptions affect the selected month; ending cash and principal are exact closing balances after its expenses and sales, and ending income becomes the next month's baseline. Closing principal is a valuation, and closing cash is a separate adjustment; neither is a sale or recurring income. Move a pin to an unoccupied month or use the Adjustments panel to recover an unreachable pin. Yearly flow edits solve an exact target for the planned group when saved; the saved target is provenance, not a live constraint.
       <span class="sep">·</span>
-      <strong>Export.</strong> CSV <code>tax_paid</code> is combined tax; <code>income_tax_paid</code>, <code>sale_tax_paid</code>, and <code>net_sale_proceeds</code> are appended.
+      <strong>Export.</strong> The table rounds money to whole dollars with cents and exact values in cell detail. CSV provides readable cents and exact <code>*_raw</code> Number columns, date/span and start/end application provenance. Readable <code>tax_paid</code> reconciles with its two tax parts; gross <code>sold</code> reconciles with sale tax and net proceeds. Invalid edits keep the last valid view and disable export until corrected.
       <span class="sep">·</span>
-      <strong>Termination.</strong> The simulation ends when investments reach zero and the buffer is at or below its floor (or at the period cap, whichever comes first).
+      <strong>Termination.</strong> The projection stops with reserve failure when an expense or the protected reserve cannot be funded; zero principal or touching the floor alone is not failure. Otherwise it ends at the requested horizon or the 1,200-month cap. A yearly row may cover fewer than 12 actual months if failure occurs or the requested horizon is partial.
       <span class="sep">·</span>
       <strong>Scope.</strong> This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.
     </p>
@@ -1157,11 +1203,596 @@ const state = {
     unit: 'months',
     num_periods: 120,
   },
-  pins: [], // [{ at_month, overrides: { ... } }]
+  pins: [], // [{ id, at_month, start: { ... }, end: { ... }, annual_edits? }]
   editing: null, // month being edited (if any)
+  revision: 0,
+  stale: false,
+  issues: [],
+  acceptedResult: null,
+  draftUnit: null,
 };
 
 const MAX_MONTHS = 1200; // 100 years
+
+function acceptPins(pins) {
+  cancelActiveSolve();
+  state.pins = pins.map(clonePin);
+  state.revision++;
+}
+
+let nextPinId = 1;
+function newPinId(pins = state.pins) {
+  let id;
+  do { id = `adjustment-${nextPinId++}`; } while (pins.some(pin => pin.id === id));
+  return id;
+}
+function clonePin(pin) {
+  return { ...pin, start: { ...pin.start }, end: { ...pin.end },
+    ...(pin.annual_edits ? { annual_edits: Object.fromEntries(Object.entries(pin.annual_edits)
+      .map(([key, value]) => [key, { ...value }])) } : {}) };
+}
+
+function tryAcceptPins(pins) {
+  const result = simulate(state.params, pins);
+  if (result.terminatedReason === 'invalid') return { ok: false, issues: result.issues };
+  acceptPins(pins);
+  return { ok: true, issues: [], result };
+}
+
+const MONEY_PARAM_KEYS = ['buffer_initial', 'floor', 'external_income', 'investments_initial', 'investment_income', 'expense'];
+const START_PIN_KEYS = new Set(['investment_income', 'modifier', 'floor', 'external_income',
+  'expense', 'inflation', 'tax_rate', 'sale_tax_rate']);
+const END_PIN_KEYS = new Set(['buffer', 'investments', 'investment_income']);
+const MONEY_PIN_KEYS = ['buffer', 'investments', 'investment_income', 'floor', 'external_income', 'expense'];
+
+function issue(field, message, extra = {}) {
+  return { field, message, ...extra };
+}
+
+function numericValue(value) {
+  try { return Number(value); }
+  catch { return NaN; }
+}
+
+function parseFiniteNonnegative(value, field, issues) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+    issues.push(issue(field, 'Enter a nonnegative number.'));
+    return null;
+  }
+  const number = numericValue(value);
+  if (!Number.isFinite(number) || number < 0) {
+    issues.push(issue(field, 'Enter a finite, nonnegative number.'));
+    return null;
+  }
+  return number;
+}
+
+function parseInflation(value, issues, extra = {}) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+    issues.push(issue('inflation', 'Enter annual inflation from -100% through 1000%.', extra));
+    return null;
+  }
+  const number = numericValue(value);
+  if (!Number.isFinite(number) || number < -1 || number > 10) {
+    issues.push(issue('inflation', 'Enter annual inflation from -100% through 1000%.', extra));
+    return null;
+  }
+  return number;
+}
+
+function normalizedTaxRate(value, fallback) {
+  const number = value === null || value === undefined || (typeof value === 'string' && value.trim() === '')
+    ? NaN : numericValue(value);
+  return Number.isFinite(number) ? Math.min(1, Math.max(0, number)) : fallback;
+}
+
+function validateParams(draft) {
+  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {
+    return { ok: false, issues: [issue('params', 'Provide a scenario with valid numeric fields.')] };
+  }
+  const issues = [];
+  const value = { ...draft };
+  for (const field of MONEY_PARAM_KEYS) value[field] = parseFiniteNonnegative(draft[field], field, issues);
+  value.modifier = parseFiniteNonnegative(draft.modifier, 'modifier', issues);
+  value.inflation = parseInflation(draft.inflation, issues);
+  value.tax_rate = normalizedTaxRate(draft.tax_rate, DEFAULT_INCOME_TAX_RATE);
+  value.sale_tax_rate = normalizedTaxRate(draft.sale_tax_rate, DEFAULT_SALE_TAX_RATE);
+  if (draft.unit !== 'months' && draft.unit !== 'years') {
+    issues.push(issue('unit', 'Choose months or years.'));
+  }
+  const periods = numericValue(draft.num_periods);
+  if (draft.num_periods === null || draft.num_periods === undefined ||
+      (typeof draft.num_periods === 'string' && draft.num_periods.trim() === '') ||
+      !Number.isSafeInteger(periods) || periods < 0) {
+    issues.push(issue('num_periods', 'Enter a whole number of periods, or 0 for the 1200-month cap.'));
+  } else value.num_periods = periods;
+  if (value.investments_initial === 0 && value.investment_income > 0) {
+    issues.push(issue('investment_income', 'Investment income must be zero when principal is zero.'));
+  }
+  return issues.length ? { ok: false, issues } : { ok: true, value, issues: [] };
+}
+
+function validatePinDraft(draft, context = {}) {
+  const issues = [];
+  const month = numericValue(draft?.at_month);
+  if (!Number.isInteger(month) || month < 1 || month > MAX_MONTHS) {
+    issues.push(issue('at_month', 'Choose a whole month from 1 through 1200.'));
+  }
+  if (typeof draft?.id !== 'string' || !draft.id) issues.push(issue('id', 'Adjustment needs a stable id.', { month }));
+  const phases = {};
+  for (const [phase, allowed] of [['start', START_PIN_KEYS], ['end', END_PIN_KEYS]]) {
+    const source = draft?.[phase];
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      issues.push(issue(phase, 'Provide adjustment fields for this phase.', { month, phase }));
+      phases[phase] = {};
+      continue;
+    }
+    const fields = {};
+    for (const [field, raw] of Object.entries(source)) {
+      if (!allowed.has(field)) issues.push(issue(field, 'This adjustment field is not supported in this phase.', { month, phase }));
+      else if (MONEY_PIN_KEYS.includes(field) || field === 'modifier') {
+        const count = issues.length;
+        fields[field] = parseFiniteNonnegative(raw, field, issues);
+        if (issues.length > count) Object.assign(issues[issues.length - 1], { month, phase });
+      } else if (field === 'inflation') fields[field] = parseInflation(raw, issues, { month, phase });
+      else fields[field] = normalizedTaxRate(raw, context.baseline?.[phase]?.[field] ??
+        context.baseline?.[field] ?? (field === 'tax_rate' ? DEFAULT_INCOME_TAX_RATE : DEFAULT_SALE_TAX_RATE));
+    }
+    phases[phase] = fields;
+  }
+  if (draft?.annual_edits !== undefined) {
+    if (!draft.annual_edits || typeof draft.annual_edits !== 'object' || Array.isArray(draft.annual_edits)) {
+      issues.push(issue('annual_edits', 'Provide valid annual edit metadata.', { month }));
+    } else for (const [field, metadata] of Object.entries(draft.annual_edits)) {
+      if (!['expense', 'investment_income'].includes(field) || !metadata || typeof metadata !== 'object' ||
+          !['target_total', 'first_month', 'last_month', 'resolved_monthly_value'].every(key => Number.isFinite(metadata[key]))) {
+        issues.push(issue('annual_edits', 'Provide valid annual edit metadata.', { month }));
+      }
+    }
+  }
+  return issues.length
+    ? { ok: false, issues: issues.map(entry => ({ ...entry, origin: 'adjustment', month: Number.isInteger(month) ? month : null })) }
+    : { ok: true, value: { ...clonePin({ ...draft, ...phases }), at_month: month }, issues: [] };
+}
+
+function pinPhase(field) { return END_PIN_KEYS.has(field) && field !== 'investment_income' ? 'end' : 'start'; }
+
+function prepareCellEdit(rowSpan, field, scenario) {
+  const qualified = field.includes('.') ? field.split('.') : null;
+  const phase = qualified ? qualified[0] : (field === 'buffer' || field === 'investments' ? 'end' : 'start');
+  field = qualified ? qualified[1] : field;
+  const month = phase === 'end' ? (rowSpan.last_month ?? rowSpan.month) : (rowSpan.first_month ?? rowSpan.month);
+  const row = rowSpan.source_rows?.find(item => item.month === month) ?? rowSpan;
+  const pin = scenario.pins.find(item => item.at_month === month);
+  const snapshot = phase === 'start' ? row.pre_start_state : row.natural_end_state;
+  const currentExactValue = pin && field in pin[phase] ? pin[phase][field] :
+    (phase === 'end' ? row.end_state?.[field] : row.post_start_state?.[field]);
+  let noOverrideBaseline = snapshot?.[field];
+  if (pin && field in pin[phase]) {
+    const trialPins = scenario.pins.map(clonePin);
+    const trialPin = trialPins.find(item => item.id === pin.id);
+    delete trialPin[phase][field];
+    const trial = simulate(scenario.params, trialPins, { throughMonth: month });
+    const baselineRow = trial.rows.find(item => item.month === month);
+    if (baselineRow) noOverrideBaseline = phase === 'start'
+      ? baselineRow.post_start_state[field] : baselineRow.end_state[field];
+  } else if (phase === 'end' && field === 'investment_income' && pin?.end?.investments !== undefined) {
+    const trial = simulate(scenario.params, scenario.pins, { throughMonth: month });
+    noOverrideBaseline = trial.rows.find(item => item.month === month)?.end_state.investment_income;
+  }
+  return { phase, month, first_month: rowSpan.first_month ?? month,
+    last_month: rowSpan.last_month ?? month, field, pinId: pin?.id ?? null,
+    currentExactValue, displayedValue: currentExactValue === undefined ? null : Math.round(currentExactValue * 100) / 100,
+    noOverrideBaseline, revision: scenario.revision ?? 0 };
+}
+
+function applyEditTransaction(scenario, edit) {
+  const pins = (scenario.pins || []).map(clonePin);
+  const params = { ...scenario.params };
+  const target = edit.id ? pins.find(pin => pin.id === edit.id) : pins.find(pin => pin.at_month === edit.at_month);
+  const fail = (field, message) => ({ ok: false, issues: [issue(field, message, { origin: 'adjustment', month: edit.at_month ?? target?.at_month })] });
+  if (edit.id && !target) return fail('id', 'Adjustment was not found.');
+  const operation = edit.type ?? 'set';
+  if (operation === 'remove') {
+    if (!target) return fail('id', 'Adjustment was not found.');
+    pins.splice(pins.indexOf(target), 1);
+  } else if (operation === 'move') {
+    if (!target) return fail('id', 'Adjustment was not found.');
+    if (pins.some(pin => pin !== target && pin.at_month === edit.at_month)) return fail('at_month', 'Another adjustment already occupies that month.');
+    if (target.at_month !== edit.at_month) {
+      target.at_month = edit.at_month;
+      delete target.annual_edits;
+    }
+  } else if (operation === 'replace' || operation === 'create') {
+    if (operation === 'replace' && !target) return fail('id', 'Adjustment was not found.');
+    if (operation === 'create' && target) return fail('at_month', 'Another adjustment already occupies that month.');
+    const index = operation === 'replace' ? pins.indexOf(target) : pins.length;
+    pins[index] = clonePin({ ...edit.pin, id: target?.id ?? edit.pin.id ?? newPinId(pins) });
+    if (target && pins[index].at_month !== target.at_month) delete pins[index].annual_edits;
+    if (pins.some((pin, idx) => idx !== index && pin.at_month === pins[index].at_month)) return fail('at_month', 'Another adjustment already occupies that month.');
+  } else if (operation === 'set' || operation === 'remove-field') {
+    const phase = edit.phase;
+    if (!['start', 'end'].includes(phase)) return fail('phase', 'Choose the beginning or end of the month.');
+    if (!(phase === 'start' ? START_PIN_KEYS : END_PIN_KEYS).has(edit.field)) return fail(edit.field, 'Field is not available in this phase.');
+    let pin = target;
+    if (!pin && operation === 'set') {
+      pin = { id: newPinId(pins), at_month: edit.at_month, start: {}, end: {} };
+      pins.push(pin);
+    }
+    if (pin) {
+      const previous = pin[phase][edit.field];
+      if (operation === 'set') pin[phase][edit.field] = edit.value;
+      else delete pin[phase][edit.field];
+      if (phase === 'start' && ['expense', 'investment_income'].includes(edit.field) && pin.annual_edits &&
+          (operation === 'remove-field' || !Object.is(previous, edit.value))) {
+        delete pin.annual_edits[edit.field];
+        if (!Object.keys(pin.annual_edits).length) delete pin.annual_edits;
+      }
+    }
+  } else return fail('edit', 'Unsupported adjustment edit.');
+  for (let index = pins.length - 1; index >= 0; index--) {
+    const pin = pins[index];
+    if (!Object.keys(pin.start).length && !Object.keys(pin.end).length) pins.splice(index, 1);
+  }
+  const trial = simulate(params, pins);
+  if (trial.terminatedReason === 'invalid') return { ok: false, issues: trial.issues };
+  return { ok: true, scenario: { ...scenario, params, pins, revision: (scenario.revision ?? 0) + 1 }, issues: [], result: trial };
+}
+
+/* Exact annual flow edits are proposals. Nothing in this section writes to state. */
+function annualSpan(scenario, span) {
+  const checked = validateParams(scenario?.params);
+  if (!checked.ok) return null;
+  const planned = Math.min(checked.value.num_periods === 0 ? MAX_MONTHS :
+    checked.value.num_periods * (checked.value.unit === 'years' ? 12 : 1), MAX_MONTHS);
+  const first = span?.first_month, last = span?.last_month;
+  if (!Number.isInteger(first) || first < 1 || first > planned ||
+      last !== Math.min(first + 11, planned) || (first - 1) % 12 !== 0) return null;
+  return { first_month: first, last_month: last };
+}
+
+function annualCandidateScenario(scenario, span, field, value, target) {
+  const pins = scenario.pins.map(clonePin);
+  let pin = pins.find(item => item.at_month === span.first_month);
+  if (!pin) {
+    const stem = `annual-target-${span.first_month}`;
+    let id = stem, suffix = 1;
+    while (pins.some(item => item.id === id)) id = `${stem}-${suffix++}`;
+    pin = { id, at_month: span.first_month, start: {}, end: {} };
+    pins.push(pin);
+  }
+  pin.start[field] = value;
+  pin.annual_edits = { ...pin.annual_edits,
+    [field]: { target_total: target, first_month: span.first_month,
+      last_month: span.last_month, resolved_monthly_value: value } };
+  return { ...scenario, params: { ...scenario.params }, pins,
+    revision: (scenario.revision ?? 0) + 1 };
+}
+
+function annualTrial(scenario, span, field, value, target, resumeState = null) {
+  const candidate = annualCandidateScenario(scenario, span, field, value, target);
+  const result = simulate(candidate.params, candidate.pins, { throughMonth: span.last_month,
+    ...(resumeState ? { startMonth: span.first_month, resumeState } : {}) });
+  const rows = result.rows.filter(row => row.month >= span.first_month && row.month <= span.last_month);
+  return { candidate, result, total: rows.reduce((sum, row) => sum + row[field], 0),
+    simulatedMonths: result.rows.length,
+    funded: result.terminatedReason !== 'invalid' && rows.length === span.last_month - span.first_month + 1 &&
+      rows.every(row => !row.insolvency) };
+}
+
+function annualIncomeContext(scenario, span, target) {
+  const prefix = simulate(scenario.params, scenario.pins,
+    { throughMonth: span.first_month, captureBeforeMonth: span.first_month });
+  const row = prefix.rows.find(item => item.month === span.first_month);
+  return { scenario, span, target, opening: row?.pre_start_state ?? null,
+    current: row?.post_start_state?.investment_income ?? null,
+    resumeState: prefix.capturedState ?? null };
+}
+
+function evaluateAnnualIncomeCandidate(context, x) {
+  if (!Number.isFinite(x) || x < 0 || !context.opening) return { total: NaN, funded: false, invalid: true };
+  const trial = annualTrial(context.scenario, context.span, 'investment_income', x, context.target, context.resumeState);
+  return { total: trial.total, funded: trial.funded, invalid: trial.result.terminatedReason === 'invalid',
+    scenario: trial.candidate, simulatedMonths: trial.simulatedMonths };
+}
+
+const intervalArithmetic = (() => {
+  const bits = new DataView(new ArrayBuffer(8));
+  function adjacent(value, direction) {
+    if (Number.isNaN(value)) return NaN;
+    if (value === (direction > 0 ? Infinity : -Infinity)) return value;
+    if (value === 0) return direction > 0 ? Number.MIN_VALUE : -Number.MIN_VALUE;
+    bits.setFloat64(0, value);
+    let code = bits.getBigUint64(0);
+    code += (value > 0) === (direction > 0) ? 1n : -1n;
+    bits.setBigUint64(0, code);
+    return bits.getFloat64(0);
+  }
+  const down = value => adjacent(value, -1);
+  const up = value => adjacent(value, 1);
+  const point = value => [value, value];
+  const hull = (a, b) => [Math.min(a[0], b[0]), Math.max(a[1], b[1])];
+  const add = (a, b) => [down(a[0] + b[0]), up(a[1] + b[1])];
+  const sub = (a, b) => [down(a[0] - b[1]), up(a[1] - b[0])];
+  function mul(a, b) {
+    const products = [a[0]*b[0], a[0]*b[1], a[1]*b[0], a[1]*b[1]];
+    if (products.some(Number.isNaN)) return [-Infinity, Infinity];
+    return [down(Math.min(...products)), up(Math.max(...products))];
+  }
+  function div(a, b) {
+    if (b[0] <= 0 && b[1] >= 0) return null;
+    return mul(a, [down(1/b[1]), up(1/b[0])]);
+  }
+  const max = (a,b) => [Math.max(a[0],b[0]), Math.max(a[1],b[1])];
+  const min = (a,b) => [Math.min(a[0],b[0]), Math.min(a[1],b[1])];
+  return { adjacent, down, up, point, hull, add, sub, mul, div, min, max };
+})();
+
+const scalarArithmetic = {
+  point: value => value,
+  add: (a,b) => a+b,
+  sub: (a,b) => a-b,
+  mul: (a,b) => a*b,
+  max: Math.max,
+};
+
+// The same arithmetic expression graph drives the ordinary month and an
+// interval trial. The interval version substitutes outward-rounded operators.
+function monthlyFlowEquations(A, income, external, tax, expense, cash, floor) {
+  const pretax = A.add(income,A.point(external));
+  const net = A.mul(pretax,A.point(1-tax));
+  return { pretax, net, incomeTax:A.mul(pretax,A.point(tax)),
+    delta:A.sub(net,expense),
+    deficit:A.max(A.point(0),A.sub(A.add(A.point(floor),expense),A.add(cash,net))) };
+}
+
+function principalIncomeEquation(A, raw, modifier, yieldRate, change) {
+  return A.add(raw,A.mul(A.mul(A.point(modifier),yieldRate),change));
+}
+
+// These interval transitions mirror the sale, income-ledger, and inflation events in
+// simulate(). Ambiguous branches are joined after each monthly transition.
+function encloseAnnualIncomeCandidates(context, domain) {
+  const I = intervalArithmetic, q = I.point, { opening, scenario, span } = context;
+  if (!opening || !Array.isArray(domain) || domain.length !== 2 ||
+      domain[0] < 0 || domain[1] < domain[0]) return { total: [-Infinity, Infinity], possibleFunded: false, singular: true };
+  const pins = new Map(scenario.pins.map(pin => [pin.at_month, pin]));
+  let s = {
+    cash: q(opening.buffer), principal: q(opening.investments), raw: q(opening.income_raw),
+    yield: q(opening.income_yield), expense: q(opening.expense), external: opening.external_income,
+    floor: opening.floor, tax: opening.tax_rate, saleTax: opening.sale_tax_rate,
+    modifier: opening.modifier, inflation: opening.inflation,
+  };
+  let total = q(0), possibleFunded = true, singular = false;
+  for (let month = span.first_month; month <= span.last_month; month++) {
+    const pin = pins.get(month), start = pin?.start ?? {};
+    for (const [key, property] of [['external_income','external'], ['floor','floor'],
+      ['modifier','modifier'], ['inflation','inflation']]) {
+      if (key in start) s[property] = start[key];
+    }
+    if ('tax_rate' in start) s.tax = normalizedTaxRate(start.tax_rate,s.tax);
+    if ('sale_tax_rate' in start) s.saleTax = normalizedTaxRate(start.sale_tax_rate,s.saleTax);
+    if ('expense' in start) s.expense = q(start.expense);
+    if (month === span.first_month || 'investment_income' in start) {
+      s.raw = month === span.first_month ? domain : q(start.investment_income);
+      const yieldRange = I.div(s.raw, s.principal);
+      if (!yieldRange) {
+        singular = true;
+        s.yield = [-Infinity, Infinity];
+      } else s.yield = yieldRange;
+      if (s.principal[0] === 0 && s.principal[1] === 0 && s.raw[0] === 0 && s.raw[1] === 0) {
+        s.yield = q(0); singular = false;
+      }
+    }
+    const payable = I.max(q(0), s.raw);
+    // The ledger keeps raw income through a zero-principal period, while the
+    // monthly payment is gated by principal exactly as in effectiveIncome().
+    const income = s.principal[1] <= 0 ? q(0) :
+      s.principal[0] > 0 ? payable : I.hull(q(0), payable);
+    total = I.add(total, income);
+    const { net, deficit } = monthlyFlowEquations(I,income,s.external,s.tax,s.expense,s.cash,s.floor);
+    let sale = q(0), proceeds = q(0), certainFullSale = false;
+    if (s.saleTax < 1 && s.principal[1] > 0 && deficit[1] > 0) {
+      const principal = I.max(q(0),s.principal);
+      const toleranceUpper = moneyTolerance(s.cash[0],s.cash[1],net[0],net[1],
+        s.expense[0],s.expense[1],s.floor);
+      const possibleNoSale = deficit[0] <= toleranceUpper || principal[0] <= 0;
+      const netFraction = q(1-s.saleTax);
+      const maximumNet = I.mul(principal,netFraction);
+      const fullPossible = maximumNet[1] >= deficit[0];
+      const partialPossible = maximumNet[0] < deficit[1];
+      const branches = [];
+      if (possibleNoSale) branches.push({ sale:q(0), proceeds:q(0) });
+      if (fullPossible) branches.push({
+        sale:I.min(principal,I.div(deficit,netFraction) ?? [0,Infinity]),
+        proceeds:deficit, // scalar funded sale uses the exact deficit
+      });
+      if (partialPossible) branches.push({sale:principal,proceeds:maximumNet});
+      if (branches.length) {
+        sale = branches.map(branch => branch.sale).reduce(I.hull);
+        proceeds = branches.map(branch => branch.proceeds).reduce(I.hull);
+        certainFullSale = branches.length === 1 && fullPossible && !possibleNoSale && !partialPossible;
+      }
+    }
+    const available = I.add(I.add(s.cash,net),proceeds);
+    const spendable = I.max(q(0),I.sub(available,q(s.floor)));
+    const paid = I.min(s.expense,spendable);
+    const gap = I.sub(s.expense,paid);
+    if (gap[0] > moneyTolerance(s.expense[1], available[1]) ||
+        I.sub(q(s.floor), I.sub(available,paid))[0] > moneyTolerance(s.floor,available[1])) possibleFunded = false;
+    s.cash = I.sub(available,paid);
+    if (certainFullSale) {
+      // Full gross-up gives net proceeds equal to the deficit. The scalar
+      // settlement therefore returns to the floor, modulo its bounded
+      // floating-point equality tolerance. Reconstructing that invariant
+      // removes cancellation dependency from the interval cash state.
+      const rounding = moneyTolerance(s.floor,s.expense[1],available[1]);
+      s.cash = [s.floor-rounding,s.floor+rounding];
+    }
+    const change = I.sub(q(0),sale);
+    s.raw = principalIncomeEquation(I,s.raw,s.modifier,s.yield,change);
+    s.principal = I.add(s.principal,change);
+    if (pin?.end) {
+      const end = pin.end;
+      if ('investments' in end) {
+        const valuation = I.sub(q(end.investments),s.principal);
+        s.raw = principalIncomeEquation(I,s.raw,s.modifier,s.yield,valuation);
+        s.principal = q(end.investments);
+      }
+      if ('investment_income' in end) {
+        s.raw = q(end.investment_income);
+        s.yield = I.div(s.raw,s.principal) ?? [-Infinity,Infinity];
+        if (s.principal[0] <= 0 && s.principal[1] >= 0) singular = true;
+        if (s.principal[0] === 0 && s.principal[1] === 0 && end.investment_income === 0) s.yield = q(0);
+      }
+      if ('buffer' in end) s.cash = q(end.buffer);
+    }
+    const factor = Math.pow(1+s.inflation,1/12);
+    s.expense = I.mul(s.expense,q(factor));
+  }
+  return { total, possibleFunded, singular };
+}
+
+function annualExpenseValue(scenario, span, target) {
+  const prior = simulate(scenario.params, scenario.pins, { throughMonth: span.first_month });
+  const first = prior.rows.find(row => row.month === span.first_month);
+  if (!first) return null;
+  const pins = new Map(scenario.pins.map(pin => [pin.at_month,pin]));
+  let a = 1, b = 0, inflation = first.post_start_state.inflation;
+  let A = 0, B = 0;
+  for (let month = span.first_month; month <= span.last_month; month++) {
+    const start = pins.get(month)?.start ?? {};
+    if (month > span.first_month && 'expense' in start) { a = 0; b = start.expense; }
+    if ('inflation' in start) inflation = start.inflation;
+    A += a; B += b;
+    const factor = Math.pow(1+inflation,1/12);
+    a *= factor; b *= factor;
+  }
+  return (target-B)/A;
+}
+
+function annualVerifiedResult(scenario, span, field, target, value) {
+  const trial = annualTrial(scenario, span, field, value, target);
+  if (trial.result.terminatedReason === 'invalid') return { status: 'invalid', issues: trial.result.issues };
+  if (!trial.funded || Math.abs(trial.total-target) > Math.min(1e-6,moneyTolerance(target))) return { status: 'infeasible' };
+  const full = simulate(trial.candidate.params, trial.candidate.pins);
+  if (full.terminatedReason === 'invalid') return { status: 'invalid', issues: full.issues };
+  return { status: 'solved', monthlyValue: value, verifiedTotal: trial.total,
+    scenario: trial.candidate, candidateRevision: trial.candidate.revision,
+    changedPinField: { month: span.first_month, phase: 'start', field, value },
+    result: full };
+}
+
+async function searchAnnualIncome({ evaluate, enclose, domain, current, target, options = {} }) {
+  const tau = Math.max(1e-9,16*Number.EPSILON*Math.max(1,Math.abs(target)));
+  const h = tau/2;
+  const rho = Math.min(1e-6, moneyTolerance(target));
+  const cancelled = () => options.signal?.aborted || options.cancelled?.();
+  const distance = x => Math.abs(x-current);
+  let dBest = Infinity, selected = null, evaluations = 0, enclosures = 0, subdivisions = 0;
+  const verified = [], cache = new Map(), unresolved = [];
+  function select() {
+    selected = verified.filter(candidate => distance(candidate.x) <= dBest+h)
+      .reduce((lowest,candidate) => !lowest || candidate.x < lowest.x ? candidate : lowest,null);
+  }
+  function sample(x) {
+    if (!Number.isFinite(x) || x < domain[0] || x > domain[1]) return null;
+    if (cache.has(x)) return cache.get(x);
+    const result = evaluate(x); evaluations++; cache.set(x,result);
+    if (result.funded && Number.isFinite(result.total) && Math.abs(result.total-target) <= rho) {
+      const candidate = { x, total: result.total };
+      verified.push(candidate);
+      dBest = Math.min(dBest,distance(x));
+      select();
+    }
+    return result;
+  }
+  const preferred = Math.max(domain[0],Math.min(domain[1],current));
+  sample(preferred); sample(domain[0]); sample(domain[1]);
+  const counts = () => ({ evaluations, enclosures, subdivisions });
+  if (cancelled()) return { status: 'cancelled', ...counts() };
+  const queue = domain[0] === domain[1] ? [] : [
+    ...(domain[0] < preferred ? [{lo:domain[0],hi:preferred,depth:0}] : []),
+    ...(preferred < domain[1] ? [{lo:preferred,hi:domain[1],depth:0}] : []),
+  ];
+  const minDistance = box => box.lo <= current && current <= box.hi ? 0 :
+    Math.min(distance(box.lo),distance(box.hi));
+  const relevant = box => !selected || minDistance(box) < dBest-h ||
+    (minDistance(box) <= dBest+h && box.lo < selected.x-h);
+  while (queue.length) {
+    if (cancelled()) return { status: 'cancelled', ...counts() };
+    queue.sort((a,b) => minDistance(a)-minDistance(b) || a.lo-b.lo);
+    const box = queue.shift();
+    if (!relevant(box)) continue;
+    const bound = enclose([box.lo,box.hi]); enclosures++;
+    if (!bound.possibleFunded || bound.total[0] > target+rho ||
+        bound.total[1] < target-rho) continue;
+    const mid = box.lo+(box.hi-box.lo)/2;
+    if (!(mid > box.lo && mid < box.hi)) {
+      sample(box.lo); sample(box.hi);
+      continue; // No representable candidate exists between the tested endpoints.
+    }
+    const left = sample(box.lo), right = sample(box.hi);
+    sample(mid);
+    if (left && right && Number.isFinite(left.total) && Number.isFinite(right.total) &&
+        left.total !== right.total) {
+      const secant = box.lo+(target-left.total)*(box.hi-box.lo)/(right.total-left.total);
+      if (secant > box.lo && secant < box.hi) sample(secant);
+    }
+    if (!relevant(box)) continue;
+    if (box.depth >= (options.maxDepth ?? 64) ||
+        subdivisions >= (options.maxSubdivisions ?? 8192)) {
+      unresolved.push(box);
+      if (subdivisions >= (options.maxSubdivisions ?? 8192)) break;
+      continue;
+    }
+    queue.push({lo:box.lo,hi:mid,depth:box.depth+1}, {lo:mid,hi:box.hi,depth:box.depth+1});
+    subdivisions++;
+    if (subdivisions % 128 === 0) {
+      if (typeof setTimeout === 'function') await new Promise(resolve => setTimeout(resolve,0));
+      else await Promise.resolve();
+    }
+  }
+  if ([...unresolved,...queue].some(relevant)) return { status: 'unresolved', ...counts() };
+  return selected ? { status: 'solved', ...selected, ...counts() } :
+    { status: 'infeasible', ...counts() };
+}
+
+async function solveAnnualTarget(scenario, span, field, target, options = {}) {
+  if (options.signal?.aborted || options.cancelled?.()) return { status:'cancelled' };
+  const fixed = annualSpan(scenario,span);
+  if (!fixed || !['expense','investment_income'].includes(field) ||
+      !Number.isFinite(target) || target < 0 ||
+      (options.throughMonth !== undefined && options.throughMonth < fixed.last_month)) {
+    return { status: 'invalid', issues: [issue(field,'Choose a valid annual target and planned span.')] };
+  }
+  if (moneyTolerance(target) > 0.0001) return { status:'invalid',
+    issues:[issue(field,'The annual target exceeds the supported numerical range.')] };
+  const checked = simulate(scenario.params, scenario.pins, { throughMonth: fixed.first_month });
+  if (checked.terminatedReason === 'invalid') return { status: 'invalid', issues: checked.issues };
+  const first = checked.rows.find(row => row.month === fixed.first_month);
+  if (!first) return { status: 'infeasible' };
+  if (field === 'expense') {
+    const value = annualExpenseValue(scenario,fixed,target);
+    if (!Number.isFinite(value)) return { status: 'invalid', issues: [issue('expense','The target exceeds the supported numerical range.')] };
+    if (value < -moneyTolerance(target)) return { status: 'infeasible' };
+    return annualVerifiedResult(scenario,fixed,field,target,Math.max(0,value));
+  }
+  const context = annualIncomeContext(scenario,fixed,target);
+  if (!context.opening) return { status: 'infeasible' };
+  if (context.opening.investments === 0) return annualVerifiedResult(scenario,fixed,field,target,0);
+  const distanceTolerance = Math.max(1e-9,16*Number.EPSILON*Math.max(1,target));
+  const answer = await searchAnnualIncome({
+    evaluate: x => evaluateAnnualIncomeCandidate(context,x),
+    enclose: interval => encloseAnnualIncomeCandidates(context,interval),
+    domain: [0,target+Math.min(1e-6,moneyTolerance(target))], current: context.current ?? 0,
+    target, options,
+  });
+  if (answer.status !== 'solved') return answer;
+  const verified = annualVerifiedResult(scenario,fixed,field,target,answer.x);
+  return { ...verified, evaluations: answer.evaluations, subdivisions: answer.subdivisions,
+    candidateDistanceTolerance: distanceTolerance };
+}
 
 /* ============================================================
    SIMULATION
@@ -1169,19 +1800,19 @@ const MAX_MONTHS = 1200; // 100 years
    ============================================================ */
 
 function calculateAssetSale(deficit, availableInvestments, saleTaxRate) {
-  if (deficit <= 0 || availableInvestments <= 0) {
+  if (deficit <= moneyTolerance(deficit) || availableInvestments <= 0) {
     return {
       grossSold: 0,
       saleTaxPaid: 0,
       netSaleProceeds: 0,
-      unfundedDeficit: Math.max(0, deficit),
+      unfundedDeficit: deficit > moneyTolerance(deficit) ? deficit : 0,
     };
   }
 
   if (saleTaxRate >= 1) {
     return {
-      grossSold: availableInvestments,
-      saleTaxPaid: availableInvestments,
+      grossSold: 0,
+      saleTaxPaid: 0,
       netSaleProceeds: 0,
       unfundedDeficit: deficit,
     };
@@ -1210,16 +1841,72 @@ function calculateAssetSale(deficit, availableInvestments, saleTaxRate) {
   };
 }
 
-function simulate() {
-  const p = state.params;
+function moneyTolerance(...amounts) {
+  return Math.max(1e-9, 16 * Number.EPSILON * Math.max(1, ...amounts.map(Math.abs)));
+}
+
+function createIncomeLedger(principal, income) {
+  return { principal, rawIncome: income, yieldRate: principal === 0 ? 0 : income / principal };
+}
+
+function effectiveIncome(ledger) {
+  return ledger.principal === 0 ? 0 : Math.max(0, ledger.rawIncome);
+}
+
+function applyPrincipalEvent(ledger, change, modifier) {
+  ledger.rawIncome = principalIncomeEquation(scalarArithmetic,ledger.rawIncome,modifier,ledger.yieldRate,change);
+  ledger.principal += change;
+}
+
+function resetIncomeLedger(ledger, income) {
+  if (ledger.principal === 0 && income > 0) {
+    throw new RangeError('Investment income must be zero at zero principal.');
+  }
+  ledger.rawIncome = income;
+  ledger.yieldRate = ledger.principal === 0 ? 0 : income / ledger.principal;
+}
+
+function simulate(params = state.params, pins = state.pins, options = {}) {
+  const checked = validateParams(params);
+  const pinChecks = Array.isArray(pins)
+    ? pins.map(pin => validatePinDraft(pin))
+    : [{ ok: false, issues: [issue('pins', 'Provide a list of adjustments.')] }];
+  const issues = [...checked.issues, ...pinChecks.flatMap(check => check.issues)];
+  const invalidResult = (moreIssues, plannedLastMonth = null) => ({
+    rows: [], plannedLastMonth, terminatedReason: 'invalid', terminatedAtMonth: null, issues: moreIssues,
+  });
+  if (issues.length) return invalidResult(issues);
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    return invalidResult([issue('options', 'Provide valid simulation options.')]);
+  }
+  const p = checked.value;
+  const monthsRequested = p.unit === 'months' ? p.num_periods : p.num_periods * 12;
+  const plannedLastMonth = monthsRequested > 0 ? Math.min(monthsRequested, MAX_MONTHS) : MAX_MONTHS;
+  const throughMonth = options.throughMonth === undefined ? plannedLastMonth : numericValue(options.throughMonth);
+  if (!Number.isInteger(throughMonth) || throughMonth < 1 || throughMonth > MAX_MONTHS) {
+    return invalidResult([issue('throughMonth', 'Choose a whole trial month from 1 through 1200.')], plannedLastMonth);
+  }
+  let dateAnchor = TODAY;
+  if (options.dateAnchor !== undefined) {
+    const supplied = options.dateAnchor;
+    let year, month;
+    try {
+      year = supplied.getFullYear();
+      month = supplied.getMonth();
+    } catch {
+      return invalidResult([issue('dateAnchor', 'Provide a valid local calendar date.')], plannedLastMonth);
+    }
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 0 || month > 11) {
+      return invalidResult([issue('dateAnchor', 'Provide a valid local calendar date.')], plannedLastMonth);
+    }
+    dateAnchor = new Date(year, month, 1);
+  }
   const monthlyInflation = Math.pow(1 + p.inflation, 1 / 12) - 1;
 
-  const sim = {
+  const sim = options.resumeState ? { ...options.resumeState,
+    ledger: { ...options.resumeState.ledger } } : {
     buffer: p.buffer_initial,
-    investments: p.investments_initial,
-    cumulative_reduction: 0,
-    baseline_principal: p.investments_initial,
-    baseline_income: p.investment_income,
+    ledger: createIncomeLedger(p.investments_initial, p.investment_income),
     current_expense: p.expense,
     current_external: p.external_income,
     current_tax: p.tax_rate,
@@ -1228,108 +1915,139 @@ function simulate() {
     current_floor: p.floor,
     current_monthly_inflation: monthlyInflation,
   };
+  if (!Object.values(sim.ledger).every(Number.isFinite)) {
+    return invalidResult([issue('model', 'The investment income yield exceeds the supported numerical range.')], plannedLastMonth);
+  }
 
-  const monthsRequested = p.unit === 'months'
-    ? p.num_periods
-    : p.num_periods * 12;
-  const monthLimit = monthsRequested > 0
-    ? Math.min(monthsRequested, MAX_MONTHS)
-    : MAX_MONTHS;
+  const monthLimit = Math.min(plannedLastMonth, throughMonth);
+  const startMonth = options.startMonth ?? 1;
+  if (!Number.isInteger(startMonth) || startMonth < 1 || startMonth > monthLimit ||
+      (startMonth > 1 && !options.resumeState)) {
+    return invalidResult([issue('startMonth','Provide a valid trial checkpoint.')],plannedLastMonth);
+  }
+  if (!Number.isFinite(dateForMonth(monthLimit, dateAnchor).getTime())) {
+    return invalidResult([issue('dateAnchor', 'The projection extends beyond the supported calendar range.')], plannedLastMonth);
+  }
 
-  const sortedPins = [...state.pins].sort((a, b) => a.at_month - b.at_month);
+  const ids = new Set();
+  const months = new Set();
+  for (const { value: pin } of pinChecks) {
+    if (ids.has(pin.id)) return invalidResult([issue('id', 'Adjustment ids must be unique.', { month: pin.at_month, origin: 'adjustment' })], plannedLastMonth);
+    if (months.has(pin.at_month)) return invalidResult([issue('at_month', 'Only one adjustment may occupy a month.', { month: pin.at_month, origin: 'adjustment' })], plannedLastMonth);
+    ids.add(pin.id);
+    months.add(pin.at_month);
+  }
+  const sortedPins = pinChecks.map((check, index) => ({ ...check.value, rawStart: pins[index].start }))
+    .sort((a, b) => a.at_month - b.at_month);
   let pinIdx = 0;
+  while (pinIdx < sortedPins.length && sortedPins[pinIdx].at_month < startMonth) pinIdx++;
 
   const rows = [];
   let terminatedReason = null;
   let terminatedAtMonth = null;
+  let capturedState = null;
 
-  for (let m = 1; m <= monthLimit; m++) {
+  for (let m = startMonth; m <= monthLimit; m++) {
+    if (m === options.captureBeforeMonth) capturedState = { ...sim, ledger: { ...sim.ledger } };
     // ------- Pin application BEFORE computing this month -------
-    let pinAppliedAtThisMonth = null;
-    let pinOverridesApplied = null;
-
-    // Snapshot the "pre-pin" state at start of this month so the editor can show baselines
-    const preState = snapshotPreState(sim);
-
-    while (pinIdx < sortedPins.length && sortedPins[pinIdx].at_month === m) {
-      const pin = sortedPins[pinIdx];
-      const ov = pin.overrides;
-      pinAppliedAtThisMonth = pin;
-      pinOverridesApplied = ov;
-
-      // ----- ABSOLUTE STATE overrides -----
-      // Track whether investments or investment_income changed (need epoch reset)
-      const investmentsChanged = 'investments' in ov;
-      const incomeChanged = 'investment_income' in ov;
-
-      if ('buffer' in ov) sim.buffer = ov.buffer;
-      if ('investments' in ov) sim.investments = ov.investments;
-
-      // ----- PARAMETER overrides -----
-      if ('modifier' in ov) sim.current_modifier = ov.modifier;
-      if ('floor' in ov) sim.current_floor = ov.floor;
-      if ('external_income' in ov) sim.current_external = ov.external_income;
-      if ('tax_rate' in ov) sim.current_tax = ov.tax_rate;
-      if ('sale_tax_rate' in ov) sim.current_sale_tax = ov.sale_tax_rate;
-      if ('expense' in ov) sim.current_expense = ov.expense;
-      if ('inflation' in ov) {
-        sim.current_monthly_inflation = Math.pow(1 + ov.inflation, 1 / 12) - 1;
+    const preStartState = snapshotState(sim);
+    const pin = sortedPins[pinIdx]?.at_month === m ? sortedPins[pinIdx++] : null;
+    const start = pin?.start || {};
+    if ('modifier' in start) sim.current_modifier = start.modifier;
+    if ('floor' in start) sim.current_floor = start.floor;
+    if ('external_income' in start) sim.current_external = start.external_income;
+    if ('tax_rate' in start) sim.current_tax = normalizedTaxRate(pin.rawStart.tax_rate, sim.current_tax);
+    if ('sale_tax_rate' in start) sim.current_sale_tax = normalizedTaxRate(pin.rawStart.sale_tax_rate, sim.current_sale_tax);
+    if ('expense' in start) sim.current_expense = start.expense;
+    if ('inflation' in start) sim.current_monthly_inflation = Math.pow(1 + start.inflation, 1 / 12) - 1;
+    if ('investment_income' in start) {
+      if (sim.ledger.principal === 0 && start.investment_income > 0) {
+        return invalidResult([issue('investment_income', 'Investment income must be zero when principal is zero.', { month: m, phase: 'start', origin: 'adjustment' })], plannedLastMonth);
       }
-
-      // ----- EPOCH RESET for investment income relationship -----
-      // If either investments or income baseline is overridden, redefine the epoch:
-      //  - new baseline_principal = current investments (after override)
-      //  - new baseline_income = pin.investment_income (if set), else current effective income
-      //  - cumulative_reduction = 0
-      if (investmentsChanged || incomeChanged) {
-        // Current effective income before reset
-        const currentEffectiveIncome = sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
-        sim.baseline_principal = sim.investments;
-        sim.baseline_income = incomeChanged ? ov.investment_income : currentEffectiveIncome;
-        sim.cumulative_reduction = 0;
-      }
-
-      pinIdx++;
+      resetIncomeLedger(sim.ledger, start.investment_income);
     }
+    const postStartState = snapshotState(sim);
 
     // ------- Compute this month -------
-    const investment_income = sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction);
-    const total_pretax = investment_income + sim.current_external;
-    const net_income = total_pretax * (1 - sim.current_tax);
-    const income_tax_paid = total_pretax * sim.current_tax;
+    const investment_income = effectiveIncome(sim.ledger);
     const expense_this_month = sim.current_expense;
-    const delta = net_income - expense_this_month;
-
-    sim.buffer += delta;
+    const flow = monthlyFlowEquations(scalarArithmetic,investment_income,sim.current_external,
+      sim.current_tax,expense_this_month,sim.buffer,sim.current_floor);
+    const net_income = flow.net;
+    const income_tax_paid = flow.incomeTax;
+    const delta = flow.delta;
 
     let sold = 0;
     let sale_tax_paid = 0;
     let net_sale_proceeds = 0;
-    let hitFloor = false;
-    let insolvency = false;
-
-    if (sim.buffer < sim.current_floor && sim.investments > 0) {
-      hitFloor = true;
-      const deficit = sim.current_floor - sim.buffer;
-      const sale = calculateAssetSale(deficit, sim.investments, sim.current_sale_tax);
+    const openingCash = sim.buffer;
+    const openingPrincipal = sim.ledger.principal;
+    const tolerance = moneyTolerance(openingCash, net_income, expense_this_month, sim.current_floor);
+    if (!Number.isFinite(tolerance) || tolerance > 0.0001) {
+      return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+    }
+    const deficit = flow.deficit;
+    const hitFloor = deficit > tolerance;
+    if (hitFloor && openingPrincipal > 0 && sim.current_sale_tax < 1) {
+      const sale = calculateAssetSale(deficit, openingPrincipal, sim.current_sale_tax);
       sold = sale.grossSold;
       sale_tax_paid = sale.saleTaxPaid;
       net_sale_proceeds = sale.netSaleProceeds;
-      sim.investments -= sold;
-      sim.buffer += net_sale_proceeds;
-      if (sim.baseline_principal > 0) {
-        const pct_of_baseline = sold / sim.baseline_principal;
-        sim.cumulative_reduction += sim.current_modifier * pct_of_baseline;
+      if (sold > 0 && openingPrincipal - sold === openingPrincipal) {
+        return invalidResult([issue('model', `The principal sale is below the supported numerical precision at month ${m}.`, { month: m })], plannedLastMonth);
       }
-      if (sale.unfundedDeficit > 0) insolvency = true;
-    } else if (sim.buffer < sim.current_floor) {
-      insolvency = true;
+      applyPrincipalEvent(sim.ledger, -sold, sim.current_modifier);
+      if (!Object.values(sim.ledger).every(Number.isFinite)) {
+        return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+      }
     }
+    const availableCash = openingCash + net_income + net_sale_proceeds;
+    const expense_paid = Math.min(expense_this_month, Math.max(0, availableCash - sim.current_floor));
+    sim.buffer = availableCash - expense_paid;
+    const unfunded_expense = expense_this_month - expense_paid;
+    const reserveGap = Math.max(0, sim.current_floor - sim.buffer);
+    const unfunded_reserve = reserveGap;
+    const unfunded_deficit = unfunded_expense + unfunded_reserve;
+    const insolvency = unfunded_deficit > tolerance;
+    const naturalEndState = snapshotState(sim);
+    let valuation_adjustment = 0;
+    let cash_adjustment = 0;
+    if (!insolvency && pin) {
+      const end = pin.end;
+      if ('investments' in end) {
+        valuation_adjustment = end.investments - sim.ledger.principal;
+        applyPrincipalEvent(sim.ledger, valuation_adjustment, sim.current_modifier);
+        sim.ledger.principal = end.investments;
+        if (!Object.values(sim.ledger).every(Number.isFinite)) {
+          return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+        }
+      }
+      if ('investment_income' in end) {
+        if (sim.ledger.principal === 0 && end.investment_income > 0) {
+          return invalidResult([issue('investment_income', 'Investment income must be zero when principal is zero.', { month: m, phase: 'end', origin: 'adjustment' })], plannedLastMonth);
+        }
+        resetIncomeLedger(sim.ledger, end.investment_income);
+      }
+      if ('buffer' in end) {
+        if (end.buffer + moneyTolerance(end.buffer, sim.current_floor) < sim.current_floor) {
+          return invalidResult([issue('buffer', 'Closing buffer cannot be below the effective floor.', { month: m, phase: 'end', origin: 'adjustment' })], plannedLastMonth);
+        }
+        cash_adjustment = end.buffer - sim.buffer;
+        sim.buffer = end.buffer;
+      }
+    }
+    const endState = snapshotState(sim);
+    const adjustment_application = pin ? { id: pin.id, at_month: m,
+      start_applied: Object.keys(start).length > 0, end_applied: !insolvency && Object.keys(pin.end).length > 0 } : null;
 
-    rows.push({
+    const row = {
       month: m,
-      date: dateForMonth(m),
+      date: dateForMonth(m, dateAnchor),
       expense: expense_this_month,
+      expense_paid,
+      unfunded_expense,
+      unfunded_reserve,
+      unfunded_deficit,
       investment_income,
       external_income: sim.current_external,
       income_tax_paid,
@@ -1338,45 +2056,58 @@ function simulate() {
       net_income,
       delta,
       buffer: sim.buffer,
-      investments: sim.investments,
+      investments: sim.ledger.principal,
       sold,
       net_sale_proceeds,
+      valuation_adjustment,
+      cash_adjustment,
       hitFloor,
       insolvency,
       surplus: delta > 0,
-      pinned_at_this_row: pinAppliedAtThisMonth,
-      overrides_applied: pinOverridesApplied,
-      pre_state: preState, // for pin editor baselines
-      effective_state: snapshotEffectiveState(sim, expense_this_month, investment_income),
-    });
+      adjustment_application,
+      pre_start_state: preStartState,
+      post_start_state: postStartState,
+      natural_end_state: naturalEndState,
+      end_state: endState,
+    };
+    if (Object.values(row).some(value => typeof value === 'number' && !Number.isFinite(value)) ||
+        [preStartState, postStartState, naturalEndState, endState].some(snapshot =>
+          Object.values(snapshot).some(value => typeof value === 'number' && !Number.isFinite(value)))) {
+      return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+    }
+    rows.push(row);
 
-    // Inflate expense for next month
-    sim.current_expense *= (1 + sim.current_monthly_inflation);
-
-    // Termination check
-    if (sim.investments <= 0 && sim.buffer <= sim.current_floor) {
-      terminatedReason = 'depleted';
+    if (insolvency) {
+      terminatedReason = 'reserve_failure';
       terminatedAtMonth = m;
       break;
     }
+    // Inflate expense for next month only after the current month settles.
+    sim.current_expense *= (1 + sim.current_monthly_inflation);
   }
 
   if (!terminatedReason) {
-    if (rows.length === monthLimit) {
-      terminatedReason = monthsRequested === 0
-        ? 'cap'
-        : (rows.length >= monthsRequested ? 'horizon' : 'cap');
+    if (rows.at(-1)?.month === monthLimit) {
+      // A trial cutoff is not evidence that the planned horizon was reached.
+      // Solvers must verify the last row reaches their target span before accepting a trial.
+      terminatedReason = throughMonth < plannedLastMonth
+        ? 'trial_limit'
+        : monthsRequested === 0 || plannedLastMonth < monthsRequested
+          ? 'cap'
+          : 'horizon';
     }
   }
 
-  return { rows, terminatedReason, terminatedAtMonth };
+  return { rows, plannedLastMonth, terminatedReason, terminatedAtMonth, issues: [], capturedState };
 }
 
-function snapshotPreState(sim) {
+function snapshotState(sim) {
   return {
     buffer: sim.buffer,
-    investments: sim.investments,
-    investment_income: sim.baseline_income * Math.max(0, 1 - sim.cumulative_reduction),
+    investments: sim.ledger.principal,
+    income_yield: sim.ledger.yieldRate,
+    income_raw: sim.ledger.rawIncome,
+    investment_income: effectiveIncome(sim.ledger),
     modifier: sim.current_modifier,
     floor: sim.current_floor,
     external_income: sim.current_external,
@@ -1387,27 +2118,12 @@ function snapshotPreState(sim) {
   };
 }
 
-function snapshotEffectiveState(sim, expense, income) {
-  return {
-    buffer: sim.buffer,
-    investments: sim.investments,
-    investment_income: income,
-    modifier: sim.current_modifier,
-    floor: sim.current_floor,
-    external_income: sim.current_external,
-    expense: expense,
-    inflation: Math.pow(1 + sim.current_monthly_inflation, 12) - 1,
-    tax_rate: sim.current_tax,
-    sale_tax_rate: sim.current_sale_tax,
-  };
-}
-
 /* ============================================================
    DATE / FORMAT HELPERS
    ============================================================ */
 
-function dateForMonth(m) {
-  return new Date(TODAY.getFullYear(), TODAY.getMonth() + m, 1);
+function dateForMonth(m, anchor = TODAY) {
+  return new Date(anchor.getFullYear(), anchor.getMonth() + m, 1);
 }
 
 function fmtMoney(v, withSign = false) {
@@ -1426,6 +2142,16 @@ function fmtMoneyCompact(v) {
   if (abs >= 1e6) return `${neg}$${(abs / 1e6).toFixed(2)}M`;
   if (abs >= 1e3) return `${neg}$${(abs / 1e3).toFixed(0)}K`;
   return `${neg}$${abs.toFixed(0)}`;
+}
+
+function moneyDetail(value) {
+  const sign = value < 0 ? '−' : '';
+  const absolute = Math.abs(value);
+  return `Rounded to cents ${sign}$${formatCents(toRoundedCents(absolute))} · Model value ${sign}$${absolute.toString()}`;
+}
+
+function moneyStat(value) {
+  return `<span title="${moneyDetail(value)}" aria-label="${moneyDetail(value)}" tabindex="0">${fmtMoneyCompact(value)}</span>`;
 }
 
 function fmtPct(v, digits = 1) {
@@ -1457,8 +2183,29 @@ function orderedOverrides(overrides) {
    AGGREGATION (for year-view)
    ============================================================ */
 
-function aggregateForView(rows, unit) {
-  if (unit === 'months') return rows.map(r => ({ ...r, label: fmtDate(r.date, 'months'), period: r.month, source_rows: [r] }));
+function adjustmentsForSpan(rows, pins, firstMonth, plannedLastMonth) {
+  return pins.filter(pin => pin.at_month >= firstMonth && pin.at_month <= plannedLastMonth)
+    .sort((a, b) => a.at_month - b.at_month || String(a.id).localeCompare(String(b.id)))
+    .map(pin => {
+      const application = rows.find(row => row.month === pin.at_month)?.adjustment_application;
+      return { id: pin.id, at_month: pin.at_month, start: pin.start, end: pin.end,
+        annual_edits: pin.annual_edits ?? {},
+        start_applied: application?.start_applied === true,
+        end_applied: application?.end_applied === true };
+    });
+}
+
+function aggregateForView(rows, unit, plannedLastMonth, pins = []) {
+  if (!Number.isInteger(plannedLastMonth) || plannedLastMonth < 0 ||
+      (rows.length && plannedLastMonth < rows.at(-1).month)) {
+    throw new TypeError('aggregateForView requires a valid plannedLastMonth');
+  }
+  if (unit === 'months') return rows.map(r => ({ ...r, label: fmtDate(r.date, 'months'), period: r.month,
+    floor: r.end_state?.floor ?? r.floor, first_month: r.month, last_month: r.month,
+    planned_last_month: r.month, months_in_period: 1,
+    first_failure_month: r.insolvency ? r.month : null,
+    adjustments: adjustmentsForSpan([r], pins, r.month, r.month),
+    adjustment_applications: r.adjustment_application ? [r.adjustment_application] : [], source_rows: [r] }));
 
   // Years: group every 12 months into one row
   const groups = [];
@@ -1468,34 +2215,36 @@ function aggregateForView(rows, unit) {
     const last = slice[slice.length - 1];
     const first = slice[0];
     const yearIdx = Math.floor(i / 12) + 1;
+    const plannedEnd = Math.min(plannedLastMonth, first.month + 11);
+    const flowKeys = ['expense', 'expense_paid', 'unfunded_expense', 'unfunded_reserve',
+      'unfunded_deficit', 'investment_income', 'external_income', 'income_tax_paid',
+      'sale_tax_paid', 'tax_paid', 'net_income', 'delta', 'sold', 'net_sale_proceeds',
+      'cash_adjustment', 'valuation_adjustment'];
+    const totals = Object.fromEntries(flowKeys.map(key => [key, slice.reduce((sum, row) => sum + (row[key] ?? 0), 0)]));
     groups.push({
+      ...totals,
       month: last.month,
       date: last.date,
-      label: fmtDate(last.date, 'years'),
+      label: `${fmtDate(first.date, 'months')}–${fmtDate(last.date, 'months')}`,
       period: yearIdx,
-      expense: slice.reduce((s, r) => s + r.expense, 0),
-      investment_income: slice.reduce((s, r) => s + r.investment_income, 0),
-      external_income: slice.reduce((s, r) => s + r.external_income, 0),
-      income_tax_paid: slice.reduce((s, r) => s + r.income_tax_paid, 0),
-      sale_tax_paid: slice.reduce((s, r) => s + r.sale_tax_paid, 0),
-      tax_paid: slice.reduce((s, r) => s + r.tax_paid, 0),
-      net_income: slice.reduce((s, r) => s + r.net_income, 0),
-      delta: slice.reduce((s, r) => s + r.delta, 0),
       buffer: last.buffer,
       investments: last.investments,
-      sold: slice.reduce((s, r) => s + r.sold, 0),
-      net_sale_proceeds: slice.reduce((s, r) => s + r.net_sale_proceeds, 0),
+      floor: last.end_state?.floor ?? last.floor,
       hitFloor: slice.some(r => r.hitFloor),
       insolvency: slice.some(r => r.insolvency),
       surplus: slice.every(r => r.surplus),
-      pinned_at_this_row: slice.find(r => r.pinned_at_this_row)?.pinned_at_this_row || null,
-      overrides_applied: slice.find(r => r.overrides_applied)?.overrides_applied || null,
+      adjustment_applications: slice.map(r => r.adjustment_application).filter(Boolean),
       months_in_period: slice.length,
       first_month: first.month,
       last_month: last.month,
+      planned_last_month: plannedEnd,
+      first_failure_month: slice.find(r => r.insolvency)?.month ?? null,
+      adjustments: adjustmentsForSpan(slice, pins, first.month, plannedEnd),
       source_rows: slice,
-      pre_state: first.pre_state, // pre-pin state at start of year
-      effective_state: last.effective_state,
+      pre_start_state: first.pre_start_state,
+      post_start_state: first.post_start_state,
+      natural_end_state: last.natural_end_state,
+      end_state: last.end_state,
     });
   }
   return groups;
@@ -1508,21 +2257,25 @@ function aggregateForView(rows, unit) {
 function renderStats(rows, result) {
   const p = state.params;
   const lastRow = rows[rows.length - 1];
+  if (!lastRow) {
+    document.getElementById('stats').innerHTML = '<div class="stat"><div class="stat-label">Projection unavailable</div><div class="stat-detail">Check the scenario inputs and try again.</div></div>';
+    return;
+  }
   const totalSold = rows.reduce((s, r) => s + r.sold, 0);
   const totalIncomeTax = rows.reduce((s, r) => s + r.income_tax_paid, 0);
   const totalSaleTax = rows.reduce((s, r) => s + r.sale_tax_paid, 0);
   const totalTax = rows.reduce((s, r) => s + r.tax_paid, 0);
   const months = rows.length;
 
-  const horizonText = result.terminatedReason === 'depleted'
+  const horizonText = result.terminatedReason === 'reserve_failure'
     ? (p.unit === 'years' ? `${(months / 12).toFixed(1)} yrs` : `${months}`)
     : (p.unit === 'years' ? `${(months / 12).toFixed(0)}` : `${months}`);
-  const horizonDetail = result.terminatedReason === 'depleted'
-    ? `depleted ${p.unit === 'years' ? `at year ${Math.ceil(months / 12)}` : `at month ${months}`}`
+  const horizonDetail = result.terminatedReason === 'reserve_failure'
+    ? `Reserve cannot be maintained at month ${result.terminatedAtMonth ?? months}`
     : result.terminatedReason === 'cap'
-      ? 'no depletion (capped)'
+      ? 'projection capped'
       : (p.unit === 'years' ? 'years displayed' : 'months displayed');
-  const horizonClass = result.terminatedReason === 'depleted' ? 'warning' : '';
+  const horizonClass = result.terminatedReason === 'reserve_failure' ? 'warning' : '';
 
   const html = `
     <div class="stat">
@@ -1532,23 +2285,23 @@ function renderStats(rows, result) {
     </div>
     <div class="stat">
       <div class="stat-label">Ending buffer</div>
-      <div class="stat-value">${fmtMoneyCompact(lastRow.buffer)}</div>
-      <div class="stat-detail">floor at ${fmtMoneyCompact(p.floor)}</div>
+      <div class="stat-value">${moneyStat(lastRow.buffer)}</div>
+      <div class="stat-detail">floor at ${moneyStat(lastRow.end_state?.floor ?? lastRow.floor ?? p.floor)}</div>
     </div>
     <div class="stat">
       <div class="stat-label">Ending principal</div>
-      <div class="stat-value">${fmtMoneyCompact(lastRow.investments)}</div>
-      <div class="stat-detail">from ${fmtMoneyCompact(p.investments_initial)}</div>
+      <div class="stat-value">${moneyStat(lastRow.investments)}</div>
+      <div class="stat-detail">from ${moneyStat(p.investments_initial)}</div>
     </div>
     <div class="stat">
       <div class="stat-label">Total liquidated</div>
-      <div class="stat-value">${fmtMoneyCompact(totalSold)}</div>
+      <div class="stat-value">${moneyStat(totalSold)}</div>
       <div class="stat-detail">gross sales across projection</div>
     </div>
     <div class="stat">
       <div class="stat-label">Total tax paid</div>
-      <div class="stat-value">${fmtMoneyCompact(totalTax)}</div>
-      <div class="stat-detail">Income tax ${fmtMoneyCompact(totalIncomeTax)} · Asset sale tax ${fmtMoneyCompact(totalSaleTax)}</div>
+      <div class="stat-value">${moneyStat(totalTax)}</div>
+      <div class="stat-detail">Income tax ${moneyStat(totalIncomeTax)} · Asset sale tax ${moneyStat(totalSaleTax)}</div>
     </div>
   `;
   document.getElementById('stats').innerHTML = html;
@@ -1562,15 +2315,19 @@ function renderChart(rows) {
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
-  if (rows.length === 0) { svg.innerHTML = ''; return; }
+  if (rows.length === 0) {
+    svg.innerHTML = '';
+    document.getElementById('chart-y-labels').innerHTML = '';
+    document.getElementById('chart-x-labels').innerHTML = '';
+    return;
+  }
 
-  // Y scale: from 0 to max(initial buffer + investments, ever total)
+  const floorOf = row => row.end_state?.floor ?? row.floor ?? p.floor;
   const maxY = Math.max(
-    p.buffer_initial + p.investments_initial,
-    p.floor,
-    ...rows.map(r => r.buffer + r.investments),
+    p.buffer_initial, p.investments_initial, p.floor,
     ...rows.map(r => r.buffer),
     ...rows.map(r => r.investments),
+    ...rows.map(floorOf),
   );
   const safeMax = maxY > 0 ? maxY * 1.05 : 1;
 
@@ -1578,15 +2335,8 @@ function renderChart(rows) {
   const xOf = (i) => padL + (n > 1 ? i / (n - 1) : 0.5) * innerW;
   const yOf = (v) => padT + (1 - Math.max(0, v) / safeMax) * innerH;
 
-  // Areas: stacked. Investments occupies 0..investments, buffer stacked on top investments..investments+buffer.
-  // Visually: buffer is the upper band, investments lower band. They sum to total stack.
-
-  // For aesthetic: draw INVESTMENTS area at bottom (0 to investments), BUFFER area stacked (investments to investments+buffer)
-  const invPathTop = rows.map((r, i) => `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(r.investments)}`).join(' ');
-  const invPath = `M ${xOf(0)} ${yOf(0)} ${invPathTop} L ${xOf(n - 1)} ${yOf(0)} Z`;
-
-  const totalPathTop = rows.map((r, i) => `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(r.investments + r.buffer)}`).join(' ');
-  const totalPath = `M ${xOf(0)} ${yOf(0)} ${totalPathTop} L ${xOf(n - 1)} ${yOf(0)} Z`;
+  const linePath = getter => rows.map((r, i) =>
+    `${i === 0 ? 'M' : 'L'} ${xOf(i)} ${yOf(getter(r))}`).join(' ');
 
   // Pin x positions
   const pinXs = state.pins
@@ -1597,37 +2347,25 @@ function renderChart(rows) {
     })
     .filter(x => x !== null);
 
-  const floorY = yOf(p.floor);
-
   // Insolvency marker
   const insolvencyIdx = rows.findIndex(r => r.insolvency);
   const insolvencyX = insolvencyIdx >= 0 ? xOf(insolvencyIdx) : null;
 
   svg.innerHTML = `
-    <defs>
-      <linearGradient id="grad-inv" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#6B4423" stop-opacity="0.75"/>
-        <stop offset="100%" stop-color="#6B4423" stop-opacity="0.45"/>
-      </linearGradient>
-      <linearGradient id="grad-buf" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2C4A3E" stop-opacity="0.85"/>
-        <stop offset="100%" stop-color="#2C4A3E" stop-opacity="0.6"/>
-      </linearGradient>
-    </defs>
-    <path d="${totalPath}" fill="url(#grad-buf)"/>
-    <path d="${invPath}" fill="url(#grad-inv)"/>
-    <line x1="${padL}" y1="${floorY}" x2="${W - padR}" y2="${floorY}" stroke="#B8862A" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.85"/>
+    <path data-series="cash" d="${linePath(r => r.buffer)}" fill="none" stroke="#2C4A3E" stroke-width="2"/>
+    <path data-series="principal" d="${linePath(r => r.investments)}" fill="none" stroke="#6B4423" stroke-width="2"/>
+    <path data-series="floor" d="${linePath(floorOf)}" fill="none" stroke="#B8862A" stroke-width="1.5" stroke-dasharray="5 4"/>
     ${pinXs.map(x => `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" stroke="#B8862A" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.6"/>
       <circle cx="${x}" cy="${padT + 4}" r="3" fill="#B8862A"/>`).join('')}
     ${insolvencyX !== null ? `<line x1="${insolvencyX}" y1="${padT}" x2="${insolvencyX}" y2="${H - padB}" stroke="#7A2A1F" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.7"/>
-      <text x="${insolvencyX - 4}" y="${H - padB - 4}" font-family="Fraunces" font-style="italic" font-size="11" fill="#7A2A1F" text-anchor="end">depleted</text>` : ''}
+      <text x="${insolvencyX - 4}" y="${H - padB - 4}" font-family="Fraunces" font-style="italic" font-size="11" fill="#7A2A1F" text-anchor="end">reserve failure</text>` : ''}
   `;
 
-  // Y labels (just two: top and floor)
+  // The floor line can change during the projection, so label its final value.
   const yWrap = document.getElementById('chart-y-labels');
   yWrap.innerHTML = `
     <div class="chart-y-label" style="top: ${padT - 5}px; left: 0;">${fmtMoneyCompact(safeMax)}</div>
-    <div class="chart-y-label" style="top: ${floorY - 5}px; left: 0; color: #B8862A;">floor ${fmtMoneyCompact(p.floor)}</div>
+    <div class="chart-y-label" style="top: ${yOf(floorOf(rows.at(-1))) - 5}px; left: 0; color: #B8862A;">floor ${fmtMoneyCompact(floorOf(rows.at(-1)))}</div>
     <div class="chart-y-label" style="top: ${innerH + padT - 8}px; left: 0;">$0</div>
   `;
 
@@ -1647,15 +2385,22 @@ function renderChart(rows) {
 // Builds one editable value cell. The four editable columns (expense,
 // investment_income, buffer, investments) map to pin fields; clicking a cell
 // opens an inline editor wired via tbody event delegation (see init()).
-function editableCellHtml(displayValue, key, pinMonth, unit, baselineVal, overridden) {
+function editableCellHtml(displayValue, key, pinMonth, unit, baselineVal, overridden, actualValue) {
   const flavor = (key === 'buffer' || key === 'investments')
     ? 'Sets the balance at this month'
     : 'Changes this value going forward';
-  const title = unit === 'years'
+  const timing = unit === 'years'
     ? `${flavor} · applies at ${fmtDate(dateForMonth(pinMonth), 'months')}`
     : flavor;
+  const detail = moneyDetail(actualValue);
+  const title = `${timing} · ${detail}`;
   const cls = 'editable-cell' + (overridden ? ' is-overridden' : '');
-  return `<td class="${cls}" data-month="${pinMonth}" data-key="${key}" data-baseline="${baselineVal}" title="${title}">${displayValue}</td>`;
+  return `<td class="${cls}" data-month="${pinMonth}" data-key="${key}" data-baseline="${baselineVal}" data-money-detail="${title}" tabindex="0" title="${title}" aria-label="${title}">${displayValue}</td>`;
+}
+
+function monetaryCell(value, className = '', display = fmtMoney(value), hint = '') {
+  const detail = `${hint ? `${hint} · ` : ''}${moneyDetail(value)}`;
+  return `<td${className ? ` class="${className}"` : ''} data-money-detail="${detail}" tabindex="0" title="${detail}" aria-label="${detail}">${display}</td>`;
 }
 
 function renderTable(viewRows, baseRows, result) {
@@ -1665,16 +2410,21 @@ function renderTable(viewRows, baseRows, result) {
   let html = '';
   for (let idx = 0; idx < viewRows.length; idx++) {
     const r = viewRows[idx];
-    const isPinned = r.pinned_at_this_row !== null && r.pinned_at_this_row !== undefined;
+    const rowStart = r.first_month ?? r.month;
+    const rowEnd = r.planned_last_month ?? (unit === 'years' ? Math.min(MAX_MONTHS, rowStart + 11) : r.month);
+    const rowPins = state.pins.filter(pin => pin.at_month >= rowStart && pin.at_month <= rowEnd);
+    const isPinned = rowPins.length > 0;
     const isInsolvent = r.insolvency;
-    const editing = state.editing && state.editing.month === (unit === 'years' ? r.last_month - 11 : r.month);
-    // Pin period for editor: in months mode, the row's month. In years mode, first month of that year.
+    // A yearly row can contain several exact-month adjustments.
     const pinMonth = unit === 'years' ? r.first_month : r.month;
-    const editorActive = state.editing && state.editing.month === pinMonth;
+    const editorActive = state.editing && state.editing.month >= rowStart && state.editing.month <= rowEnd;
 
     // The pin (if any) at this row's target month drives the overridden-cell markers.
-    const pinAtMonth = state.pins.find(pn => pn.at_month === pinMonth);
-    const ovKeys = new Set(pinAtMonth ? Object.keys(pinAtMonth.overrides) : []);
+    const startPin = state.pins.find(pn => pn.at_month === pinMonth);
+    const closingMonth = r.last_month ?? r.month;
+    const endPin = state.pins.find(pn => pn.at_month === closingMonth);
+    const startKeys = new Set(startPin ? Object.keys(startPin.start) : []);
+    const endKeys = new Set(endPin ? Object.keys(endPin.end) : []);
 
     const trClasses = [
       isPinned ? 'is-pinned' : '',
@@ -1686,16 +2436,14 @@ function renderTable(viewRows, baseRows, result) {
 
     const notes = [];
     if (isPinned) {
-      const ov = r.overrides_applied || {};
-      const keys = Object.keys(ov);
-      if (keys.length > 0) {
-        notes.push(`<span class="marker-dot pinned"></span><em>pinned</em> ${keys.length === 1 ? PARAM_DEFS.find(d => d.key === keys[0])?.label.toLowerCase() : `${keys.length} overrides`}`);
-      } else {
-        notes.push(`<span class="marker-dot pinned"></span><em>pinned</em>`);
-      }
+      notes.push(`<span class="marker-dot pinned"></span>${rowPins.map(pin => {
+        const application = baseRows.find(row => row.month === pin.at_month)?.adjustment_application;
+        const applied = application?.start_applied || application?.end_applied;
+        return `<em>${applied ? 'adjusted' : 'unapplied'}</em> month ${pin.at_month}`;
+      }).join(', ')}`);
     }
-    if (r.hitFloor) notes.push(`<span class="marker-dot floor"></span>${unit === 'years' ? 'floor reached' : 'sold from principal'}`);
-    if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--oxblood)">depletion</strong>`);
+    if (r.hitFloor) notes.push(`<span class="marker-dot floor"></span>reserve funding needed`);
+    if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--oxblood)">reserve cannot be maintained</strong>`);
     if (r.surplus && !isPinned && !r.hitFloor) {
       // suppress for cleaner table - only show notes when something interesting
     }
@@ -1705,16 +2453,16 @@ function renderTable(viewRows, baseRows, result) {
 
     html += `
       <tr class="${trClasses}" data-month="${pinMonth}" style="animation-delay:${Math.min(idx * 5, 200)}ms">
-        <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="${isPinned ? 'Edit pin' : 'Pin overrides here'}">${isPinned ? '✎' : '+'}</span></td>
+        <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="Add adjustment">+</span>${rowPins.map(pin => `<span class="pin-action" data-id="${pin.id}" data-month="${pin.at_month}" title="Edit month ${pin.at_month}">✎</span>`).join('')}</td>
         <td class="col-period">${periodLabel}</td>
         <td class="col-date">${dateLabel}</td>
-        ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_state.expense, ovKeys.has('expense'))}
-        ${editableCellHtml(fmtMoney(r.investment_income), 'investment_income', pinMonth, unit, r.pre_state.investment_income, ovKeys.has('investment_income'))}
-        <td>${fmtMoney(r.net_income)}</td>
-        <td class="${deltaClass}">${deltaStr}</td>
-        ${editableCellHtml(fmtMoney(r.buffer), 'buffer', pinMonth, unit, r.pre_state.buffer, ovKeys.has('buffer'))}
-        ${editableCellHtml(fmtMoney(r.investments), 'investments', pinMonth, unit, r.pre_state.investments, ovKeys.has('investments'))}
-        <td class="${r.sold > 0 ? 'col-sold' : 'col-sold-zero'}">${r.sold > 0 ? fmtMoney(r.sold) : '—'}</td>
+        ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_start_state.expense, startKeys.has('expense'), r.expense)}
+        ${editableCellHtml(fmtMoney(r.investment_income), 'investment_income', pinMonth, unit, r.pre_start_state.investment_income, startKeys.has('investment_income'), r.investment_income)}
+        ${monetaryCell(r.net_income)}
+        ${monetaryCell(r.delta, deltaClass, deltaStr)}
+        ${r.insolvency ? monetaryCell(r.buffer, '', fmtMoney(r.buffer), 'Closing balance cannot be edited in an unfunded month') : editableCellHtml(fmtMoney(r.buffer), 'buffer', closingMonth, unit, r.natural_end_state.buffer, endKeys.has('buffer'), r.buffer)}
+        ${r.insolvency ? monetaryCell(r.investments, '', fmtMoney(r.investments), 'Closing balance cannot be edited in an unfunded month') : editableCellHtml(fmtMoney(r.investments), 'investments', closingMonth, unit, r.natural_end_state.investments, endKeys.has('investments'), r.investments)}
+        ${monetaryCell(r.sold, r.sold > 0 ? 'col-sold' : 'col-sold-zero', r.sold > 0 ? fmtMoney(r.sold) : '—')}
         <td class="col-notes">${notes.join(' &nbsp; ')}</td>
       </tr>
     `;
@@ -1731,20 +2479,21 @@ function renderTable(viewRows, baseRows, result) {
   tbody.querySelectorAll('.pin-action').forEach(el => {
     el.addEventListener('click', (e) => {
       const month = +el.getAttribute('data-month');
-      togglePinEditor(month);
+      togglePinEditor(month, el.getAttribute('data-id'));
     });
   });
 
   // Footer
   const footer = document.getElementById('table-footer');
-  if (result.terminatedReason === 'depleted') {
+  if (result.terminatedReason === 'reserve_failure') {
     const m = result.terminatedAtMonth;
     const dateStr = fmtDate(dateForMonth(m), 'months');
+    const failed = baseRows.find(row => row.month === m);
     footer.className = 'table-footer depleted';
-    footer.innerHTML = `Funds <em>terminate</em> at month <span class="footer-stat">${m}</span> &mdash; <span class="footer-stat">${dateStr}</span>`;
+    footer.innerHTML = `Last fully funded month <span class="footer-stat">${m - 1}</span>; reserve cannot be maintained in month <span class="footer-stat">${m}</span> &mdash; ${dateStr}. Required expense ${fmtMoney(failed.expense)}, funded expense ${fmtMoney(failed.expense_paid)}, unmet expense ${fmtMoney(failed.unfunded_expense)}, unmet reserve ${fmtMoney(failed.unfunded_reserve)}.`;
   } else if (result.terminatedReason === 'cap') {
     footer.className = 'table-footer';
-    footer.innerHTML = `<em>No depletion within</em> ${baseRows.length} months — projection capped at the 100-year horizon`;
+    footer.innerHTML = `Projection capped at ${baseRows.length} months (100-year horizon)`;
   } else {
     footer.className = 'table-footer';
     footer.innerHTML = `End of requested horizon — ${baseRows.length} months projected`;
@@ -1758,58 +2507,66 @@ function renderTable(viewRows, baseRows, result) {
 }
 
 function renderPinEditor(row, baseRows) {
-  // Find the underlying monthly row to use for pre-state
-  // For years view, this is the first month of the year (row.first_month).
-  // For months view, just the row.month.
   const unit = state.params.unit;
-  const editorMonth = unit === 'years' ? row.first_month : row.month;
+  const editorMonth = state.editing?.month ?? (unit === 'years' ? row.first_month : row.month);
   const sourceRow = baseRows.find(br => br.month === editorMonth);
-  if (!sourceRow) return '';
+  const existingPin = state.editing?.id
+    ? state.pins.find(pn => pn.id === state.editing.id)
+    : state.pins.find(pn => pn.at_month === editorMonth);
+  if (!sourceRow && !existingPin && !state.editing) return '';
 
-  const baseline = sourceRow.pre_state;
-  const existingPin = state.pins.find(pn => pn.at_month === editorMonth);
-  const overrides = existingPin ? existingPin.overrides : {};
-
-  // Build fields
   let fieldsHtml = '';
-  for (const def of PARAM_DEFS) {
-    const baseVal = baseline[def.key];
-    const isOverridden = def.key in overrides;
-    const value = isOverridden ? overrides[def.key] : baseVal;
+  for (const [phase, defs] of [['start', PARAM_DEFS.filter(def => START_PIN_KEYS.has(def.key))],
+    ['end', PARAM_DEFS.filter(def => END_PIN_KEYS.has(def.key))]]) {
+    fieldsHtml += `<h4>${phase === 'start' ? 'Beginning of selected month' : 'End of selected month'}</h4>`;
+    for (const def of defs) {
+    const identity = `${phase}.${def.key}`;
+    const baseVal = sourceRow
+      ? prepareCellEdit(sourceRow, `${phase}.${def.key}`, { params: state.params, pins: state.pins, revision: state.revision }).noOverrideBaseline
+      : undefined;
+    const isOverridden = existingPin && def.key in existingPin[phase] &&
+      !state.editing?.resetAll && !state.editing?.resetFields?.has(identity);
+    const value = isOverridden ? existingPin[phase][def.key] : baseVal;
 
     let displayValue, baselineDisplay;
-    if (def.fmt === 'money') {
-      displayValue = Math.round(value);
-      baselineDisplay = fmtMoney(baseVal);
+    if (value === undefined) {
+      displayValue = '';
+      baselineDisplay = 'unreachable';
+    } else if (def.fmt === 'money') {
+      displayValue = value.toFixed(2);
+      baselineDisplay = baseVal === undefined ? 'unreachable' : fmtMoney(baseVal);
     } else if (def.fmt === 'pct') {
       displayValue = (value * 100).toFixed(2);
-      baselineDisplay = fmtPct(baseVal, 2);
+      baselineDisplay = baseVal === undefined ? 'unreachable' : fmtPct(baseVal, 2);
     } else {
       displayValue = value;
-      baselineDisplay = (+baseVal).toFixed(2);
+      baselineDisplay = baseVal === undefined ? 'unreachable' : (+baseVal).toFixed(2);
     }
+    const originalDisplay = state.editing?.originalDisplays?.get(identity) ?? displayValue;
+    displayValue = state.editing?.draftValues?.get(identity) ?? displayValue;
 
     const inputAttrs = def.fmt === 'pct'
       ? `step="0.1" min="${def.min * 100}" max="${def.max * 100}"`
       : def.fmt === 'money'
-        ? `step="100"`
+        ? `step="0.01"`
         : `step="0.1" min="0"`;
 
     const prefix = def.fmt === 'money' ? '<span class="prefix">$</span>' : '';
     const suffix = def.fmt === 'pct' ? '<span class="suffix">%</span>' : '';
 
     fieldsHtml += `
-      <div class="pin-editor-field ${isOverridden ? 'changed' : ''}" data-key="${def.key}" data-fmt="${def.fmt}" data-baseline="${baseVal}">
-        <label>${def.label}${def.absolute ? ' <em style="color:var(--ochre); font-style:italic;">·</em>' : ''}</label>
-        <span class="input-wrap">${prefix}<input type="number" class="pin-field-input" data-key="${def.key}" value="${displayValue}" ${inputAttrs}>${suffix}</span>
+      <div class="pin-editor-field ${isOverridden || state.editing?.dirty?.has(identity) ? 'changed' : ''}" data-phase="${phase}" data-key="${def.key}" data-fmt="${def.fmt}" data-baseline="${baseVal ?? ''}">
+        <label>${phase === 'end' && def.key === 'investment_income' ? "Next month's investment income" : def.label}${['expense', 'external_income', 'investment_income'].includes(def.key) ? ' (monthly)' : ''}</label>
+        <span class="input-wrap">${prefix}<input type="number" class="pin-field-input" data-phase="${phase}" data-key="${def.key}" data-original="${originalDisplay}" value="${displayValue}" ${inputAttrs}>${suffix}</span>
         <span class="baseline">baseline: ${baselineDisplay}</span>
+        ${isOverridden ? `<button type="button" class="pin-reset-field" data-phase="${phase}" data-key="${def.key}">Reset this field</button>` : ''}
       </div>
     `;
+    }
   }
 
-  const periodLabel = unit === 'years'
-    ? `Year ${Math.ceil(editorMonth / 12)}`
-    : `Month ${editorMonth} &mdash; ${fmtDate(dateForMonth(editorMonth), 'months')}`;
+  const periodLabel = `Month ${editorMonth} &mdash; ${fmtDate(dateForMonth(editorMonth), 'months')}`;
+  const selectedMonth = state.editing?.monthDraft ?? editorMonth;
 
   return `
     <tr class="pin-editor-row">
@@ -1818,11 +2575,16 @@ function renderPinEditor(row, baseRows) {
           <div class="pin-editor-header">
             <div>
               <div class="pin-editor-title">${existingPin ? 'Editing' : 'Pinning'} <em>${periodLabel}</em></div>
-              <div class="pin-editor-sub">Change any parameter. Past rows are immutable; only this row forward will reflect your edits.</div>
+              <div class="pin-editor-sub">Beginning assumptions affect this month's flow. Ending balances and next-month income apply after its expenses and sales.</div>
             </div>
           </div>
           <div class="pin-editor-grid">${fieldsHtml}</div>
+          <label>Effective month <input id="pin-month" type="number" min="1" max="1200" step="1" value="${selectedMonth}"></label>
+          <span id="pin-effective-date">${Number.isInteger(Number(selectedMonth)) && Number(selectedMonth) >= 1 && Number(selectedMonth) <= MAX_MONTHS ? fmtDate(dateForMonth(Number(selectedMonth)), 'months') : 'Choose month 1–1200'}</span>
+          <div id="pin-move-note">${existingPin?.annual_edits && Number(selectedMonth) !== editorMonth ? 'Moving this adjustment converts its annual target to a monthly assumption.' : ''}</div>
+          <div id="pin-editor-error" role="alert"></div>
           <div class="pin-editor-actions">
+            <button class="pin-btn" id="pin-reset-income">Set new income baseline</button>
             <button class="reset" id="pin-reset-all">Reset all to baseline</button>
             ${existingPin ? `<button class="pin-btn remove-btn" id="pin-remove">Remove pin</button>` : ''}
             <button class="pin-btn" id="pin-cancel">Cancel</button>
@@ -1836,81 +2598,175 @@ function renderPinEditor(row, baseRows) {
 
 function attachPinEditorEvents(viewRows, baseRows) {
   if (!state.editing) return;
+  document.querySelector('.pin-editor')?.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      state.editing = null;
+      rerender();
+    }
+  });
   const editorMonth = state.editing.month;
   const sourceRow = baseRows.find(br => br.month === editorMonth);
-  if (!sourceRow) return;
-  const baseline = sourceRow.pre_state;
-
-  // Seed the per-session dirty set: an existing pin's overrides are genuine prior
-  // user choices, so they start dirty; every other field starts clean. This set is
-  // re-derived every time the editor (re)opens and never survives close/cancel.
-  const existingPin = state.pins.find(pn => pn.at_month === editorMonth);
-  state.editing.dirty = new Set(existingPin ? Object.keys(existingPin.overrides) : []);
-
-  // Track input changes: a field becomes dirty the moment the user edits it. The
-  // `changed` highlight follows dirty AND value != baseline, so an untouched field
-  // with a fractional baseline is never highlighted, and a dirty field restored to
-  // its baseline value loses the highlight (but stays dirty, so save drops it).
+  const existingPin = state.editing.id
+    ? state.pins.find(pn => pn.id === state.editing.id)
+    : state.pins.find(pn => pn.at_month === editorMonth);
+  state.editing.dirty ??= new Set();
+  state.editing.resetFields ??= new Set();
+  state.editing.draftValues ??= new Map();
+  state.editing.originalDisplays ??= new Map();
+  document.getElementById('pin-month')?.addEventListener('input', event => {
+    state.editing.monthDraft = event.target.value;
+    const month = Number(event.target.value);
+    document.getElementById('pin-effective-date').textContent =
+      Number.isInteger(month) && month >= 1 && month <= MAX_MONTHS
+        ? fmtDate(dateForMonth(month), 'months') : 'Choose month 1–1200';
+    document.getElementById('pin-move-note').textContent = existingPin?.annual_edits && month !== editorMonth
+      ? 'Moving this adjustment converts its annual target to a monthly assumption.' : '';
+  });
   document.querySelectorAll('.pin-field-input').forEach(inp => {
+    const identity = `${inp.dataset.phase}.${inp.dataset.key}`;
+    if (!state.editing.originalDisplays.has(identity))
+      state.editing.originalDisplays.set(identity, inp.dataset.original);
     inp.addEventListener('input', () => {
       const key = inp.getAttribute('data-key');
+      const phase = inp.getAttribute('data-phase');
       const fieldEl = inp.closest('.pin-editor-field');
       const fmt = fieldEl.getAttribute('data-fmt');
-      const baseVal = +fieldEl.getAttribute('data-baseline');
+      const baselineText = fieldEl.getAttribute('data-baseline');
+      const baseVal = baselineText === '' ? undefined : Number(baselineText);
       let value = +inp.value;
       if (fmt === 'pct') value = value / 100;
-      state.editing.dirty.add(key);
-      fieldEl.classList.toggle('changed', !floatsEqual(value, baseVal));
+      const identity = `${phase}.${key}`;
+      if (inp.value === inp.dataset.original) {
+        state.editing.dirty.delete(identity);
+        state.editing.draftValues.delete(identity);
+      } else {
+        state.editing.dirty.add(identity);
+        state.editing.draftValues.set(identity, inp.value);
+      }
+      state.editing.resetFields.delete(`${phase}.${key}`);
+      fieldEl.classList.toggle('changed', baseVal === undefined || !floatsEqual(value, baseVal));
+    });
+  });
+  document.querySelectorAll('.pin-reset-field').forEach(button => {
+    button.addEventListener('click', () => {
+      const phase = button.getAttribute('data-phase');
+      const key = button.getAttribute('data-key');
+      state.editing.resetFields.add(`${phase}.${key}`);
+      state.editing.dirty.delete(`${phase}.${key}`);
+      state.editing.draftValues.delete(`${phase}.${key}`);
+      const field = button.closest('.pin-editor-field');
+      field.querySelector('.pin-field-input').value = field.dataset.baseline === ''
+        ? '' : field.dataset.fmt === 'pct'
+          ? (Number(field.dataset.baseline) * 100).toFixed(2)
+          : Number(field.dataset.baseline).toFixed(2);
+      field.classList.remove('changed');
     });
   });
 
   const saveBtn = document.getElementById('pin-save');
-  if (saveBtn) saveBtn.addEventListener('click', () => savePinFromEditor(editorMonth, baseline));
+  if (saveBtn) saveBtn.addEventListener('click', () => savePinFromEditor(editorMonth));
+  const incomeReset = document.getElementById('pin-reset-income');
+  if (incomeReset) incomeReset.addEventListener('click', () => {
+    const input = document.querySelector('.pin-field-input[data-phase="start"][data-key="investment_income"]');
+    if (input) {
+      state.editing.dirty.add('start.investment_income');
+      state.editing.forceIncomeReset = true;
+    }
+  });
 
   const cancelBtn = document.getElementById('pin-cancel');
   if (cancelBtn) cancelBtn.addEventListener('click', () => { state.editing = null; rerender(); });
 
   const removeBtn = document.getElementById('pin-remove');
   if (removeBtn) removeBtn.addEventListener('click', () => {
-    state.pins = state.pins.filter(p => p.at_month !== editorMonth);
-    state.editing = null;
-    rerender();
+    removePinFromUI(existingPin?.id, document.getElementById('pin-editor-error'));
   });
 
   const resetBtn = document.getElementById('pin-reset-all');
   if (resetBtn) resetBtn.addEventListener('click', () => {
-    // Reset all inputs to baseline and clear every dirty flag, so a save right
-    // after reset produces zero overrides (and therefore prunes the pin).
     document.querySelectorAll('.pin-field-input').forEach(inp => {
       const fieldEl = inp.closest('.pin-editor-field');
       const fmt = fieldEl.getAttribute('data-fmt');
-      const baseVal = +fieldEl.getAttribute('data-baseline');
-      if (fmt === 'pct') inp.value = (baseVal * 100).toFixed(2);
-      else if (fmt === 'money') inp.value = Math.round(baseVal);
+      const baselineText = fieldEl.getAttribute('data-baseline');
+      const baseVal = baselineText === '' ? undefined : Number(baselineText);
+      if (baseVal === undefined) inp.value = '';
+      else if (fmt === 'pct') inp.value = (baseVal * 100).toFixed(2);
+      else if (fmt === 'money') inp.value = baseVal.toFixed(2);
       else inp.value = (+baseVal).toFixed(2);
       fieldEl.classList.remove('changed');
     });
-    if (state.editing) state.editing.dirty = new Set();
+    if (state.editing) {
+      state.editing.dirty = new Set();
+      state.editing.resetFields = new Set();
+      state.editing.draftValues = new Map();
+      state.editing.resetAll = true;
+    }
   });
 }
 
-function savePinFromEditor(editorMonth, baseline) {
-  // Persist only fields the user actually touched (dirty) AND that differ from the
-  // baseline. Untouched fields are never saved, even when their displayed baseline
-  // rounds away a fractional value — this is the phantom-override fix.
-  const dirty = (state.editing && state.editing.dirty) || new Set();
-  const overrides = collectPinOverrides(document.querySelectorAll('.pin-field-input'), dirty);
-
-  // Remove any existing pin at this month
-  state.pins = state.pins.filter(p => p.at_month !== editorMonth);
-
-  // Add new pin only if there's at least one override
-  if (Object.keys(overrides).length > 0) {
-    state.pins.push({ at_month: editorMonth, overrides });
+function savePinFromEditor(editorMonth) {
+  if (!state.editing || state.editing.saving) return;
+  const hasSidebarDraft = sidebarTimers.size > 0 || state.stale;
+  cancelPendingSidebarTimers();
+  const checked = hasSidebarDraft ? readParams() : { ok: true };
+  if (!checked.ok) {
+    document.getElementById('pin-editor-error').textContent = checked.issues.map(item => item.message).join(' ');
+    return;
   }
-
+  const existing = state.editing.id
+    ? state.pins.find(pin => pin.id === state.editing.id)
+    : state.pins.find(pin => pin.at_month === editorMonth);
+  const draft = existing ? clonePin(existing) : { id: newPinId(), at_month: editorMonth, start: {}, end: {} };
+  const targetMonth = Number(document.getElementById('pin-month')?.value ?? editorMonth);
+  draft.at_month = targetMonth;
+  if (existing?.at_month !== targetMonth) delete draft.annual_edits;
+  if (state.editing.resetAll) { draft.start = {}; draft.end = {}; delete draft.annual_edits; }
+  for (const input of document.querySelectorAll('.pin-field-input')) {
+    const phase = input.getAttribute('data-phase');
+    const key = input.getAttribute('data-key');
+    if (state.editing.resetFields?.has(`${phase}.${key}`)) {
+      delete draft[phase][key];
+      if (phase === 'start' && draft.annual_edits?.[key]) delete draft.annual_edits[key];
+      continue;
+    }
+    if (!state.editing.dirty.has(`${phase}.${key}`)) continue;
+    const originalText = input.getAttribute('data-original');
+    if (!(state.editing.forceIncomeReset && phase === 'start' && key === 'investment_income') &&
+        originalText.trim() !== '' && input.value.trim() !== '' &&
+        Number(input.value) === Number(originalText)) continue;
+    const field = input.closest('.pin-editor-field');
+    // The rendered baseline is field-specific. End income includes any closing
+    // principal valuation from this same adjustment, unlike natural_end_state.
+    const baselineText = field.getAttribute('data-baseline');
+    const baseline = baselineText === '' ? undefined : Number(baselineText);
+    const value = readPinFieldValue(input, key, field.getAttribute('data-fmt'), baseline);
+    // Once a displayed value changes, it is an explicit replacement. The user
+    // removes a stored value through "Reset this field"; a stale counterfactual
+    // cannot silently discard simultaneous principal and income edits.
+    draft[phase][key] = value;
+    if (phase === 'start' && draft.annual_edits?.[key]) delete draft.annual_edits[key];
+  }
+  if (!existing && !Object.keys(draft.start).length && !Object.keys(draft.end).length) {
+    state.editing = null;
+    rerender(true);
+    return;
+  }
+  if (existing && JSON.stringify(draft) === JSON.stringify(existing)) {
+    state.editing = null;
+    rerender(true);
+    return;
+  }
+  const transaction = applyEditTransaction({ params: state.params, pins: state.pins, revision: state.revision },
+    existing ? { type: 'replace', id: existing.id, pin: draft } : { type: 'create', at_month: targetMonth, pin: draft });
+  if (!transaction.ok) {
+    document.getElementById('pin-editor-error').textContent = transaction.issues.map(item => item.message).join(' ');
+    showScenarioStatus(transaction.issues, state.stale);
+    return;
+  }
+  acceptPins(transaction.scenario.pins);
   state.editing = null;
-  rerender();
+  rerender(true);
 }
 
 function floatsEqual(a, b) {
@@ -1940,12 +2796,13 @@ function readPinFieldValue(input, key, fmt, baseline) {
   if (key === 'tax_rate' || key === 'sale_tax_rate') {
     return readNormalizedTaxRate(input, baseline);
   }
+  if (typeof input.value === 'string' && input.value.trim() === '') return '';
   const value = +input.value;
   return fmt === 'pct' ? value / 100 : value;
 }
 
-function collectPinOverrides(fieldInputs, dirtyKeys) {
-  const overrides = {};
+function collectPinFields(fieldInputs, dirtyKeys) {
+  const fields = {};
   fieldInputs.forEach(input => {
     const key = input.getAttribute('data-key');
     if (!dirtyKeys.has(key)) return;
@@ -1953,62 +2810,121 @@ function collectPinOverrides(fieldInputs, dirtyKeys) {
     const fmt = fieldEl.getAttribute('data-fmt');
     const baseline = +fieldEl.getAttribute('data-baseline');
     const value = readPinFieldValue(input, key, fmt, baseline);
-    if (!floatsEqual(value, baseline)) overrides[key] = value;
+    if (value === '' || !Number.isFinite(value) || !floatsEqual(value, baseline)) fields[key] = value;
   });
-  return overrides;
+  return fields;
 }
 
-function togglePinEditor(month) {
-  if (state.editing && state.editing.month === month) {
+function togglePinEditor(month, id = null) {
+  cancelActiveSolve();
+  closeCellEditor();
+  if (state.editing && state.editing.month === month && state.editing.id === id) {
     state.editing = null;
   } else {
-    state.editing = { month };
+    state.editing = { month, id };
   }
   rerender();
 }
 
 /* ---- In-table cell editing (expense, investment_income, buffer, investments) ---- */
 let cellEditor = null; // the currently-open inline cell editor, if any
+let activeSolve = null;
+const sidebarTimers = new Map();
+function cancelPendingSidebarTimers() {
+  for (const timer of sidebarTimers.values()) clearTimeout(timer);
+  sidebarTimers.clear();
+}
+function cancelActiveSolve() {
+  if (activeSolve) activeSolve.aborted = true;
+  activeSolve = null;
+}
 
 function openCellEditor(cell, month, key) {
   closeCellEditor(); // only one inline editor open at a time
-  // Compare and prune against the display-rounded baseline: money cells only
-  // accept whole dollars, so a blur/Enter that leaves the pre-filled baseline
-  // untouched must not manufacture a spurious override.
-  const baselineRounded = Math.round(+cell.dataset.baseline);
+  const phase = key === 'buffer' || key === 'investments' ? 'end' : 'start';
   const pin = state.pins.find(p => p.at_month === month);
-  const overridden = pin && key in pin.overrides;
-  // Pre-fill with the existing override value if present, else the pre-state
-  // baseline (start-of-month for the absolute buffer/investments fields).
-  const prefill = Math.round(overridden ? pin.overrides[key] : baselineRounded);
+  const overridden = pin && key in pin[phase];
+  const annualFlow = state.params.unit === 'years' && phase === 'start';
+  const annualRow = annualFlow
+    ? aggregateForView(state.acceptedResult.rows, 'years', state.acceptedResult.plannedLastMonth, state.pins)
+      .find(row => row.first_month === month)
+    : null;
+  const plannedEnd = annualRow?.planned_last_month ?? month;
+  const exact = annualFlow
+    ? annualRow?.[key]
+    : overridden ? pin[phase][key] : Number(cell.dataset.baseline);
+  const prefill = Number(exact).toFixed(2);
   const originalHTML = cell.innerHTML;
 
   const input = document.createElement('input');
   input.type = 'number';
   input.className = 'cell-edit-input';
-  input.step = '100';
+  input.step = '0.01';
   input.value = prefill;
+  const details = document.createElement('div');
+  details.className = 'cell-edit-details';
+  details.textContent = annualFlow
+    ? `${plannedEnd - month + 1 === 12 ? 'Annual total' : `${plannedEnd - month + 1}-month total`} · ${fmtDate(dateForMonth(month), 'months')}–${fmtDate(dateForMonth(plannedEnd), 'months')}`
+    : `${phase === 'start' ? 'Beginning' : 'End'} of month ${month} · ${fmtDate(dateForMonth(month), 'months')}`;
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.className = 'cell-reset-field';
+  reset.textContent = 'Reset this field';
+  reset.hidden = !overridden;
+  const feedback = document.createElement('div');
+  feedback.className = 'cell-edit-feedback';
+  feedback.setAttribute('role', 'alert');
 
   let settled = false;
-  const finish = (commit) => {
+  let saving = false;
+  const finish = async (commit, resetField = false) => {
     if (settled) return;
-    settled = true;
-    cellEditor = null;
-    if (!commit) { cell.innerHTML = originalHTML; return; }
+    if (!commit) { settled = true; cellEditor = null; cancelActiveSolve(); cell.innerHTML = originalHTML; return; }
+    if (saving) return;
     const raw = input.value.trim();
-    const value = parseFloat(raw);
-    if (raw === '' || !isFinite(value)) { cell.innerHTML = originalHTML; return; } // empty/unparseable = cancel
-    commitCellEdit(month, key, value, baselineRounded); // rerenders, destroying the input
+    const value = Number(raw);
+    if (!resetField && (raw === '' || !Number.isFinite(value) || value < 0)) {
+      feedback.textContent = 'Enter a nonnegative amount.';
+      return;
+    }
+    if (!resetField && value === Number(prefill)) {
+      if (sidebarTimers.size || state.stale) {
+        cancelPendingSidebarTimers();
+        const checked = readParams();
+        if (!checked.ok) { feedback.textContent = checked.issues.map(item => item.message).join(' '); return; }
+        settled = true;
+        cellEditor = null;
+        rerender(true);
+      } else {
+        settled = true;
+        cellEditor = null;
+        cell.innerHTML = originalHTML;
+      }
+      return;
+    }
+    input.disabled = true;
+    saving = true;
+    const ok = await commitCellEdit(month, key, value, { annualFlow, resetField,
+      span: { first_month: month, last_month: plannedEnd }, feedback });
+    if (ok) { settled = true; cellEditor = null; }
+    else input.disabled = false;
+    saving = false;
   };
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
     else if (e.key === 'Escape') { e.preventDefault(); finish(false); } // Escape never commits
   });
-  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('blur', event => {
+    if (event.relatedTarget !== reset && !annualFlow) finish(true);
+  });
+  reset.addEventListener('click', () => finish(true, true));
 
   cell.innerHTML = '';
   cell.appendChild(input);
+  cell.appendChild(details);
+  cell.appendChild(reset);
+  cell.appendChild(feedback);
   input.focus();
   input.select();
   cellEditor = { finish };
@@ -2018,22 +2934,44 @@ function closeCellEditor() {
   if (cellEditor) cellEditor.finish(false);
 }
 
-function commitCellEdit(month, key, value, baselineRounded) {
-  const pin = state.pins.find(p => p.at_month === month);
-  if (floatsEqual(value, baselineRounded)) {
-    // Committing the baseline back clears this field's override; prune empty pins.
-    if (pin && key in pin.overrides) {
-      delete pin.overrides[key];
-      if (Object.keys(pin.overrides).length === 0) {
-        state.pins = state.pins.filter(p => p !== pin);
-      }
+async function commitCellEdit(month, key, value, context) {
+  const hasSidebarDraft = sidebarTimers.size > 0 || state.stale;
+  cancelPendingSidebarTimers();
+  const checked = hasSidebarDraft ? readParams() : { ok: true };
+  if (!checked.ok) { context.feedback.textContent = checked.issues.map(item => item.message).join(' '); return false; }
+  const phase = key === 'buffer' || key === 'investments' ? 'end' : 'start';
+  const pin = state.pins.find(item => item.at_month === month);
+  if (context.annualFlow && !context.resetField) {
+    const token = { aborted: false, revision: state.revision, month, key };
+    activeSolve = token;
+    context.feedback.textContent = 'Solving annual target…';
+    const answer = await solveAnnualTarget({ params: state.params, pins: state.pins, revision: state.revision },
+      context.span, key, value, { signal: token });
+    if (token.aborted || activeSolve !== token || state.revision !== token.revision) return false;
+    activeSolve = null;
+    if (answer.status !== 'solved') {
+      context.feedback.textContent = answer.status === 'infeasible'
+        ? 'Annual target is infeasible for the funded months.'
+        : answer.status === 'unresolved' ? 'Annual target could not be resolved; try a different total.'
+        : (answer.issues?.map(item => item.message).join(' ') || 'Could not solve annual target.');
+      return false;
     }
-  } else if (pin) {
-    pin.overrides[key] = value;
-  } else {
-    state.pins.push({ at_month: month, overrides: { [key]: value } });
+    acceptPins(answer.scenario.pins);
+    rerender(true);
+    return true;
   }
-  rerender();
+  const transaction = applyEditTransaction({ params: state.params, pins: state.pins, revision: state.revision },
+    context.resetField
+      ? { type: 'remove-field', id: pin?.id, at_month: month, phase, field: key }
+      : { type: 'set', id: pin?.id, at_month: month, phase, field: key, value });
+  if (!transaction.ok) {
+    context.feedback.textContent = transaction.issues.map(item => item.message).join(' ');
+    showScenarioStatus(transaction.issues, state.stale);
+    return false;
+  }
+  acceptPins(transaction.scenario.pins);
+  rerender(true);
+  return true;
 }
 
 /* ---- Adjustments sidebar panel (read-only list of pins) ---- */
@@ -2041,49 +2979,94 @@ function renderAdjustments() {
   const container = document.getElementById('adjustments-list');
   if (!container) return;
   const pins = [...state.pins].sort((a, b) => a.at_month - b.at_month);
-  if (pins.length === 0) {
-    container.innerHTML = '<div class="adj-empty">none — edit any row</div>';
-    return;
-  }
-  let html = '';
+  let html = pins.length === 0 ? '<div class="adj-empty">none — edit any row</div>' : '';
   for (const pin of pins) {
     const dateStr = fmtDate(dateForMonth(pin.at_month), 'months');
-    // orderedOverrides gives a stable field order with the display labels + formats.
-    const fieldsHtml = orderedOverrides(pin.overrides)
-      .map(({ def, value }) => `<div class="adj-field"><span class="adj-field-label">${def.label}</span><span class="adj-field-val">${fmtVal(value, def.fmt)}</span></div>`)
+    const result = state.acceptedResult;
+    const row = result?.rows.find(item => item.month === pin.at_month);
+    const phaseNote = (phase) => {
+      if (!Object.keys(pin[phase]).length) return '';
+      const applied = row?.adjustment_application?.[`${phase}_applied`] === true;
+      let reason = '';
+      if (!applied) {
+        if (pin.at_month > result?.plannedLastMonth) reason = ' · outside horizon';
+        else if (!row) reason = ' · projection stopped before month';
+        else if (phase === 'end' && row.insolvency) reason = ' · operating month failed';
+      }
+      return `<span class="adj-phase-status">${phase === 'start' ? 'Beginning' : 'End'} ${applied ? 'applied' : 'unapplied'}${reason}</span>`;
+    };
+    const fieldsHtml = [['start', pin.start], ['end', pin.end]]
+      .flatMap(([phase, fields]) => orderedOverrides(fields).map(({ def, value }) =>
+        `<div class="adj-field"><span class="adj-field-label">${phase === 'start' ? 'Beginning' : 'End'} · ${def.label}</span><span class="adj-field-val">${fmtVal(value, def.fmt)}</span></div>`))
       .join('');
+    const annualHtml = Object.entries(pin.annual_edits ?? {}).map(([field, edit]) => {
+      const spanRows = result?.rows.filter(row => row.month >= edit.first_month && row.month <= edit.last_month) ?? [];
+      const currentTotal = spanRows.reduce((total, row) => total + row[field], 0);
+      const complete = spanRows.length === edit.last_month - edit.first_month + 1 &&
+        spanRows[0]?.month === edit.first_month && spanRows.at(-1)?.month === edit.last_month &&
+        spanRows.every(row => !row.insolvency);
+      const changed = !complete || Math.abs(currentTotal - edit.target_total) > 1e-6;
+      const through = spanRows.length ? ` through month ${spanRows.at(-1).month}` : ` before month ${edit.first_month}`;
+      const targetLabel = changed
+        ? `originally targeted ${fmtMoney(edit.target_total)} · current total ${fmtMoney(currentTotal)}${complete ? '' : through}`
+        : `target ${fmtMoney(edit.target_total)}`;
+      return `<div class="adj-field">Annual ${field === 'expense' ? 'expense' : 'investment income'} ${targetLabel} · ` +
+        `derived monthly assumption ${fmtMoney(edit.resolved_monthly_value)} · effective ${fmtDate(dateForMonth(edit.first_month), 'months')}</div>`;
+    }).join('');
     html += `
-      <div class="adj-entry" data-month="${pin.at_month}">
+      <div class="adj-entry" data-id="${pin.id}" data-month="${pin.at_month}">
         <div class="adj-entry-head">
           <span class="adj-entry-when">Month ${pin.at_month} · ${dateStr}</span>
-          <button class="adj-remove" data-month="${pin.at_month}" title="Remove this adjustment">remove</button>
+          <button class="adj-remove" data-id="${pin.id}" title="Remove this adjustment">remove</button>
         </div>
-        ${fieldsHtml}
+        <div class="adj-phase-statuses">${phaseNote('start')}${phaseNote('end')}</div>
+        ${fieldsHtml}${annualHtml}
       </div>`;
+  }
+  if (state.editing && !state.acceptedResult?.rows.some(row => row.month === state.editing.month)) {
+    html += `<table><tbody>${renderPinEditor({ month: state.editing.month }, state.acceptedResult?.rows ?? [])}</tbody></table>`;
   }
   container.innerHTML = html;
 
   container.querySelectorAll('.adj-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also fire the entry's jump-to-row
-      const m = +btn.getAttribute('data-month');
-      state.pins = state.pins.filter(p => p.at_month !== m);
-      if (state.editing && state.editing.month === m) state.editing = null; // close editor if open on it
-      rerender();
+      removePinFromUI(btn.getAttribute('data-id'));
     });
   });
   container.querySelectorAll('.adj-entry').forEach(entry => {
-    entry.addEventListener('click', () => jumpToPin(+entry.getAttribute('data-month')));
+    entry.addEventListener('click', () => jumpToPin(entry.getAttribute('data-id')));
   });
 }
 
-function jumpToPin(month) {
-  // Open the pin's editor and scroll its row into view. In years view the editor
-  // lives on the year's first-month row, so map the pin's month to that row.
-  const editorMonth = state.params.unit === 'years'
-    ? Math.floor((month - 1) / 12) * 12 + 1
-    : month;
-  state.editing = { month: editorMonth };
+function removePinFromUI(id, errorElement = null) {
+  const hasSidebarDraft = sidebarTimers.size > 0 || state.stale;
+  cancelPendingSidebarTimers();
+  const checked = hasSidebarDraft ? readParams(state.pins.filter(pin => pin.id !== id)) : { ok: true };
+  if (!checked.ok) {
+    if (errorElement) errorElement.textContent = checked.issues.map(item => item.message).join(' ');
+    return false;
+  }
+  const transaction = applyEditTransaction({ params: state.params, pins: state.pins, revision: state.revision },
+    { type: 'remove', id });
+  if (!transaction.ok) {
+    if (errorElement) errorElement.textContent = transaction.issues.map(item => item.message).join(' ');
+    showScenarioStatus(transaction.issues, state.stale);
+    return false;
+  }
+  acceptPins(transaction.scenario.pins);
+  if (state.editing?.id === id) state.editing = null;
+  rerender(true);
+  return true;
+}
+
+function jumpToPin(id) {
+  cancelActiveSolve();
+  closeCellEditor();
+  const pin = state.pins.find(item => item.id === id);
+  if (!pin) return;
+  const editorMonth = state.params.unit === 'years' ? Math.floor((pin.at_month - 1) / 12) * 12 + 1 : pin.at_month;
+  state.editing = { month: pin.at_month, id };
   rerender(); // rebuilds the tbody...
   const row = document.querySelector(`tr[data-month="${editorMonth}"]`);
   if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' }); // ...so scroll afterwards
@@ -2093,35 +3076,86 @@ function jumpToPin(month) {
    ORCHESTRATION
    ============================================================ */
 
-function readParams() {
-  const p = state.params;
-  p.buffer_initial = +document.getElementById('buffer-initial').value;
-  p.floor = +document.getElementById('floor').value;
-  p.external_income = +document.getElementById('external-income').value;
-  p.investments_initial = +document.getElementById('investments-initial').value;
-  p.investment_income = +document.getElementById('investment-income').value;
-  p.modifier = +document.getElementById('modifier').value;
-  p.expense = +document.getElementById('expense').value;
-  p.inflation = +document.getElementById('inflation').value / 100;
-  p.tax_rate = readNormalizedTaxRate(document.getElementById('tax-rate'), DEFAULT_INCOME_TAX_RATE);
-  p.sale_tax_rate = readNormalizedTaxRate(document.getElementById('sale-tax-rate'), DEFAULT_SALE_TAX_RATE);
-  p.num_periods = +document.getElementById('periods').value;
-  // unit is set via toggle handler
+function showScenarioStatus(issues, stale) {
+  state.issues = issues;
+  state.stale = stale;
+  const status = document.getElementById('scenario-status');
+  if (status) {
+    status.hidden = issues.length === 0;
+    status.textContent = issues.length
+      ? `${stale ? 'Showing the last valid projection. ' : ''}${issues.map(item => {
+          const location = item.origin === 'adjustment'
+            ? `Adjustment${Number.isInteger(item.month) ? ` at month ${item.month}` : ''} — `
+            : '';
+          return `${location}${item.field}: ${item.message}`;
+        }).join(' ')}`
+      : '';
+  }
+  const exportButton = document.getElementById('export-csv');
+  if (exportButton) exportButton.disabled = stale;
 }
 
-function rerender() {
+function readParams(pins = state.pins) {
+  const ids = {
+    buffer_initial: 'buffer-initial', floor: 'floor', external_income: 'external-income',
+    investments_initial: 'investments-initial', investment_income: 'investment-income',
+    modifier: 'modifier', expense: 'expense', inflation: 'inflation',
+    tax_rate: 'tax-rate', sale_tax_rate: 'sale-tax-rate', num_periods: 'periods',
+  };
+  const controls = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, document.getElementById(id)]));
+  const draft = { ...state.params, unit: state.draftUnit ?? state.params.unit };
+  for (const [key, control] of Object.entries(controls)) {
+    if (key === 'tax_rate' || key === 'sale_tax_rate') {
+      const fallback = key === 'tax_rate' ? DEFAULT_INCOME_TAX_RATE : DEFAULT_SALE_TAX_RATE;
+      draft[key] = readNormalizedTaxRate(control, fallback);
+    } else if (key === 'inflation') {
+      draft[key] = control.value.trim() === '' ? '' : Number(control.value) / 100;
+    } else draft[key] = control.value;
+  }
+  const checked = validateParams(draft);
+  const trial = checked.ok ? simulate(checked.value, pins) : null;
+  const issues = trial?.terminatedReason === 'invalid' ? trial.issues : checked.issues;
+  const byField = new Set(issues.filter(item => item.origin !== 'adjustment').map(item => item.field));
+  for (const [key, control] of Object.entries(controls)) {
+    if (byField.has(key)) control.setAttribute?.('aria-invalid', 'true');
+    else control.removeAttribute?.('aria-invalid');
+  }
+  if (issues.length) {
+    showScenarioStatus(issues, true);
+    return { ok: false, issues };
+  }
+  if (JSON.stringify(state.params) !== JSON.stringify(checked.value)) {
+    cancelActiveSolve();
+    state.revision++;
+  }
+  state.params = checked.value;
+  state.draftUnit = null;
+  return checked;
+}
+
+function rerender(validated = false) {
   const result = simulate();
-  const viewRows = aggregateForView(result.rows, state.params.unit);
+  if (result.terminatedReason === 'invalid') {
+    showScenarioStatus(result.issues, true);
+    return result;
+  }
+  state.acceptedResult = result;
+  if (validated) showScenarioStatus([], false);
+  const viewRows = aggregateForView(result.rows, state.params.unit, result.plannedLastMonth, state.pins);
   renderStats(result.rows, result);
   renderChart(result.rows);
   renderTable(viewRows, result.rows, result);
-  attachPinEditorEvents(viewRows, result.rows);
   renderAdjustments();
+  attachPinEditorEvents(viewRows, result.rows);
+  return result;
 }
 
 function recalc() {
-  readParams();
-  rerender();
+  cancelActiveSolve();
+  cancelPendingSidebarTimers();
+  const checked = readParams();
+  if (!checked.ok) return checked;
+  return rerender(true);
 }
 
 /* ============================================================
@@ -2141,19 +3175,48 @@ function formatCents(cents) {
 }
 
 function buildCsvText(viewRows, unit, pins) {
-  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides', 'income_tax_paid', 'sale_tax_paid', 'net_sale_proceeds'];
+  const rawKeys = ['expense', 'investment_income', 'external_income', 'tax_paid', 'net_income',
+    'delta', 'buffer', 'investments', 'sold', 'income_tax_paid', 'sale_tax_paid',
+    'net_sale_proceeds', 'expense_paid', 'cash_adjustment', 'valuation_adjustment',
+    'unfunded_expense', 'unfunded_reserve', 'unfunded_deficit', 'floor'];
+  const headers = ['period', 'date', 'expense', 'investment_income', 'external_income', 'tax_paid', 'net_income', 'delta', 'buffer', 'investments', 'sold', 'hit_floor', 'insolvency', 'pinned', 'overrides', 'income_tax_paid', 'sale_tax_paid', 'net_sale_proceeds',
+    'expense_paid', 'cash_adjustment', 'valuation_adjustment', 'unfunded_expense',
+    'unfunded_reserve', 'unfunded_deficit', 'floor', 'first_month', 'last_month',
+    'planned_last_month', 'adjustments_json', ...rawKeys.map(key => `${key}_raw`)];
+  const csvCell = value => {
+    const string = String(value ?? '');
+    return /[",\r\n]/.test(string) ? `"${string.replaceAll('"', '""')}"` : string;
+  };
+  const rawNumber = value => String(Object.is(value, -0) ? 0 : value ?? 0);
+  const readable = value => formatCents(toRoundedCents(value ?? 0));
   const lines = [headers.join(',')];
   for (const r of viewRows) {
-    // Aggregate every pin whose month falls within this row's span (a single
-    // month in months view, the whole year in years view) as raw key=value pairs.
     const startM = r.first_month !== undefined ? r.first_month : r.month;
-    const endM = r.last_month !== undefined ? r.last_month : r.month;
+    const endM = r.planned_last_month ?? r.last_month ?? r.month;
     const pairs = [];
-    pins
+    const adjustments = pins
       .filter(p => p.at_month >= startM && p.at_month <= endM)
-      .sort((a, b) => a.at_month - b.at_month)
-      .forEach(pin => orderedOverrides(pin.overrides).forEach(({ def, value }) => pairs.push(`${def.key}=${value}`)));
-    const overridesField = pairs.length ? `"${pairs.join('; ')}"` : '';
+      .sort((a, b) => a.at_month - b.at_month || String(a.id).localeCompare(String(b.id)))
+      .map(pin => {
+        const application = r.source_rows?.find(row => row.month === pin.at_month)?.adjustment_application
+          ?? r.adjustment_applications?.find(item => item.id === pin.id)
+          ?? (r.adjustment_application?.id === pin.id ? r.adjustment_application : null);
+        const phases = {};
+        for (const phase of ['start', 'end']) {
+          const fields = Object.fromEntries(orderedOverrides(pin[phase] ?? {}).map(({ def, value }) => [def.key, value]));
+          phases[phase] = { fields, applied: application?.[`${phase}_applied`] === true };
+          for (const [key, value] of Object.entries(fields)) {
+            pairs.push(`month ${pin.at_month} ${phase}.${key}=${rawNumber(value)} (${phases[phase].applied ? 'applied' : 'unapplied'})`);
+          }
+        }
+        const annual_edits = Object.fromEntries(Object.entries(pin.annual_edits ?? {})
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([field, metadata]) => [field, Object.fromEntries(Object.entries(metadata)
+            .sort(([a], [b]) => a.localeCompare(b)))]));
+        return { id: pin.id, month: pin.at_month, start: phases.start,
+          end: phases.end, annual_edits };
+      });
+    const overridesField = pairs.join('; ');
     const grossSaleCents = toRoundedCents(r.sold);
     const saleTaxCents = toRoundedCents(r.sale_tax_paid);
     const netSaleCents = grossSaleCents - saleTaxCents;
@@ -2161,33 +3224,50 @@ function buildCsvText(viewRows, unit, pins) {
     const combinedTaxCents = incomeTaxCents + saleTaxCents;
     const row = [
       r.period,
-      `"${unit === 'years' ? r.label : fmtDate(r.date, 'months')}"`,
-      r.expense.toFixed(2),
-      r.investment_income.toFixed(2),
-      r.external_income.toFixed(2),
+      unit === 'years' ? r.label : fmtDate(r.date, 'months'),
+      readable(r.expense),
+      readable(r.investment_income),
+      readable(r.external_income),
       formatCents(combinedTaxCents),
-      r.net_income.toFixed(2),
-      r.delta.toFixed(2),
-      r.buffer.toFixed(2),
-      r.investments.toFixed(2),
+      readable(r.net_income),
+      readable(r.delta),
+      readable(r.buffer),
+      readable(r.investments),
       formatCents(grossSaleCents),
       r.hitFloor ? 'yes' : '',
       r.insolvency ? 'yes' : '',
-      r.pinned_at_this_row ? 'yes' : '',
+      adjustments.some(item => item.start.applied || item.end.applied) ? 'yes' : '',
       overridesField,
       formatCents(incomeTaxCents),
       formatCents(saleTaxCents),
       formatCents(netSaleCents),
+      ...['expense_paid', 'cash_adjustment', 'valuation_adjustment', 'unfunded_expense',
+        'unfunded_reserve', 'unfunded_deficit', 'floor'].map(key => readable(r[key])),
+      startM,
+      r.last_month ?? r.month,
+      endM,
+      JSON.stringify(adjustments),
+      ...rawKeys.map(key => rawNumber(r[key])),
     ];
-    lines.push(row.join(','));
+    lines.push(row.map((value, index) => index === 1 || (index === 14 && value)
+      ? `"${String(value).replaceAll('"', '""')}"` : csvCell(value)).join(','));
   }
   return lines.join('\n');
 }
 
 function exportCsv() {
-  const result = simulate();
+  const needsRefresh = sidebarTimers.size > 0 || state.stale || !state.acceptedResult;
+  const priorRevision = state.revision;
+  cancelPendingSidebarTimers();
+  const checked = readParams();
+  if (!checked.ok) return;
+  const result = needsRefresh || state.revision !== priorRevision ? rerender(true) : state.acceptedResult;
+  if (result.terminatedReason === 'invalid') {
+    showScenarioStatus(result.issues, true);
+    return;
+  }
   const unit = state.params.unit;
-  const viewRows = aggregateForView(result.rows, unit);
+  const viewRows = aggregateForView(result.rows, unit, result.plannedLastMonth, state.pins);
   const csvText = buildCsvText(viewRows, unit, state.pins);
   const blob = new Blob([csvText], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
@@ -2210,23 +3290,28 @@ function init() {
   const inputs = ['buffer-initial', 'floor', 'external-income', 'investments-initial', 'investment-income', 'modifier', 'expense', 'inflation', 'tax-rate', 'sale-tax-rate', 'periods'];
   inputs.forEach(id => {
     const el = document.getElementById(id);
-    let timer;
     el.addEventListener('input', () => {
-      clearTimeout(timer);
-      timer = setTimeout(recalc, 220);
+      cancelActiveSolve();
+      clearTimeout(sidebarTimers.get(el));
+      showScenarioStatus([issue('draft', 'Input changed; projection will update after validation.')], true);
+      sidebarTimers.set(el, setTimeout(recalc, 220));
     });
   });
 
   // Unit toggle
   document.getElementById('unit-months').addEventListener('click', () => {
-    state.params.unit = 'months';
+    cancelActiveSolve();
+    closeCellEditor();
+    state.draftUnit = 'months';
     document.getElementById('unit-months').classList.add('active');
     document.getElementById('unit-years').classList.remove('active');
     document.getElementById('periods').value = '120';
     recalc();
   });
   document.getElementById('unit-years').addEventListener('click', () => {
-    state.params.unit = 'years';
+    cancelActiveSolve();
+    closeCellEditor();
+    state.draftUnit = 'years';
     document.getElementById('unit-years').classList.add('active');
     document.getElementById('unit-months').classList.remove('active');
     document.getElementById('periods').value = '10';
@@ -2239,9 +3324,13 @@ function init() {
   // Clear pins
   document.getElementById('clear-pins').addEventListener('click', () => {
     if (state.pins.length === 0) return;
-    state.pins = [];
+    const hasSidebarDraft = sidebarTimers.size > 0 || state.stale;
+    cancelPendingSidebarTimers();
+    const checked = hasSidebarDraft ? readParams([]) : { ok: true };
+    if (!checked.ok) return;
+    acceptPins([]);
     state.editing = null;
-    rerender();
+    rerender(true);
   });
 
   // Export CSV

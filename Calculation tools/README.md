@@ -8,22 +8,22 @@ The calculations run entirely in the browser. The pages do not send inputs to a 
 
 ### `drawdown.html`
 
-Projects how long a cash buffer and investment principal remain solvent under monthly income, expenses, inflation, and taxes.
+Projects monthly cash flow and investment principal until the requested horizon, a protected-reserve failure, or the 1,200-month safety cap.
 
 - Models starting cash, a cash floor, external income, investment principal and income, expenses, annual inflation, and separate effective rates for recurring income and asset sales.
 - Applies the income effective rate to recurring investment income plus external income before expenses. It applies the asset sale effective rate to gross asset-sale proceeds.
-- Uses investment sales to restore the cash buffer to its floor. When sufficient assets exist and the asset sale rate is below 100%, the gross sale is `shortfall / (1 - rate)` so the net proceeds fill the shortfall.
-- Reduces principal by the gross liquidation, not the net proceeds. Gross liquidation also drives the permanent, cumulative investment-income reduction configured by the income modifier.
-- Simulates monthly even when the yearly view is selected; yearly rows aggregate groups of 12 monthly results.
-- Supports forward-looking overrides ("pins") from a selected month. The full row editor can change buffer, investments, investment income, income modifier, cash floor, external income, expense, inflation, recurring-income tax, and asset-sale tax. Only fields actually changed by the user are stored.
-- Expense, investment income, buffer, and investment cells can also be edited directly. In yearly view, an edit applies at the first month represented by that row.
-- Lists pins in the **Adjustments** panel, where they can be opened or removed. Pins share one chronological model, compose with later pins, and remain in page memory only.
-- Shows summary statistics, a trajectory chart, a detailed table, and CSV export.
-- Treats a period count of `0` as "run to depletion," subject to a 1,200-month (100-year) safety cap.
+- Protects the cash floor while funding monthly expenses. A sale seeks enough net proceeds to cover expenses *and* restore the floor; when sufficient principal exists and the asset sale rate is below 100%, gross sale is `shortfall / (1 - rate)`. A 100% sale rate cannot fund a sale. The final row reports required expense, funded expense, unmet expense, and unmet reserve separately. The projection ends with `reserve_failure` when either amount remains unfunded; reaching zero principal or touching the floor alone does not end it.
+- Reduces principal by gross liquidation, not net proceeds. The income ledger retains a raw income amount and yield; each sale or closing-principal valuation adjusts raw income by `modifier × yield × principal change`, using the modifier in force at that event. The change persists in the running ledger and can be reversed by later principal changes. Payable investment income is zero while principal is zero, even if the raw ledger remains positive. An explicit beginning or ending income edit resets the raw baseline and yield; ending income starts paying in the next month.
+- Simulates monthly even in yearly view. Yearly rows group up to 12 actual months, sum flows, and show the exact closing balances of the last simulated month. A short final group can be a requested partial horizon or a group cut short by reserve failure; its planned last month and failure month are retained separately.
+- Supports one identified adjustment per month. Beginning assumptions affect that month's flow; ending cash, principal valuation, and income baseline apply after expenses and sales. Closing cash is a separate cash adjustment, not recurring income. Only explicitly changed fields are stored. Pins can be moved to another unoccupied month, edited, reset, or removed. An unreachable pin remains visible with unapplied phase status for recovery; a failure-month ending phase does not apply.
+- Expense and investment-income table cells edit the selected month's opening assumption; buffer and investment cells set its exact closing balance. In yearly view, flow cells set a target for the planned group by solving the first month's monthly assumption, while closing balance cells target the last simulated month. Annual targets are verified when saved and their target, resolved monthly value, and span are kept as provenance, not as a constraint automatically re-solved after later edits. Moving an annual pin preserves its monthly assumption but clears annual-target provenance.
+- Lists adjustments in the **Adjustments** panel, where each can be opened at its exact month or removed. Changes compose chronologically and remain in page memory only.
+- Shows summary statistics, a trajectory chart, a detailed table, and CSV export. Table money is rounded to whole dollars for display; hover or keyboard focus reveals cents and, on editable cells, the exact model value. CSV has readable cents columns and exact JavaScript Number `*_raw` columns. Its date, `first_month`, `last_month`, `planned_last_month`, `overrides`, and `adjustments_json` fields preserve row spans and applied/unapplied start/end provenance. Readable tax and sale columns reconcile at cents (`tax_paid = income_tax_paid + sale_tax_paid`; `sold = sale_tax_paid + net_sale_proceeds`), while raw columns retain the unrounded computation.
+- Treats a period count of `0` as a run until reserve failure or the 1,200-month (100-year) safety cap. Invalid inputs show a recoverable status and keep the last valid projection visible; CSV export is disabled while it is stale and revalidates before download. Unreachable adjustments remain in the Adjustments panel for correction or removal.
 
-Projection dates are anchored to the browser's current local month when the page loads. Month 1 is the following calendar month. Overrides exist only in page memory and disappear on reload. Google Fonts are loaded from the network when available; the calculator otherwise uses local fallback fonts.
+Projection dates are anchored to the browser's current local month when the page loads. Month 1 is the following calendar month. Adjustments exist only in page memory and disappear on reload. Closing principal changes are valuations that affect subsequent investment income without creating a sale or sale tax. Closing cash changes are separate adjustments to cash, not recurring income. Google Fonts are loaded from the network when available; the calculator otherwise uses local fallback fonts.
 
-In CSV exports, `tax_paid` is the combined recurring-income and asset-sale tax. The `overrides` column records pin values as deterministic semicolon-separated `key=value` pairs. The appended `income_tax_paid`, `sale_tax_paid`, and `net_sale_proceeds` columns provide the tax components and net cash received from sales.
+In CSV exports, `tax_paid` combines recurring-income and asset-sale tax. The `overrides` column contains deterministic month and phase-qualified values with application status. The `income_tax_paid`, `sale_tax_paid`, and `net_sale_proceeds` columns provide readable tax and sale components.
 
 The tax model is a planning simplification. It does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules.
 
@@ -77,9 +77,9 @@ Both calculators use `APR / 12` monthly compounding and round monthly amounts to
 3. Click **Calculate** where provided. `drawdown.html` also recalculates shortly after an input changes.
 4. Use the page's export controls if you need CSV data or, for the early-loan calculator, a PNG chart.
 
-Run the dependency-free Node regression suite with `node --test tests/*.test.js`. It covers drawdown date anchoring, asset-sale tax and liquidation behavior, pin normalization, yearly aggregation, summary output, and CSV schema/rounding. No package installation is required for that suite.
+Run the dependency-free Node regression suite with `node --test tests/*.test.js`. It covers drawdown dates, protected-reserve settlement, sales and income-ledger changes, adjustments, yearly aggregation and targets, and CSV schema and precision. No package installation is required for that suite.
 
-The Playwright suite loads the Chart.js-backed calculator in Chromium and verifies both the pinned browser dependency and the default calculation:
+The Playwright suite covers the drawdown editor, yearly target workflow, validation and stale-export recovery, and CSV download, as well as the Chart.js-backed financing calculator in Chromium:
 
 ```sh
 npm ci
@@ -87,6 +87,6 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Run both automated suites with `npm test`. Pin editing interactions and the remaining calculators still require browser checks; verify their default scenarios, representative edge cases such as zero interest, and download controls when changing them.
+Run both full automated suites with `npm test`. To inspect the browser suite before running it, use `npx playwright test --list`. The other calculators still require browser checks when changing them; verify their default scenarios, representative edge cases such as zero interest, and download controls.
 
 These tools provide planning estimates, not financial, tax, or investment advice.
