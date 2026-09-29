@@ -10,6 +10,43 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('editing an assumption does not replay table row animations', async ({ page }) => {
+  await page.evaluate(() => {
+    window.tableRowAnimations = 0;
+    document.addEventListener('animationstart', event => {
+      if (event.target.matches('#amort-body tr[data-month]')) window.tableRowAnimations++;
+    }, true);
+  });
+  await page.locator('#expense').fill('5100');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await page.waitForTimeout(250);
+  expect(await page.evaluate(() => window.tableRowAnimations)).toBe(0);
+});
+
+test('pin editor fades when opened but not when rerendered', async ({ page }) => {
+  await page.locator('#amort-body tr[data-month="2"] .pin-action').click();
+  await expect(page.locator('.pin-editor-row')).toHaveClass(/is-entering/);
+  const count = await page.evaluate(async () => {
+    let animations = 0;
+    document.addEventListener('animationstart', event => {
+      if (event.target.matches('.pin-editor-row')) animations++;
+    }, true);
+    rerender();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return animations;
+  });
+  expect(count).toBe(0);
+  await expect(page.locator('.pin-editor-row')).not.toHaveClass(/is-entering/);
+});
+
+test('reduced motion shortens the pin editor fade', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#amort-body tr[data-month="2"] .pin-action').click();
+  const duration = await page.locator('.pin-editor-row').evaluate(node =>
+    parseFloat(getComputedStyle(node).animationDuration));
+  expect(duration).toBeLessThan(0.001);
+});
+
 test('phone layout stacks the sidebar and keeps content inside the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => {

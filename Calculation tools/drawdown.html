@@ -51,7 +51,16 @@
     outline-offset: 2px;
   }
 
-  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 
   body {
     font-family: 'Hanken Grotesk', system-ui, sans-serif;
@@ -296,7 +305,7 @@
     color: var(--text-muted);
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    transition: all 0.15s;
+    transition: background-color 0.15s, color 0.15s;
   }
   .toggle button:not(.active):not(:disabled):hover, .theme-toggle button:not(.active):not(:disabled):hover {
     background: var(--surface-raised);
@@ -323,7 +332,7 @@
     text-transform: uppercase;
     cursor: pointer;
     margin-top: 18px;
-    transition: all 0.2s;
+    transition: background-color 0.2s;
     position: relative;
     overflow: hidden;
   }
@@ -611,7 +620,7 @@
     color: var(--text-muted);
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    transition: all 0.15s;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
   }
   .table-actions button:not(:disabled):hover {
     background: var(--text);
@@ -770,7 +779,7 @@
     font-size: 16px;
     font-family: 'Fraunces', serif;
     line-height: 1;
-    transition: all 0.15s;
+    transition: color 0.15s, transform 0.15s, opacity 0.15s;
     user-select: none;
     display: inline-block;
     width: 18px;
@@ -980,7 +989,7 @@
     color: var(--text-muted);
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    transition: all 0.15s;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
   }
   .pin-editor-actions .pin-btn:not(:disabled):hover {
     background: var(--text-muted);
@@ -1060,10 +1069,7 @@
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
   }
-  .amort tbody tr {
-    animation: fadein 0.2s ease-out backwards;
-  }
-  .pin-editor-row {
+  .pin-editor-row.is-entering {
     animation: fadein 0.18s ease-out;
   }
 
@@ -2587,7 +2593,7 @@ function renderTable(viewRows, baseRows, result) {
     const dateLabel = unit === 'years' ? r.label : fmtDate(r.date, 'months');
 
     html += `
-      <tr class="${trClasses}" data-month="${pinMonth}" style="animation-delay:${Math.min(idx * 5, 200)}ms">
+      <tr class="${trClasses}" data-month="${pinMonth}">
         <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="Add adjustment">+</span>${rowPins.map(pin => `<span class="pin-action" data-id="${pin.id}" data-month="${pin.at_month}" title="Edit month ${pin.at_month}">✎</span>`).join('')}</td>
         <td class="col-period">${periodLabel}</td>
         <td class="col-date">${dateLabel}</td>
@@ -2644,6 +2650,8 @@ function renderTable(viewRows, baseRows, result) {
 }
 
 function renderPinEditor(row, baseRows) {
+  const enteringClass = pinEditorJustOpened ? ' is-entering' : '';
+  pinEditorJustOpened = false;
   const unit = state.params.unit;
   const editorMonth = state.editing?.month ?? (unit === 'years' ? row.first_month : row.month);
   const sourceRow = baseRows.find(br => br.month === editorMonth);
@@ -2706,7 +2714,7 @@ function renderPinEditor(row, baseRows) {
   const selectedMonth = state.editing?.monthDraft ?? editorMonth;
 
   return `
-    <tr class="pin-editor-row">
+    <tr class="pin-editor-row${enteringClass}">
       <td colspan="11">
         <div class="pin-editor">
           <div class="pin-editor-header">
@@ -2955,6 +2963,7 @@ function collectPinFields(fieldInputs, dirtyKeys) {
   return fields;
 }
 
+let pinEditorJustOpened = false;
 function togglePinEditor(month, id = null) {
   cancelActiveSolve();
   closeCellEditor();
@@ -2962,6 +2971,7 @@ function togglePinEditor(month, id = null) {
     state.editing = null;
   } else {
     state.editing = { month, id };
+    pinEditorJustOpened = true;
   }
   rerender();
 }
@@ -3207,9 +3217,10 @@ function jumpToPin(id) {
   if (!pin) return;
   const editorMonth = state.params.unit === 'years' ? Math.floor((pin.at_month - 1) / 12) * 12 + 1 : pin.at_month;
   state.editing = { month: pin.at_month, id };
+  pinEditorJustOpened = true;
   rerender(); // rebuilds the tbody...
   const row = document.querySelector(`tr[data-month="${editorMonth}"]`);
-  if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' }); // ...so scroll afterwards
+  if (row) row.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' }); // ...so scroll afterwards
 }
 
 /* ============================================================
