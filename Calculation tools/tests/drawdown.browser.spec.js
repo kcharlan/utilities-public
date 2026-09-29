@@ -10,6 +10,31 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('fresh projection keeps its last valid rows during invalid input and restores CSV export', async ({ page }) => {
+  const firstRow = page.locator('#amort-body tr').first();
+  await expect(firstRow).toBeVisible();
+  const before = await firstRow.innerText();
+  const expense = page.locator('#expense');
+  await expense.fill('');
+  await expect(page.locator('#scenario-status')).toContainText('Showing the last valid projection');
+  await expect(page.locator('#export-csv')).toBeDisabled();
+  await expect(firstRow).toHaveText(before);
+
+  await expense.fill('5100');
+  await expect(page.locator('#scenario-status')).toBeHidden();
+  await expect(page.locator('#export-csv')).toBeEnabled();
+  await expect(firstRow.locator('td[data-key="expense"]')).toHaveText('$5,100');
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#export-csv').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^drawdown-months-\d{4}-\d{2}-\d{2}\.csv$/);
+  const stream = await download.createReadStream();
+  let csv = '';
+  for await (const chunk of stream) csv += chunk.toString();
+  const firstDataRow = csv.split('\n')[1].split(',');
+  expect(firstDataRow[2]).toBe('5100.00');
+});
+
 test('subcent monetary detail is honest and visible on keyboard focus', async ({ page }) => {
   await page.evaluate(() => {
     Object.assign(state.params, { buffer_initial: 10, floor: 0, investments_initial: 0,

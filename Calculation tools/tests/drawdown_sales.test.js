@@ -268,7 +268,7 @@ test('[Gross sold] table renames only the visible sale heading', () => {
   assert.match(calculatorHtml, /r\.sold > 0 \? fmtMoney\(r\.sold\) : '—'/);
 });
 
-test('[methodology] distinguishes income tax, sale tax, and gross liquidation', () => {
+test('[methodology] explains tax, principal events, reserve failure, and income reset', () => {
   const footnote = calculatorHtml.match(/<p class="footnote">([\s\S]*?)<\/p>/)?.[1] ?? '';
   const text = footnote
     .replace(/<[^>]+>/g, ' ')
@@ -277,7 +277,11 @@ test('[methodology] distinguishes income tax, sale tax, and gross liquidation', 
 
   assert.match(text, /Income effective rate.*recurring investment income and external income/i);
   assert.match(text, /Asset sale effective rate.*gross asset-sale proceeds/i);
-  assert.match(text, /Gross liquidation.*principal reduction.*sell-off decay/i);
+  assert.match(text, /Gross sales reduce principal.*closing-principal valuations adjust raw investment income/i);
+  assert.match(text, /Later principal changes can raise or lower that ledger/i);
+  assert.match(text, /At zero principal, payable investment income is zero.*explicit income edit resets raw income and yield/i);
+  assert.match(text, /Expenses are funded only from cash above the protected floor/i);
+  assert.match(text, /reserve failure when an expense or the protected reserve cannot be funded/i);
 });
 
 test('[layout] amortization uses a bounded two-axis scroll region for sticky headers', () => {

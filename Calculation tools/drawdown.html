@@ -1086,7 +1086,7 @@
     <header class="header">
       <div class="eyebrow">A study in patience &amp; principal</div>
       <h2>Investment <em>Drawdown</em></h2>
-      <p class="subtitle">A month-by-month projection of buffer, principal, and income, traced until the wells run dry — or until you adjust the headwaters.</p>
+      <p class="subtitle">A month-by-month projection of cash, principal, and income until the protected reserve cannot be maintained or the horizon ends.</p>
       <div class="today-stamp">From <strong id="today-stamp"></strong></div>
     </header>
 
@@ -1112,7 +1112,7 @@
       <div class="table-head">
         <div class="table-head-titles">
           <h3>The <em>Amortization</em></h3>
-          <div class="table-hint">Click <em>+</em> on any row to change assumptions from that month forward.</div>
+          <div class="table-hint">Click <em>+</em> to edit beginning assumptions or ending balances at an exact month. Table amounts show whole dollars; focus a cell for detail.</div>
         </div>
         <div class="table-actions">
           <span class="pin-count" id="pin-count"></span>
@@ -1146,17 +1146,17 @@
     </section>
 
     <p class="footnote">
-      <strong>Method.</strong> Inflation compounds at the user's annual rate, converted to an effective periodic rate (APY).
+      <strong>Method.</strong> Inflation compounds monthly from the annual effective rate. Expenses are funded only from cash above the protected floor; sales seek enough net proceeds to fund expenses and restore it. Required and funded expense, unmet expense, and unmet reserve are reported separately.
       <span class="sep">·</span>
       <strong>Tax.</strong> The Income effective rate applies to recurring investment income and external income. The Asset sale effective rate applies to gross asset-sale proceeds. When sufficient assets exist, the calculator grosses up a cash-buffer shortfall so net sale proceeds fill it: <em>gross sale = shortfall ÷ (1 − rate)</em> for rates below 100%.
       <span class="sep">·</span>
-      <strong>Decay.</strong> Gross liquidation—not net proceeds—drives principal reduction and sell-off decay. Each principal change adjusts the running investment-income ledger by <em>modifier × income yield × principal change</em>. The modifier in force at that event is locked in; a later income edit resets the yield and running income.
+      <strong>Income ledger.</strong> Gross sales reduce principal. Sales and closing-principal valuations adjust raw investment income by <em>modifier × income yield × principal change</em>, using the modifier in force at each event. Later principal changes can raise or lower that ledger. At zero principal, payable investment income is zero even if raw income remains; an explicit income edit resets raw income and yield.
       <span class="sep">·</span>
-      <strong>Adjustments.</strong> Click <em>+</em> to edit beginning assumptions or ending balances. Closing principal is a valuation, and closing cash is a separate adjustment; neither is a sale or recurring income.
+      <strong>Pins.</strong> Beginning assumptions affect the selected month; ending cash and principal are exact closing balances after its expenses and sales, and ending income becomes the next month's baseline. Closing principal is a valuation, and closing cash is a separate adjustment; neither is a sale or recurring income. Move a pin to an unoccupied month or use the Adjustments panel to recover an unreachable pin. Yearly flow edits solve an exact target for the planned group when saved; the saved target is provenance, not a live constraint.
       <span class="sep">·</span>
-      <strong>Export.</strong> CSV <code>tax_paid</code> is combined tax; <code>income_tax_paid</code>, <code>sale_tax_paid</code>, and <code>net_sale_proceeds</code> are appended.
+      <strong>Export.</strong> The table rounds money to whole dollars with cents and exact values in cell detail. CSV provides readable cents and exact <code>*_raw</code> Number columns, date/span and start/end application provenance. Readable <code>tax_paid</code> reconciles with its two tax parts; gross <code>sold</code> reconciles with sale tax and net proceeds. Invalid edits keep the last valid view and disable export until corrected.
       <span class="sep">·</span>
-      <strong>Projection limit.</strong> The projection stops when monthly expenses or the protected reserve cannot be funded, or at the period cap.
+      <strong>Termination.</strong> The projection stops with reserve failure when an expense or the protected reserve cannot be funded; zero principal or touching the floor alone is not failure. Otherwise it ends at the requested horizon or the 1,200-month cap. A yearly row may cover fewer than 12 actual months if failure occurs or the requested horizon is partial.
       <span class="sep">·</span>
       <strong>Scope.</strong> This planning simplification does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules. It is not tax or investment advice.
     </p>
