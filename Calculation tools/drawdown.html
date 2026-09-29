@@ -549,14 +549,15 @@
   }
   .legend-swatch {
     display: inline-block;
-    width: 12px;
-    height: 12px;
+    width: 18px;
+    height: 0;
+    border-top: 2px solid;
     vertical-align: -2px;
     margin-right: 6px;
   }
   .chart-svg {
     width: 100%;
-    height: 200px;
+    height: 280px;
     display: block;
     overflow: visible;
   }
@@ -564,7 +565,7 @@
     position: absolute;
     left: 0;
     top: 0;
-    height: 200px;
+    height: 280px;
     pointer-events: none;
     width: auto;
   }
@@ -580,10 +581,12 @@
     letter-spacing: -0.01em;
   }
   .chart-y-label--floor { color: var(--accent-strong); }
-  .legend-swatch--cash { background: var(--series-cash); }
-  .legend-swatch--principal { background: var(--series-principal); }
-  .legend-swatch--floor { background: var(--series-floor); opacity: 0.7; }
-  #chart path { fill: none; }
+  .legend-swatch--cash { border-color: var(--series-cash); }
+  .legend-swatch--principal { border-color: var(--series-principal); }
+  .legend-swatch--floor { border-color: var(--series-floor); border-style: dashed; }
+  #chart path[data-series] { fill: none; }
+  .chart-grid { stroke: var(--rule-fine); stroke-width: 1; }
+  .chart-reserve-band { fill: var(--negative-tint); stroke: none; }
   #chart path[data-series="cash"] { stroke: var(--series-cash); stroke-width: 2; }
   #chart path[data-series="principal"] { stroke: var(--series-principal); stroke-width: 2; }
   #chart path[data-series="floor"] { stroke: var(--series-floor); stroke-width: 1.5; stroke-dasharray: 5 4; }
@@ -591,6 +594,26 @@
   .chart-pin-dot { fill: var(--accent); }
   .chart-failure-line { stroke: var(--negative); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0.7; }
   .chart-failure-label { fill: var(--negative); font-family: 'Fraunces', Georgia, serif; font-style: italic; font-size: var(--fs-2xs); }
+  .chart-end-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-2xs); }
+  .chart-end-label--cash { fill: var(--series-cash); }
+  .chart-end-label--principal { fill: var(--series-principal); }
+  .chart-crosshair { stroke: var(--text-subtle); stroke-width: 1; }
+  .chart-hover-dot--cash { fill: var(--series-cash); }
+  .chart-hover-dot--principal { fill: var(--series-principal); }
+  .chart-hover-dot--floor { fill: var(--series-floor); }
+  .chart-tooltip {
+    position: absolute;
+    z-index: 2;
+    background: var(--surface-raised);
+    border: 1px solid var(--control-border);
+    box-shadow: 0 3px 8px var(--shadow);
+    padding: 8px 10px;
+    font-size: var(--fs-xs);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .chart-tooltip[hidden] { display: none; }
+  #amort-body tr.is-chart-hover { background: var(--negative-tint); }
   .chart-x-labels {
     display: flex;
     justify-content: space-between;
@@ -1116,6 +1139,7 @@
   }
 
   @media (max-width: 900px) {
+    .chart-svg, .chart-y-labels { height: 220px; }
     .layout { grid-template-columns: minmax(0, 1fr); }
     .sidebar-status-anchor { transform: none; }
     .sidebar {
@@ -1255,9 +1279,10 @@
           <span><span class="legend-swatch legend-swatch--floor"></span>Floor</span>
         </div>
       </div>
-      <div style="position: relative;">
-        <svg class="chart-svg" id="chart" viewBox="0 0 1000 200"></svg>
+      <div class="chart-plot" style="position: relative;">
+        <svg class="chart-svg" id="chart" viewBox="0 0 1000 280" role="img"></svg>
         <div class="chart-y-labels" id="chart-y-labels"></div>
+        <div id="chart-tooltip" class="chart-tooltip" hidden></div>
       </div>
       <div class="chart-x-labels" id="chart-x-labels"></div>
     </div>
@@ -2541,7 +2566,7 @@ function renderChart(rows) {
   const W = Math.round(box.width) || 1000;
   const H = Math.round(box.height) || 200;
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  const padL = 0, padR = 0, padT = 8, padB = 8;
+  const padL = 0, padR = W >= 600 ? 112 : 56, padT = 8, padB = 8;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
@@ -2551,6 +2576,8 @@ function renderChart(rows) {
     svg.innerHTML = '';
     document.getElementById('chart-y-labels').innerHTML = '';
     document.getElementById('chart-x-labels').innerHTML = '';
+    document.getElementById('chart-tooltip').hidden = true;
+    document.querySelectorAll('#amort-body tr.is-chart-hover').forEach(tr => tr.classList.remove('is-chart-hover'));
     return;
   }
 
@@ -2584,8 +2611,16 @@ function renderChart(rows) {
   // Insolvency marker
   const insolvencyIdx = rows.findIndex(r => r.insolvency);
   const insolvencyX = insolvencyIdx >= 0 ? xOf(insolvencyIdx) : null;
+  const last = rows.at(-1);
+  const endLabels = spreadLabels([
+    { key: 'cash', y: yOf(last.buffer), value: last.buffer },
+    { key: 'principal', y: yOf(last.investments), value: last.investments },
+  ], 14, padT, H - padB);
+  const bandPath = `${linePath(floorOf)} L ${xOf(n - 1).toFixed(2)} ${(H - padB).toFixed(2)} L ${xOf(0).toFixed(2)} ${(H - padB).toFixed(2)} Z`;
 
   svg.innerHTML = `
+    ${[0.25, 0.5, 0.75].map(fraction => `<line class="chart-grid" x1="${padL}" y1="${(padT + fraction * innerH).toFixed(2)}" x2="${(padL + innerW).toFixed(2)}" y2="${(padT + fraction * innerH).toFixed(2)}"/>`).join('')}
+    <path class="chart-reserve-band" d="${bandPath}"/>
     <path data-series="cash" d="${linePath(r => r.buffer)}"/>
     <path data-series="principal" d="${linePath(r => r.investments)}"/>
     <path data-series="floor" d="${linePath(floorOf)}"/>
@@ -2593,7 +2628,17 @@ function renderChart(rows) {
       <circle class="chart-pin-dot" cx="${x.toFixed(2)}" cy="${(padT + 4).toFixed(2)}" r="3"/>`).join('')}
     ${insolvencyX !== null ? `<line class="chart-failure-line" x1="${insolvencyX.toFixed(2)}" y1="${padT.toFixed(2)}" x2="${insolvencyX.toFixed(2)}" y2="${(H - padB).toFixed(2)}"/>
       <text class="chart-failure-label" x="${(insolvencyX - 4).toFixed(2)}" y="${(H - padB - 4).toFixed(2)}" text-anchor="end">reserve failure</text>` : ''}
+    ${endLabels.map(label => `<text class="chart-end-label chart-end-label--${label.key}" x="${(padL + innerW + 8).toFixed(2)}" y="${label.y.toFixed(2)}" dominant-baseline="middle">${W >= 600 ? (label.key === 'cash' ? 'Buffer ' : 'Investments ') : ''}${fmtMoneyCompact(label.value)}</text>`).join('')}
+    <g class="chart-hover" visibility="hidden">
+      <line class="chart-crosshair" y1="${padT}" y2="${(H - padB).toFixed(2)}"/>
+      <circle class="chart-hover-dot--cash" data-hover-series="cash" r="4"/>
+      <circle class="chart-hover-dot--principal" data-hover-series="principal" r="4"/>
+      <circle class="chart-hover-dot--floor" data-hover-series="floor" r="4"/>
+    </g>
   `;
+  svg.setAttribute('aria-label', `Trajectory of buffer, investments, and floor from ${fmtDate(rows[0].date, 'months')} to ${fmtDate(last.date, 'months')}`);
+  document.getElementById('chart-tooltip').hidden = true;
+  document.querySelectorAll('#amort-body tr.is-chart-hover').forEach(tr => tr.classList.remove('is-chart-hover'));
 
   // The floor line can change during the projection, so label its final value.
   const yWrap = document.getElementById('chart-y-labels');
@@ -2610,6 +2655,7 @@ function renderChart(rows) {
 
   // X labels
   const xWrap = document.getElementById('chart-x-labels');
+  xWrap.style.paddingRight = `${padR}px`;
   const firstD = rows[0].date;
   const lastD = rows[rows.length - 1].date;
   const midIdx = Math.floor(rows.length / 2);
@@ -3619,6 +3665,46 @@ function init() {
       sidebarTimers.set(el, setTimeout(recalc, 220));
     });
   });
+
+  const chart = document.getElementById('chart');
+  const chartTooltip = document.getElementById('chart-tooltip');
+  const clearChartHover = () => {
+    chart.querySelector('.chart-hover')?.setAttribute('visibility', 'hidden');
+    chartTooltip.hidden = true;
+    document.querySelectorAll('#amort-body tr.is-chart-hover').forEach(tr => tr.classList.remove('is-chart-hover'));
+  };
+  chart.addEventListener('pointermove', event => {
+    if (!chartGeometry || !lastChartRows?.length) return;
+    const { padL, padT, padB, H, innerW, n, xOf, yOf, floorOf } = chartGeometry;
+    const px = event.clientX - chart.getBoundingClientRect().left;
+    const index = n === 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round((px - padL) / innerW * (n - 1))));
+    const row = lastChartRows[index];
+    const x = xOf(index);
+    const hover = chart.querySelector('.chart-hover');
+    hover.setAttribute('visibility', 'visible');
+    const crosshair = hover.querySelector('.chart-crosshair');
+    crosshair.setAttribute('x1', x);
+    crosshair.setAttribute('x2', x);
+    crosshair.setAttribute('y1', padT);
+    crosshair.setAttribute('y2', H - padB);
+    for (const [series, value] of [['cash', row.buffer], ['principal', row.investments], ['floor', floorOf(row)]]) {
+      const dot = hover.querySelector(`[data-hover-series="${series}"]`);
+      dot.setAttribute('cx', x);
+      dot.setAttribute('cy', yOf(value));
+    }
+    chartTooltip.innerHTML = `<strong>${fmtDate(row.date, 'months')}</strong><br>Buffer ${fmtMoney(row.buffer)}<br>Investments ${fmtMoney(row.investments)}<br>Floor ${fmtMoney(floorOf(row))}`;
+    chartTooltip.hidden = false;
+    const wrapperWidth = chart.parentElement.getBoundingClientRect().width;
+    chartTooltip.style.left = `${x + 12 + chartTooltip.offsetWidth > wrapperWidth ? x - chartTooltip.offsetWidth - 12 : x + 12}px`;
+    chartTooltip.style.top = `${padT + 8}px`;
+    document.querySelectorAll('#amort-body tr.is-chart-hover').forEach(tr => tr.classList.remove('is-chart-hover'));
+    const tableRows = [...document.querySelectorAll('#amort-body tr[data-month]')];
+    const target = state.params.unit === 'years'
+      ? tableRows.filter(tr => Number(tr.dataset.month) <= row.month).at(-1)
+      : tableRows.find(tr => Number(tr.dataset.month) === row.month);
+    target?.classList.add('is-chart-hover');
+  });
+  chart.addEventListener('pointerleave', clearChartHover);
 
   if (typeof ResizeObserver === 'function') {
     let chartFrame = null;

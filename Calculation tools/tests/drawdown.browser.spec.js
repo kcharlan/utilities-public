@@ -669,6 +669,65 @@ test('chart uses each effective floor and includes a raised floor in its bounds'
   await expect(page.locator('#chart-y-labels')).toContainText('floor $900K');
 });
 
+test('chart renders reserve band, guides, and end labels', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator('#chart .chart-reserve-band')).toHaveCount(1);
+  await expect(page.locator('#chart .chart-grid')).toHaveCount(3);
+  await expect(page.locator('#chart .chart-end-label')).toHaveCount(2);
+  await expect(page.locator('#chart .chart-end-label').first()).toContainText('Buffer');
+  await expect(page.locator('#chart .chart-end-label').last()).toContainText('Investments');
+  await expect(page.locator('#chart')).toHaveAttribute('role', 'img');
+});
+
+test('chart separates equal end values and shortens labels on narrow screens', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 100000, investments_initial: 100000,
+      floor: 0, external_income: 0, investment_income: 0, expense: 0, inflation: 0,
+      num_periods: 12, unit: 'months' });
+    acceptPins([]);
+    rerender();
+  });
+  const ys = await page.locator('#chart .chart-end-label').evaluateAll(labels =>
+    labels.map(label => Number(label.getAttribute('y'))));
+  expect(ys).toHaveLength(2);
+  expect(Math.abs(ys[0] - ys[1])).toBeGreaterThanOrEqual(14);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.locator('#chart .chart-end-label').first().textContent()).toMatch(/^\$/);
+  const narrowLabels = await page.locator('#chart .chart-end-label').allTextContents();
+  expect(narrowLabels.join(' ')).not.toContain('Buffer');
+  expect(narrowLabels.join(' ')).not.toContain('Investments');
+});
+
+test('chart hover shows projection details and highlights one monthly table row', async ({ page }) => {
+  const target = await page.evaluate(() => {
+    const i = Math.round((lastChartRows.length - 1) / 2);
+    const row = lastChartRows[i];
+    return { x: chartGeometry.xOf(i), y: chartGeometry.H / 2,
+      date: fmtDate(row.date, 'months'), month: row.month };
+  });
+  const box = await page.locator('#chart').boundingBox();
+  await page.mouse.move(box.x + target.x, box.y + target.y);
+  await expect(page.locator('#chart-tooltip')).toBeVisible();
+  await expect(page.locator('#chart-tooltip')).toContainText(target.date);
+  for (const label of ['Buffer', 'Investments', 'Floor']) {
+    await expect(page.locator('#chart-tooltip')).toContainText(label);
+  }
+  await expect(page.locator('#chart .chart-hover')).toHaveAttribute('visibility', 'visible');
+  await expect(page.locator('#amort-body tr.is-chart-hover')).toHaveCount(1);
+  await expect(page.locator('#amort-body tr.is-chart-hover')).toHaveAttribute('data-month', String(target.month));
+  await page.mouse.move(box.x - 20, box.y - 20);
+  await expect(page.locator('#chart-tooltip')).toBeHidden();
+  await expect(page.locator('#amort-body tr.is-chart-hover')).toHaveCount(0);
+});
+
+test('chart hover highlights exactly one yearly row', async ({ page }) => {
+  await page.locator('#unit-years').click();
+  const position = await page.evaluate(() => ({ x: chartGeometry.xOf(4), y: chartGeometry.H / 2 }));
+  const box = await page.locator('#chart').boundingBox();
+  await page.mouse.move(box.x + position.x, box.y + position.y);
+  await expect(page.locator('#amort-body tr.is-chart-hover')).toHaveCount(1);
+});
+
 test('chart axis labels align with plotted pixel coordinates', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const positions = await page.evaluate(() => {
