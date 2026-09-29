@@ -173,8 +173,11 @@ test('sidebar validation is atomic and marks the accepted result stale', () => {
   const accepted = readParams();
   assert.equal(accepted.ok, true);
   assert.equal(state.params.buffer_initial, 200);
-  assert.equal(state.stale, false);
-  assert.equal(controls.get('export-csv').disabled, false);
+  // Parsing a valid draft updates params, but the visible accepted result is
+  // still the old projection until the caller renders the new scenario.
+  assert.equal(state.stale, true);
+  assert.equal(controls.get('export-csv').disabled, true);
+  assert.match(controls.get('scenario-status').textContent, /Showing the last valid projection/);
 });
 
 test('sidebar draft cannot invalidate an existing pin while changing accepted params', () => {

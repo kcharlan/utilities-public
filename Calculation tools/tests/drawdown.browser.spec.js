@@ -35,6 +35,19 @@ test('fresh projection keeps its last valid rows during invalid input and restor
   expect(firstDataRow[2]).toBe('5100.00');
 });
 
+test('opening and closing a pin editor keeps an invalid sidebar draft stale', async ({ page }) => {
+  await page.locator('#expense').fill('');
+  await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+  await expect(page.locator('#export-csv')).toBeDisabled();
+  await page.locator('#amort-body tr[data-month="1"] .pin-action').first().click();
+  await expect(page.locator('#pin-save')).toBeVisible();
+  await expect(page.locator('#scenario-status')).toContainText('Showing the last valid projection');
+  await expect(page.locator('#export-csv')).toBeDisabled();
+  await page.locator('#pin-cancel').click();
+  await expect(page.locator('#scenario-status')).toContainText('Showing the last valid projection');
+  await expect(page.locator('#export-csv')).toBeDisabled();
+});
+
 test('subcent monetary detail is honest and visible on keyboard focus', async ({ page }) => {
   await page.evaluate(() => {
     Object.assign(state.params, { buffer_initial: 10, floor: 0, investments_initial: 0,
@@ -220,6 +233,186 @@ test('occupied adjustment move stays open with an error and preserves both recor
   await expect(page.locator('#pin-editor-error')).toContainText('Another adjustment already occupies that month.');
   expect(await page.evaluate(() => state.pins.map(p => p.at_month))).toEqual([1,2]);
 });
+
+test('rejected move after a pending sidebar change keeps export stale until the visible projection catches up', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([
+      { id: 'synthetic-one', at_month: 1, start: { expense: 5001 }, end: {} },
+      { id: 'synthetic-two', at_month: 2, start: { expense: 5002 }, end: {} },
+    ]);
+    rerender();
+  });
+  await page.locator('#adjustments-list .adj-entry[data-month="1"]').click();
+  await page.locator('#pin-month').fill('2');
+  await page.evaluate(() => {
+    const input = document.getElementById('investments-initial');
+    input.value = '700000';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('pin-save').click();
+  });
+  await expect(page.locator('#pin-editor-error')).toContainText('Another adjustment already occupies that month.');
+  await expect(page.locator('#scenario-status')).toContainText('Showing the last valid projection');
+  await expect(page.locator('#export-csv')).toBeDisabled();
+  expect(await page.evaluate(() => state.acceptedResult.rows[0].investments)).not.toBe(700000);
+  expect(await page.evaluate(() => state.pins.map(p => p.at_month))).toEqual([1, 2]);
+
+  await page.locator('#calc-button').click();
+  await expect(page.locator('#export-csv')).toBeEnabled();
+  expect(await page.evaluate(() => state.acceptedResult.rows[0].pre_start_state.investments)).toBe(700000);
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#export-csv').click();
+  const stream = await (await downloadPromise).createReadStream();
+  let csv = '';
+  for await (const chunk of stream) csv += chunk.toString();
+  const first = csv.split('\n')[1].split(',');
+  expect(Number(first[9])).toBe(await page.evaluate(() => state.acceptedResult.rows[0].investments));
+});
+
+test('rejected cell edit after a pending sidebar change retains the editor and disables stale export', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([
+      { id: 'synthetic-principal', at_month: 1, start: {}, end: { investments: 100 } },
+      { id: 'synthetic-income', at_month: 2, start: { investment_income: 10 }, end: {} },
+    ]);
+    rerender();
+  });
+  await page.locator('#amort-body tr[data-month="1"] td[data-key="investments"]').click();
+  await page.locator('.cell-edit-input').fill('0');
+  await page.evaluate(() => {
+    const input = document.getElementById('investments-initial');
+    input.value = '700000';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('.cell-edit-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  });
+  await expect(page.locator('.cell-edit-feedback')).toContainText('Investment income must be zero when principal is zero.');
+  await expect(page.locator('.cell-edit-input')).toBeVisible();
+  await expect(page.locator('#scenario-status')).toContainText('Showing the last valid projection');
+  await expect(page.locator('#export-csv')).toBeDisabled();
+  expect(await page.evaluate(() => state.pins[0].end.investments)).toBe(100);
+  await page.locator('#calc-button').click();
+  await expect(page.locator('#export-csv')).toBeEnabled();
+});
+
+test('removing a prerequisite adjustment is rejected in the sidebar and full editor', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 100, floor: 0, investments_initial: 0,
+      investment_income: 0, external_income: 0, expense: 0, inflation: 0,
+      tax_rate: 0, sale_tax_rate: 0, modifier: 1, unit: 'months', num_periods: 3 });
+    acceptPins([
+      { id: 'synthetic-prerequisite', at_month: 1, start: {}, end: { investments: 100 } },
+      { id: 'synthetic-dependent', at_month: 2, start: { investment_income: 10 }, end: {} },
+    ]);
+    rerender();
+  });
+  const accepted = await page.evaluate(() => JSON.stringify(state.acceptedResult.rows));
+  await page.locator('.adj-remove[data-id="synthetic-prerequisite"]').click();
+  await expect(page.locator('#scenario-status')).toContainText('month 2');
+  expect(await page.evaluate(() => state.pins.map(p => p.id))).toEqual(['synthetic-prerequisite', 'synthetic-dependent']);
+  expect(await page.evaluate(() => JSON.stringify(state.acceptedResult.rows))).toBe(accepted);
+
+  await page.locator('.adj-entry[data-id="synthetic-prerequisite"]').click();
+  await page.locator('#pin-remove').click();
+  await expect(page.locator('#pin-editor-error')).toContainText('Investment income must be zero when principal is zero.');
+  await expect(page.locator('#pin-remove')).toBeVisible();
+  expect(await page.evaluate(() => state.pins.map(p => p.id))).toEqual(['synthetic-prerequisite', 'synthetic-dependent']);
+  expect(await page.evaluate(() => JSON.stringify(state.acceptedResult.rows))).toBe(accepted);
+});
+
+test('removing an adjustment can resolve a pending sidebar change that invalidates only that adjustment', async ({ page }) => {
+  await page.locator('#investments-initial').fill('100');
+  await page.locator('#investment-income').fill('0');
+  await page.locator('#expense').fill('0');
+  await page.locator('#calc-button').click();
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-income', at_month: 1, start: { investment_income: 10 }, end: {} }]);
+    rerender();
+    const input = document.getElementById('investments-initial');
+    input.value = '0';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('.adj-remove[data-id="synthetic-income"]').click();
+  });
+  expect(await page.evaluate(() => state.pins)).toEqual([]);
+  expect(await page.evaluate(() => state.params.investments_initial)).toBe(0);
+  await expect(page.locator('#scenario-status')).toBeHidden();
+  await expect(page.locator('#export-csv')).toBeEnabled();
+});
+
+test('annual provenance names the original target and current changed total', async ({ page }) => {
+  await page.locator('#unit-years').click();
+  await page.locator('#amort-body tr[data-month="1"] td[data-key="expense"]').click();
+  await page.locator('.cell-edit-input').fill('72000');
+  await page.locator('.cell-edit-input').press('Enter');
+  await expect(page.locator('#adjustments-list')).toContainText('Annual expense target');
+  await page.locator('#unit-months').click();
+  await page.locator('#amort-body tr[data-month="2"] td[data-key="expense"]').click();
+  await page.locator('.cell-edit-input').fill('6000');
+  await page.locator('.cell-edit-input').press('Enter');
+  const current = await page.evaluate(() => state.acceptedResult.rows.slice(0, 12).reduce((sum, row) => sum + row.expense, 0));
+  await expect(page.locator('.adj-entry[data-month="1"]')).toContainText('originally targeted');
+  await expect(page.locator('.adj-entry[data-month="1"]')).toContainText(`current total ${fmtForTest(current)}`);
+});
+
+test('annual provenance marks an incomplete span even when its partial sum matches the old target', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 20, floor: 0, investments_initial: 0,
+      investment_income: 0, external_income: 0, expense: 10, inflation: 0,
+      tax_rate: 0, sale_tax_rate: 0, modifier: 1, unit: 'years', num_periods: 1 });
+    acceptPins([{ id: 'synthetic-annual', at_month: 1, start: { expense: 10 }, end: {},
+      annual_edits: { expense: { target_total: 30, first_month: 1, last_month: 12,
+        resolved_monthly_value: 10 } } }]);
+    rerender();
+  });
+  await expect(page.locator('.adj-entry[data-id="synthetic-annual"]')).toContainText('originally targeted $30');
+  await expect(page.locator('.adj-entry[data-id="synthetic-annual"]')).toContainText('current total $30 through month 3');
+});
+
+test('annual provenance includes terminal-month income in a failed span total', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 0, floor: 0, investments_initial: 100,
+      investment_income: 10, external_income: 0, expense: 20, inflation: 0,
+      tax_rate: 0, sale_tax_rate: 1, modifier: 1, unit: 'years', num_periods: 1 });
+    acceptPins([{ id: 'synthetic-annual-income', at_month: 1,
+      start: { investment_income: 10 }, end: {},
+      annual_edits: { investment_income: { target_total: 10, first_month: 1,
+        last_month: 12, resolved_monthly_value: 10 } } }]);
+    rerender();
+  });
+  expect(await page.evaluate(() => state.acceptedResult.rows[0].investment_income)).toBe(10);
+  expect(await page.evaluate(() => state.acceptedResult.rows[0].insolvency)).toBe(true);
+  await expect(page.locator('.adj-entry[data-id="synthetic-annual-income"]')).toContainText('originally targeted $10');
+  await expect(page.locator('.adj-entry[data-id="synthetic-annual-income"]')).toContainText('current total $10 through month 1');
+});
+
+test('export preserves an open annual cell draft when the displayed scenario is current', async ({ page }) => {
+  await page.locator('#unit-years').click();
+  await page.locator('#amort-body tr[data-month="1"] td[data-key="expense"]').click();
+  await page.locator('.cell-edit-input').fill('73000');
+  const download = page.waitForEvent('download');
+  await page.locator('#export-csv').click();
+  await download;
+  await expect(page.locator('.cell-edit-input')).toHaveValue('73000');
+  await page.locator('.cell-edit-input').press('Enter');
+  await expect.poll(() => page.evaluate(() => state.pins[0]?.annual_edits?.expense?.target_total)).toBe(73000);
+});
+
+test('clearing pins with a pending sidebar draft synchronizes the visible projection and export', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic', at_month: 1, start: { expense: 5001 }, end: {} }]);
+    rerender();
+    const input = document.getElementById('investments-initial');
+    input.value = '700000';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('clear-pins').click();
+  });
+  expect(await page.evaluate(() => state.pins.length)).toBe(0);
+  expect(await page.evaluate(() => state.params.investments_initial)).toBe(700000);
+  await expect(page.locator('#export-csv')).toBeEnabled();
+  expect(await page.evaluate(() => state.acceptedResult.rows[0].pre_start_state.investments)).toBe(700000);
+});
+
+function fmtForTest(value) {
+  return `$${Math.round(value).toLocaleString('en-US')}`;
+}
 
 test('subcent solved assumption stays exact through no-op, reverted draft, and Escape', async ({ page }) => {
   await page.evaluate(() => {

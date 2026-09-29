@@ -2680,9 +2680,7 @@ function attachPinEditorEvents(viewRows, baseRows) {
 
   const removeBtn = document.getElementById('pin-remove');
   if (removeBtn) removeBtn.addEventListener('click', () => {
-    acceptPins(state.pins.filter(p => p.id !== existingPin?.id));
-    state.editing = null;
-    rerender();
+    removePinFromUI(existingPin?.id, document.getElementById('pin-editor-error'));
   });
 
   const resetBtn = document.getElementById('pin-reset-all');
@@ -2751,24 +2749,24 @@ function savePinFromEditor(editorMonth) {
   }
   if (!existing && !Object.keys(draft.start).length && !Object.keys(draft.end).length) {
     state.editing = null;
-    rerender();
+    rerender(true);
     return;
   }
   if (existing && JSON.stringify(draft) === JSON.stringify(existing)) {
     state.editing = null;
-    rerender();
+    rerender(true);
     return;
   }
   const transaction = applyEditTransaction({ params: state.params, pins: state.pins, revision: state.revision },
     existing ? { type: 'replace', id: existing.id, pin: draft } : { type: 'create', at_month: targetMonth, pin: draft });
   if (!transaction.ok) {
     document.getElementById('pin-editor-error').textContent = transaction.issues.map(item => item.message).join(' ');
-    showScenarioStatus(transaction.issues, false);
+    showScenarioStatus(transaction.issues, state.stale);
     return;
   }
   acceptPins(transaction.scenario.pins);
   state.editing = null;
-  rerender();
+  rerender(true);
 }
 
 function floatsEqual(a, b) {
@@ -2896,7 +2894,7 @@ function openCellEditor(cell, month, key) {
         if (!checked.ok) { feedback.textContent = checked.issues.map(item => item.message).join(' '); return; }
         settled = true;
         cellEditor = null;
-        rerender();
+        rerender(true);
       } else {
         settled = true;
         cellEditor = null;
@@ -2959,7 +2957,7 @@ async function commitCellEdit(month, key, value, context) {
       return false;
     }
     acceptPins(answer.scenario.pins);
-    rerender();
+    rerender(true);
     return true;
   }
   const transaction = applyEditTransaction({ params: state.params, pins: state.pins, revision: state.revision },
@@ -2968,11 +2966,11 @@ async function commitCellEdit(month, key, value, context) {
       : { type: 'set', id: pin?.id, at_month: month, phase, field: key, value });
   if (!transaction.ok) {
     context.feedback.textContent = transaction.issues.map(item => item.message).join(' ');
-    showScenarioStatus(transaction.issues, false);
+    showScenarioStatus(transaction.issues, state.stale);
     return false;
   }
   acceptPins(transaction.scenario.pins);
-  rerender();
+  rerender(true);
   return true;
 }
 
@@ -3001,9 +2999,20 @@ function renderAdjustments() {
       .flatMap(([phase, fields]) => orderedOverrides(fields).map(({ def, value }) =>
         `<div class="adj-field"><span class="adj-field-label">${phase === 'start' ? 'Beginning' : 'End'} · ${def.label}</span><span class="adj-field-val">${fmtVal(value, def.fmt)}</span></div>`))
       .join('');
-    const annualHtml = Object.entries(pin.annual_edits ?? {}).map(([field, edit]) =>
-      `<div class="adj-field">Annual ${field === 'expense' ? 'expense' : 'investment income'} target ${fmtMoney(edit.target_total)} · ` +
-      `derived monthly assumption ${fmtMoney(edit.resolved_monthly_value)} · effective ${fmtDate(dateForMonth(edit.first_month), 'months')}</div>`).join('');
+    const annualHtml = Object.entries(pin.annual_edits ?? {}).map(([field, edit]) => {
+      const spanRows = result?.rows.filter(row => row.month >= edit.first_month && row.month <= edit.last_month) ?? [];
+      const currentTotal = spanRows.reduce((total, row) => total + row[field], 0);
+      const complete = spanRows.length === edit.last_month - edit.first_month + 1 &&
+        spanRows[0]?.month === edit.first_month && spanRows.at(-1)?.month === edit.last_month &&
+        spanRows.every(row => !row.insolvency);
+      const changed = !complete || Math.abs(currentTotal - edit.target_total) > 1e-6;
+      const through = spanRows.length ? ` through month ${spanRows.at(-1).month}` : ` before month ${edit.first_month}`;
+      const targetLabel = changed
+        ? `originally targeted ${fmtMoney(edit.target_total)} · current total ${fmtMoney(currentTotal)}${complete ? '' : through}`
+        : `target ${fmtMoney(edit.target_total)}`;
+      return `<div class="adj-field">Annual ${field === 'expense' ? 'expense' : 'investment income'} ${targetLabel} · ` +
+        `derived monthly assumption ${fmtMoney(edit.resolved_monthly_value)} · effective ${fmtDate(dateForMonth(edit.first_month), 'months')}</div>`;
+    }).join('');
     html += `
       <div class="adj-entry" data-id="${pin.id}" data-month="${pin.at_month}">
         <div class="adj-entry-head">
@@ -3022,15 +3031,33 @@ function renderAdjustments() {
   container.querySelectorAll('.adj-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also fire the entry's jump-to-row
-      const id = btn.getAttribute('data-id');
-      acceptPins(state.pins.filter(p => p.id !== id));
-      if (state.editing && state.editing.id === id) state.editing = null;
-      rerender();
+      removePinFromUI(btn.getAttribute('data-id'));
     });
   });
   container.querySelectorAll('.adj-entry').forEach(entry => {
     entry.addEventListener('click', () => jumpToPin(entry.getAttribute('data-id')));
   });
+}
+
+function removePinFromUI(id, errorElement = null) {
+  const hasSidebarDraft = sidebarTimers.size > 0 || state.stale;
+  cancelPendingSidebarTimers();
+  const checked = hasSidebarDraft ? readParams(state.pins.filter(pin => pin.id !== id)) : { ok: true };
+  if (!checked.ok) {
+    if (errorElement) errorElement.textContent = checked.issues.map(item => item.message).join(' ');
+    return false;
+  }
+  const transaction = applyEditTransaction({ params: state.params, pins: state.pins, revision: state.revision },
+    { type: 'remove', id });
+  if (!transaction.ok) {
+    if (errorElement) errorElement.textContent = transaction.issues.map(item => item.message).join(' ');
+    showScenarioStatus(transaction.issues, state.stale);
+    return false;
+  }
+  acceptPins(transaction.scenario.pins);
+  if (state.editing?.id === id) state.editing = null;
+  rerender(true);
+  return true;
 }
 
 function jumpToPin(id) {
@@ -3068,7 +3095,7 @@ function showScenarioStatus(issues, stale) {
   if (exportButton) exportButton.disabled = stale;
 }
 
-function readParams() {
+function readParams(pins = state.pins) {
   const ids = {
     buffer_initial: 'buffer-initial', floor: 'floor', external_income: 'external-income',
     investments_initial: 'investments-initial', investment_income: 'investment-income',
@@ -3086,7 +3113,7 @@ function readParams() {
     } else draft[key] = control.value;
   }
   const checked = validateParams(draft);
-  const trial = checked.ok ? simulate(checked.value, state.pins) : null;
+  const trial = checked.ok ? simulate(checked.value, pins) : null;
   const issues = trial?.terminatedReason === 'invalid' ? trial.issues : checked.issues;
   const byField = new Set(issues.filter(item => item.origin !== 'adjustment').map(item => item.field));
   for (const [key, control] of Object.entries(controls)) {
@@ -3103,17 +3130,17 @@ function readParams() {
   }
   state.params = checked.value;
   state.draftUnit = null;
-  showScenarioStatus([], false);
   return checked;
 }
 
-function rerender() {
+function rerender(validated = false) {
   const result = simulate();
   if (result.terminatedReason === 'invalid') {
     showScenarioStatus(result.issues, true);
     return result;
   }
   state.acceptedResult = result;
+  if (validated) showScenarioStatus([], false);
   const viewRows = aggregateForView(result.rows, state.params.unit, result.plannedLastMonth, state.pins);
   renderStats(result.rows, result);
   renderChart(result.rows);
@@ -3128,7 +3155,7 @@ function recalc() {
   cancelPendingSidebarTimers();
   const checked = readParams();
   if (!checked.ok) return checked;
-  return rerender();
+  return rerender(true);
 }
 
 /* ============================================================
@@ -3229,10 +3256,12 @@ function buildCsvText(viewRows, unit, pins) {
 }
 
 function exportCsv() {
+  const needsRefresh = sidebarTimers.size > 0 || state.stale || !state.acceptedResult;
+  const priorRevision = state.revision;
   cancelPendingSidebarTimers();
   const checked = readParams();
   if (!checked.ok) return;
-  const result = simulate();
+  const result = needsRefresh || state.revision !== priorRevision ? rerender(true) : state.acceptedResult;
   if (result.terminatedReason === 'invalid') {
     showScenarioStatus(result.issues, true);
     return;
@@ -3295,9 +3324,13 @@ function init() {
   // Clear pins
   document.getElementById('clear-pins').addEventListener('click', () => {
     if (state.pins.length === 0) return;
+    const hasSidebarDraft = sidebarTimers.size > 0 || state.stale;
+    cancelPendingSidebarTimers();
+    const checked = hasSidebarDraft ? readParams([]) : { ok: true };
+    if (!checked.ok) return;
     acceptPins([]);
     state.editing = null;
-    rerender();
+    rerender(true);
   });
 
   // Export CSV
