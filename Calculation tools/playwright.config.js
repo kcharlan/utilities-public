@@ -2,7 +2,7 @@ const { defineConfig } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './tests',
-  testMatch: 'browser.spec.js',
+  testMatch: ['browser.spec.js', 'drawdown.browser.spec.js'],
   use: {
     baseURL: 'http://127.0.0.1:4174',
   },
