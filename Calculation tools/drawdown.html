@@ -184,6 +184,17 @@
     font-family: 'Fraunces', serif;
     margin-top: 1px;
   }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 
   /* Adjustments panel — read-only list of pins in the sidebar */
   .adj-empty {
@@ -205,11 +216,16 @@
     gap: 10px;
     margin-bottom: 3px;
   }
-  .adj-entry-when {
+  .adj-open {
     font-family: 'Fraunces', serif;
     font-style: italic;
     font-size: 12px;
     color: var(--accent-strong);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
   }
   .adj-remove {
     font-family: 'Fraunces', serif;
@@ -773,8 +789,12 @@
     color: var(--negative);
   }
 
+  .gutter-actions { display: inline-flex; flex-wrap: wrap; gap: 2px; }
   .pin-action {
     cursor: pointer;
+    background: none;
+    border: 0;
+    padding: 0;
     color: var(--text-subtle);
     font-size: 16px;
     font-family: 'Fraunces', serif;
@@ -782,10 +802,10 @@
     transition: color 0.15s, transform 0.15s, opacity 0.15s;
     user-select: none;
     display: inline-block;
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
     text-align: center;
-    line-height: 18px;
+    line-height: 24px;
   }
   .pin-action:hover {
     color: var(--accent-strong);
@@ -1110,11 +1130,11 @@
     <div class="group">
       <div class="group-label"><span>Buffer Fund</span><span class="ordinal">§ 01</span></div>
       <div class="field">
-        <label>Starting cash</label>
+        <label for="buffer-initial">Starting cash</label>
         <span class="input-wrap"><span class="prefix">$</span><input type="number" id="buffer-initial" value="270000" step="1000"></span>
       </div>
       <div class="field">
-        <label>Floor</label>
+        <label for="floor">Floor</label>
         <span class="input-wrap"><span class="prefix">$</span><input type="number" id="floor" value="100000" step="1000"></span>
       </div>
     </div>
@@ -1122,35 +1142,35 @@
     <div class="group">
       <div class="group-label"><span>External Income</span><span class="ordinal">§ 02</span></div>
       <div class="field">
-        <label>Monthly</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="external-income" value="2000" step="100"></span>
+        <label for="external-income"><span class="sr-only">External income, </span>Monthly</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="external-income" value="2000" step="100" aria-label="External income, monthly"></span>
       </div>
     </div>
 
     <div class="group">
       <div class="group-label"><span>Investments</span><span class="ordinal">§ 03</span></div>
       <div class="field">
-        <label>Principal</label>
+        <label for="investments-initial">Principal</label>
         <span class="input-wrap"><span class="prefix">$</span><input type="number" id="investments-initial" value="600000" step="1000"></span>
       </div>
       <div class="field">
-        <label>Monthly income</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="investment-income" value="6000" step="100"></span>
+        <label for="investment-income"><span class="sr-only">Investments, </span>Monthly income</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="investment-income" value="6000" step="100" aria-label="Investments, monthly income"></span>
       </div>
       <div class="field">
-        <label>Income modifier<span class="hint">income drop ÷ principal drop</span></label>
-        <span class="input-wrap"><input type="number" id="modifier" value="1" step="0.1" min="0"></span>
+        <label for="modifier">Income modifier<span class="hint" id="modifier-hint" aria-hidden="true">income drop ÷ principal drop</span></label>
+        <span class="input-wrap"><input type="number" id="modifier" value="1" step="0.1" min="0" aria-label="Income modifier" aria-describedby="modifier-hint"></span>
       </div>
     </div>
 
     <div class="group">
       <div class="group-label"><span>Expenses</span><span class="ordinal">§ 04</span></div>
       <div class="field">
-        <label>Monthly</label>
-        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="expense" value="5000" step="100"></span>
+        <label for="expense"><span class="sr-only">Expenses, </span>Monthly</label>
+        <span class="input-wrap"><span class="prefix">$</span><input type="number" id="expense" value="5000" step="100" aria-label="Expenses, monthly"></span>
       </div>
       <div class="field">
-        <label>Annual inflation</label>
+        <label for="inflation">Annual inflation</label>
         <span class="input-wrap"><input type="number" id="inflation" value="3" step="0.1"><span class="suffix">% APY</span></span>
       </div>
     </div>
@@ -1158,12 +1178,12 @@
     <div class="group">
       <div class="group-label"><span>Tax</span><span class="ordinal">§ 05</span></div>
       <div class="field">
-        <label>Income effective rate<span class="hint">applied to recurring income</span></label>
-        <span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
+        <label for="tax-rate">Income effective rate<span class="hint" id="tax-rate-hint" aria-hidden="true">applied to recurring income</span></label>
+        <span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0.5" min="0" max="100" aria-label="Income effective rate" aria-describedby="tax-rate-hint"><span class="suffix">%</span></span>
       </div>
       <div class="field">
-        <label>Asset sale effective rate<span class="hint">applied to gross sale proceeds</span></label>
-        <span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0.5" min="0" max="100"><span class="suffix">%</span></span>
+        <label for="sale-tax-rate">Asset sale effective rate<span class="hint" id="sale-tax-rate-hint" aria-hidden="true">applied to gross sale proceeds</span></label>
+        <span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0.5" min="0" max="100" aria-label="Asset sale effective rate" aria-describedby="sale-tax-rate-hint"><span class="suffix">%</span></span>
       </div>
     </div>
 
@@ -1174,8 +1194,8 @@
         <button type="button" id="unit-years" aria-pressed="false">Years</button>
       </div>
       <div class="field">
-        <label>Periods<span class="hint">0 = run until reserve failure or cap</span></label>
-        <span class="input-wrap"><input type="number" id="periods" value="120" step="1" min="0"></span>
+        <label for="periods">Periods<span class="hint" id="periods-hint" aria-hidden="true">0 = run until reserve failure or cap</span></label>
+        <span class="input-wrap"><input type="number" id="periods" value="120" step="1" min="0" aria-label="Periods" aria-describedby="periods-hint"></span>
       </div>
     </div>
 
@@ -2594,7 +2614,7 @@ function renderTable(viewRows, baseRows, result) {
 
     html += `
       <tr class="${trClasses}" data-month="${pinMonth}">
-        <td class="col-gutter"><span class="pin-action" data-month="${pinMonth}" title="Add adjustment">+</span>${rowPins.map(pin => `<span class="pin-action" data-id="${pin.id}" data-month="${pin.at_month}" title="Edit month ${pin.at_month}">✎</span>`).join('')}</td>
+        <td class="col-gutter"><span class="gutter-actions"><button type="button" class="pin-action" data-month="${pinMonth}" aria-label="Add adjustment at month ${pinMonth}" title="Add adjustment">+</button>${rowPins.map(pin => `<button type="button" class="pin-action" data-id="${pin.id}" data-month="${pin.at_month}" aria-label="Edit adjustment at month ${pin.at_month}" title="Edit month ${pin.at_month}">✎</button>`).join('')}</span></td>
         <td class="col-period">${periodLabel}</td>
         <td class="col-date">${dateLabel}</td>
         ${editableCellHtml(fmtMoney(r.expense), 'expense', pinMonth, unit, r.pre_start_state.expense, startKeys.has('expense'), r.expense)}
@@ -2650,8 +2670,7 @@ function renderTable(viewRows, baseRows, result) {
 }
 
 function renderPinEditor(row, baseRows) {
-  const enteringClass = pinEditorJustOpened ? ' is-entering' : '';
-  pinEditorJustOpened = false;
+  const enteringClass = pendingFocus === '.pin-editor .pin-field-input' ? ' is-entering' : '';
   const unit = state.params.unit;
   const editorMonth = state.editing?.month ?? (unit === 'years' ? row.first_month : row.month);
   const sourceRow = baseRows.find(br => br.month === editorMonth);
@@ -2963,7 +2982,13 @@ function collectPinFields(fieldInputs, dirtyKeys) {
   return fields;
 }
 
-let pinEditorJustOpened = false;
+let pendingFocus = null;
+let pinEditorOpener = null;
+function restorePendingFocus() {
+  if (pendingFocus) document.querySelector(pendingFocus)?.focus({ preventScroll: true });
+  pendingFocus = null;
+}
+
 function togglePinEditor(month, id = null) {
   cancelActiveSolve();
   closeCellEditor();
@@ -2971,7 +2996,10 @@ function togglePinEditor(month, id = null) {
     state.editing = null;
   } else {
     state.editing = { month, id };
-    pinEditorJustOpened = true;
+    pinEditorOpener = id
+      ? `#amort-body .pin-action[data-id="${CSS.escape(id)}"]`
+      : `#amort-body .pin-action[data-month="${month}"]:not([data-id])`;
+    pendingFocus = '.pin-editor .pin-field-input';
   }
   rerender();
 }
@@ -3005,6 +3033,7 @@ function openCellEditor(cell, month, key) {
     : overridden ? pin[phase][key] : Number(cell.dataset.baseline);
   const prefill = Number(exact).toFixed(2);
   const originalHTML = cell.innerHTML;
+  const cellSelector = `#amort-body td.editable-cell[data-month="${month}"][data-key="${key}"]`;
 
   const input = document.createElement('input');
   input.type = 'number';
@@ -3027,9 +3056,14 @@ function openCellEditor(cell, month, key) {
 
   let settled = false;
   let saving = false;
+  let restoreFocusOnCommit = false;
   const finish = async (commit, resetField = false) => {
     if (settled) return;
-    if (!commit) { settled = true; cellEditor = null; cancelActiveSolve(); cell.innerHTML = originalHTML; return; }
+    if (!commit) {
+      settled = true; cellEditor = null; cancelActiveSolve(); cell.innerHTML = originalHTML;
+      restorePendingFocus();
+      return;
+    }
     if (saving) return;
     const raw = input.value.trim();
     const value = Number(raw);
@@ -3044,26 +3078,29 @@ function openCellEditor(cell, month, key) {
         if (!checked.ok) { feedback.textContent = checked.issues.map(item => item.message).join(' '); return; }
         settled = true;
         cellEditor = null;
+        if (restoreFocusOnCommit) pendingFocus = cellSelector;
         rerender(true);
       } else {
         settled = true;
         cellEditor = null;
         cell.innerHTML = originalHTML;
+        if (restoreFocusOnCommit) { pendingFocus = cellSelector; restorePendingFocus(); }
       }
       return;
     }
     input.disabled = true;
     saving = true;
     const ok = await commitCellEdit(month, key, value, { annualFlow, resetField,
-      span: { first_month: month, last_month: plannedEnd }, feedback });
+      span: { first_month: month, last_month: plannedEnd }, feedback,
+      restoreFocus: restoreFocusOnCommit ? cellSelector : null });
     if (ok) { settled = true; cellEditor = null; }
     else input.disabled = false;
     saving = false;
   };
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); finish(false); } // Escape never commits
+    if (e.key === 'Enter') { e.preventDefault(); restoreFocusOnCommit = true; finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); pendingFocus = cellSelector; finish(false); } // Escape never commits
   });
   input.addEventListener('blur', event => {
     if (event.relatedTarget !== reset && !annualFlow) finish(true);
@@ -3082,6 +3119,10 @@ function openCellEditor(cell, month, key) {
 
 function closeCellEditor() {
   if (cellEditor) cellEditor.finish(false);
+}
+
+function openCellFromElement(cell) {
+  openCellEditor(cell, +cell.dataset.month, cell.dataset.key);
 }
 
 async function commitCellEdit(month, key, value, context) {
@@ -3107,6 +3148,7 @@ async function commitCellEdit(month, key, value, context) {
       return false;
     }
     acceptPins(answer.scenario.pins);
+    if (context.restoreFocus) pendingFocus = context.restoreFocus;
     rerender(true);
     return true;
   }
@@ -3120,6 +3162,7 @@ async function commitCellEdit(month, key, value, context) {
     return false;
   }
   acceptPins(transaction.scenario.pins);
+  if (context.restoreFocus) pendingFocus = context.restoreFocus;
   rerender(true);
   return true;
 }
@@ -3166,7 +3209,7 @@ function renderAdjustments() {
     html += `
       <div class="adj-entry" data-id="${pin.id}" data-month="${pin.at_month}">
         <div class="adj-entry-head">
-          <span class="adj-entry-when">Month ${pin.at_month} · ${dateStr}</span>
+          <button type="button" class="adj-open">Month ${pin.at_month} · ${dateStr}</button>
           <button class="adj-remove" data-id="${pin.id}" title="Remove this adjustment">remove</button>
         </div>
         <div class="adj-phase-statuses">${phaseNote('start')}${phaseNote('end')}</div>
@@ -3205,7 +3248,11 @@ function removePinFromUI(id, errorElement = null) {
     return false;
   }
   acceptPins(transaction.scenario.pins);
-  if (state.editing?.id === id) state.editing = null;
+  if (state.editing?.id === id) {
+    // The removed pin's opener disappears, so return to that month's add button.
+    pinEditorOpener = `#amort-body .pin-action[data-month="${state.editing.month}"]:not([data-id])`;
+    state.editing = null;
+  }
   rerender(true);
   return true;
 }
@@ -3217,7 +3264,8 @@ function jumpToPin(id) {
   if (!pin) return;
   const editorMonth = state.params.unit === 'years' ? Math.floor((pin.at_month - 1) / 12) * 12 + 1 : pin.at_month;
   state.editing = { month: pin.at_month, id };
-  pinEditorJustOpened = true;
+  pinEditorOpener = `.adj-entry[data-id="${CSS.escape(id)}"] .adj-open`;
+  pendingFocus = '.pin-editor .pin-field-input';
   rerender(); // rebuilds the tbody...
   const row = document.querySelector(`tr[data-month="${editorMonth}"]`);
   if (row) row.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' }); // ...so scroll afterwards
@@ -3298,6 +3346,11 @@ function rerender(validated = false) {
   renderTable(viewRows, result.rows, result);
   renderAdjustments();
   attachPinEditorEvents(viewRows, result.rows);
+  if (!state.editing && pinEditorOpener) {
+    pendingFocus = pinEditorOpener;
+    pinEditorOpener = null;
+  }
+  restorePendingFocus();
   return result;
 }
 
@@ -3525,7 +3578,12 @@ function init() {
     if (e.target.tagName === 'INPUT') return; // click landed inside the open editor
     const cell = e.target.closest('.editable-cell');
     if (!cell) return;
-    openCellEditor(cell, +cell.dataset.month, cell.dataset.key);
+    openCellFromElement(cell);
+  });
+  document.getElementById('amort-body').addEventListener('keydown', (e) => {
+    if (!e.target.matches('td.editable-cell') || !['Enter', ' '].includes(e.key)) return;
+    e.preventDefault();
+    openCellFromElement(e.target);
   });
 
   // Initial run

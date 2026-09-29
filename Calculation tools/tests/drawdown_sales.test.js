@@ -53,13 +53,14 @@ function assertSaleInvariants(result, deficit, availableInvestments) {
 }
 
 test('[ui] tax control labels recurring and asset-sale rates', () => {
+  // Lock the tax input defaults and bounds while allowing the accessible hint wiring.
   assert.match(
     calculatorHtml,
-    /<label>Income effective rate<span class="hint">applied to recurring income<\/span><\/label>\s*<span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0\.5" min="0" max="100">/,
+    /<label for="tax-rate">Income effective rate<span class="hint" id="tax-rate-hint" aria-hidden="true">applied to recurring income<\/span><\/label>\s*<span class="input-wrap"><input type="number" id="tax-rate" value="25" step="0\.5" min="0" max="100" aria-label="Income effective rate" aria-describedby="tax-rate-hint">/,
   );
   assert.match(
     calculatorHtml,
-    /<label>Asset sale effective rate<span class="hint">applied to gross sale proceeds<\/span><\/label>\s*<span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0\.5" min="0" max="100">/,
+    /<label for="sale-tax-rate">Asset sale effective rate<span class="hint" id="sale-tax-rate-hint" aria-hidden="true">applied to gross sale proceeds<\/span><\/label>\s*<span class="input-wrap"><input type="number" id="sale-tax-rate" value="15" step="0\.5" min="0" max="100" aria-label="Asset sale effective rate" aria-describedby="sale-tax-rate-hint">/,
   );
   assert.match(calculatorHtml, /const inputs = \[[^\]]*'sale-tax-rate'[^\]]*\];/);
 });

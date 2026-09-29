@@ -10,6 +10,70 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => { expect(page._drawdownErrors).toEqual([]); });
 
+test('keyboard pin and cell editors return focus to their openers', async ({ page }) => {
+  const add = page.getByRole('button', { name: 'Add adjustment at month 2', exact: true });
+  await add.focus();
+  await add.press('Enter');
+  await expect(page.locator('.pin-field-input').first()).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(add).toBeFocused();
+
+  const expense = page.locator('#amort-body td.editable-cell[data-month="2"][data-key="expense"]');
+  await expense.focus();
+  await expense.press('Enter');
+  await expect(page.locator('.cell-edit-input')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(expense).toBeFocused();
+  await expense.press('Space');
+  await expect(page.locator('.cell-edit-input')).toBeFocused();
+});
+
+test('adjustment list opens by keyboard and Cancel returns focus', async ({ page }) => {
+  await page.evaluate(() => {
+    acceptPins([{ id: 'synthetic-pin', at_month: 2, start: { expense: 12345.67 }, end: {} }]);
+    rerender();
+  });
+  const opener = page.locator('.adj-entry[data-id="synthetic-pin"] .adj-open');
+  await opener.focus();
+  await opener.press('Enter');
+  await expect(page.locator('.pin-field-input').first()).toBeFocused();
+  await page.locator('#pin-cancel').click();
+  await expect(opener).toBeFocused();
+});
+
+test('saving and removing a pin return focus to a month action', async ({ page }) => {
+  const add = page.getByRole('button', { name: 'Add adjustment at month 2', exact: true });
+  await add.press('Enter');
+  await page.locator('.pin-field-input[data-phase="start"][data-key="expense"]').fill('12345.67');
+  await page.locator('#pin-save').click();
+  await expect(add).toBeFocused();
+  const edit = page.getByRole('button', { name: 'Edit adjustment at month 2', exact: true });
+  await edit.press('Enter');
+  await expect(page.locator('.pin-field-input').first()).toBeFocused();
+  await page.locator('#pin-remove').click();
+  await expect(edit).toHaveCount(0);
+  await expect(add).toBeFocused();
+});
+
+test('Enter commits an inline cell and returns focus to the cell', async ({ page }) => {
+  const cell = page.locator('#amort-body td.editable-cell[data-month="2"][data-key="expense"]');
+  await cell.press('Enter');
+  await page.locator('.cell-edit-input').fill('12345.67');
+  await page.locator('.cell-edit-input').press('Enter');
+  await expect(cell).toBeFocused();
+  await expect(cell).toContainText('$12,346');
+});
+
+test('sidebar controls have associated names and described hints', async ({ page }) => {
+  await expect(page.getByLabel('Starting cash', { exact: true })).toHaveId('buffer-initial');
+  await expect(page.getByLabel('Expenses, monthly', { exact: true })).toHaveId('expense');
+  await expect(page.getByLabel('Periods', { exact: true })).toHaveId('periods');
+  await expect(page.getByLabel('External income, monthly', { exact: true })).toHaveId('external-income');
+  await expect(page.getByLabel('Investments, monthly income', { exact: true })).toHaveId('investment-income');
+  await expect(page.locator('#periods')).toHaveAttribute('aria-describedby', 'periods-hint');
+  await expect(page.locator('#periods-hint')).toContainText('0 = run until reserve failure or cap');
+});
+
 test('editing an assumption does not replay table row animations', async ({ page }) => {
   await page.evaluate(() => {
     window.tableRowAnimations = 0;
