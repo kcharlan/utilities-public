@@ -78,6 +78,33 @@ test('ledger anchors the identity columns and keeps row treatments aligned while
   await expect(page.locator('.pin-editor-row > td')).toHaveCSS('position', 'static');
 });
 
+test('ledger sticky cells meet without gaps at narrow and tablet widths', async ({ page }) => {
+  for (const width of [390, 1024]) {
+    await page.setViewportSize({ width, height: 800 });
+    const edges = await page.evaluate(() => {
+      const scroller = document.querySelector('.table-scroll');
+      scroller.scrollLeft = 200;
+      const boxes = selector => [...document.querySelectorAll(selector)]
+        .slice(0, 3).map(cell => cell.getBoundingClientRect());
+      return {
+        scrollLeft: scroller.scrollLeft,
+        pageOverflow: document.documentElement.scrollWidth > innerWidth,
+        data: boxes('#amort-body tr[data-month="1"] > td'),
+        headers: boxes('.amort thead .col-heads > th'),
+        group: document.querySelector('.amort thead .col-groups > th').getBoundingClientRect(),
+      };
+    });
+    expect(edges.scrollLeft).toBe(200);
+    expect(edges.pageOverflow).toBe(false);
+    for (const cells of [edges.data, edges.headers]) {
+      expect(Math.abs(cells[0].right - cells[1].left), `${width}px first edge`).toBeLessThanOrEqual(1);
+      expect(Math.abs(cells[1].right - cells[2].left), `${width}px second edge`).toBeLessThanOrEqual(1);
+    }
+    expect(Math.abs(edges.group.right - edges.headers[2].right), `${width}px group edge`)
+      .toBeLessThanOrEqual(1);
+  }
+});
+
 test('header leads with the date of the default reserve verdict', async ({ page }) => {
   const endDate = await page.evaluate(() => fmtDate(dateForMonth(120), 'months'));
   await expect(page.locator('.header .eyebrow')).toHaveText('The verdict');
