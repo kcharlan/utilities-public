@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Market Atlas — Historical Strategy Backtest</title>
+<link rel="icon" href="data:,">
+<script>
+/* Applied before first paint so a stored dark preference never flashes light.
+   Deliberately inline and dependency-free; the full controller lives in the
+   main script and re-reads the same key. */
+(function () {
+  'use strict';
+  try {
+    var stored = window.localStorage.getItem('market-atlas-theme');
+    if (stored === 'dark' || stored === 'light') {
+      document.documentElement.setAttribute('data-theme', stored);
+    }
+  } catch (error) {
+    /* Private browsing or blocked storage: fall back to the system preference. */
+  }
+})();
+</script>
+<style>
+  /* ============================================================
+     THEME TOKENS
+     Light is the base palette on bare :root. Dark is redefined twice:
+     once under prefers-color-scheme for viewers on the system default,
+     and once under [data-theme="dark"] so an explicit choice wins in
+     both directions. Every colour in this document resolves through a
+     token here -- including the inline SVG charts, which read them via
+     var() in presentation attributes.
+     ============================================================ */
+  :root {
+    --font-display: 'Iowan Old Style', 'Baskerville', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+    --font-body: 'Avenir Next', 'Gill Sans', 'Trebuchet MS', sans-serif;
+    --font-mono: 'SFMono-Regular', Menlo, Consolas, monospace;
+
+    color-scheme: light;
+    --paper: #F2ECE0;
+    --paper-warm: #EAE3D5;
+    --paper-deep: #E3DAC8;
+    --ink: #1A1814;
+    --ink-soft: #5C544A;
+    --ink-fade: #685E52;
+    --ink-disabled: #8A8074;
+    --oxblood: #7A2A1F;
+    --oxblood-soft: #B85D4F;
+    --forest: #2C4A3E;
+    --forest-soft: #6B9080;
+    --ochre: #B8862A;
+    --ochre-soft: #DBB76D;
+    --ochre-pale: rgba(184, 134, 42, 0.08);
+    --umber: #6B4423;
+    --rule: #CDC1AD;
+    --rule-soft: #DCD2C0;
+    --rule-fine: #E6DDC9;
+
+    /* surface tints, formerly hardcoded rgba() */
+    --tint-panel: rgba(234,227,213,0.58);
+    --tint-panel-strong: rgba(234,227,213,0.75);
+    --tint-panel-soft: rgba(234,227,213,0.64);
+    --tint-table: rgba(242,236,224,0.55);
+    --tint-label-bg: rgba(242,236,224,0.84);
+    --tint-scroll-mask: rgba(234,227,213,0.58);
+    --tint-success: rgba(44,74,62,0.055);
+    --tint-failure: rgba(122,42,31,0.055);
+    --tint-rule-line: rgba(92,84,74,0.11);
+    --grain-dot: rgba(26,24,20,0.035);
+    --grain-ochre: rgba(184,134,42,0.04);
+    --grain-forest: rgba(44,74,62,0.04);
+
+    /* chart palette -- consumed by inline SVG via var() */
+    --chart-stock: #2C4A3E;
+    --chart-bond: #B8862A;
+    --chart-bill: #6B4423;
+    --chart-grid: #CDC1AD;
+    --chart-grid-soft: #DCD2C0;
+    --chart-axis: #1A1814;
+    --chart-label: #5C544A;
+    --chart-seam: #B8862A;
+    --chart-seam-label: #6B4423;
+    --chart-fail: #7A2A1F;
+    --chart-bg: #F2ECE0;
+    --series-1: #2C4A3E;
+    --series-2: #365D78;
+    --series-3: #6B4423;
+
+    /* heatmap cell chrome */
+    --cell-border: rgba(26,24,20,0.16);
+    --cell-hatch: rgba(26,24,20,.12);
+    --cell-fail-slash: rgba(0,0,0,.25);
+    --cell-norate-ring: rgba(255,255,255,.22);
+  }
+
+  /* Dark palette. Accents are lifted well above their light-mode values:
+     forest #2C4A3E and oxblood #7A2A1F are near-invisible on a dark ground,
+     so the dark theme substitutes brightened counterparts that hold the same
+     semantic roles (green = stock/survival, red = failure, ochre = caution). */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper: #14120E;
+      --paper-warm: #1C1915;
+      --paper-deep: #24201A;
+      --ink: #EDE5D6;
+      --ink-soft: #B7AD9B;
+      --ink-fade: #9A9080;
+      --ink-disabled: #6F675A;
+      --oxblood: #E58F7C;
+      --oxblood-soft: #C2705F;
+      --forest: #7FB79C;
+      --forest-soft: #5E917C;
+      --ochre: #DCAC4E;
+      --ochre-soft: #B8862A;
+      --ochre-pale: rgba(220, 172, 78, 0.12);
+      --umber: #C68F5C;
+      --rule: #3B352C;
+      --rule-soft: #322D25;
+      --rule-fine: #292420;
+
+      --tint-panel: rgba(28,25,21,0.62);
+      --tint-panel-strong: rgba(28,25,21,0.82);
+      --tint-panel-soft: rgba(28,25,21,0.7);
+      --tint-table: rgba(20,18,14,0.55);
+      --tint-label-bg: rgba(20,18,14,0.86);
+      --tint-scroll-mask: rgba(28,25,21,0.62);
+      --tint-success: rgba(127,183,156,0.10);
+      --tint-failure: rgba(229,143,124,0.10);
+      --tint-rule-line: rgba(183,173,155,0.10);
+      --grain-dot: rgba(237,229,214,0.028);
+      --grain-ochre: rgba(220,172,78,0.05);
+      --grain-forest: rgba(127,183,156,0.045);
+
+      --chart-stock: #6FAF92;
+      --chart-bond: #DCAC4E;
+      --chart-bill: #C68F5C;
+      --chart-grid: #3B352C;
+      --chart-grid-soft: #332E26;
+      --chart-axis: #EDE5D6;
+      --chart-label: #B7AD9B;
+      --chart-seam: #DCAC4E;
+      --chart-seam-label: #C68F5C;
+      --chart-fail: #E58F7C;
+      --chart-bg: #14120E;
+      --series-1: #6FAF92;
+      --series-2: #7FA8CE;
+      --series-3: #C68F5C;
+
+      --cell-border: rgba(237,229,214,0.18);
+      --cell-hatch: rgba(237,229,214,.14);
+      --cell-fail-slash: rgba(0,0,0,.38);
+      --cell-norate-ring: rgba(255,255,255,.26);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #14120E;
+    --paper-warm: #1C1915;
+    --paper-deep: #24201A;
+    --ink: #EDE5D6;
+    --ink-soft: #B7AD9B;
+    --ink-fade: #9A9080;
+    --ink-disabled: #6F675A;
+    --oxblood: #E58F7C;
+    --oxblood-soft: #C2705F;
+    --forest: #7FB79C;
+    --forest-soft: #5E917C;
+    --ochre: #DCAC4E;
+    --ochre-soft: #B8862A;
+    --ochre-pale: rgba(220, 172, 78, 0.12);
+    --umber: #C68F5C;
+    --rule: #3B352C;
+    --rule-soft: #322D25;
+    --rule-fine: #292420;
+
+    --tint-panel: rgba(28,25,21,0.62);
+    --tint-panel-strong: rgba(28,25,21,0.82);
+    --tint-panel-soft: rgba(28,25,21,0.7);
+    --tint-table: rgba(20,18,14,0.55);
+    --tint-label-bg: rgba(20,18,14,0.86);
+    --tint-scroll-mask: rgba(28,25,21,0.62);
+    --tint-success: rgba(127,183,156,0.10);
+    --tint-failure: rgba(229,143,124,0.10);
+    --tint-rule-line: rgba(183,173,155,0.10);
+    --grain-dot: rgba(237,229,214,0.028);
+    --grain-ochre: rgba(220,172,78,0.05);
+    --grain-forest: rgba(127,183,156,0.045);
+
+    --chart-stock: #6FAF92;
+    --chart-bond: #DCAC4E;
+    --chart-bill: #C68F5C;
+    --chart-grid: #3B352C;
+    --chart-grid-soft: #332E26;
+    --chart-axis: #EDE5D6;
+    --chart-label: #B7AD9B;
+    --chart-seam: #DCAC4E;
+    --chart-seam-label: #C68F5C;
+    --chart-fail: #E58F7C;
+    --chart-bg: #14120E;
+    --series-1: #6FAF92;
+    --series-2: #7FA8CE;
+    --series-3: #C68F5C;
+
+    --cell-border: rgba(237,229,214,0.18);
+    --cell-hatch: rgba(237,229,214,.14);
+    --cell-fail-slash: rgba(0,0,0,.38);
+    --cell-norate-ring: rgba(255,255,255,.26);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    min-width: 320px;
+    min-height: 100vh;
+    color: var(--ink);
+    background-color: var(--paper);
+    background-image:
+      radial-gradient(circle at 1px 1px, var(--grain-dot) 1px, transparent 0),
+      radial-gradient(ellipse at top left, var(--grain-ochre), transparent 50%),
+      radial-gradient(ellipse at bottom right, var(--grain-forest), transparent 50%);
+    background-size: 22px 22px, 100% 100%, 100% 100%;
+    font: 14px/1.45 var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  button, input, select { font: inherit; }
+  button { color: inherit; }
+  [hidden] { display: none !important; }
+
+  :focus-visible {
+    outline: 2px solid var(--oxblood);
+    outline-offset: 3px;
+  }
+
+  .skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 100;
+    padding: 8px 12px;
+    color: var(--paper);
+    background: var(--ink);
+    transform: translateY(-150%);
+  }
+  .skip-link:focus { transform: translateY(0); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 360px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow: auto;
+    padding: 32px 26px 40px;
+    background: var(--paper-warm);
+    border-right: 1px solid var(--rule);
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule) transparent;
+  }
+  .sidebar::-webkit-scrollbar { width: 6px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--rule); }
+  .brand {
+    margin-bottom: 26px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .brand .mark,
+  .eyebrow,
+  .group-label,
+  .section-kicker,
+  .status-label {
+    font-family: var(--font-display);
+    font-variation-settings: "opsz" 9;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .brand .mark { margin-bottom: 5px; color: var(--ink-fade); }
+  .brand h1 {
+    font-family: var(--font-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-size: 36px;
+    font-weight: 400;
+    line-height: 0.95;
+    letter-spacing: -0.025em;
+  }
+  .brand h1 em {
+    color: var(--oxblood);
+    font-style: italic;
+    font-weight: 300;
+    font-variation-settings: "opsz" 144, "SOFT" 50;
+  }
+  .brand .tagline {
+    margin-top: 7px;
+    color: var(--ink-soft);
+    font: italic 12px var(--font-display);
+  }
+  .group { margin-bottom: 20px; }
+  .group-label {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 11px;
+    padding-bottom: 5px;
+    color: var(--ink-soft);
+    border-bottom: 1px solid var(--rule);
+  }
+  .ordinal {
+    color: var(--ink-fade);
+    font: 9px var(--font-mono);
+    letter-spacing: 0.05em;
+  }
+  .field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .field > label {
+    flex: 1;
+    color: var(--ink);
+    font-size: 12.5px;
+  }
+  .hint {
+    display: block;
+    margin-top: 1px;
+    color: var(--ink-fade);
+    font: italic 10.5px var(--font-display);
+  }
+  .input-wrap {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    min-width: 118px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+  .input-wrap:focus-within {
+    border-color: var(--ink);
+    box-shadow: 0 0 0 1px var(--paper-warm), 0 0 0 2px var(--ink);
+  }
+  .input-wrap .prefix,
+  .input-wrap .suffix {
+    padding: 0 5px;
+    color: var(--ink-fade);
+    font: 11px var(--font-mono);
+  }
+  .input-wrap .prefix { padding-left: 7px; }
+  .input-wrap .suffix { padding-right: 7px; }
+  .input-wrap input,
+  .input-wrap select,
+  .field-select {
+    min-width: 0;
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    outline: 0;
+    font: 12px var(--font-mono);
+    font-feature-settings: "tnum";
+  }
+  .input-wrap input { width: 78px; padding: 6px 4px; text-align: right; }
+  .input-wrap select { width: 154px; padding: 6px 26px 6px 8px; }
+  .input-wrap.select-wrap { min-width: 164px; }
+  input::-webkit-outer-spin-button,
+  input::-webkit-inner-spin-button { margin: 0; -webkit-appearance: none; }
+  input[type='number'] { -moz-appearance: textfield; }
+  .allocation-status,
+  .range-note {
+    margin-top: 10px;
+    padding: 8px 9px;
+    color: var(--forest);
+    background: var(--tint-success);
+    border-left: 2px solid var(--forest);
+    font: 10.5px/1.45 var(--font-mono);
+  }
+  .allocation-status.invalid,
+  .range-note.error {
+    color: var(--oxblood);
+    background: var(--tint-failure);
+    border-left-color: var(--oxblood);
+  }
+  .allocation-status.managed {
+    color: var(--umber);
+    background: var(--ochre-pale);
+    border-left-color: var(--ochre);
+  }
+  .input-wrap:has(input:disabled) { background: var(--paper-deep); opacity: 0.78; }
+  .input-wrap input:disabled { color: var(--ink-soft); cursor: not-allowed; }
+  .range-note { color: var(--umber); background: var(--ochre-pale); border-left-color: var(--ochre); }
+
+  .toggle {
+    display: flex;
+    overflow: hidden;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+  }
+  .toggle button {
+    flex: 1;
+    padding: 7px 10px;
+    color: var(--ink-soft);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: color 150ms ease, background 150ms ease;
+  }
+  .toggle button + button { border-left: 1px solid var(--rule); }
+  .toggle button:not(.active):hover { color: var(--ink); background: var(--paper-warm); }
+  .toggle button.active { color: var(--paper); background: var(--ink); }
+
+  .calc-button {
+    position: relative;
+    width: 100%;
+    margin-top: 2px;
+    padding: 11px;
+    overflow: hidden;
+    color: var(--paper);
+    background: var(--ink);
+    border: 0;
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-variation-settings: "opsz" 24, "SOFT" 50;
+    font-size: 14px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: background 180ms ease;
+  }
+  .calc-button:hover { background: var(--oxblood); }
+  .calc-button:active { transform: translateY(1px); }
+  .calc-button .arrow { display: inline-block; margin-left: 6px; font-style: italic; transition: transform 180ms ease; }
+  .calc-button:hover .arrow { transform: translateX(3px); }
+
+  /* Main ledger */
+  .main { min-width: 0; padding: 38px 48px 60px; }
+  .header { position: relative; margin-bottom: 26px; padding-right: 130px; }
+  .eyebrow { margin-bottom: 6px; color: var(--oxblood); }
+  .header h2 {
+    max-width: 760px;
+    font-family: var(--font-display);
+    font-variation-settings: "opsz" 144, "SOFT" 40, "wght" 350;
+    font-size: clamp(43px, 5.2vw, 70px);
+    font-weight: 350;
+    line-height: 0.94;
+    letter-spacing: -0.04em;
+  }
+  .header h2 em {
+    color: var(--ink-soft);
+    font-style: italic;
+    font-weight: 300;
+    font-variation-settings: "opsz" 144, "SOFT" 80, "wght" 300;
+  }
+  .subtitle {
+    max-width: 610px;
+    margin-top: 12px;
+    color: var(--ink-soft);
+    font: italic 15px/1.5 var(--font-display);
+  }
+  .folio {
+    position: absolute;
+    top: 6px;
+    right: 0;
+    padding-left: 14px;
+    color: var(--ink-fade);
+    border-left: 1px solid var(--rule);
+    font: 9px/1.5 var(--font-mono);
+    letter-spacing: 0.15em;
+    text-align: right;
+    text-transform: uppercase;
+  }
+  .folio strong { display: block; color: var(--ink); font-size: 12px; font-weight: 500; }
+
+  .history-seam {
+    display: grid;
+    grid-template-columns: minmax(110px, 1fr) auto minmax(110px, 1.5fr);
+    align-items: center;
+    gap: 10px;
+    margin: 24px 0 22px;
+    color: var(--ink-fade);
+    font: 9px var(--font-mono);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .era { position: relative; padding-top: 9px; border-top: 1px solid var(--rule); }
+  .era:first-child { color: var(--ochre); border-top-style: dashed; border-color: var(--ochre-soft); }
+  .era:last-child { color: var(--forest); border-color: var(--forest-soft); text-align: right; }
+  .seam-knot {
+    width: 15px;
+    height: 15px;
+    border: 1px solid var(--oxblood);
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 4px var(--paper), inset 0 0 0 6px var(--oxblood);
+  }
+
+  .mode-nav {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 24px;
+    border-bottom: 1.5px solid var(--ink);
+  }
+  .mode-tabs { display: flex; }
+  .mode-tabs button {
+    min-width: 112px;
+    padding: 9px 18px 10px;
+    color: var(--ink-soft);
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: 0;
+    cursor: pointer;
+    font: 400 16px var(--font-display);
+  }
+  .mode-tabs button.active {
+    position: relative;
+    top: 1px;
+    color: var(--paper);
+    background: var(--ink);
+  }
+  .mode-context { padding-bottom: 8px; color: var(--ink-fade); font: italic 11px var(--font-display); }
+
+  .view { animation: reveal 280ms ease-out both; }
+  .view-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 18px;
+  }
+  .section-kicker { margin-bottom: 3px; color: var(--oxblood); }
+  .view-head h3,
+  .ledger-title {
+    font-family: var(--font-display);
+    font-variation-settings: "opsz" 72, "SOFT" 35;
+    font-size: 28px;
+    font-weight: 400;
+    letter-spacing: -0.018em;
+  }
+  .view-head h3 em,
+  .ledger-title em { color: var(--ink-soft); font-style: italic; font-weight: 300; }
+  .window-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 13px; }
+  .compact-field { min-width: 108px; }
+  .compact-field label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--ink-fade);
+    font: 9px var(--font-mono);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .compact-field select,
+  .compact-field input {
+    width: 100%;
+    padding: 7px 28px 7px 9px;
+    color: var(--ink);
+    background: var(--paper-warm);
+    border: 1px solid var(--rule);
+    font: 12px var(--font-mono);
+  }
+  .compact-field input { padding-right: 9px; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: 3fr 4fr;
+    margin-bottom: 28px;
+    border-top: 1.5px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+  }
+  .stat-group { min-width: 0; }
+  .stat-group-label { padding: 8px 12px; color: var(--ink-soft); font: 10px/1.5 var(--font-mono); border-bottom: 1px solid var(--rule); }
+  .stat-group-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lifestyle-group { background: var(--tint-success); }
+  .lifestyle-group .stat-group-label { color: var(--forest); }
+  .lifestyle-group .stat-group-cells { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .spending-range-stat .stat-value { font-size: 16px; }
+  #need-status { margin-top: 10px; color: var(--ink-soft); font: 10px/1.5 var(--font-mono); }
+  input[aria-invalid="true"] { color: var(--oxblood); }
+  figure.spending-strip { margin: 0 0 24px; padding: 18px; background: var(--tint-panel); border: 1px solid var(--rule); }
+  svg.spending-strip { display: block; width: 100%; height: auto; font: 12px var(--font-mono); }
+  .ledger-table .at-floor { background: var(--tint-failure); }
+  .ledger-table .unfunded-row { color: var(--ink-fade); background: var(--tint-panel); }
+  .stat { min-height: 82px; padding: 14px 10px; border-right: 1px solid var(--rule); }
+  .stat:last-child { border-right: 0; }
+  .stat-label { margin-bottom: 7px; color: var(--ink-soft); font: 9.5px var(--font-display); letter-spacing: 0.17em; text-transform: uppercase; }
+  .stat-value { color: var(--ink); font: 500 18px var(--font-mono); font-feature-settings: "tnum"; }
+  .stat-detail { margin-top: 4px; color: var(--ink-fade); font: italic 11px var(--font-display); }
+  .stat-value.warning { color: var(--oxblood); }
+  .stat-value.success { color: var(--forest); }
+
+  .window-ledger { min-width: 0; }
+  .ledger-key { margin-top: 9px; color: var(--ink-fade); font: italic 11.5px var(--font-display); }
+  .ledger-key .quality-mark { color: var(--ochre); border-bottom: 1px dashed var(--ochre); font-style: normal; }
+  .balance-figure {
+    margin: 0 0 24px;
+    padding: 18px 18px 12px;
+    background: var(--tint-panel);
+    border: 1px solid var(--rule);
+  }
+  .chart-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 11px; }
+  .chart-heading h4 { font: 400 19px var(--font-display); }
+  .chart-caveat { margin: -4px 0 9px; color: var(--ink-fade); font: italic 11.5px var(--font-display); }
+  .chart-heading p { color: var(--ink-fade); font: 9px var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; }
+  .balance-chart-wrap { position: relative; min-height: 200px; }
+  .balance-chart { display: block; width: 100%; height: 200px; overflow: visible; }
+  .chart-y-labels { position: absolute; inset: 0 auto 0 0; pointer-events: none; }
+  .chart-y-label { position: absolute; padding: 1px 4px; color: var(--ink-soft); background: var(--tint-label-bg); font: 9px var(--font-mono); white-space: nowrap; transform: translateY(-50%); }
+  .chart-x-labels { display: flex; justify-content: space-between; margin-top: 5px; color: var(--ink-fade); font: 9px var(--font-mono); }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; color: var(--ink-soft); font-size: 10px; }
+  .chart-legend span::before { display: inline-block; width: 9px; height: 9px; margin-right: 5px; content: ''; background: var(--legend-color); }
+  .chart-legend .stock { --legend-color: var(--forest); }
+  .chart-legend .bond { --legend-color: var(--ochre); }
+  .chart-legend .bill { --legend-color: var(--umber); }
+  .ledger-table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--rule); background: var(--tint-table); }
+  .ledger-table { width: 100%; min-width: 1120px; border-collapse: collapse; font: 10.5px var(--font-mono); font-feature-settings: "tnum"; }
+  .ledger-table caption { padding: 13px 14px; color: var(--ink); border-bottom: 1px solid var(--rule); font: italic 14px var(--font-display); text-align: left; }
+  .ledger-table th { position: sticky; top: 0; z-index: 1; padding: 9px 8px; color: var(--ink-soft); background: var(--paper-warm); border-bottom: 1px solid var(--ink); font-size: 8.5px; font-weight: 500; letter-spacing: 0.06em; text-align: right; text-transform: uppercase; white-space: nowrap; }
+  .ledger-table th:first-child, .ledger-table th:last-child { text-align: left; }
+  .ledger-table td { padding: 8px; border-bottom: 1px solid var(--rule-fine); text-align: right; white-space: nowrap; }
+  .ledger-table td:first-child, .ledger-table td:last-child { text-align: left; }
+  .ledger-table tr:last-child td { border-bottom: 0; }
+  .ledger-table tbody tr:hover { background: var(--ochre-pale); }
+  .ledger-table tr.failure-row { color: var(--oxblood); background: var(--tint-failure); }
+  .ledger-table .notes-cell { min-width: 230px; color: var(--ink-soft); font-family: var(--font-body); white-space: normal; }
+  .ledger-table .quality-mark { color: var(--ochre); border-bottom: 1px dashed var(--ochre); }
+  .delta-pos { color: var(--forest); }
+  .delta-neg { color: var(--oxblood); }
+  .empty-window { padding: 64px 20px; color: var(--ink-soft); border: 1px solid var(--rule); font: italic 15px var(--font-display); text-align: center; }
+
+  .sweep-controls { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: flex-end; gap: 10px; }
+  .sweep-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+  .export-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+  .small-button:disabled { cursor: not-allowed; opacity: 0.48; }
+  .small-button {
+    padding: 7px 10px;
+    color: var(--ink);
+    background: transparent;
+    border: 1px solid var(--ink-soft);
+    cursor: pointer;
+    font: 10px var(--font-mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .small-button:hover { color: var(--paper); background: var(--ink); }
+  .small-button:disabled { color: var(--ink-disabled); border-color: var(--rule); cursor: not-allowed; }
+  .comparison-tray { display: flex; flex-wrap: wrap; gap: 8px; margin: -8px 0 17px; }
+  .comparison-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 9px;
+    background: var(--tint-panel-soft);
+    border: 1px solid var(--rule);
+    font-size: 11px;
+  }
+  .series-swatch { width: 10px; height: 10px; flex: 0 0 auto; background: var(--series-color); }
+  .comparison-chip strong { font-weight: 600; }
+  .comparison-details { display: block; margin-top: 2px; color: var(--ink-soft); font: 9.5px/1.4 var(--font-mono); }
+  .chip-remove { padding: 0 2px; color: var(--ink-fade); background: transparent; border: 0; cursor: pointer; font-size: 16px; line-height: 1; }
+  .sweep-notice { margin: 0 0 13px; color: var(--umber); font: 10.5px/1.5 var(--font-mono); }
+  .sweep-progress { margin: 0 0 13px; color: var(--forest); font: 10.5px var(--font-mono); }
+  .sweep-progress-row { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; }
+  .sweep-progress-row .sweep-progress { margin: 0; }
+  .heatmap-figure { margin-top: 22px; padding: 18px; background: var(--tint-panel); border: 1px solid var(--rule); }
+  .heatmap-caption { margin-bottom: 12px; color: var(--ink-soft); font: italic 12px/1.5 var(--font-display); }
+  .heatmap-scroll { width: 100%; overflow-x: auto; border: 1px solid var(--rule); background: var(--paper); }
+  .heatmap-table { border-spacing: 2px; border-collapse: separate; font: 8px var(--font-mono); font-feature-settings: "tnum"; }
+  .heatmap-table th { min-width: 28px; padding: 4px 2px; color: var(--ink-soft); background: var(--paper-warm); font-size: 7px; font-weight: 500; white-space: nowrap; }
+  .heatmap-table thead th { position: sticky; top: 0; z-index: 2; height: 54px; writing-mode: vertical-rl; transform: rotate(180deg); }
+  .heatmap-table thead th:first-child { left: 0; z-index: 3; writing-mode: initial; transform: none; }
+  .heatmap-table tbody th { position: sticky; left: 0; z-index: 1; min-width: 62px; text-align: right; }
+  .heatmap-table .quality-seam { border-left: 3px dashed var(--ochre); }
+  .heatmap-cell { display: block; width: 28px; height: 28px; padding: 0; color: var(--cell-foreground); background: var(--cell-color); border: 1px solid var(--cell-border); cursor: pointer; font: 600 9.5px var(--font-mono); }
+  .heatmap-cell.kind-partial { background-image: repeating-linear-gradient(135deg, transparent 0 4px, var(--cell-hatch) 4px 6px); }
+  .heatmap-cell.kind-failed { background-image: linear-gradient(135deg, transparent 42%, var(--cell-fail-slash) 43% 55%, transparent 56%); }
+  .heatmap-cell.kind-no-rate { background-image: radial-gradient(circle, transparent 35%, var(--cell-norate-ring) 37% 45%, transparent 47%); }
+  .heatmap-cell:hover, .heatmap-cell:focus-visible { position: relative; z-index: 3; border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink); }
+  .heatmap-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 11px; color: var(--ink-soft); font: 9.5px/1.4 var(--font-mono); }
+  .heatmap-ramp { width: 150px; height: 11px; background: linear-gradient(90deg, var(--heatmap-min), var(--heatmap-mid), var(--heatmap-max)); border: 1px solid var(--rule); }
+  .heatmap-seam-note { color: var(--umber); }
+  .sweep-figure { margin: 0 0 22px; padding: 18px; background: var(--tint-panel); border: 1px solid var(--rule); }
+  .sweep-chart-scroll { width: 100%; overflow-x: auto; }
+  .frontier-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
+  .frontier-figure { margin-top: 22px; }
+  .frontier-controls .compact-field { flex: 0 1 108px; min-width: 0; }
+  .frontier-controls .frontier-parameter { flex-basis: 300px; max-width: 100%; }
+  .frontier-controls input, .frontier-controls select { max-width: 100%; }
+  .frontier-controls .small-button { min-height: 30px; }
+  .sweep-chart, .frontier-chart { display: block; width: 100%; min-width: 720px; height: auto; }
+  .sweep-point { cursor: pointer; }
+  .sweep-point:hover, .sweep-point:focus { stroke: var(--ink); stroke-width: 3; }
+  .sweep-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 10px; color: var(--ink-soft); font-size: 10.5px; }
+  .sweep-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sweep-table { min-width: 980px; }
+  .sweep-table td, .sweep-table th { text-align: center !important; }
+  .sweep-table th:first-child, .sweep-table td:first-child { position: sticky; left: 0; z-index: 2; text-align: left !important; background: var(--paper-warm); }
+  .sweep-table td:first-child { color: var(--ink-soft); font-family: var(--font-body); font-weight: 600; }
+  .visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+  .ledger-placeholder {
+    position: relative;
+    min-height: 248px;
+    padding: 20px 22px 26px;
+    overflow: hidden;
+    background: var(--tint-panel-strong);
+    border: 1px solid var(--rule);
+  }
+  .ledger-placeholder::before {
+    position: absolute;
+    inset: 0;
+    content: '';
+    pointer-events: none;
+    background: repeating-linear-gradient(to bottom, transparent 0, transparent 33px, var(--tint-rule-line) 34px);
+  }
+  .ledger-placeholder::after {
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    left: -1px;
+    height: 3px;
+    content: '';
+    background: linear-gradient(90deg, var(--ochre), var(--forest), var(--oxblood));
+    opacity: 0.45;
+  }
+  .placeholder-copy { position: relative; z-index: 1; max-width: 520px; padding-top: 72px; }
+  .placeholder-copy p { margin-top: 7px; color: var(--ink-soft); font: italic 13px/1.55 var(--font-display); }
+  .engraving {
+    position: absolute;
+    right: 20px;
+    bottom: 12px;
+    color: var(--tint-rule-line);
+    font: 300 clamp(56px, 9vw, 118px)/1 var(--font-display);
+    letter-spacing: -0.05em;
+  }
+
+  .app-status {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    margin-top: 18px;
+    padding: 10px 0;
+    color: var(--ink-soft);
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule-fine);
+    font-size: 12px;
+  }
+  .app-status.error { color: var(--oxblood); }
+  .status-label { color: var(--ink-fade); }
+  .footnote {
+    max-width: 820px;
+    margin-top: 28px;
+    color: var(--ink-fade);
+    font: italic 12.5px/1.7 var(--font-display);
+    font-variation-settings: "opsz" 9;
+    letter-spacing: 0.005em;
+  }
+  .footnote strong { color: var(--ink-soft); font-style: normal; font-weight: 500; }
+  .footnote .sep { margin: 0 8px; color: var(--rule); }
+  .footnote p + p { margin-top: 8px; }
+  .footnote-sources { overflow-wrap: anywhere; }
+
+  @keyframes reveal {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (max-width: 980px) {
+    .layout { grid-template-columns: 320px minmax(0, 1fr); }
+    .main { padding-inline: 30px; }
+    .sidebar { padding-inline: 22px; }
+    .stats { grid-template-columns: 1fr; }
+    .stat-group + .stat-group { border-top: 1px solid var(--rule); }
+  }
+
+  @media (max-width: 760px) {
+    .layout { display: block; }
+    .sidebar { position: static; max-height: none; padding: 25px 20px 30px; border-right: 0; border-bottom: 1px solid var(--rule); }
+    .brand h1 { font-size: 34px; }
+    .main { padding: 30px 20px 44px; }
+    .header { padding-right: 0; }
+    .folio { position: static; margin-top: 16px; padding: 8px 0 0; border-top: 1px solid var(--rule); border-left: 0; text-align: left; }
+    .mode-nav, .view-head { align-items: stretch; flex-direction: column; }
+    .mode-nav { gap: 10px; }
+    .mode-tabs { width: 100%; }
+    .mode-tabs button { flex: 1; }
+    .mode-context { display: none; }
+    .window-controls { justify-content: stretch; }
+    .sweep-controls { justify-content: stretch; }
+    .sweep-controls .compact-field { min-width: 140px; }
+    .sweep-actions { width: 100%; }
+    .sweep-actions .small-button { flex: 1; }
+    .export-actions { justify-content: stretch; width: 100%; }
+    .export-actions .small-button { flex: 1 1 170px; }
+    .compact-field { flex: 1; }
+    .stat-group-cells, .lifestyle-group .stat-group-cells { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .stat, .stat:nth-child(3) { border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+    .stat:nth-child(2n) { border-right: 0; }
+    .stat:last-child { border-bottom: 0; }
+    .history-seam { grid-template-columns: 1fr auto 1fr; }
+    .engraving { display: none; }
+    .chart-heading { align-items: flex-start; flex-direction: column; gap: 2px; }
+  }
+
+  @media (max-width: 420px) {
+    .header h2 { font-size: 41px; }
+    .field { align-items: flex-start; }
+    .field > label { padding-top: 5px; }
+    .input-wrap.select-wrap { min-width: 148px; }
+    .input-wrap select { width: 138px; }
+
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to results</a>
+<div class="layout">
+  <aside class="sidebar" aria-label="Backtest parameters">
+    <div class="brand">
+      <div class="mark">A Historical Solvency Atlas</div>
+      <h1>Market <em>Atlas</em></h1>
+      <div class="tagline">one strategy, every year the record remembers</div>
+      <p class="hint">Synthetic example defaults. <a href="DATA_SOURCES.md">Data sources and usage notice</a>.</p>
+    </div>
+
+    <form id="controls-form" novalidate>
+
+    <div class="group">
+      <div class="group-label"><span>Strategy</span><span class="ordinal">§ 01</span></div>
+      <div class="field">
+        <label for="strategy-select">Withdrawal method<span class="hint">the rule governing annual spending</span></label>
+        <span class="input-wrap select-wrap"><select id="strategy-select" aria-describedby="strategy-context"></select></span>
+      </div>
+      <p class="hint" id="strategy-context">Parameters below follow the selected method.</p>
+    </div>
+
+    <div class="group" id="strategy-parameters-group">
+      <div class="group-label"><span>Method Parameters</span><span class="ordinal">§ 02</span></div>
+      <div id="strategy-params"></div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Portfolio</span><span class="ordinal">§ 03</span></div>
+      <div class="field">
+        <label for="starting-balance">Starting balance</label>
+        <span class="input-wrap"><span class="prefix">$</span><input id="starting-balance" name="startingBalance" type="number" value="1000000" min="0" step="10000" inputmode="decimal" aria-describedby="app-status-message"></span>
+      </div>
+      <div class="field">
+        <label for="allocation-stock">US stocks</label>
+        <span class="input-wrap"><input id="allocation-stock" data-allocation="stock" type="number" value="60" min="0" max="100" step="1" inputmode="decimal" aria-describedby="allocation-status app-status-message"><span class="suffix">%</span></span>
+      </div>
+      <div class="field">
+        <label for="allocation-bond">10-year bonds</label>
+        <span class="input-wrap"><input id="allocation-bond" data-allocation="bond" type="number" value="40" min="0" max="100" step="1" inputmode="decimal" aria-describedby="allocation-status app-status-message"><span class="suffix">%</span></span>
+      </div>
+      <div class="field">
+        <label for="allocation-bill">Treasury bills</label>
+        <span class="input-wrap"><input id="allocation-bill" data-allocation="bill" type="number" value="0" min="0" max="100" step="1" inputmode="decimal" aria-describedby="allocation-status app-status-message"><span class="suffix">%</span></span>
+      </div>
+      <div id="allocation-status" class="allocation-status" role="status" aria-live="polite">Allocation totals 100%.</div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Friction &amp; Display</span><span class="ordinal">§ 04</span></div>
+      <div class="field">
+        <label for="fee-rate">Annual fee<span class="hint">portfolio expense drag</span></label>
+        <span class="input-wrap"><input id="fee-rate" type="number" value="0" min="0" max="100" step="0.01" inputmode="decimal" aria-describedby="app-status-message"><span class="suffix">%</span></span>
+      </div>
+      <div class="field">
+        <label for="tax-rate">Effective tax<span class="hint">flat withdrawal gross-up</span></label>
+        <span class="input-wrap"><input id="tax-rate" type="number" value="0" min="0" max="95" step="0.01" inputmode="decimal" aria-describedby="app-status-message"><span class="suffix">%</span></span>
+      </div>
+      <div class="toggle" id="display-toggle" role="group" aria-label="Value display basis">
+        <button type="button" class="active" data-display="real" aria-pressed="true">Real</button>
+        <button type="button" data-display="nominal" aria-pressed="false">Nominal</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Lifestyle need</span><span class="ordinal">§ 05</span></div>
+      <div class="field"><label for="need-amount">Spending need<span class="hint">real after-tax $ per year</span></label><span class="input-wrap"><span class="prefix">$</span><input id="need-amount" type="number" value="36000" min="0" step="1000" inputmode="decimal" aria-describedby="need-status"></span></div>
+      <div class="field"><label for="need-percent">…as % of year 1</label><span class="input-wrap"><input id="need-percent" type="number" value="90" min="0" max="200" step="1" inputmode="decimal" aria-describedby="need-status"><span class="suffix">%</span></span></div>
+      <div id="need-status" role="status" aria-live="polite">Need $36,000 real/yr · 90% of the live configuration’s year-1 spending ($40,000). Pinned comparisons use the same $36,000. Follows the live configuration — enter dollars to hold it fixed.</div>
+    </div>
+
+    <div class="group">
+      <div class="group-label"><span>Appearance</span><span class="ordinal">§ 06</span></div>
+      <div class="field">
+        <label id="theme-toggle-label">Plate finish<span class="hint">follows your system unless set</span></label>
+      </div>
+      <div class="toggle" id="theme-toggle" role="group" aria-labelledby="theme-toggle-label">
+        <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
+
+    <div id="range-note" class="range-note" role="status" aria-live="polite">Finding the usable historical record…</div>
+    <button class="calc-button" id="recalculate" type="submit">Recalculate<span class="arrow" aria-hidden="true">→</span></button>
+    </form>
+  </aside>
+
+  <main class="main" id="main-content" tabindex="-1">
+    <header class="header">
+      <div class="eyebrow">The American return record, reconstructed &amp; observed</div>
+      <h2>Historical <em>Strategy</em> Backtest</h2>
+      <p class="subtitle">Trace a retirement rule through one lived sequence, then turn the folio and test it against every available beginning.</p>
+      <div class="folio">Ledger / Series<strong id="folio-range">—</strong>Folio 001</div>
+    </header>
+
+    <div class="history-seam" aria-label="Historical data lineage">
+      <div class="era" id="reconstructed-era">Reconstructed record</div>
+      <span class="seam-knot" aria-hidden="true"></span>
+      <div class="era" id="observed-era">Observed record</div>
+    </div>
+
+    <nav class="mode-nav" aria-label="Analysis mode">
+      <div class="mode-tabs" role="tablist" aria-label="Backtest view">
+        <button id="window-tab" class="active" type="button" role="tab" aria-selected="true" aria-controls="window-mode" data-mode="window">Window</button>
+        <button id="sweep-tab" type="button" role="tab" aria-selected="false" aria-controls="sweep-mode" data-mode="sweep" tabindex="-1">Sweep</button>
+      </div>
+      <div class="mode-context">Window / inspect one passage &nbsp;·&nbsp; Sweep / compare the whole record</div>
+    </nav>
+
+    <section class="view" id="window-mode" role="tabpanel" aria-labelledby="window-tab">
+      <div class="view-head">
+        <div>
+          <div class="section-kicker">Plate I · Sequence</div>
+          <h3>One historical <em>passage</em></h3>
+        </div>
+        <div class="window-controls" aria-label="Window settings">
+          <div class="compact-field">
+            <label for="start-year">Start year</label>
+            <select id="start-year" form="controls-form" aria-describedby="range-note app-status-message"></select>
+          </div>
+          <div class="compact-field">
+            <label for="horizon">Horizon</label>
+            <input id="horizon" form="controls-form" type="number" value="30" min="1" max="100" step="1" inputmode="numeric" aria-describedby="app-status-message">
+          </div>
+          <div class="export-actions">
+            <button class="small-button" id="export-window-csv" type="button" aria-describedby="app-status-message" disabled>Export ledger CSV</button>
+          </div>
+        </div>
+      </div>
+      <div class="stats" id="window-stats" aria-label="Window summary">
+        <div class="stat-group solvency-group"><div class="stat-group-label">Portfolio</div><div class="stat-group-cells"><div class="stat"><div class="stat-label">Outcome</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Terminal wealth · real</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Max real drawdown</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div></div></div>
+        <div class="stat-group lifestyle-group"><div class="stat-group-label">Lifestyle · real after-tax · retirement-start dollars · always real</div><div class="stat-group-cells"><div class="stat"><div class="stat-label">Spending floor</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Spending range</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Typical year</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Below your need</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div></div></div>
+      </div>
+      <div class="ledger-placeholder" id="window-output">
+        <div class="placeholder-copy">
+          <div class="ledger-title">The annual <em>ledger</em></div>
+          <p>The balance drawing, year-by-year returns, withdrawals, and strategy annotations will be set here without changing this page’s frame.</p>
+        </div>
+        <div class="engraving" aria-hidden="true">I</div>
+      </div>
+    </section>
+
+    <section class="view" id="sweep-mode" role="tabpanel" aria-labelledby="sweep-tab" hidden>
+      <div class="view-head">
+        <div>
+          <div class="section-kicker">Plate II · Distribution</div>
+          <h3>Every possible <em>beginning</em></h3>
+        </div>
+        <div class="sweep-controls" aria-label="Sweep settings">
+          <div class="compact-field">
+            <label for="sweep-horizon">Horizon</label>
+            <input id="sweep-horizon" type="number" value="30" min="1" max="100" step="1" inputmode="numeric" aria-describedby="app-status-message">
+          </div>
+          <div class="compact-field">
+            <label for="sweep-cohort">Historical sample</label>
+            <select id="sweep-cohort">
+              <option value="modern" selected>Modern record</option>
+              <option value="full">Full record</option>
+            </select>
+          </div>
+          <div class="compact-field">
+            <label for="sweep-chart-metric">Chart metric</label>
+            <select id="sweep-chart-metric">
+              <option value="auto" selected>Sustainable rate / wealth</option>
+              <option value="spending">Real spending range</option>
+            </select>
+          </div>
+          <div class="compact-field">
+            <label for="heatmap-metric">Heatmap metric</label>
+            <select id="heatmap-metric" aria-describedby="heatmap-metric-note">
+              <option value="success" selected>Success / failure</option>
+              <option value="wealth">Real terminal wealth</option>
+              <option value="safe">Maximum safe rate</option>
+              <option value="floor">Spending floor · % of year 1</option>
+              <option value="belowNeed">Years below need</option>
+            </select>
+            <span class="visually-hidden" id="heatmap-metric-note">Maximum safe rate is unavailable for fixed-percent withdrawals.</span>
+          </div>
+          <div class="sweep-actions">
+            <button class="small-button" id="add-comparison" type="button">Add current comparison</button>
+            <button class="small-button" id="clear-comparisons" type="button">Clear pinned</button>
+            <button class="small-button" id="export-sweep-curve-csv" type="button" aria-describedby="app-status-message" disabled>Export curve CSV</button>
+            <button class="small-button" id="export-sweep-heatmap-csv" type="button" aria-describedby="app-status-message" disabled>Export heatmap CSV</button>
+          </div>
+        </div>
+      </div>
+      <div class="comparison-tray" id="comparison-tray" aria-label="Compared configurations"></div>
+      <p class="sweep-notice" id="sweep-notice">Preparing a common historical range…</p>
+      <div class="sweep-progress-row"><p class="sweep-progress" id="sweep-progress" role="status" aria-live="polite" hidden></p><button class="small-button" id="cancel-heatmap" type="button" hidden>Cancel</button></div>
+      <div class="stats" id="sweep-stats" aria-label="Sweep summary">
+        <div class="stat-group solvency-group"><div class="stat-group-label">Solvency</div><div class="stat-group-cells"><div class="stat"><div class="stat-label">Survived</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Worst solvency start</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Terminal wealth · real</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div></div></div>
+        <div class="stat-group lifestyle-group"><div class="stat-group-label">Lifestyle · across N complete windows · partial windows held out</div><div class="stat-group-cells"><div class="stat"><div class="stat-label">Worst floor</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Typical floor</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Deepest cut</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div><div class="stat"><div class="stat-label">Lifestyle-worst start</div><div class="stat-value">—</div><div class="stat-detail">awaiting calculation</div></div></div></div>
+      </div>
+      <div class="ledger-placeholder" id="sweep-output">
+        <div class="placeholder-copy">
+          <div class="ledger-title">The return <em>atlas</em></div>
+          <p>Start-year profiles, comparisons, and the engraved horizon grid will occupy this ruled plate.</p>
+        </div>
+        <div class="engraving" aria-hidden="true">II</div>
+      </div>
+    </section>
+
+    <div class="app-status" id="app-status" role="status" aria-live="polite">
+      <span class="status-label">Status</span><span id="app-status-message">Loading the historical record…</span>
+    </div>
+
+    <aside class="footnote" id="method-footnote" aria-labelledby="method-footnote-title">
+      <p><strong id="method-footnote-title">Method note.</strong> Loading data lineage…</p>
+    </aside>
+  </main>
+</div>
+
+<script src="market-data.js"></script>
+<script src="format.js"></script>
+<script src="stats.js"></script>
+<script src="views.js"></script>
+<script src="lifestyle.js"></script>
+<script src="charts.js"></script>
+<script src="csv.js"></script>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
