@@ -85,6 +85,16 @@ Use this matrix to identify project-specific validation commands after applying 
   - `pytest tests -v`
 - `web_games/multibody_sim`:
   - `npm test` (Playwright; config launches local `http-server` on `127.0.0.1:4173`)
+- `Calculation tools/backtest` (independent nested Market Atlas project):
+  - Follow `tests/README.md` for verified external data, locked Node/managed Chromium and a ready external compiler venv. Test drivers never prepare data or install dependencies.
+  - `npm test` (complete retained Node suite and all three original browser cases at flat file and isolated HTTP explicit-index targets).
+  - `npm run test:synthetic` (complete invented subset and both original compiler modules; run root audit suites separately; this does not replace historical acceptance).
+  - `PYTHONDONTWRITEBYTECODE=1 "$MARKET_ATLAS_TEST_PYTHON" -B -m unittest discover -s data -p 'test_*.py' -v` (full compiler suite including retained real-input reproduction; interpreter must be the prepared venv).
+  - Installed browser acceptance requires separate live authorization and uses `http://127.0.0.1:7711/calculators/backtest/index.html`, checking response bytes as well as application behavior. Preserve the shared folder routing.
+- Static deployment/fleet audit tooling:
+  - `node --test tools/tests/check_static_deployments.test.mjs`
+  - `zsh tools/tests/test_check_local_deployments.zsh`
+  - Changes to the static audit or its child runner also require Market Atlas's complete suites above. The app synthetic command does not implicitly run root suites.
 - `tax2`:
   - `.venv/bin/python -m pytest`
   - Run `./tax2 --help`, then start `./tax2 --no-browser --port <free-port>`, request `/` and `/api/status`, and terminate the FastAPI process cleanly.

@@ -55,7 +55,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `anduril_steps` – A calculator and solver for configuring "Stepped Ramp" brightness levels (1-150) on Anduril 2 flashlights.
 - `apple-health-extract` – Parse Apple Health `export.xml` to build workout summaries, heart‑rate detail, and incidental exercise bout analytics.
 - `benchmark-llm` – Filesystem-first LLM benchmark runner with three authoring rails: prompt-batch packages, scripted repo-task benchmarks with preserved git worktrees and command provenance, and Python plugin benchmarks via a small `benchsdk` API.
-- `Calculation tools` – Browser-based finance calculators for drawdown/solvency, lump-sum, early-loan-payoff, and MoneySense scenarios.
+- `Calculation tools` – Four standalone finance calculators and the independently maintained [Market Atlas backtest app](Calculation%20tools/backtest/README.md). Market Atlas keeps historical data and local builds outside the public repository; its canonical [installed app](http://127.0.0.1:7711/calculators/backtest/index.html) uses the explicit index route.
 - `Claude_plugin_converter` – Utilities for converting Claude-style plugins (skills and commands) to other CLI formats, currently supporting Gemini CLI.
 - `coding` – Curated coding orchestration reference assets. Contains `task_orch/` (legacy task orchestration scaffold, deprecated in favor of Cognitive Switchyard) and `design_orch/` (design-document packetization and implementation loop extracted from Git Fleet).
 - `cognitive_switchyard` – Local-first task orchestration engine with multi-phase pipeline (intake, planning, resolution, execution, verification, auto-fix), parallel worker dispatch, git worktree isolation, streaming phase logs, and a real-time React monitoring dashboard. Pluggable runner packs make it workload-agnostic.
@@ -125,7 +125,7 @@ For any standalone utility installed outside the repository:
 
 The destination is user- and platform-specific. Common choices include `~/.local/bin`, `~/bin`, a user scripts directory, or an administrator-managed executable directory. Project READMEs may show a platform-specific example, but must not treat that example as the only valid installation location.
 
-For the maintained macOS deployment layout, tracked-file synchronization rules, Docker lifecycle checks, rollback procedure, and the read-only drift audit, see [docs/local_deployment_sync.md](docs/local_deployment_sync.md).
+For the maintained macOS deployment layout, tracked-file synchronization rules, Docker lifecycle checks, rollback procedure, read-only drift audit, and guidance for adding deployments with fixture and acceptance coverage, see [docs/local_deployment_sync.md](docs/local_deployment_sync.md).
 
 Copy-based installs are preferred when the utility must keep working if the repository is moved or removed. Symlinks remain useful during active development, but maintainers must not assume that committing a repository update also deploys it to existing runtime locations.
 
@@ -248,7 +248,7 @@ This is the right form for things like:
 - `web_games/gorilla`
 - the calculators under `Calculation tools`
 
-Do not force these into the Python zipapp pattern. If they stay backend-free, plain static delivery is usually the better design.
+Do not force these into the Python zipapp pattern. If they stay backend-free, plain static delivery is usually the better design. Market Atlas uses Python only for local data setup/maintenance; its built browser runtime needs no Python service.
 
 ## Choosing Between the Forms
 

@@ -93,7 +93,7 @@ from its source distribution. Do not run the script's shebang directly.
 selects the external local data root. Setup places its compiler venv in `.venv`,
 raw immutable inputs in `inputs/<sha256>/source.xls`, immutable compiled bundles
 in `datasets/<bundleId>`, atomic selection in `current.json`, and local builds
-in `builds/<artifactId>`. Runtime builds are local data-bearing artifacts,
+in the flat `site/` directory. Runtime builds are local data-bearing artifacts,
 not public distributables. Preserve older inputs and bundles after refresh.
 
 Prefer the setup wrapper. For manual maintainer preparation, use a new owned
@@ -117,14 +117,13 @@ selected actual data, run the full discovery command in the test instructions.
 
 System Python is used only for `-m venv`. Subsequent Python/pip/compiler/test
 work uses the venv. Existing directories are not chmodded.
-Never acquire dependencies/data from deployment, rollback, audit or startup.
+Never acquire dependencies/data from deployment, recovery, audit or browser startup.
 
 `npm run test:synthetic` first validates a ready external venv, then runs its
 whole-file invented Node subset and exactly `test_compile_market_data` plus
 `test_external_compiler` from `data/` (invented cases). Select the
 interpreter with `MARKET_ATLAS_TEST_PYTHON`, or use `<DATA_HOME>/.venv/bin/python`.
-The driver then runs both required root audit suites sequentially with invented
-isolated fixtures, as described in the test instructions. Tests never create a
+Run the root audit suites independently as described in the test instructions. Tests never create a
 venv, install dependencies or acquire actual history. Missing
 prerequisites fail; a Node-only result cannot satisfy the synthetic command.
 See [test commands and browser prerequisites](../tests/README.md).
@@ -205,10 +204,8 @@ logging remains; setup reports status/count/hash without row/private path dumps.
 Before every commit, run `node tools/check_admission.mjs` from the project and
 inspect the complete staged inventory/diff. The guard checks stage-zero project
 objects plus all staged additions/modifications, including renamed data outside
-the project. It rejects prohibited paths, workbook/archive signatures and
-substantial dataset-shaped/encoded copies even when force-added. Reports give
-counts/categories rather than observations or untrusted path payloads. The
-check recognizes structured JSON and quoted CSV, and uses one bounded worklist
-for known base64, hex, JSON-string, Unicode and percent encodings. Decoding
-depth/byte/item or structure limits fail closed as unreviewed content. This is
-defense in depth: contextual staged review remains mandatory.
+the project. It rejects prohibited local data/runtime paths, ordinary workbook/
+archive signatures and recognizable materialized JSON/CSV datasets, including
+force-added files. Reports give counts/categories rather than observations or
+untrusted path payloads. Recursive encoding/container inspection is retired.
+This is defense in depth: contextual staged review remains mandatory.

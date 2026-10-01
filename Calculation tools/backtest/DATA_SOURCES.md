@@ -5,8 +5,8 @@ Application/compiler code, source-selection metadata and synthetic tests can
 be admitted without distributing the dataset. Local setup acquires the
 official workbooks and compiles 154 contiguous annual rows spanning 1872–2025
 outside the repository. The browser uses the resulting local static build
-offline; opening the app, installation, rollback and read-only audit do not
-download data. Workbooks, observations, compiled builds, exports and private
+offline from a twelve-file flat directory; opening the app, installation,
+ordinary backup recovery and read-only audit do not download data. Workbooks, observations, compiled builds, exports and private
 validation remain outside Git and public CI artifacts/caches. The local build
 contains historical values and is intended for localhost use; a public demo,
 package, container, release or downloadable build requires a separate data
