@@ -48,6 +48,17 @@ combined income. Each state is computed separately from its allocated income.
 Allocation percentages are independent: two selected states may both be 100%,
 and Tax2 neither normalizes the percentages nor requires a total of 100%.
 
+The federal/state breakdown is followed by **Total Monthly Tax** and **Net
+Monthly Income** summary cards. Net subtracts total displayed monthly tax from
+the combined monthly gross income, using the displayed two-decimal amounts. It
+is after the estimated taxes shown in the calculator; it can be negative and is
+not exported as an additional QIF transaction. The cards adapt to available
+width and stack on narrow screens.
+
+After any calculation input changes, the results show **Calculating...** and QIF
+export is disabled until the current calculation succeeds. A calculation error
+replaces the result cards; changing the inputs allows another calculation.
+
 ### Rules Engine
 
 Rules mode computes directly from YAML files under `rules/`. It preserves the

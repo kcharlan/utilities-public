@@ -589,7 +589,7 @@ HTML_TEMPLATE = r"""
 
         .app-container {
             display: grid;
-            grid-template-columns: 280px 1fr 320px;
+            grid-template-columns: 280px minmax(0, 1fr) 320px;
             height: 100vh;
             gap: 0;
         }
@@ -721,6 +721,8 @@ HTML_TEMPLATE = r"""
 
         /* Main Panel */
         .main-panel {
+            min-width: 0;
+            container-type: inline-size;
             padding: 2rem;
             overflow-y: auto;
             background: var(--bg-primary);
@@ -825,14 +827,37 @@ HTML_TEMPLATE = r"""
         }
 
         /* Results Dashboard */
-        .results-grid {
+        .results-grid, .summary-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: minmax(0, 1fr);
             gap: 1.5rem;
             margin-bottom: 2rem;
         }
 
+        @container (min-width: 484px) {
+            .results-grid, .summary-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @container (min-width: 738px) {
+            .results-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+
+        .summary-grid {
+            margin-bottom: 0.75rem;
+        }
+
+        .summary-note {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 2rem;
+        }
+
         .result-card {
+            min-width: 0;
             background: var(--bg-secondary);
             border: 1px solid var(--border-subtle);
             border-radius: 12px;
@@ -858,6 +883,10 @@ HTML_TEMPLATE = r"""
             background: var(--accent-state);
         }
 
+        .result-card.net::before {
+            background: var(--accent-income);
+        }
+
         .result-card.total::before {
             background: var(--text-primary);
         }
@@ -873,6 +902,7 @@ HTML_TEMPLATE = r"""
         }
 
         .result-amount {
+            overflow-wrap: anywhere;
             font-family: var(--font-mono);
             font-size: 2rem;
             font-weight: 700;
@@ -1133,7 +1163,7 @@ HTML_TEMPLATE = r"""
         /* Responsive */
         @media (max-width: 1200px) {
             .app-container {
-                grid-template-columns: 260px 1fr;
+                grid-template-columns: 260px minmax(0, 1fr);
             }
 
             .export-panel {
@@ -1151,8 +1181,8 @@ HTML_TEMPLATE = r"""
                 border-bottom: 1px solid var(--border-subtle);
             }
 
-            .results-grid {
-                grid-template-columns: 1fr;
+            .results-grid, .summary-grid {
+                grid-template-columns: minmax(0, 1fr);
             }
 
             .income-input {
@@ -1169,6 +1199,21 @@ HTML_TEMPLATE = r"""
         import * as ReactDOMClient from 'react-dom/client';
 
         const { useState, useEffect } = React;
+
+        const moneyFormatter = new Intl.NumberFormat('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+            useGrouping: false
+        });
+
+        // Match the visible gross/tax rounding before subtracting their cents.
+        const centsFromTwoDecimalDisplay = (value) => {
+            const parts = moneyFormatter.formatToParts(value);
+            const integer = Number(parts.find(part => part.type === 'integer').value);
+            const fraction = Number(parts.find(part => part.type === 'fraction').value);
+            const sign = parts.some(part => part.type === 'minusSign') ? -1 : 1;
+            return sign * (integer * 100 + fraction);
+        };
 
         // Icon component (utility for Lucide icons)
         const Icon = ({ name, size = 18, className = "" }) => {
@@ -1392,6 +1437,7 @@ HTML_TEMPLATE = r"""
             monthlyEarned,
             setMonthlyEarned,
             taxResults,
+            computedGrossMonthly,
             loading,
             error,
             darkMode,
@@ -1404,6 +1450,10 @@ HTML_TEMPLATE = r"""
                 });
             };
             const monthlyTotal = monthlyUnearned + monthlyEarned;
+            const netCents = taxResults
+                ? centsFromTwoDecimalDisplay(computedGrossMonthly) - centsFromTwoDecimalDisplay(taxResults.total_monthly)
+                : 0;
+            const netAmount = `${netCents < 0 ? '-' : ''}$${formatCurrency(Math.abs(netCents) / 100)}`;
 
             return (
                 <div className="main-panel">
@@ -1445,12 +1495,13 @@ HTML_TEMPLATE = r"""
                             Calculating...
                         </div>
                     ) : taxResults ? (
-                        <div className="results-grid">
+                        <>
+                        <div className="results-grid" role="group" aria-label="Monthly tax breakdown">
                             <div className="result-card federal">
                                 <div className="result-label">Federal Tax</div>
                                 <div className="result-amount">${formatCurrency(taxResults.federal_monthly)}</div>
                                 <div className="result-sublabel">
-                                    {monthlyTotal > 0 ? ((taxResults.federal_monthly / monthlyTotal) * 100).toFixed(1) : "0.0"}% effective
+                                    {computedGrossMonthly > 0 ? ((taxResults.federal_monthly / computedGrossMonthly) * 100).toFixed(1) : "0.0"}% effective
                                 </div>
                             </div>
 
@@ -1461,17 +1512,26 @@ HTML_TEMPLATE = r"""
                                     </div>
                                     <div className="result-amount">${formatCurrency(state.monthly)}</div>
                                     <div className="result-sublabel">
-                                        {monthlyTotal > 0 ? ((state.monthly / monthlyTotal) * 100).toFixed(1) : "0.0"}% effective
+                                        {computedGrossMonthly > 0 ? ((state.monthly / computedGrossMonthly) * 100).toFixed(1) : "0.0"}% effective
                                     </div>
                                 </div>
                             ))}
 
+                        </div>
+                        <div className="summary-grid" role="group" aria-label="Monthly income summary">
                             <div className="result-card total">
-                                <div className="result-label">Total Monthly</div>
+                                <div className="result-label">Total Monthly Tax</div>
                                 <div className="result-amount">${formatCurrency(taxResults.total_monthly)}</div>
                                 <div className="result-sublabel">{taxResults.effective_rate}% combined</div>
                             </div>
+                            <div className="result-card net">
+                                <div className="result-label">Net Monthly Income</div>
+                                <div className="result-amount">{netAmount}</div>
+                                <div className="result-sublabel">Gross minus estimated taxes</div>
+                            </div>
                         </div>
+                        <p className="summary-note">Net income is after the estimated taxes shown above.</p>
+                        </>
                     ) : null}
                 </div>
             );
@@ -1587,9 +1647,22 @@ HTML_TEMPLATE = r"""
             const [availableStates, setAvailableStates] = useState([]);
             const [selectedStates, setSelectedStates] = useState([]);
             const [allocations, setAllocations] = useState({});
-            const [taxResults, setTaxResults] = useState(null);
-            const [loading, setLoading] = useState(false);
-            const [error, setError] = useState(null);
+            const [computation, setComputation] = useState({ key: null, status: 'idle' });
+            const requestKey = JSON.stringify({
+                monthly_earned: monthlyEarned,
+                monthly_unearned: monthlyUnearned,
+                filing_status: filingStatus,
+                year: selectedYear,
+                mode: computeMode,
+                states: selectedStates.map(code => ({
+                    code,
+                    allocation_pct: allocations[code] ?? 100
+                }))
+            });
+            const isCurrent = computation.key === requestKey;
+            const taxResults = isCurrent && computation.status === 'success' ? computation.data : null;
+            const loading = selectedStates.length > 0 && (!isCurrent || computation.status === 'pending');
+            const error = isCurrent && computation.status === 'error' ? computation.error : null;
 
             const [qifConfig, setQifConfig] = useState({
                 txDate: new Date().toISOString().split('T')[0],
@@ -1624,11 +1697,43 @@ HTML_TEMPLATE = r"""
             }, []);
 
             useEffect(() => {
-                const timer = setTimeout(() => {
-                    computeTaxes();
+                const payload = JSON.parse(requestKey);
+                if (!payload.states.length) return;
+                let active = true;
+                const controller = new AbortController();
+                setComputation({ key: requestKey, status: 'pending' });
+                const timer = setTimeout(async () => {
+                    try {
+                        const response = await fetch('/api/compute', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: requestKey,
+                            signal: controller.signal
+                        });
+                        if (!response.ok) {
+                            const err = await response.json();
+                            throw new Error(err.detail || 'Computation failed');
+                        }
+                        const data = await response.json();
+                        if (active) {
+                            setComputation({
+                                key: requestKey, status: 'success', data,
+                                grossMonthly: payload.monthly_earned + payload.monthly_unearned
+                            });
+                        }
+                    } catch (err) {
+                        if (active) {
+                            setComputation({ key: requestKey, status: 'error', error: err.message });
+                            console.error('Computation error:', err);
+                        }
+                    }
                 }, 300);
-                return () => clearTimeout(timer);
-            }, [monthlyUnearned, monthlyEarned, filingStatus, selectedYear, computeMode, selectedStates, allocations]);
+                return () => {
+                    active = false;
+                    clearTimeout(timer);
+                    controller.abort();
+                };
+            }, [requestKey]);
 
             useEffect(() => {
                 const saved = localStorage.getItem('tax2-dark-mode');
@@ -1684,43 +1789,6 @@ HTML_TEMPLATE = r"""
             const setAllocation = (code, value) => {
                 const numeric = Math.max(0, Math.min(100, Number(value) || 0));
                 setAllocations(prev => ({ ...prev, [code]: numeric }));
-            };
-
-            const computeTaxes = async () => {
-                if (!selectedStates.length) return;
-                setLoading(true);
-                setError(null);
-
-                try {
-                    const response = await fetch('/api/compute', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            monthly_earned: monthlyEarned,
-                            monthly_unearned: monthlyUnearned,
-                            filing_status: filingStatus,
-                            year: selectedYear,
-                            mode: computeMode,
-                            states: selectedStates.map(code => ({
-                                code,
-                                allocation_pct: allocations[code] ?? 100
-                            }))
-                        })
-                    });
-
-                    if (!response.ok) {
-                        const err = await response.json();
-                        throw new Error(err.detail || 'Computation failed');
-                    }
-
-                    const data = await response.json();
-                    setTaxResults(data);
-                } catch (err) {
-                    setError(err.message);
-                    console.error('Computation error:', err);
-                } finally {
-                    setLoading(false);
-                }
             };
 
             const downloadQIF = async () => {
@@ -1782,6 +1850,7 @@ HTML_TEMPLATE = r"""
                         monthlyEarned={monthlyEarned}
                         setMonthlyEarned={setMonthlyEarned}
                         taxResults={taxResults}
+                        computedGrossMonthly={computation.grossMonthly}
                         loading={loading}
                         error={error}
                         darkMode={darkMode}
