@@ -173,7 +173,7 @@ def test_calculator_loads_tailwind_v4_recomputes_and_persists_dark_mode(
         expected_error = "Computation error: Error: Synthetic compute failure"
         page.goto(url, wait_until="domcontentloaded")
         expect(page.get_by_text("Tax2", exact=True)).to_be_visible(timeout=15_000)
-        expect(page.get_by_text("Total Monthly", exact=True)).to_be_visible()
+        expect(page.get_by_text("Total Monthly Tax", exact=True)).to_be_visible()
 
         script_sources = page.locator("script[src]").evaluate_all(
             "elements => elements.map(element => element.src)"
@@ -325,7 +325,228 @@ def test_calculator_keeps_native_styles_when_tailwind_is_unavailable(
             expect(page.get_by_text("Tax2", exact=True)).to_be_visible(
                 timeout=15_000
             )
+            expect(page.locator(".result-card.net")).to_be_visible(timeout=15_000)
+            assert page.locator(".summary-grid").evaluate(
+                "element => getComputedStyle(element).display"
+            ) == "grid"
+            assert page.locator(".result-card.net").evaluate(
+                "element => getComputedStyle(element, '::before').backgroundColor"
+            ) == "rgb(5, 150, 105)"
             assert page.locator("body").evaluate(
                 "element => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color]"
             ) == ["rgb(250, 250, 249)", "rgb(28, 25, 23)"]
+        browser.close()
+
+
+# All amounts in these scenarios are synthetic; real tax requests remain covered.
+def fill_income_and_compute(page, index, value):
+    income = page.locator(".income-input").nth(index)
+    income.click()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and response.url.endswith("/api/compute")
+    ) as computation:
+        income.fill(str(value))
+    assert computation.value.status == 200
+    return computation.value.json()
+
+
+def test_net_income_reconciles_real_multistate_results_and_qif(monkeypatch, tmp_path):
+    monkeypatch.setenv("TAX2_HOME", str(tmp_path / "synthetic-runtime"))
+    module = load_launcher(PROJECT_ROOT / "tax2")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="domcontentloaded")
+            total = page.locator(".result-card.total .result-amount")
+            net = page.locator(".result-card.net .result-amount")
+            expect(total).to_be_visible(timeout=15_000)
+            data = fill_income_and_compute(page, 0, 5000)
+            assert data["total_monthly"] == 621.93
+            expect(net).to_have_text("$4,378.07")
+            with page.expect_response("**/api/compute"):
+                page.get_by_label("Pennsylvania", exact=True).check()
+            expect(net).to_have_text("$4,224.57")
+            with page.expect_response("**/api/compute"):
+                page.locator('input[type="number"]').nth(1).fill("50")
+            expect(total).to_have_text("$698.68")
+            expect(net).to_have_text("$4,301.32")
+            data = fill_income_and_compute(page, 1, 250)
+            expected_net = 5250 - data["total_monthly"]
+            expect(net).to_have_text(f"${expected_net:,.2f}")
+            expect(page.locator(".income-sublabel").first).to_contain_text("$5,250.00")
+            with page.expect_request("**/api/export/qif") as export, page.expect_download():
+                page.get_by_role("button", name="Download QIF").click()
+            payload = export.value.post_data_json
+            assert payload["federal_tax"] == data["federal_monthly"]
+            assert [state["amount"] for state in payload["states"]] == [
+                state["monthly"] for state in data["states"]
+            ]
+            assert not any("net" in key for key in payload)
+            fill_income_and_compute(page, 1, 0)
+            fill_income_and_compute(page, 0, 0)
+            expect(net).to_have_text("$0.00")
+            expect(page.locator(".results-grid")).not_to_contain_text("NaN")
+        browser.close()
+
+
+@pytest.mark.parametrize(
+    ("gross", "tax", "expected"),
+    [(100.005, 10, "$90.01"), (100, 125, "-$25.00"), (0, 10, "-$10.00")],
+)
+def test_net_income_uses_display_cents_and_table_result(
+    monkeypatch, tmp_path, gross, tax, expected
+):
+    monkeypatch.setenv("TAX2_HOME", str(tmp_path / "synthetic-runtime"))
+    module = load_launcher(PROJECT_ROOT / "tax2")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        requests = []
+
+        def synthetic_compute(route):
+            payload = route.request.post_data_json
+            requests.append(payload)
+            route.fulfill(json={
+                "federal_monthly": tax, "federal_annual": tax * 12,
+                "states": [{"code": state["code"], "display_name": "Synthetic state",
+                            "monthly": 0, "annual": 0,
+                            "allocation_pct": state["allocation_pct"]}
+                           for state in payload["states"]],
+                "total_monthly": tax, "total_annual": tax * 12, "effective_rate": 0,
+            })
+
+        with guard_browser_errors(page):
+            page.route("**/api/compute", synthetic_compute)
+            page.goto(url, wait_until="domcontentloaded")
+            expect(page.locator(".result-card.total")).to_be_visible(timeout=15_000)
+            fill_income_and_compute(page, 0, gross)
+            with page.expect_response("**/api/compute"):
+                page.get_by_label("Lookup Table", exact=True).check()
+            expect(page.locator(".result-card.net .result-amount")).to_have_text(expected)
+            assert requests[-1]["mode"] == "table"
+            assert requests[-1]["monthly_unearned"] == gross
+            if gross == 100.005:
+                expect(page.locator(".income-sublabel").first).to_contain_text("$100.01")
+        browser.close()
+
+
+@pytest.mark.parametrize("obsolete_failure", [False, True])
+def test_only_current_computation_can_publish_results(monkeypatch, tmp_path, obsolete_failure):
+    monkeypatch.setenv("TAX2_HOME", str(tmp_path / "synthetic-runtime"))
+    module = load_launcher(PROJECT_ROOT / "tax2")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        browser_errors = capture_browser_errors(page)
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            total = page.locator(".result-card.total .result-amount")
+            expect(total).to_be_visible(timeout=15_000)
+            # Deliberately ignore AbortSignal: obsolete promises must be guarded
+            # even if fetch cancellation does not prevent their completion.
+            page.evaluate("""() => {
+                const realFetch = window.fetch.bind(window);
+                window.syntheticRequests = [];
+                window.fetch = (input, init) => {
+                    if (!String(input).endsWith('/api/compute')) return realFetch(input, init);
+                    return new Promise(resolve => {
+                        window.syntheticRequests.push({payload: JSON.parse(init.body), resolve});
+                    });
+                };
+                window.finishSynthetic = (index, failure, tax) => {
+                    const request = window.syntheticRequests[index];
+                    const payload = request.payload;
+                    request.resolve(new Response(JSON.stringify(failure ? {detail: failure} : {
+                        federal_monthly: tax, federal_annual: tax * 12,
+                        states: payload.states.map(state => ({...state, display_name: 'Synthetic state',
+                            monthly: 0, annual: 0})),
+                        total_monthly: tax, total_annual: tax * 12, effective_rate: 0
+                    }), {status: failure ? 422 : 200,
+                         headers: {'Content-Type': 'application/json'}}));
+                };
+            }""")
+            income = page.locator(".income-input").first
+            income.click()
+            income.fill("5000")
+            # Assert before the 300ms fetch debounce, after React shows new gross.
+            expect(page.locator(".income-sublabel").first).to_contain_text("$5,000.00")
+            assert page.locator(".result-card").count() == 0
+            expect(page.get_by_role("button", name="Download QIF")).to_be_disabled()
+            page.wait_for_function("window.syntheticRequests.length === 1")
+            income.fill("6000")
+            page.wait_for_function("window.syntheticRequests.length === 2")
+            # Repeat A's request key while its first generation is still unresolved.
+            income.fill("5000")
+            page.wait_for_function("window.syntheticRequests.length === 3")
+            assert page.evaluate("window.syntheticRequests.map(request => request.payload.monthly_unearned)") == [5000, 6000, 5000]
+            page.evaluate("window.finishSynthetic(1, null, 888)")
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            expect(page.get_by_text("Calculating...", exact=True)).to_be_visible()
+            expect(page.locator(".result-card")).to_have_count(0)
+            page.evaluate("window.finishSynthetic(2, null, 30)")
+            expect(total).to_have_text("$30.00")
+            expect(page.locator(".result-card.net .result-amount")).to_have_text("$4,970.00")
+            page.evaluate("""failure => {
+                window.finishSynthetic(0, failure, 999);
+            }""", "Synthetic obsolete failure" if obsolete_failure else None)
+            # Flush response publication and React rendering, without a sleep.
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            expect(total).to_have_text("$30.00")
+            expect(page.get_by_text("Synthetic obsolete failure", exact=False)).not_to_be_visible()
+            expect(page.get_by_role("button", name="Download QIF")).to_be_enabled()
+            income.fill("7000")
+            page.wait_for_function("window.syntheticRequests.length === 4")
+            page.evaluate("window.finishSynthetic(3, 'Synthetic current failure', 0)")
+            expect(page.get_by_text("Synthetic current failure", exact=False)).to_be_visible()
+            expect(page.locator(".result-card")).to_have_count(0)
+            expect(page.get_by_role("button", name="Download QIF")).to_be_disabled()
+            income.fill("8000")
+            page.wait_for_function("window.syntheticRequests.length === 5")
+            page.evaluate("window.finishSynthetic(4, null, 40)")
+            expect(page.locator(".result-card.net .result-amount")).to_have_text("$7,960.00")
+            expect(page.get_by_text("Synthetic current failure", exact=False)).not_to_be_visible()
+            expect(page.get_by_role("button", name="Download QIF")).to_be_enabled()
+            assert len(browser_errors) == 1
+            assert browser_errors[0].splitlines()[0] == "Computation error: Error: Synthetic current failure"
+        finally:
+            browser.close()
+
+
+def test_summary_layout_fits_available_space_in_both_themes(monkeypatch, tmp_path):
+    monkeypatch.setenv("TAX2_HOME", str(tmp_path / "synthetic-runtime"))
+    module = load_launcher(PROJECT_ROOT / "tax2")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="domcontentloaded")
+            expect(page.locator(".result-card.net")).to_be_visible(timeout=15_000)
+            fill_income_and_compute(page, 0, 987654321)
+            for dark in (False, True):
+                if dark:
+                    page.get_by_role("button", name="Toggle Theme").click()
+                for width in (1440, 1280, 1201, 1200, 900, 768, 390):
+                    page.set_viewport_size({"width": width, "height": 1000})
+                    geometry = page.evaluate("""() => {
+                        const total = document.querySelector('.result-card.total').getBoundingClientRect();
+                        const net = document.querySelector('.result-card.net').getBoundingClientRect();
+                        return {
+                            overflow: document.documentElement.scrollWidth > innerWidth,
+                            cardsFit: [...document.querySelectorAll('.result-card, .result-amount')]
+                                .every(el => el.scrollWidth <= el.clientWidth + 1),
+                            paired: Math.abs(total.top - net.top) < 1,
+                            ordered: net.top > total.top || net.left > total.left,
+                            accent: getComputedStyle(document.querySelector('.result-card.net'), '::before').backgroundColor
+                        };
+                    }""")
+                    assert not geometry["overflow"], (width, dark, geometry)
+                    assert geometry["cardsFit"], (width, dark, geometry)
+                    assert geometry["accent"] == ("rgb(16, 185, 129)" if dark else "rgb(5, 150, 105)")
+                    assert geometry["ordered"]
+                    assert geometry["paired"] == (width > 768)
+                # A halved desktop CSS viewport approximates the layout at 200% zoom.
+                page.set_viewport_size({"width": 720, "height": 500})
+                expect(page.locator(".result-card.net")).to_be_visible()
         browser.close()

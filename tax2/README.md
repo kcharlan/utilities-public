@@ -64,8 +64,16 @@ The UI:
 - computes federal tax once on the total income;
 - discovers available states from `rules/states/`;
 - supports one or more independently allocated states;
-- calculates from YAML rules or generated lookup tables; and
+- calculates from YAML rules or generated lookup tables;
+- shows total monthly tax alongside net monthly income; and
 - exports the displayed monthly estimates as one QIF bundle.
+
+**Net Monthly Income** subtracts the displayed **Total Monthly Tax** from the
+combined monthly earned and unearned income, reconciled to the displayed cents.
+It includes all displayed federal and selected-state estimates. Net can be
+negative; it is not a separate QIF transaction. Results and QIF export are
+unavailable while a changed calculation is pending or has failed, so amounts
+always belong to the current inputs.
 
 The selected year defaults to the current year when federal rules exist,
 otherwise to the latest available federal year. A state still needs a rules

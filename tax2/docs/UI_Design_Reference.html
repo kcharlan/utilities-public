@@ -88,7 +88,7 @@
 
         .app-container {
             display: grid;
-            grid-template-columns: 280px 1fr 320px;
+            grid-template-columns: 280px minmax(0, 1fr) 320px;
             height: 100vh;
             gap: 0;
         }
@@ -220,6 +220,8 @@
 
         /* Main Panel */
         .main-panel {
+            min-width: 0;
+            container-type: inline-size;
             padding: 2rem;
             overflow-y: auto;
             background: var(--bg-primary);
@@ -324,14 +326,32 @@
         }
 
         /* Results Dashboard */
-        .results-grid {
+        .results-grid, .summary-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: minmax(0, 1fr);
             gap: 1.5rem;
             margin-bottom: 2rem;
         }
 
+        @container (min-width: 484px) {
+            .results-grid, .summary-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @container (min-width: 738px) {
+            .results-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+
+        .summary-grid { margin-bottom: 0.75rem; }
+        .summary-note {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 2rem;
+        }
+
         .result-card {
+            min-width: 0;
             background: var(--bg-secondary);
             border: 1px solid var(--border-subtle);
             border-radius: 12px;
@@ -358,6 +378,10 @@
             background: var(--accent-state);
         }
 
+        .result-card.net::before {
+            background: var(--accent-income);
+        }
+
         .result-card.total::before {
             background: var(--text-primary);
         }
@@ -373,6 +397,7 @@
         }
 
         .result-amount {
+            overflow-wrap: anywhere;
             font-family: var(--font-mono);
             font-size: 2rem;
             font-weight: 700;
@@ -626,7 +651,7 @@
         /* Responsive */
         @media (max-width: 1200px) {
             .app-container {
-                grid-template-columns: 260px 1fr;
+                grid-template-columns: 260px minmax(0, 1fr);
             }
 
             .export-panel {
@@ -644,8 +669,8 @@
                 border-bottom: 1px solid var(--border-subtle);
             }
 
-            .results-grid {
-                grid-template-columns: 1fr;
+            .results-grid, .summary-grid {
+                grid-template-columns: minmax(0, 1fr);
             }
 
             .income-input {
@@ -730,6 +755,8 @@
                 <div class="income-sublabel">= $150,000 annually</div>
             </div>
 
+            <p class="summary-note">Synthetic demonstration values — not a tax calculation.</p>
+
             <!-- Results Cards -->
             <div class="results-grid">
                 <div class="result-card federal">
@@ -744,12 +771,20 @@
                     <div class="result-sublabel">5.2% effective</div>
                 </div>
 
+            </div>
+            <div class="summary-grid" role="group" aria-label="Monthly income summary">
                 <div class="result-card total">
-                    <div class="result-label">Total Monthly</div>
+                    <div class="result-label">Total Monthly Tax</div>
                     <div class="result-amount">$2,838.75</div>
                     <div class="result-sublabel">22.7% combined</div>
                 </div>
+                <div class="result-card net">
+                    <div class="result-label">Net Monthly Income</div>
+                    <div class="result-amount">$9,661.25</div>
+                    <div class="result-sublabel">Gross minus estimated taxes</div>
+                </div>
             </div>
+            <p class="summary-note">Net income is after the estimated taxes shown above.</p>
 
             <!-- Tax Breakdown Chart -->
             <div class="chart-section">
