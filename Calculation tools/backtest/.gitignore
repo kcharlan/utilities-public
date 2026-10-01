@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+.pytest_cache/
+cache/
+archives/
+exports/
+dist/
+node_modules/
+test-results/
+playwright-report/
+market-atlas-*.csv
+*.xls
+*.xlsx
+market-data.js
+market-data.csv
+inputs/
+datasets/
+builds/
+current.json
+provenance.json
+.DS_Store
+
+# Historical inputs, outputs and local state always belong outside the repository.
+# Deliberately keep synthetic CSV fixtures visible; there is no blanket CSV ignore.

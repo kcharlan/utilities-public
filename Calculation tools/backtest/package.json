@@ -1,0 +1,19 @@
+{
+  "name": "market-atlas",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node tests/run_tests.cjs",
+    "test:browser": "node tests/run_artifact_browser.cjs",
+    "setup:data": "node tools/setup_data.mjs",
+    "build": "node tools/build_static.mjs",
+    "test:synthetic": "node tests/run_tests.cjs --synthetic",
+    "deploy": "node tools/deploy_static.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

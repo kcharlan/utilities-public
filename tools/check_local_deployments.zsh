@@ -264,7 +264,23 @@ typeset -A stale_counts stale_history_operational_errors
 for mapping in "${copy_mappings[@]}"; do
   direct_source_paths+=("${mapping%%|*}")
 done
+# Flat runtime source and the read-only data helper; local history is external.
+typeset -a static_source_paths=(
+  'Calculation tools/backtest/DATA_SOURCES.md'
+  'Calculation tools/backtest/app.js'
+  'Calculation tools/backtest/charts.js'
+  'Calculation tools/backtest/csv.js'
+  'Calculation tools/backtest/engine.js'
+  'Calculation tools/backtest/format.js'
+  'Calculation tools/backtest/index.html'
+  'Calculation tools/backtest/lifestyle.js'
+  'Calculation tools/backtest/stats.js'
+  'Calculation tools/backtest/tools/data_contract.mjs'
+  'Calculation tools/backtest/views.js'
+  'tools/check_static_deployments.mjs'
+)
 audited_scopes=(
+  "${static_source_paths[@]}"
   "${direct_source_paths[@]}"
   model_sentinel/__main__.py
   model_sentinel/model_sentinel
@@ -377,6 +393,41 @@ if [[ "$git_snapshot_ok" == true && "$git_head_ok" == true ]]; then
     done < "$pending_snapshot"
   else
     git_snapshot_ok=false
+  fi
+fi
+
+# Use the same validated index inventory as the original fleet checks.
+static_source_ok=true
+if [[ "$git_snapshot_ok" != true || "$git_head_ok" != true ]]; then
+  static_source_ok=false
+fi
+for required_static_path in "${static_source_paths[@]}"; do
+  if [[ -z "${index_membership[$required_static_path]-}" ||
+        -n "${invalid_index_membership[$required_static_path]-}" ||
+        -n "${source_state_invalid[$required_static_path]-}" ||
+        -n "${pending_deletions[$required_static_path]-}" ||
+        ! -f "$REPO_ROOT/$required_static_path" || -L "$REPO_ROOT/$required_static_path" ]]; then
+    static_source_ok=false
+  fi
+ done
+if [[ "$static_source_ok" != true ]]; then
+  report_failure "backtest static source inventory unverified"
+else
+  static_inventory="$AUDIT_TMP/static-source-inventory"
+  for required_static_path in "${static_source_paths[@]}"; do
+    printf '%s\t%s\0' "${index_modes[$required_static_path]}" "$required_static_path"
+  done > "$static_inventory"
+  static_stdout="$AUDIT_TMP/static.stdout"
+  static_stderr="$AUDIT_TMP/static.stderr"
+  if node "$REPO_ROOT/tools/check_static_deployments.mjs" --source-inventory "$static_inventory" > "$static_stdout" 2> "$static_stderr"; then
+    if [[ ! -s "$static_stderr" && "$(stat -f '%z' "$static_stdout")" == 31 &&
+          "$(/usr/bin/head -c 256 "$static_stdout")" == 'OK: backtest static deployment' ]]; then
+      print -- 'OK: backtest static deployment'
+    else
+      report_failure "backtest static child protocol unverified"
+    fi
+  else
+    report_failure "backtest static audit unverified"
   fi
 fi
 

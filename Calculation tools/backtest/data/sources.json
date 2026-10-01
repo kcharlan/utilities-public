@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "damodaran",
+      "name": "Damodaran",
+      "url": "https://pages.stern.nyu.edu/~adamodar/pc/datasets/histretSP.xls",
+      "pageUrl": "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html",
+      "allowedOrigins": ["https://pages.stern.nyu.edu", "https://www.stern.nyu.edu"],
+      "cacheFilename": "histretSP.xls",
+      "format": "OLE/XLS",
+      "requiredSheets": ["Returns by year", "Inflation Rate"],
+      "layout": {
+        "Returns by year": {"headerRow": 19, "firstDataRow": 20, "columns": {"year": 0, "stock_tr": 1, "tbill_tr": 3, "bond10_tr": 4}},
+        "Inflation Rate": {"headerRow": 10, "firstDataRow": 11, "columns": {"year": 0, "seriesLabel": 1, "cpi_change": 2}}
+      }
+    },
+    {
+      "id": "shiller",
+      "name": "Shiller",
+      "url": "https://img1.wsimg.com/blobby/go/e5e77e0b-59d1-44d9-ab25-4763ac982e53/downloads/70fec4f5-727f-4e53-b5f1-179af109c5fa/ie_data.xls?ver=1788371540009",
+      "pageUrl": "https://shillerdata.com/",
+      "allowedOrigins": ["https://img1.wsimg.com"],
+      "cacheFilename": "ie_data.xls",
+      "format": "OLE/XLS",
+      "requiredSheets": ["Data"],
+      "layout": {"Data": {"headerRows": [5, 6, 7], "firstDataRow": 8, "columns": {"date": 0, "cpi": 4, "realTotalReturnPrice": 9, "monthlyGrossBondReturn": 17}}}
+    }
+  ],
+  "output": {"firstYear": 1872, "lastYear": 2025, "spliceYear": 1928, "reconciliationLastYear": 2022},
+  "transformations": {
+    "stock_tr": "Before the splice, nominalize Shiller's real total-return index with CPI and use December-to-December ratios; thereafter use Damodaran annual total returns.",
+    "bond10_tr": "Before the splice, chain all twelve Shiller monthly gross bond factors; thereafter use Damodaran annual total returns.",
+    "tbill_tr": "Unavailable before the splice; thereafter use Damodaran annual bill returns.",
+    "cpi_change": "Before the splice, use Shiller December-to-December CPI ratios; thereafter use Damodaran annual CPI changes.",
+    "rounding": "Eight decimal places; reconstructed quality before the splice and ok thereafter."
+  }
+}

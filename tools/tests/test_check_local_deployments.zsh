@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly TEST_SCRIPT_DIR="${0:A:h}"
 readonly REPO_UNDER_TEST="${TEST_SCRIPT_DIR:h:h}"
+readonly FIXTURE_NODE="$(command -v node)"
 readonly AUDIT_SOURCE="$REPO_UNDER_TEST/tools/check_local_deployments.zsh"
 
 umask 077
@@ -290,6 +291,10 @@ new_fixture() {
   mkdir -p -- "$FIXTURE_HOME/.local/state/n8n-poc"
   chmod 700 "$FIXTURE_HOME/.local/state/n8n-poc"
 
+  mkdir -p "$FIXTURE_ROOT/node bin"
+  ln -s "$FIXTURE_NODE" "$FIXTURE_ROOT/node bin/node"
+  "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/static-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
+
   git -C "$FIXTURE_REPO" init -q
   git -C "$FIXTURE_REPO" config user.name "Synthetic Audit Tester"
   git -C "$FIXTURE_REPO" config user.email "audit-tester@example.invalid"
@@ -307,7 +312,7 @@ new_fixture() {
 
 run_audit() {
   local shim_dir="${1:-}"
-  local fixture_path="/usr/bin:/bin:/usr/sbin:/sbin"
+  local fixture_path="$FIXTURE_ROOT/node bin:/usr/bin:/bin:/usr/sbin:/sbin"
   if [[ -n "$shim_dir" ]]; then
     fixture_path="$shim_dir:$fixture_path"
   fi
@@ -344,6 +349,8 @@ run_audit() {
       GIT_OPTIONAL_LOCKS=0 \
       UTILITIES_SCRIPTS_DIR="$FIXTURE_SCRIPTS" \
       UTILITIES_LOCAL_ROOT="$FIXTURE_LOCAL" \
+      UTILITIES_WEBROOT_DIR="$FIXTURE_HOME/invented web root" \
+      MARKET_ATLAS_DATA_HOME="$FIXTURE_HOME/invented data home" \
       /bin/zsh -f "$FIXTURE_REPO/tools/check_local_deployments.zsh"
   ) > "$AUDIT_STDOUT" 2> "$AUDIT_STDERR"; then
     AUDIT_STATUS=0
@@ -399,6 +406,7 @@ test_passing_baseline() {
   snapshot_fixture "$after"
 
   assert_status 0 "$AUDIT_STATUS" "passing baseline"
+  assert_occurrences "$AUDIT_STDOUT" 1 "OK: backtest static deployment"
   local mapping deployed_name
   for mapping in "${COPY_MAPPINGS[@]}"; do
     deployed_name="${mapping#*|}"
@@ -1460,5 +1468,25 @@ test_model_archive_rejects_expected_symlink_entry
 test_model_archive_rejects_encrypted_entries
 test_model_archive_rejects_truncation
 test_model_archive_bounds_streamed_output
+
+
+# The retired receipt, AST closure and strict native metadata assertions belonged
+# only to the withdrawn deployment framework. Keep ordinary drift/index checks.
+test_backtest_drift() {
+  new_fixture
+  print 'invented drift' >> "$FIXTURE_HOME/invented web root/calculators/backtest/app.js"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'backtest byte drift'
+  assert_contains "$AUDIT_STDERR" 'FAIL: backtest static audit unverified'
+}
+test_backtest_source_inventory() {
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached 'Calculation tools/backtest/app.js'
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'backtest removed index source'
+  assert_contains "$AUDIT_STDERR" 'FAIL: backtest static source inventory unverified'
+}
+test_backtest_drift
+test_backtest_source_inventory
 
 print -- "check_local_deployments tests: PASS"

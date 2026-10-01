@@ -1,10 +1,18 @@
 # Calculation Tools
 
-Four browser-based financial calculators implemented as self-contained HTML files. They have no build step or server component: open a file directly in a modern browser or publish the directory with any static file host.
+Four financial calculators are self-contained HTML files with no build step or server component. Open those files directly in a modern browser or serve them with a static host. The independently maintained [Market Atlas](backtest/README.md) app lives in `backtest/` and uses external local historical data and a static packaging step. Its data-bearing builds are local runtime artifacts.
 
-The calculations run entirely in the browser. The pages do not send inputs to a backend or save them in browser storage. Reloading a page restores its built-in defaults.
+Calculations run entirely in the browser, and scenario inputs remain in page memory. The four HTML calculators do not save browser preferences; Market Atlas saves only its appearance preference. Reloading restores the built-in scenario defaults.
 
 ## Calculators
+
+### `backtest/` — Market Atlas
+
+Compares fixed-real, fixed-percent, Guyton–Klinger and configurable barbell withdrawal strategies across historical windows. Window, Sweep and Lifestyle views include pinned comparisons, spending floors and frontier exploration. Ordinary numerical defaults are synthetic examples.
+
+Historical workbooks, compiled datasets, exports and local builds stay outside this public repository. Follow the [project README](backtest/README.md) for setup, offline use and the separate complete historical/browser validation gate. The parent test command covers the standalone calculators; it does not run this child project’s suite.
+
+When installed through the existing localhost server, the canonical app link is [Market Atlas](http://127.0.0.1:7711/calculators/backtest/index.html). The folder URL may show the existing file browser. This port does not change shared proxy routing.
 
 ### `drawdown.html`
 

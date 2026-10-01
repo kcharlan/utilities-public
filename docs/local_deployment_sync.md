@@ -6,7 +6,7 @@ This repository is the canonical public source. Copies under `~/Library/Scripts`
 
 1. Validate repository source before deploying it.
 2. Back up every destination file that will be replaced.
-3. Copy only files tracked by Git. Never mirror a whole directory and never use `rsync --delete` against a live local project.
+3. For direct copies and maintained source trees, copy only files tracked by Git. Never mirror a whole directory and never use `rsync --delete` against a live local project. Market Atlas is a narrow static-runtime exception: validated source and selected external local history supply exactly twelve copied runtime files. This does not authorize public data redistribution or copying its private inputs and recovery records into the repository.
 4. Preserve ignored/local-only configuration, databases, exports, generated tables, logs, venvs, and runtime state.
 5. After copying, compare the deployed artifact with its source and exercise the deployed command directly.
 6. For Docker, capture which stacks are running before maintenance and restore the same running/stopped state afterward.
@@ -61,6 +61,97 @@ retained public repository history began.
 
 Stale detection reports aggregate counts and never deletes deployment files.
 Removal remains a separately authorized operation performed with backups.
+
+## Adding a deployment
+
+Define the deployment form before building its installer or audit:
+
+| Form | Deployment contract |
+| --- | --- |
+| Direct file copy | Explicit source-to-destination mappings; installed bytes and permission modes match the tracked files. |
+| Maintained source tree | An explicit inventory of maintained files; updates preserve local-only configuration and runtime state. |
+| Generated static artifact | A declared source/data inventory and build recipe; verify the built runtime inventory and installed bytes independently of source tests. |
+
+Direct copies and maintained source trees retain the tracked-copy rules above.
+Generated artifacts use their explicitly admitted inputs and runtime inventory;
+Market Atlas follows the installer-only exception in rule 3. All forms preserve
+local state.
+Document the activation boundary, backups, rollback behavior, and what the
+read-only audit verifies for the chosen form.
+
+Reuse or build a small isolated fixture harness to prove the lifecycle early,
+using conspicuously synthetic inputs and temporary source, destination, and
+state directories. Invoke the actual deployment CLI to install a first release,
+update it, exercise a controlled activation failure, roll back, and run the
+read-only audit. Assert the expected active bytes and modes after each step,
+that a failed activation preserves or restores the previous working release,
+and that local-only state survives. Verify that the audit leaves source,
+deployment, configuration, and runtime state unchanged. Establish this basic
+path before expanding meaningful project-specific edge cases, such as an
+interrupted update or invalid input; avoid building a general framework before
+the working deployment path is proven.
+
+Keep fast synthetic deployment tests separate from slower historical-data and
+browser acceptance. Both remain required wherever applicable: synthetic
+fixtures make failure paths repeatable, while full acceptance verifies the
+actual application and artifact. Neither category replaces the other or
+reduces the project's complete documented validation suite.
+
+Existing references include the [read-only fleet audit](../tools/check_local_deployments.zsh)
+and its [isolated fixture tests](../tools/tests/test_check_local_deployments.zsh),
+plus Market Atlas's [synthetic artifact fixture](../Calculation%20tools/backtest/tests/helpers/static-fixture.cjs)
+and [static deployment tests](../Calculation%20tools/backtest/tests/static-deploy.test.js).
+These are project-specific implementations, not an established shared
+deployment library. After implementations pass their required gates, identify
+the common pieces from working code as a future extraction; do not
+assume a common framework already exists.
+
+## Market Atlas generated static deployment
+
+The [project guide](../Calculation%20tools/backtest/README.md),
+[data guide](../Calculation%20tools/backtest/data/README.md) and
+[test guide](../Calculation%20tools/backtest/tests/README.md) describe local acquisition,
+external history and complete validation. The runtime is twelve flat files:
+HTML, eight app modules, the data JS/CSV pair and the source notice. Build and
+browser operation work offline after setup. Real history, builds and backups
+stay outside the public checkout.
+
+From the child project, prepare data/build and review the dry-run:
+
+```sh
+npm run setup:data
+npm run build -- --offline
+npm run deploy -- --dry-run --webroot "<WEBROOT>"
+```
+
+Build defaults to `<DATA_HOME>/site`. Deploy consumes that existing build,
+compares it against source and selected data, then moves the exact prior app
+tree into a timestamped private container under
+`~/.utilities-deploy-backups/backtest/` and copies twelve files to
+`<WEBROOT>/calculators/backtest`. A brief unavailable route is acceptable.
+A copy or verification error restores the saved tree using ordinary moves;
+backups are never automatically pruned. Recovery commands are in the project
+guide. Existing attributes, including `com.apple.macl`, are not admission
+failures and shared ancestor permissions are not changed.
+
+`MARKET_ATLAS_DATA_HOME` defaults to `~/.cache/market-atlas`;
+`UTILITIES_WEBROOT_DIR` defaults to `~/webroot`. Live deployment requires
+its existing authorization. This port's live cutover follows upstream merge
+and the branch completion workflow. Deploy never runs setup/compiler/dependency
+installation or reloads the webserver.
+
+The canonical installed URL is
+`http://127.0.0.1:7711/calculators/backtest/index.html`. The folder route may
+remain a file browser. Installed acceptance checks all original browser scenarios
+and compares served HTML/scripts/notice/CSV with source/selected pair bytes.
+
+The [read-only helper](../tools/check_static_deployments.mjs) compares the twelve
+installed files with source from the fleet's validated Git inventory and the
+selected external dataset. Extra files, missing inputs and changed bytes fail
+as drift. It does not acquire, build, repair or write state. The
+[isolated tests](../tools/tests/check_static_deployments.test.mjs) use invented
+history. No release manifests, receipts, parser or metadata restoration
+framework is required for this single-owner localhost deployment.
 
 ## `~/Library/Scripts`
 
@@ -195,3 +286,8 @@ Validate Compose configuration before starting. Rebuild/start only the projects 
 ## Rollback
 
 Deployment snapshots live under `~/.utilities-deploy-backups/`. They may contain old operational source or private local configuration and must never be copied into this public repository. Keep the directory at `0700` and backup files at `0600`.
+
+Market Atlas moves the entire prior app into a new private backup container,
+without normalizing the saved tree or promising exact metadata restoration.
+Ordinary move-based recovery preserves the saved contents, including legacy
+symlinks. Restoring a legacy tree also restores its old exposure profile.
