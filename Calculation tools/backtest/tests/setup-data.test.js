@@ -349,3 +349,17 @@ for(const code of [7,0])test('production runner cleans closed-stdio descendants 
  const stopped=Date.now()+1000;while(alive()&&Date.now()<stopped)await new Promise(resolve=>setTimeout(resolve,10));
  assert.equal(alive(),false,'Owned descendant survived leader settlement');
 });
+test('cold setup then flat build permits warm offline setup and rebuild without acquisition',async t=>{
+ const f=await fixture(t),{setupData}=await api,{buildStatic,buildLocal,RUNTIME_FILES}=await import('../tools/build_static.mjs');
+ for(const name of ['legacy.txt','.temporary'])await fs.writeFile(path.join(f.dataHome,name),'invented unrelated entry');
+ const selected=await setupData(f.options),outputDir=path.join(f.dataHome,'site');
+ await buildStatic({...f.options,dataRoot:selected.root,outputDir});
+ const before=new Map(await Promise.all(RUNTIME_FILES.map(async name=>[name,await fs.readFile(path.join(outputDir,name))])));
+ const selector=await fs.readFile(path.join(f.dataHome,'current.json'));f.calls.length=0;
+ assert.equal((await setupData({...f.options,offline:true})).reused,true);assert.deepEqual(f.calls,[]);
+ await buildLocal({...f.options,offline:true,hooks:{...f.hooks,setup:setupData}});
+ assert.deepEqual(f.calls,[]);assert.deepEqual(await fs.readFile(path.join(f.dataHome,'current.json')),selector);
+ assert.deepEqual((await fs.readdir(outputDir)).sort(),[...RUNTIME_FILES].sort());
+ for(const [name,bytes]of before)assert.deepEqual(await fs.readFile(path.join(outputDir,name)),bytes);
+ for(const name of ['legacy.txt','.temporary'])assert.equal(await fs.readFile(path.join(f.dataHome,name),'utf8'),'invented unrelated entry');
+});
