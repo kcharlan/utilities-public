@@ -6,7 +6,8 @@ financial assertions, barbell behavior and all three browser scenarios.
 
 ## Prerequisites
 
-From this project, use the locked Node dependency and managed Chromium:
+From this project, use Node.js 24 or newer, the locked dependencies and
+managed Chromium:
 
 ```sh
 npm ci
@@ -64,7 +65,7 @@ backup, failed-copy restoration and no-write dry-run. Read-only audit fixtures
 cover source/data drift, missing inputs/targets and leftover runtime material.
 Withdrawn immutable runtime releases, receipt/state machines, AST import proofs,
 strict native metadata admission and exact restoration tests were retired
-because the replacement plan explicitly removes those features. Application,
+when the port adopted the flat copy lifecycle. Application,
 financial, privacy and meaningful recovery coverage is retained.
 
 ## Root audit checks
@@ -81,8 +82,7 @@ perform no live deployment. No vendored parser or deployment receipts are needed
 
 ## Installed acceptance
 
-Only after live deployment is authorized (for this port: after upstream merge
-and branch completion), compare the installed responses and execute all three
+Only after live deployment is authorized, compare the installed responses and execute all three
 cases at the explicit index URL:
 
 ```sh

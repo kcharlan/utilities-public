@@ -30,6 +30,9 @@ In `docker-compose.yml`:
 
 ## How to Modify and Extend
 
+Run the Docker Compose commands below from the parent `docker/webserver`
+directory. Regenerate the dependency lock from this `app_py` directory.
+
 1.  **Add New Endpoints:**
     *   Edit `main.py` to add more routes and logic using FastAPI.
     *   Example:

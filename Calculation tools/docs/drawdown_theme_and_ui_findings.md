@@ -2,7 +2,7 @@
 
 Scope: `Calculation tools/drawdown.html` (3,355 lines; CSS 10–993, markup 995–1164, script 1166–3353). These are findings only; no repository file was changed.
 
-> **Status (2026-09-29):** This is the analysis snapshot behind `drawdown_theme_and_ui_implementation_plan.md`. Line numbers refer to the file as of commit `cc7a570` and drift once implementation begins. The decisions in §1.9 are resolved; where this document and the plan differ, **the plan wins**. In particular, the plan uses mechanism M1 (`light-dark()`) with no head script and no storage, not the M2 recommendation below. Once no persistence was chosen, M2's pre-paint script was no longer needed.
+> **Historical reference:** These findings describe commit `cc7a570`, before the theme and UI refresh delivered in `702a2c8` on 2026-09-29. They are measured design evidence, not an open defect list or implementation backlog. The delivered implementation uses mechanism M1 (`light-dark()`) with no head script and no storage, rather than the M2 recommendation below. Current behavior is documented in [the README](../README.md), with maintenance guidance in [lessons learned](LESSONS_LEARNED.md). The completed implementation plan has been retired; line numbers and pre-refresh measurements below remain historical.
 
 **Evidence**
 - Source reading.

@@ -22,13 +22,22 @@ Utilities for turning an Apple Health export (`export.xml`) into structured CSV 
 
 ## Setup
 
-Run the setup script from this directory. It requires Python 3.11 or newer and
-network access for the initial dependency installation. Python 3.11 is the
-minimum supported by the declared pandas 3 line.
+Keep health exports and generated CSVs outside this public checkout. From this
+source directory, create a private operational copy containing only the scripts
+and runtime requirements, then run setup there:
 
 ```bash
+mkdir -p "$HOME/.apple-health-extract/project"
+chmod 700 "$HOME/.apple-health-extract" "$HOME/.apple-health-extract/project"
+cp extract_workout_stats.py exercise_bouts.py setup.sh run.sh requirements.txt \
+  "$HOME/.apple-health-extract/project/"
+cd "$HOME/.apple-health-extract/project"
 ./setup.sh
 ```
+
+The setup script requires Python 3.11 or newer and
+network access for the initial dependency installation. Python 3.11 is the
+minimum supported by the declared pandas 3 line.
 
 This creates `venv/` and installs current compatible releases of `pandas>=3.0`
 and `tqdm>=4.70` from `requirements.txt`. The provided commands call
@@ -36,7 +45,7 @@ and `tqdm>=4.70` from `requirements.txt`. The provided commands call
 scripts by name during an interactive session, activate it with
 `source venv/bin/activate`.
 
-For a disposable development environment, create a virtual environment and
+For a disposable development environment in the source checkout, create a virtual environment and
 install `requirements-dev.txt`; the project intentionally has no separate
 Python test framework dependency because its tracked automated test is a shell
 wrapper test:
@@ -49,20 +58,22 @@ bash tests/test_run_wrapper.sh
 
 ## Portable Wrapper
 
-When `run.sh` remains in this project directory, it finds the project beside itself:
+When `run.sh` remains in the private operational directory, it finds the scripts
+and virtual environment beside itself:
 
 ```bash
 ./run.sh --check
 ./run.sh
 ```
 
-To copy the wrapper elsewhere, including `~/Library/Scripts`, create its private local configuration while your shell is in this project directory:
+To copy the wrapper elsewhere, including `~/Library/Scripts`, create its private local configuration while your shell is in the private operational directory:
 
 ```bash
 mkdir -p "$HOME/.apple-health-extract"
 chmod 700 "$HOME/.apple-health-extract"
 printf '%s\n' "$(pwd -P)" > "$HOME/.apple-health-extract/project-dir"
 chmod 600 "$HOME/.apple-health-extract/project-dir"
+mkdir -p "$HOME/Library/Scripts"
 cp run.sh "$HOME/Library/Scripts/apple-health-extract"
 chmod 755 "$HOME/Library/Scripts/apple-health-extract"
 "$HOME/Library/Scripts/apple-health-extract" --check
@@ -75,11 +86,18 @@ If a standalone copy has no configuration, its first processing or `--check` inv
 ## Required Inputs
 
 1. In the Apple Health app, use **Export All Health Data** to create a ZIP archive.
-2. Extract `export.xml` from the archive and place it in this project directory.
+2. Extract `export.xml` from the archive and place it in the private operational
+   directory created above, never in this public checkout.
 
-The scripts use fixed input and output filenames and do not provide command-line options for changing them. Existing output CSVs are overwritten.
+The scripts resolve fixed input and output filenames from the current working
+directory and do not provide command-line options for changing them. The wrapper
+changes to its configured project directory before extraction; changing your
+shell's directory alone does not redirect a colocated wrapper's outputs.
+Existing output CSVs are overwritten.
 
 ## Typical Workflow
+
+Run these commands from the private operational directory:
 
 1. **Generate workout summaries and heart-rate detail**
 

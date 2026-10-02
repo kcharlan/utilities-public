@@ -18,7 +18,7 @@ A walkthrough for exploring, editing, and exporting JSON files with jtree's inte
 # Custom port
 ./jtree data.json --port 9000
 
-# Read-only mode (disables all editing)
+# Open this file read-only
 ./jtree data.json --readonly
 ```
 
@@ -191,7 +191,10 @@ Save As writes a copy. A browser save/download does not attach a server path to 
 
 ## 6. Editing
 
-All editing operations are disabled while the current file is read-only. Each edit is recorded in a 50-operation undo stack.
+All editing operations are disabled while the current file is read-only. The
+`--readonly` flag applies to the initial command-line file; opening another file
+through the UI creates an editable document. Each edit is recorded in a
+50-operation undo stack.
 
 ### Edit Values
 
@@ -347,7 +350,7 @@ jtree identifies nodes with dot-separated paths. Object keys containing literal 
 |------|-------|---------|-------------|
 | `file.json` | — | *(none)* | JSON file to open (optional) |
 | `--port` | `-p` | 8100 | Preferred server port; tries the next 19 if occupied |
-| `--readonly` | — | off | Disable all editing |
+| `--readonly` | — | off | Open the initial command-line file read-only |
 
 ### Keyboard Shortcuts
 

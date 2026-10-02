@@ -16,6 +16,13 @@ elsewhere.
 
 ## Quick start
 
+Create and activate a virtual environment before invoking the Python script:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
 1. Follow [`Operational_Guide.md`](./Operational_Guide.md) to create the two
    browser bookmarklets.
 2. Use the bookmarklets on the signed-in Abacus.AI Billing/Usage page to
@@ -40,7 +47,8 @@ input file. It requires Python 3 and has no third-party dependencies.
 The converter reads the column order from `result.columns`; when that field is
 missing, it infers columns from `result.log`. It places `date` first when
 present, rounds numeric values to two decimal places, ignores row fields that
-are not output columns, and fills missing values with `0` by default.
+are not output columns, and fills missing non-date values with `0` by default.
+Missing dates remain blank.
 
 ## Command-line options
 

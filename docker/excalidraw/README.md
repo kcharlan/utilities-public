@@ -40,7 +40,7 @@ docker-compose down -v
 - `up.sh`: Runs `docker-compose up --build -d`.
 - `down.sh`: Runs `docker-compose down -v` (the stack currently defines no
   Compose-managed volumes).
-- `update.sh`: Pulls the latest Excalidraw image, force-recreates the service, waits for readiness, and prints Compose status.
+- `update.sh`: Pulls the latest Excalidraw image, force-recreates the service, waits for it to be running, and prints Compose status. This stack has no health check, so Compose's wait does not verify HTTP readiness.
 
 ## Customization
 

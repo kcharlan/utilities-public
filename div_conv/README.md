@@ -20,9 +20,10 @@ required:
 
 ```sh
 ./div_conv --help
-./div_conv export.csv
-./div_conv --brokerage fidelity 'exports/*.csv'
-./div_conv --output-dir /path/to/local/output export-1.csv export-2.csv
+./div_conv "$HOME/.div_conv/exports/export.csv"
+./div_conv --brokerage fidelity "$HOME/.div_conv/exports/*.csv"
+./div_conv --output-dir /path/to/private/output \
+  /path/to/private/export-1.csv /path/to/private/export-2.csv
 ```
 
 If the launcher is placed or linked on `PATH`, the same commands may use

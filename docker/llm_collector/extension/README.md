@@ -31,12 +31,12 @@ The extension currently supports tracking usage on the following platforms:
 
 1.  Open your web browser's extension management page (e.g., `chrome://extensions`).
 2.  Enable "Developer mode".
-3.  Run `../setup.sh` from the project root so it generates `extension/config.local.js`.
+3.  From the `llm_collector` project root, run `./setup.sh` so it generates `extension/config.local.js`.
 4.  Click "Load unpacked" and select this `extension` directory.
 
 ## Configuration
 
-Do not edit `background.js` for local secrets. Run `../setup.sh` from the project root. It reads `~/.config/llm_collector/secret.env` and generates `config.local.js` with:
+Do not edit `background.js` for local secrets. From the `llm_collector` project root, run `./setup.sh` (or `../setup.sh` from this `extension` directory). It reads `~/.config/llm_collector/secret.env` and generates `config.local.js` with:
 
 *   `API_KEY`: Must match the collector server API key.
 *   `COLLECTOR_URL`: The collector server URL, usually `http://127.0.0.1:9000`.

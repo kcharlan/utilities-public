@@ -356,6 +356,7 @@ For `visibility.expose` and `visibility.hide`, the runtime strips the static pat
 - [examples/cron-eval](./examples/cron-eval/README.md)
 - [examples/policy-engine](./examples/policy-engine/README.md)
 - [examples/plugin-advanced](./examples/plugin-advanced/README.md)
+- [examples/orchestrator-model-eval](./examples/orchestrator-model-eval/README.md) -- Synthetic paired-evaluation harness; live model runs require separate approval as described in its README.
 
 ## Development
 

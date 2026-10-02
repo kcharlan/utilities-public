@@ -47,7 +47,7 @@ npx http-server -p 4173 -c-1
 - `multibody-test-2.json`: sample User setup mode save state for multibody testing.
 - `multibody-test-3.json`: sample saved setup state for multibody testing.
 - `tests/smoke.spec.js`: Playwright smoke tests.
-- `playwright.config.js`: Playwright test configuration (launches `http-server` on `127.0.0.1:4173`).
+- `playwright.config.js`: Playwright test configuration (launches `http-server` and tests through `127.0.0.1:4173`).
 - `package.json`: local tooling dependencies (`http-server`, Playwright libs).
 
 ## Core Behavior Summary
@@ -370,8 +370,8 @@ From repo root, `cd web_games/multibody_sim`:
 Syntax check:
 
 ```bash
-awk '/<script[^>]*>/{flag=1;next}/<\\/script>/{flag=0}flag' index.html > /tmp/multibody_sim_check.js
-node --check /tmp/multibody_sim_check.js
+awk '/<script[^>]*>/{flag=1;next}/<\/script>/{flag=0}flag' index.html > /tmp/multibody_sim_check.mjs
+node --check /tmp/multibody_sim_check.mjs
 ```
 
 Serve locally:
@@ -380,9 +380,13 @@ Serve locally:
 npx http-server -p 4173 -c-1
 ```
 
-Run Playwright smoke tests (config launches local `http-server` on `127.0.0.1:4173`):
+Prepare the test dependencies and managed Chromium, then run the complete
+Playwright suite. The config launches `http-server` and tests through
+`127.0.0.1:4173`:
 
 ```bash
+npm ci
+npx playwright install chromium
 npm test
 ```
 

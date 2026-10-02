@@ -7,7 +7,7 @@ Expense Dock is a uv-managed local web app for logging business expenses through
 When you submit an expense, Expense Dock:
 
 1. Renames the receipt file to a standardized format (`YYYY-MM-DD_Vendor_Amount_Purpose.ext`)
-2. Uploads the receipt to OneDrive under `Business Expenses/YYYY/YYYY-MM/`, creating year and month folders as needed
+2. Uploads the receipt under the configured shared OneDrive folder's `YYYY/YYYY-MM/` path, creating year and month folders as needed
 3. Generates an anonymous read-only share link for the uploaded receipt
 4. Downloads the expense tracking workbook from OneDrive, appends a new row with all the expense details and the receipt link, then uploads it back
 5. If the receipt upload succeeds but the workbook write fails, the expense is queued for retry

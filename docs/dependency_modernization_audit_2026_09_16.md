@@ -1,5 +1,9 @@
 # Dependency Modernization Audit — 2026-09-16
 
+> **Historical reference:** The versions, holds, and validation results below
+> describe the September 16 snapshot. Use project READMEs and manifests for
+> current dependency and setup guidance.
+
 ## Scope and method
 
 This is a source and validation snapshot of the repository's 54 independently

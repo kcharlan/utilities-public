@@ -45,7 +45,7 @@ The CLI runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using the 
 6. Monitor active work in the UI or logs.
 7. Review retained artifacts after completion.
 
-When the session is deleted (via the Reset button or the purge API), the worktree is removed and the git worktree reference is cleaned up in the source repo.
+Idle sessions retain their worktrees for further runs. A completed run retains its worktree for validation and merge review; use the completion card's cleanup action when that review is finished. Aborted sessions and explicitly ended idle sessions clean up their worktrees. Deleting, resetting, or purging a session also removes its worktree and cleans up the git worktree reference in the source repo.
 
 ## History and Retention
 

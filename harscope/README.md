@@ -127,7 +127,7 @@ Validation checks:
 
 Single-file Python application (uv-managed via a PEP 723 header) with:
 - FastAPI backend with 26 REST routes
-- Embedded React SPA using React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map; Babel Standalone 8.0.5 compiles the module-aware inline JSX, with Tailwind CSS 4.3.3, Lucide Icons, and Google Fonts loaded from exact-version CDN URLs
+- Embedded React SPA using React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map; Babel Standalone 8.0.5 compiles the module-aware inline JSX, with Tailwind CSS 4.3.3 and Lucide Icons loaded from exact-version CDN URLs. Google Fonts loads through its unversioned CSS API
 - No build step, no npm, no node_modules
 - Recursive whole-tree scanner with JSON body parsing, base64 decoding, and WebSocket message inspection
 

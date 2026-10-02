@@ -32,8 +32,8 @@ generated directories are not part of this snapshot.
 ## Requirements
 
 - zsh
-- Python 3.10 or newer (the progress parser and embedded helpers are
-  standard-library only)
+- Python 3.10 or newer in an activated virtual environment (the progress
+  parser and embedded helpers call `python3` and are standard-library only)
 - either the `codex` CLI (the default) or Claude command wrappers configured
   through `CLAUDE_SONNET_COMMAND` and `CLAUDE_OPUS_COMMAND`
 - `gpt-5.6-sol` is the default Codex model; override it with `MODEL_NAME`
@@ -48,9 +48,14 @@ appropriate.
 ## Use in another project
 
 Copy this directory structure into the target repository, then set at least
-the design path and test command:
+the design path and test command. Create and activate the target project's
+virtual environment before running the loop so its `python3` helpers use that
+interpreter:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+
 DESIGN_DOC=docs/my_design.md \
 FULL_TEST_COMMAND='my-project-test-command' \
 ./scripts/codex_packet_loop.zsh bootstrap
