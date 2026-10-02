@@ -2524,6 +2524,59 @@ assert_file_exists "candidate moved into a retained day is not deleted" "${old_f
 assert_contains "changed purge-day candidate is visibly skipped" "${race_output}" "Skipped 1 candidate"
 touch -t 203701010101 "${old_file}"
 
+deletion_log="${test_root}/SYNTHETIC-DELETION-LOG"
+deletion_syslog="${test_root}/SYNTHETIC-DELETION-SYSLOG"
+deletion_logger="${test_root}/deletion-logger"
+cat > "${deletion_logger}" <<'EOF'
+#!/bin/zsh
+print -r -- "$*" >> "${SYNTHETIC_DELETION_SYSLOG}"
+EOF
+chmod 755 "${deletion_logger}"
+escaped_name_file="${backup_dir}/"$'SYNTHETIC SPACE\n\e[31m.SYNTHETIC-BACKUP'
+for deletion_mode in dry-run failure both-stderr-file stdout-only stdin-only; do
+  touch -t 203701010101 "${old_file}" "${escaped_name_file}"
+  : > "${deletion_log}"
+  : > "${deletion_syslog}"
+  typeset -a deletion_options=()
+  typeset -a deletion_overrides=()
+  deletion_tty_mode="${deletion_mode}"
+  case "${deletion_mode}" in
+    dry-run)
+      deletion_tty_mode=both-stderr-file
+      deletion_options=(--dry-run)
+      ;;
+    failure)
+      deletion_tty_mode=both-stderr-file
+      deletion_overrides=("MONEYDANCE_RM_BIN=${rm_fail}")
+      ;;
+  esac
+  run_with_pty 10 "${deletion_tty_mode}" /usr/bin/env \
+    HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${mount_mock}" \
+    MONEYDANCE_LOG_FILE="${deletion_log}" MONEYDANCE_USE_SYSLOG=1 \
+    MONEYDANCE_LOGGER_BIN="${deletion_logger}" SYNTHETIC_DELETION_SYSLOG="${deletion_syslog}" \
+    "${deletion_overrides[@]}" "${SCRIPT}" --config "${config}" "${deletion_options[@]}"
+  if [[ "${deletion_mode}" == failure ]]; then
+    assert_status "terminal deletion failure exits nonzero" 1 "${PTY_STATUS}"
+  else
+    assert_status "${deletion_mode} deletion output run succeeds" 0 "${PTY_STATUS}"
+  fi
+  if [[ "${deletion_mode}" == both-stderr-file || "${deletion_mode}" == stdout-only ]]; then
+    assert_contains "${deletion_mode} shows successfully removed path" "${PTY_TRANSCRIPT}" "Removed: ${(q)old_file}"
+    assert_contains "${deletion_mode} escapes filename control characters" "${PTY_TRANSCRIPT}" "Removed: ${(q)escaped_name_file}"
+    assert_file_missing "${deletion_mode} removes reported file" "${old_file}"
+    assert_file_missing "${deletion_mode} removes escaped-name file" "${escaped_name_file}"
+  else
+    assert_not_contains "${deletion_mode} never claims an interactive removal" "${PTY_TRANSCRIPT}${PTY_NONTTY_STDOUT}" "Removed: "
+  fi
+  deletion_persistent="$(<"${deletion_log}")$(<"${deletion_syslog}")${PTY_STDERR}${PTY_NONTTY_STDOUT}"
+  assert_contains "${deletion_mode} still writes aggregate logs" "${deletion_persistent}" "Identified 2 file(s)"
+  assert_not_contains "${deletion_mode} persistent sinks omit backup filename" "${deletion_persistent}" "${private_name}"
+  assert_not_contains "${deletion_mode} persistent sinks omit escaped filename" "${deletion_persistent}" "SYNTHETIC SPACE"
+  assert_not_contains "${deletion_mode} persistent sinks omit backup directory" "${deletion_persistent}" "SYNTHETIC_BACKUPS"
+done
+/bin/rm -f -- "${escaped_name_file}"
+touch -t 203701010101 "${old_file}"
+
 outside_dir="${test_root}/outside-backup-tree"
 mkdir -p "${outside_dir}"
 outside_file="${outside_dir}/OUTSIDE.SYNTHETIC-BACKUP"

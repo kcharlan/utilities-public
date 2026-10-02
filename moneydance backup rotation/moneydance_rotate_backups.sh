@@ -1188,6 +1188,7 @@ for file in "${purge_candidates[@]}"; do
 
   if "${RM_BIN}" -f -- "${file}" 2>/dev/null; then
     (( removed += 1 ))
+    terminal_detail "Removed: ${(q)file}"
   else
     (( removal_failures += 1 ))
   fi

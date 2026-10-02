@@ -13,9 +13,11 @@ values and defaults to dry-run mode. Missing or invalid required settings stop
 the script before it inspects mounts or files. Operational logs report counts
 and outcomes without printing the configured host, share, directory, or backup
 file names. Detailed host, share, directory, and private-config values are
-shown only on an interactive terminal; non-terminal stdout and stderr, the
-configured log file, syslog, and captured child-command diagnostics remain
-redacted.
+shown only on an interactive terminal. Each successful backup deletion also
+prints `Removed: <path>` only when stdout is a terminal, with the path
+shell-escaped so spaces and control characters are displayed safely.
+Non-terminal stdout and stderr, the configured log file, syslog, and captured
+child-command diagnostics remain redacted.
 
 ## Overview
 
@@ -219,6 +221,10 @@ cleanup.
    regular, non-symlink file beneath the backup directory, still has the exact
    configured suffix, and still belongs to a purge day. Changed candidates are
    skipped.
+9. After each successful deletion, show its escaped path on an interactive
+   terminal. Dry runs, failed removals, and skipped candidates do not produce
+   individual `Removed:` messages. Redirected output, configured file logs,
+   and syslog retain aggregate counts only.
 
 If reading the mount table fails, the share is not mounted, the directory is
 inaccessible, enumeration or classification fails, or validation fails,
