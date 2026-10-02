@@ -8,10 +8,8 @@ Use conspicuously synthetic public fixtures. Keep operational configuration and 
 Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Eighteen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
 
 The September dependency review is preserved in
-[the audit](docs/dependency_modernization_audit_2026_09_16.md), with the subsequent
-frontend, test-client, video-processing, and model-default migrations recorded in
-[the follow-up analysis](docs/dependency_modernization_followup_analysis_2026_09_16.md).
-These are dated references; project READMEs describe the current dependencies.
+[the audit](docs/dependency_modernization_audit_2026_09_16.md). It is a dated
+reference; project READMEs describe the current dependencies.
 
 ## Flagship Utilities
 

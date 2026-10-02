@@ -241,4 +241,4 @@ Unit/API tests and Playwright E2E tests are separate invocations because Playwri
 .venv/bin/python -m pytest tests/test_e2e.py -v
 ```
 
-The E2E server must use a temporary database and suppress normal browser launch. See `README.md` for environment setup and `docs/test_coverage_improvements.md` for known non-blocking gaps.
+The E2E server must use a temporary database and suppress normal browser launch. See `README.md` for environment setup.

@@ -203,8 +203,7 @@ accidentally by stale provider-wide factors. The Abacus template intentionally
 retains `1 / 1`, but that is not a complete normalization rule: its public
 schema mixes per-token token rates with media prices in other units. Abacus
 therefore uses the generic fallback profile until its authenticated payload is
-validated and a dedicated field-rule registry is added. See
-[`docs/provider_schema_notes.md`](./docs/provider_schema_notes.md).
+validated and a dedicated field-rule registry is added.
 
 ## Required Credential Environment Variables
 
@@ -642,6 +641,4 @@ before running the suite.
 
 ## Documents
 
-- [`docs/DESIGN.md`](./docs/DESIGN.md)
 - [`docs/LAUNCHD.md`](./docs/LAUNCHD.md)
-- [`docs/provider_schema_notes.md`](./docs/provider_schema_notes.md)

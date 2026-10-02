@@ -1,9 +1,8 @@
 # Dependency Modernization Audit — 2026-09-16
 
 > **Historical reference:** The versions, holds, and validation results below
-> describe the September 16 snapshot. The subsequent migrations are recorded in
-> [the follow-up analysis](dependency_modernization_followup_analysis_2026_09_16.md);
-> use project READMEs and manifests for current dependency and setup guidance.
+> describe the September 16 snapshot. Use project READMEs and manifests for
+> current dependency and setup guidance.
 
 ## Scope and method
 
