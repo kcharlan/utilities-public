@@ -136,8 +136,8 @@ failures and shared ancestor permissions are not changed.
 
 `MARKET_ATLAS_DATA_HOME` defaults to `~/.cache/market-atlas`;
 `UTILITIES_WEBROOT_DIR` defaults to `~/webroot`. Live deployment requires
-its existing authorization. This port's live cutover follows upstream merge
-and the branch completion workflow. Deploy never runs setup/compiler/dependency
+explicit authorization. The source port is implemented; repository updates do
+not update an installed copy. Deploy never runs setup/compiler/dependency
 installation or reloads the webserver.
 
 The canonical installed URL is

@@ -2,6 +2,11 @@
 
 Date: 2026-09-16
 
+**Status:** Completed historical audit. Findings and validation below record the
+September 16 cleanup, not current test counts or an open implementation queue.
+The completed execution plan has been retired; the retention criteria remain
+useful maintenance guidance.
+
 ## Assumptions
 
 - Each directory documented as a project in the repository README is an independently maintained boundary unless its README identifies it as a grouping or reference directory.
@@ -134,40 +139,6 @@ Projects with cleanup changes: `cognitive_switchyard`, `data_format_converter`, 
 Projects whose current test infrastructure was retained after review: `Calculation tools`, `apple-health-extract`, `benchmark-llm`, `div_conv`, `docker/llm_collector`, `docpipe`, `editdb`, `etf_montecarlo`, `expense_dock`, `hysa-excel`, `md-autotax`, `mls-tracker` beyond its unused dependency, `moneydance backup rotation`, `router-log-analyzer`, `time_machine_snapshot_monitor`, and `usage-monthly-csv`.
 
 Projects inspected and confirmed to have no removable test infrastructure: `Claude_plugin_converter`, `abacus usage`, `anduril_steps`, `coding`, `dloc`, `doc_linearizer`, the grouping-only `docker` root, `docker/actual-data`, `docker/docker-disk-compact`, `docker/excalidraw`, `docker/mermaid`, `docker/n8n-poc`, `docker/webserver`, `md-json`, `mem_snapshots`, `pdf-split`, `reversible-skew`, `toggle_wifi`, `transcription`, `trim_last`, `vid-compiler`, `video-scenes`, `web_games/rps_screen`, and `worktree-helper`. Runtime self-tests, deployment smoke checks, sprites, sample inputs, and operator verification commands were retained when they are part of the current product rather than test cruft.
-
-## Implementation Plan
-
-### Phase 1: Inventory and contract mapping
-
-1. Read the repository and project READMEs plus linked behavior/design documents.
-2. Inventory test files, helpers, fixtures, runners, manifests, configs, documented commands, and tracked generated artifacts.
-3. Map borderline negative and compatibility tests to current behavior before deciding whether to remove them.
-
-**Result**: Completed for every project listed in the root README.
-
-### Phase 2: High-confidence cleanup
-
-1. Remove placeholders, transition-only assertions, copied-fragment tests, exact/subset duplicates, and orphaned runners.
-2. Remove unused helpers, fixtures, imports, and dependencies.
-3. Update only the documentation, lockfiles, and dependency-policy entries directly made stale by those removals.
-
-**Result**: Completed. No production application behavior or public API was changed.
-
-### Phase 3: Adversarial review
-
-1. Review every deletion against current docs, production behavior, retained coverage, and history.
-2. Restore any removed test with a distinct durable contract.
-3. Scan again for missed obsolete infrastructure and stale references.
-
-**Result**: Completed. The review restored RouterView's documented live-route exclusion test, found the disconnected Cognitive Switchyard tests, and identified unused Harscope/Jtree coverage dependencies. The final adversarial verdict was approved with no remaining actionable findings.
-
-### Phase 4: Verification and delivery
-
-1. Run complete documented suites for every changed project boundary.
-2. Run dependency/header guards, shell syntax/safe smoke checks, diff hygiene, reference scans, and sensitive-data review.
-3. Stage the exact diff, re-inspect it, commit on the feature branch, push, and open a pull request.
-
-**Stop condition**: Do not commit or open the pull request while any test is failing or an adversarial finding remains unresolved.
 
 ## Validation Summary
 

@@ -1,7 +1,19 @@
 # Dependency Modernization Follow-up Analysis — 2026-09-16
 
+> **Historical reference:** This analysis preserves the migration decisions and
+> integration constraints from September 16. Its proposed work was implemented
+> on September 17, except for the explicitly waived paid comparison and the
+> closed Node lifecycle gate described below. Forward-looking language in the
+> original analysis is historical; current project READMEs and source govern.
+> The completed implementation plan has been retired. SQLite resource-lifecycle
+> follow-up, upstream warning rechecks, and supply-chain options remain separate
+> considerations rather than unfinished migration tasks.
+
 ## Execution outcome — 2026-09-17
 
+- The React 19/Babel 8 ESM migrations, applicable Tailwind 4 and chart/graph
+  upgrades, Switchyard test-client migration, and direct FFmpeg video compiler
+  were implemented. Current project READMEs document the delivered contracts.
 - The public-safe `benchmark-llm` harness was implemented and validated with
   fake executors only. The user explicitly waived the planned paid comparison
   and directed all maintained `coding/design_orch` and Cognitive Switchyard
@@ -22,8 +34,9 @@ This document analyzes every dependency surface that the
 [2026-09-16 dependency modernization audit](dependency_modernization_audit_2026_09_16.md)
 did not move to the newest available line. It distinguishes work that is ready
 to implement from updates that are correctly gated by release policy or an
-explicit product decision. It does not authorize implementation; the companion
-implementation plan defines that work.
+explicit product decision. It preserves the rationale and integration contract
+for the completed work; the execution outcome above records how its proposed
+gates were resolved.
 
 ## Executive conclusion
 
