@@ -44,9 +44,11 @@ cd model_sentinel
 
 The shebang launcher is the simplest local entry point.
 
-You can also run the module directly:
+You can also run the module directly from an activated project virtual
+environment:
 
 ```bash
+source .venv/bin/activate
 python3 -m model_sentinel --help
 ```
 
@@ -422,7 +424,10 @@ not a `--format` value:
 Scan reports use smart, field-type-aware formatting:
 
 - **Fields classified as monetary prices** are presented as a normalized
-  `$X.XX` per-1M figure alongside the provider's raw value. Newly added and
+  `$X.XX` figure in the unit declared by the active provider profile alongside
+  the provider's raw value. OpenRouter token prices use `/1M tokens`, searches
+  use `/1K searches`, and request/image prices retain their respective units.
+  Unknown OpenRouter monetary leaves use `/unit unknown`. Newly added and
   removed prices are included. For an unregistered, mixed-unit provider this
   classification and unit are best-effort; see the Abacus caveat under
   Configuration.

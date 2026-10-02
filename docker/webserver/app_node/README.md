@@ -31,6 +31,8 @@ In `docker-compose.yml`:
 
 ## How to Modify and Extend
 
+Run Docker Compose commands from the parent `docker/webserver` directory.
+
 1.  **Add New Endpoints:**
     *   Edit `api.js` to add more routes and logic using Express.js.
     *   Example:
@@ -41,7 +43,7 @@ In `docker-compose.yml`:
         ```
 
 2.  **Add Dependencies:**
-    *   If your new features require additional Node.js packages, add them to `package.json` under `dependencies`.
+    *   From this `app_node` directory, use `npm install <package>` to update both `package.json` and `package-lock.json`, then review and commit both files. The image uses `npm ci`, so editing only `package.json` leaves an inconsistent build input.
     *   Example:
         ```json
         "dependencies": {

@@ -15,6 +15,13 @@ It has two modes:
 - Python 3.10 or newer
 - No third-party packages
 
+Create and activate a virtual environment before running the script:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
 The examples below assume the current directory is `anduril_steps/`. The script
 is tracked as executable, so it can be run directly:
 

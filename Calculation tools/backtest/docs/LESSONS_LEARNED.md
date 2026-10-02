@@ -48,9 +48,9 @@ restoration errors with the actual retained recovery location.
 
 Use `/calculators/backtest/index.html`. The folder route may remain the shared
 file browser; no proxy edits or service reloads are needed. Source tests and
-fixture installation do not establish live deployment. For this port, finish
-validation, push/open the PR, merge upstream and complete the branch workflow
-before live cutover. Data-bearing public distribution needs its own decision.
+fixture installation do not establish live deployment. Validate changes and
+obtain live-cutover authorization before installing them. Data-bearing public
+distribution needs its own decision.
 
 The repository [deployment guide](../../../docs/local_deployment_sync.md#adding-a-deployment)
 describes choosing direct copy, maintained tree or generated static deployment

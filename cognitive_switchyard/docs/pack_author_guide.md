@@ -152,7 +152,7 @@ phases:
   # Required: execution must be enabled
   execution:
     enabled: true           # Must be true
-    executor: shell         # or: agent
+    executor: shell         # Required by the current worker dispatcher
     reasoning_effort: medium  # Optional; exposed to shell hooks via env
     command: scripts/execute  # Required for shell executor; path relative to pack root
     max_workers: 3          # Max parallel worker slots (default: 2)

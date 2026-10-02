@@ -15,7 +15,7 @@ Standalone Zsh utility that runs the `ccusage claude daily` and `ccusage codex d
 - Supports an explicit prior-month mode for manual backfills after the boundary window.
 - Accepts `--date` in either `YYYY-MM-DD` or `YYYYMMDD`, normalizes internally, and still passes `YYYYMMDD`-style values to the upstream commands.
 - Replaces existing files for the same month only after the new report has been generated successfully.
-- If the JSON-report path is unavailable, falls back to the legacy `ccusage_csv` and `cusage_csv` commands. It can load those commands through interactive Zsh when they are defined as functions or aliases in a startup file such as `~/.zshrc`.
+- If `npx` or `jq` is missing, falls back to the legacy `ccusage_csv` and `cusage_csv` commands. It can load those commands through interactive Zsh when they are defined as functions or aliases in a startup file such as `~/.zshrc`.
 
 ## Requirements
 
@@ -23,6 +23,8 @@ Standalone Zsh utility that runs the `ccusage claude daily` and `ccusage codex d
 - One of these report sources:
   - Preferred: `npx` and `jq` on `PATH`. The script invokes the reproducibly pinned `ccusage@20.0.20`, so `npx` may need network access when that package is not cached.
   - Fallback: both `ccusage_csv` and `cusage_csv`, either on `PATH` or available to interactive Zsh through a startup file such as `~/.zshrc`.
+
+An upstream JSON command failure stops the run; it does not trigger the fallback.
 
 ## Installation
 

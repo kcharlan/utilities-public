@@ -50,7 +50,8 @@ source.
 
 ## Convert the download
 
-From the `abacus usage` directory, run:
+From the `abacus usage` directory, activate the virtual environment described in
+the README, then run:
 
 ```bash
 ./de-abacus.py \

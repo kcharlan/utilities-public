@@ -30,7 +30,7 @@ jtree [file.json] [--port 8100] [--readonly]
 |------|---------|-------------|
 | `[file.json]` | optional | Path to the JSON file (opens welcome screen if omitted) |
 | `--port`, `-p` | 8100 | Preferred local-server port; if occupied, jtree tries the next 19 ports |
-| `--readonly` | off | Disable all editing |
+| `--readonly` | off | Open the initial command-line file read-only |
 
 ## Features
 
@@ -95,6 +95,7 @@ jtree [file.json] [--port 8100] [--readonly]
 - Only expanded nodes are rendered
 
 ### Current Limitations
+- `--readonly` applies to the initial file. Opening another file through the UI creates an editable document; it is not a session-wide restriction.
 - Node paths use `.` as their separator, so object keys containing literal periods cannot be navigated or edited reliably
 - Expand All traverses at most 200 immediate children per container and stops after 5,000 expanded containers
 - The frontend libraries and fonts are loaded from CDNs, so the UI needs network access unless those resources are already cached by the browser

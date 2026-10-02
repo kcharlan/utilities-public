@@ -105,7 +105,7 @@ docpipe convert --input PATH --out DIR [OPTIONS]
 | `--out` | *(required)* | Output directory (created if it doesn't exist) |
 | `--images` | `false` | Extract images (PDF page renders, DOCX embedded) |
 | `--format` | `md+json` | Output format: `md`, `json`, or `md+json` |
-| `--max-page-images` | `50` | Max PDF pages to render as images |
+| `--max-page-images` | `50` | Maximum retained PDF page images; Poppler renders all pages before excess images are removed |
 | `--xlsx-max-cells` | `2000000` | Safety cap on cells extracted from XLSX |
 | `--strict` | `false` | Treat conversion warnings as errors (exit 2 without writing Markdown/JSON; an image-cap warning can occur after assets are created) |
 | `--verbose` | `false` | Show detailed logging and tracebacks on error |

@@ -8,6 +8,10 @@ comparisons stay in page memory. Only the appearance preference is stored in
 
 ## Setup and build
 
+Use Node.js 24 or newer and npm, matching this project's `engines` contract.
+Cold data setup also needs Python 3.10 or newer available for external venv
+creation; the default command is `python3.14` (override with `--python`).
+
 The public checkout contains application/compiler source and invented tests.
 Real workbooks, generated history, builds, exports and validation records stay
 outside Git and public artifacts. From this project directory:
@@ -80,8 +84,7 @@ legacy tree also restores its old exposure profile; this is emergency recovery.
 The canonical installed URL is
 `http://127.0.0.1:7711/calculators/backtest/index.html`. The folder route may
 remain a file browser. No proxy reload, container restart or routing change is
-needed. This port's live deployment follows upstream merge and the branch
-completion workflow.
+needed. Live deployment requires separate authorization.
 
 ## Validation and audit
 

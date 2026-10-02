@@ -30,7 +30,7 @@ Packs declare which phases they use. All phases are optional except Execution.
 
 ## Session Worktree Isolation
 
-When a session is created with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNITIVE_SWITCHYARD_BRANCH` environment variables, the backend creates a git worktree in a peer directory of the source repo. Workers operate on the worktree, leaving the original repository untouched. Worktrees are cleaned up automatically when sessions complete, abort, or are deleted.
+When a session is created through the web backend with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNITIVE_SWITCHYARD_BRANCH` environment variables, the backend creates a git worktree in a peer directory of the source repo. Workers operate on the worktree, leaving the original checkout untouched. Idle sessions retain their worktrees for subsequent runs. Completed runs retain them for validation and merge review until the operator uses the completion card's cleanup action. Aborted sessions, explicitly ended idle sessions, and deleted or purged sessions clean up their worktrees.
 
 ## Architecture
 
@@ -170,12 +170,14 @@ Packs are synced to the runtime directory on first run and can be refreshed with
 
 ## Web UI
 
-The embedded React SPA provides four views:
+The embedded React SPA provides four main views:
 
 - **Setup** -- Create sessions, configure packs, set repo root/branch for worktree isolation, run preflight checks, manage intake items
 - **Monitor** -- Real-time pipeline strip, streaming phase logs (planning/resolution/execution), worker cards with progress bars and log tails, verification progress countdown, auto-fix attempt tracking
 - **History** -- Browse completed/aborted sessions, view release notes and task outcomes
 - **Settings** -- Global configuration (retention, default counts, default pack)
+
+The Monitor also opens a task detail view with logs and status, and an interactive dependency DAG view.
 
 Real-time updates flow through WebSocket: state changes, task status transitions, worker log lines, progress detail markers, and alerts.
 

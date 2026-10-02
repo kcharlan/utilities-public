@@ -332,7 +332,7 @@ Results appear immediately:
 
 | Status | Meaning |
 |--------|---------|
-| **PASS** | Decision was applied correctly — redacted values show `[REDACTED]`, kept values have their original content |
+| **PASS** | Redacted values show `[REDACTED]`; kept values are not `[REDACTED]`. Validation does not compare kept values with the original capture |
 | **FAIL** | Decision was NOT applied — the value doesn't match what was expected |
 | **ERROR** | Location not found in the HAR — the path may have changed or the entry is missing |
 
@@ -437,7 +437,7 @@ Four charts below:
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `file_path` | — | *(none)* | HAR file to open (optional) |
-| `--port` | `-p` | 8200 | Server port (auto-probes 8200–8219) |
+| `--port` | `-p` | 8200 | Preferred server port (probes 20 ports starting with the requested value) |
 | `--validate` | — | — | Validate a sanitized HAR against an EDL (CLI mode) |
 | `--edl` | — | — | Path to `.edl.json` (required with `--validate`) |
 | `--format` | `-f` | `text` | Output format for validation: `text` or `json` |

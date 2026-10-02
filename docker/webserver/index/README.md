@@ -62,6 +62,10 @@ In `docker-compose.yml`:
 
 ## How to Modify and Extend
 
+Run Docker Compose commands from the parent `docker/webserver` directory.
+When dependencies change, update and review `package-lock.json` alongside
+`package.json`; the image installs with `npm ci`.
+
 ### Theming the Index
 
 The dynamic index uses inline CSS and a basic HTML structure. To customize its appearance:

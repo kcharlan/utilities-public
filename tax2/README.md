@@ -130,8 +130,9 @@ transactions for every selected state:
 1. an expense transaction with a negative amount; and
 2. a transfer transaction with the corresponding positive amount.
 
-The default expense categories and transfer accounts come from the state YAML
-`qif` block and can be edited in the UI. Dates use `MM/DD/YY` on QIF date lines
+The state expense categories and transfer accounts come from the state YAML
+`qif` block, with optional runtime overrides. Federal fields have UI defaults;
+all fields can be edited in the UI. Dates use `MM/DD/YY` on QIF date lines
 and `MM/DD/YYYY` in memos. A single-state Georgia export retains compatibility
 with the previous Tax2/`md-autotax` transaction text; multi-state memos include
 the state code.

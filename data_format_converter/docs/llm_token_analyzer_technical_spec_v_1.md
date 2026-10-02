@@ -63,7 +63,7 @@ source panel. Counts and comparisons remain cleared.
 | XML | `DOMParser` / `jsonFromXml` | `xmlFromJson` | Generated output is wrapped in `root`; attributes are ignored; leaf numbers/booleans are coerced |
 | YAML | `jsyaml.load` | `jsyaml.dump` | Library loaded from jsDelivr |
 | TOON | `jsonFromToon` | `toonFromJson` | Local key/value subset; object root required for output |
-| TOML | `@iarna/toml.parse` | `@iarna/toml.stringify` | ESM library loaded from esm.sh; null rejected before output |
+| TOML | `@iarna/toml.parse` | `@iarna/toml.stringify` | ESM library loaded from jsDelivr; null rejected before output |
 
 The browser TOON adapter is deliberately separate from the Python
 `toon-format` library. Its colon-delimited lines, bracket lists, and inline

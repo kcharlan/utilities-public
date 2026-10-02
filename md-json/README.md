@@ -22,8 +22,13 @@ No packages need to be installed after activation.
 
 ## Usage
 
+Keep Moneydance exports and generated CSVs outside this public repository. After
+activating the virtual environment, supply private input and output paths:
+
 ```bash
-python md_converter.py --input <your-moneydance-export.json> --output <your-desired-output.csv>
+python md_converter.py \
+  --input "$HOME/.md-json/export.json" \
+  --output "$HOME/.md-json/transactions.csv"
 ```
 
 Run the command from the `md-json` directory. Both options are optional:
@@ -31,12 +36,10 @@ Run the command from the `md-json` directory. Both options are optional:
 - `--input` defaults to `md-all-data.json`.
 - `--output` defaults to `output_with_types_v4.csv`.
 
-For example:
-
-```bash
-python md_converter.py
-python md_converter.py --input my_export.json --output transactions.csv
-```
+Both defaults resolve from the current working directory. Use explicit external
+paths when running from this source directory, or change to private storage and
+invoke the script by its absolute path. Create the private output directory
+before running; the converter does not create it.
 
 The output file is replaced if it already exists. A missing or invalid input
 file, or an unwritable output path, is reported on standard output.

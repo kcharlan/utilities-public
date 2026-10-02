@@ -5,11 +5,13 @@
 
 Use conspicuously synthetic public fixtures. Keep operational configuration and mutable state in the tool's documented user-home runtime directory. Before every commit, review the complete staged diff and file list specifically for sensitive content.
 
-Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Seventeen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
+Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Eighteen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
 
-The latest repository-wide dependency review, including compatibility holds
-that require follow-on architecture work, is recorded in
-[docs/dependency_modernization_audit_2026_09_16.md](docs/dependency_modernization_audit_2026_09_16.md).
+The September dependency review is preserved in
+[the audit](docs/dependency_modernization_audit_2026_09_16.md), with the subsequent
+frontend, test-client, video-processing, and model-default migrations recorded in
+[the follow-up analysis](docs/dependency_modernization_followup_analysis_2026_09_16.md).
+These are dated references; project READMEs describe the current dependencies.
 
 ## Flagship Utilities
 
@@ -97,8 +99,8 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `time_machine_snapshot_monitor` – Hourly alert-only macOS monitor for Time Machine local snapshots that remain mounted after backup activity stops, with an explicit safe-repair action, bounded logs, and user-level `launchd` installation.
 - `toggle_wifi` – macOS helper that briefly toggles Wi-Fi when invoked; wake detection or scheduling must be configured separately.
 - `transcription` – Whisper-backed Streamlit console for bulk transcription with meticulous session/lifetime counters and batching helpers.
-- `trim_last` – FFmpeg-based CLI for trimming a configurable duration from the end of one or more media files.
-- `usage-monthly-csv` – Standalone Zsh utility that runs `ccusage_csv` and `cusage_csv` for the current month, automatically includes the prior month near month boundaries, and writes `MMYY`-suffixed CSV reports to Downloads by default.
+- `trim_last` – FFmpeg-based CLI that retains the final requested number of seconds from one or more media files.
+- `usage-monthly-csv` – Standalone Zsh utility that converts pinned `ccusage` Claude/Codex JSON reports to CSV, falls back to legacy CSV commands when `npx` or `jq` is unavailable, automatically includes the prior month near month boundaries, and writes `MMYY`-suffixed CSV reports to Downloads by default.
 - `vid-compiler` – uv-managed, FFmpeg-based sampler that stitches highlight reels and tail segments from long raw footage.
 - `video-scenes` – Setup and command reference for PySceneDetect scene-boundary workflows.
 - `web_games/gorilla` – Modern browser remake of the classic QBasic **Gorilla.BAS** artillery game with AI opponents and local multiplayer.

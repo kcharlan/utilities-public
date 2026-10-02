@@ -47,6 +47,9 @@ To change how Nginx behaves, you will edit `default.conf`.
 
 ### Applying Changes
 
+Run the Docker Compose commands below from the parent `docker/webserver`
+directory.
+
 After modifying `default.conf`, you need to restart the Nginx `web` service for the changes to take effect:
 
 ```bash

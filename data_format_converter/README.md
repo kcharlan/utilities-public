@@ -120,9 +120,11 @@ Important conversion behavior:
 - XML element values load as strings through `xmltodict`; an XML round trip may
   therefore not preserve scalar Python types.
 - TOML conversion fails with exit code `4` when the data contains `null`/`None`.
-- Parse/input errors use exit code `3`, conversion errors use `4`, output-write
-  errors use `5`, and `argparse` usage errors use `2`. Runtime error details are
-  emitted as one-line JSON on standard error.
+- Missing input paths and parse errors use exit code `3`, conversion errors
+  use `4`, output-write errors use `5`, and `argparse` usage errors use `2`.
+  Handled runtime errors are emitted as one-line JSON on standard error;
+  other input-read failures, such as permission errors, propagate as Python
+  exceptions.
 
 ## Testing
 

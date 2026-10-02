@@ -158,5 +158,4 @@ remain a file browser. The [test guide](../tests/README.md) specifies retained
 Node tests and all three original browser scenarios on flat file and isolated
 HTTP explicit-index targets. Independent source/data bytes define expectations.
 Installed acceptance follows authorized cutover and checks served bytes as well
-as application behavior. For this port, cutover follows upstream merge and
-branch completion; source validation does not imply live deployment.
+as application behavior; source validation does not imply live deployment.

@@ -63,6 +63,12 @@ media-dater --prefix "VACATION_" --ext mov,mp4 ~/Movies/Trip
 
 ## Behavior and limitations
 
+- Counter handling depends on the Bash version: the first `((count++))` or
+  `((skipped++))` returns status 1 because its counter starts at zero. Bash
+  versions that apply `set -e` to arithmetic commands exit at that point,
+  before the dry-run preview or rename command. macOS's bundled Bash 3.2 does
+  not exit on that arithmetic status; portability requires a counter-handling
+  code fix.
 - Without `--ext`, discovery includes every non-hidden regular file, not just
   recognized image and video formats. Use `--ext` when the target contains
   unrelated files.
