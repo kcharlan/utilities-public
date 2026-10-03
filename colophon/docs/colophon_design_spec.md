@@ -1,6 +1,6 @@
 # Colophon — Design Spec
 
-Status: approved design; user review complete; revised after review round 1 and its sanity check · Date: 2026-10-03
+Status: approved design; user review complete; revised after review round 1 and its sanity check; amended by the implementation plan on 2026-10-03 · Date: 2026-10-03
 
 Colophon is a local, read-only explorer for OpenAI Codex session logs. One
 command compiles the logs under `~/.codex` into a single self-contained,
@@ -87,6 +87,7 @@ written with mode 0600.
 | `cache/` | Per-log parse records, plus the cache format version. |
 | `pricing-cache.json` | OpenAI subset of the catalog, its ETag and fetch time. |
 | `price-history.json` | The user's editable price-history ledger (§5.6). Created empty on first run. Curated entries live in the launcher and are never copied here. |
+| `priority-turns.json` | Sticky memory of detected priority turns (§5.5), retained after trace rows are pruned. |
 | `workspaces.json` | Optional workspace aliases. |
 | `workspaces.example.json` | Synthetic template written on first run. Never read as configuration. |
 | `perf-baseline.json` | Local throughput baseline. Written only by the local acceptance script, never by `colophon` (§11). |
@@ -109,12 +110,20 @@ Colophon reads every source read-only. SQLite databases are opened with
 
 | Source | Use |
 |---|---|
-| `sessions/**/rollout-*.jsonl`, `archived_sessions/**/rollout-*.jsonl` | Primary data. A log under `archived_sessions` is archived. |
+| All non-hidden files with a case-insensitive `.jsonl` extension under `sessions/` and `archived_sessions/` | Primary data, including date partitions, flat files and recursive legacy layouts. A log under `archived_sessions` is archived. |
 | `state_*.sqlite` (newest readable schema): `threads` | Titles, cwd, git data, archived flag, agent nickname/role/path, `rollout_path`. |
 | `state_*.sqlite`: `thread_spawn_edges` | Authoritative parent → child edges, when present (§5.3). |
+| `logs_2.sqlite`: `logs` | Priority-turn detection, following the upstream cold scan (§5.5). The file is under `--codex-home`. |
 | `session_index.jsonl`, `.codex-global-state.json` | Additional title sources, in the title priority of §5.1. |
 
 Database threads with no log file are counted in diagnostics only.
+
+Discovery follows `listCodexSessionFiles`, `listCodexSessionFilesFlat` and
+`listCodexLegacySessionFilesRecursive` in `CostUsageScanner.swift`
+@ `3bbf6bc48` (2151–2187, 3283–3330), over all history. Paths and filesystem
+identities `(device, inode)` are de-duplicated so overlapping discovery paths
+or hard links do not count the same file twice. No `rollout-` filename prefix
+is required.
 
 **Recognized record types.** Each type is either *used* or *known and
 ignored*. Any other type is counted per type for format-drift diagnostics
@@ -125,7 +134,7 @@ ignored*. Any other type is counted per type for format-drift diagnostics
 | `session_meta` | Used. **The first `session_meta` in a file owns the session identity.** A later one is ancestor metadata and marks a copied (inherited) prefix. Same rule as the research extractor and upstream CodexBar. |
 | `turn_context` | Used: model, effort, turn id. |
 | `event_msg` `task_started` / `task_complete` / `turn_aborted` | Used: turn lifecycle, duration, time to first token. |
-| `event_msg` `thread_settings_applied` | Used: `service_tier` in force from that point (priority pricing, §5.6). Also ends an inherited prefix, as in the research extractor. |
+| `event_msg` `thread_settings_applied` | Known; ends an inherited prefix (§5.3). Not a tier source. |
 | `event_msg` `item_completed`: `UserMessage`, `AgentMessage` | Used: requests and final answers (§5.1). |
 | `event_msg` `item_completed`: `CommandExecution`, `FileChange`, `McpToolCall`, `WebSearch`, `ImageView`, `Extension` | Used: tool summary (§5.4). |
 | `event_msg` `item_completed`: `SubAgentActivity`, `CollabAgentToolCall` | Used: subagent linking (§5.3). |
@@ -155,6 +164,9 @@ scan files → parse each file (cached) → load metadata → assemble sessions
 - Each log is read once, as a stream.
 - A parse produces a compact per-file record: session facts, turns, kept text,
   tool counts, usage events and diagnostics.
+- A log without `session_meta` still contributes usage as a separate
+  `file:<path>` accounting unit (§5.1). Files sharing a session id retain a
+  union of distinct usage rows while display facts come from one copy.
 - **The cached record holds only time-independent facts.** That covers turn
   starts and ends as logged, whether the final line was partial, the scan-start
   mtime, and the raw usage events.
@@ -227,7 +239,8 @@ in the meantime, because its log changed and is reparsed.
      and cost still count, because they were spent.
 5. **Counter restart.** A cumulative token counter that restarts after a crash
    is handled by the ported interleaving rules (§5.5, fallback rule 3).
-6. **Empty or header-only logs.** Skipped and counted. Not an error.
+6. **Empty or header-only logs.** Skipped and counted. Not an error. A log
+   with usage but no `session_meta` is counted instead (§5.1).
 7. **Colophon's own interruption.** The page, the cache and the price-history
    ledger are always written via temp file + rename. An interrupted run leaves
    the previous versions intact.
@@ -260,9 +273,33 @@ The implementation must not depend on access to the extractor.
 ### 5.1 Sessions, titles and text
 
 **Session types.**
-- A session is one log file, identified by its first `session_meta` id.
+- A session is identified by its first `session_meta` id. Multiple files
+  sharing that id follow the copy rules below.
 - "Your sessions" have no subagent parent. Subagents are nested under their
   parent.
+
+**Logs without `session_meta`.** Their tokens count, as in CodexBar. Each
+file is its own accounting unit, keyed `file:<path>` (`codexUsageRowKey`,
+`CostUsageScanner+CacheHelpers.swift` @ `3bbf6bc48`, 497–512), never merged
+with another file and never entered into the fork-parent index. For display
+only, use the filename's trailing UUID, otherwise its stem. Flag the row
+`no_session_meta`.
+
+**Files sharing a session id.**
+- Fallback rows are de-duplicated across copies with upstream
+  `uniqueCodexRows` / `codexCrossFileRowKey`
+  (`CostUsageScanner+CacheHelpers.swift`, 497–555), so the union of distinct
+  rows counts. Primary records are de-duplicated by `(thread_id, response_id)`.
+- Display facts (turns, requests, title and live state) come from the copy
+  with the newest mtime, with ties broken by ascending path.
+- Fork-parent lookup uses the newest-mtime copy, with the same tie-break.
+  This is a user-approved difference from upstream's incremental file-index
+  selection; the row union still follows upstream.
+- `duplicate_session_ids` lists every **pre-pass** id found in more than
+  one file. That is the id used by the fork-parent index. Its first eligible
+  metadata record is subject to upstream's 256 KiB line limit, so it can
+  differ from the true-first metadata id used for display. The diagnostic
+  lists both when they differ.
 
 **Display title.**
 - **Your sessions:** the inherited title priority. Database name, then session
@@ -578,13 +615,58 @@ The model in force is also reset to none at a subagent's owned suffix (see
 - **`unknown`** is never priced (upstream `resolvedCodexPricing` returns
   nothing for it), and is shown as an unpriced model.
 
-**Service tier.** The service tier is the one in force at that instant, from
-the latest preceding `thread_settings_applied`; the default tier applies
-before any. Session and turn attribution follow "Attribution" below.
+**Service tier: upstream trace detection plus sticky memory.** A usage unit
+is priority exactly when its turn id is detected or stored as a priority
+turn. This applies to both token paths, matching upstream's
+`row.turnID.flatMap { priorityTurns[$0] }`. Other usage is standard.
+`thread_settings_applied` only ends an inherited prefix; it supplies no tier.
 
-Upstream detects priority from Codex's `logs_*.sqlite` trace database
-instead. Colophon's source is a recorded deviation in `token_rules.md`, and
-parity reports any difference.
+**Detection (port).** On every invocation, cold-scan
+`<codex-home>/logs_2.sqlite`, table `logs`, with no memo, cursor, anchors or
+pruning. Open it read-only with
+`sqlite3.connect("file:…?mode=ro", uri=True, timeout=0.25)`, matching upstream's
+250 ms busy timeout. Port `resolveCodexPriorityTurns`' cold-scan semantics
+from `CostUsageScanner+CodexPriority.swift` @ `3bbf6bc48`:
+
+- `accumulateCodexPriorityTurns` and `storePendingCodexCompletedModels`
+  (889–971), including the pending-completion FIFO cap of 4096 turn ids;
+- `filteredResolvedCodexPriorityTurns` / `latestCodexCompletedModel`
+  (440–459), selecting the highest-rowid retained completed model;
+- `parseCodexPriorityTraceRow`, `parseCodexPrioritySubmissionRow`,
+  `parseCodexCompletedTraceRow`, `value(named:in:)` and `quotedValue(named:in:)`
+  (1020–1098);
+- the non-indexed query from `codexPriorityAccumulationPlan` (973–1005):
+  `rowid > 0`, `ts >= 0`, request/completion/submission body filters, ordered
+  by rowid, over all history.
+
+The detected model is the highest-rowid retained `response.completed`
+model for that turn, otherwise the latest priority request model. Pending
+completions before priority detection follow upstream's FIFO retention;
+completions for an already-priority turn are retained for that turn. The
+trace path follows `--codex-home`, a user-approved difference from upstream's
+fixed `~/.codex` path.
+
+**Sticky memory (Colophon addition).** Merge detected turns into
+`$COLOPHON_HOME/priority-turns.json`, written atomically at mode 0600:
+
+```text
+{"schema": 1, "turns": {turn_id: {"thread_id": str or null,
+  "model": str or null, "timestamp": str or null, "first_seen_ms": int}}}
+```
+
+Never remove stored turns. A database entry replaces the stored entry
+except for `first_seen_ms`, which stays unchanged. Entries absent from the
+database remain. Usage older than both the trace database and the first
+Colophon run stays standard-priced; the README states this limitation.
+
+**Priced model (port).** `codexPriorityPricingModel` and
+`codexResolvedCostUSD` (`CostUsageScanner+PricingRows.swift`, 4–45, 87–95)
+use the priority turn's **raw** model when `codexAPIFastMultiplier` knows
+that model after normalization, otherwise the usage unit's own model. The
+fixed upstream model set controls this override decision only; the actual
+multiplier and cap come from price history (§5.6). Priority cost is
+`max(priority cost, standard cost)` when a priority cost exists, otherwise
+standard cost, both resolved for the priced model.
 
 **Source selection, per turn.**
 - If the turn has any `token_usage_record` belonging to this session, use
@@ -606,7 +688,17 @@ when that turn is a displayed, owned turn under §5.3.
 port**. Upstream never reads these records; it counts `token_count` for every
 turn. Colophon prefers them because each is an exact per-response figure. The
 difference is a recorded deviation (§15), and parity will show it.
-- Each `response_id` is counted once.
+
+- **Approved evidence (2026-10-03).** In the research period September 4
+  through October 3, the per-response records exceed CodexBar's daily totals
+  by 22.24M input tokens (0.65%) and 387K output tokens. Almost all is context
+  compaction: Codex logs those calls as `token_usage_record` directly before
+  `compacted`, without a corresponding `token_count`. Adding the 94 calls
+  exactly explains 19 of 25 days; four more differ by one call across
+  midnight. About 1.26M input tokens on September 4 and 6, under 0.04% of
+  the period, remain unexplained. The user set that remainder aside; revisit
+  it only if parity shows the gap growing.
+- Each `(thread_id, response_id)` is counted once, including across copies.
 - Only records whose `thread_id` equals the session's own id are counted. The
   real-data audit found no foreign records, so this guard is exercised by
   fixtures.
@@ -696,6 +788,9 @@ accounting:
 - **Otherwise:** the fork needs its parent's parse record. The dependency is
   recursive when the parent is itself a fork. The parent's prefix up to the
   fork point never changes, so the dependency is stable.
+  Colophon resolves parents on demand regardless of file order. This is the
+  approved fork-of-fork difference (§15): upstream's production scan order
+  can leave the `b10` chain unresolved, whereas Colophon resolves it.
 - **Parent log missing, or the fork timestamp missing or unparseable:** the
   fork baseline is unresolved, as upstream returns it. The fork's
   fallback-path usage is suppressed with the diagnostic "fork baseline
@@ -770,7 +865,9 @@ validation and the recorded deviations.
   image-only models, for example, are not priceable.
 - There is no bundled snapshot of current prices.
 
-**The resolver.** `resolve(id, catalog)` takes a normalized model id. It is
+**The resolver.** `resolve(id, catalog)` takes a normalized model id for
+ordinary usage; `resolve_rates(raw_model)` retains raw lookup only for the
+priority override described below. It is
 the port of upstream `resolvedCodexPricing`, **excluding its historical-rate
 branch**, because history lives in the ledgers.
 - **Catalog lookup.** It finds the catalog entry through the ported lookup
@@ -807,11 +904,12 @@ branch**, because history lives in the ledgers.
 - **Note in `token_rules.md`.** models.dev's own `tiers` data gives 272,000
   for models where upstream uses 200,000. Colophon keeps upstream's behavior
   for parity and records this as an upstream simplification to revisit.
-- **Keyed by normalized id, as upstream.** Ledgers and the resolver are keyed
-  by `normalizeCodexModel(raw)`. That is the same key upstream uses for its
-  bundled table and historical rates, so thresholds, bundled fills and
-  historical rates apply exactly when they would upstream. Each logged model
-  is priced as `resolve(normalizeCodexModel(raw), …)`.
+- **Ordinary usage is keyed by normalized id, as upstream.** Each logged
+  model is priced as `resolve(normalizeCodexModel(raw), …)`. Upstream stores
+  normalized row models (`CostUsageScanner.swift`, 4288, 4637), so ordinary
+  alias, bundled-only alias and folded dated-id pricing all match upstream.
+  Raw-id lookup applies only to priority overrides below. Thresholds,
+  bundled fills and historical rates use the normalized id.
   - **Unfolded spellings.** A dated or versioned spelling that
     `normalizeCodexModel` does not fold (for example
     `gpt-6-sol-2026-09-01`, whose base is not bundled) is its **own key**
@@ -828,18 +926,6 @@ branch**, because history lives in the ledgers.
     - If the catalog later lists the spelling itself at different rates,
       that is recorded as an ordinary rate change. Past usage keeps its
       rates.
-  - **Deviation.** Upstream first tries the raw logged id against the catalog
-    and only then the normalized id. A raw alias that has its own catalog
-    entry (for example `gpt-5.6` beside `gpt-5.6-sol`) is priced upstream
-    from the alias's entry, and in Colophon from the canonical one. Their
-    rates were identical in the research snapshot. Likewise, an alias whose
-    canonical model is bundled-only (for example `gpt-daybreak-red-latest` →
-    `gpt-5.6-cyber`) is priced from `CURATED_BUNDLED`, never from the
-    alias's catalog price; those rates were also identical. The same applies
-    to a dated spelling that folds to a bundled base but also has its own
-    catalog entry (for example a `<bundled>-YYYY-MM-DD` listed in models.dev):
-    upstream prices it from the dated entry, Colophon from the base. All
-    three cases are recorded in `token_rules.md` and §15.
   - **Provider-qualified ids.** Ids such as `provider/model` for a provider
     other than OpenAI are unpriced, because only the `openai` subset is
     kept. That is also recorded.
@@ -854,7 +940,9 @@ delimited JSON blocks keep the launcher a single file:
   fields). Fields upstream leaves `nil` are omitted. It has no
   `effective_from` or `source`.
   - It is read by the resolver and by the `normalizeCodexModel` port.
-  - A test checks every value against upstream's table at the cited commit.
+  - The maintainer script `tests/parity/check_upstream_tables.py` checks every
+    value against upstream's table at the cited commit. It is separate from
+    the suite; suite tests never read an external repository or binary.
 - **`CURATED_PRICE_HISTORY`** holds dated entries in the ledger format below,
   seeded by the maintainer from a dated models.dev snapshot. `token_rules.md`
   records the snapshot date and method.
@@ -911,7 +999,7 @@ tokens, every rate a plain number:
 
 | Field | Rule |
 |---|---|
-| `model` | Required string; a normalized model id. |
+| `model` | Required string; a normalized model id, except the priority-override key `catalog:<matched_catalog_id>\|<normalized_id>` below. |
 | `effective_from` | Required. An RFC 3339 UTC instant. `null` ("from the beginning") is allowed **only** in `CURATED_PRICE_HISTORY`. |
 | `per_million` | Required object. All four keys are required, each a number ≥ 0. |
 | `long_context` | Optional object. If present, `threshold` is required (a positive integer), and all four rate keys are required, each a number ≥ 0. A request whose input exceeds `threshold` uses these rates. |
@@ -948,23 +1036,58 @@ README shows how to copy the rates.
      "unpriced", used everywhere (§9).
 6. **Long context.** Use the entry's `long_context` rates when the request's
    input exceeds its `threshold`.
-7. **Priority tier.** Applies when the tier in force (§5.5) is `priority`,
-   following upstream `codexPriorityCostUSD`.
+7. **Priority turn.** Applies when the unit's turn id is detected or stored
+   as priority (§5.5), following upstream `codexPriorityCostUSD` and
+   `codexResolvedCostUSD`. Resolve rates for the priced model, including the
+   raw-model override below; the bucket still uses the normalized usage model.
    - The *standard cost* is the non-priority cost from the formula, with
      long-context rates when they apply.
-   - **Multiplier.** If the entry has `priority` and the request's input is
-     within `max_input_tokens` (`null` means no cap), cost = `multiplier` ×
-     the standard cost.
+   - **Multiplier.** Read `priority` from the history entry selected for the
+     normalized **priced** model at the request time, independently of the
+     rates key. Within `max_input_tokens` (`null` means no cap), priority cost
+     = `multiplier` × standard cost, and final cost is
+     `max(priority cost, standard cost)`.
    - **Over the cap.** If the input exceeds the cap, use the standard cost.
-   - **No `priority` field.** Use the standard cost and record the diagnostic
+   - **No `priority` field in that multiplier entry.** Use the standard cost
+     and record the diagnostic
      "priority usage on a model with no known multiplier; priced at
      standard", with the token volume. That tells the user which models need
      a `manual` entry.
+
+**Priority-override rate selection.** This follows upstream
+`resolvedCodexPricing(model: m)` (`CostUsagePricing.swift`, 562–620). Let
+`m` be the raw trace model chosen by the override rule, `n` its normalized
+id, and `t` the usage timestamp:
+
+1. If `n` has an upstream historical cutoff and `t` precedes it, pick `n`'s
+   history. Historical rates take precedence over the catalog.
+2. Otherwise run the ported catalog lookup chain for both `m` and `n`.
+   Let their first priceable matched catalog model ids be `c_m` and `c_n`.
+   If `c_m` exists and differs from `c_n`, use history key
+   `catalog:<c_m>|<n>`. Resolve that key's rates through `resolve_rates(m)`:
+   raw catalog lookup, with the bundled entry and threshold of `n`, exactly
+   as upstream merges them.
+   - With no entries for this key, use a transient `resolve_rates(m)` entry.
+   - With entries but `t` before their first one, use `n`'s history instead.
+     Before the alias catalog entry existed, both lookups matched `n`;
+     adding an alias entry later must not reprice earlier override usage.
+3. When the matches are equal, absent, or step 2 selects the earlier-history
+   fallback, pick `n`'s history with the ordinary rules and bundled fallback.
+
+The override key is the only non-normalized ledger key. The multiplier and
+cap always come from `history.pick(n_priced, t).priority`, where `n_priced`
+is the normalized priced model, independently of that key.
 
 **Recording catalog rates.** Recording runs whenever a catalog is available
 and the user ledger is valid: from a 200, a 304, the cache, or `--offline`.
 It happens **before** pricing (§4). Let *T* be the catalog's **fetch time**,
 which is when that copy was downloaded, not the current run time.
+
+Recording receives `key → source_model` pairs. For ordinary keys,
+`source_model = key`; for an active priority override key,
+`source_model = m`. Run the priceable-catalog filter and resolver on the
+source model while recording the result under the key. The set below
+includes these override pairs in addition to ordinary ids.
 
 The **recording set** is the union of:
 - the normalized id of every **priceable** model in the catalog (the same rule
@@ -979,7 +1102,8 @@ For each such id:
 - **Skip** if any entry for this model already has `effective_from` = *T*.
   This makes recording idempotent: re-reading the same cached catalog never
   appends.
-- **Compute** `resolve(id, catalog)`. Its `priority` is copied from the
+- **Compute** `resolve_rates(source_model)` for each recording key. Its
+  `priority` is copied from the
   entry the pick rule selects at *T*, of any source, if there is one,
   because the catalog has no priority data.
 - **Compare** with the latest **non-`manual`** entry (`catalog` or `curated`)
@@ -1041,16 +1165,20 @@ deliberately. An agent can perform this mechanically.
 chosen entry's rates (its `long_context` rates when `long`):
 
 ```
-tok_in        = request input tokens (total prompt size)
-tok_cached    = min(cached_input_tokens, tok_in)
-tok_cachew    = min(cache_write_input_tokens, tok_in − tok_cached)
+tok_in        = max(0, request input tokens) (total prompt size)
+tok_cached    = min(max(0, cached_input_tokens), tok_in)
+tok_cachew    = 0 (upstream Codex rows bill no cache writes)
 tok_uncached  = tok_in − tok_cached − tok_cachew
 long          = entry.long_context present and tok_in > entry.long_context.threshold
 rate          = long ? entry.long_context : entry.per_million
-cost_usd      = ( tok_uncached × rate.input
-                + tok_cached   × rate.cached_input
-                + tok_cachew   × rate.cache_write
-                + output_tokens × rate.output ) / 1e6
+input_rate    = rate.input / 1_000_000
+cached_rate   = rate.cached_input / 1_000_000
+cachew_rate   = rate.cache_write / 1_000_000
+output_rate   = rate.output / 1_000_000
+cost_usd      = (tok_uncached × input_rate)
+                + (tok_cached × cached_rate)
+                + (tok_cachew × cachew_rate)
+                + (max(0, output_tokens) × output_rate)
 ```
 
 - `output_tokens` is used as reported: it already includes reasoning tokens,
@@ -1058,10 +1186,15 @@ cost_usd      = ( tok_uncached × rate.input
 - Token counts come from the usage record on the primary path, and from the
   counted deltas of the ported accounting on the fallback path (§5.5). They
   are never a raw cumulative total.
-- **Deviation.** Upstream passes zero cache-write tokens for Codex rows.
-  Colophon uses the logged `cache_write_input_tokens`. These are zero in all
-  current logs, so the results are identical today. The deviation is recorded
-  in `token_rules.md`.
+- Cache-write billing is zero, matching upstream. The logged count remains
+  in the payload's `cache_write` field for display only.
+- Rates are never rounded. Catalog per-million values are stored as given.
+  A bundled per-token value `x` becomes per million through
+  `float(Decimal(repr(x)).scaleb(6))`. Dividing each rate before multiplying,
+  and adding terms in the order shown, matches `codexCostUSD`'s operations.
+  A bundled double can differ by one ulp after that round trip; parity may
+  also sum in a different order. The accepted daily cost tolerance is
+  `|Δcost| ≤ 1e-9 × cost + 1e-9` USD (representation only).
 
 **Labels.** Costs are labelled "API-equivalent estimate (not billed)"
 everywhere. The reader and the models panel show which rate period, and which
@@ -1113,7 +1246,7 @@ The page embeds one JSON document in
 | `subagents` | Keyed by id: the same shape, plus the parent link, spawn and interaction turns, and the link method. |
 | `workspaces` | Name, keys, aliases. |
 | `models` | Rate periods used per model, each with its ledger source (curated, catalog or manual), or "unpriced". |
-| `diagnostics` | Skipped files, malformed-line counts, truncated and recovered lines, unknown record types, database threads without logs, orphaned subagents, inferred links, unpriced models, models whose price history begins after their first use, priority usage without a known multiplier, rates from an unrecorded catalog, unresolved fork boundaries, ledger warnings, page size. |
+| `diagnostics` | Skipped files, malformed-line counts, truncated and recovered lines, unknown record types, database threads without logs, logs without metadata, `duplicate_session_ids`, orphaned subagents, inferred links, unpriced models, models whose price history begins after their first use, priority usage without a known multiplier, rates from an unrecorded catalog, unresolved fork boundaries, ledger warnings, page size. |
 
 - All times are UTC.
 - Aggregates and filters are computed in the browser from `sessions` and
@@ -1133,6 +1266,9 @@ Style **"instrument panel"**:
 
 The approved mockups cover the overview and the session list + reader, and
 the layout rules in §8.5 came from their review.
+The mockups remain private because they contain real session titles. Only
+their design tokens and layout values, restated in the implementation plan,
+may enter public source; the mockup files themselves must not.
 
 ## 8. Screens and behavior
 
@@ -1337,7 +1473,10 @@ anything. Also confirm what `codex resume` does to an archived session.
 | Unreadable or empty log file | Skipped; named in diagnostics. |
 | Unrecognized record type (§3) | Counted per type. The footer says "Codex's log format may have changed". |
 | Metadata SQLite locked or unreadable | Fall back to titles from the logs; diagnostic recorded. |
+| Priority trace database unavailable | Retain sticky priority memory; units without detected or stored priority evidence use standard pricing. |
 | Database thread without a log file | Counted in diagnostics. |
+| Log with usage but no `session_meta` | Count tokens in its own `file:<path>` unit; display filename-derived identity with `no_session_meta` (§5.1). |
+| Files sharing a session id | Count the union of distinct rows; display newest-mtime copy; `duplicate_session_ids` lists pre-pass ids and differing display ids (§5.1). |
 | Catalog unreachable or timed out | Use the cached catalog and the price history; diagnostic recorded. |
 | Model with no history entry and no catalog rate | "Unpriced" for that model; tokens still shown (§5.6 step 5, the only definition). |
 | Usage before a model's first dated entry | Priced at that model's earliest entry; diagnostic recorded. |
@@ -1369,9 +1508,10 @@ stderr prints a one-line summary.
   your requests and final answers.
 - **What is stored.** Only the text described in §5.1.
 - **Origin URLs** are stripped of credentials before they are stored.
-- **Public repository.** It holds only conspicuously synthetic fixtures and
-  examples. Parity and real-data acceptance output stays under
-  `$COLOPHON_HOME` and is never committed.
+- **Public repository.** It holds conspicuously synthetic fixtures and
+  examples, plus seven specifically approved, allowlist-scrubbed fixture
+  families (§12.1). No raw real data is committed. Parity and real-data
+  acceptance output stays under `$COLOPHON_HOME` and is never committed.
 
 ## 11. Performance
 
@@ -1394,9 +1534,24 @@ The targets scale with the data rather than fixing a number of seconds.
 
 ## 12. Testing
 
-Every category below runs in the project's documented suite.
+Unit, integration and browser categories run in the project's documented
+suite. Local acceptance and maintainer scripts are separate commands;
+neither the suite nor its fixtures require an external checkout or binary.
 
 ### 12.1 Fixtures
+
+All test data is Colophon's own. The suite never reads another repository's
+code, tests or fixtures and never runs CodexBar. Upstream sanitized fixtures
+are not imported. Maintainer scripts may use a local CodexBar checkout and
+CLI outside the suite.
+
+Seven scrubbed real fork/subagent families in `tests/fixtures/scrubbed/`
+were approved on 2026-10-03. They use an allowlist scrub, generated ids,
+synthetic paths, names and text, whole-day time shifts and doubled tokens.
+Their stored reference outputs were checked against the private originals
+using the same mapping. They are immutable Colophon fixtures; never change
+or regenerate their inputs or expected values to make a test pass. No raw
+real data is committed.
 
 A generator in `tests/` builds synthetic Codex homes. They cover:
 - **Log formats and records:**
@@ -1414,8 +1569,9 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
   - Repeated token snapshots, a counter drop, and `token_usage_record` turns.
   - A turn that has only `token_count` inside a `token_usage_record` file.
   - A foreign-thread usage record.
-  - Priority tier, including a session that switches between default and
-    priority.
+  - Priority tier from a synthetic `logs_2.sqlite`, including standard and
+    priority turns in the same session, completed-model highest-rowid choice,
+    pending-completion FIFO retention, and sticky memory after pruning.
   - Priority on a model with a multiplier (under and over its input cap), on
     gpt-6-astra (no cap), and on a model with no multiplier (diagnostic);
     a `manual` entry adding a multiplier; `priority` carried forward.
@@ -1434,8 +1590,10 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
     recorded when repriced.
   - The seed union: a catalog-only model (not in `CURATED_BUNDLED`) priced
     from its `null` seed entry.
-  - The raw-alias deviation: a log model id that is an alias with its own
-    catalog entry, priced from the canonical id.
+  - Ordinary aliases, bundled-only aliases and folded dated spellings with
+    their own catalog entries: normalized row pricing matches upstream.
+    Raw lookup is exercised only for priority overrides, including a later
+    alias catalog entry that must not reprice earlier usage (§5.6).
   - Unfolded spellings:
     - A dated log id whose base is not bundled: its own key; priced through
       the lookup chain from the base's catalog entry; a `catalog` entry under
@@ -1488,6 +1646,11 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
   - A fragment glued to a following record.
   - A counter restart.
   - Empty and header-only logs.
+  - Logs with usage but no `session_meta`, counted as separate file units.
+  - Files sharing session ids: fallback-row union, primary-record
+    de-duplication, newest-mtime display and parent selection, path tie-break,
+    and pre-pass ids that differ from true-first display ids.
+  - Fork-of-fork resolution independent of scan order (approved `b10` case).
   - A same-size, same-mtime rewrite, caught by the tail fingerprint.
   - A log moved into `archived_sessions`, and a deleted log.
   - A file that grows during the scan (scan-start cache key).
@@ -1589,7 +1752,7 @@ static deployment test, as `agents.md` requires.
 - `colophon/docs/`: this spec, the implementation plan, `token_rules.md`,
   `font.md`.
 - `colophon/tests/`.
-- `colophon/requirements-dev.txt` (pytest, playwright, fonttools).
+- `colophon/requirements-dev.txt` (pytest, playwright, fonttools, brotli).
 - `colophon/pytest.ini`.
 
 **Fleet registration:**
@@ -1637,20 +1800,43 @@ Ported functions carry a header comment naming their upstream source.
   marker. The quiet threshold for abandoned turns is 2 hours (§4.1).
 - `--rebuild` replaces the cache atomically (§2).
 
-**Deliberate deviations from upstream CodexBar** (each recorded in `token_rules.md`;
-parity is expected to show them):
-- Exact per-response `token_usage_record` usage is preferred where present;
-  upstream reads only `token_count` (§5.5).
-- Ledgers are keyed by normalized id, so a raw alias with its own catalog
-  entry, an alias of a bundled-only model, or a folded dated spelling with its
-  own catalog entry is priced from the canonical entry. Provider-qualified ids outside OpenAI are unpriced (§5.6).
-- The priority multiplier lives in the price history and is editable; upstream
-  hard-codes it (§5.6).
-- The priority tier comes from `thread_settings_applied`, not the trace
-  database (§5.5).
-- Logged cache-write tokens are used; they are zero in current logs (§5.6).
-- Prices are dated history, so a price change never reprices past usage
-  (§5.6).
+**Approved differences from upstream CodexBar (complete list, 2026-10-03).**
+Each is recorded in `token_rules.md`; other token and cost calculations
+follow upstream at `3bbf6bc48`.
+
+1. Exact per-response `token_usage_record` usage is preferred where present;
+   other turns use the ported `token_count` accounting. The context-compaction
+   evidence and the explicitly set-aside remainder are recorded in §5.5.
+2. Prices are dated history, so a price change never reprices past usage.
+   The priority multiplier and cap live in that history, seeded from
+   upstream `codexAPIFastMultiplier` (§5.6).
+3. Priority tier comes from upstream's trace database, plus sticky memory of
+   detected priority turns. This Colophon addition preserves detected turns
+   after trace pruning (§5.5), serving the role of upstream's persistent
+   cached row pricing mode/model.
+4. The trace database follows `--codex-home`; upstream uses `~/.codex`
+   regardless of `CODEX_HOME`.
+5. Only the `openai` catalog subset is kept. `openai/` is stripped as
+   upstream normalization does; any other provider-qualified model is
+   unpriced with a diagnostic. Colophon reads no CodexBar cache, settings
+   or data.
+6. Duplicate-id fork parents use the newest-mtime copy, with ascending-path
+   ties, rather than upstream's incremental file-index selection (§5.1).
+   The union of distinct token rows across copies still follows upstream.
+7. Fork-of-fork chains resolve regardless of file order. Upstream's
+   newest-first production scan retries a pending parent only one level
+   deep, leaving the `b10` reference chain unresolved when the grandchild
+   file is newest. Colophon resolves parents on demand; this was approved
+   with "resolve them anyway". The comparison was verified by reordering
+   only mtimes; porting upstream's scan-order machinery was declined.
+
+**Factual correction C1.** Ordinary raw-alias, bundled-only alias and folded
+dated-id pricing are not deviations. Upstream normalizes usage rows before
+pricing; only its priority override carries a raw model into the resolver
+(`CostUsageScanner.swift`, 4288, 4637;
+`CostUsageScanner+PricingRows.swift`, 15–19, 87–95). Colophon follows that
+structure. Cache-write tokens are billed as zero. Rate conversion changes
+only representation, within the explicit §5.6 cost tolerance.
 
 **Deliberate deviation from the research extractor:** a fork whose history
 boundary cannot be resolved is listed without turn, time or request metrics,
