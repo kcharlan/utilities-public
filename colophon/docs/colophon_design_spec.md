@@ -549,7 +549,8 @@ Each usage unit, from either path below, carries a model, a UTC instant and a
 service tier.
 
 **Model in force.** As upstream tracks `currentModel`, the model in force is
-set by each record that carries one, read in this order:
+set only by `turn_context` records (upstream `codexTurnContextModel`), read in
+this order:
 - `payload.model`
 - `payload.model_name`
 - `payload.info.model`
