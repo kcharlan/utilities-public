@@ -556,23 +556,31 @@ this order:
 - `payload.info.model`
 - `payload.info.model_name`
 
-Values are trimmed. A field that is present but blank clears the model; an
-omitted field leaves it unchanged. It is reset to none at a subagent's owned
-suffix (§5.5, fork handling).
+For each `turn_context` record:
+- The first of those four fields whose value, after trimming whitespace, is
+  not empty becomes the model in force. Blank fields are skipped.
+- If at least one field is present but every present field is blank, the
+  model in force is cleared.
+- If all four fields are omitted (a non-string value counts as omitted), the
+  model in force is unchanged.
+
+The model in force is also reset to none at a subagent's owned suffix (see
+"Forks" under the fallback path).
 
 **Model per unit:**
 - **`token_count` event:** the model in force. If there is none, the event's
-  own model (`info.model`, `info.model_name`, `payload.model`, or the
-  top-level `model`). If there is none of those, `unknown`. This is upstream
-  `handleTokenCount`.
+  own model: the first non-blank, trimmed value of `info.model`,
+  `info.model_name`, `payload.model`, then the top-level `model`. If there is
+  none of those, `unknown`. This is upstream `handleTokenCount`.
 - **`token_usage_record`:** the model in force, otherwise `unknown`.
   Colophon's own path; see "Primary path".
 - **Bare usage line:** the order given under the fallback path.
 - **`unknown`** is never priced (upstream `resolvedCodexPricing` returns
-  nothing for it), and is shown as an unpriced model. The service tier is
-the one in force at that instant, from the latest preceding
-`thread_settings_applied`; the default tier applies before any. Session and
-turn attribution follow "Attribution" below.
+  nothing for it), and is shown as an unpriced model.
+
+**Service tier.** The service tier is the one in force at that instant, from
+the latest preceding `thread_settings_applied`; the default tier applies
+before any. Session and turn attribution follow "Attribution" below.
 
 Upstream detects priority from Codex's `logs_*.sqlite` trace database
 instead. Colophon's source is a recorded deviation in `token_rules.md`, and
@@ -812,8 +820,10 @@ branch**, because history lives in the ledgers.
       upstream does.
     - Its history starts with a `catalog` entry recorded at the first fetch
       after it appears. Earlier usage is priced at that entry's rate. Upstream
-      also prices such a spelling at the current catalog rate, so the cost is
-      the same. The diagnostic for this case reads "price history for <id>
+      also prices such a spelling at the current catalog rate, so the cost
+      matches upstream as of the time it is recorded. After a later repricing,
+      upstream reprices past usage and Colophon does not (the dated-history
+      deviation in §15). The diagnostic for this case reads "price history for <id>
       begins <date>", as information, not a warning.
     - If the catalog later lists the spelling itself at different rates,
       that is recorded as an ordinary rate change. Past usage keeps its
@@ -825,8 +835,11 @@ branch**, because history lives in the ledgers.
     rates were identical in the research snapshot. Likewise, an alias whose
     canonical model is bundled-only (for example `gpt-daybreak-red-latest` →
     `gpt-5.6-cyber`) is priced from `CURATED_BUNDLED`, never from the
-    alias's catalog price; those rates were also identical. Both are
-    recorded in `token_rules.md` and §15.
+    alias's catalog price; those rates were also identical. The same applies
+    to a dated spelling that folds to a bundled base but also has its own
+    catalog entry (for example a `<bundled>-YYYY-MM-DD` listed in models.dev):
+    upstream prices it from the dated entry, Colophon from the base. All
+    three cases are recorded in `token_rules.md` and §15.
   - **Provider-qualified ids.** Ids such as `provider/model` for a provider
     other than OpenAI are unpriced, because only the `openai` subset is
     kept. That is also recorded.
@@ -854,6 +867,7 @@ delimited JSON blocks keep the launcher a single file:
     - every `CURATED_BUNDLED` key
     - the normalized id of every **priceable** `openai` model in the snapshot,
       resolved against the snapshot and `CURATED_BUNDLED` only
+
     This covers models upstream prices only from the catalog, such as
     gpt-6-sol and gpt-6.1-sol. Upstream prices those at the catalog rate for
     all dates; a `null` entry does the same.
@@ -1433,8 +1447,10 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
     - The catalog later listing a dated spelling itself at different rates:
       recorded as a rate change, with past usage unchanged.
   - Bare usage lines: the model from the line itself, from `data`, from the
-    `turn_context` in force, and the `unknown` model; a bare line outside
-    any turn.
+    model in force, and the `unknown` model; a bare line outside any turn.
+  - Model in force: a blank field followed by a non-blank one (the non-blank
+    one wins); all present fields blank (cleared); all four omitted
+    (unchanged); reset at a subagent's owned suffix.
   - The attribution invariants (§5.5): turn cards + "outside displayed
     turns" = own total; own + descendants = overall total.
   - A forked log whose counted deltas fall on inherited records ("tokens
@@ -1626,8 +1642,8 @@ parity is expected to show them):
 - Exact per-response `token_usage_record` usage is preferred where present;
   upstream reads only `token_count` (§5.5).
 - Ledgers are keyed by normalized id, so a raw alias with its own catalog
-  entry, or an alias of a bundled-only model, is priced from the canonical
-  entry. Provider-qualified ids outside OpenAI are unpriced (§5.6).
+  entry, an alias of a bundled-only model, or a folded dated spelling with its
+  own catalog entry is priced from the canonical entry. Provider-qualified ids outside OpenAI are unpriced (§5.6).
 - The priority multiplier lives in the price history and is editable; upstream
   hard-codes it (§5.6).
 - The priority tier comes from `thread_settings_applied`, not the trace
