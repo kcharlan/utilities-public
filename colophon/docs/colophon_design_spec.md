@@ -310,10 +310,18 @@ assistant.
   - A request after the last turn goes to that turn as a follow-up.
   - In a session with no turns, requests appear at session level.
 - **Spoken replies.** Consecutive assistant segments form one spoken reply.
-  - A reply belongs to the most recent turn that started before it, including
-    replies spoken after that turn's `task_complete`.
-  - A turn with no `final_answer` uses its **last** reply (the substantive one;
-    earlier replies are often fillers) as the answer, marked "voice reply".
+  - **Placement.** A reply is placed with the voice request immediately
+    before it, so a question and its answer stay together. That includes
+    replies spoken after a turn's `task_complete`.
+    - With no preceding voice request, the reply goes to the most recent turn
+      that started before it.
+    - With no such turn either (a reply before the first turn, with no
+      request), the reply is dropped, unless the session has no turns, in
+      which case it appears at session level.
+  - A turn with no `final_answer` uses as its answer the last reply placed
+    with a request **inside** that turn, never a reply attached to a "before
+    this turn" request. It is marked "voice reply". The last reply is chosen
+    because earlier ones are often fillers.
   - A turn that has a `final_answer` shows only that.
 
 The wrapper, heading and prefix lists are single constants, and tests assert
@@ -554,53 +562,102 @@ parity reports any difference.
   fixtures.
 
 **Fallback path: `token_count`.** This is a behavioral port of upstream's
-Codex snapshot accounting, not a new algorithm:
-- `CodexSnapshotAccumulator.apply` and `CodexTotalsTracker`
-- their helpers: `codexShouldPreferTotalDelta`,
+per-file Codex token accounting, not a new algorithm. It lives in
+`CostUsageScanner.swift` and `CodexSubagentRolloutShape.swift` @ `3bbf6bc48`.
+CodexBar is public, so the implementer ports from that source and cites it in
+`token_rules.md`. **The upstream code is authoritative.** The rules below are
+orientation only; where they disagree with upstream, upstream wins.
+
+**Port targets:**
+- `parseCodexFileCancellable` and its nested `handleTokenCount` /
+  `commitDelta`: the per-event billed deltas.
+- `CodexTotalsTracker`, and the helpers `codexShouldPreferTotalDelta`,
   `codexLooksLikeStaleRegression`, `codexTotalDelta`,
-  `codexContainedTotalDelta`, `codexPostLatchEventDelta`
+  `codexContainedTotalDelta`, `codexDivergentTotalDelta` and
+  `codexPostLatchEventDelta`.
+- **Fork handling:** `inheritedTotals(for:atOrBefore:)` (which uses
+  `CodexSnapshotAccumulator` to compute a parent's totals at the fork point),
+  `raiseInheritedBaselineIfContinuedCounter`, `configureForkAccountingIfReady`,
+  and the related local state in `parseCodexFileCancellable`
+  (`remainingInheritedTotals`, `adjustedLastDelta`,
+  `hasUnresolvedForkBaseline`, `suppressUnownedCopiedPrefix`), plus the
+  subagent owned-suffix reset (`subagent_history_start_ordinal`).
+- **Fork baseline:** `CodexSubagentRolloutShape`.
+- **Note:** `CodexSnapshotAccumulator.apply` is **not** the per-event billing
+  logic. It only builds a parent's snapshot totals.
 
-These are in `CostUsageScanner.swift` @ `3bbf6bc48`. CodexBar is public, so
-the implementer ports from that source and cites it in `token_rules.md`. The
-port is complete when the parity script (§12.4) agrees, or every difference is
-recorded.
+The port is complete when the parity script (§12.4) agrees with CodexBar, or
+every difference is recorded.
 
-For orientation, the upstream rules per `token_count` event are:
+**Upstream rules, for orientation.** In the non-fork case, for each
+`token_count` event:
 1. **Repeat.** A cumulative total identical to one already seen counts zero.
 2. **Stale regression.** A total that fell back by roughly one recent increment
    is stale and counts zero.
 3. **Interleaving.** A total with any component below the running watermark
    latches *interleaved* mode. From then on, deltas are contained against the
-   watermark and the counted totals (`codexPostLatchEventDelta`). This is how
-   counter drops and restarts after a crash are handled.
+   watermark and the counted totals. This handles counter drops and restarts
+   after a crash.
 4. **Normal case.** The counted delta is the event's `last_token_usage`. The
-   total-derived delta (current total − baseline) replaces it when all of
-   these hold:
-   - a baseline exists
+   total-derived delta replaces it when all of these hold:
+   - a baseline exists (the tracker watermark, otherwise the raw totals
+     baseline)
    - the current total is ≥ the baseline in every component
-   - the total delta is ≤ `last_token_usage` in every component
-   - no divergence between raw and counted totals has been seen
-
-   Consequences: the first event (no baseline) counts its `last_token_usage`,
-   and a gap larger than `last` is not billed.
+   - the total delta is ≤ `last` in every component
+   - no divergence has been seen
 5. **Total only.** An event with a total but no `last` counts the total delta,
-   contained against the watermark once latched.
+   which is contained once latched, or computed by `codexDivergentTotalDelta`
+   once divergence has been seen.
 
-The components are input, cached input, output and reasoning output. Upstream
-does not track cache-write input on this path, so on the fallback path it is
-taken as zero.
+**First event and divergence.**
+- No previous totals exist at the first event, so its counted delta is its
+  `last_token_usage`. The raw baseline becomes its `total`.
+- If that first `total` differs from its `last`, counted and raw totals
+  diverge immediately. Divergence is then set for the rest of the file, which
+  disables rule 4's total-delta preference.
+- Some real logs start this way, so the port must reproduce it exactly.
+
+**Forks.** A file with `forked_from_id` uses upstream's totals-only fork
+accounting:
+- Subtract the parent's inherited totals at the fork point.
+- Trim `last` by the remaining inherited totals.
+- Raise the baseline when a continued counter proves it.
+- Suppress rows while the fork baseline is unresolved, and suppress any
+  unowned copied prefix.
+- Reset at the subagent's owned suffix.
+
+**Parent-log dependency.** It follows upstream `configureForkAccountingIfReady`:
+- **Independent counters, or a local owned-suffix boundary:** the fork is
+  accounted without the parent, and its usage counts even if the parent log
+  is missing.
+- **Otherwise:** the fork needs its parent's parse record. The dependency is
+  recursive when the parent is itself a fork. The parent's prefix up to the
+  fork point never changes, so the dependency is stable.
+- **Parent log missing, or the fork timestamp missing or unparseable:** the
+  fork baseline is unresolved, as upstream returns it. The fork's
+  fallback-path usage is suppressed with the diagnostic "fork baseline
+  unavailable".
+
+**Inputs and scope.**
+- **All events go in.** The ported state machine receives **every**
+  `token_count` record in the file, in order, including records in the
+  inherited prefix, exactly as upstream does. Upstream's fork rules, not the
+  §5.3 inherited-record exclusion, decide owned token usage on this path.
+  §5.3's exclusion still governs every non-token metric.
+- **Selection is per turn.** The state machine always runs over the whole
+  file, which keeps its baselines correct. The per-turn source selection
+  above then decides which counted deltas are used:
+  - **Turns with a `token_usage_record`:** their counted deltas from
+    `token_count` are discarded.
+  - **Turns without one:** their counted deltas are used. For example, an
+    aborted turn that has only a `token_count` in a file whose other turns
+    have records.
+- **Components:** input, cached input, output and reasoning output. Upstream
+  does not track cache-write on this path, so it is taken as zero.
 
 **Pricing uses the counted deltas.** The counted delta components are the
 token counts passed to the §5.6 formula, and the long-context test uses the
 counted input delta.
-
-**Fork baseline.** Follows upstream `CodexSubagentRolloutShape`, ported the
-same way:
-- The first session meta owns leaf identity.
-- Embedded ancestor metadata proves a copied prefix.
-- A zero-component opening event carries inherited context.
-- The first owned event supplies the baseline.
-- Independently restarted counters still count their opening usage.
 
 **Provenance.** `colophon/docs/token_rules.md` lists every CodexBar-derived
 token and pricing rule with:
@@ -616,6 +673,20 @@ Every cost is computed from a **price history**: a dated record of rates per
 model. A request is priced at the rate in effect at its own timestamp. Once a
 model has history, a later price change never reprices earlier usage.
 
+**Normative source.** Rate *resolution* (how a catalog entry becomes rates),
+model normalization, the cost formula and the priority multiplier are ports
+of upstream CodexBar, `CostUsagePricing.swift` @ `3bbf6bc48`:
+- `resolvedCodexPricing`
+- `normalizeCodexModel`
+- `codexCostUSD`
+- `codexPriorityCostUSD` / `codexAPIFastMultiplier`
+
+The upstream code is authoritative. Where this section summarizes it, the
+summary is orientation only; if the two disagree, upstream wins and the
+difference is fixed in this spec. What this section *does* define
+normatively is Colophon's own design: the dated ledgers, recording,
+validation and the recorded deviations.
+
 **Fetching.** The current-rate source is the catalog at
 `COLOPHON_PRICING_URL` (models.dev by default). Prices are USD per 1M tokens.
 - **Every run fetches the catalog before compiling, including the first.**
@@ -629,33 +700,65 @@ model has history, a later price change never reprices earlier usage.
   ignored.
 - There is no bundled snapshot of current prices.
 
-**Two ledgers, one format.**
-- **Curated history.** Maintained in the repository and embedded in the
-  launcher as one clearly delimited JSON block, `CURATED_PRICE_HISTORY`, so
-  the launcher stays a single file.
-  - **Seed.** The seed equals what upstream `resolvedCodexPricing`
-    (`CostUsagePricing.swift` @ `3bbf6bc48`) resolves for each model in its
-    bundled `codex` table. It is computed once by the maintainer from a dated
-    models.dev snapshot, and `token_rules.md` records the snapshot date and
-    method.
-    - **Model with an upstream historical rate** (`codexHistoricalPricing`):
-      an entry with `effective_from: null` ("from the beginning") carrying the
-      historical rate, followed by an entry at the cutoff carrying the
-      resolved current rate.
-    - **Other bundled model:** one `null` entry carrying the resolved rate.
-    - **Every seed entry** carries upstream's bundled threshold (272,000)
-      and its `priority`.
-  - **Effect.** Because the seed matches the catalog as of its snapshot, the
-    first fetch records nothing for unchanged models. Usage after a cutoff is
-    priced at catalog rates, as upstream does.
-  - Only the curated ledger may use `null`.
-- **User ledger.** `$COLOPHON_HOME/price-history.json` is created on first run
-  with an empty `entries` list, and curated entries are never copied into
-  it. Colophon only ever appends `catalog` entries, and only to this file. It
-  never rewrites or deletes an entry. The user, or an agent, may edit the
-  file freely, and edits apply on the next run.
+**The resolver.** `resolve(model, catalog)` is the port of upstream
+`resolvedCodexPricing`, **excluding its historical-rate branch**, because
+history lives in the ledgers. It uses `CURATED_BUNDLED` (below) wherever
+upstream uses its bundled `codex` table.
+- **Output.** The resolver returns **fully effective numeric rates**. It
+  applies upstream `codexCostUSD`'s own fallbacks before storing, so no rate
+  field is ever empty:
+  - a missing cached rate becomes the input rate
+  - long-context fields fall back as `codexCostUSD` does
 
-**Format.** Human-readable JSON, prices per million tokens:
+  Pricing therefore never needs fallback logic, and two entries can be
+  compared field by field.
+- **Threshold.** The bundled threshold when the bundled table has one;
+  otherwise the catalog's (200,000 from `context_over_200k`); otherwise no
+  `long_context`. This follows upstream exactly.
+- **Note in `token_rules.md`.** models.dev's own `tiers` data gives 272,000
+  for models where upstream uses 200,000. Colophon keeps upstream's behavior
+  for parity and records this as an upstream simplification to revisit.
+- **Model ids.** Catalog keys are normalized with `normalizeCodexModel`. When
+  several keys normalize to the same model:
+  - Use the key that is already equal to the normalized id.
+  - If no key is equal and all the candidates resolve to identical rates, use
+    any of them.
+  - Otherwise, skip that model for the run and record the diagnostic
+    "ambiguous catalog aliases for <model>".
+
+  One run never records two entries for one model.
+
+**Curated data (in the launcher, maintained in the repo).** Two clearly
+delimited JSON blocks keep the launcher a single file:
+- **`CURATED_BUNDLED`** is a port of upstream's bundled `codex` table, with
+  its raw fields as they are upstream, missing values included. Only the
+  resolver reads it.
+- **`CURATED_PRICE_HISTORY`** holds dated entries in the ledger format below,
+  seeded by the maintainer from a dated models.dev snapshot. `token_rules.md`
+  records the snapshot date and method.
+  - **Model with an upstream historical rate** (`codexHistoricalPricing`):
+    an entry with `effective_from: null` ("from the beginning") carrying the
+    historical rate, then an entry at the cutoff carrying
+    `resolve(model, snapshot)`.
+  - **Every other model in `CURATED_BUNDLED`:** one `null` entry carrying
+    `resolve(model, snapshot)`.
+  - **Priority:** seed entries carry `priority` from upstream
+    `codexAPIFastMultiplier`:
+    - ×2 for gpt-5.4, gpt-5.4-mini, gpt-5.6-sol, gpt-5.6-terra and
+      gpt-5.6-luna, capped at 272,000 input tokens
+    - ×2 for gpt-6-astra, with no cap
+    - ×2.5 for gpt-5.5, capped at 272,000
+  - **Effect.** The seed is the resolver's own output for the snapshot, so a
+    first fetch of an unchanged catalog records nothing.
+
+**User ledger.** `$COLOPHON_HOME/price-history.json` is created on first run
+with an empty `entries` list, and curated entries are never copied into it.
+Colophon only ever appends `catalog` entries, and only to this file. It never
+rewrites or deletes an entry. The user, or an agent, may edit the file
+freely, and edits apply on the next run.
+
+**Ledger format** (both ledgers). Human-readable JSON, prices per million
+tokens, every rate a plain number:
 
 ```json
 {
@@ -666,6 +769,7 @@ model has history, a later price change never reprices earlier usage.
       "effective_from": "2026-08-21T00:00:00Z",
       "per_million": { "input": 4.0, "cached_input": 0.4, "cache_write": 5.0, "output": 20.0 },
       "long_context": { "threshold": 272000, "input": 8.0, "cached_input": 0.8, "cache_write": 10.0, "output": 30.0 },
+      "priority": { "multiplier": 2.0, "max_input_tokens": 272000 },
       "source": "catalog",
       "recorded_at": "2026-08-23T14:02:11Z",
       "approximate_date": true,
@@ -677,151 +781,82 @@ model has history, a later price change never reprices earlier usage.
 
 | Field | Rule |
 |---|---|
-| `model` | Required. Normalized model id. |
-| `effective_from` | Required. An RFC 3339 UTC instant. Curated entries may instead use `null`, meaning "from the beginning". |
-| `per_million` | Required, with all four keys. A model with no separate cached or cache-write rate repeats its `input` rate. |
-| `long_context` | Optional. If present, `threshold` and all four rate keys are required. A request whose input exceeds `threshold` uses these rates. |
+| `model` | Required string; a normalized model id. |
+| `effective_from` | Required. An RFC 3339 UTC instant. `null` ("from the beginning") is allowed **only** in `CURATED_PRICE_HISTORY`. |
+| `per_million` | Required object. All four keys are required, each a number ≥ 0. |
+| `long_context` | Optional object. If present, `threshold` is required (a positive integer), and all four rate keys are required, each a number ≥ 0. A request whose input exceeds `threshold` uses these rates. |
+| `priority` | Optional object. `multiplier` is a number > 0. `max_input_tokens` is a positive integer, or `null` for no cap. |
 | `source` | Required. `curated` (launcher only), `catalog` (appended by Colophon) or `manual` (written by a person or an agent). |
-| `priority` | Optional: `{ "multiplier": 2.0, "max_input_tokens": 272000 }`. `multiplier` > 0; `max_input_tokens` is a positive integer or `null` (no cap). See step 7. |
 | `recorded_at` | Required on `catalog` entries; optional otherwise. |
 | `approximate_date`, `note` | Optional. |
 
-**Priority seeding and editing.**
-- Curated entries carry upstream `codexAPIFastMultiplier`:
-  - ×2 for gpt-5.4, gpt-5.4-mini, gpt-5.6-sol, gpt-5.6-terra and
-    gpt-5.6-luna, capped at 272,000 input tokens
-  - ×2 for gpt-6-astra, with no cap
-  - ×2.5 for gpt-5.5, capped at 272,000
-- A `catalog` entry copies `priority` from the prior entry (defined under
-  the mapping below), because the catalog has no priority data.
-- A `manual` entry may set or change `priority`, for example to add a
-  multiplier for gpt-6.1-sol, which upstream does not know.
-  - A manual entry covers only its own rate period.
-  - To add a multiplier from date D, write a `manual` entry at D that repeats
-    that period's rates and adds `priority`.
-  - The README shows this pattern.
+A hand-written `manual` entry must also give every rate as a number. A manual
+entry covers only its own rate period. To add a priority multiplier from date
+D, for example for gpt-6.1-sol, which upstream does not know, write a
+`manual` entry at D that repeats that period's rates and adds `priority`. The
+README shows how to copy the rates.
 
 **Resolution, per request.**
-1. **Normalize** the model name, ported from upstream `normalizeCodexModel`.
-2. **Merge** the curated and user ledgers. Entries never replace one another
-   during the merge; all of them are kept.
-3. **Pick** the applicable entry: the one with the latest `effective_from` at
-   or before the request's timestamp. `null` sorts before every instant.
-   - When entries share a model and `effective_from`, the order of precedence
-     is `manual`, then `catalog`, then `curated`.
-   - A user entry can therefore correct a curated entry, but only by being
-     `manual` or `catalog`. A user-ledger entry marked `curated` is a
-     validation error.
-4. **If no entry is at or before the timestamp** (usage older than a model's
-   first dated entry), use that model's **earliest** entry. Never use current
-   rates for older usage. Record the diagnostic "priced at earliest known
-   rate".
+1. **Normalize** the model name (ported `normalizeCodexModel`).
+2. **Merge** `CURATED_PRICE_HISTORY` and the user ledger. All entries are kept.
+3. **Pick** the entry with the latest `effective_from` at or before the
+   request's timestamp. `null` sorts before every instant.
+   - For the same model and `effective_from`, `manual` beats `catalog`, which
+     beats `curated`.
+   - A user entry can therefore correct a curated entry, but only as `manual`
+     or `catalog`. A user-ledger entry marked `curated` is a validation error.
+4. **Usage older than a model's first dated entry** uses that model's
+   **earliest** entry, never current rates, and records the diagnostic
+   "priced at earliest known rate".
 5. **No ledger entry at all.**
-   - **Catalog rate available** (fetched or cached) but not yet recorded in
-     either ledger. This happens when recording was skipped because the ledger
-     changed during the run (see "Writing the ledger"). Price with a
-     *transient* entry, effective from the beginning, built from the catalog
-     by the mapping below. Record the diagnostic "priced from unrecorded
-     catalog rate".
-   - **No catalog rate either.** The model is **unpriced**. This is the single
-     definition of "unpriced", used everywhere (§9).
-6. **Long context.** Use the long-context rates when the request's input
-   exceeds the entry's threshold. The threshold comes from:
-   - `long_context.threshold` on the entry.
-   - When an entry is first recorded from the catalog: the catalog's
-     `cost.tiers[].tier.size`, or 200,000 if the catalog has only
-     `context_over_200k`.
-   - Curated Codex entries carry upstream's bundled 272,000.
-
-   **Deviation.** Upstream uses 200,000 for every non-bundled model that has
-   `context_over_200k`, even where the catalog's own tier size is 272,000.
-   For such models (for example the gpt-6 family), Colophon follows the
-   catalog's explicit tier size. This is recorded in `token_rules.md`, and
-   parity is expected to report it.
-7. **Priority tier.** Applies when the tier in force (§5.5) is `priority`.
-   - **Standard cost** means the non-priority cost from the formula below,
-     long-context rates included when they apply.
-   - **Multiplier.** If the chosen entry has `priority` and the request's input
-     is within `max_input_tokens`, cost = `multiplier` × the standard cost.
-     For an uncapped model (gpt-6-astra), the multiplier applies on top of
-     long-context rates.
-   - **Over the cap.** If the input exceeds `max_input_tokens`, use the
-     standard cost, as upstream does.
+   - If a catalog rate is available (fetched or cached) but was not recorded,
+     because recording was skipped this run (see "Writing the ledger"), price
+     with a *transient* entry, `resolve(model, catalog)`, effective from the
+     beginning. Record the diagnostic "priced from unrecorded catalog rate".
+   - Otherwise the model is **unpriced**. This is the single definition of
+     "unpriced", used everywhere (§9).
+6. **Long context.** Use the entry's `long_context` rates when the request's
+   input exceeds its `threshold`.
+7. **Priority tier.** Applies when the tier in force (§5.5) is `priority`,
+   following upstream `codexPriorityCostUSD`.
+   - The *standard cost* is the non-priority cost from the formula, with
+     long-context rates when they apply.
+   - **Multiplier.** If the entry has `priority` and the request's input is
+     within `max_input_tokens` (`null` means no cap), cost = `multiplier` ×
+     the standard cost.
+   - **Over the cap.** If the input exceeds the cap, use the standard cost.
    - **No `priority` field.** Use the standard cost and record the diagnostic
      "priority usage on a model with no known multiplier; priced at
-     standard", with the token volume. The diagnostic tells the user exactly
-     which models need a `manual` entry.
-
-**Catalog → entry mapping.** Used for recording and for transient entries.
-It mirrors upstream `resolvedCodexPricing`: the catalog supplies the rates,
-and the model's **prior entry** stands in for upstream's bundled values where
-the catalog is silent.
-
-The *prior entry* is the entry the pick rule (step 3) selects for that model
-at the catalog's fetch time. A model with no entry has none.
-
-1. **Normalize catalog keys** with `normalizeCodexModel`.
-2. **Several keys, one model.** When several catalog keys normalize to the
-   same model:
-   - Use the key that is already equal to the normalized id.
-   - If no key is equal and all the candidates' rates are identical, use any
-     of them.
-   - Otherwise, skip that model for this run and record the diagnostic
-     "ambiguous catalog aliases for <model>".
-
-   One run never appends two entries for one model.
-3. **Standard rates.**
-
-   | Entry field | Source, first available |
-   |---|---|
-   | `input` | `cost.input` |
-   | `output` | `cost.output` |
-   | `cached_input` | `cost.cache_read`, then the prior entry's `cached_input`, then `cost.input` |
-   | `cache_write` | `cost.cache_write`, then the prior entry's `cache_write`, then `cost.input` |
-
-4. **Long context, when the catalog has a block.** The block is
-   `cost.tiers[0]`, or `cost.context_over_200k` when there are no tiers.
-
-   | Long-context field | Source, first available |
-   |---|---|
-   | `input` | the block's `input`, then the standard `input` |
-   | `output` | the block's `output`, then the standard `output` |
-   | `cached_input` | the block's `cache_read`, then raw `cost.cache_read`, then the long `input`, then the standard `input` |
-   | `cache_write` | the block's `cache_write`, then raw `cost.cache_write`, then the long `input`, then the standard `input` |
-
-   "Raw" means the catalog field itself, never a filled value.
-
-   **Threshold:** the prior entry's threshold when it has one. Otherwise the
-   tier's `tier.size`, or 200,000 for `context_over_200k`. Upstream lets the
-   bundled threshold win in the same way.
-5. **Long context, when the catalog has no block:** copy the prior entry's
-   `long_context` unchanged, or omit it if there is none.
-6. **Priority:** copy the prior entry's `priority`. The catalog has no
-   priority data.
+     standard", with the token volume. That tells the user which models need
+     a `manual` entry.
 
 **Recording catalog rates.** Recording runs whenever a catalog is available
-and the user ledger is valid. The catalog may come from a 200, a 304, the
-cache, or `--offline`. Recording happens **before** pricing (§4), so
-first-sight models never need a transient entry in a normal run.
-
-For each model after the mapping, let *T* be the catalog's **fetch time**:
-when that copy was downloaded, not the current run time.
+and the user ledger is valid: from a 200, a 304, the cache, or `--offline`.
+It happens **before** pricing (§4). Let *T* be the catalog's **fetch time**,
+which is when that copy was downloaded, not the current run time. For each
+catalog model:
 - **Skip** if any entry for this model already has `effective_from` = *T*.
   This makes recording idempotent: re-reading the same cached catalog never
-  appends again.
-- **First sight** (the model has no entry at all): append a `catalog` entry
-  with `effective_from` *T* and `approximate_date: true`. Because of step 4,
-  usage before *T* is priced at this rate.
-- **Rates differ** from the prior entry at *T*: append a `catalog` entry with
-  `effective_from` *T* and `approximate_date: true`.
-  - "Rates" means the four standard rates and the four long-context rates.
-  - Threshold and `priority` are carried forward, never compared.
-  - Comparing against the entry in force at *T*, not the latest entry, means
-    that a later `manual` correction never causes repeated appends.
+  appends.
+- **Compute** `resolve(model, catalog)`. Its `priority` is copied from the
+  entry the pick rule selects at *T*, of any source, if there is one,
+  because the catalog has no priority data.
+- **Compare** with the latest **non-`manual`** entry (`catalog` or `curated`)
+  at or before *T*. Compare the standard rates, and the `long_context`
+  threshold and rates. `priority` is not compared.
+  - No such entry exists (first sight, or a model with only `manual`
+    entries): **append**.
+  - Any compared field differs: **append**.
+  - Otherwise: nothing.
+- **Appended entries** have `source: catalog`, `effective_from` *T*,
+  `recorded_at` set to now, and `approximate_date: true`.
+- **Manual entries are never compared against.** A `manual` correction stays
+  in force until the catalog itself changes price; the catalog's new price
+  then supersedes it from *T* onward. A model the user priced manually before
+  the catalog listed it gets a `catalog` entry at *T* once it appears. The
+  README states both behaviors.
 - **Never** backdate to the catalog's per-model `last_updated`. It is not a
   price-change date: in research it lagged real repricings by weeks.
-
-new.
 
 **Detection lag.** Colophon only sees a change when it fetches. Usage between
 a real change and its detection is priced at the earlier rate. A `manual`
@@ -836,20 +871,20 @@ the intended effect.
 3. Otherwise write a temp file and rename it into place.
 
 **Validation.** The user ledger fails validation when:
-- it is not valid JSON, or the schema is unknown
-- an entry is missing a required field
-- a rate is negative
-- `effective_from` is unparseable, or is `null` in the user ledger
-- `source` is unknown, or is `curated` in the user ledger
-- `priority.multiplier` is not > 0, or `priority.max_input_tokens` is
-  neither a positive integer nor `null`
+- it is not valid JSON, or the `schema` is unknown
+- any field violates the table above (missing, wrong type, out of range)
+- `effective_from` is unparseable, or is `null`
+- `source` is unknown, or is `curated`
 - two entries share model, `effective_from` and `source` but differ in any
-  field other than `note` and `recorded_at` (`priority` included)
+  field other than `note` and `recorded_at`
 
 A failed ledger stops cost computation for that run, and also stops
 recording. Tokens are still shown. The error names the file, the entry index
-and the problem. Exact duplicate entries are not an error: they collapse, and
-a warning is reported. Colophon never repairs or guesses.
+and the problem. Exact duplicates are not an error: they collapse, and a
+warning is reported. Colophon never repairs or guesses.
+
+A test validates `CURATED_PRICE_HISTORY` and `CURATED_BUNDLED` with the same
+rules (`null` `effective_from` allowed there).
 
 **Promotion to the repo** (maintainer procedure, in the README):
 1. List the user-ledger `catalog` entries newer than the curated history.
@@ -860,9 +895,8 @@ a warning is reported. Colophon never repairs or guesses.
 `manual` entries are personal corrections and are promoted only
 deliberately. An agent can perform this mechanically.
 
-**Formula.** Applied per request or event. Token counts are lowercase; rates
-come from the chosen entry, and are its `long_context` rates when `long` is
-true.
+**Formula.** The port of `codexCostUSD`, applied per request or event with the
+chosen entry's rates (its `long_context` rates when `long`):
 
 ```
 tok_in        = request input tokens (total prompt size)
@@ -880,8 +914,8 @@ cost_usd      = ( tok_uncached × rate.input
 - `output_tokens` is used as reported: it already includes reasoning tokens,
   which are not added again.
 - Token counts come from the usage record on the primary path, and from the
-  counted deltas of the ported snapshot accounting on the fallback path
-  (§5.5). They are never a raw cumulative total.
+  counted deltas of the ported accounting on the fallback path (§5.5). They
+  are never a raw cumulative total.
 - **Deviation.** Upstream passes zero cache-write tokens for Codex rows.
   Colophon uses the logged `cache_write_input_tokens`. These are zero in all
   current logs, so the results are identical today. The deviation is recorded
@@ -1241,8 +1275,13 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
     gpt-6-astra (no cap), and on a model with no multiplier (diagnostic);
     a `manual` entry adding a multiplier; `priority` carried forward.
   - Catalog aliases that normalize to one model (equal key present; all
-    rates equal; conflicting rates skipped), and the full catalog → entry
-    mapping including missing tier keys.
+    resolved rates equal; conflicting rates skipped).
+  - The resolver port: catalog models with and without `cache_read`,
+    `cache_write` and a long-context block; bundled models with and without a
+    bundled threshold; a bundled model missing from the catalog. Expected
+    values are derived by hand from upstream `resolvedCodexPricing` and
+    `codexCostUSD`.
+  - A model with only `manual` entries that then appears in the catalog.
   - Recording from a 304, from the cache and under `--offline`, and
     idempotence; a transient entry when recording is skipped.
   - Fallback-path counted deltas matching upstream behavior: first event,
@@ -1429,8 +1468,6 @@ Ported functions carry a header comment naming their upstream source.
 parity is expected to show them):
 - The priority multiplier lives in the price history and is editable; upstream
   hard-codes it (§5.6).
-- The long-context threshold for non-bundled models follows the catalog's
-  tier size, not a fixed 200,000 (§5.6).
 - The priority tier comes from `thread_settings_applied`, not the trace
   database (§5.5).
 - Logged cache-write tokens are used; they are zero in current logs (§5.6).
