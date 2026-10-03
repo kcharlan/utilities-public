@@ -138,12 +138,13 @@ ignored*. Any other type is counted per type for format-drift diagnostics
 | `response_item` `*_output`, `reasoning`, `tool_search_output` | Known and ignored. |
 | `response_item` `agent_message`, top-level `inter_agent_communication_metadata` | Known and **never stored**. These are inter-agent messages. Their header lines are plain text; in every task brief observed during research, the payload was encrypted. |
 | Top-level `world_state`, `compacted` | Known and ignored. |
-| Top-level `realtime_item` | Used for the user's voice transcript segments only (§5.1). |
+| Top-level `realtime_item` | Used for voice transcript segments only: user segments as requests, assistant segments as spoken replies (§5.1). |
 | Legacy `event_msg` `user_message` / `agent_message` | Supported for older Codex versions; absent from current logs. |
 
 ## 4. Compile pipeline
 
 ```
+fetch catalog → record catalog rates in the ledger
 scan files → parse each file (cached) → load metadata → assemble sessions
 → link subagents → resolve workspaces → account tokens → price
 → render HTML (data embedded) → atomic write → open
@@ -153,6 +154,19 @@ scan files → parse each file (cached) → load metadata → assemble sessions
 - Each log is read once, as a stream.
 - A parse produces a compact per-file record: session facts, turns, kept text,
   tool counts, usage events and diagnostics.
+- **The cached record holds only time-independent facts.** That covers turn
+  starts and ends as logged, whether the final line was partial, the scan-start
+  mtime, and the raw usage events.
+- **Recomputed on every run, never cached.** Anything that depends on how long
+  ago the log changed is derived at assembly time from the scan-start mtime
+  and the current snapshot time:
+  - running vs abandoned turns
+  - "still being written" vs "truncated" final lines
+  - LIVE flags
+  - running-turn intervals
+
+  An unchanged log is a cache hit, yet its open turn still moves from running
+  to abandoned once the quiet threshold passes.
 - **Cache key.** Each record is cached, keyed on:
   - path
   - size
@@ -208,10 +222,10 @@ in the meantime, because its log changed and is reparsed.
      counts toward every time, token and cost total, flagged LIVE, and totals
      show "includes n running".
    - *Abandoned.* No later turn, and the log has been quiet longer than the
-     threshold. Excluded from time totals and flagged incomplete. Its tokens
+     threshold. Excluded from time totals and flagged abandoned. Its tokens
      and cost still count, because they were spent.
 5. **Counter restart.** A cumulative token counter that restarts after a crash
-   is handled by the counter-drop rule (§5.5).
+   is handled by the ported interleaving rules (§5.5, fallback rule 3).
 6. **Empty or header-only logs.** Skipped and counted. Not an error.
 7. **Colophon's own interruption.** The page, the cache and the price-history
    ledger are always written via temp file + rename. An interrupted run leaves
@@ -220,14 +234,14 @@ in the meantime, because its log changed and is reparsed.
 Fixtures exist for each case (§12.1).
 
 **Rules carried over from the research extractor.** The extractor is a
-private research script, not part of this repository. Its rules are restated
-here and in §5, and are behaviors to carry over, not code to copy:
-- title priority
-- turn lifecycle
-- inherited-prefix boundary for forks, including the
-  synthetic-start-verified-by-completion case
-- timestamp-provenance flags
-- reported-duration fallback
+private research script, not part of this repository. Every rule taken from
+it is restated in full in this spec:
+- title priority (§5.1)
+- timestamp provenance, collapsed timestamps, turn construction and duration
+  (§5.2)
+- inherited-prefix detection (§5.3)
+
+The implementation must not depend on access to the extractor.
 
 **Message deduplication** keeps the original semantics:
 - **Duplicate:** same role and text, from a *different* record family, with
@@ -284,17 +298,30 @@ Each text part of a user message is classified in this order:
    images shows "+ n images".
 5. **Everything else** is kept as the request.
 
-**Voice.** User transcript segments in `realtime_item` are kept as requests
-marked "voice", grouped per contiguous run of segments. A run is attached to
-the turn that contains it. A run that falls between turns, or before the
-first turn, is attached to the next turn that starts; a run after the last
-turn is attached to that last turn. In a session with no turns, runs appear
-as session-level requests.
+**Voice.** `realtime_item` transcript segments alternate between user and
+assistant.
+- **Grouping.** Consecutive *user* segments, with no assistant segment between
+  them, form one voice request. Each assistant segment run ends the current
+  request.
+- **Placement.** A request goes to the turn that contains its first segment.
+  - A request before the first turn, or between turns, goes to the next turn
+    that starts, under the label "before this turn". It is not shown as a
+    follow-up.
+  - A request after the last turn goes to that turn as a follow-up.
+  - In a session with no turns, requests appear at session level.
+- **Spoken replies.** Consecutive assistant segments form one spoken reply.
+  - A reply belongs to the most recent turn that started before it, including
+    replies spoken after that turn's `task_complete`.
+  - A turn with no `final_answer` uses its **last** reply (the substantive one;
+    earlier replies are often fillers) as the answer, marked "voice reply".
+  - A turn that has a `final_answer` shows only that.
 
 The wrapper, heading and prefix lists are single constants, and tests assert
 each list in full. Fixtures cover every wrapper with and without a heading.
 
-**Final answer.** The turn's last `final_answer`-phase agent message.
+**Final answer.** The turn's last `final_answer`-phase agent message. If there
+is none, the voice reply above is used, if any. Otherwise the reader shows
+"no final answer recorded".
 
 **Never stored.** Commentary, reasoning, command output, patch contents, MCP
 arguments and results, inter-agent messages (including subagent task briefs),
@@ -302,11 +329,67 @@ and developer/system messages.
 
 ### 5.2 Turns and time
 
-**Turns.**
-- **Duration** comes from the start/end timestamps, otherwise from the
-  reported duration.
-- **Status** is completed, aborted, interrupted, running or abandoned. The last
-  three are the open-turn cases of §4.1.
+**Event timestamps.** Each record's time is chosen in this order, and the
+source is kept as its provenance:
+1. Embedded clocks, which survive some log rewrites. Which ones are checked
+   depends on the payload type:
+
+   | Payload | Keys checked, in order |
+   |---|---|
+   | `task_started` | `started_at_ms`, then `started_at` |
+   | `task_complete`, `turn_aborted` | `completed_at_ms`, then `completed_at` |
+   | anything else | `completed_at_ms` |
+
+   - `_ms` keys are epoch milliseconds; the others are epoch seconds.
+   - The first valid key wins.
+   - **Exception:** a seconds-precision key that is strictly less than 2 s from the
+     wrapper `timestamp` yields the wrapper time, because the wrapper has
+     sub-second precision. Its provenance is then `record_timestamp`.
+2. Otherwise, the wrapper `timestamp`, with provenance `record_timestamp`.
+
+**Collapsed timestamps.**
+- A log is *collapsed* when it has more than one wrapper `timestamp` and all
+  of them are identical. A rewritten log can stamp every record with one
+  time.
+- In a collapsed log, any time whose provenance is `record_timestamp` is
+  unreliable:
+  - message times with that provenance are flagged
+  - the user-message span is not computed when any user message has an
+    unreliable time
+  - durations follow the rules below
+- Open item: logs with only two distinct wrapper times (§15).
+
+**Turn construction.**
+- A `task_started` opens a turn, keyed by its `turn_id`. If there is no
+  `turn_id`, the key is `turn-<n>`.
+- Records between a start and its end belong to that turn when they carry no
+  `turn_id` of their own.
+- A `task_complete` closes the turn as *completed*, and a `turn_aborted` as
+  *aborted*.
+  - If the turn has no start but the end carries an embedded `started_at`,
+    that becomes the start.
+  - `duration_ms` and `time_to_first_token_ms` (when present and ≥ 0) are kept
+    as the reported duration and time to first token.
+
+**Turn duration.**
+1. **Collapsed and unreliable: unknown.** If the log is collapsed, there is no
+   reported duration, and both the start and the end have provenance
+   `record_timestamp`, the duration is **unknown** and flagged.
+2. **Reported duration.** If a reported duration exists and the turn has an
+   end, use it when any of these hold:
+   - there is no start
+   - the log is collapsed
+   - the end's provenance is `completed_at`
+
+   Then start = end − reported, and the duration is the reported value.
+3. **Start/end difference.** Otherwise, if start and end both exist and
+   end ≥ start, the duration is end − start.
+4. Otherwise the duration is unknown.
+
+Turns with an unknown duration are excluded from active time and flagged.
+
+**Status** is completed, aborted, interrupted, running or abandoned. The last
+three are the open-turn cases of §4.1.
 - **Active time** is the union of the intervals of completed, aborted,
   interrupted and running turns. Running turns end at the snapshot time.
   Abandoned turns are excluded and flagged.
@@ -343,6 +426,47 @@ they affect.
   "forked from <session>" link in the reader. None were observed; the case is
   supported anyway.
 - Inherited records are excluded from every metric.
+
+**Inherited-prefix detection.** Restated from the research extractor.
+
+*Setup.*
+- `created_at` is the first `session_meta` payload `timestamp`, or that
+  record's event time (§5.2) if the payload has none.
+- A record whose event time is earlier than `created_at` is always inherited.
+
+*Path A: the first `session_meta` has `forked_from_id`.* Scan the file's
+`event_msg` `task_started` and `task_complete` records in order:
+1. **Synthetic starts.** A `task_started` whose `turn_id` begins with
+   `rollout-` is remembered as (record index, `started_at`) and skipped.
+2. **Ownership.** Any other such record is **owned** when its `turn_id` is a
+   UUIDv7 whose embedded creation time (the first 48 bits, in ms) is at least
+   `created_at` − 1 s. Two adjustments, applied in this order:
+   - It is **not** owned if its `started_at` (epoch seconds) is earlier than
+     `created_at` − 1 s.
+   - Then, a `task_started` whose `turn_id` is not a UUIDv7 **is** owned if
+     its wrapper time is at least `created_at` + 1 s. This overrides the
+     previous adjustment.
+3. **Boundary.** At the first owned record:
+   - If it is a `task_complete` whose `started_at` equals a remembered
+     synthetic start's `started_at`, the boundary is the index of the **last**
+     such matching synthetic start (*synthetic start verified by completion*).
+   - Otherwise the boundary is this record's index (*own lifecycle*).
+4. **Result.** Records strictly between index 0 and the boundary are
+   inherited.
+5. **No owned record found.** The session is flagged **history boundary
+   unresolved**. It is listed with its title and links but no metrics,
+   because its own activity cannot be separated from the copy. It is counted
+   in diagnostics.
+
+*Path B: no `forked_from_id`.*
+- A second `session_meta` with a different id starts an inherited run.
+- The run ends at the first of:
+  - a `thread_settings_applied`
+  - a record whose payload `thread_id` equals the session id
+  - an own `task_started`: its `started_at` is at least `created_at` − 1 s,
+    or, if it has no `started_at`, its event time is at least
+    `created_at` + 1 s
+- The record that ends the run is itself **not** inherited.
 
 **Child → parent turn(s).** A subagent has one *spawn turn* and zero or more
 *interaction turns*, because a parent can send it follow-up tasks in later
@@ -429,19 +553,54 @@ parity reports any difference.
   real-data audit found no foreign records, so this guard is exercised by
   fixtures.
 
-**Fallback path: `token_count`.**
-- Usage per event is the change in cumulative `total_token_usage`. A repeated
-  snapshot counts zero. Summing `last_token_usage` overcounts because
-  snapshots repeat.
-- **Counter drop.** The cumulative total can decrease. The starting rule is:
-  the pre-drop peak stays counted and the next segment starts a new baseline.
-  The final rule is set by parity (§12.4).
-- **Fork baseline.** Follows upstream `CodexSubagentRolloutShape`:
-  - The first session meta owns leaf identity.
-  - Embedded ancestor metadata proves a copied prefix.
-  - A zero-component opening event carries inherited context.
-  - The first owned event supplies the baseline.
-  - Independently restarted counters still count their opening usage.
+**Fallback path: `token_count`.** This is a behavioral port of upstream's
+Codex snapshot accounting, not a new algorithm:
+- `CodexSnapshotAccumulator.apply` and `CodexTotalsTracker`
+- their helpers: `codexShouldPreferTotalDelta`,
+  `codexLooksLikeStaleRegression`, `codexTotalDelta`,
+  `codexContainedTotalDelta`, `codexPostLatchEventDelta`
+
+These are in `CostUsageScanner.swift` @ `3bbf6bc48`. CodexBar is public, so
+the implementer ports from that source and cites it in `token_rules.md`. The
+port is complete when the parity script (§12.4) agrees, or every difference is
+recorded.
+
+For orientation, the upstream rules per `token_count` event are:
+1. **Repeat.** A cumulative total identical to one already seen counts zero.
+2. **Stale regression.** A total that fell back by roughly one recent increment
+   is stale and counts zero.
+3. **Interleaving.** A total with any component below the running watermark
+   latches *interleaved* mode. From then on, deltas are contained against the
+   watermark and the counted totals (`codexPostLatchEventDelta`). This is how
+   counter drops and restarts after a crash are handled.
+4. **Normal case.** The counted delta is the event's `last_token_usage`. The
+   total-derived delta (current total − baseline) replaces it when all of
+   these hold:
+   - a baseline exists
+   - the current total is ≥ the baseline in every component
+   - the total delta is ≤ `last_token_usage` in every component
+   - no divergence between raw and counted totals has been seen
+
+   Consequences: the first event (no baseline) counts its `last_token_usage`,
+   and a gap larger than `last` is not billed.
+5. **Total only.** An event with a total but no `last` counts the total delta,
+   contained against the watermark once latched.
+
+The components are input, cached input, output and reasoning output. Upstream
+does not track cache-write input on this path, so on the fallback path it is
+taken as zero.
+
+**Pricing uses the counted deltas.** The counted delta components are the
+token counts passed to the §5.6 formula, and the long-context test uses the
+counted input delta.
+
+**Fork baseline.** Follows upstream `CodexSubagentRolloutShape`, ported the
+same way:
+- The first session meta owns leaf identity.
+- Embedded ancestor metadata proves a copied prefix.
+- A zero-component opening event carries inherited context.
+- The first owned event supplies the baseline.
+- Independently restarted counters still count their opening usage.
 
 **Provenance.** `colophon/docs/token_rules.md` lists every CodexBar-derived
 token and pricing rule with:
@@ -474,14 +633,21 @@ model has history, a later price change never reprices earlier usage.
 - **Curated history.** Maintained in the repository and embedded in the
   launcher as one clearly delimited JSON block, `CURATED_PRICE_HISTORY`, so
   the launcher stays a single file.
-  - It is seeded with rates ported from upstream CodexBar
-    (`CostUsagePricing.swift` @ `3bbf6bc48`, cited in `token_rules.md`): its
-    bundled Codex rates and thresholds, plus `codexHistoricalPricing`.
-  - **Seeding rule.** A historical rate valid until a cutoff becomes an entry
-    with `effective_from: null`, which means "from the beginning". It is
-    followed by an entry at the cutoff carrying the upstream bundled rate.
-    A bundled rate with no historical predecessor becomes a single
-    `effective_from: null` entry.
+  - **Seed.** The seed equals what upstream `resolvedCodexPricing`
+    (`CostUsagePricing.swift` @ `3bbf6bc48`) resolves for each model in its
+    bundled `codex` table. It is computed once by the maintainer from a dated
+    models.dev snapshot, and `token_rules.md` records the snapshot date and
+    method.
+    - **Model with an upstream historical rate** (`codexHistoricalPricing`):
+      an entry with `effective_from: null` ("from the beginning") carrying the
+      historical rate, followed by an entry at the cutoff carrying the
+      resolved current rate.
+    - **Other bundled model:** one `null` entry carrying the resolved rate.
+    - **Every seed entry** carries upstream's bundled threshold (272,000)
+      and its `priority`.
+  - **Effect.** Because the seed matches the catalog as of its snapshot, the
+    first fetch records nothing for unchanged models. Usage after a cutoff is
+    priced at catalog rates, as upstream does.
   - Only the curated ledger may use `null`.
 - **User ledger.** `$COLOPHON_HOME/price-history.json` is created on first run
   with an empty `entries` list, and curated entries are never copied into
@@ -516,8 +682,24 @@ model has history, a later price change never reprices earlier usage.
 | `per_million` | Required, with all four keys. A model with no separate cached or cache-write rate repeats its `input` rate. |
 | `long_context` | Optional. If present, `threshold` and all four rate keys are required. A request whose input exceeds `threshold` uses these rates. |
 | `source` | Required. `curated` (launcher only), `catalog` (appended by Colophon) or `manual` (written by a person or an agent). |
+| `priority` | Optional: `{ "multiplier": 2.0, "max_input_tokens": 272000 }`. `multiplier` > 0; `max_input_tokens` is a positive integer or `null` (no cap). See step 7. |
 | `recorded_at` | Required on `catalog` entries; optional otherwise. |
 | `approximate_date`, `note` | Optional. |
+
+**Priority seeding and editing.**
+- Curated entries carry upstream `codexAPIFastMultiplier`:
+  - ×2 for gpt-5.4, gpt-5.4-mini, gpt-5.6-sol, gpt-5.6-terra and
+    gpt-5.6-luna, capped at 272,000 input tokens
+  - ×2 for gpt-6-astra, with no cap
+  - ×2.5 for gpt-5.5, capped at 272,000
+- A `catalog` entry copies `priority` from the prior entry (defined under
+  the mapping below), because the catalog has no priority data.
+- A `manual` entry may set or change `priority`, for example to add a
+  multiplier for gpt-6.1-sol, which upstream does not know.
+  - A manual entry covers only its own rate period.
+  - To add a multiplier from date D, write a `manual` entry at D that repeats
+    that period's rates and adds `priority`.
+  - The README shows this pattern.
 
 **Resolution, per request.**
 1. **Normalize** the model name, ported from upstream `normalizeCodexModel`.
@@ -534,9 +716,15 @@ model has history, a later price change never reprices earlier usage.
    first dated entry), use that model's **earliest** entry. Never use current
    rates for older usage. Record the diagnostic "priced at earliest known
    rate".
-5. **Unpriced.** A model is unpriced at an instant only when it has no history
-   entry at all and no catalog rate is available from a fetch or the cache.
-   This is the single definition of "unpriced", used everywhere (§9).
+5. **No ledger entry at all.**
+   - **Catalog rate available** (fetched or cached) but not yet recorded in
+     either ledger. This happens when recording was skipped because the ledger
+     changed during the run (see "Writing the ledger"). Price with a
+     *transient* entry, effective from the beginning, built from the catalog
+     by the mapping below. Record the diagnostic "priced from unrecorded
+     catalog rate".
+   - **No catalog rate either.** The model is **unpriced**. This is the single
+     definition of "unpriced", used everywhere (§9).
 6. **Long context.** Use the long-context rates when the request's input
    exceeds the entry's threshold. The threshold comes from:
    - `long_context.threshold` on the entry.
@@ -550,19 +738,90 @@ model has history, a later price change never reprices earlier usage.
    For such models (for example the gpt-6 family), Colophon follows the
    catalog's explicit tier size. This is recorded in `token_rules.md`, and
    parity is expected to report it.
-7. **Priority tier.** When the tier in force (§5.5) is `priority`, apply the
-   upstream `codexPriorityCostUSD` multiplier rules.
+7. **Priority tier.** Applies when the tier in force (§5.5) is `priority`.
+   - **Standard cost** means the non-priority cost from the formula below,
+     long-context rates included when they apply.
+   - **Multiplier.** If the chosen entry has `priority` and the request's input
+     is within `max_input_tokens`, cost = `multiplier` × the standard cost.
+     For an uncapped model (gpt-6-astra), the multiplier applies on top of
+     long-context rates.
+   - **Over the cap.** If the input exceeds `max_input_tokens`, use the
+     standard cost, as upstream does.
+   - **No `priority` field.** Use the standard cost and record the diagnostic
+     "priority usage on a model with no known multiplier; priced at
+     standard", with the token volume. The diagnostic tells the user exactly
+     which models need a `manual` entry.
 
-**Recording catalog rates.** Runs only after a successful fetch, and only when
-the user ledger is valid. For each model in the catalog:
-- **No history entry at all** (first sight). Append a `catalog` entry with
-  `effective_from` set to the fetch time and `approximate_date: true`. Because
-  of step 4, usage before this entry is priced at this rate.
-- **Rates differ** from the model's latest entry in the merged history.
-  Append a `catalog` entry with `effective_from` set to the fetch time and
-  `approximate_date: true`.
+**Catalog → entry mapping.** Used for recording and for transient entries.
+It mirrors upstream `resolvedCodexPricing`: the catalog supplies the rates,
+and the model's **prior entry** stands in for upstream's bundled values where
+the catalog is silent.
+
+The *prior entry* is the entry the pick rule (step 3) selects for that model
+at the catalog's fetch time. A model with no entry has none.
+
+1. **Normalize catalog keys** with `normalizeCodexModel`.
+2. **Several keys, one model.** When several catalog keys normalize to the
+   same model:
+   - Use the key that is already equal to the normalized id.
+   - If no key is equal and all the candidates' rates are identical, use any
+     of them.
+   - Otherwise, skip that model for this run and record the diagnostic
+     "ambiguous catalog aliases for <model>".
+
+   One run never appends two entries for one model.
+3. **Standard rates.**
+
+   | Entry field | Source, first available |
+   |---|---|
+   | `input` | `cost.input` |
+   | `output` | `cost.output` |
+   | `cached_input` | `cost.cache_read`, then the prior entry's `cached_input`, then `cost.input` |
+   | `cache_write` | `cost.cache_write`, then the prior entry's `cache_write`, then `cost.input` |
+
+4. **Long context, when the catalog has a block.** The block is
+   `cost.tiers[0]`, or `cost.context_over_200k` when there are no tiers.
+
+   | Long-context field | Source, first available |
+   |---|---|
+   | `input` | the block's `input`, then the standard `input` |
+   | `output` | the block's `output`, then the standard `output` |
+   | `cached_input` | the block's `cache_read`, then raw `cost.cache_read`, then the long `input`, then the standard `input` |
+   | `cache_write` | the block's `cache_write`, then raw `cost.cache_write`, then the long `input`, then the standard `input` |
+
+   "Raw" means the catalog field itself, never a filled value.
+
+   **Threshold:** the prior entry's threshold when it has one. Otherwise the
+   tier's `tier.size`, or 200,000 for `context_over_200k`. Upstream lets the
+   bundled threshold win in the same way.
+5. **Long context, when the catalog has no block:** copy the prior entry's
+   `long_context` unchanged, or omit it if there is none.
+6. **Priority:** copy the prior entry's `priority`. The catalog has no
+   priority data.
+
+**Recording catalog rates.** Recording runs whenever a catalog is available
+and the user ledger is valid. The catalog may come from a 200, a 304, the
+cache, or `--offline`. Recording happens **before** pricing (§4), so
+first-sight models never need a transient entry in a normal run.
+
+For each model after the mapping, let *T* be the catalog's **fetch time**:
+when that copy was downloaded, not the current run time.
+- **Skip** if any entry for this model already has `effective_from` = *T*.
+  This makes recording idempotent: re-reading the same cached catalog never
+  appends again.
+- **First sight** (the model has no entry at all): append a `catalog` entry
+  with `effective_from` *T* and `approximate_date: true`. Because of step 4,
+  usage before *T* is priced at this rate.
+- **Rates differ** from the prior entry at *T*: append a `catalog` entry with
+  `effective_from` *T* and `approximate_date: true`.
+  - "Rates" means the four standard rates and the four long-context rates.
+  - Threshold and `priority` are carried forward, never compared.
+  - Comparing against the entry in force at *T*, not the latest entry, means
+    that a later `manual` correction never causes repeated appends.
 - **Never** backdate to the catalog's per-model `last_updated`. It is not a
   price-change date: in research it lagged real repricings by weeks.
+
+new.
 
 **Detection lag.** Colophon only sees a change when it fetches. Usage between
 a real change and its detection is priced at the earlier rate. A `manual`
@@ -582,8 +841,10 @@ the intended effect.
 - a rate is negative
 - `effective_from` is unparseable, or is `null` in the user ledger
 - `source` is unknown, or is `curated` in the user ledger
-- two entries share model, `effective_from` and `source` but have different
-  rates
+- `priority.multiplier` is not > 0, or `priority.max_input_tokens` is
+  neither a positive integer nor `null`
+- two entries share model, `effective_from` and `source` but differ in any
+  field other than `note` and `recorded_at` (`priority` included)
 
 A failed ledger stops cost computation for that run, and also stops
 recording. Tokens are still shown. The error names the file, the entry index
@@ -618,8 +879,9 @@ cost_usd      = ( tok_uncached × rate.input
 
 - `output_tokens` is used as reported: it already includes reasoning tokens,
   which are not added again.
-- "Request input" comes from the usage record, or from the event's
-  `last_token_usage` on the fallback path. It is never a cumulative total.
+- Token counts come from the usage record on the primary path, and from the
+  counted deltas of the ported snapshot accounting on the fallback path
+  (§5.5). They are never a raw cumulative total.
 - **Deviation.** Upstream passes zero cache-write tokens for Codex rows.
   Colophon uses the logged `cache_write_input_tokens`. These are zero in all
   current logs, so the results are identical today. The deviation is recorded
@@ -675,7 +937,7 @@ The page embeds one JSON document in
 | `subagents` | Keyed by id: the same shape, plus the parent link, spawn and interaction turns, and the link method. |
 | `workspaces` | Name, keys, aliases. |
 | `models` | Rate periods used per model, each with its ledger source (curated, catalog or manual), or "unpriced". |
-| `diagnostics` | Skipped files, malformed-line counts, truncated and recovered lines, unknown record types, database threads without logs, orphaned subagents, inferred links, unpriced models, usage priced at earliest known rate, ledger warnings, page size. |
+| `diagnostics` | Skipped files, malformed-line counts, truncated and recovered lines, unknown record types, database threads without logs, orphaned subagents, inferred links, unpriced models, usage priced at earliest known rate, priority usage without a known multiplier, ambiguous catalog aliases, rates from an unrecorded catalog, unresolved fork boundaries, ledger warnings, page size. |
 
 - All times are UTC.
 - Aggregates and filters are computed in the browser from `sessions` and
@@ -722,8 +984,14 @@ read.
 - turns (with average turn time)
 - tokens (with cached-input share)
 - estimated cost
-- problem turns (amber): the count of aborted + interrupted + abandoned turns,
-  with the breakdown beneath
+- aborted turns (amber), as in the approved mockup. The line beneath shows
+  "n interrupted · n abandoned". These two statuses replaced the mockup's
+  "incomplete" when live-session handling was added (§4.1).
+
+**Turn scope.** The turns, average turn time and aborted-turns tiles, and the
+hour × weekday heat map, count **your sessions' turns only**. Subagent
+activity appears in the agent-time and subagent figures, never in turn
+counts. Tokens and cost include subagents, per §5.9.
 
 When any total includes running turns, that tile shows a LIVE marker with
 "includes n running" (§4.1).
@@ -742,7 +1010,7 @@ the same days of the previous month). It is hidden for ALL and CUSTOM.
 | Turns | The list |
 | Tokens | The list sorted by tokens |
 | Estimated cost | The list sorted by cost |
-| Problem turns | The list filtered to sessions with aborted, interrupted or abandoned turns (same set as the tile's count) |
+| Aborted turns | The list filtered to sessions with aborted turns. The "interrupted" and "abandoned" figures beneath are separate links, each filtering to its own status. |
 
 **Panels:**
 - **Calendar heat map:** 53 weeks × 7 days, or fewer for short periods. Metric
@@ -751,7 +1019,8 @@ the same days of the previous month). It is hidden for ALL and CUSTOM.
   - If the weeks still do not fit, the grid sits in a horizontal scroll region
     (`data-scroll-region`), scrolled to the most recent week by default.
   - This is the only permitted scroll region (§8.5).
-- **Hour × weekday heat map:** counts turn starts, in local time.
+- **Hour × weekday heat map:** counts your sessions' turn starts, in local
+  time.
 - **Workspaces:** bars, with a time / tokens toggle; top N, then "+ N more".
 - **Models:** tokens and cost.
 - **Notable:** busiest day, longest active day, biggest subagent fan-out,
@@ -817,6 +1086,9 @@ and cost (with a yours / subagents split).
 - **YOU ASKED · n:** the first two requests are shown. "+ n follow-ups sent
   while it worked" expands the rest. Long text is clamped behind "more".
   Voice requests are marked.
+  - Requests labelled "before this turn" (§5.1) appear first, in their own
+    group, and do not count toward the "first two" or the follow-ups.
+  - A voice-reply answer is marked "voice reply" under FINAL ANSWER.
 - **IT USED:** tool-summary chips (§5.4), with failures in amber.
 - **SUBAGENTS · n:** subagents spawned in this turn. Each row shows agent-path
   label · nickname · start · active time · tokens, plus a forked badge where
@@ -892,6 +1164,10 @@ anything. Also confirm what `codex resume` does to an archived session.
 | Invalid `price-history.json` | Costs are not computed and nothing is recorded for the run; tokens still shown. Stderr names the file, entry index and problem (§5.6). |
 | Ledger changed by another writer during the run | Appending is skipped for this run, with a warning. |
 | Orphaned subagent (parent log missing) | Listed as a top-level row with a flag; counted. |
+| Priority usage on a model with no known multiplier | Priced at standard; diagnostic names the model and token volume (§5.6 step 7). |
+| Several catalog keys normalize to one model with different rates | That model is skipped for recording this run; diagnostic (§5.6). |
+| Model priced from an unrecorded catalog rate | Transient entry used; diagnostic (§5.6 step 5). |
+| Fork history boundary unresolved | Session listed without metrics; flagged and counted (§5.3). |
 | Truncated final line or glued fragment | Per §4.1: skipped or recovered, counted in its own category. |
 | Invalid `workspaces.json` | Stderr names the file, line and problem. The file is ignored, the run continues, and diagnostics record it. |
 | Cache version mismatch or corruption | Discard the entry (or the whole cache) and reparse. |
@@ -961,6 +1237,17 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
   - A foreign-thread usage record.
   - Priority tier, including a session that switches between default and
     priority.
+  - Priority on a model with a multiplier (under and over its input cap), on
+    gpt-6-astra (no cap), and on a model with no multiplier (diagnostic);
+    a `manual` entry adding a multiplier; `priority` carried forward.
+  - Catalog aliases that normalize to one model (equal key present; all
+    rates equal; conflicting rates skipped), and the full catalog → entry
+    mapping including missing tier keys.
+  - Recording from a 304, from the cache and under `--offline`, and
+    idempotence; a transient entry when recording is skipped.
+  - Fallback-path counted deltas matching upstream behavior: first event,
+    repeated totals, stale regressions, interleaving latch, gaps larger than
+    `last_token_usage`, and total-only events.
   - Historical-cutoff dates, and the curated `null` seed entries.
   - Long-context requests, including the 200k–272k band.
   - Catalog `tiers` and `context_over_200k` shapes, a catalog model without
@@ -975,6 +1262,11 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
     - every invalid-ledger case of §5.6
 - **Time and turns:**
   - Collapsed timestamps.
+  - Every embedded-clock key, and the within-2 s wrapper preference.
+  - Each turn-duration rule of §5.2, including reported duration with a
+    `completed_at` end, and unknown duration in a collapsed log.
+  - Inherited-prefix path A (own lifecycle, a verified synthetic `rollout-*`
+    start, and unresolved) and path B (each of its three end conditions).
   - Aborted turns, and the interrupted, running and abandoned open-turn cases
     either side of the 2-hour threshold.
   - A turn crossing local midnight, and DST transitions.
@@ -987,12 +1279,17 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
   - A same-size, same-mtime rewrite, caught by the tail fingerprint.
   - A log moved into `archived_sessions`, and a deleted log.
   - A file that grows during the scan (scan-start cache key).
+  - An unchanged log first parsed within 2 hours, then re-run after 2 hours:
+    its open turn flips from running to abandoned and its partial final line
+    from "still being written" to "truncated", despite the cache hit.
 - **Text and requests:**
   - Injected request prefixes.
   - Every context wrapper, with and without a request heading.
   - Answer parts and image parts.
   - Multiple requests per turn.
-  - Voice transcript runs inside, between, before and after turns.
+  - Voice: alternating user and assistant segments, requests before and
+    between turns ("before this turn"), after the last turn, a turn with no
+    `final_answer` using the voice reply, and a session with no turns.
   - Identical repeated user messages.
 - **Tools:** `Extension` `clock.sleep` (not counted), `image_gen.generation`
   (Other), `custom_tool_call` `exec` vs `apply_patch`, and `tool_search_call`.
@@ -1130,6 +1427,8 @@ Ported functions carry a header comment naming their upstream source.
 
 **Deliberate deviations from upstream CodexBar** (each recorded in `token_rules.md`;
 parity is expected to show them):
+- The priority multiplier lives in the price history and is editable; upstream
+  hard-codes it (§5.6).
 - The long-context threshold for non-bundled models follows the catalog's
   tier size, not a fixed 200,000 (§5.6).
 - The priority tier comes from `thread_settings_applied`, not the trace
@@ -1138,10 +1437,18 @@ parity is expected to show them):
 - Prices are dated history, so a price change never reprices past usage
   (§5.6).
 
+**Deliberate deviation from the research extractor:** a fork whose history
+boundary cannot be resolved is listed without metrics; the extractor dropped
+such sessions entirely (§5.3).
+
 **Resolved during implementation.**
-1. Counter-drop rule and fork baselines on the fallback path: set by parity.
+1. Fallback-path port (snapshot accounting and fork baselines): verified by
+   parity; any remaining difference is recorded in `token_rules.md`.
 2. Whether sessions missing from CodexBar's report are a CodexBar rule or a
    gap. Colophon counts them unless a recorded rule says otherwise.
 3. Open in Codex / `codex resume` behavior (§8.4).
 4. Measure and record cold throughput and real page size.
 5. Light theme: the next release after v1 acceptance.
+6. Logs with only two distinct wrapper timestamps exist in the research
+   sample. Measure them during acceptance, and decide whether the collapsed
+   rule (§5.2) should cover them. Record the decision here.
