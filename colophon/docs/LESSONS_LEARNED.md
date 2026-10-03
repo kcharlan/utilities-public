@@ -17,3 +17,9 @@
   of rejecting them. Validate signed offset hours and minutes before
   parsing. Regressions check invalid minutes in both signs, invalid hours,
   and the valid `±23:59` boundaries.
+- Synthetic fixture builders must distinguish omitted values from explicit
+  empty dictionaries and lists; truthiness fallbacks silently change the
+  intended record. Restrict custom log names to filenames so fixture writes
+  stay within the supplied home. Regressions:
+  `test_explicit_empty_arguments_and_receivers_are_preserved` and
+  `test_filename_cannot_escape_supplied_home`.
