@@ -140,14 +140,15 @@ ignored*. Any other type is counted per type for format-drift diagnostics
 | Top-level `world_state`, `compacted` | Known and ignored. |
 | Top-level `realtime_item` | Used for voice transcript segments only: user segments as requests, assistant segments as spoken replies (§5.1). |
 | Legacy `event_msg` `user_message` / `agent_message` | Supported for older Codex versions; absent from current logs. |
+| A line with no `type` that carries usage (one-shot `codex exec` output) | Used: tokens, via the ported bare-usage handling (§5.5). Absent from the research logs; a fixture covers it. |
 
 ## 4. Compile pipeline
 
 ```
-fetch catalog → record catalog rates in the ledger
+fetch catalog (may run alongside the scan)
 scan files → parse each file (cached) → load metadata → assemble sessions
-→ link subagents → resolve workspaces → account tokens → price
-→ render HTML (data embedded) → atomic write → open
+→ link subagents → resolve workspaces → record catalog rates in the ledger
+→ account tokens → price → render HTML (data embedded) → atomic write → open
 ```
 
 **Parsing.**
@@ -433,7 +434,8 @@ they affect.
 - A `forked_from_id` on a session that has no subagent parent is shown as a
   "forked from <session>" link in the reader. None were observed; the case is
   supported anyway.
-- Inherited records are excluded from every metric.
+- Inherited records are excluded from every **non-token** metric. Tokens
+  follow §5.5 and its ported fork rules.
 
 **Inherited-prefix detection.** Restated from the research extractor.
 
@@ -462,9 +464,12 @@ they affect.
 4. **Result.** Records strictly between index 0 and the boundary are
    inherited.
 5. **No owned record found.** The session is flagged **history boundary
-   unresolved**. It is listed with its title and links but no metrics,
-   because its own activity cannot be separated from the copy. It is counted
-   in diagnostics.
+   unresolved**. It is listed with its title and links, but with no turn,
+   time or request metrics. Its tokens and cost are shown only when the
+   token accounting (§5.5, either path) attributes owned usage to it. Turn
+   metrics
+   are withheld because its own turns cannot be separated from the copy. It
+   is counted in diagnostics.
 
 *Path B: no `forked_from_id`.*
 - A second `session_meta` with a different id starts an inherited run.
@@ -541,10 +546,11 @@ Subagents have their own section in the reader. Tests enumerate this list.
 
 ### 5.5 Tokens
 
-Each usage unit is attributed to a session, turn, model (from the
-`turn_context` in force), UTC instant, and service tier. The service tier is
+Each usage unit, from either path below, carries a model (from the
+`turn_context` in force), a UTC instant and a service tier. The service tier is
 the one in force at that instant, from the latest preceding
-`thread_settings_applied`; the default tier applies before any.
+`thread_settings_applied`; the default tier applies before any. Session and
+turn attribution follow "Attribution" below.
 
 Upstream detects priority from Codex's `logs_*.sqlite` trace database
 instead. Colophon's source is a recorded deviation in `token_rules.md`, and
@@ -555,7 +561,21 @@ parity reports any difference.
   those records.
 - Otherwise use `token_count` deltas.
 
-**Primary path: `token_usage_record`.**
+**Attribution (both paths).** Every usage unit goes to its session, its model
+and tier, and its 15-minute bucket, always. It also goes to its turn, but only
+when that turn is a displayed, owned turn under §5.3.
+- A unit on a record §5.3 treats as inherited, or outside any displayed turn,
+  still counts toward the session's totals.
+- The reader shows that usage on a line "tokens outside displayed turns".
+- **Invariant:** the turn cards plus that line equal the session's **own**
+  total, which excludes its subagents. Subagent usage appears in the
+  subagent rows. The session's overall total is its own total plus all
+  descendants' totals (§5.9). Tests assert both equalities.
+
+**Primary path: `token_usage_record`.** This is **Colophon's own design, not a
+port**. Upstream never reads these records; it counts `token_count` for every
+turn. Colophon prefers them because each is an exact per-response figure. The
+difference is a recorded deviation (§15), and parity will show it.
 - Each `response_id` is counted once.
 - Only records whose `thread_id` equals the session's own id are counted. The
   real-data audit found no foreign records, so this guard is exercised by
@@ -583,6 +603,13 @@ orientation only; where they disagree with upstream, upstream wins.
   `hasUnresolvedForkBaseline`, `suppressUnownedCopiedPrefix`), plus the
   subagent owned-suffix reset (`subagent_history_start_ordinal`).
 - **Fork baseline:** `CodexSubagentRolloutShape`.
+- **Bare usage lines:** `handleBareUsage` and `codexBareUsage`. These are
+  one-shot `codex exec` usage lines that have no `type`, ported so they are
+  counted, not reported as unknown records. As upstream, they bypass the
+  `token_count` state machine. They follow the per-turn source selection like
+  fallback usage, so they are discarded for a turn that has `token_usage_record`
+  usage. A bare line with no model is upstream's `unknown` model, which is
+  unpriced.
 - **Note:** `CodexSnapshotAccumulator.apply` is **not** the per-event billing
   logic. It only builds a parent's snapshot totals.
 
@@ -678,6 +705,11 @@ model normalization, the cost formula and the priority multiplier are ports
 of upstream CodexBar, `CostUsagePricing.swift` @ `3bbf6bc48`:
 - `resolvedCodexPricing`
 - `normalizeCodexModel`
+- the catalog lookup chain: `codexModelsDevLookup`,
+  `codexModelsDevPricingTargets`, and in `ModelsDevPricing.swift`
+  `ModelsDevProvider.pricing(modelID:)`, `ModelsDevModelIDNormalizer` and
+  `ModelsDevModel.pricing` (which decides `isPriceable` and the 200,000
+  `context_over_200k` threshold)
 - `codexCostUSD`
 - `codexPriorityCostUSD` / `codexAPIFastMultiplier`
 
@@ -696,14 +728,23 @@ validation and the recorded deviations.
     body download.
   - `--refresh-prices` forces an unconditional GET with the same 30 s budget.
   - `--offline` skips the fetch.
-- Catalog models without a `cost` object (for example image-only models) are
-  ignored.
+- A catalog model is usable only if the ported `ModelsDevModel.pricing` finds
+  it priceable. That means it has a `cost` with both input and output;
+  image-only models, for example, are not priceable.
 - There is no bundled snapshot of current prices.
 
-**The resolver.** `resolve(model, catalog)` is the port of upstream
-`resolvedCodexPricing`, **excluding its historical-rate branch**, because
-history lives in the ledgers. It uses `CURATED_BUNDLED` (below) wherever
-upstream uses its bundled `codex` table.
+**The resolver.** `resolve(id, catalog)` takes a normalized model id. It is
+the port of upstream `resolvedCodexPricing`, **excluding its historical-rate
+branch**, because history lives in the ledgers.
+- **Catalog lookup.** It finds the catalog entry through the ported lookup
+  chain. That chain tries the id, then the candidates produced by
+  `ModelsDevModelIDNormalizer`, which strip date and version suffixes such as
+  `-YYYY-MM-DD`. The first priceable match wins.
+- **Bundled values.** It uses `CURATED_BUNDLED` (below) wherever upstream
+  uses its bundled `codex` table.
+- **Normalization.** The `normalizeCodexModel` port also reads
+  `CURATED_BUNDLED` keys, as upstream does: an id that is a bundled key is
+  kept as is, and a dated suffix is stripped only when the base is bundled.
 - **Output.** The resolver returns **fully effective numeric rates**. It
   applies upstream `codexCostUSD`'s own fallbacks before storing, so no rate
   field is ever empty:
@@ -712,27 +753,47 @@ upstream uses its bundled `codex` table.
 
   Pricing therefore never needs fallback logic, and two entries can be
   compared field by field.
+  - **Fill order.** Long-context fields are derived from the **raw, unfilled**
+    fields, in `codexCostUSD` order:
+    - long input: `longInput = inputAbove ?? input`
+    - long output: `outputAbove ?? output`
+    - long cached: `cacheReadAbove ?? cacheRead ?? longInput`
+    - long cache write: `cacheWriteAbove ?? cacheWrite ?? longInput`
+
+    The standard fields are filled only afterwards: `cached = cacheRead ??
+    input`, and `cache write = cacheWrite ?? input`. Filling them first would
+    change long-context results. Upstream `codexCostUSD` is authoritative for
+    any case this list misses.
 - **Threshold.** The bundled threshold when the bundled table has one;
   otherwise the catalog's (200,000 from `context_over_200k`); otherwise no
   `long_context`. This follows upstream exactly.
 - **Note in `token_rules.md`.** models.dev's own `tiers` data gives 272,000
   for models where upstream uses 200,000. Colophon keeps upstream's behavior
   for parity and records this as an upstream simplification to revisit.
-- **Model ids.** Catalog keys are normalized with `normalizeCodexModel`. When
-  several keys normalize to the same model:
-  - Use the key that is already equal to the normalized id.
-  - If no key is equal and all the candidates resolve to identical rates, use
-    any of them.
-  - Otherwise, skip that model for the run and record the diagnostic
-    "ambiguous catalog aliases for <model>".
-
-  One run never records two entries for one model.
+- **Keyed by normalized id.** Ledgers and the resolver are keyed by the
+  normalized model id, so each logged model is priced as
+  `resolve(normalizeCodexModel(raw))`.
+  - **Deviation.** Upstream first tries the raw logged id against the catalog
+    and only then the normalized id. A raw alias that has its own catalog
+    entry (for example `gpt-5.6` beside `gpt-5.6-sol`) is priced upstream
+    from the alias's entry, and in Colophon from the canonical one. Their
+    rates were identical in the research snapshot. This is recorded in
+    `token_rules.md` and §15.
+  - **Provider-qualified ids.** Ids such as `provider/model` for a provider
+    other than OpenAI are unpriced, because only the `openai` subset is
+    kept. That is also recorded.
 
 **Curated data (in the launcher, maintained in the repo).** Two clearly
 delimited JSON blocks keep the launcher a single file:
-- **`CURATED_BUNDLED`** is a port of upstream's bundled `codex` table, with
-  its raw fields as they are upstream, missing values included. Only the
-  resolver reads it.
+- **`CURATED_BUNDLED`** is a port of upstream's bundled `codex` table. It has
+  **its own schema**, not the ledger format: an object keyed by model id
+  whose values use upstream's field names and **per-token** units
+  (`inputCostPerToken`, `outputCostPerToken`, `cacheReadInputCostPerToken`,
+  `cacheWriteInputCostPerToken`, `thresholdTokens` and the `…AboveThreshold`
+  fields). Fields upstream leaves `nil` are omitted. It has no
+  `effective_from` or `source`.
+  - It is read by the resolver and by the `normalizeCodexModel` port.
+  - A test checks every value against upstream's table at the cited commit.
 - **`CURATED_PRICE_HISTORY`** holds dated entries in the ledger format below,
   seeded by the maintainer from a dated models.dev snapshot. `token_rules.md`
   records the snapshot date and method.
@@ -740,8 +801,14 @@ delimited JSON blocks keep the launcher a single file:
     an entry with `effective_from: null` ("from the beginning") carrying the
     historical rate, then an entry at the cutoff carrying
     `resolve(model, snapshot)`.
-  - **Every other model in `CURATED_BUNDLED`:** one `null` entry carrying
-    `resolve(model, snapshot)`.
+  - **Every other seeded id:** one `null` entry carrying `resolve(id,
+    snapshot)`. The seeded ids are the union of:
+    - every `CURATED_BUNDLED` key
+    - the normalized id of every **priceable** `openai` model in the snapshot
+
+    This covers models upstream prices only from the catalog, such as
+    gpt-6-sol and gpt-6.1-sol. Upstream prices those at the catalog rate for
+    all dates; a `null` entry does the same.
   - **Priority:** seed entries carry `priority` from upstream
     `codexAPIFastMultiplier`:
     - ×2 for gpt-5.4, gpt-5.4-mini, gpt-5.6-sol, gpt-5.6-terra and
@@ -749,7 +816,8 @@ delimited JSON blocks keep the launcher a single file:
     - ×2 for gpt-6-astra, with no cap
     - ×2.5 for gpt-5.5, capped at 272,000
   - **Effect.** The seed is the resolver's own output for the snapshot, so a
-    first fetch of an unchanged catalog records nothing.
+    first fetch of an unchanged catalog records nothing. Only models that
+    are new or repriced since the snapshot get `catalog` entries.
 
 **User ledger.** `$COLOPHON_HOME/price-history.json` is created on first run
 with an empty `entries` list, and curated entries are never copied into it.
@@ -833,12 +901,19 @@ README shows how to copy the rates.
 **Recording catalog rates.** Recording runs whenever a catalog is available
 and the user ledger is valid: from a 200, a 304, the cache, or `--offline`.
 It happens **before** pricing (§4). Let *T* be the catalog's **fetch time**,
-which is when that copy was downloaded, not the current run time. For each
-catalog model:
+which is when that copy was downloaded, not the current run time.
+
+The **recording set** is the union of:
+- the normalized id of every **priceable** model in the catalog (the same rule
+  as the seed)
+- the normalized ids of every model seen in this run's logs
+- every id that has an entry in **either** ledger
+
+For each id in the set that `resolve(id, catalog)` can price:
 - **Skip** if any entry for this model already has `effective_from` = *T*.
   This makes recording idempotent: re-reading the same cached catalog never
   appends.
-- **Compute** `resolve(model, catalog)`. Its `priority` is copied from the
+- **Compute** `resolve(id, catalog)`. Its `priority` is copied from the
   entry the pick rule selects at *T*, of any source, if there is one,
   because the catalog has no priority data.
 - **Compare** with the latest **non-`manual`** entry (`catalog` or `curated`)
@@ -883,8 +958,9 @@ recording. Tokens are still shown. The error names the file, the entry index
 and the problem. Exact duplicates are not an error: they collapse, and a
 warning is reported. Colophon never repairs or guesses.
 
-A test validates `CURATED_PRICE_HISTORY` and `CURATED_BUNDLED` with the same
-rules (`null` `effective_from` allowed there).
+A test validates `CURATED_PRICE_HISTORY` with the same rules, with two
+exceptions: `source: curated` is required, and a `null` `effective_from` is
+allowed. `CURATED_BUNDLED` is validated against its own schema, above.
 
 **Promotion to the repo** (maintainer procedure, in the README):
 1. List the user-ledger `catalog` entries newer than the curated history.
@@ -971,7 +1047,7 @@ The page embeds one JSON document in
 | `subagents` | Keyed by id: the same shape, plus the parent link, spawn and interaction turns, and the link method. |
 | `workspaces` | Name, keys, aliases. |
 | `models` | Rate periods used per model, each with its ledger source (curated, catalog or manual), or "unpriced". |
-| `diagnostics` | Skipped files, malformed-line counts, truncated and recovered lines, unknown record types, database threads without logs, orphaned subagents, inferred links, unpriced models, usage priced at earliest known rate, priority usage without a known multiplier, ambiguous catalog aliases, rates from an unrecorded catalog, unresolved fork boundaries, ledger warnings, page size. |
+| `diagnostics` | Skipped files, malformed-line counts, truncated and recovered lines, unknown record types, database threads without logs, orphaned subagents, inferred links, unpriced models, usage priced at earliest known rate, priority usage without a known multiplier, rates from an unrecorded catalog, unresolved fork boundaries, ledger warnings, page size. |
 
 - All times are UTC.
 - Aggregates and filters are computed in the browser from `sessions` and
@@ -1131,6 +1207,10 @@ and cost (with a yours / subagents split).
   that only interacted with a subagent show "also used: <agent-path label>".
 - **FINAL ANSWER:** an excerpt, with "expand".
 
+Below the last turn card, a line "tokens outside displayed turns" appears
+whenever §5.5 attributed usage to the session but to no displayed turn, so the
+cards plus that line equal the session's own total (§5.5).
+
 **Pre-ship verification.** Confirm that "Open in Codex" opens a live session,
 an archived session and a subagent session, and that it does not un-archive
 anything. Also confirm what `codex resume` does to an archived session.
@@ -1199,9 +1279,8 @@ anything. Also confirm what `codex resume` does to an archived session.
 | Ledger changed by another writer during the run | Appending is skipped for this run, with a warning. |
 | Orphaned subagent (parent log missing) | Listed as a top-level row with a flag; counted. |
 | Priority usage on a model with no known multiplier | Priced at standard; diagnostic names the model and token volume (§5.6 step 7). |
-| Several catalog keys normalize to one model with different rates | That model is skipped for recording this run; diagnostic (§5.6). |
 | Model priced from an unrecorded catalog rate | Transient entry used; diagnostic (§5.6 step 5). |
-| Fork history boundary unresolved | Session listed without metrics; flagged and counted (§5.3). |
+| Fork history boundary unresolved | Session listed without turn, time or request metrics (tokens per §5.5); flagged and counted (§5.3). |
 | Truncated final line or glued fragment | Per §4.1: skipped or recovered, counted in its own category. |
 | Invalid `workspaces.json` | Stderr names the file, line and problem. The file is ignored, the run continues, and diagnostics record it. |
 | Cache version mismatch or corruption | Discard the entry (or the whole cache) and reparse. |
@@ -1274,14 +1353,27 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
   - Priority on a model with a multiplier (under and over its input cap), on
     gpt-6-astra (no cap), and on a model with no multiplier (diagnostic);
     a `manual` entry adding a multiplier; `priority` carried forward.
-  - Catalog aliases that normalize to one model (equal key present; all
-    resolved rates equal; conflicting rates skipped).
+  - Lookup chain: a dated or versioned log model id priced through
+    `ModelsDevModelIDNormalizer` candidates; a catalog model without input
+    or output (not priceable); a provider-qualified id (unpriced).
   - The resolver port: catalog models with and without `cache_read`,
     `cache_write` and a long-context block; bundled models with and without a
     bundled threshold; a bundled model missing from the catalog. Expected
     values are derived by hand from upstream `resolvedCodexPricing` and
     `codexCostUSD`.
   - A model with only `manual` entries that then appears in the catalog.
+  - A bare usage line with no `type`.
+  - Recording scope: a priceable catalog model added after the snapshot and
+    not yet used is recorded at first fetch; a seeded but unused model is
+    recorded when repriced.
+  - The seed union: a catalog-only model (not in `CURATED_BUNDLED`) priced
+    from its `null` seed entry.
+  - The raw-alias deviation: a log model id that is an alias with its own
+    catalog entry, priced from the canonical id.
+  - The attribution invariants (§5.5): turn cards + "outside displayed
+    turns" = own total; own + descendants = overall total.
+  - A forked log whose counted deltas fall on inherited records ("tokens
+    outside displayed turns").
   - Recording from a 304, from the cache and under `--offline`, and
     idempotence; a transient entry when recording is skipped.
   - Fallback-path counted deltas matching upstream behavior: first event,
@@ -1466,6 +1558,11 @@ Ported functions carry a header comment naming their upstream source.
 
 **Deliberate deviations from upstream CodexBar** (each recorded in `token_rules.md`;
 parity is expected to show them):
+- Exact per-response `token_usage_record` usage is preferred where present;
+  upstream reads only `token_count` (§5.5).
+- Ledgers are keyed by normalized model id, so a raw alias with its own
+  catalog entry is priced from the canonical entry; provider-qualified ids
+  outside OpenAI are unpriced (§5.6).
 - The priority multiplier lives in the price history and is editable; upstream
   hard-codes it (§5.6).
 - The priority tier comes from `thread_settings_applied`, not the trace
@@ -1475,8 +1572,9 @@ parity is expected to show them):
   (§5.6).
 
 **Deliberate deviation from the research extractor:** a fork whose history
-boundary cannot be resolved is listed without metrics; the extractor dropped
-such sessions entirely (§5.3).
+boundary cannot be resolved is listed without turn, time or request metrics,
+with tokens only where token accounting attributes owned usage. The extractor
+dropped such sessions entirely (§5.3).
 
 **Resolved during implementation.**
 1. Fallback-path port (snapshot accounting and fork baselines): verified by
