@@ -546,8 +546,29 @@ Subagents have their own section in the reader. Tests enumerate this list.
 ### 5.5 Tokens
 
 Each usage unit, from either path below, carries a model, a UTC instant and a
-service tier. The model is the one from the `turn_context` in force, except
-for bare usage lines, whose order is given below. The service tier is
+service tier.
+
+**Model in force.** As upstream tracks `currentModel`, the model in force is
+set by each record that carries one, read in this order:
+- `payload.model`
+- `payload.model_name`
+- `payload.info.model`
+- `payload.info.model_name`
+
+Values are trimmed. A field that is present but blank clears the model; an
+omitted field leaves it unchanged. It is reset to none at a subagent's owned
+suffix (§5.5, fork handling).
+
+**Model per unit:**
+- **`token_count` event:** the model in force. If there is none, the event's
+  own model (`info.model`, `info.model_name`, `payload.model`, or the
+  top-level `model`). If there is none of those, `unknown`. This is upstream
+  `handleTokenCount`.
+- **`token_usage_record`:** the model in force, otherwise `unknown`.
+  Colophon's own path; see "Primary path".
+- **Bare usage line:** the order given under the fallback path.
+- **`unknown`** is never priced (upstream `resolvedCodexPricing` returns
+  nothing for it), and is shown as an unpriced model. The service tier is
 the one in force at that instant, from the latest preceding
 `thread_settings_applied`; the default tier applies before any. Session and
 turn attribution follow "Attribution" below.
@@ -611,9 +632,11 @@ orientation only; where they disagree with upstream, upstream wins.
   usage. A bare line outside any turn has no selection to apply and always
   counts.
   - **Its model**, as upstream `handleBareUsage`:
-    1. the line's own `model` or `model_name`, on the line or under `data`
-    2. otherwise the `turn_context` model in force
-    3. only if neither exists, upstream's `unknown` model, which is unpriced
+    1. the line's own model, checked in this order: line `model`, line
+       `model_name`, `data.model`, `data.model_name`. Values are trimmed and
+       blank values skipped.
+    2. otherwise the model in force (defined above)
+    3. only if neither exists, `unknown`, which is unpriced
 - **Note:** `CodexSnapshotAccumulator.apply` is **not** the per-event billing
   logic. It only builds a parent's snapshot totals.
 
@@ -775,21 +798,25 @@ branch**, because history lives in the ledgers.
 - **Note in `token_rules.md`.** models.dev's own `tiers` data gives 272,000
   for models where upstream uses 200,000. Colophon keeps upstream's behavior
   for parity and records this as an upstream simplification to revisit.
-- **Pricing key.** Ledgers and the resolver are keyed by a model's *pricing
-  key*, so every spelling that prices from the same catalog or bundled entry
-  shares one price history. For a logged raw id:
-  1. Let *n* = `normalizeCodexModel(raw)`.
-  2. The pricing key is the first of these ids that exists in the catalog
-     (cached or fetched) or as a key in either ledger:
-     - *n* itself
-     - the `ModelsDevModelIDNormalizer` candidates of *n*, in upstream order
-       (for example `gpt-6-sol-2026-09-01` → `gpt-6-sol`)
-  3. If none exists, the pricing key is *n*, and the model is unpriced unless
-     a `manual` entry is later added for it.
-
-  A dated or versioned spelling therefore uses the base model's history. It
-  never starts a separate one, and never triggers "priced at earliest known
-  rate" because of its spelling.
+- **Keyed by normalized id, as upstream.** Ledgers and the resolver are keyed
+  by `normalizeCodexModel(raw)`. That is the same key upstream uses for its
+  bundled table and historical rates, so thresholds, bundled fills and
+  historical rates apply exactly when they would upstream. Each logged model
+  is priced as `resolve(normalizeCodexModel(raw), …)`.
+  - **Unfolded spellings.** A dated or versioned spelling that
+    `normalizeCodexModel` does not fold (for example
+    `gpt-6-sol-2026-09-01`, whose base is not bundled) is its **own key**
+    with its own history.
+    - The lookup chain still prices it from the base's catalog entry, as
+      upstream does.
+    - Its history starts with a `catalog` entry recorded at the first fetch
+      after it appears. Earlier usage is priced at that entry's rate. Upstream
+      also prices such a spelling at the current catalog rate, so the cost is
+      the same. The diagnostic for this case reads "price history for <id>
+      begins <date>", as information, not a warning.
+    - If the catalog later lists the spelling itself at different rates,
+      that is recorded as an ordinary rate change. Past usage keeps its
+      rates.
   - **Deviation.** Upstream first tries the raw logged id against the catalog
     and only then the normalized id. A raw alias that has its own catalog
     entry (for example `gpt-5.6` beside `gpt-5.6-sol`) is priced upstream
@@ -824,8 +851,8 @@ delimited JSON blocks keep the launcher a single file:
   - **Every other seeded id:** one `null` entry carrying `resolve(id,
     snapshot)`. The seeded ids are the union of:
     - every `CURATED_BUNDLED` key
-    - the pricing key of every **priceable** `openai` model in the snapshot
-
+    - the normalized id of every **priceable** `openai` model in the snapshot,
+      resolved against the snapshot and `CURATED_BUNDLED` only
     This covers models upstream prices only from the catalog, such as
     gpt-6-sol and gpt-6.1-sol. Upstream prices those at the catalog rate for
     all dates; a `null` entry does the same.
@@ -894,8 +921,9 @@ README shows how to copy the rates.
    - A user entry can therefore correct a curated entry, but only as `manual`
      or `catalog`. A user-ledger entry marked `curated` is a validation error.
 4. **Usage older than a model's first dated entry** uses that model's
-   **earliest** entry, never current rates, and records the diagnostic
-   "priced at earliest known rate".
+   **earliest** entry, never current rates. It records the informational
+   diagnostic "price history for <id> begins <date>". The same diagnostic
+   covers unfolded spellings (above).
 5. **No ledger entry at all.**
    - If a catalog rate is available (fetched or cached) but was not recorded,
      because recording was skipped this run (see "Writing the ledger"), price
@@ -924,16 +952,15 @@ It happens **before** pricing (§4). Let *T* be the catalog's **fetch time**,
 which is when that copy was downloaded, not the current run time.
 
 The **recording set** is the union of:
-- the pricing key of every **priceable** model in the catalog (the same rule
+- the normalized id of every **priceable** model in the catalog (the same rule
   as the seed)
-- the pricing keys of every model seen in this run's logs
+- the normalized ids of every model seen in this run's logs
 - every id that has an entry in **either** ledger
 
-For each key in the set whose lookup chain finds a **priceable catalog entry**:
-
-A bundled-only key that is absent from the catalog is never recorded. Its
-curated seed entry already prices it, and a `source: catalog` label would be
-misleading.
+Only ids whose lookup chain finds a **priceable catalog entry** are recorded.
+A bundled-only id absent from the catalog is never recorded: its curated seed
+entry already prices it, and a `source: catalog` label would be misleading.
+For each such id:
 - **Skip** if any entry for this model already has `effective_from` = *T*.
   This makes recording idempotent: re-reading the same cached catalog never
   appends.
@@ -1071,7 +1098,7 @@ The page embeds one JSON document in
 | `subagents` | Keyed by id: the same shape, plus the parent link, spawn and interaction turns, and the link method. |
 | `workspaces` | Name, keys, aliases. |
 | `models` | Rate periods used per model, each with its ledger source (curated, catalog or manual), or "unpriced". |
-| `diagnostics` | Skipped files, malformed-line counts, truncated and recovered lines, unknown record types, database threads without logs, orphaned subagents, inferred links, unpriced models, usage priced at earliest known rate, priority usage without a known multiplier, rates from an unrecorded catalog, unresolved fork boundaries, ledger warnings, page size. |
+| `diagnostics` | Skipped files, malformed-line counts, truncated and recovered lines, unknown record types, database threads without logs, orphaned subagents, inferred links, unpriced models, models whose price history begins after their first use, priority usage without a known multiplier, rates from an unrecorded catalog, unresolved fork boundaries, ledger warnings, page size. |
 
 - All times are UTC.
 - Aggregates and filters are computed in the browser from `sessions` and
@@ -1394,11 +1421,16 @@ A generator in `tests/` builds synthetic Codex homes. They cover:
     from its `null` seed entry.
   - The raw-alias deviation: a log model id that is an alias with its own
     catalog entry, priced from the canonical id.
-  - A dated log id (`<base>-YYYY-MM-DD`) whose base is not bundled: it
-    resolves to the base's pricing key, appends no ledger entry, records no
-    "earliest known rate" diagnostic, and uses the base's dated history,
-    including a base repricing that happened before the dated spelling first
-    appeared.
+  - Unfolded spellings:
+    - A dated log id whose base is not bundled: its own key; priced through
+      the lookup chain from the base's catalog entry; a `catalog` entry under
+      the dated id at its first fetch; the "price history begins" diagnostic;
+      and the same cost upstream gives it.
+    - A compact-date (`-YYYYMMDD`), `-vN:N` or `@` spelling of a bundled base:
+      not folded, so no bundled threshold or historical rate applies, exactly
+      as upstream.
+    - The catalog later listing a dated spelling itself at different rates:
+      recorded as a rate change, with past usage unchanged.
   - Bare usage lines: the model from the line itself, from `data`, from the
     `turn_context` in force, and the `unknown` model; a bare line outside
     any turn.
@@ -1592,7 +1624,7 @@ Ported functions carry a header comment naming their upstream source.
 parity is expected to show them):
 - Exact per-response `token_usage_record` usage is preferred where present;
   upstream reads only `token_count` (§5.5).
-- Ledgers are keyed by pricing key, so a raw alias with its own catalog
+- Ledgers are keyed by normalized id, so a raw alias with its own catalog
   entry, or an alias of a bundled-only model, is priced from the canonical
   entry. Provider-qualified ids outside OpenAI are unpriced (§5.6).
 - The priority multiplier lives in the price history and is editable; upstream
