@@ -49,6 +49,10 @@ def parse_rfc3339_ms(value) -> int | None:
         value,
     ):
         return None
+    if value[-1] not in "Zz" and (
+        int(value[-5:-3]) > 23 or int(value[-2:]) > 59
+    ):
+        return None
     try:
         instant = datetime.fromisoformat(value.upper().replace("Z", "+00:00"))
         delta = instant.astimezone(timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -99,14 +103,20 @@ def atomic_write_bytes(path: Path, data: bytes, mode: int = 0o600) -> None:
     """Write a complete private file before replacing its destination."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd_owned = True
     try:
         os.fchmod(fd, mode)
-        with os.fdopen(fd, "wb") as fh:
+        fh = os.fdopen(fd, "wb")
+        fd_owned = False
+        with fh:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
     except BaseException:
+        if fd_owned:
+            with contextlib.suppress(OSError):
+                os.close(fd)
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
         raise
@@ -114,7 +124,7 @@ def atomic_write_bytes(path: Path, data: bytes, mode: int = 0o600) -> None:
 
 def atomic_write_json(path: Path, obj, *, indent: int | None = 2) -> None:
     """Write readable UTF-8 JSON with a terminating newline."""
-    data = (json.dumps(obj, indent=indent, ensure_ascii=False) + "\n").encode("utf-8")
+    data = (json.dumps(obj, indent=indent, ensure_ascii=True) + "\n").encode("utf-8")
     atomic_write_bytes(path, data)
 
 

@@ -1,5 +1,7 @@
 """Task 1 contracts for the CLI and private atomic runtime writes."""
 
+import contextlib
+import errno
 import json
 import os
 import stat
@@ -143,6 +145,83 @@ def test_atomic_json_indentation_and_newline(colophon, tmp_path):
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_atomic_json_roundtrips_lone_surrogate_and_unicode(colophon, tmp_path):
+    path = tmp_path / "synthetic-unicode.json"
+    original = {"synthetic_text": "Synthetic damaged log \ud800",
+                "synthetic_unicode": "Synthetic café 雪 🌱"}
+    colophon.atomic_write_json(path, original)
+    text = path.read_bytes().decode("utf-8")
+    assert json.loads(text) == original
+    assert text.startswith('{\n  "synthetic_text": ')
+    assert text.endswith("\n")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("failure_stage", ["fchmod", "fdopen"])
+def test_atomic_write_closes_untransferred_fd_on_failure(colophon, tmp_path, monkeypatch, failure_stage):
+    path = tmp_path / "synthetic.bin"
+    old_content = b"Synthetic old content"
+    path.write_bytes(old_content)
+    old_inode = path.stat().st_ino
+    original_error = OSError(f"Synthetic {failure_stage} failure")
+    captured_fds = []
+
+    def fail(fd, *args):
+        captured_fds.append(fd)
+        raise original_error
+
+    monkeypatch.setattr(colophon.os, failure_stage, fail)
+    try:
+        with pytest.raises(OSError) as raised:
+            colophon.atomic_write_bytes(path, b"Synthetic new content")
+        assert raised.value is original_error
+        assert path.read_bytes() == old_content
+        assert path.stat().st_ino == old_inode
+        assert sorted(tmp_path.iterdir()) == [path]
+        with pytest.raises(OSError) as closed:
+            os.fstat(captured_fds[0])
+        assert closed.value.errno == errno.EBADF
+    finally:
+        # Reclaim the descriptor during the expected red run if it leaked.
+        for fd in captured_fds:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+
+def test_atomic_write_does_not_close_fd_after_transfer(colophon, tmp_path, monkeypatch):
+    path = tmp_path / "synthetic.bin"
+    path.write_bytes(b"Synthetic old content")
+    original_error = OSError("Synthetic replace failure after transfer")
+    original_fsync = colophon.os.fsync
+    original_close = colophon.os.close
+    captured_fds = []
+    explicit_closes = []
+
+    def fsync(fd):
+        captured_fds.append(fd)
+        return original_fsync(fd)
+
+    def close(fd):
+        explicit_closes.append(fd)
+        return original_close(fd)
+
+    def fail_replace(source, destination):
+        raise original_error
+
+    monkeypatch.setattr(colophon.os, "fsync", fsync)
+    monkeypatch.setattr(colophon.os, "close", close)
+    monkeypatch.setattr(colophon.os, "replace", fail_replace)
+    with pytest.raises(OSError) as raised:
+        colophon.atomic_write_bytes(path, b"Synthetic new content")
+    assert raised.value is original_error
+    assert not explicit_closes
+    with pytest.raises(OSError) as closed:
+        os.fstat(captured_fds[0])
+    assert closed.value.errno == errno.EBADF
+    assert path.read_bytes() == b"Synthetic old content"
+    assert sorted(tmp_path.iterdir()) == [path]
+
+
 def test_now_ms_uses_wall_clock_milliseconds(colophon, monkeypatch):
     monkeypatch.setattr(colophon.time, "time_ns", lambda: 1_234_567_890)
     assert colophon.now_ms() == 1234
@@ -154,6 +233,24 @@ def test_parse_rfc3339_ms_preserves_instants_and_rejects_invalid_values(colophon
     assert colophon.parse_rfc3339_ms("1970-01-01T00:00:00Z") == 0
     for invalid in (None, 12, "invalid", "2030-01-15T12:00:00", "2030-02-30T12:00:00Z"):
         assert colophon.parse_rfc3339_ms(invalid) is None
+
+
+@pytest.mark.parametrize("offset", ["+00:60", "+01:99", "-00:60", "-01:99"])
+def test_parse_rfc3339_ms_rejects_invalid_offset_minutes(colophon, offset):
+    assert colophon.parse_rfc3339_ms(f"2030-01-15T12:00:00{offset}") is None
+
+
+@pytest.mark.parametrize("offset,utc", [
+    ("+23:59", "2030-01-14T12:01:00Z"),
+    ("-23:59", "2030-01-16T11:59:00Z"),
+])
+def test_parse_rfc3339_ms_accepts_offset_boundaries(colophon, offset, utc):
+    assert colophon.parse_rfc3339_ms(f"2030-01-15T12:00:00{offset}") == colophon.parse_rfc3339_ms(utc)
+
+
+@pytest.mark.parametrize("offset", ["+24:00", "-24:00"])
+def test_parse_rfc3339_ms_rejects_invalid_offset_hours(colophon, offset):
+    assert colophon.parse_rfc3339_ms(f"2030-01-15T12:00:00{offset}") is None
 
 
 def test_format_rfc3339_emits_whole_seconds_in_utc(colophon):
