@@ -750,3 +750,96 @@ def test_missing_install_path_does_not_prove_backup_ownership(colophon, home, co
     assert cache._committed is False and not cache.installed.exists()
     assert (old / "synthetic-marker").read_bytes() == b"synthetic foreign directory"
     assert {p.name: p.read_bytes() for p in preserved.iterdir()} == before
+
+
+@pytest.mark.parametrize("cleanup_type", [PermissionError, KeyboardInterrupt])
+def test_direct_abort_cleanup_failure_always_closes(colophon, home, codex_home,
+                                                    monkeypatch, cleanup_type):
+    log_at(codex_home)
+    scan(colophon, home, codex_home)
+    before = cache_bytes(home)
+    cache = colophon.ParseCache.open(home, rebuild=True)
+    colophon.scan_logs(codex_home, cache)
+    cleanup = cleanup_type("synthetic abort cleanup failure")
+    original = colophon.shutil.rmtree
+    def fail(target, *args, **kwargs):
+        if target == cache.directory:
+            raise cleanup
+        return original(target, *args, **kwargs)
+    monkeypatch.setattr(colophon.shutil, "rmtree", fail)
+    with pytest.raises(cleanup_type) as caught:
+        cache.abort()
+    assert caught.value is cleanup
+    assert cache.finished is True and cache.buffer == {} and cache._committed is False
+    assert cache._abort_cleanup_error is cleanup
+    assert cache_bytes(home) == before
+    assert cache.directory.exists()
+    cache.abort()
+    assert cache._abort_cleanup_error is cleanup
+
+
+@pytest.mark.parametrize("cleanup_type", [PermissionError, KeyboardInterrupt])
+def test_scan_interrupt_preserved_when_abort_cleanup_fails(colophon, home, codex_home,
+                                                           monkeypatch, cleanup_type):
+    log_at(codex_home)
+    scan(colophon, home, codex_home)
+    before = cache_bytes(home)
+    cache = colophon.ParseCache.open(home, rebuild=True)
+    interruption = KeyboardInterrupt("synthetic primary scan interrupt")
+    cleanup = cleanup_type("synthetic secondary cleanup failure")
+    original = colophon.shutil.rmtree
+    def fail(target, *args, **kwargs):
+        if target == cache.directory:
+            raise cleanup
+        return original(target, *args, **kwargs)
+    def interrupt(done, total):
+        raise interruption
+    monkeypatch.setattr(colophon.shutil, "rmtree", fail)
+    with pytest.raises(BaseException) as caught:
+        colophon.scan_logs(codex_home, cache, progress=interrupt)
+    assert caught.value is interruption
+    assert cache.finished is True and cache.buffer == {} and cache._committed is False
+    assert cache._abort_cleanup_error is cleanup
+    assert any(f"{cleanup_type.__name__}: synthetic secondary cleanup failure" in note
+               for note in interruption.__notes__)
+    assert cache_bytes(home) == before
+    assert cache.directory.exists()
+
+
+@pytest.mark.parametrize("cleanup_type", [PermissionError, KeyboardInterrupt])
+def test_format_failure_preserved_when_abort_cleanup_fails(colophon, home, codex_home,
+                                                           monkeypatch, cleanup_type):
+    log_at(codex_home)
+    scan(colophon, home, codex_home)
+    before = cache_bytes(home)
+    failure = OSError("synthetic FORMAT initialization failure")
+    cleanup = cleanup_type("synthetic secondary cleanup failure")
+    pending = home / f"cache.rebuild-{os.getpid()}"
+    created = []
+    original_init = colophon.ParseCache.__init__
+    original_write = colophon.atomic_write_bytes
+    original_remove = colophon.shutil.rmtree
+    def capture(cache, *args, **kwargs):
+        original_init(cache, *args, **kwargs)
+        created.append(cache)
+    def fail_write(path, data):
+        if path == pending / "FORMAT":
+            raise failure
+        return original_write(path, data)
+    def fail_remove(target, *args, **kwargs):
+        if target == pending:
+            raise cleanup
+        return original_remove(target, *args, **kwargs)
+    monkeypatch.setattr(colophon.ParseCache, "__init__", capture)
+    monkeypatch.setattr(colophon, "atomic_write_bytes", fail_write)
+    monkeypatch.setattr(colophon.shutil, "rmtree", fail_remove)
+    with pytest.raises(BaseException) as caught:
+        colophon.ParseCache.open(home, rebuild=True)
+    assert caught.value is failure
+    cache = created[0]
+    assert cache.finished is True and cache.buffer == {} and cache._committed is False
+    assert cache._abort_cleanup_error is cleanup
+    assert any(f"{cleanup_type.__name__}: synthetic secondary cleanup failure" in note
+               for note in failure.__notes__)
+    assert cache_bytes(home) == before
+    assert pending.exists()

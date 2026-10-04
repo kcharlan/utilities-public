@@ -162,3 +162,14 @@ backups are rejected before mutation handling, and recovery preserves the
 original exception even when filesystem repair fails. Trace-injected synthetic
 interrupts exercise the rename and bookkeeping boundaries, including existing
 and first-ever rebuild installations; no signal timing assumption is required.
+
+Abort finalization always clears the buffer and closes the cache without
+changing `_committed`, including when rebuild-directory removal fails. Direct
+`abort()` propagates that cleanup exception and retains its object privately
+as `_abort_cleanup_error`. During scan failure or failed FORMAT initialization,
+the original exception object instead propagates with a note describing the
+cleanup failure; the same private field retains the cleanup object. A retained
+rebuild directory remains subject to the existing dead-pid cleanup rules.
+This is Colophon's transaction/error contract, not an additional upstream
+parse or discovery rule. Synthetic regressions cover both filesystem errors
+and a second interruption during abort cleanup.

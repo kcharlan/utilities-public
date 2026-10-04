@@ -2124,6 +2124,7 @@ class ParseCache:
         self.buffer: dict[str, dict] = {}
         self._live_paths: set[str] = set()
         self._committed = False
+        self._abort_cleanup_error: BaseException | None = None
         self.finished = False
 
     @classmethod
@@ -2163,8 +2164,8 @@ class ParseCache:
         try:
             if rebuild or not (cache.directory / "FORMAT").exists():
                 atomic_write_bytes(cache.directory / "FORMAT", cache._format().encode())
-        except BaseException:
-            cache.abort()
+        except BaseException as failure:
+            cache._abort_after_failure(failure)
             raise
         return cache
 
@@ -2270,10 +2271,22 @@ class ParseCache:
 
     def abort(self) -> None:
         self.buffer.clear()
-        if self.rebuild and not self.finished:
-            with contextlib.suppress(FileNotFoundError):
-                shutil.rmtree(self.directory)
-        self.finished = True
+        try:
+            if self.rebuild and not self.finished:
+                with contextlib.suppress(FileNotFoundError):
+                    shutil.rmtree(self.directory)
+        except BaseException as cleanup:
+            self._abort_cleanup_error = cleanup
+            raise
+        finally:
+            self.finished = True
+
+    def _abort_after_failure(self, failure: BaseException) -> None:
+        """Close after a primary failure without replacing it with cleanup."""
+        try:
+            self.abort()
+        except BaseException as cleanup:
+            failure.add_note(f"Parse cache abort cleanup failed: {type(cleanup).__name__}: {cleanup}")
 
 
 def scan_logs(codex_home: Path, cache: ParseCache, *,
@@ -2313,8 +2326,8 @@ def scan_logs(codex_home: Path, cache: ParseCache, *,
                 progress(done, total)
         records = [hits[str(log.path)] for log in logs if str(log.path) in hits]
         return ScanResult(records, parsed, len(records) - parsed, unreadable, done)
-    except BaseException:
-        cache.abort()
+    except BaseException as failure:
+        cache._abort_after_failure(failure)
         raise
 
 

@@ -225,3 +225,12 @@
   `test_rebuild_interrupt_swap_and_bookkeeping_boundaries`,
   `test_preexisting_backup_is_never_claimed_or_modified`, and
   `test_missing_install_path_does_not_prove_backup_ownership`.
+- Abort cleanup can fail while handling another failure. Clear the buffer and
+  mark the cache closed in `finally`; preserve the committed marker. Direct
+  abort exposes its cleanup exception, while exceptional scan and FORMAT
+  initialization preserve the original exception object, attach a cleanup
+  note and retain the cleanup exception on the cache. Failed removal leaves
+  the rebuild directory for the existing dead-pid maintenance path.
+  Regressions: `test_direct_abort_cleanup_failure_always_closes`,
+  `test_scan_interrupt_preserved_when_abort_cleanup_fails`, and
+  `test_format_failure_preserved_when_abort_cleanup_fails`.
