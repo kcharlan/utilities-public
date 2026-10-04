@@ -348,3 +348,13 @@
   before suffix classification; never compare its model dictionary to an
   integer. Regression:
   `test_truncated_context_has_no_ordinal_in_explicit_subagent_suffix`.
+- Snapshot withholding must follow the source predicate exactly.
+  `isUnresolvedMissingParentFork` (ForkCoverage.swift 43–46) derives solely from
+  the dependency key the child used (CacheHelpers.swift 1297–1308). The empty
+  fork-timestamp guard (Scanner.swift 1692–1697) returns unresolved without
+  clearing a previously resolved parent key, so a child can parse unresolved yet
+  still offer snapshots. Adding the per-parse `has_unresolved_fork_baseline`
+  flag to the withholding test was a stricter invention that dropped a
+  grandchild's owned usage. Keep the flag as the result's own diagnostic only.
+  Regressions: `test_retained_parent_key_offers_snapshots` and
+  `test_retained_parent_key_resolves_grandchild_usage`.

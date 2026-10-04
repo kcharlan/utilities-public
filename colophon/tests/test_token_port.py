@@ -168,3 +168,41 @@ def test_truncated_context_has_no_ordinal_in_explicit_subagent_suffix(colophon):
     result = colophon.parse_codex_usage(stream, resolver=None)
     assert [(row.input, row.model, row.line) for row in result.rows] == [(2, 'unknown', 8)]
     assert result.model_timeline == [(7.5, None)]
+
+
+def _withholding_stream(identity, tokens, output, parent=None, fork_ts=None):
+    ts = '2030-01-07T12:00:00Z'
+    meta = {'session_id': identity, 'forked_from_id': parent, 'fork_ts': fork_ts}
+    return {'observations': [['P', meta], ['M', 0, 0, 0, meta],
+        ['T', 1, 1, 1, ts, 'gpt-5.4', None, [tokens, 0, output, None], [tokens, 0, output, None]]],
+        'unconsumed_tail': False}
+
+
+def test_retained_parent_key_offers_snapshots(colophon):
+    ts = '2030-01-07T12:00:00Z'
+    parent = _withholding_stream('synthetic-parent', 10, 1)
+    fork = _withholding_stream('synthetic-fork', 20, 1, 'synthetic-parent', '')
+    resolver = colophon.InheritedTotalsResolver({'synthetic-parent': parent, 'synthetic-fork': fork})
+    resolver.inherited_totals('synthetic-parent', ts)
+    parsed, _, offered = resolver.snapshot_resolution('synthetic-fork')
+    # Empty fork_ts parses unresolved, yet the primed parent key stays 'resolved'
+    # (CacheHelpers.swift 1297–1308 returns dependencyKeyUsed; the empty-cutoff guard at
+    # Scanner.swift 1692–1697 does not clear it). isUnresolvedMissingParentFork
+    # (ForkCoverage.swift 43–46) reads only that key, so the source offers snapshots.
+    assert resolver.dependency_keys['synthetic-parent'] == 'resolved'
+    assert parsed.has_unresolved_fork_baseline
+    assert offered
+
+
+def test_retained_parent_key_resolves_grandchild_usage(colophon):
+    ts = '2030-01-07T12:00:00Z'
+    parent = _withholding_stream('synthetic-parent', 10, 1)
+    primer = _withholding_stream('synthetic-primer', 15, 2, 'synthetic-parent', ts)
+    fork = _withholding_stream('synthetic-fork', 20, 1, 'synthetic-parent', '')
+    child = _withholding_stream('synthetic-child', 25, 2, 'synthetic-fork', ts)
+    records = [{'key': {'path': f'/synthetic/{name}.jsonl', 'mtime_ns': 1}, 'token_stream': stream}
+               for name, stream in [('primer', primer), ('fork', fork), ('child', child), ('parent', parent)]]
+    result = colophon.account_logs(records)['/synthetic/child.jsonl']
+    # The fork's retry buffer makes it incomplete, but its final snapshot (20/0/1) covers
+    # the cutoff (Scanner.swift 1716–1723), so the child owns 25-20 input and 2-1 output.
+    assert [(row.input, row.cached, row.output) for row in result.rows] == [(5, 0, 1)]

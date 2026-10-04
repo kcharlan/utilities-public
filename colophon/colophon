@@ -4040,9 +4040,10 @@ class InheritedTotalsResolver:
             stream = self.streams[session_id]
             parsed = parse_codex_usage(stream, resolver=self)
             assert parsed.session_id == session_id, 'resolver stream key differs from parsed session id'
+            # isUnresolvedMissingParentFork derives only from the used dependency key; the
+            # per-parse unresolved flag is deliberately not consulted (a retained key stays).
             offered = not (parsed.forked_from_id is not None and parsed.depends_on_parent
-                           and (parsed.has_unresolved_fork_baseline
-                                or self.dependency_keys.get(parsed.forked_from_id) != 'resolved'))
+                           and self.dependency_keys.get(parsed.forked_from_id) != 'resolved')
             self.memo[session_id] = (parsed, stream, offered)
         return self.memo[session_id]
 
