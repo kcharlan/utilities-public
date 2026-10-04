@@ -18,6 +18,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import struct
 import sys
 import tempfile
@@ -2203,6 +2204,16 @@ class ParseCache:
             raise RuntimeError("Parse cache is closed")
         self.buffer[record["key"]["path"]] = record
 
+    @staticmethod
+    def _directory_identity(path: Path) -> tuple[int, int] | None:
+        try:
+            info = path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISDIR(info.st_mode):
+            raise NotADirectoryError(f"Cache path is not a directory: {path}")
+        return info.st_dev, info.st_ino
+
     def commit(self, live_paths: set[str]) -> None:
         if self.finished:
             return
@@ -2215,24 +2226,45 @@ class ParseCache:
                 path.unlink()
         if self.rebuild:
             old = self.home / f"cache.old-{os.getpid()}"
-            moved_old = False
+            # Reject any existing backup before entering mutation recovery.
+            if os.path.lexists(old):
+                raise FileExistsError(f"Rebuild backup already exists: {old}")
+            prior_identity = self._directory_identity(self.installed)
+            new_identity = self._directory_identity(self.directory)
+            if new_identity is None:
+                raise FileNotFoundError(f"Rebuild directory is missing: {self.directory}")
             try:
-                if old.exists():
-                    raise FileExistsError(f"Rebuild backup already exists: {old}")
-                if self.installed.exists():
+                if prior_identity is not None:
                     self.installed.rename(old)
-                    moved_old = True
                 self.directory.rename(self.installed)
+                # The rename is the commit point, including when an interrupt
+                # arrives before these Python bookkeeping assignments execute.
+                self._committed = True
+                self.buffer.clear()
+                self.finished = True
             except BaseException:
-                if moved_old:
-                    old.rename(self.installed)
+                # A completed filesystem call can raise before the next Python
+                # assignment. Recognize owned directories by captured identity,
+                # never infer a successful move merely from an absent path.
+                with contextlib.suppress(OSError):
+                    installed_identity = self._directory_identity(self.installed)
+                    if installed_identity == new_identity:
+                        self._committed = True
+                        self.buffer.clear()
+                        self.finished = True
+                    elif (prior_identity is not None and installed_identity is None
+                          and self._directory_identity(old) == prior_identity
+                          and self._directory_identity(self.directory) == new_identity):
+                        old.rename(self.installed)
+                # Recovery failures must not replace the original interrupt.
                 raise
-        # Installing the new directory is the commit point. Garbage cleanup
-        # cannot roll back a backup that may already have been partly removed.
-        self._committed = True
-        self.buffer.clear()
-        self.finished = True
-        if self.rebuild and moved_old:
+        else:
+            self._committed = True
+            self.buffer.clear()
+            self.finished = True
+        # A partly deleted backup cannot be rolled back. Garbage cleanup occurs
+        # only after installation is recorded as committed.
+        if self.rebuild and prior_identity is not None:
             with contextlib.suppress(OSError):
                 shutil.rmtree(old)
 

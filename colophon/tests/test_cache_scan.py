@@ -589,3 +589,164 @@ def test_cache_committed_marker_distinguishes_abort(colophon, home, codex_home, 
         cache.abort()
         assert cache._committed is True
     assert cache.finished is True
+
+
+def interrupt_commit_boundary(cache, boundary, exception):
+    """Deliver one real trace interrupt immediately after a completed rename."""
+    import inspect
+    import sys
+    source, first_line = inspect.getsourcelines(type(cache).commit)
+    if boundary.startswith("statement:"):
+        statement = boundary.removeprefix("statement:")
+        index = next(i for i, line in enumerate(source) if line.strip() == statement)
+    elif boundary == "backup":
+        index = next(i for i, line in enumerate(source) if "self.installed.rename(old)" in line) + 1
+        while not source[index].strip() or source[index].lstrip().startswith("#"):
+            index += 1
+    else:
+        install_index = next(i for i, line in enumerate(source) if "self.directory.rename(self.installed)" in line)
+        index = next(i for i, line in enumerate(source)
+                     if i > install_index and "self._committed = True" in line)
+    target_line = first_line + index
+    injected = False
+    original_trace = sys.gettrace()
+    def trace(frame, event, arg):
+        nonlocal injected
+        if (event == "line" and frame.f_code is type(cache).commit.__code__
+                and frame.f_lineno == target_line and not injected):
+            injected = True
+            raise exception
+        return trace
+    try:
+        sys.settrace(trace)
+        cache.commit(cache._live_paths)
+    finally:
+        sys.settrace(original_trace)
+        assert injected, "Synthetic interrupt boundary was not exercised"
+
+
+def test_interrupt_immediately_after_backup_rename_restores_old(colophon, home, codex_home):
+    path = log_at(codex_home)
+    scan(colophon, home, codex_home)
+    before = cache_bytes(home)
+    with path.open("ab") as fh:
+        fh.write(b'{"type":"synthetic"}\n')
+    cache = colophon.ParseCache.open(home, rebuild=True)
+    colophon.scan_logs(codex_home, cache, progress=None)
+    interruption = KeyboardInterrupt("synthetic post-backup interrupt")
+    with pytest.raises(KeyboardInterrupt) as caught:
+        interrupt_commit_boundary(cache, "backup", interruption)
+    assert caught.value is interruption
+    cache.abort()
+    assert cache_bytes(home) == before
+    assert cache._committed is False
+    assert not list(home.glob("cache.*-*"))
+
+
+@pytest.mark.parametrize("existing_cache", [False, True])
+def test_interrupt_immediately_after_install_records_commit(colophon, home, codex_home, existing_cache):
+    path = log_at(codex_home)
+    if existing_cache:
+        scan(colophon, home, codex_home)
+        before = cache_bytes(home)
+        with path.open("ab") as fh:
+            fh.write(b'{"type":"synthetic"}\n')
+    cache = colophon.ParseCache.open(home, rebuild=True)
+    result = colophon.scan_logs(codex_home, cache, progress=None)
+    interruption = KeyboardInterrupt("synthetic post-install interrupt")
+    with pytest.raises(KeyboardInterrupt) as caught:
+        interrupt_commit_boundary(cache, "install", interruption)
+    assert caught.value is interruption
+    assert cache._committed is True and cache.finished is True and cache.buffer == {}
+    cache.abort()
+    assert json.loads(entry(home, path).read_text()) == result.records[0]
+    old = home / f"cache.old-{os.getpid()}"
+    if existing_cache:
+        assert {p.name: p.read_bytes() for p in old.iterdir()} == before
+    else:
+        assert not old.exists()
+    assert not (home / f"cache.rebuild-{os.getpid()}").exists()
+
+
+@pytest.mark.parametrize("statement,installed_new", [
+    ("if prior_identity is not None:", False),
+    ("self.installed.rename(old)", False),
+    ("self.directory.rename(self.installed)", False),
+    ("self._committed = True", True),
+    ("self.buffer.clear()", True),
+    ("self.finished = True", True),
+    ("if self.rebuild and prior_identity is not None:", True),
+])
+def test_rebuild_interrupt_swap_and_bookkeeping_boundaries(colophon, home, codex_home,
+                                                          statement, installed_new):
+    path = log_at(codex_home)
+    scan(colophon, home, codex_home)
+    before = cache_bytes(home)
+    with path.open("ab") as fh:
+        fh.write(b'{"type":"synthetic"}\n')
+    cache = colophon.ParseCache.open(home, rebuild=True)
+    result = colophon.scan_logs(codex_home, cache, progress=None)
+    interruption = KeyboardInterrupt("synthetic traced swap interrupt")
+    with pytest.raises(KeyboardInterrupt) as caught:
+        interrupt_commit_boundary(cache, "statement:" + statement, interruption)
+    assert caught.value is interruption
+    cache.abort()
+    assert cache._committed is installed_new
+    if installed_new:
+        assert json.loads(entry(home, path).read_text()) == result.records[0]
+        old = home / f"cache.old-{os.getpid()}"
+        assert {p.name: p.read_bytes() for p in old.iterdir()} == before
+    else:
+        assert cache_bytes(home) == before
+        assert not list(home.glob("cache.*-*"))
+
+
+@pytest.mark.parametrize("backup_kind", ["directory", "broken_symlink"])
+def test_preexisting_backup_is_never_claimed_or_modified(colophon, home, codex_home, backup_kind):
+    log_at(codex_home)
+    scan(colophon, home, codex_home)
+    before = cache_bytes(home)
+    cache = colophon.ParseCache.open(home, rebuild=True)
+    colophon.scan_logs(codex_home, cache, progress=None)
+    old = home / f"cache.old-{os.getpid()}"
+    if backup_kind == "directory":
+        old.mkdir()
+        (old / "synthetic-marker").write_bytes(b"synthetic existing backup")
+    else:
+        old.symlink_to(home / "synthetic-missing-target", target_is_directory=True)
+    with pytest.raises(FileExistsError, match="Rebuild backup already exists"):
+        cache.commit(cache._live_paths)
+    cache.abort()
+    assert cache_bytes(home) == before and cache._committed is False
+    if backup_kind == "directory":
+        assert (old / "synthetic-marker").read_bytes() == b"synthetic existing backup"
+    else:
+        assert old.is_symlink()
+
+
+def test_missing_install_path_does_not_prove_backup_ownership(colophon, home, codex_home, monkeypatch):
+    log_at(codex_home)
+    scan(colophon, home, codex_home)
+    before = cache_bytes(home)
+    cache = colophon.ParseCache.open(home, rebuild=True)
+    colophon.scan_logs(codex_home, cache, progress=None)
+    old = home / f"cache.old-{os.getpid()}"
+    preserved = home / "synthetic-preserved-original"
+    interruption = KeyboardInterrupt("synthetic changed backup ownership")
+    original = Path.rename
+    def replace_backup(path, target):
+        result = original(path, target)
+        if path == cache.installed and target == old:
+            original(old, preserved)
+            old.mkdir()
+            (old / "synthetic-marker").write_bytes(b"synthetic foreign directory")
+            raise interruption
+        return result
+    monkeypatch.setattr(Path, "rename", replace_backup)
+    with pytest.raises(KeyboardInterrupt) as caught:
+        cache.commit(cache._live_paths)
+    assert caught.value is interruption
+    cache.abort()
+    assert cache._committed is False and not cache.installed.exists()
+    assert (old / "synthetic-marker").read_bytes() == b"synthetic foreign directory"
+    assert {p.name: p.read_bytes() for p in preserved.iterdir()} == before

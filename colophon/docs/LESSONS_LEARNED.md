@@ -213,3 +213,15 @@
   does not commit it; a post-install interruption has already committed.
   Keep an explicit committed marker that abort preserves. Regression:
   `test_cache_committed_marker_distinguishes_abort`.
+- Filesystem renames and Python bookkeeping are separate interrupt points.
+  An interrupt after the old cache moved but before a flag assignment can
+  skip restoration; an interrupt after installation can falsely report an
+  uncommitted cache. Capture directory device/inode identities before mutation
+  and reconcile actual owned locations inside exception handling. Reject
+  existing backups before recovery, preserve the original exception, and never
+  infer ownership or successful installation from missing paths alone.
+  Regressions: `test_interrupt_immediately_after_backup_rename_restores_old`,
+  `test_interrupt_immediately_after_install_records_commit`,
+  `test_rebuild_interrupt_swap_and_bookkeeping_boundaries`,
+  `test_preexisting_backup_is_never_claimed_or_modified`, and
+  `test_missing_install_path_does_not_prove_backup_ownership`.

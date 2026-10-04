@@ -151,3 +151,14 @@ state honestly rather than claiming the previous cache was retained after a
 post-install interruption. `_committed` distinguishes this state from an
 aborted scan (both are finished), and abort never changes it. No rollback
 attempts use a partly deleted backup.
+
+Rebuild swap recovery captures the old and new directories' device/inode
+identities before either rename, without following symlinks. If an interrupt
+arrives after a completed rename but before bookkeeping, exception handling
+recognizes the installed new identity and marks it committed, or restores the
+matching owned old backup while the matching new directory still awaits
+installation. Missing paths alone do not prove either outcome. Preexisting
+backups are rejected before mutation handling, and recovery preserves the
+original exception even when filesystem repair fails. Trace-injected synthetic
+interrupts exercise the rename and bookkeeping boundaries, including existing
+and first-ever rebuild installations; no signal timing assumption is required.
