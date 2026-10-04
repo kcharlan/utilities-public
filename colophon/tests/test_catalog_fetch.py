@@ -405,3 +405,156 @@ def test_watchdog_firing_during_cancel_is_not_forgotten(colophon, serve, tmp_pat
     result = fetch(colophon, url, path)
     assert result.status == "unavailable" and not path.exists()
     assert any("timeout" in m for m in result.messages)
+
+
+@pytest.fixture(params=["network", "raw_cache"])
+def ingest_raw(request, colophon, serve, tmp_path):
+    def ingest(raw):
+        url, _ = serve(lambda h: reply(h, body=raw.encode()))
+        path = tmp_path / "pricing-cache.json"
+        if request.param == "raw_cache":
+            path.write_text('{"schema":1,"url":' + json.dumps(url) +
+                            ',"fetched_at_ms":' + str(NOW) + ',"catalog":' + raw + '}')
+        result = fetch(colophon, url, path, offline=request.param == "raw_cache")
+        assert result.status == ("fetched" if request.param == "network" else "offline")
+        return result.catalog
+
+    return ingest
+
+
+def test_raw_duplicate_rate_retains_first_value(colophon, ingest_raw):
+    # Foundation KeyedContainer.stringify 1205–1208 uses _setIfNil.
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-model":{"id":"synthetic-model",'
+                         '"cost":{"input":3,"input":30,"output":9}}}}}')
+    pricing = colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-model")
+    assert pricing["per_million"]["input"] == 3
+
+
+def test_raw_duplicate_null_does_not_borrow_later_rate(colophon, ingest_raw):
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-model":{"id":"synthetic-model",'
+                         '"cost":{"input":null,"input":3,"output":9}}}}}')
+    assert colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-model") is None
+
+
+def test_raw_canonical_duplicate_keeps_first_key_spelling_and_value(colophon, ingest_raw):
+    # Swift String dictionary equality is canonical; the first spelling remains.
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-é":{"id":"synthetic-é",'
+                         '"cost":{"input":3,"output":9}},"synthetic-e\\u0301":'
+                         '{"id":"synthetic-e\\u0301","cost":{"input":30,"output":9}}}}}')
+    assert list(catalog["openai"]["models"]) == ["synthetic-é"]
+    pricing = colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-e\u0301")
+    assert pricing["per_million"]["input"] == 3 and pricing["model_id"] == "synthetic-é"
+
+
+@pytest.mark.parametrize("field", ["input", "output", "cache_read", "cache_write",
+    "long_input", "long_output", "long_cache_read", "long_cache_write"])
+def test_raw_underflow_in_typed_rate_rejects_only_its_model(colophon, ingest_raw, field):
+    # unwrapFloatingPoint 913–929 rejects nonzero spelling rounded to zero.
+    cost = {"input": 3, "output": 9}
+    target = cost
+    if field.startswith("long_"):
+        target = cost["context_over_200k"] = {}
+        field = field.removeprefix("long_")
+    target[field] = "SYNTHETIC_RAW_NUMBER"
+    raw_cost = json.dumps(cost).replace('"SYNTHETIC_RAW_NUMBER"', "1e-999")
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-invalid":{"id":"synthetic-invalid",'
+                         '"cost":' + raw_cost + '},"synthetic-valid":{"id":"synthetic-valid",'
+                         '"cost":{"input":3,"output":9}}}}}')
+    index = colophon.ModelsDevIndex.from_catalog(catalog)
+    assert index.pricing("openai", "synthetic-invalid") is None
+    assert index.pricing("openai", "synthetic-valid")["per_million"]["input"] == 3
+
+
+@pytest.mark.parametrize("lexeme,expected", [("0e-999", 0.0), ("-0.000e999", -0.0),
+    ("5e-324", 5e-324), ("-5e-324", -5e-324)])
+def test_raw_true_zero_and_representable_subnormal_rates_survive(colophon, ingest_raw, lexeme, expected):
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-model":{"id":"synthetic-model",'
+                         '"cost":{"input":' + lexeme + ',"output":9}}}}}')
+    pricing = colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-model")
+    assert pricing["per_million"]["input"] == expected
+
+
+def test_raw_underflow_context_and_ignored_metadata_are_not_double_rate_fields(colophon, ingest_raw):
+    # The Int slow path 1002–1026 accepts exact Int(Double(...)) below 2^53.
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-model":{"id":"synthetic-model",'
+                         '"limit":{"context":1e-999},"synthetic-ignored":1e-999,'
+                         '"cost":{"input":3,"output":9,"synthetic-ignored":1e-999}}}}}')
+    assert catalog["openai"]["models"]["synthetic-model"]["limit"]["context"] == 0
+    assert colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-model") is not None
+
+
+@pytest.mark.parametrize("field", ["id", "name", "model_key", "cost_key", "limit_key", "long_key"])
+def test_raw_invalid_unicode_model_fields_and_keys_reject_only_its_model(colophon, ingest_raw, field):
+    model = {"id": "synthetic-invalid", "cost": {"input": 3, "output": 9}}
+    if field in ("id", "name"):
+        model[field] = "\ud800"
+    elif field == "model_key":
+        model["\ud800"] = "synthetic-ignored"
+    elif field == "cost_key":
+        model["cost"]["\ud800"] = 1
+    elif field == "limit_key":
+        model["limit"] = {"\ud800": 1}
+    else:
+        model["cost"]["context_over_200k"] = {"\ud800": 1}
+    raw = json.dumps({"openai": {"models": {"synthetic-invalid": model,
+        "synthetic-valid": CATALOG["openai"]["models"]["synthetic-model"]}}})
+    catalog = ingest_raw(raw)
+    index = colophon.ModelsDevIndex.from_catalog(catalog)
+    assert index.pricing("openai", "synthetic-invalid") is None
+    assert index.pricing("openai", "synthetic-valid") is not None
+
+
+@pytest.mark.parametrize("field", ["id", "name", "provider_key", "models_key"])
+def test_raw_invalid_unicode_provider_fields_and_keys_reject_provider(colophon, ingest_raw, field):
+    provider = {"models": {"synthetic-model": CATALOG["openai"]["models"]["synthetic-model"]}}
+    if field in ("id", "name"):
+        provider[field] = "\udfff"
+    elif field == "provider_key":
+        provider["\ud800"] = 1
+    else:
+        provider["models"]["\ud800"] = {"id": "synthetic-ignored"}
+    catalog = ingest_raw(json.dumps({"openai": provider}))
+    assert colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-model") is None
+
+
+def test_raw_invalid_ignored_unicode_values_and_nested_keys_remain_ignored(colophon, ingest_raw):
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-model":{"id":"synthetic-model",'
+                         '"synthetic-ignored":"\\ud800","synthetic-nested":{"\\ud800":1},'
+                         '"cost":{"input":3,"output":9}}}}}')
+    assert colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-model") is not None
+
+
+def test_raw_valid_unicode_surrogate_pairs_and_scalar_keys_survive(colophon, ingest_raw):
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-\\ud83d\\ude00":'
+                         '{"id":"synthetic-\\ud83d\\ude00","name":"Synthetic \\ud83d\\ude00",'
+                         '"cost":{"input":3,"output":9}}}}}')
+    assert list(catalog["openai"]["models"]) == ["synthetic-😀"]
+    assert catalog["openai"]["models"]["synthetic-😀"]["name"] == "Synthetic 😀"
+    assert colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-😀") is not None
+
+
+@pytest.mark.parametrize("lexeme", ["-1e-999", "1.000E-999", "0." + "0" * 350 + "1"])
+def test_raw_nonzero_underflow_coefficient_forms_are_not_free_rates(colophon, ingest_raw, lexeme):
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-model":{"id":"synthetic-model",'
+                         '"cost":{"input":' + lexeme + ',"output":9}}}}}')
+    assert colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-model") is None
+
+
+def test_raw_discarded_duplicate_invalid_value_is_not_decoded(colophon, ingest_raw):
+    catalog = ingest_raw('{"openai":{"models":{"synthetic-model":{"id":"synthetic-model",'
+                         '"name":"Synthetic first","name":"\\ud800",'
+                         '"cost":{"input":3,"input":1e-999,"output":9}}}}}')
+    assert catalog["openai"]["models"]["synthetic-model"]["name"] == "Synthetic first"
+    assert colophon.ModelsDevIndex.from_catalog(catalog).pricing("openai", "synthetic-model")["per_million"]["input"] == 3
+
+
+@pytest.mark.parametrize("source", ["network", "raw_cache"])
+def test_raw_invalid_top_level_key_is_a_catalog_failure(colophon, serve, tmp_path, source):
+    raw = '{"openai":{"models":{}},"\\ud800":1}'
+    url, _ = serve(lambda h: reply(h, body=raw.encode()))
+    path = tmp_path / "pricing-cache.json"
+    if source == "raw_cache":
+        path.write_text('{"schema":1,"url":' + json.dumps(url) +
+                        ',"fetched_at_ms":' + str(NOW) + ',"catalog":' + raw + '}')
+    result = fetch(colophon, url, path, offline=source == "raw_cache")
+    assert result.status == "unavailable" and result.catalog is None and result.messages

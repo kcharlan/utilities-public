@@ -6530,7 +6530,62 @@ def _catalog_json_loads(data: bytes):
     def reject_constant(spelling):
         raise ValueError(f"invalid JSON number {spelling}")
 
-    return json.loads(data, parse_float=_CatalogFloat, parse_constant=reject_constant)
+    def first_pairs(pairs):
+        # JSONDecoder KeyedContainer.stringify 1205–1208 uses _setIfNil in
+        # a Swift String dictionary: canonical equality, first spelling/value.
+        result, identities = {}, set()
+        for key, value in pairs:
+            identity = unicodedata.normalize("NFC", key)
+            if identity not in identities:
+                identities.add(identity)
+                result[key] = value
+        return result
+
+    value = json.loads(data, parse_float=_CatalogFloat, parse_constant=reject_constant,
+                       object_pairs_hook=first_pairs)
+    if isinstance(value, dict) and not _catalog_keys_valid(value):
+        raise ValueError("invalid Unicode in catalog object key")
+    return value
+
+
+def _catalog_string_valid(value) -> bool:
+    # JSONDecoder.unwrapString (799–818) rejects unpaired UTF-16 escapes.
+    # json.loads already combines valid escaped surrogate pairs into scalars.
+    return not isinstance(value, str) or not any(0xD800 <= ord(char) <= 0xDFFF for char in value)
+
+
+def _catalog_keys_valid(value) -> bool:
+    return not isinstance(value, dict) or all(_catalog_string_valid(key) for key in value)
+
+
+def _catalog_model_raw_valid(model) -> bool:
+    """Validate only fields/containers that the source typed model decodes."""
+    if not isinstance(model, dict) or not _catalog_keys_valid(model):
+        return False
+    if not all(_catalog_string_valid(model.get(key)) for key in ("id", "name")):
+        return False
+    if not _catalog_keys_valid(model.get("limit")):
+        return False
+    cost = model.get("cost")
+    if not _catalog_keys_valid(cost):
+        return False
+    if isinstance(cost, dict):
+        long_context = cost.get("context_over_200k")
+        if not _catalog_keys_valid(long_context):
+            return False
+        for block in (cost, long_context):
+            if not isinstance(block, dict):
+                continue
+            for key in ("input", "output", "cache_read", "cache_write"):
+                number = block.get(key)
+                # unwrapFloatingPoint 913–929: finite zero is accepted only
+                # when every coefficient digit is zero, ignoring the exponent.
+                # This does NOT apply to the separate context Int slow path.
+                if isinstance(number, _CatalogFloat) and number == 0:
+                    coefficient = number.spelling.lower().split("e", 1)[0]
+                    if any("1" <= char <= "9" for char in coefficient):
+                        return False
+    return True
 
 
 def _catalog_plain(value, *, finite: bool = False):
@@ -6548,16 +6603,24 @@ def _catalog_plain(value, *, finite: bool = False):
 def _catalog_decode_contexts(catalog: dict) -> dict:
     # ModelsDevProvider.init skips typed model failures independently. Apply
     # the raw-lexeme check before an ordinary float erases that evidence.
+    if not _catalog_keys_valid(catalog):
+        raise ValueError("invalid Unicode in catalog object key")
     for providers in (catalog, catalog.get("providers")):
         if not isinstance(providers, dict):
             continue
         for provider_key, provider in list(providers.items()):
-            if not _models_dev_provider_decodable(provider):
+            if (not _models_dev_provider_decodable(provider)
+                    or not _catalog_keys_valid(provider)
+                    or not _catalog_keys_valid(provider["models"])
+                    or not all(_catalog_string_valid(provider.get(key)) for key in ("id", "name"))):
                 # Reject before sanitizing ignored overflow fields: changing an
                 # invalid optional name/id into null must not invent a provider.
                 providers[provider_key] = None
                 continue
             for key, model in list(provider["models"].items()):
+                if not _catalog_model_raw_valid(model):
+                    del provider["models"][key]
+                    continue
                 limit = model.get("limit") if isinstance(model, dict) else None
                 context = limit.get("context") if isinstance(limit, dict) else None
                 if isinstance(context, _CatalogFloat):

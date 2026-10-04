@@ -509,3 +509,32 @@
   use the verified Foundation UInt128/UInt64 Decimal boundary before ordinary
   Double rate decoding. Regression:
   `test_raw_context_acceptance_survives_network_and_cache`.
+- Raw catalog objects must project duplicate keys as Foundation does:
+  `_setIfNil` retains the first value, including null, and Swift String
+  canonical equality retains the first spelling. Python's default last-value
+  projection changes rates and can decode a malformed value the source ignores.
+  Regressions: `test_raw_duplicate_rate_retains_first_value`,
+  `test_raw_duplicate_null_does_not_borrow_later_rate`,
+  `test_raw_canonical_duplicate_keeps_first_key_spelling_and_value`, and
+  `test_raw_discarded_duplicate_invalid_value_is_not_decoded`.
+- A finite Python float is insufficient evidence of a valid source Double:
+  Foundation rejects a nonzero raw coefficient rounded down to zero. Check
+  known standard and long-context rate lexemes before float normalization;
+  retain true zero and representable subnormals. The context Int slow path is
+  separate and can accept underflow as zero; ignored metadata is not a rate.
+  Regressions: `test_raw_underflow_in_typed_rate_rejects_only_its_model`,
+  `test_raw_true_zero_and_representable_subnormal_rates_survive`,
+  `test_raw_nonzero_underflow_coefficient_forms_are_not_free_rates`, and
+  `test_raw_underflow_context_and_ignored_metadata_are_not_double_rate_fields`.
+- Python JSON accepts escaped lone surrogates that Foundation's typed strings
+  and object keys reject. Apply Unicode checks at the source's container/field
+  boundaries: a bad model field rejects its child, a bad provider or model-map
+  key rejects the provider, and a bad catalog key rejects the catalog. Preserve
+  valid surrogate pairs and ignore unknown nested metadata, rather than globally
+  rejecting strings or replacing malformed typed values with null. Equivalent
+  synthetic Swift decoder probes confirmed these boundaries. Regressions:
+  `test_raw_invalid_unicode_model_fields_and_keys_reject_only_its_model`,
+  `test_raw_invalid_unicode_provider_fields_and_keys_reject_provider`,
+  `test_raw_invalid_top_level_key_is_a_catalog_failure`,
+  `test_raw_invalid_ignored_unicode_values_and_nested_keys_remain_ignored`, and
+  `test_raw_valid_unicode_surrogate_pairs_and_scalar_keys_survive`.
