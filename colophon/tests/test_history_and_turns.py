@@ -118,6 +118,61 @@ def test_path_b_two_runs_and_same_identity_header(colophon, log):
     assert r['history']['inherited_recs'] == [[2, 3], [4, 6]]
 
 
+INVALID_IDENTITIES = [
+    pytest.param({}, id='missing'),
+    pytest.param({'id': None}, id='null'),
+    pytest.param({'id': True}, id='true'),
+    pytest.param({'id': False}, id='false'),
+    pytest.param({'id': 0}, id='zero'),
+    pytest.param({'id': 7}, id='integer'),
+    pytest.param({'id': []}, id='array'),
+    pytest.param({'id': {}}, id='object'),
+    pytest.param({'id': ''}, id='empty-string'),
+]
+
+
+@pytest.mark.parametrize('identity_fields', INVALID_IDENTITIES)
+def test_path_b_invalid_later_identity_is_not_mismatch_evidence(colophon, log, identity_fields):
+    b, t = log
+    # Raw fields omit all five alternate D18 identity candidates.
+    b.meta(at=t)._emit('session_meta', {'timestamp': iso(t + 1000), **identity_fields}, at=t + 1000)
+    r = parse(colophon, b.world_state(at=t + 1500).task_complete('synthetic-owned', at=t + 2000))
+    assert r['history']['inherited_recs'] == []
+    assert r['history']['inherited_lines'] == []
+    assert r['owned_span'] == {'first_ms': t, 'last_ms': t + 2000}
+    assert [turn['key'] for turn in r['turns']] == ['synthetic-owned']
+    assert r['extra_meta_count'] == 1
+
+
+@pytest.mark.parametrize('identity_fields', INVALID_IDENTITIES)
+def test_path_b_invalid_original_identity_is_not_mismatch_evidence(colophon, log, identity_fields):
+    b, t = log
+    b._emit('session_meta', {'timestamp': iso(t), **identity_fields}, at=t)
+    b.meta(at=t + 1000, id='synthetic-ancestor')
+    r = parse(colophon, b.world_state(at=t + 1500).task_complete('synthetic-owned', at=t + 2000))
+    assert r['history']['inherited_recs'] == []
+    assert r['history']['inherited_lines'] == []
+    assert r['owned_span'] == {'first_ms': t, 'last_ms': t + 2000}
+    assert [turn['key'] for turn in r['turns']] == ['synthetic-owned']
+    # History validation must not alter true-first SessionMeta/D18 extraction.
+    assert r['meta']['id'] == ('' if identity_fields.get('id') == '' else None)
+
+
+@pytest.mark.parametrize('fallback_position', ['original', 'later'])
+def test_path_b_selected_fallback_identity_remains_mismatch_evidence(colophon, log, fallback_position):
+    b, t = log
+    if fallback_position == 'original':
+        b._emit('session_meta', {'id': True, 'session_id': b.session_id, 'timestamp': iso(t)}, at=t)
+        b.meta(at=t + 1000, id='synthetic-ancestor')
+    else:
+        b.meta(at=t)._emit('session_meta', {'id': None, 'session_id': 'synthetic-ancestor',
+                                         'timestamp': iso(t + 1000)}, at=t + 1000)
+    r = parse(colophon, b.world_state(at=t + 1500).thread_settings(at=t + 2000))
+    assert r['meta']['id'] == b.session_id
+    assert r['history']['inherited_recs'] == [[1, 3]]
+    assert r['owned_span'] == {'first_ms': t, 'last_ms': t + 2000}
+
+
 @pytest.mark.parametrize('started,at', [(-1001, 10000), (None, 999)])
 def test_path_b_rejects_non_owned_start(colophon, log, started, at):
     b, t = log

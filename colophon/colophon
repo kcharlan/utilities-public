@@ -403,12 +403,15 @@ def _history(meta: dict | None, facts: list[RecordFact]) -> tuple[dict, list[boo
             inherited[index] = True
     elif meta:
         history["path"] = "B"
-        session_id = meta.get("id")
+        # Selected metadata identity follows D18 unchanged. History mismatch
+        # evidence additionally requires usable identities on both sides.
+        session_id = _identifier(meta.get("id"))
         in_run = False
         first_meta_seen = False
         for fact in facts:
             if fact.kind == "session_meta":
-                if first_meta_seen and fact.meta_id != session_id:
+                if (first_meta_seen and session_id is not None
+                        and _identifier(fact.meta_id) is not None and fact.meta_id != session_id):
                     in_run = True
                 first_meta_seen = True
             started = _started_epoch_ms(fact)

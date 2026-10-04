@@ -53,3 +53,11 @@
   clocks are unusable; reported-duration derivation can supply effective timing
   without rewriting those facts. Regression:
   `test_unknown_clock_start_record_prevents_completion_recovery`.
+- A missing or invalid identity is not evidence of a different session.
+  Path B requires usable nonempty selected string identities on both sides
+  before starting an inherited run. Keep D18 metadata extraction unchanged,
+  including legitimate fallback candidates, and apply this validation only
+  to history evidence. Regressions:
+  `test_path_b_invalid_later_identity_is_not_mismatch_evidence`,
+  `test_path_b_invalid_original_identity_is_not_mismatch_evidence` and
+  `test_path_b_selected_fallback_identity_remains_mismatch_evidence`.
