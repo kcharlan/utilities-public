@@ -82,7 +82,15 @@ remains standard-priced because no priority evidence survives for those turns.
 
 ## Privacy
 
-Codex data is read-only. Runtime state belongs outside this public repository.
+Colophon never modifies Codex data or non-SQLite files under the Codex home.
+SQLite databases use `file:<path>?mode=ro` with the plan-specified timeout;
+SQLite's own read coordination may create or update `-shm` and `-wal` side files.
+That coordination is the one exception to the read-only source policy, approved
+on 2026-10-04. Live reads retain normal SQLite locking and change detection;
+they do not use immutable mode or exclusive locking. Metadata reads wait up
+to one second; an unreadable or locked database falls back to older database
+schemas or log, index and desktop titles, with diagnostics.
+Runtime state belongs outside this public repository.
 The completed compiler's only network traffic is the price-catalog GET; it
 sends no session data. `--offline` suppresses that request. uv may provision
 an interpreter on its first invocation. The generated page contains private

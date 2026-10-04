@@ -234,3 +234,13 @@
   Regressions: `test_direct_abort_cleanup_failure_always_closes`,
   `test_scan_interrupt_preserved_when_abort_cleanup_fails`, and
   `test_format_failure_preserved_when_abort_cleanup_fails`.
+- SQLite `mode=ro` protects database data, but WAL reads can create side files
+  and change shared-memory read marks. Synthetic probes established this;
+  the user approved SQLite read coordination as the sole source-write
+  exception on 2026-10-04. Keep normal locking and change detection rather
+  than substituting immutable or exclusive modes. Regression:
+  `test_live_wal_reads_latest_data_without_modifying_main_or_non_sqlite_files`.
+- A nonblank cwd can have a whitespace-only final component. Require the
+  basename itself to be nonblank before selecting it as a fallback title;
+  preserve usable strings without stripping them. Regression:
+  `test_title_fallbacks`.

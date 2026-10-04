@@ -72,7 +72,7 @@ These apply to every task. Values are copied from the spec unless an amendment s
   - `0`: success. This includes skipped files, zero sessions, and a browser that could not be opened.
   - `1`: fatal. The Codex home is missing or unreadable, or the page cannot be written. It also covers an interrupt (Ctrl-C) and any unexpected error (Task 18).
   - `2`: usage error.
-- **Read-only.** Colophon never writes under the Codex home. SQLite databases are opened with the URI `file:<path>?mode=ro`.
+- **Read-only (user amendment, 2026-10-04).** Colophon never modifies Codex data or any non-SQLite file under the Codex home. SQLite databases are opened with the URI `file:<path>?mode=ro` and the plan-specific timeout. SQLite's own read-coordination writes to `-shm`/`-wal` side files are allowed; this is the one exception. Do not use `immutable=1` or exclusive locking.
 - **Network.** The only request is the price-catalog GET.
   - 3 s to connect and receive the response headers; 30 s to download the body.
   - It is skipped with `--offline`.
