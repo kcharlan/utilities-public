@@ -740,3 +740,9 @@
   Regressions: `test_invalid_baseline_is_not_measurement_evidence`,
   `test_invalid_baseline_schema` and
   `test_throughput_cli_creates_then_preserves_baseline`.
+- A carriage return moves the terminal cursor but does not erase the previous
+  line. When an ETA shrinks from 100s to 0s, pad the replacement to the largest
+  rendered width so no old suffix remains. Test actual two-file cold progress
+  through an independent terminal-cell replay, with a CR-only defect control;
+  raw output containing a correct new ETA alone cannot prove visible correctness.
+  Regression: `test_cold_progress_clears_previous_longer_eta`.

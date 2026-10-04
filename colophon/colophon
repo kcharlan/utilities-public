@@ -8411,11 +8411,14 @@ def run(args: argparse.Namespace, *, now_ms: int | None = None,
         fetch_thread.start()
         cache = ParseCache.open(home, rebuild=args.rebuild)
         scan_start = time.monotonic()
+        progress_width = 0
         def progress(done, total):
-            nonlocal progress_active
+            nonlocal progress_active, progress_width
             if tty:
                 elapsed = time.monotonic() - scan_start
-                print("\rcolophon: " + format_progress(done, total, elapsed), end="", file=sys.stderr, flush=True)
+                line = "colophon: " + format_progress(done, total, elapsed)
+                progress_width = max(progress_width, len(line))
+                print("\r" + line.ljust(progress_width), end="", file=sys.stderr, flush=True)
                 progress_active = True
         scan = scan_logs(codex_home, cache, progress=progress)
         if progress_active:

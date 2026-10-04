@@ -51,3 +51,42 @@ def test_warm_cache_and_empty_home_have_no_progress(colophon, codex_home, capsys
     output = capsys.readouterr()
     assert '0 parsed, 1 cached' in output.out
     assert '\r' not in output.err
+
+
+def terminal_lines(stream):
+    """Replay CR as cursor movement, without incorrectly erasing old cells."""
+    cells, lines = [], []
+    cursor = 0
+    for character in stream:
+        if character == '\r':
+            cursor = 0
+        elif character == '\n':
+            lines.append(''.join(cells))
+            cells, cursor = [], 0
+        else:
+            if cursor < len(cells):
+                cells[cursor] = character
+            else:
+                cells.append(character)
+            cursor += 1
+    return lines
+
+
+def test_terminal_replay_preserves_suffix_after_carriage_return():
+    assert terminal_lines('ETA 100s\rETA 0s\n') == ['ETA 0s0s']
+
+
+def test_cold_progress_clears_previous_longer_eta(colophon, codex_home, capsys, monkeypatch):
+    builder = CodexHome(codex_home)
+    for identity in ('synthetic-a', 'synthetic-b'):
+        builder.log(identity).meta().task_started().user_item().task_complete().write()
+    sizes = [path.stat().st_size for path in codex_home.rglob('*.jsonl')]
+    assert len(sizes) == 2 and sizes[0] == sizes[1] and sum(sizes) < 0.05 * 1024**2
+    clocks = iter([0, 100, 101])
+    monkeypatch.setattr(colophon.time, 'monotonic', lambda: next(clocks))
+    assert colophon.run(args(colophon, codex_home, '--rebuild'), now_ms=NOW, stderr_tty=True) == 0
+    output = capsys.readouterr()
+    assert '2 logs (2 parsed, 0 cached)' in output.out
+    assert output.err.count('\rcolophon: parsing ') == 2
+    assert re.findall(r'ETA (\d+)s', output.err) == ['100', '0']
+    assert terminal_lines(output.err)[0].rstrip() == 'colophon: parsing 0.0/0.0 MB · ETA 0s'
