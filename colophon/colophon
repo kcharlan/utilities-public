@@ -7504,6 +7504,7 @@ PAGE_JS = r"""
     const sum = values.reduce((total, value) => total + value, 0);
     return valid(sum) ? sum : null;
   }
+  const currencyMargin = (scale, operations) => Math.max(4 * operations * (Number.EPSILON * scale + Number.MIN_VALUE), 1e-9 * scale + 1e-9);
   function provesUsage(selected, total, turn, operations, currency = false) {
     if (evidenceSum([selected, total, turn], currency) === null || turn > total) return false;
     // Buckets have no turn IDs. Conservation proves this particular turn only
@@ -7513,8 +7514,18 @@ PAGE_JS = r"""
     // gap beyond the §5.6 representation tolerance, scaled to all operands.
     // Neither .1 > (.3 - .2) nor accumulated unit-rounding proves inclusion.
     const scale = selected + total + turn;
-    const margin = currency ? Math.max(4 * operations * (Number.EPSILON * scale + Number.MIN_VALUE), 1e-9 * scale + 1e-9) : 0;
+    const margin = currency ? currencyMargin(scale, operations) : 0;
     return Number.isFinite(margin) && selected - total <= margin && selected - (total - turn) > margin;
+  }
+  function paidCapacity(usage) {
+    if (usage.cost_usd !== null) return evidenceSum([usage.cost_usd], true);
+    const total = evidenceSum([usage.input, usage.output]);
+    // Null alone is unknown. Conserved wholly-unpriced input/output rules out
+    // paid units only with valid cached reads contained in input. This Codex
+    // row path passes zero billed cache-write tokens; reasoning is billed only
+    // through output (§5.6 and pinned codexResolvedCostUSD).
+    return total !== null && evidenceSum([usage.unpriced_tokens, usage.cached_input, usage.cache_write, usage.reasoning]) !== null &&
+      usage.unpriced_tokens === total && usage.cached_input <= usage.input ? 0 : null;
   }
   function liveUsage(row, window) {
     const buckets = windowBuckets(row, window), operations = row.buckets.length + row.turns.length + 4;
@@ -7522,12 +7533,29 @@ PAGE_JS = r"""
     const selected = evidenceSum(buckets.flatMap(b => [b[3], b[6]]));
     const unpriced = evidenceSum(buckets.filter(b => b[8] === null).flatMap(b => [b[3], b[6]]));
     const completeCosts = evidenceSum([...row.buckets.map(b => b[8]), ...row.turns.map(t => t.usage.cost_usd), row.outside_usage.cost_usd], true) !== null;
-    const cost = completeCosts ? evidenceSum(buckets.map(b => b[8]), true) : null;
+    // Numeric buckets are a lower bound; a null bucket may hide paid units.
+    const cost = evidenceSum(buckets.filter(b => b[8] !== null).map(b => b[8]), true);
+    const components = [row.outside_usage, ...row.turns.map(turn => turn.usage)];
+    const partitioned = ["input", "cached_input", "cache_write", "output", "reasoning", "unpriced_tokens"].every(key =>
+      evidenceSum([row.own_usage[key]]) !== null && evidenceSum(components.map(value => value[key])) === row.own_usage[key]);
     let tokens = 0, costs = 0;
     for (const turn of row.turns) if (turn.status === "running") {
       if (provesUsage(selected, volume(row.own_usage), volume(turn.usage), operations)) tokens++;
-      if (provesUsage(cost, row.own_usage.cost_usd, turn.usage.cost_usd, operations, true) ||
-          provesUsage(unpriced, row.own_usage.unpriced_tokens, turn.usage.unpriced_tokens, operations)) costs++;
+      const competing = [row.outside_usage, ...row.turns.filter(other => other !== turn).map(other => other.usage)];
+      const capacity = evidenceSum(competing.map(paidCapacity), true);
+      const capacityKnown = evidenceSum([cost, capacity], true) !== null;
+      const targetValid = turn.usage.cost_usd === null || evidenceSum([turn.usage.cost_usd], true) !== null;
+      const paid = provesUsage(completeCosts ? cost : null, row.own_usage.cost_usd, turn.usage.cost_usd, operations, true) ||
+        // The target's total may itself be unknown: a positive displayed lower
+        // bound exceeding ALL known competitors still proves its contribution.
+        (row.own_usage.cost_usd === null && partitioned && targetValid && capacityKnown &&
+          cost - capacity > currencyMargin(cost + capacity, operations));
+      const ownVolume = volume(row.own_usage), turnVolume = volume(turn.usage);
+      const validUnpriced = evidenceSum([row.own_usage.unpriced_tokens, turn.usage.unpriced_tokens]) !== null &&
+        row.own_usage.unpriced_tokens <= ownVolume && turn.usage.unpriced_tokens <= turnVolume && turn.usage.unpriced_tokens <= row.own_usage.unpriced_tokens;
+      // All null-bucket tokens may be paid competitors; subtract only this
+      // turn's known unpriced volume from ALL own volume, not own unpriced.
+      if (paid || (validUnpriced && provesUsage(unpriced, ownVolume, turn.usage.unpriced_tokens, operations))) costs++;
     }
     return {tokens, costs};
   }

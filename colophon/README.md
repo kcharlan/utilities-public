@@ -30,6 +30,10 @@ unpriced-token contributions are proved separately; ambiguous usage has no marke
 This usage proof needs no inferred turn timestamp; time figures still require
 their own known intervals. Numeric cost evidence must exceed the documented
 currency representation tolerance as well as local arithmetic error.
+Null-cost buckets may mix paid and unpriced units. A cost LIVE witness retains
+all competing token capacity and may establish paid contribution alongside
+wholly unpriced components only from conserved usage quantities, never from a
+null cost or missing pricing reference alone.
 
 ## Install
 

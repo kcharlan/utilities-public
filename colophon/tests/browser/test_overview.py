@@ -397,7 +397,9 @@ def test_running_untimed_usage_does_not_mark_completed_timed_usage_live(page_for
     ([('completed',100,None,'inside'),('running',200,None,'outside')],0,0),
     ([('completed',100,None,'inside'),('running',200,None,'untimed')],0,0),
     ([('completed',100,None,'inside'),('running',200,.2,'outside')],0,0),
-    ([('completed',100,None,'inside'),('running',200,.2,'inside')],1,0),
+    # §5.2 includes running paid cost: _usage_payload's unknown own total does
+    # not erase the affirmative wholly-unpriced competing turn's evidence.
+    ([('completed',100,None,'inside'),('running',200,.2,'inside')],1,1),
 ], ids=['zero-price-running','ambiguous-two-runners','one-proven-runner','two-proven-runners',
     'proven-unpriced','outside-unpriced','untimed-unpriced','closed-unpriced','unknown-own-cost'])
 def test_live_usage_requires_proof_for_each_running_turn(page_for,overview_payload,entries,token_live,cost_live):
@@ -500,6 +502,126 @@ def test_live_cost_rejects_compiler_unit_accumulation_roundoff(page_for,overview
     assert totals['tokens']==unit_count and totals['cost']==closed_cost
     assert totals['live']['tokens']==0 and totals['live']['cost']==0
     expect(page.locator('[data-kpi="cost"] .live')).to_have_count(0)
+
+
+@pytest.mark.parametrize('location',['outside','inside','untimed','mixed-outside'])
+def test_compiled_mixed_null_bucket_keeps_paid_competing_capacity(page_for,colophon,codex_home,location):
+    log=CodexHome(codex_home).log('synthetic-mixed-running',day='2030-01-15').meta(at=NOW-1600*MINUTE)
+    mixed_at=NOW-1500*MINUTE if location=='mixed-outside' else NOW-179*MINUTE
+    running_at=NOW-176*MINUTE if location=='inside' else NOW-1500*MINUTE
+    entries=[('synthetic-closed-paid',10,NOW-190*MINUTE,mixed_at,NOW-178*MINUTE),
+        ('synthetic-closed-unpriced',50,NOW-177*MINUTE,mixed_at+MINUTE,NOW-170*MINUTE),
+        ('synthetic-running',40,NOW-60*MINUTE,running_at,None)]
+    for identifier,tokens,start,at,end in entries:
+        log.task_started(identifier,at=start).turn_context(identifier,model='gpt-synthetic-mixed',at=start+MINUTE)
+        log.usage_record(turn_id=identifier,usage={'input_tokens':tokens,'output_tokens':0},at=at)
+        if end is not None: log.task_complete(identifier,at=end)
+    path=log.write(mtime=NOW/1000)
+    record=colophon.parse_log_file(path,size=path.stat().st_size,mtime_ns=path.stat().st_mtime_ns,archived=False)
+    metadata=colophon.CodexMetadata()
+    corpus=colophon.build_corpus([record],metadata,NOW)
+    colophon.link_subagents(corpus,metadata,NOW)
+    priority=colophon.PriorityTurns({'synthetic-closed-paid':{'model':'gpt-5.4'},
+        'synthetic-closed-unpriced':{'model':None},'synthetic-running':{'model':None}},[])
+    colophon.compose_usage(corpus,priority)
+    if location=='untimed':
+        # Exercise the compiler's null-bucket grouping after known primary
+        # attribution: no timestamp is invented for the running usage unit.
+        for session in corpus.sessions.values():
+            for unit in session.units:
+                if unit.display_turn=='synthetic-running': unit.at_ms=None
+    pricing=colophon.price_units(corpus,colophon.PriceHistory(colophon.CURATED_PRICE_HISTORY['entries'],[]),None,costs_available=True)
+    payload=colophon.build_payload(corpus,colophon.resolve_workspaces(corpus,[]),pricing,{
+        'generated_at_ms':NOW,'codex_home':codex_home,'logs':1,'parsed':1,'cached':0,
+        'catalog':colophon.CatalogResult('offline',None,None,None,[]),'costs_available':True})
+    row=payload['sessions'][0]
+    assert row['own_usage']['input']==100 and row['own_usage']['unpriced_tokens']==90
+    assert row['turns'][0]['usage']['cost_usd']>0
+    assert row['turns'][2]['usage']['unpriced_tokens']==40
+    assert any(b[3]>=60 and b[8] is None for b in row['buckets'])
+    page=page_for(payload,hash='#p=custom&from=2030-01-15&to=2030-01-15')
+    totals=values(page,'kpis',payload)
+    wanted=1 if location=='inside' else 0
+    assert totals['live']['cost']==wanted
+    expect(page.locator('[data-kpi="cost"] .live')).to_have_count(wanted)
+
+
+def test_compiled_paid_running_cost_survives_wholly_unpriced_closed_turn(page_for,codex_home):
+    log=CodexHome(codex_home).log('synthetic-paid-running',day='2030-01-15').meta(at=NOW-180*MINUTE)
+    log.task_started('synthetic-closed',at=NOW-180*MINUTE)
+    log.turn_context('synthetic-closed',model='gpt-synthetic-unpriced',at=NOW-179*MINUTE)
+    log.usage_record(turn_id='synthetic-closed',usage={'input_tokens':100,'output_tokens':0},at=NOW-178*MINUTE)
+    log.task_complete('synthetic-closed',at=NOW-120*MINUTE)
+    log.task_started('synthetic-running',at=NOW-60*MINUTE)
+    log.turn_context('synthetic-running',model='gpt-5.4',at=NOW-59*MINUTE)
+    log.usage_record(turn_id='synthetic-running',usage={'input_tokens':200,'output_tokens':0},at=NOW-30*MINUTE)
+    log.write(mtime=NOW/1000)
+    page=page_for(codex_home)
+    payload=json.loads(page.locator('#colophon-data').text_content())
+    row=payload['sessions'][0]
+    assert row['own_usage']['cost_usd'] is None
+    assert row['turns'][0]['usage']['unpriced_tokens']==100
+    assert row['turns'][1]['usage']['cost_usd']==.0005
+    assert len(row['buckets'])==2 and all(b[0] is not None for b in row['buckets'])
+    totals=values(page,'kpis',payload)
+    assert totals['cost']==.0005 and totals['unpriced']
+    assert totals['live']['cost']==1
+    expect(page.locator('[data-kpi="cost"] .live')).to_be_visible()
+
+
+@pytest.mark.parametrize('case',['partially-unpriced','invalid-cached-subset','unbilled-cache-write','missing-priced-refs','mixed-running-bucket','unaccounted-own-volume'])
+def test_paid_live_witness_requires_complete_other_capacity(page_for,overview_payload,case):
+    row=overview_payload['sessions'][1]
+    row['buckets'][0][8]=None
+    row['turns'][0]['usage']=usage([row['buckets'][0]])
+    row['own_usage']=usage(row['buckets'])
+    closed=row['turns'][0]['usage']
+    if case=='partially-unpriced':
+        closed['unpriced_tokens']-=1
+        row['own_usage']['unpriced_tokens']-=1
+    if case=='invalid-cached-subset':
+        closed['cached_input']=closed['input']+1
+        row['buckets'][0][4]=closed['cached_input']
+        row['own_usage']['cached_input']=sum(b[4] for b in row['buckets'])
+    if case=='unbilled-cache-write':
+        closed['cache_write']=20
+        row['buckets'][0][5]=20
+        row['own_usage']['cache_write']=20
+    if case=='missing-priced-refs': row['turns'][1]['usage']['priced_by']=[]
+    if case=='mixed-running-bucket':
+        # A null bucket may hide paid running units; it contributes no displayed
+        # numeric cost. Keep the turn's known numeric cost, but assert no marker.
+        combined=copy.deepcopy(row['buckets'][1])
+        combined[3:8]=[sum(b[n] for b in row['buckets']) for n in range(3,8)]
+        combined[8]=None
+        row['buckets']=[combined]
+    if case=='unaccounted-own-volume': row['own_usage']['input']+=1
+    overview_payload.update(sessions=[row],subagents={})
+    page=page_for(overview_payload)
+    totals=values(page,'kpis',overview_payload)
+    wanted=1 if case in ('unbilled-cache-write','missing-priced-refs') else 0
+    assert totals['live']['cost']==wanted
+    expect(page.locator('[data-kpi="cost"] .live')).to_have_count(wanted)
+
+
+@pytest.mark.parametrize('location',['outside','untimed'])
+def test_paid_live_witness_does_not_require_known_target_cost(page_for,overview_payload,location):
+    row=overview_payload['sessions'][1]
+    row['buckets'][0][8]=None
+    unknown=[ms('2030-01-14T09:00')//900_000 if location=='outside' else None,
+        'gpt-synthetic-beta','standard',100,25,0,50,0,None]
+    row['buckets'].append(unknown)
+    row['turns'][0]['usage']=usage([row['buckets'][0]])
+    row['turns'][1]['usage']=usage([row['buckets'][1],unknown])
+    row['own_usage']=usage(row['buckets'])
+    overview_payload.update(sessions=[row],subagents={})
+    page=page_for(overview_payload,hash='#p=custom&from=2030-01-15&to=2030-01-15')
+    totals=values(page,'kpis',overview_payload)
+    assert row['turns'][1]['usage']['cost_usd'] is None
+    assert row['turns'][0]['usage']['unpriced_tokens']==300
+    assert totals['cost']==.3 and totals['tokens']==750
+    assert totals['live']['cost']==1
+    expect(page.locator('[data-kpi="cost"] .live')).to_be_visible()
 
 
 @pytest.mark.parametrize('target',['tile-subline','tile-delta','recent-metrics'])

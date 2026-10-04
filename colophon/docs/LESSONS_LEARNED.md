@@ -1,5 +1,24 @@
 # Lessons learned
 
+- `_usage_payload` sets bucket cost to null if any grouped unit is unpriced;
+  that bucket can still contain paid units. To prove running unpriced usage,
+  compare all timed null-bucket input/output against all own input/output minus
+  that turn's known unpriced volume, retaining paid competitors as capacity.
+  Conversely, unknown own cost need not erase an affirmative paid witness:
+  numeric buckets are a lower bound, and every other turn/outside component
+  must have known paid cost or conserved wholly-unpriced input/output. Validate
+  the exact component partition and cached reads as a subset of input. This
+  pinned Codex row path passes zero billed cache-write tokens; reasoning is
+  billed only through output. The target's cost may also be unknown: positive
+  displayed numeric cost above all complete competing capacities suffices
+  without using that null as numeric evidence. Partial unpriced usage remains
+  unknown, and pricing refs alone prove neither paid cost nor zero capacity.
+  Regressions:
+  `test_compiled_mixed_null_bucket_keeps_paid_competing_capacity`,
+  `test_compiled_paid_running_cost_survives_wholly_unpriced_closed_turn`,
+  `test_paid_live_witness_requires_complete_other_capacity`, and
+  `test_paid_live_witness_does_not_require_known_target_cost`.
+
 - Bucket timestamps and all-dates turn usage cannot establish each other's
   provenance. A running turn contributes to window tokens only when the window
   volume exceeds all own volume minus that particular turn's volume; count each
