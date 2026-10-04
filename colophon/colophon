@@ -7203,7 +7203,7 @@ PAGE_CSS = r"""/* tokens:start */
   --tl-turn: #2a7a52; --tl-sub: #4dbb83; --focus: var(--g);
 }
 /* tokens:end */
-* { box-sizing: border-box; }
+* { box-sizing: border-box; min-width: 0; }
 body {
   margin: 0; background-color: var(--bg); color: var(--txt);
   background-image: linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
@@ -7269,7 +7269,7 @@ input[type="date"] { width: 150px; }
 .heat-legend .heat-cell { width: 9px; height: 9px; }
 .hour-grid { display: grid; grid-template-columns: 28px repeat(24, minmax(0, 1fr)); gap: 3px; }
 .hour-grid .heat-cell { height: 13px; }
-.axis { font-size: 8px; color: var(--dim); }
+.axis { font-size: 8px; color: var(--dim); overflow-wrap: anywhere; }
 .bar-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 64px; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; text-align: left; padding: 6px 0; }
 .bar-label, .model-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .bar-track { background: var(--heat-0); height: 9px; }
@@ -7910,7 +7910,7 @@ PAGE_JS = r"""
     const result = panel("workspaces", el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
       el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}}))),
       ...rows.slice(0, expandedWorkspaces ? rows.length : 6).map(row => el("button", {type: "button", class: "bar-row", "data-workspace": row.key, title: workspaceName(row.key), onclick: () => drill({ws: row.key})},
-        el("span", {class: "bar-label", text: workspaceName(row.key)}),
+        el("span", {class: "bar-label", text: workspaceName(row.key), title: workspaceName(row.key)}),
         el("span", {class: "bar-track"}, el("span", {class: "bar-fill", style: "width:" + (maximum ? row[workspaceMetric] / maximum * 100 : 0) + "%"})),
         el("span", {class: "bar-number", "data-value": row[workspaceMetric], text: metricText(workspaceMetric, row[workspaceMetric])}))));
     if (!expandedWorkspaces && rows.length > 6) result.append(el("button", {class: "expand-workspaces", type: "button", text: "+ " + (rows.length - 6) + " more", onclick: () => {expandedWorkspaces = true; render();}}));
@@ -7941,7 +7941,7 @@ PAGE_JS = r"""
   }
   function renderModels(now) {
     return panel("models", ...models(data.sessions, currentState, now).map(row => el("button", {class: "model-row", type: "button", "data-model": row.model, title: rateTooltip(row.model, now), onclick: () => drill({model: row.model})},
-      el("span", {class: "model-name", text: row.model}), el("span", {text: countText(row.tokens)}),
+      el("span", {class: "model-name", text: row.model, title: row.model}), el("span", {text: countText(row.tokens)}),
       el("span", {class: row.unpriced ? "warning" : "", text: !data.meta.costs.available ? "costs unavailable" : costText(row.cost) + (row.unpriced ? " + unpriced" : "")}))),
       el("p", {class: "panel-meta", text: "API-equivalent estimate (not billed)"}));
   }
@@ -7965,7 +7965,7 @@ PAGE_JS = r"""
         onclick: event => {if (!event.target.closest("button")) act({v: "session", s: row.id});}},
         el("span", {class: "recent-time", text: validMs(row.start_ms) ? localStamp(row.start_ms).slice(5) : "unknown"}),
         el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · ARCHIVED" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
-        el("span", {class: "recent-workspace", text: workspaceName(row.workspace)}), el("span", {class: "recent-metrics", text: durationText(own) + " · " + agents + " subagents"})));
+        el("span", {class: "recent-workspace", text: workspaceName(row.workspace), title: workspaceName(row.workspace)}), el("span", {class: "recent-metrics", text: durationText(own) + " · " + agents + " subagents", title: durationText(own) + " · " + agents + " subagents"})));
     }
     result.append(list, el("button", {type: "button", class: "view-all", "data-view-all": "", text: "view all " + scope(data.sessions, currentState, now).rows.length + " →", onclick: () => drill({sort: "newest"})}));
     return result;
@@ -8019,6 +8019,8 @@ PAGE_JS = r"""
         (figuresForRow.cost === null ? "costs unavailable" : costText(figuresForRow.cost) + (figuresForRow.unpriced ? " + unpriced" : "")) :
         currentState.sort === "subtime" ? durationText(figuresForRow.subtime) + " agent" : null;
       result.append(el("div", {class: "list-row" + (row.id === currentState.s ? " selected" : ""), "data-list-row": "", "data-session-id": row.id,
+        role: "button", tabindex: "0", "aria-label": "Open session " + row.title,
+        onkeydown: event => {if (event.target === event.currentTarget && ["Enter", " "].includes(event.key)) {event.preventDefault(); open();}},
         onclick: event => {if (!event.target.closest("button")) open();}},
         el("span", {class: "list-time", text: timeOnly(row.start_ms)}),
         el("div", {class: "list-main"}, el("button", {type: "button", class: "session-title", title: row.title_full, text: row.title, onclick: open}),
@@ -8224,7 +8226,8 @@ PAGE_JS = r"""
     };
     const kind = !row.kind || row.kind === "orphan" ? "subagent" : row.archived ? "archived" : "live";
     header.append(el("div", {class: "reader-buttons"},
-      ...(data.meta.links.open_in_codex[kind] ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex"})] : []),
+      ...(data.meta.links.open_in_codex[kind] ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
+        onkeydown: event => {if (event.key === " ") {event.preventDefault(); event.currentTarget.click();}}})] : []),
       ...(data.meta.links.continue_in_cli[kind] ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy("codex resume " + row.id)})] : []),
       el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)}), el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})), copyArea);
     const stat = (key, label, value, text, sub, tooltip) => el("div", {class: "reader-stat", "data-reader-stat": key, title: tooltip},

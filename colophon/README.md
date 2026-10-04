@@ -25,6 +25,15 @@ Unknown clocks stay unknown; recorded durations remain visible without
 inventing active intervals. Font sources and regeneration are documented in
 [font.md](docs/font.md).
 
+Layouts are measured at 360, 390, 899, 901, 1024 and 1440 px, including long
+synthetic names, dense agent timelines and expanded reader content. Truncated
+labels expose their full text in tooltips. The calendar is the only horizontal
+scroll region and starts at the most recent week. Keyboard Tab exposes a visible
+focus ring; Enter and Space activate controls, whole session rows and reader
+actions. Browser tests intercept Codex links and stub the clipboard; they do
+not open the desktop application or execute copied commands. The thirty declared
+text/background token pairs meet WCAG AA without further color changes.
+
 Reader copy actions use the browser clipboard and fall back to a selected,
 read-only field with a “press ⌘C” hint. “Continue in CLI” copies a command that
 continues the session. Open-in-Codex and CLI support flags have browser-only

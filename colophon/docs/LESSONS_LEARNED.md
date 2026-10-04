@@ -698,3 +698,29 @@
   `test_fork_link_invalid_parent_title_falls_back_to_id`,
   `test_fork_link_missing_parent_falls_back_to_id_and_preserves_navigation`, and
   `test_fork_link_conflicting_parent_titles_fall_back_to_id`.
+- A parent button's tooltip does not establish the clipping contract for an
+  ellipsized child span. Put full workspace/model text on the actual clipped
+  node; allow two-digit hour axes to wrap when a narrow 24-column grid cannot
+  fit their glyphs. Set minimum width zero on grid and flex children. Regression:
+  `test_stress_has_no_overflow_or_fragment_overlap` checks direct-text per-line
+  Range fragments, clipping ancestors and the prescribed one-pixel tolerance
+  at all six widths, including expanded reader content. Its independent checker
+  control proves that clipping, true overlap and unmarked scrolling are detected.
+- Whole clickable list rows require their own Tab stop and Enter/Space handling;
+  ignore bubbled keyboard events from the nested title button so one activation
+  creates one navigation entry. Native links activate Enter but not Space;
+  reader link handling supplies the required Space activation. Keep browser
+  tests synthetic, intercept protocol defaults and stub clipboard writes.
+  Regressions: `test_keyboard_list_reader_buttons_and_expanders` and
+  `test_keyboard_overview_controls_tiles_and_every_heat_cell`.
+- Synthetic stress must retain exact model membership and usage conservation:
+  copying an agent without replacing its bucket model silently adds a forty-first
+  model. Validate fixture shape and counters independently before measuring it.
+  Hash-only browser navigation also completes asynchronously; wait for the
+  rendered frame before asserting focus on newly rebuilt controls. Regression:
+  `test_stress_fixture_has_exact_shape_and_conserved_usage`.
+- Zero-dimensional boxes are not evidence that text is unpainted: a zero-height
+  container can expose overlapping direct text, and a zero-width clipped box
+  still requires an ellipsis and tooltip. Skip only non-rendered/hidden elements;
+  apply the positive-client-width exception only to visible overflow. Regression:
+  `test_checker_includes_painted_or_clipped_text_in_zero_dimension_boxes`.
