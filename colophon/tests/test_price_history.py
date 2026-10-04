@@ -641,10 +641,22 @@ def test_seed_rejects_nonobject_snapshot(colophon, snapshot):
     ("-9007199254740993.00000000000000000000001", -9007199254740993),
     ("-9223372036854774785.00000000000000000001", -9223372036854774785),
     ("9007199254740993.9999999999999999999999999999999", None),
+    ("9007199254740992.1", 9007199254740992),
+    ("9007199254740992.01", 9007199254740992),
+    ("9007199254740993.1", 9007199254740993),
+    ("9007199254740993.01", 9007199254740993),
+    ("-9007199254740992.1", -9007199254740992),
+    ("-9007199254740992.01", -9007199254740992),
+    ("-9007199254740993.1", -9007199254740993),
+    ("-9007199254740993.01", -9007199254740993),
+    ("9223372036854774785.1", None),
+    ("-9223372036854774785.1", None),
 ])
 def test_seed_raw_context_preserves_jsondecoder_acceptance(colophon, raw, expected):
     # ModelsDevPricing.swift ModelsDevLimit.context 291–293; independently
-    # hand-expected Int results corroborated by Task13 pinned-struct probes.
+    # hand-expected Int results corroborated by Task13/Task16 pinned-struct
+    # probes. Foundation swift-6.2-RELEASE JSONDecoder.swift 1044–1104 checks
+    # compacted UInt64 mantissa before division (which discards remainders).
     text = '{"openai":{"models":{"gpt-synthetic-context":{"id":"gpt-synthetic-context",' \
            '"cost":{"input":2,"output":7},"limit":{"context":' + raw + '}}}}}'
     snapshot = seed_tool().load_snapshot(text)

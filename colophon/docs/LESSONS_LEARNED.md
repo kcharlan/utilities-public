@@ -11,9 +11,12 @@
   Regressions: `test_nonfinite_metadata_is_not_json` and
   `test_append_rejects_nonstandard_json_constants`.
 - JSONDecoder's large-context Decimal slow path loses fractional digits once
-  its UInt128 mantissa fills. Test representability after that finite parse,
-  rather than against Python's unlimited Decimal precision or NSNumber's
-  wrapping integer cast. Positive and negative boundary regressions extend
+  its UInt128 mantissa fills, then compacts trailing zeros. Its internal
+  integer conversion first sizes the compacted mantissa as UInt64, divides
+  for negative exponents without checking a remainder, and sizes the positive
+  magnitude before applying its sign. Preserve those stages: mathematical
+  integrality rejects accepted `.1`/`.01` near 2^53, while blanket truncation
+  accepts oversized mantissas that the source rejects. Boundary regressions extend
   `test_seed_raw_context_preserves_jsondecoder_acceptance`.
 
 - Re-stat a reread ledger before decoding or parsing its bytes. An editor may

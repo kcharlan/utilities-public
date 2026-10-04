@@ -46,8 +46,8 @@ def _context_integer(value: _SnapshotFloat) -> int | None:
         return int(binary)
     # Foundation swift-6.1-RELEASE Decimal.swift _decimal 320–424 accumulates
     # a UInt128 mantissa; after overflow it discards further fractional digits.
-    # Preserve that representation loss before Int(exactly:), not Python's
-    # arbitrary-precision fractional value or NSNumber's wrapping Int cast.
+    # Preserve that representation loss before the internal integer conversion,
+    # not Python's arbitrary precision or NSNumber's wrapping Int cast.
     sign, digits, exponent = Decimal(value.spelling).as_tuple()
     coefficient = discarded = 0
     for digit in digits:
@@ -59,12 +59,20 @@ def _context_integer(value: _SnapshotFloat) -> int | None:
     exponent += discarded
     if not -128 <= exponent <= 127:
         return None
+    # Decimal._decimal compacts trailing zeroes before returning. Foundation
+    # JSONDecoder.swift (swift-6.2-RELEASE) FixedWidthInteger.init 1044–1104
+    # then requires this mantissa to fit UInt64 BEFORE exponent scaling. Its
+    # negative-exponent division discards remainders; signed sizing precedes
+    # sign application. This is not mathematical exact-integrality testing.
+    while coefficient and coefficient % 10 == 0 and exponent < 127:
+        coefficient //= 10
+        exponent += 1
+    if coefficient > 2**64 - 1:
+        return None
     if exponent >= 0:
         integer = coefficient * 10**exponent
     else:
-        integer, remainder = divmod(coefficient, 10**(-exponent))
-        if remainder:
-            return None
+        integer = coefficient // 10**(-exponent)
     if sign:
         integer = -integer
     return integer if -(2**63) < integer < 2**63 else None

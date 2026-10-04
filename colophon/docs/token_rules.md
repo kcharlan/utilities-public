@@ -17,10 +17,15 @@ OpenAI context fields in this snapshot are integers and are unaffected;
 the checked parser regenerates the exact same seed bytes. Cost fields retain
 the existing Double conversion and invalid model children are skipped individually.
 The source boundary follows Swift Foundation's
-[JSONDecoder integer conversion](https://raw.githubusercontent.com/swiftlang/swift-foundation/main/Sources/FoundationEssentials/JSON/JSONDecoder.swift)
+[JSONDecoder integer conversion](https://github.com/swiftlang/swift-foundation/blob/swift-6.2-RELEASE/Sources/FoundationEssentials/JSON/JSONDecoder.swift#L1001-L1104)
 and [Foundation Decimal parsing](https://github.com/swiftlang/swift-foundation/blob/swift-6.1-RELEASE/Sources/FoundationEssentials/Decimal/Decimal.swift#L320-L424).
 For the large-number slow path, the parser fills a UInt128 mantissa and
-discards excess fractional digits before checking exact Int conversion.
+discards excess fractional digits, then compacts trailing zeros. The released
+JSONDecoder's internal `FixedWidthInteger.init?(_ decimal: Decimal)` requires
+the compacted mantissa to fit UInt64 before exponent scaling, divides without
+checking fractional remainders, and sizes the positive magnitude before
+applying its sign. This accepts `.1`/`.01` near 2^53 while rejecting nearby
+tiny fractions and larger mantissas; mathematical integrality is not the rule.
 Independent synthetic Foundation probes pin both sides of that boundary;
 rate resolution stays pinned to
 CodexBar `3bbf6bc48`.
