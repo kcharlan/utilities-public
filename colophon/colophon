@@ -7451,12 +7451,19 @@ PAGE_JS = r"""
     controls.chips.replaceChildren(...Object.entries(labels).filter(([key]) => currentState[key]).map(([key, label]) =>
       el("button", {class: "fchip", type: "button", text: label + ": " + currentState[key] + " ×", "aria-label": "Remove " + label + " filter", onclick: () => act({[key]: undefined})})));
   }
-  function diagnosticCount(value) {
+  const lineDiagnosticCategories = new Set(["malformed_lines", "truncated_lines", "recovered_lines"]);
+  function diagnosticCount(key, value) {
+    if (lineDiagnosticCategories.has(key)) return value.total;
+    if (key === "unknown_record_types") return Object.values(value).reduce((sum, count) => sum + count, 0);
     if (Array.isArray(value)) return value.length;
     if (typeof value === "number") return value;
     if (typeof value === "boolean") return Number(value);
-    if (value && typeof value === "object") return "total" in value ? value.total : Object.values(value).reduce((a, b) => a + (typeof b === "number" ? b : 0), 0);
     return 0;
+  }
+  function diagnosticItems(key, value) {
+    if (lineDiagnosticCategories.has(key)) return value.files;
+    if (key === "unknown_record_types") return Object.entries(value).map(([type, count]) => type + ": " + count);
+    return Array.isArray(value) ? value : [value];
   }
   function diagnosticText(value) {
     if (typeof value === "string") return value;
@@ -7465,10 +7472,10 @@ PAGE_JS = r"""
   }
   function renderFooter() {
     const diagnostic = data.diagnostics;
-    const rows = Object.entries(diagnostic).filter(([key, value]) => key !== "page_size_bytes" && diagnosticCount(value) > 0).map(([key, value]) => {
-      const items = Array.isArray(value) ? value : value.files || (typeof value === "object" ? Object.entries(value).map(([type, count]) => type + ": " + count) : [value]);
+    const rows = Object.entries(diagnostic).filter(([key, value]) => key !== "page_size_bytes" && diagnosticCount(key, value) > 0).map(([key, value]) => {
+      const items = diagnosticItems(key, value);
       const row = el("details", {"data-diagnostic": key},
-        el("summary", {text: key.replace(/_/g, " ") + " · " + diagnosticCount(value)}),
+        el("summary", {text: key.replace(/_/g, " ") + " · " + diagnosticCount(key, value)}),
         el("ul", {}, ...items.map(item => el("li", {text: diagnosticText(item)}))));
       if (key === "unknown_record_types") row.append(el("p", {text: "Codex's log format may have changed"}));
       if (key === "untimed_usage") row.append(el("p", {text: "priced at current rates: usage has no timestamp"}));
@@ -7581,8 +7588,10 @@ def _diagnostic_counts(diagnostics: dict) -> list[str]:
     for key, value in diagnostics.items():
         if key == "page_size_bytes":
             continue
-        if isinstance(value, dict):
-            count = value["total"] if "total" in value else sum(value.values())
+        if key in ("malformed_lines", "truncated_lines", "recovered_lines"):
+            count = value["total"]
+        elif key == "unknown_record_types":
+            count = sum(value.values())
         elif isinstance(value, list):
             count = len(value)
         else:

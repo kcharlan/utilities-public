@@ -1,5 +1,14 @@
 # Lessons learned
 
+- Diagnostic object members cannot establish their schema: unknown record
+  types are arbitrary data and may literally be named `files` or `total`.
+  Guessing by those members crashed footer rendering and understated stderr
+  counts. Dispatch by diagnostic category: only the three structured line
+  categories use `total`/`files`; unknown types always sum and enumerate every
+  type. Regressions: `test_unknown_record_names_are_data_in_footer_and_stderr`,
+  `test_diagnostic_summary_counts_unknown_record_names_as_data`, and the
+  structured-line count/item controls.
+
 - `document.fonts.ready` waits for requested faces but does not load an unused
   weight. Empty pages use body Light and brand Medium, so the prescribed
   default-weight Regular check can fail even with valid embedded bytes. Request

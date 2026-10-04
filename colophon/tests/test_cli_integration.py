@@ -23,6 +23,15 @@ def args(c, root, *flags):
     return c.build_arg_parser().parse_args(['--offline','--no-open','--codex-home',str(root),*flags])
 
 
+def test_diagnostic_summary_counts_unknown_record_names_as_data(colophon):
+    assert colophon._diagnostic_counts({'unknown_record_types': {'total':1, 'files':2}}) == ['unknown_record_types=3']
+
+
+@pytest.mark.parametrize('category', ['malformed_lines','truncated_lines','recovered_lines'])
+def test_diagnostic_summary_uses_structured_line_total(colophon, category):
+    assert colophon._diagnostic_counts({category: {'total':3, 'files':[{'path':'/synthetic/log.jsonl','count':3}]}}) == [category+'=3']
+
+
 def compiled(home):
     return extract((home/'colophon.html').read_bytes())
 

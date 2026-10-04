@@ -118,6 +118,31 @@ def test_diagnostics_from_malformed_unknown_log(page_for, codex_home):
     expect(row).to_contain_text("Codex's log format may have changed")
 
 
+def test_unknown_record_names_are_data_in_footer_and_stderr(page_for, codex_home, capsys):
+    CodexHome(codex_home).log('synthetic-diagnostic-keys', day='2030-01-15').meta(at=NOW-1000).task_started().raw(b'{"type":"files"}\n').raw(b'{"type":"total"}\n').raw(b'{"type":"files"}\n').task_complete().write(mtime=NOW/1000)
+    page = page_for(codex_home)
+    assert 'unknown_record_types=3' in capsys.readouterr().err
+    expect(page.locator('[data-session-id="synthetic-diagnostic-keys"]')).to_be_visible()
+    row = page.locator('details[data-diagnostic="unknown_record_types"]')
+    expect(row.locator('summary')).to_have_text('unknown record types · 3')
+    row.locator('summary').click()
+    expect(row.locator('li')).to_have_text(['files: 2', 'total: 1'])
+    expect(row).to_contain_text("Codex's log format may have changed")
+    expect(page.locator('footer')).to_contain_text('API-equivalent estimate (not billed)')
+
+
+@pytest.mark.parametrize('category', ['malformed_lines', 'truncated_lines', 'recovered_lines'])
+def test_structured_line_diagnostics_keep_total_and_file_items(page_for, shell_payload, category):
+    shell_payload['diagnostics'][category] = dict(total=3, files=[
+        dict(path='/synthetic/first.jsonl', count=2), dict(path='/synthetic/second.jsonl', count=1)])
+    page = page_for(shell_payload)
+    row = page.locator(f'details[data-diagnostic="{category}"]')
+    expect(row.locator('summary')).to_have_text(category.replace('_', ' ') + ' · 3')
+    row.locator('summary').click()
+    expect(row.locator('li')).to_have_text([
+        'path: /synthetic/first.jsonl · count: 2', 'path: /synthetic/second.jsonl · count: 1'])
+
+
 def test_every_nonzero_diagnostic_has_collapsible_details(page_for, shell_payload):
     diagnostics = shell_payload['diagnostics']
     for key, value in list(diagnostics.items()):
