@@ -420,3 +420,11 @@
   `test_all_trace_markers_reject_clustered_boundaries`,
   `test_clustered_request_marker_falls_back_to_valid_submission`, and
   `test_character_correct_ids_reach_priority_and_completed_composition`.
+- Primary usage must preserve the existing nonempty turn identity. Reusing
+  history-boundary validation rejected whitespace-only ids that Task 4 and
+  fallback accounting retain, causing primary and fallback tokens to count
+  together and dropping primary display/priority attribution. Use `_identifier`
+  locally in primary composition; keep the stricter history-only predicate
+  separate. Task 15's per-turn source selection then replaces fallback usage
+  with the primary record for that exact id. Regression:
+  `test_whitespace_turn_identity_selects_primary_and_preserves_attribution`.

@@ -4820,7 +4820,7 @@ def compose_usage(corpus: Corpus, priority: PriorityTurns) -> None:
                     if key in responses:
                         continue
                     responses.add(key)
-                turn_id = _history_identifier(usage['turn_id'])
+                turn_id = _identifier(usage['turn_id'])
                 primary_turns.add(_codex_session_identity(turn_id) if turn_id is not None else None)
                 position = bisect.bisect_left(positions, usage['line']) - 1
                 model = (timeline[position][1] if position >= 0 else None) or 'unknown'

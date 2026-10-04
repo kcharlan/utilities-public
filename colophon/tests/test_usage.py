@@ -72,6 +72,26 @@ def test_per_turn_selection_retains_fallback_after_primary(colophon, tmp_path):
         ('synthetic-primary', 'record', 12), ('synthetic-fallback', 'token_count', 30)]
 
 
+def test_whitespace_turn_identity_selects_primary_and_preserves_attribution(colophon, tmp_path):
+    # Task4 _identifier preserves nonempty ids verbatim; Task15 A4#1 selects
+    # primary per identical turn id, so record4 replaces fallback10 (not14).
+    turn_id = ' '
+    log = (CodexHome(tmp_path / 'synthetic-home').log('synthetic-session').meta()
+        .task_started(turn_id).usage_record(usage={'input_tokens': 4})
+        .token_count(last={'input_tokens': 10}, total={'input_tokens': 10}))
+    record = parsed(colophon, log)
+    assert record['usage_records'][0]['turn_id'] == turn_id
+    metadata = {'thread_id': 'synthetic-session', 'model': 'gpt-5',
+                'timestamp': '1', 'first_seen_ms': 1}
+    session = compose(colophon, [record], {turn_id: metadata}).sessions['synthetic-session']
+    assert [turn.id for turn in session.turns] == [turn_id]
+    assert [(unit.source, unit.input, unit.turn_id, unit.display_turn) for unit in session.units] == [
+        ('record', 4, turn_id, turn_id)]
+    assert session.units[0].tier == 'priority'
+    assert session.units[0].priority == metadata
+    assert counts(session.units) == (4, 0, 0, 0, 0)
+
+
 def test_bare_primary_turn_discarded_and_no_turn_counted(colophon, tmp_path):
     # Scanner.swift4279–4307 emits bare rows; A4#1 replaces only owned turn's900.
     log = (CodexHome(tmp_path / 'synthetic-home').log('synthetic-session').meta()
