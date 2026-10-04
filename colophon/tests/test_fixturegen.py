@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 import json
 import sqlite3
+from contextlib import closing
 from uuid import UUID
 
 import pytest
@@ -203,13 +204,13 @@ def test_state_database_schema_rows_edges_and_versions(tmp_path):
     row = {"id": "synthetic-child", "title": "Synthetic title", "cwd": "/synthetic/projects/alpha", "archived": 1}
     path = home.state_db([row], version=7, spawn_edges=[("synthetic-parent", "synthetic-child")])
     assert path == tmp_path / "state_7.sqlite"
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         columns = {r[1] for r in db.execute("PRAGMA table_info(threads)")}
         assert {"id", "name", "title", "cwd", "git_branch", "git_origin_url", "git_sha", "source", "originator", "archived", "first_user_message", "agent_nickname", "agent_role", "agent_path", "rollout_path"} <= columns
         assert db.execute("SELECT id,title,cwd,archived FROM threads").fetchone() == tuple(row.values())
         assert db.execute("SELECT parent_thread_id,child_thread_id FROM thread_spawn_edges").fetchall() == [("synthetic-parent", "synthetic-child")]
     empty = home.state_db([])
-    with sqlite3.connect(empty) as db:
+    with closing(sqlite3.connect(empty)) as db:
         assert db.execute("SELECT count(*) FROM threads").fetchone() == (0,)
         assert db.execute("SELECT name FROM sqlite_master WHERE name='thread_spawn_edges'").fetchone() is None
 
@@ -232,7 +233,7 @@ def test_trace_rows_match_pinned_upstream_text_and_schema(tmp_path):
     completion = home.completed_row("synthetic-turn", "gpt-synthetic-2", 1893974402)
     path = home.trace_db([request, submission, completion])
     assert path == tmp_path / "logs_2.sqlite"
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         columns = {r[1] for r in db.execute("PRAGMA table_info(logs)")}
         assert {"id", "ts", "ts_nanos", "level", "target", "feedback_log_body", "thread_id"} <= columns
         rows = db.execute("SELECT ts,feedback_log_body,thread_id FROM logs ORDER BY rowid").fetchall()
@@ -284,3 +285,39 @@ def test_backwards_at_override_keeps_automatic_clock_monotonic(tmp_path):
     log = gen.CodexHome(tmp_path).log().meta(at=1893974409000).world_state(at=1893974401000).compacted()
     records = [json.loads(line) for line in log.write().read_text().splitlines()]
     assert [r["timestamp"] for r in records] == ["2030-01-07T00:00:09.000Z", "2030-01-07T00:00:01.000Z", "2030-01-07T00:00:09.002Z"]
+
+
+@pytest.mark.parametrize("writer", ["state_db", "trace_db"])
+@pytest.mark.parametrize("fails", [False, True], ids=["success", "failure"])
+def test_database_writers_close_real_connections_on_every_exit(tmp_path, monkeypatch, writer, fails):
+    gen = load_generator()
+    home = gen.CodexHome(tmp_path)
+    real_connect = sqlite3.connect
+    connections = []
+
+    def capture_connection(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", capture_connection)
+    if writer == "state_db":
+        # A list cannot bind to a SQLite TEXT column; failure occurs after open.
+        rows = [{"id": "synthetic-thread", "title": [] if fails else "Synthetic title"}]
+    else:
+        # A list cannot bind to a SQLite INTEGER column, also after open.
+        rows = [{"ts": [] if fails else 1893974400, "feedback_log_body": "Synthetic trace."}]
+    if fails:
+        with pytest.raises(sqlite3.ProgrammingError, match="type 'list' is not supported"):
+            getattr(home, writer)(rows)
+    else:
+        getattr(home, writer)(rows)
+    assert len(connections) == 1
+    # Check the actual retained connection; this must not rely on garbage
+    # collection, reference counts, or a fake close implementation.
+    try:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connections[0].execute("SELECT 1")
+    finally:
+        # Keep the regression itself leak-free if it catches a future failure.
+        connections[0].close()

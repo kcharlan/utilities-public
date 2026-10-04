@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypedDict
@@ -87,7 +88,7 @@ class CodexHome:
                  spawn_edges: list[tuple[str, str]] | None = None) -> Path:
         """Edges are (parent, child); omitted edges omit the optional table."""
         path = self.root / f"state_{version}.sqlite"
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             columns = ",".join(f'{name} {"INTEGER" if name == "archived" else "TEXT"}' for name in THREAD_COLUMNS)
             db.execute(f"CREATE TABLE threads ({columns})")
             placeholders = ",".join("?" for _ in THREAD_COLUMNS)
@@ -111,7 +112,7 @@ class CodexHome:
     def trace_db(self, rows: list[TraceRow]) -> Path:
         path = self.root / "logs_2.sqlite"
         columns = ("id", "ts", "ts_nanos", "level", "target", "feedback_log_body", "thread_id")
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("CREATE TABLE logs (id INTEGER PRIMARY KEY, ts INTEGER, ts_nanos INTEGER, level TEXT, target TEXT, feedback_log_body TEXT, thread_id TEXT)")
             for n, row in enumerate(rows, 1):
                 defaults = {"id": n, "ts": 0, "ts_nanos": 0, "level": "TRACE", "target": "synthetic_codex", "thread_id": None}

@@ -23,3 +23,9 @@
   stay within the supplied home. Regressions:
   `test_explicit_empty_arguments_and_receivers_are_preserved` and
   `test_filename_cannot_escape_supplied_home`.
+- SQLite's connection context manager commits or rolls back a transaction;
+  it does not close the connection. Combine `contextlib.closing` with the
+  transaction context in fixture writers, and close test readers explicitly.
+  Verify actual retained connections are closed on successful writes and
+  binding failures without relying on garbage collection. Regression:
+  `test_database_writers_close_real_connections_on_every_exit`.
