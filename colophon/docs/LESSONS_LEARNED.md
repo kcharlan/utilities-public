@@ -1,5 +1,22 @@
 # Lessons learned
 
+- `document.fonts.ready` waits for requested faces but does not load an unused
+  weight. Empty pages use body Light and brand Medium, so the prescribed
+  default-weight Regular check can fail even with valid embedded bytes. Request
+  all three embedded faces during boot. Regression:
+  `test_empty_topbar_font_and_offline`.
+- Browser fixtures must derive synthetic dates from the documented frozen
+  instant: 2030-01-15 noon UTC is `1894708800000`. A mislabeled epoch and a
+  future fixture day can hide rows under later period filtering. Keep every
+  source clock and mtime relative to that snapshot rather than assuming the
+  comment is correct.
+- Repeated URL keys establish a value only when all decoded values agree.
+  Keeping the first contradictory filter invents evidence from ambiguous
+  input. Drop conflicting keys, use ordinary defaults for defaulted controls,
+  and retain identical repeats; failed escape decoding contributes no value.
+  Regressions: `test_conflicting_duplicate_state_is_unknown_and_bad_unicode_is_removed`
+  and `test_conflicting_filters_drop_but_identical_and_malformed_repeats_do_not`.
+
 - Catalog change detection compares the four standard rates and long-context
   threshold/four rates, not whole rate objects. Accepted extra metadata must
   not trigger a catalog observation that displaces a manual correction. Keep

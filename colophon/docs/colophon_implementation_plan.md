@@ -2082,7 +2082,10 @@ All page JavaScript lives in `PAGE_JS`, as one IIFE with `"use strict"`.
   - Subset with `pyftsubset --flavor=woff2 --layout-features='*' --unicodes=<range>`. The range is U+0020–007E, U+00A0–00FF, U+2010–2027, U+2030–203A, U+2190–2193, U+2197, U+2212, U+2264–2265, U+2315, U+2318, U+25B2–25BC and U+2713.
   - `tests/tools/subset_font.py` performs the whole recipe deterministically and prints `FONT_CSS`.
   - `docs/font.md` records the release, the asset SHA-256, the exact file names, the weights, the range and the command.
-  - `OFL.txt` is copied verbatim from the release zip.
+  - The release ZIP contains no license file. User-approved source correction
+    (2026-10-04): copy `OFL.txt` verbatim from the same v1.1.0 source commit
+    `8ffa86c2998677256252336f3662d60997e74b05`. Record both exact input URLs
+    and SHA-256 values in `docs/font.md`; the font ZIP remains unchanged.
   - A test asserts that the license text in `FONT_CSS` equals `OFL.txt` and contains no `*/`.
 - **Tokens.** `PAGE_CSS` starts with `/* tokens:start */ :root[data-theme="dark"] { … } /* tokens:end */`, holding the full table from [Visual tokens](#visual-tokens-from-the-approved-mockups).
 - **Theme lint** (`test_page_assets.py`):

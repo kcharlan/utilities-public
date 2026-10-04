@@ -6,8 +6,10 @@ A colophon records who made a book, when, where and how. Colophon applies that
 idea to Codex sessions: a local, read-only explorer of their activity and cost.
 The [design spec](docs/colophon_design_spec.md) defines the complete application.
 The compiler scans logs, preserves dated prices, and writes a self-contained
-offline page. The page currently provides the data contract and empty state;
-the complete explorer interface is added by subsequent tasks.
+offline page. The page shell includes embedded Martian Mono, period controls,
+URL history, search across full titles and requests, an archive toggle, and
+collapsible diagnostics. The complete explorer views are added by subsequent
+tasks. Font sources and regeneration are documented in [font.md](docs/font.md).
 
 ## Install
 
