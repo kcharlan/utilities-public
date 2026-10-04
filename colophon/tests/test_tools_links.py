@@ -384,3 +384,35 @@ def test_unknown_top_level_type_cannot_trigger_structured_precedence(colophon, t
     result = parse(colophon, log)
     assert result["unknown_types"] == {item["type"]: 1}
     assert result["tools"] == {"synthetic-turn-1": counts(shell=1)}
+
+
+@pytest.mark.parametrize("prefix", ["$", "π", "é", "工具", "١", ".", "synthetic_"],
+                         ids=["dollar", "greek_word", "latin_word", "cjk_word", "unicode_digit", "qualified", "ascii_word"])
+@pytest.mark.parametrize("marker", ["tools.exec_command();", "web.run();"], ids=["tools", "web"])
+def test_distinct_js_identifier_prefixes_are_not_tool_evidence(colophon, prefix, marker):
+    tools = tally(colophon)
+    tools.add_raw(raw("custom_tool_call", name="exec", input=prefix + marker))
+    assert tools.result() == counts()
+
+
+@pytest.mark.parametrize("prefix", ["", "await ", "(", ";", "\n"],
+                         ids=["start", "await", "parenthesis", "semicolon", "newline"])
+def test_standalone_js_calls_still_count_at_valid_boundaries(colophon, prefix):
+    tools = tally(colophon)
+    tools.add_raw(raw("custom_tool_call", name="exec",
+                      input=f"{prefix}tools.exec_command(); {prefix}web.run();"))
+    assert tools.result() == counts(shell=1, web=1)
+
+
+@pytest.mark.parametrize("name", ["mcp__synthetic_srv__", "mcp____lookup", "mcp__synthetic_srv", "mcp__"],
+                         ids=["missing_tool", "missing_server", "missing_separator", "missing_both"])
+def test_incomplete_js_mcp_marker_is_other_not_group_evidence(colophon, name):
+    tools = tally(colophon)
+    tools.add_raw(raw("custom_tool_call", name="exec", input=f"tools.{name}();"))
+    assert tools.result() == counts(other={name: 1})
+
+
+def test_complete_js_mcp_marker_preserves_server_and_tool_underscores(colophon):
+    tools = tally(colophon)
+    tools.add_raw(raw("custom_tool_call", name="exec", input="tools.mcp___synthetic_srv__lookup__detail();"))
+    assert tools.result() == counts(mcp={"_synthetic_srv": 1})

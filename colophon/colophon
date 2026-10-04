@@ -61,8 +61,8 @@ ORCHESTRATION_JS: frozenset[str] = frozenset({
 STRUCTURED_TOOL_TYPES: frozenset[str] = frozenset({
     "CommandExecution", "FileChange", "McpToolCall", "WebSearch", "ImageView", "Extension",
 })
-JS_TOOL_CALL = re.compile(r"(?<![A-Za-z0-9_.])tools\.([A-Za-z_][A-Za-z0-9_]*)\(")
-JS_WEB_CALL = re.compile(r"(?<![A-Za-z0-9_.])web\.run\(")
+JS_TOOL_CALL = re.compile(r"(?<![\w$.])tools\.([A-Za-z_][A-Za-z0-9_]*)\(")
+JS_WEB_CALL = re.compile(r"(?<![\w$.])web\.run\(")
 ToolCounts = dict[str, int | dict[str, int]]
 KNOWN_RECORD_KEYS: frozenset[str] = frozenset({
     "session_meta", "turn_context", "token_usage_record", "world_state", "compacted",
@@ -305,8 +305,12 @@ class ToolTally:
                 self.raw["shell"] += 1
             elif name == "apply_patch":
                 self.raw["file_edits"] += 1
-            elif name.startswith("mcp__") and "__" in name[5:]:
-                self._group(self.raw, "mcp", name[5:].split("__", 1)[0])
+            elif name.startswith("mcp__"):
+                server, _, tool = name[5:].partition("__")
+                if server and tool:
+                    self._group(self.raw, "mcp", server)
+                else:
+                    self._group(self.raw, "other", name)
             elif name == "web__run":
                 self.raw["web"] += 1
             elif name == "view_image":

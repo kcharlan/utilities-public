@@ -96,3 +96,11 @@
   when retaining exit codes. In zsh, `status` is read-only; assigning it can
   fail the harness after the tests pass. Preserve both logs and diagnose the
   harness separately before rerunning.
+- Occurrence scanners need identifier boundaries even when the called name
+  has an ASCII-only contract. Exclude Unicode word characters, dollar signs
+  and dots before `tools` or standalone `web`, so distinct prefixed objects
+  cannot provide tool evidence. Require both server and tool in a JS MCP
+  marker; incomplete MCP-shaped identifiers belong under Other. Regressions:
+  `test_distinct_js_identifier_prefixes_are_not_tool_evidence`,
+  `test_standalone_js_calls_still_count_at_valid_boundaries` and
+  `test_incomplete_js_mcp_marker_is_other_not_group_evidence`.
