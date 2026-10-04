@@ -907,6 +907,7 @@ This keeps one read per file (spec §4) while allowing path A's retroactive boun
      - Then: **not** owned if its `started_at` (epoch seconds) is `< created_at − 1 s`.
      - Then: a `task_started` whose `turn_id` is not a UUIDv7 **is** owned if its wrapper time is `≥ created_at + 1 s`. This overrides the previous adjustment.
   3. **Boundary.** At the first owned record: if it is a `task_complete` whose `started_at` equals a remembered synthetic `started_at`, the boundary is the **last** matching synthetic start's `rec` (method `synthetic_start_verified_by_completion`). Otherwise the boundary is this record's `rec` (`own_lifecycle`).
+     User clarification (2026-10-03): both clocks must be finite JSON numbers (`int` or `float`, not `bool`) of epoch seconds, compared numerically. Missing, null, non-numeric, boolean or non-finite values never match, including each other. With no valid match, use the completion's own `rec` and method `own_lifecycle`.
   4. Records with `0 < rec < boundary` are inherited.
   5. If no record is owned, the method is `unresolved` and the boundary is the record count, so every record after the first is inherited.
 - **Path B** (no `forked_from_id`).
@@ -918,6 +919,7 @@ This keeps one read per file (spec §4) while allowing path A's retroactive boun
   - A `task_started` opens a turn keyed by its `turn_id`, else by `turn-<n>`, where `n` is the number of turns so far plus 1.
   - A record without its own `turn_id`, between a start and that turn's end, belongs to the current turn.
   - A `task_complete` closes the turn as `completed`, and a `turn_aborted` as `aborted`. When the turn has no start, an embedded `started_at` on the end becomes the start, with provenance `started_at` and the flag `start_from_completion`.
+    User clarification (2026-10-03): completion-only recovery requires no `task_started` record. A start record with no usable clock still opens the turn with its key, `rec` and `turn_id`; preserve its `start_rec`, leave its logged start time unknown, and do not flag `start_from_completion`. Apply the duration rules normally, including reported duration when present.
   - Keep `duration_ms` and `time_to_first_token_ms` when they are numbers ≥ 0.
   - When the end record's turn equals the current turn, the current turn is cleared.
 - **Open turns at parse time.** A turn with a start and no end, where some later turn started, is `interrupted`. Its `end_ms` is the latest event time among the records attributed to it before that later turn's start. Otherwise the turn is `open`, and Task 10 classifies it as running or abandoned.

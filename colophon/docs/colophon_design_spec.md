@@ -414,6 +414,11 @@ source is kept as its provenance:
   *aborted*.
   - If the turn has no start but the end carries an embedded `started_at`,
     that becomes the start.
+    Completion-only recovery requires the absence of a `task_started`
+    record. A start record with no usable clock still opens the turn and keeps
+    its record position; its logged start time stays unknown and it does not
+    receive `start_from_completion`. Duration follows the rules below,
+    including reported duration when present.
   - `duration_ms` and `time_to_first_token_ms` (when present and ≥ 0) are kept
     as the reported duration and time to first token.
 
@@ -497,6 +502,9 @@ they affect.
    - If it is a `task_complete` whose `started_at` equals a remembered
      synthetic start's `started_at`, the boundary is the index of the **last**
      such matching synthetic start (*synthetic start verified by completion*).
+     Both clocks must be finite JSON numbers (`int` or `float`, not `bool`)
+     of epoch seconds, compared numerically. Missing, null, non-numeric,
+     boolean and non-finite clocks never match, including each other.
    - Otherwise the boundary is this record's index (*own lifecycle*).
 4. **Result.** Records strictly between index 0 and the boundary are
    inherited.

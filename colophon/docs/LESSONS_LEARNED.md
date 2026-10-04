@@ -36,3 +36,20 @@
   generator contract, without changing the generator to fit test mistakes.
   Regressions: `test_true_first_meta_owns_identity_before_ancestor` and
   `test_metadata_fields_and_git_mapping`.
+- An idless lifecycle start must allocate a new numbered turn. Current-turn
+  fallback belongs to intervening records and ends; applying it to starts
+  overwrites the previous turn and hides interruption. Regression:
+  `test_missing_turn_id_gets_numbered_key`.
+- Releasing a decoded record variable does not release the object when its
+  `DecodedLine` container still references it. Drop that container immediately
+  after extracting the object so phase two receives only compact scalar facts.
+  Regression: `test_decoded_records_released_before_phase_two`.
+- Python retains a `for` loop's final binding after exhaustion, including a
+  skipped malformed or partial tail. Explicitly release the final raw-line
+  holder at the phase boundary rather than assuming iteration freed its bytes.
+  Regression: `test_raw_lines_released_before_phase_two`.
+- An unknown start timestamp is different from an absent start record.
+  Completion-only recovery checks `start_rec`, preserving logged starts whose
+  clocks are unusable; reported-duration derivation can supply effective timing
+  without rewriting those facts. Regression:
+  `test_unknown_clock_start_record_prevents_completion_recovery`.

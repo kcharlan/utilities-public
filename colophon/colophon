@@ -298,6 +298,229 @@ def _session_meta(record: dict, payload: dict) -> dict:
     }
 
 
+class RecordFact(NamedTuple):
+    """Transient scalar headers; decoded payloads never survive phase one."""
+    rec: int
+    line: int
+    kind: str
+    at_ms: int | None
+    ts_src: str
+    wrapper_ms: int | None
+    turn_id: str | None
+    thread_id: str | None
+    meta_id: str | None
+    started_at: int | float | None
+    reported_ms: int | float | None
+    ttft_ms: int | float | None
+
+
+def _finite_number(value) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if not isinstance(value, float) or math.isfinite(value) else None
+
+
+def _nonnegative_number(value) -> int | float | None:
+    value = _finite_number(value)
+    return value if value is not None and value >= 0 else None
+
+
+def _identifier(value) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _record_fact(record: dict, payload: dict, *, rec: int, line: int, kind: str,
+                 meta_id: str | None) -> RecordFact:
+    at_ms, ts_src = event_time(record, payload)
+    turn_id = _identifier(payload.get("turn_id"))
+    if turn_id is None and record.get("type") == "response_item":
+        turn_id = _identifier(_object(payload.get(
+            "internal_chat_message_metadata_passthrough")).get("turn_id"))
+    return RecordFact(
+        rec, line, kind, at_ms, ts_src, parse_rfc3339_ms(record.get("timestamp")),
+        turn_id, _identifier(payload.get("thread_id")), meta_id,
+        _finite_number(payload.get("started_at")),
+        _nonnegative_number(payload.get("duration_ms")),
+        _nonnegative_number(payload.get("time_to_first_token_ms")),
+    )
+
+
+def _merged_indexes(indexes: Iterator[int]) -> list[list[int]]:
+    """Merge adjacent sorted positions without swallowing undecoded lines."""
+    ranges: list[list[int]] = []
+    for index in indexes:
+        if ranges and ranges[-1][1] == index:
+            ranges[-1][1] = index + 1
+        else:
+            ranges.append([index, index + 1])
+    return ranges
+
+
+def _started_epoch_ms(fact: RecordFact) -> Decimal | None:
+    # History compares the seconds clock exactly, rather than its truncated ms.
+    return None if fact.started_at is None else Decimal(repr(fact.started_at)).scaleb(3)
+
+
+def _history(meta: dict | None, facts: list[RecordFact]) -> tuple[dict, list[bool]]:
+    """Resolve research-extractor history paths from spec §5.3."""
+    history = {"path": "none", "boundary_rec": None, "method": None,
+               "inherited_recs": [], "inherited_lines": []}
+    created = meta.get("created_at_ms") if meta else None
+    inherited = [created is not None and f.at_ms is not None and f.at_ms < created
+                 for f in facts]
+    if meta and meta.get("forked_from_id"):
+        history["path"] = "A"
+        history["boundary_rec"] = len(facts)
+        history["method"] = "unresolved"
+        synthetic: dict[int | float, int] = {}
+        for fact in facts:
+            if fact.kind not in ("event_msg/task_started", "event_msg/task_complete"):
+                continue
+            is_start = fact.kind == "event_msg/task_started"
+            if is_start and fact.turn_id and fact.turn_id.startswith("rollout-"):
+                if fact.started_at is not None:
+                    synthetic[fact.started_at] = fact.rec
+                continue
+            is_uuid = fact.turn_id is not None and re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}",
+                fact.turn_id, re.IGNORECASE) is not None
+            owned = bool(is_uuid and created is not None
+                         and int(fact.turn_id.replace("-", "")[:12], 16) >= created - 1000)
+            started = _started_epoch_ms(fact)
+            if started is not None and created is not None and started < created - 1000:
+                owned = False
+            if (is_start and not is_uuid and created is not None
+                    and fact.wrapper_ms is not None and fact.wrapper_ms >= created + 1000):
+                owned = True
+            if not owned:
+                continue
+            verified = not is_start and fact.started_at is not None and fact.started_at in synthetic
+            history["boundary_rec"] = synthetic[fact.started_at] if verified else fact.rec
+            history["method"] = ("synthetic_start_verified_by_completion" if verified
+                                 else "own_lifecycle")
+            break
+        for index in range(1, history["boundary_rec"]):
+            inherited[index] = True
+    elif meta:
+        history["path"] = "B"
+        session_id = meta.get("id")
+        in_run = False
+        first_meta_seen = False
+        for fact in facts:
+            if fact.kind == "session_meta":
+                if first_meta_seen and fact.meta_id != session_id:
+                    in_run = True
+                first_meta_seen = True
+            started = _started_epoch_ms(fact)
+            own_start = (fact.kind == "event_msg/task_started" and created is not None and (
+                started >= created - 1000 if started is not None else
+                fact.at_ms is not None and fact.at_ms >= created + 1000))
+            if in_run and (fact.kind == "event_msg/thread_settings_applied"
+                           or session_id is not None and fact.thread_id == session_id or own_start):
+                in_run = False
+            if in_run:
+                inherited[fact.rec] = True
+    history["inherited_recs"] = _merged_indexes(f.rec for f in facts if inherited[f.rec])
+    history["inherited_lines"] = _merged_indexes(f.line for f in facts if inherited[f.rec])
+    return history, inherited
+
+
+def is_inherited(record_facts: dict, rec: int) -> bool:
+    """Test a decoded record position against FileRecord history intervals."""
+    ranges = record_facts["history"]["inherited_recs"]
+    # Binary search keeps repeated attribution checks cheap for fragmented logs.
+    low, high = 0, len(ranges)
+    while low < high:
+        mid = (low + high) // 2
+        start, end = ranges[mid]
+        if rec < start:
+            high = mid
+        elif rec >= end:
+            low = mid + 1
+        else:
+            return True
+    return False
+
+
+class TurnBuilder:
+    """Attribute owned scalar facts in file order, preserving logged clocks."""
+
+    def __init__(self):
+        self.turns: list[dict] = []
+        self.by_id: dict[str, dict] = {}
+        self.current: dict | None = None
+        self.last_sources: dict[str, str] = {}
+
+    def _new_turn(self, turn_id: str | None) -> dict:
+        turn = {"key": turn_id or f"turn-{len(self.turns) + 1}", "turn_id": turn_id,
+                "start_ms": None, "start_src": None, "end_ms": None, "end_src": None,
+                "end_kind": "open", "reported_ms": None, "ttft_ms": None,
+                "start_rec": None, "last_ms": None}
+        self.turns.append(turn)
+        if turn_id is not None:
+            self.by_id[turn_id] = turn
+        return turn
+
+    def add(self, fact: RecordFact) -> str | None:
+        """Consume an owned fact and return its attributed turn key, if any."""
+        is_start = fact.kind == "event_msg/task_started"
+        is_end = fact.kind in ("event_msg/task_complete", "event_msg/turn_aborted")
+        turn = self.by_id.get(fact.turn_id) if fact.turn_id is not None else self.current
+        if is_start:
+            # Current-turn fallback attributes intervening records and ends;
+            # an idless start always opens a new independently numbered turn.
+            if fact.turn_id is None:
+                turn = None
+            # Freeze interruption before the later start is attributed. A later
+            # explicit end can still replace this provisional interruption.
+            if self.current and self.current["end_kind"] == "open" and self.current["start_rec"] is not None:
+                self.current["end_kind"] = "interrupted"
+                self.current["end_ms"] = self.current["last_ms"]
+                self.current["end_src"] = self.last_sources.get(self.current["key"])
+            turn = turn if turn is not None else self._new_turn(fact.turn_id)
+            turn.update(start_ms=fact.at_ms, start_src=fact.ts_src, start_rec=fact.rec,
+                        end_ms=None, end_src=None, end_kind="open")
+            self.current = turn
+        elif is_end:
+            turn = turn if turn is not None else self._new_turn(fact.turn_id)
+            if turn["start_rec"] is None and fact.started_at is not None:
+                turn["start_ms"] = epoch_to_ms(fact.started_at)
+                turn["start_src"] = "started_at"
+            turn.update(end_ms=fact.at_ms, end_src=fact.ts_src,
+                        end_kind="completed" if fact.kind == "event_msg/task_complete" else "aborted",
+                        reported_ms=fact.reported_ms, ttft_ms=fact.ttft_ms)
+            if turn is self.current:
+                self.current = None
+        if turn is not None and fact.at_ms is not None:
+            if turn["last_ms"] is None or fact.at_ms >= turn["last_ms"]:
+                turn["last_ms"] = fact.at_ms
+                self.last_sources[turn["key"]] = fact.ts_src
+        return turn["key"] if turn is not None else None
+
+
+def turn_timing(turn: dict, *, collapsed: bool = False) -> dict:
+    """Derive spec §5.2 duration and flags without mutating cached facts."""
+    start, end, reported = turn["start_ms"], turn["end_ms"], turn["reported_ms"]
+    flags = []
+    if start is not None and turn["start_rec"] is None and turn["start_src"] == "started_at":
+        flags.append("start_from_completion")
+    duration = None
+    if turn["end_kind"] != "open":
+        if (collapsed and reported is None and turn["start_src"] == "record_timestamp"
+                and turn["end_src"] == "record_timestamp"):
+            flags.append("collapsed")
+        elif (reported is not None and end is not None
+              and (start is None or collapsed or turn["end_src"] == "completed_at")):
+            start = end - reported
+            duration = reported
+            flags.append("reported_duration")
+        elif start is not None and end is not None and end >= start:
+            duration = end - start
+        else:
+            flags.append("unknown_duration")
+    return {"start_ms": start, "duration_ms": duration, "flags": flags}
+
+
 def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> dict:
     """Read a log once, retaining facts rather than raw decoded records."""
     result = {
@@ -309,6 +532,7 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
         "wrapper_ts": {"count": 0, "distinct": 0},
     }
     wrapper_values: set[str] = set()
+    facts: list[RecordFact] = []
     with path.open("rb") as fh:
         tail_start = max(0, size - TAIL_FINGERPRINT_BYTES)
         fh.seek(tail_start)
@@ -320,6 +544,7 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
                 if decoded.status in ("malformed", "recovered"):
                     result["lines"][decoded.status] += 1
                 record = decoded.obj
+                del decoded
             else:
                 record = _json_object(raw.data)
                 if record is None:
@@ -337,8 +562,9 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
                 if len(wrapper_values) < 3:
                     wrapper_values.add(timestamp)
             if key == "session_meta":
+                header = _session_meta(record, payload)
                 if result["no_session_meta"]:
-                    result["meta"] = _session_meta(record, payload)
+                    result["meta"] = header
                     result["no_session_meta"] = False
                 else:
                     result["extra_meta_count"] += 1
@@ -346,7 +572,28 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
                     result["status"] = "header_only"
             else:
                 result["status"] = "ok"
+            facts.append(_record_fact(record, payload, rec=len(facts), line=raw.index,
+                                      kind=key, meta_id=header["id"] if key == "session_meta" else None))
+            # The next phase uses scalar facts only, including after the final
+            # iteration where loop variables would otherwise retain a payload.
+            del record, payload
+    # Loop bindings survive exhaustion, even for a skipped damaged tail. Keep
+    # neither the last line's bytes nor a later metadata header in phase two.
+    raw = header = None
     result["wrapper_ts"]["distinct"] = len(wrapper_values)
+    result["history"], inherited = _history(result["meta"], facts)
+    builder = TurnBuilder()
+    first_ms = last_ms = None
+    for fact in facts:
+        if inherited[fact.rec]:
+            continue
+        if fact.at_ms is not None:
+            first_ms = fact.at_ms if first_ms is None else min(first_ms, fact.at_ms)
+            last_ms = fact.at_ms if last_ms is None else max(last_ms, fact.at_ms)
+        if result["history"]["method"] != "unresolved":
+            builder.add(fact)
+    result["owned_span"] = {"first_ms": first_ms, "last_ms": last_ms}
+    result["turns"] = builder.turns
     return result
 
 
