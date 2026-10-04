@@ -3531,7 +3531,7 @@ def _pricing_has_suffix(value: str, suffix: str) -> bool:
 
 
 def normalize_codex_model(raw: str) -> str:
-    """Port normalizeCodexModel (CostUsagePricing.swift 487–526)."""
+    """Port normalizeCodexModel (CostUsagePricing.swift 482–518)."""
     trimmed = _codex_trim(raw)
     if _pricing_has_prefix(trimmed, "openai/"):
         trimmed = trimmed[len("openai/"):]
