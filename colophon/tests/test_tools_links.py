@@ -368,3 +368,19 @@ def test_usage_timestamp_native_precision_at_ties_negative_epochs_and_second_bou
     log.raw((json.dumps({"type": "token_usage_record", "timestamp": timestamp, "payload": {"usage": {}}}) + "\n").encode())
     row = parse(colophon, log)["usage_records"][0]
     assert row["timestamp_unix_ms"] == expected
+
+
+@pytest.mark.parametrize("item", [
+    {"type": "CommandExecution", "exit_code": 2},
+    {"type": "FileChange", "changes": {"/synthetic/a": {}}},
+    {"type": "McpToolCall", "server": "synthetic_srv"},
+    {"type": "WebSearch"},
+    {"type": "ImageView"},
+    {"type": "Extension", "kind": "clock.sleep"},
+], ids=lambda item: item["type"])
+def test_unknown_top_level_type_cannot_trigger_structured_precedence(colophon, tmp_path, item):
+    log = new_log(tmp_path).task_started().function_call()
+    log._emit(item["type"], {"turn_id": "synthetic-turn-1", "item": item})
+    result = parse(colophon, log)
+    assert result["unknown_types"] == {item["type"]: 1}
+    assert result["tools"] == {"synthetic-turn-1": counts(shell=1)}

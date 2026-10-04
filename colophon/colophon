@@ -357,7 +357,8 @@ class ToolCandidate(NamedTuple):
 
 
 def _tool_candidate(record: dict, payload: dict, kind: str) -> ToolCandidate | None:
-    structured = kind.removeprefix("event_msg/item_completed/") in STRUCTURED_TOOL_TYPES
+    structured = (kind.startswith("event_msg/item_completed/")
+                  and kind.removeprefix("event_msg/item_completed/") in STRUCTURED_TOOL_TYPES)
     if not structured and kind not in (
         "response_item/function_call", "response_item/custom_tool_call",
         "response_item/local_shell_call", "response_item/web_search_call",

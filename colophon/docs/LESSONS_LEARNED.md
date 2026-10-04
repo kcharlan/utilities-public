@@ -88,3 +88,11 @@
   timestamp routing. Regressions:
   `test_usage_timestamp_native_parser_truncates_beyond_three_digits` and
   `test_usage_timestamp_native_precision_at_ties_negative_epochs_and_second_boundary`.
+- `str.removeprefix` leaves a string unchanged when the prefix is absent.
+  Require the documented record container before checking structured item
+  types, so unknown top-level names never count or suppress genuine raw tools.
+  Regression: `test_unknown_top_level_type_cannot_trigger_structured_precedence`.
+- Shell harnesses must use task-specific variables such as `task_test_rc`
+  when retaining exit codes. In zsh, `status` is read-only; assigning it can
+  fail the harness after the tests pass. Preserve both logs and diagnose the
+  harness separately before rerunning.
