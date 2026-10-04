@@ -29,3 +29,10 @@
   Verify actual retained connections are closed on successful writes and
   binding failures without relying on garbage collection. Regression:
   `test_database_writers_close_real_connections_on_every_exit`.
+- Reader tests must use the fixture generator's documented defaults rather
+  than assuming an epoch constant, cwd or CLI identity. `CodexHome.log`
+  defaults to 2030-01-07; pass `at` explicitly when a test needs a different
+  instant. Keep expected metadata aligned with the existing synthetic
+  generator contract, without changing the generator to fit test mistakes.
+  Regressions: `test_true_first_meta_owns_identity_before_ancestor` and
+  `test_metadata_fields_and_git_mapping`.
