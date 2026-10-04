@@ -170,3 +170,46 @@
   `test_foundation_duplicate_projection_keeps_first_value`,
   `test_foundation_duplicate_usage_fields_keep_first_value`, and
   `test_foundation_validates_overwritten_strings`.
+- File path identity in a port is a source contract, not a generic filesystem
+  convenience. `Path.resolve()` erases symlink spellings and conflicts with
+  CodexBar's lexical `codexPathKey`, which only aliases `/private/var/` to `/var/`.
+  Use that same key throughout parse, discovery and cache. Regressions:
+  `test_path_key_preserves_symlink_spelling` and
+  `test_path_key_only_private_var_alias`; the reader fingerprint test retains
+  its independent path expectation and all snapshot assertions.
+- Requested metadata properties do not imply a listing filter. Upstream asks
+  for regular-file information but admits matching directories and retains
+  candidates whose stat failed. Let open/read report unreadability rather than
+  suppressing discovery candidates. Regressions:
+  `test_directory_shaped_jsonl_is_discovered_and_reported` and
+  `test_stat_failure_still_reports_unreadable_candidate`.
+- Python booleans compare equal to integers. Validate cache parser versions
+  and numeric keys by exact integer type before comparing their values.
+  Regression: `test_bool_parser_version_is_not_valid_evidence`.
+- Platform enumeration options carry resource-property semantics: hidden
+  flags and packages on Darwin differ from dot-name-only corelibs traversal.
+  Use platform properties with typed native calls and explicit ownership,
+  rather than guessing suffixes or assuming `os.walk` is equivalent.
+  Regressions: `test_foundation_package_descendants_and_symlinks`,
+  `test_hidden_resource_flag_excludes_files_and_descendants`,
+  `test_non_darwin_package_option_is_ignored`, and
+  `test_package_property_releases_every_owned_reference`.
+- Filtering an existing-directory optimization must preserve direct-path source
+  semantics. CodexBar generates canonical day paths and filters only their
+  entries, so hidden flags on year/month/day ancestors do not hide a visible
+  log. Enumerate those ancestors without resource filtering. Regression:
+  `test_hidden_partition_ancestor_does_not_hide_visible_day_entry`.
+- A scan is not the cache transaction's commit point. Buffer until the caller
+  has written the page, retaining the start inventory including unreadables
+  for pruning. Regressions: `test_scan_buffers_until_caller_commit`,
+  `test_successful_rebuild_scan_can_abort_before_commit`, and
+  `test_scan_keeps_unreadable_live_paths_for_deferred_pruning`.
+- Mark successful installation as committed before backup garbage cleanup.
+  A partly deleted backup cannot be rolled back. Cleanup filesystem failures
+  leave the installed cache valid and the remaining backup for dead-pid
+  maintenance; interrupts expose the committed state to the caller.
+  Regression: `test_post_install_cleanup_preserves_committed_state`.
+- Closed and committed are different cache states. Abort closes the buffer but
+  does not commit it; a post-install interruption has already committed.
+  Keep an explicit committed marker that abort preserves. Regression:
+  `test_cache_committed_marker_distinguishes_abort`.

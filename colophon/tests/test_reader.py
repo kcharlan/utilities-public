@@ -96,7 +96,11 @@ def test_snapshot_tail_fingerprint_single_open(colophon,codex_home,monkeypatch,l
     monkeypatch.setattr(Path,'open',tracked)
     result = parse(colophon,path,size=length,archived=True)
     assert len(handles)==1 and handles[0].closed
-    assert result['key'] == {'path':str(path.resolve()),'size':length,'mtime_ns':path.stat().st_mtime_ns,
+    # CodexBar codexPathKey aliases /private/var without resolving symlinks.
+    expected_path = str(path.absolute())
+    if expected_path.startswith('/private/var/'):
+        expected_path = expected_path[len('/private'):]
+    assert result['key'] == {'path':expected_path,'size':length,'mtime_ns':path.stat().st_mtime_ns,
         'tail_sha256':hashlib.sha256(snapshot[max(0,length-4096):length]).hexdigest()}
     assert result['archived'] is True and result['status']=='empty'
     assert result['parser_version']==colophon.PARSER_VERSION

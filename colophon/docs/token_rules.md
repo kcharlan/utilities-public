@@ -90,3 +90,64 @@ probes establish that duplicate keys keep the first source value, including
 nested usage fields; the fallback preserves that dictionary projection.
 Terminated typed fast routing and structurally complete truncated
 tails retain their source behavior without whole-object JSON validation.
+
+## Task 8 — discovery and processing order
+
+The discovery port reads `CostUsageScanner.swift` at `3bbf6bc48`:
+
+| Colophon rule | Upstream source | Treatment |
+|---|---|---|
+| Sessions root before archived root; separately sorted paths | `codexSessionsRoots`, `listCodexSessionFiles`, scan root loop (2151–2187, 5950–5968) | Port; full recursive cold discovery over all history. |
+| Canonical calendar day directories, shallow day contents | `listCodexSessionFilesByDatePartition` (2740–2810) | Port; enumerate existing canonical valid days instead of probing absent days. Ancestors are unfiltered, because upstream generates day paths directly; only day entries apply hidden filtering. |
+| Flat and legacy `.jsonl`, case insensitive; root-level four-number-character years excluded from legacy traversal | `listCodexSessionFilesFlat`, `listCodexLegacySessionFilesRecursive`, `isCodexDatePartitionAncestor` (3283–3330), `isDatePartitionComponent` (2479–2481) | Port; malformed year contents are not a recursive fallback. |
+| Lexical absolute keys; `/private/var/` maps to `/var/` | `codexPathKey` (2533–2543) | Port; retain general symlink spellings in parser and cache keys. |
+| Path and device/inode de-duplication | Root loop (5950–5968), `scanCodexFile` (5320–5323) | Port; the first discovery path owns a filesystem identity. |
+| Admit directory-shaped `.jsonl`; failed stat retains zero size/mtime without identity | `CostUsageScanner+CacheHelpers.swift`, `codexFileMetadata` (660–677); scanner listing functions above | Port; actual open/read errors are reported by Colophon's scan. No regular-file-only filter is added. |
+| Descending millisecond mtime, ascending size, ascending path | `sortedCodexSessionFilesNewestFirst` (6717–6732) | Port; scan records retain this processing order even across mixed cache hits and misses. |
+
+Darwin's `FileManager` enumeration options also exclude hidden resource flags
+and package descendants. Standard-library `ctypes` calls the same platform
+CoreFoundation `kCFURLIsHiddenKey` and `kCFURLIsPackageKey` resource properties,
+with explicitly typed functions and owned references released in `finally`.
+No filename-extension approximation classifies packages. Native loading is lazy
+and cached. Primary API references: [hidden property](https://developer.apple.com/documentation/corefoundation/kcfurlishiddenkey?language=objc)
+and [package property](https://developer.apple.com/documentation/corefoundation/kcfurlispackagekey?language=objc).
+Synthetic macOS Foundation and CoreFoundation probes corroborated package,
+hidden-flag, directory-shaped `.jsonl`, and symlink behavior outside the
+repository; no probe or upstream checkout is a test-suite dependency.
+
+On non-Darwin platforms, package exclusion is deliberately absent, matching
+[`NSURLDirectoryEnumerator.nextObject` in swift-corelibs-foundation](https://github.com/swiftlang/swift-corelibs-foundation/blob/44cd6163efc4d12bef854bed34bf17cda65747d4/Sources/Foundation/FileManager%2BPOSIX.swift#L354-L397):
+it explicitly ignores `skipsPackageDescendants`, filters dot-prefixed names,
+and uses physical traversal without descending symlinks. Platform assertions
+run without skipped tests. This is library compatibility for the pinned
+scanner's discovery options, not an added token-accounting deviation.
+
+The private parse cache is Colophon's own adaptation: changed files reparse
+from byte zero; keys retain scan-start nanosecond mtime and size and the last
+4096 snapshot bytes' SHA-256. Cache entries are buffered until commit; rebuild
+writes a sibling directory and swaps it only after scanning succeeds. Invalid
+cache key types and boolean parser versions never provide hit evidence.
+
+Source detail: a visible entry remains discoverable under a hidden-flagged
+canonical year, month or day directory. Upstream opens generated day paths
+directly; its hidden option filters entries within each day, rather than
+ancestors. Synthetic direct-day Foundation probes verified all three cases.
+The spec's broad non-hidden discovery wording is read in this source-defined
+sense, rather than extended to every ancestor.
+
+Scanning buffers records without committing. The caller commits after a
+successful page write (Task 18); `cache._live_paths` keeps the scan-start
+inventory including unreadable candidates, so pruning never needs a second
+discovery pass. A successful rebuild scan can still be aborted before commit.
+
+The successful rebuild installation rename is the commit point. Pre-install
+scan/write/swap failures retain or restore the old cache. After installation,
+the cache sets `_committed` and is marked finished before old-backup cleanup:
+cleanup `OSError` is
+best effort and leaves the backup for dead-pid maintenance; `KeyboardInterrupt`
+propagates with the committed state intact. Callers must report this committed
+state honestly rather than claiming the previous cache was retained after a
+post-install interruption. `_committed` distinguishes this state from an
+aborted scan (both are finished), and abort never changes it. No rollback
+attempts use a partly deleted backup.
