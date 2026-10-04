@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import struct
 import sys
 import tempfile
 import time
@@ -1097,6 +1098,51 @@ def _reject_json_constant(value):
     raise ValueError(f'Non-JSON constant: {value}')
 
 
+def _codex_decimal_int(text: str) -> int:
+    """Foundation Decimal parse, then NSNumber.intValue's fixed-width cast.
+
+    Decimal retains a UInt128 mantissa and signed eight-bit exponent. Excess
+    least-significant digits are discarded, raising the exponent; validate
+    its range before compaction (including zero). This models representation
+    loss before the later signed Int64 mantissa conversion and decimal scaling.
+    """
+    sign, digits, exponent = Decimal(text).as_tuple()
+    coefficient = discarded = 0
+    for digit in digits:
+        candidate = coefficient * 10 + digit
+        if discarded or candidate > 2**128 - 1:
+            discarded += 1
+        else:
+            coefficient = candidate
+    exponent += discarded
+    if not -128 <= exponent <= 127:
+        raise ValueError('Foundation Decimal exponent out of range')
+    while coefficient and coefficient % 10 == 0 and exponent < 127:
+        coefficient //= 10
+        exponent += 1
+    coefficient = (coefficient + 2**63) % 2**64 - 2**63
+    if exponent >= 0:
+        coefficient = coefficient * pow(10, exponent, 2**64) % 2**64
+    elif exponent < -20:
+        coefficient = 0
+    else:
+        quotient = abs(coefficient) // 10**(-exponent)
+        coefficient = -quotient if coefficient < 0 else quotient
+    if sign:
+        coefficient = -coefficient
+    return (coefficient + 2**63) % 2**64 - 2**63
+
+
+class _CodexJSONInteger(int):
+    """Retain bounded Foundation Decimal semantics for large JSON integers."""
+
+    def __new__(cls, text):
+        value = super().__new__(cls, text)
+        value.foundation_int = ((value + 2**63) % 2**64 - 2**63
+            if -(2**63) <= value <= 2**64 - 1 else _codex_decimal_int(text))
+        return value
+
+
 class _CodexJSONFloat(float):
     """Retain the Foundation number representation for fallback integer casts."""
 
@@ -1105,24 +1151,7 @@ class _CodexJSONFloat(float):
         mantissa = re.split('[eE]', text)[0].lstrip('+-')
         whole, _, fraction = mantissa.partition('.')
         if len(whole.lstrip('0')) + len(fraction) > 17:
-            decimal = Decimal(text)
-            sign, digits, exponent = decimal.as_tuple()
-            digits = list(digits)
-            while digits and digits[-1] == 0:
-                digits.pop()
-                exponent += 1
-            coefficient = 0
-            for digit in digits:
-                coefficient = (coefficient * 10 + digit) % 2**64
-            if exponent >= 0:
-                coefficient = coefficient * pow(10, exponent, 2**64) % 2**64
-            elif exponent < -20:
-                coefficient = 0
-            else:
-                coefficient //= 10**(-exponent)
-            if sign:
-                coefficient = -coefficient
-            value.foundation_int = (coefficient + 2**63) % 2**64 - 2**63
+            value.foundation_int = _codex_decimal_int(text)
         elif value >= 2**63:
             value.foundation_int = 2**63 - 1
         elif value < -(2**63):
@@ -1135,7 +1164,8 @@ class _CodexJSONFloat(float):
 def _upstream_json(data: bytes):
     """Foundation JSONSerialization stand-in, including its Unicode checks."""
     try:
-        value = json.loads(data, parse_constant=_reject_json_constant, parse_float=_CodexJSONFloat)
+        value = json.loads(data, parse_constant=_reject_json_constant,
+                           parse_int=_CodexJSONInteger, parse_float=_CodexJSONFloat)
         pending = [value]
         while pending:
             item = pending.pop()
@@ -1419,23 +1449,113 @@ def _codex_timestamp_valid(timestamp) -> bool:
     return _codex_historical_iso_valid(timestamp)
 
 
-def _codex_historical_iso_valid(timestamp: str) -> bool:
-    """Historical Foundation internet-date-time acceptance (Timestamp 28–32).
+def _codex_int32(value: int) -> int:
+    return (value + 2**31) % 2**32 - 2**31
 
-    Its format is calendar-based, accepts variable-width fields and consumes
-    a date prefix. It normalizes a day up to 31 and hour 24, but rejects month
-    0/13, day 0/32, hour 25, minute 60 and second 60. Native RFC3339 successes
-    already satisfy dayKeyFromTimestamp; this is the remaining fallback.
-    """
-    match = re.match(
-        r'\s*([+-]?[0-9]+)\s*-\s*([0-9]+)\s*-\s*([0-9]+)T'
-        r'\s*([0-9]+)\s*:\s*([0-9]+)\s*:\s*([0-9]+)'
-        r'(?:\.[0-9]+)?\s*(?i:Z|UTC?|GMT|[+-][0-9]+)', timestamp)
+
+# Foundation CharacterSet.whitespacesAndNewlines (26 Unicode scalars).
+_CODEX_TRIM_CHARACTERS = ('\t\n\v\f\r \u0085\u00a0\u1680'
+                          '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007'
+                          '\u2008\u2009\u200a\u200b\u2028\u2029\u202f\u205f\u3000')
+
+
+_CODEX_ICU_MINUS = '-－﹣‐‑‒–−⁻₋➖'
+_CODEX_ICU_PLUS = '+＋﬩﹢⁺₊➕'
+_CODEX_ICU_BIDI = '\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069'
+_CODEX_ICU_SPACE = _CODEX_TRIM_CHARACTERS.replace('\u200b', '') + _CODEX_ICU_BIDI
+_CODEX_ICU_NUMBER = (rf'[{_CODEX_ICU_MINUS}]?(?:\d+(?:[eE][{_CODEX_ICU_MINUS}{_CODEX_ICU_PLUS}]?\d+)?|(?i:NaN)|∞)')
+_CODEX_ICU_GAP = rf'[{_CODEX_ICU_SPACE}]*'
+_CODEX_HISTORICAL_DATE = re.compile(
+    _CODEX_ICU_GAP + '(' + _CODEX_ICU_NUMBER + ')' + _CODEX_ICU_GAP + '-' + _CODEX_ICU_GAP +
+    '(' + _CODEX_ICU_NUMBER + ')' + _CODEX_ICU_GAP + '-' + _CODEX_ICU_GAP +
+    '(' + _CODEX_ICU_NUMBER + ')' + rf'[{_CODEX_ICU_BIDI}]*T' + _CODEX_ICU_GAP +
+    '(' + _CODEX_ICU_NUMBER + ')' + _CODEX_ICU_GAP + ':' + _CODEX_ICU_GAP +
+    '(' + _CODEX_ICU_NUMBER + ')' + _CODEX_ICU_GAP + ':' + _CODEX_ICU_GAP +
+    '(' + _CODEX_ICU_NUMBER + ')' + r'(?:\.(' + _CODEX_ICU_NUMBER + '))?' +
+    _CODEX_ICU_GAP + '(?i:Z|UTC?|GMT|[+-][0-9]+)')
+
+
+def _codex_historical_number(text: str) -> int:
+    """ICU parseInt => Formattable::getLong(), including its union cast."""
+    text = text.translate(str.maketrans({c: '-' for c in _CODEX_ICU_MINUS} |
+                                     {c: '+' for c in _CODEX_ICU_PLUS}))
+    if text.casefold().lstrip('-') == 'nan' or text.lstrip('-') == '∞':
+        return 0  # Binary64 NaN/infinity have zero low Int32 mantissa bits.
+    decimal = Decimal(text)
+    sign, digits, exponent = decimal.as_tuple()
+    coefficient = 0
+    for digit in digits:
+        coefficient = coefficient * 10 + digit
+    if exponent < 0:
+        divisor = 10**(-exponent) if -exponent <= len(digits) else coefficient + 1
+        integer, remainder = divmod(coefficient, divisor)
+    elif len(digits) + exponent <= 19:
+        integer, remainder = coefficient * 10**exponent, 0
+    else:
+        integer, remainder = None, 0
+    if integer is not None and sign:
+        integer = -integer
+    if integer is not None and not remainder and -(2**63) <= integer < 2**63:
+        return _codex_int32(integer)
+    bits = struct.unpack('<Q', struct.pack('<d', float(decimal)))[0]
+    return _codex_int32(bits)
+
+
+def _codex_historical_julian_day(year: int, month: int, day: int) -> int | None:
+    """Fixed GregorianCalendar day-of-month slice with checked Int32 edges."""
+    if year > (2**31 - 1) // 2:
+        return None
+    previous_year = year - 1
+    starts = (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
+
+    def compute(gregorian):
+        leap = year % 4 == 0 and (not gregorian or year % 100 != 0 or year % 400 == 0)
+        raw = 365 * previous_year + previous_year // 4 + 1721426 - 3
+        if gregorian:
+            raw += 2 - previous_year // 100 + previous_year // 400
+        raw += starts[month - 1] + int(leap and month > 2)
+        result = _codex_int32(raw) + day
+        return result if -(2**31) <= result < 2**31 else None
+
+    gregorian = year >= 1582
+    result = compute(gregorian)
+    if result is not None and gregorian != (result >= 2299161):
+        result = compute(not gregorian)
+    return result
+
+
+def _codex_historical_iso_valid(timestamp: str) -> bool:
+    """The historical formatter's fixed internet-date-time numeric slice."""
+    match = _CODEX_HISTORICAL_DATE.match(timestamp)
     if match is None:
         return False
-    _, month, day, hour, minute, second = map(int, match.groups())
-    return (1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour <= 24
-            and 0 <= minute < 60 and 0 <= second < 60)
+    year, month, day, hour, minute, second = map(_codex_historical_number, match.groups()[:6])
+    if not (1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour <= 24
+            and 0 <= minute < 60 and 0 <= second < 60):
+        return False
+    julian = _codex_historical_julian_day(year, month, day)
+    if julian is None:
+        return False
+    milliseconds = 0
+    fraction = match[7]
+    if fraction is not None:
+        milliseconds = _codex_historical_number(fraction)
+        # ICU countDigits uses u_isdigit (Unicode Nd), not all numeric characters.
+        count = sum(c.isdecimal() for c in fraction)
+        if count < 3:
+            milliseconds = _codex_int32(milliseconds * 10**(3 - count))
+        else:
+            divisor = _codex_int32(pow(10, count - 3, 2**32))
+            # subParse's Int32 a *= 10 wraps to zero for 32+ excess digits.
+            # The pinned formatter's macOS ARM64 division then yields zero;
+            # standalone Foundation probes retain these fractions at midnight.
+            quotient = abs(milliseconds) // abs(divisor) if divisor else 0
+            milliseconds = -quotient if (milliseconds < 0) != (divisor < 0) else quotient
+    # ICU uses Double UDate milliseconds: at extreme dates fractional clock
+    # values can disappear or carry into the next day before overflow checks.
+    local_millis = float((julian - 2440588) * 86400000) + ((hour * 3600 + minute * 60 + second) * 1000 + milliseconds)
+    normalized = math.floor(local_millis / 86400000) + 2440588
+    return -(2**31) + 2440588 <= normalized < 2**31
 
 
 def _codex_string(value):
@@ -1445,7 +1565,7 @@ def _codex_string(value):
 def _codex_number(value):
     # Foundation's NSNumber.intValue includes bool, truncates floating values
     # and returns the signed platform Int for unsigned integer JSON numbers.
-    if isinstance(value, _CodexJSONFloat):
+    if isinstance(value, (_CodexJSONInteger, _CodexJSONFloat)):
         return value.foundation_int
     if isinstance(value, int):
         return (value + 2**63) % 2**64 - 2**63
@@ -1456,12 +1576,6 @@ def _codex_number(value):
 
 def _codex_first(*values):
     return next((value for value in values if value is not None), None)
-
-
-# Foundation CharacterSet.whitespacesAndNewlines (26 Unicode scalars).
-_CODEX_TRIM_CHARACTERS = ('\t\n\v\f\r \u0085\u00a0\u1680'
-                          '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007'
-                          '\u2008\u2009\u200a\u200b\u2028\u2029\u202f\u205f\u3000')
 
 
 def _codex_trim(value: str) -> str:

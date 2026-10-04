@@ -393,3 +393,126 @@ def test_foundation_project_path_collapses_double_root_slash(colophon):
     row = {'type': 'session_meta', 'payload': {'id': 'synthetic-leaf', 'cwd': '//synthetic//a/./b/../'}}
     meta = {**META, 'project_path': '/synthetic/a'}
     assert observe(colophon, [row])['observations'] == [['P', meta], ['M', 0, 0, None, meta]]
+
+
+def test_historical_formatter_rejects_plus_prefixed_year(colophon):
+    # Timestamp parseISO/parseHistoricalISO 22–32: native fixed-position parsing
+    # misses this shape and both Foundation internet-date-time formatters reject
+    # a leading plus year. A negative historical year remains supported.
+    assert observe(colophon, [context({}, timestamp='+2030-1-7T0:0:0z')])['observations'] == []
+
+
+@pytest.mark.parametrize('literal', ['1.1234567890123456789e200', '1'+'0'*200],
+                         ids=['decimal-exponent-overflow', 'integer-exponent-overflow'])
+def test_foundation_decimal_range_rejection_keeps_tail_unconsumed(colophon, literal):
+    # Jsonl hasCompleteJSONTail 383–392 requires JSONSerialization acceptance;
+    # these lexemes select Foundation Decimal, whose exponent cannot represent
+    # them, so the structurally complete object is not committed.
+    data = b'{"synthetic":'+literal.encode()+b'}'
+    assert observe(colophon, [data], terminated=False) == {'observations': [], 'unconsumed_tail': True}
+
+
+def test_foundation_long_integer_precision_before_int_cast(colophon):
+    # Scanner tokenTotals 4970–4989 uses JSONSerialization's bounded Decimal
+    # representation before NSNumber.intValue; insignificant tail digits are
+    # truncated before the signed integer conversion, not preserved by Python.
+    literal = '100000000000000000000000000000000000000000000001'
+    data = (b'{"t\\u0079pe":"event_msg","timestamp":"'+TS.encode()+
+            b'","payload":{"type":"token_count","info":{"last_token_usage":'
+            b'{"input_tokens":'+literal.encode()+b',"output_tokens":1}}}}')
+    assert observe(colophon, [data])['observations'] == [['T', 0, 0, None, TS, None, None,
+                                                      [6450984253743169536, 0, 1, None], None]]
+
+
+@pytest.mark.parametrize('literal,accepted', [
+    ('1.1234567890123456789e146', True), ('1.1234567890123456789e147', False),
+    ('1.0000000000000000000e-109', True), ('1.0000000000000000000e-110', False),
+    ('0.0000000000000000000e-109', True), ('0.0000000000000000000e-110', False),
+    ('1'+'0'*165, True), ('1'+'0'*166, False),
+], ids=['exp127', 'exp128', 'exp-negative128', 'exp-negative129',
+        'zero-exp-negative128', 'zero-exp-negative129', 'integer-max-exp', 'integer-exp-overflow'])
+def test_foundation_decimal_exponent_boundaries(colophon, literal, accepted):
+    # JSONSerialization's Decimal has a UInt128 mantissa and signed 8-bit
+    # exponent. Truncate excess mantissa digits first; validate exponent before
+    # compacting trailing zeroes. Thus even zero can fail its raw exponent.
+    data = b'{"synthetic":'+literal.encode()+b'}'
+    assert observe(colophon, [data], terminated=False) == {
+        'observations': [], 'unconsumed_tail': not accepted}
+
+
+@pytest.mark.parametrize('literal,expected', [
+    ('-340282366920938463463374607431768211455', 1),
+    ('-340282366920938463463374607431768211456', 6),
+    ('-340282366920938463463374607431768211456.0', 6),
+    ('1.111111111111111111111111111111111111111', 0),
+])
+def test_foundation_decimal_mantissa_truncation_boundaries(colophon, literal, expected):
+    # Scanner tokenTotals 4970–4989 consumes NSNumber.intValue. At UInt128.max
+    # the mantissa survives intact; max+1 truncates a decimal digit, incrementing
+    # the exponent before signed Int64 conversion. Fractional scaling follows
+    # the fixed-width mantissa conversion, so its cast can produce zero.
+    data = (b'{"t\\u0079pe":"event_msg","timestamp":"'+TS.encode()+
+            b'","payload":{"type":"token_count","info":{"last_token_usage":'
+            b'{"input_tokens":'+literal.encode()+b',"output_tokens":1}}}}')
+    assert observe(colophon, [data])['observations'] == [['T', 0, 0, None, TS, None, None,
+                                                      [expected, 0, 1, None], None]]
+
+
+@pytest.mark.parametrize('literal,expected', [('10.000000000000000001', 0),
+                                             ('-10.000000000000000001', 8)])
+def test_foundation_decimal_signed_mantissa_before_fractional_division(colophon, literal, expected):
+    # Scanner tokenTotals 4970–4989: NSNumber.intValue converts the mantissa to
+    # signed Int64 before dividing by the decimal exponent, truncates toward
+    # zero, then applies Decimal's sign. The positive literal casts to -8 and
+    # the negative to 8; tokenTotals clamps the former to zero.
+    data = (b'{"t\\u0079pe":"event_msg","timestamp":"'+TS.encode()+
+            b'","payload":{"type":"token_count","info":{"last_token_usage":'
+            b'{"input_tokens":'+literal.encode()+b',"output_tokens":1}}}}')
+    assert observe(colophon, [data])['observations'] == [['T', 0, 0, None, TS, None, None,
+                                                      [expected, 0, 1, None], None]]
+
+
+@pytest.mark.parametrize('timestamp,valid', [
+    ('2147483647-1-7T0:0:0z', False), ('2147483648-1-7T0:0:0z', True),
+    ('9999999999-1-7T0:0:0z', False), ('-2147483649-1-7T0:0:0z', False),
+    ('-1475755716-1-7T0:0:0z', False), ('335169349-1-7T0:0:0z', True),
+    ('٢٠٣٠-1-7T0:0:0z', True), ('2030-١-7T0:0:0z', True),
+    ('2030-1-7T٠:0:0z', True), ('2030-4294967297-7T0:0:0z', True),
+    ('2030-1-4294967303T0:0:0z', True), ('2030-1-7T4294967296:0:0z', True),
+    ('2030-1-7T0:4294967296:0z', True), ('2030-1-7T0:0:4294967296z', True),
+    ('2030-1-7T0:0:0.123e4z', True), ('2030-1-7T0:0:0.٠z', True),
+    ('2e3-1-7T0:0:0z', True), ('−2030-1-7T0:0:0z', True),
+    ('NaN-1-7T0:0:0z', True), ('\u001c2030-1-7T0:0:0z', False),
+], ids=['year-int32-max', 'year-int32-wrap', 'year-wrapped-bound', 'negative-year-wrapped-bound',
+        'julian-epoch-subtraction-overflow', 'julian-nominal-bound-is-not-parser-bound',
+        'unicode-year', 'unicode-month', 'unicode-hour', 'wrapped-month', 'wrapped-day',
+        'wrapped-hour', 'wrapped-minute', 'wrapped-second', 'fraction-exponent', 'unicode-fraction',
+        'year-exponent', 'unicode-minus', 'nan-year', 'control-separator'])
+def test_historical_formatter_source_numeric_and_calendar_slice(colophon, timestamp, valid):
+    # Pinned Timestamp parseHistoricalISO 28–32 delegates to Foundation's fixed
+    # internet-date-time formats. Apple ICU SimpleDateFormat::subParse/parseInt
+    # uses shared number parsing and Formattable::getLong union conversion;
+    # Calendar::handleComputeJulianDay / computeGregorianFields check year and
+    # Julian subtraction overflow. Expected retention follows that source chain,
+    # corroborated by standalone synthetic Foundation probes, never fixtures.
+    expected = [['C', 0, 0, None, timestamp, None]] if valid else []
+    assert observe(colophon, [context({}, timestamp=timestamp)])['observations'] == expected
+
+
+@pytest.mark.parametrize('timestamp,valid', [
+    ('-517877550160484792401-1-7T0:0:0z', False),
+    ('-5877520-3-3T0:0:0.-001z', True), ('-5877520-3-3T0:0:0.-1z', False),
+    ('5874898-6-3T23:59:59.999z', False),
+    ('2030-1-7\u200eT0:0:0z', True), ('2030-1-7\u00a0T0:0:0z', False),
+    ('-5877520-3-3T0:0:0.'+'9'*35+'z', True),
+], ids=['oversized-negative-double-union', 'lower-double-loses-negative-ms',
+        'lower-negative-second-rejected', 'upper-double-carries-positive-ms',
+        'bidi-before-T', 'space-before-T', 'fraction-divisor-wraps-zero'])
+def test_historical_formatter_double_and_literal_boundaries(colophon, timestamp, valid):
+    # Timestamp parseHistoricalISO 28–32 delegates fixed formats. ICU stores
+    # oversized numbers in Double before the union cast; fractional subParse
+    # counts Unicode decimal digits, divides using its Int32 power-of-ten, and
+    # Calendar normalizes Double milliseconds before checked epoch subtraction.
+    # Its literal matcher skips bidi controls before T, but not ordinary space.
+    expected = [['C', 0, 0, None, timestamp, None]] if valid else []
+    assert observe(colophon, [context({}, timestamp=timestamp)])['observations'] == expected

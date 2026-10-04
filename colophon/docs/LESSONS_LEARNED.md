@@ -122,3 +122,25 @@
   separate. Regressions: `test_fallback_numeric_lexemes_preserve_nsnumber_cast`,
   `test_foundation_model_trim_set` and
   `test_truncated_swift_character_whitespace_excludes_control_separator`.
+- Library Decimal compatibility includes representation loss before integer
+  conversion. Foundation bounds its mantissa to UInt128 and its exponent to
+  signed eight-bit range; Python's arbitrary precision would accept rejected
+  JSON and retain digits already lost upstream. Its Int64 cast precedes
+  fractional division, which truncates toward zero before applying Decimal's
+  sign. Regressions: `test_foundation_decimal_exponent_boundaries`,
+  `test_foundation_decimal_mantissa_truncation_boundaries` and
+  `test_foundation_decimal_signed_mantissa_before_fractional_division`.
+- A regex matching ordinary Foundation date spellings does not establish
+  formatter equivalence. Synthetic large-year probes exposed nonmonotonic
+  acceptance through ICU's numeric union and calendar arithmetic; other numeric
+  fields and Unicode digits share that path. Port the fixed formatter slice
+  from library source and verify it with synthetic probes before adding isolated
+  exceptions. ICU's nominal Julian-day range is not its parser acceptance
+  boundary: checked epoch subtraction and Double clock normalization matter.
+  Regressions: `test_historical_formatter_source_numeric_and_calendar_slice`
+  and `test_historical_formatter_double_and_literal_boundaries`.
+- Representability state must not use an overlapping numeric sentinel. A
+  positive overflow sentinel can become a valid minimum integer after applying
+  a negative sign and take the wrong union branch. Preserve an explicit absent
+  integer value until the floating representation is selected. Regression:
+  `test_historical_formatter_double_and_literal_boundaries[oversized-negative-double-union]`.
