@@ -30,6 +30,7 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO, Callable, Iterator, Literal, NamedTuple
+from urllib.parse import urlsplit
 
 __version__ = "0.1.0"
 PARSER_VERSION = 1
@@ -3001,6 +3002,172 @@ def link_subagents(corpus: Corpus, metadata: CodexMetadata, snapshot_ms: int) ->
                 turn.spawned.append(session.id)
             if turn.id in interaction_ids:
                 turn.used.append(session.id)
+
+
+# ===== 11. Workspaces =====
+def normalize_origin_url(url: str | None) -> str | None:
+    """D13 remote identity: HTTPS host/path, without userinfo or transport port."""
+    if not _metadata_text(url):
+        return None
+    value = url.strip()
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        return None
+    if "://" not in value:
+        # SCP-style SSH is accepted only with an explicit user@host marker.
+        match = re.fullmatch(r"[^/@\s]+@([^/:\s]+):(.+)", value)
+        if match is None:
+            return None
+        value = f"ssh://{match[1]}/{match[2]}"
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        # Accessing port also validates the authority's port syntax.
+        parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https", "ssh", "git"} or not host:
+        return None
+    if any(character.isspace() for character in host):
+        return None
+    path = parsed.path.rstrip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    if not path or path == "/":
+        return None
+    # Brackets retain an IPv6 host's authority boundaries after dropping port.
+    host = f"[{host.lower()}]" if ":" in host else host.lower()
+    return f"https://{host}/{path.lstrip('/')}"
+
+
+def _workspace_path(value: object) -> Path | None:
+    """Only absolute, nonblank source paths provide cwd/alias evidence."""
+    if not _metadata_text(value) or "\0" in value:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() and ".." not in path.parts else None
+
+
+@lru_cache(maxsize=None)
+def find_git_root(cwd: str) -> Path | None:
+    """Walk lexical ancestors, admitting both repository and worktree markers.
+
+    resolve_workspaces clears this memo at every run boundary; no filesystem
+    evidence is carried from one corpus resolution to the next.
+    """
+    path = _workspace_path(cwd)
+    if path is None:
+        return None
+    try:
+        if not path.exists() or not path.is_dir():
+            return None
+        for candidate in (path, *path.parents):
+            marker = candidate / ".git"
+            if marker.is_file() or marker.is_dir():
+                return candidate
+    except OSError:
+        pass
+    return None
+
+
+def load_workspace_aliases(path: Path) -> tuple[list[dict], list[str]]:
+    """Validate the whole optional alias file; callers retain returned diagnostics."""
+    def error(problem: str) -> tuple[list[dict], list[str]]:
+        message = f"colophon: {path}: {problem}; workspace aliases ignored"
+        print(message, file=sys.stderr)
+        return [], [message]
+
+    try:
+        with path.open(encoding="utf-8") as stream:
+            data = json.load(stream)
+    except FileNotFoundError:
+        return [], []
+    except json.JSONDecodeError as exc:
+        return error(f"line {exc.lineno}: {exc.msg}")
+    except (OSError, UnicodeError) as exc:
+        return error(str(exc))
+    if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != 1:
+        return error("field schema must be integer 1")
+    if not isinstance(data.get("aliases"), list):
+        return error("field aliases must be an array")
+    for index, item in enumerate(data["aliases"]):
+        prefix = f"alias index {index}"
+        if not isinstance(item, dict):
+            return error(f"{prefix}: alias must be an object")
+        if not _metadata_text(item.get("name")):
+            return error(f"{prefix}, field name must be a nonblank string")
+        for name, valid in (("origins", normalize_origin_url), ("paths", _workspace_path)):
+            values = item.get(name)
+            if not isinstance(values, list) or any(valid(value) is None for value in values):
+                return error(f"{prefix}, field {name} must be an array of valid {name} strings")
+    return data["aliases"], []
+
+
+def _workspace_subfolder(cwd: Path | None, root: Path | None) -> str | None:
+    if cwd is None or root is None or cwd == root:
+        return None
+    try:
+        return str(cwd.relative_to(root))
+    except ValueError:
+        return None
+
+
+def _abbreviate_workspace_path(path: Path) -> str:
+    home = Path.home()
+    if path == home:
+        return "~"
+    relative = _workspace_subfolder(path, home)
+    return f"~/{relative}" if relative is not None else str(path)
+
+
+def resolve_workspaces(corpus: Corpus, aliases: list[dict]) -> dict[str, dict]:
+    """Assign each session's own workspace without rewriting any source metadata."""
+    find_git_root.cache_clear()
+    prepared = [(item, {origin for value in item["origins"]
+                        if (origin := normalize_origin_url(value)) is not None},
+                 {path for value in item["paths"] if (path := _workspace_path(value)) is not None})
+                for item in aliases]
+    workspaces = {}
+    keys_by_workspace: dict[str, set[str]] = {}
+    for session in corpus.sessions.values():
+        meta = session.meta or {}
+        git = meta.get("git")
+        origin = normalize_origin_url(git.get("origin_url")) if isinstance(git, dict) else None
+        if origin is None:
+            origin = normalize_origin_url(session.db_info.get("git_origin_url"))
+        cwd = _workspace_path(meta.get("cwd")) or _workspace_path(session.db_info.get("cwd"))
+        root = find_git_root(str(cwd)) if cwd is not None else None
+        subfolder = _workspace_subfolder(cwd, root)
+        matched = None
+        for item, origins, paths in prepared:
+            matching_paths = {path for path in paths if cwd is not None
+                              and (cwd == path or cwd.is_relative_to(path))}
+            if origin in origins or matching_paths:
+                matched = item
+                if matching_paths:
+                    # Different alias roots prove the name, not a unique chip.
+                    subfolder = (_workspace_subfolder(cwd, next(iter(matching_paths)))
+                                 if len(matching_paths) == 1 else None)
+                break
+        if matched is not None:
+            key, name, kind, alias_name = (f"alias:{matched['name']}", matched["name"],
+                                            "alias", matched["name"])
+        elif origin is not None:
+            key, name, kind, alias_name = f"origin:{origin}", origin.rsplit("/", 1)[-1], "origin", None
+        elif root is not None:
+            key = f"git:{root}"
+            name = "~" if root == Path.home() else root.name or str(root)
+            kind, alias_name = "git_root", None
+        else:
+            key, kind, alias_name = f"cwd:{cwd if cwd is not None else ''}", "cwd", None
+            name = ("(unknown)" if cwd is None else "~ (home)" if cwd == Path.home()
+                    else f"{_abbreviate_workspace_path(cwd)} (no repo)")
+        session.workspace, session.subfolder = key, subfolder
+        workspaces.setdefault(key, {"name": name, "kind": kind, "keys": [], "alias": alias_name})
+        keys_by_workspace.setdefault(key, set()).update(
+            str(value) for value in (origin, root, cwd) if value is not None)
+    for key, workspace in workspaces.items():
+        workspace["keys"] = sorted(keys_by_workspace[key])
+    return workspaces
 
 
 # ===== 19. CLI =====

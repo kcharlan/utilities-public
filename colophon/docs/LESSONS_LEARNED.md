@@ -286,3 +286,16 @@
   documented method. Regressions:
   `test_latest_spawn_with_unusable_turn_does_not_borrow_older_spawn` and
   `test_conflicting_started_activities_fail_over_but_duplicates_are_evidence`.
+- Workspace fixtures must distinguish raw log keys from cached metadata:
+  `git.repository_url` becomes `meta.git.origin_url`. The shared builder also
+  supplies a synthetic remote unless `git={}` is explicit. Set raw inputs and
+  absent evidence deliberately rather than changing source precedence or
+  weakening fallback assertions. Regressions:
+  `test_meta_precedes_db_origin_and_cwd_without_mutating_sources` and
+  `test_missing_cwd_path_and_unknown_cwd_fallback`.
+- URL parsers may silently remove embedded control characters, and lexical
+  path prefixes admit `..` traversal. Reject these malformed workspace facts
+  before normalizing or matching: damaged input must not establish a valid
+  origin or alias. Regressions:
+  `test_control_characters_do_not_become_origin_evidence` and
+  `test_parent_traversal_path_does_not_invent_alias_match`.
