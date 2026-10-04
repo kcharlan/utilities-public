@@ -299,3 +299,19 @@
   origin or alias. Regressions:
   `test_control_characters_do_not_become_origin_evidence` and
   `test_parent_traversal_path_does_not_invent_alias_match`.
+- Swift's pricing normalizer searches complete Characters, not individual
+  Python code points. An accented `@` is not an at-sign delimiter, an accented
+  slash is not the `openai/` prefix, and non-ASCII regex digits include numeric
+  graphemes such as superscripts and numeric CJK. Use the narrow, source-grounded
+  Numeric/Grapheme_Cluster_Break slice; category M alone misses ZWJ, modifiers,
+  tags and spacing-mark exceptions. Preserve canonical dictionary equality
+  separately from the returned catalog spelling. Regressions:
+  `test_non_character_at_sign_does_not_invent_base_candidate`,
+  `test_non_character_slash_does_not_strip_provider_prefix`,
+  `test_suffix_regex_uses_digit_graphemes_not_category_m`, and
+  `test_unicode_equivalent_lookup_preserves_catalog_identity`.
+- `math.isfinite` implicitly converts Python integers to float and can raise
+  `OverflowError` for damaged oversized catalog values. Perform the bounded
+  Double conversion explicitly, reject failed/nonfinite conversions as invalid
+  typed model evidence, and keep valid neighboring models priceable. Regression:
+  `test_unpriceable_or_malformed_models_are_not_evidence[bad9]`.

@@ -24,6 +24,7 @@ import struct
 import sys
 import tempfile
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -91,6 +92,176 @@ KNOWN_RECORD_KEYS: frozenset[str] = frozenset({
     "response_item/local_shell_call_output", "response_item/reasoning",
     "response_item/tool_search_output", "response_item/agent_message",
 })
+
+
+# ===== 3. Curated pricing data =====
+# CodexBar 3bbf6bc48: CostUsagePricing.swift codex (84–208), gpt56Pricing (45–60).
+# >>> CURATED_BUNDLED
+CURATED_BUNDLED = json.loads(r"""
+{
+  "gpt-5": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5-codex": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5-mini": {
+    "inputCostPerToken": 2.5e-7,
+    "outputCostPerToken": 2e-6,
+    "cacheReadInputCostPerToken": 2.5e-8
+  },
+  "gpt-5-nano": {
+    "inputCostPerToken": 5e-8,
+    "outputCostPerToken": 4e-7,
+    "cacheReadInputCostPerToken": 5e-9
+  },
+  "gpt-5-pro": {
+    "inputCostPerToken": 1.5e-5,
+    "outputCostPerToken": 1.2e-4
+  },
+  "gpt-5.1": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5.1-codex": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5.1-codex-max": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5.1-codex-mini": {
+    "inputCostPerToken": 2.5e-7,
+    "outputCostPerToken": 2e-6,
+    "cacheReadInputCostPerToken": 2.5e-8
+  },
+  "gpt-5.2": {
+    "inputCostPerToken": 1.75e-6,
+    "outputCostPerToken": 1.4e-5,
+    "cacheReadInputCostPerToken": 1.75e-7
+  },
+  "gpt-5.2-codex": {
+    "inputCostPerToken": 1.75e-6,
+    "outputCostPerToken": 1.4e-5,
+    "cacheReadInputCostPerToken": 1.75e-7
+  },
+  "gpt-5.2-pro": {
+    "inputCostPerToken": 2.1e-5,
+    "outputCostPerToken": 1.68e-4
+  },
+  "gpt-5.3-codex": {
+    "inputCostPerToken": 1.75e-6,
+    "outputCostPerToken": 1.4e-5,
+    "cacheReadInputCostPerToken": 1.75e-7
+  },
+  "gpt-5.3-codex-spark": {
+    "inputCostPerToken": 0,
+    "outputCostPerToken": 0,
+    "cacheReadInputCostPerToken": 0,
+    "displayLabel": "Research Preview"
+  },
+  "gpt-5.4": {
+    "inputCostPerToken": 2.5e-6,
+    "outputCostPerToken": 1.5e-5,
+    "cacheReadInputCostPerToken": 2.5e-7,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 5e-6,
+    "outputCostPerTokenAboveThreshold": 2.25e-5,
+    "cacheReadInputCostPerTokenAboveThreshold": 5e-7
+  },
+  "gpt-5.4-mini": {
+    "inputCostPerToken": 7.5e-7,
+    "outputCostPerToken": 4.5e-6,
+    "cacheReadInputCostPerToken": 7.5e-8
+  },
+  "gpt-5.4-nano": {
+    "inputCostPerToken": 2e-7,
+    "outputCostPerToken": 1.25e-6,
+    "cacheReadInputCostPerToken": 2e-8
+  },
+  "gpt-5.4-pro": {
+    "inputCostPerToken": 3e-5,
+    "outputCostPerToken": 1.8e-4
+  },
+  "gpt-5.5": {
+    "inputCostPerToken": 5e-6,
+    "outputCostPerToken": 3e-5,
+    "cacheReadInputCostPerToken": 5e-7,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 1e-5,
+    "outputCostPerTokenAboveThreshold": 4.5e-5,
+    "cacheReadInputCostPerTokenAboveThreshold": 1e-6
+  },
+  "gpt-5.5-pro": {
+    "inputCostPerToken": 3e-5,
+    "outputCostPerToken": 1.8e-4
+  },
+  "gpt-6-astra": {
+    "inputCostPerToken": 1e-5,
+    "outputCostPerToken": 5e-5,
+    "cacheReadInputCostPerToken": 1e-6,
+    "cacheWriteInputCostPerToken": 1.25e-5,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 2e-5,
+    "outputCostPerTokenAboveThreshold": 7.5e-5,
+    "cacheReadInputCostPerTokenAboveThreshold": 2e-6,
+    "cacheWriteInputCostPerTokenAboveThreshold": 2.5e-5
+  },
+  "gpt-5.6-sol": {
+    "inputCostPerToken": 4e-6,
+    "cacheReadInputCostPerToken": 4e-7,
+    "cacheWriteInputCostPerToken": 5e-6,
+    "outputCostPerToken": 2e-5,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 8e-6,
+    "cacheReadInputCostPerTokenAboveThreshold": 8e-7,
+    "cacheWriteInputCostPerTokenAboveThreshold": 1e-5,
+    "outputCostPerTokenAboveThreshold": 3e-5
+  },
+  "gpt-5.6-terra": {
+    "inputCostPerToken": 2e-6,
+    "cacheReadInputCostPerToken": 2e-7,
+    "cacheWriteInputCostPerToken": 2.5e-6,
+    "outputCostPerToken": 1.2e-5,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 4e-6,
+    "cacheReadInputCostPerTokenAboveThreshold": 4e-7,
+    "cacheWriteInputCostPerTokenAboveThreshold": 5e-6,
+    "outputCostPerTokenAboveThreshold": 1.8e-5
+  },
+  "gpt-5.6-luna": {
+    "inputCostPerToken": 2e-7,
+    "cacheReadInputCostPerToken": 2e-8,
+    "cacheWriteInputCostPerToken": 2.5e-7,
+    "outputCostPerToken": 1.2e-6,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 4e-7,
+    "cacheReadInputCostPerTokenAboveThreshold": 4e-8,
+    "cacheWriteInputCostPerTokenAboveThreshold": 5e-7,
+    "outputCostPerTokenAboveThreshold": 1.8e-6
+  },
+  "gpt-5.6-cyber": {
+    "inputCostPerToken": 1.25e-5,
+    "outputCostPerToken": 7.5e-5,
+    "cacheReadInputCostPerToken": 1.25e-6,
+    "cacheWriteInputCostPerToken": 1.5625e-5
+  },
+  "gpt-5.5-cyber": {
+    "inputCostPerToken": 1.25e-5,
+    "outputCostPerToken": 7.5e-5,
+    "cacheReadInputCostPerToken": 1.25e-6
+  }
+}
+""")
+# <<< CURATED_BUNDLED
 
 
 # ===== 4. Utilities =====
@@ -3168,6 +3339,508 @@ def resolve_workspaces(corpus: Corpus, aliases: list[dict]) -> dict[str, dict]:
     for key, workspace in workspaces.items():
         workspace["keys"] = sorted(keys_by_workspace[key])
     return workspaces
+
+
+# ===== 14. Pricing port =====
+# Library compatibility for String.range's non-ASCII regex path: Swift matches
+# numeric Characters, while NSRegularExpression matches scalar decimal digits.
+# Only digit and literal graphemes occur in these four anchored suffix patterns.
+# Unicode 17.0 DerivedNumericType and GraphemeBreakProperty supply Numeric,
+# Extend/SpacingMark/ZWJ and Prepend ranges; UAX #29 GB9/9a/9b govern this slice.
+# Unicode 17.0.0 sources (compressed ranges only):
+# https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedNumericType.txt
+# https://www.unicode.org/Public/17.0.0/ucd/auxiliary/GraphemeBreakProperty.txt
+# License https://www.unicode.org/license.txt, reproduced for standalone copies:
+# UNICODE LICENSE V3
+#
+# COPYRIGHT AND PERMISSION NOTICE
+#
+# Copyright © 1991-2026 Unicode, Inc.
+#
+# NOTICE TO USER: Carefully read the following legal agreement. BY
+# DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+# SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+# TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+# DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of data files and any associated documentation (the "Data Files") or
+# software and any associated documentation (the "Software") to deal in the
+# Data Files or Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, and/or sell
+# copies of the Data Files or Software, and to permit persons to whom the
+# Data Files or Software are furnished to do so, provided that either (a)
+# this copyright and permission notice appear with all copies of the Data
+# Files or Software, or (b) this copyright and permission notice appear in
+# associated Documentation.
+#
+# THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+# KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+# THIRD PARTY RIGHTS.
+#
+# IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+# BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+# OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+# WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+# ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+# FILES OR SOFTWARE.
+#
+# Except as contained in this notice, the name of a copyright holder shall
+# not be used in advertising or otherwise to promote the sale, use or other
+# dealings in these Data Files or Software without prior written
+# authorization of the copyright holder.
+#
+_PRICING_NUMERIC_RANGES = """
+30-39 b2-b3 b9 bc-be 660-669 6f0-6f9 7c0-7c9 966-96f 9e6-9ef 9f4-9f9 a66-a6f ae6-aef
+b66-b6f b72-b77 be6-bf2 c66-c6f c78-c7e ce6-cef d58-d5e d66-d78 de6-def e50-e59 ed0-ed9
+f20-f33 1040-1049 1090-1099 1369-137c 16ee-16f0 17e0-17e9 17f0-17f9 1810-1819 1946-194f
+19d0-19da 1a80-1a89 1a90-1a99 1b50-1b59 1bb0-1bb9 1c40-1c49 1c50-1c59 2070 2074-2079
+2080-2089 2150-2182 2185-2189 2460-249b 24ea-24ff 2776-2793 2cfd 3007 3021-3029 3038-303a
+3192-3195 3220-3229 3248-324f 3251-325f 3280-3289 32b1-32bf 3405 3483 382a 3b4d 4e00 4e03
+4e07 4e09 4e24 4e5d 4e8c 4e94 4e96 4eac 4ebf-4ec0 4edf 4ee8 4f0d 4f70 4fe9 5006 5104 5146
+5169 516b 516d 5341 5343-5345 534c 53c1-53c4 56db 58f1 58f9 5e7a 5efe-5eff 5f0c-5f0e 5f10
+62d0 62fe 634c 67d2 6d1e 6f06 7396 767e 7695 79ed 8086 842c 8cae 8cb3 8d30 920e 94a9 9621
+9646 964c 9678 96f6 a620-a629 a6e6-a6ef a830-a835 a8d0-a8d9 a900-a909 a9d0-a9d9 a9f0-a9f9
+aa50-aa59 abf0-abf9 f96b f973 f978 f9b2 f9d1 f9d3 f9fd ff10-ff19 10107-10133 10140-10178
+1018a-1018b 102e1-102fb 10320-10323 10341 1034a 103d1-103d5 104a0-104a9 10858-1085f
+10879-1087f 108a7-108af 108fb-108ff 10916-1091b 109bc-109bd 109c0-109cf 109d2-109ff
+10a40-10a48 10a7d-10a7e 10a9d-10a9f 10aeb-10aef 10b58-10b5f 10b78-10b7f 10ba9-10baf
+10cfa-10cff 10d30-10d39 10d40-10d49 10e60-10e7e 10f1d-10f26 10f51-10f54 10fc5-10fcb
+11052-1106f 110f0-110f9 11136-1113f 111d0-111d9 111e1-111f4 112f0-112f9 11450-11459
+114d0-114d9 11650-11659 116c0-116c9 116d0-116e3 11730-1173b 118e0-118f2 11950-11959
+11bf0-11bf9 11c50-11c6c 11d50-11d59 11da0-11da9 11de0-11de9 11f50-11f59 11fc0-11fd4
+12038-12039 12079 12226 1222b 1230b 1230d 12399 12400-1246e 16130-16139 16a60-16a69
+16ac0-16ac9 16b50-16b59 16b5b-16b61 16d70-16d79 16e80-16e96 16ff4-16ff6 1ccf0-1ccf9
+1d2c0-1d2d3 1d2e0-1d2f3 1d360-1d378 1d7ce-1d7ff 1e140-1e149 1e2f0-1e2f9 1e4f0-1e4f9
+1e5f1-1e5fa 1e8c7-1e8cf 1e950-1e959 1ec71-1ecab 1ecad-1ecaf 1ecb1-1ecb4 1ed01-1ed2d
+1ed2f-1ed3d 1f100-1f10c 1fbf0-1fbf9 20001 20064 200e2 20121 2092a 20983 2098c 2099c 20aea
+20afd 20b19 22390 22998 23b1b 2626d 2f890
+"""
+_PRICING_EXTEND_RANGES = """
+300-36f 483-489 591-5bd 5bf 5c1-5c2 5c4-5c5 5c7 610-61a 64b-65f 670 6d6-6dc 6df-6e4
+6e7-6e8 6ea-6ed 711 730-74a 7a6-7b0 7eb-7f3 7fd 816-819 81b-823 825-827 829-82d 859-85b
+897-89f 8ca-8e1 8e3-903 93a-93c 93e-94f 951-957 962-963 981-983 9bc 9be-9c4 9c7-9c8
+9cb-9cd 9d7 9e2-9e3 9fe a01-a03 a3c a3e-a42 a47-a48 a4b-a4d a51 a70-a71 a75 a81-a83 abc
+abe-ac5 ac7-ac9 acb-acd ae2-ae3 afa-aff b01-b03 b3c b3e-b44 b47-b48 b4b-b4d b55-b57
+b62-b63 b82 bbe-bc2 bc6-bc8 bca-bcd bd7 c00-c04 c3c c3e-c44 c46-c48 c4a-c4d c55-c56
+c62-c63 c81-c83 cbc cbe-cc4 cc6-cc8 cca-ccd cd5-cd6 ce2-ce3 cf3 d00-d03 d3b-d3c d3e-d44
+d46-d48 d4a-d4d d57 d62-d63 d81-d83 dca dcf-dd4 dd6 dd8-ddf df2-df3 e31 e33-e3a e47-e4e
+eb1 eb3-ebc ec8-ece f18-f19 f35 f37 f39 f3e-f3f f71-f84 f86-f87 f8d-f97 f99-fbc fc6
+102d-1037 1039-103e 1056-1059 105e-1060 1071-1074 1082 1084-1086 108d 109d 135d-135f
+1712-1715 1732-1734 1752-1753 1772-1773 17b4-17d3 17dd 180b-180d 180f 1885-1886 18a9
+1920-192b 1930-193b 1a17-1a1b 1a55-1a5e 1a60 1a62 1a65-1a7c 1a7f 1ab0-1add 1ae0-1aeb
+1b00-1b04 1b34-1b44 1b6b-1b73 1b80-1b82 1ba1-1bad 1be6-1bf3 1c24-1c37 1cd0-1cd2 1cd4-1ce8
+1ced 1cf4 1cf7-1cf9 1dc0-1dff 200c-200d 20d0-20f0 2cef-2cf1 2d7f 2de0-2dff 302a-302f
+3099-309a a66f-a672 a674-a67d a69e-a69f a6f0-a6f1 a802 a806 a80b a823-a827 a82c a880-a881
+a8b4-a8c5 a8e0-a8f1 a8ff a926-a92d a947-a953 a980-a983 a9b3-a9c0 a9e5 aa29-aa36 aa43
+aa4c-aa4d aa7c aab0 aab2-aab4 aab7-aab8 aabe-aabf aac1 aaeb-aaef aaf5-aaf6 abe3-abea
+abec-abed fb1e fe00-fe0f fe20-fe2f ff9e-ff9f 101fd 102e0 10376-1037a 10a01-10a03
+10a05-10a06 10a0c-10a0f 10a38-10a3a 10a3f 10ae5-10ae6 10d24-10d27 10d69-10d6d 10eab-10eac
+10efa-10eff 10f46-10f50 10f82-10f85 11000-11002 11038-11046 11070 11073-11074 1107f-11082
+110b0-110ba 110c2 11100-11102 11127-11134 11145-11146 11173 11180-11182 111b3-111c0
+111c9-111cc 111ce-111cf 1122c-11237 1123e 11241 112df-112ea 11300-11303 1133b-1133c
+1133e-11344 11347-11348 1134b-1134d 11357 11362-11363 11366-1136c 11370-11374 113b8-113c0
+113c2 113c5 113c7-113ca 113cc-113d0 113d2 113e1-113e2 11435-11446 1145e 114b0-114c3
+115af-115b5 115b8-115c0 115dc-115dd 11630-11640 116ab-116b7 1171d-1171f 11722-1172b
+1182c-1183a 11930-11935 11937-11938 1193b-1193e 11940 11942-11943 119d1-119d7 119da-119e0
+119e4 11a01-11a0a 11a33-11a39 11a3b-11a3e 11a47 11a51-11a5b 11a8a-11a99 11b60-11b67
+11c2f-11c36 11c38-11c3f 11c92-11ca7 11ca9-11cb6 11d31-11d36 11d3a 11d3c-11d3d 11d3f-11d45
+11d47 11d8a-11d8e 11d90-11d91 11d93-11d97 11ef3-11ef6 11f00-11f01 11f03 11f34-11f3a
+11f3e-11f42 11f5a 13440 13447-13455 1611e-1612f 16af0-16af4 16b30-16b36 16f4f 16f51-16f87
+16f8f-16f92 16fe4 16ff0-16ff1 1bc9d-1bc9e 1cf00-1cf2d 1cf30-1cf46 1d165-1d169 1d16d-1d172
+1d17b-1d182 1d185-1d18b 1d1aa-1d1ad 1d242-1d244 1da00-1da36 1da3b-1da6c 1da75 1da84
+1da9b-1da9f 1daa1-1daaf 1e000-1e006 1e008-1e018 1e01b-1e021 1e023-1e024 1e026-1e02a 1e08f
+1e130-1e136 1e2ae 1e2ec-1e2ef 1e4ec-1e4ef 1e5ee-1e5ef 1e6e3 1e6e6 1e6ee-1e6ef 1e6f5
+1e8d0-1e8d6 1e944-1e94a 1f3fb-1f3ff e0020-e007f e0100-e01ef
+"""
+_PRICING_PREPEND_RANGES = """
+600-605 6dd 70f 890-891 8e2 d4e 110bd 110cd 111c2-111c3 113d1 1193f 11941 11a84-11a89
+11d46 11f02
+"""
+
+
+
+def _pricing_unicode_class(ranges: str) -> str:
+    pieces = []
+    for item in ranges.split():
+        bounds = item.split("-")
+        pieces.append("-".join(re.escape(chr(int(bound, 16))) for bound in bounds))
+    return "[" + "".join(pieces) + "]"
+
+
+_PRICING_NUMERIC_CLASS = _pricing_unicode_class(_PRICING_NUMERIC_RANGES)
+_PRICING_EXTEND_CLASS = _pricing_unicode_class(_PRICING_EXTEND_RANGES)
+_PRICING_PREPEND_CLASS = _pricing_unicode_class(_PRICING_PREPEND_RANGES)
+
+
+@lru_cache(maxsize=4)
+def _pricing_grapheme_pattern(pattern: str) -> re.Pattern:
+    # A digit consumes its full grapheme. Literal -, v and : must be whole
+    # graphemes themselves; a preceding Prepend would attach to the first one.
+    digit = "(?:" + _PRICING_NUMERIC_CLASS + _PRICING_EXTEND_CLASS + "*)"
+    translated = ""
+    index = 0
+    while index < len(pattern):
+        if pattern[index:index + 2] == r"\d":
+            translated += digit
+            index += 2
+            continue
+        character = pattern[index]
+        if character in "-v:":
+            translated += re.escape(character) + "(?!" + _PRICING_EXTEND_CLASS + ")"
+        elif character == "$":
+            translated += r"\Z"
+        else:
+            translated += character
+        index += 1
+    return re.compile("(?<!" + _PRICING_PREPEND_CLASS + ")" + translated)
+
+
+def _pricing_regex_range(pattern: str, value: str) -> re.Match | None:
+    """ModelsDevModelIDNormalizer.range: ASCII ICU path, else Character path."""
+    if value.isascii():
+        return re.search(pattern, value)
+    return _pricing_grapheme_pattern(pattern).search(value)
+
+
+@lru_cache(maxsize=8)
+def _pricing_literal_pattern(literal: str) -> re.Pattern:
+    return re.compile("(?<!" + _PRICING_PREPEND_CLASS + ")" + re.escape(literal)
+                      + "(?!" + _PRICING_EXTEND_CLASS + ")")
+
+
+def _pricing_literal_index(value: str, literal: str, *, last: bool = False) -> int | None:
+    """Swift Character search: a scalar inside a larger grapheme is no delimiter."""
+    matches = _pricing_literal_pattern(literal).finditer(value)
+    match = None
+    for found in matches:
+        match = found
+        if not last:
+            break
+    return match.start() if match is not None else None
+
+
+def _pricing_has_prefix(value: str, prefix: str) -> bool:
+    return _pricing_literal_pattern(prefix).match(value) is not None
+
+
+def _pricing_has_suffix(value: str, suffix: str) -> bool:
+    match = _pricing_literal_pattern(suffix).search(value, max(0, len(value) - len(suffix)))
+    return match is not None and match.end() == len(value)
+
+
+def normalize_codex_model(raw: str) -> str:
+    """Port normalizeCodexModel (CostUsagePricing.swift 487–526)."""
+    trimmed = _codex_trim(raw)
+    if _pricing_has_prefix(trimmed, "openai/"):
+        trimmed = trimmed[len("openai/"):]
+    if trimmed == "gpt-5.6":
+        return "gpt-5.6-sol"
+    if trimmed == "gpt-reserve":
+        return "gpt-5.6-luna"
+    if trimmed == "gpt-daybreak-blue-latest":
+        return "gpt-5.6-sol"
+    if trimmed == "gpt-daybreak-red-latest":
+        return "gpt-5.6-cyber"
+    if trimmed in CURATED_BUNDLED:
+        return trimmed
+    dated = _pricing_regex_range(r"-\d{4}-\d{2}-\d{2}$", trimmed)
+    if dated:
+        base = trimmed[:dated.start()]
+        if base in CURATED_BUNDLED:
+            return base
+    return trimmed
+
+
+def codex_models_dev_pricing_targets(raw: str) -> list[tuple[str, str]]:
+    """Codex targets plus TargetResolver, restricted to OpenAI per A4."""
+    trimmed = _codex_trim(raw)
+    if not trimmed:
+        return []
+    slash = _pricing_literal_index(trimmed, "/")
+    if slash is not None:
+        route, model = trimmed[:slash], trimmed[slash + 1:]
+        route = route.lower()
+        if route != "openai" or not model:
+            return []
+        # TargetResolver trims the route-qualified id, removes its matching
+        # route and validates the remainder before emitting a target.
+        if _pricing_has_prefix(model, "/") or _pricing_has_suffix(model, "/"):
+            return []
+        targets = [("openai", model)]
+        normalized = normalize_codex_model(model)
+        if normalized != model:
+            targets.append(("openai", normalized))
+        return targets
+    normalized = normalize_codex_model(trimmed)
+    targets = [("openai", trimmed)]
+    if normalized != trimmed:
+        targets.append(("openai", normalized))
+    return targets
+
+
+def _models_dev_candidates(raw: str) -> list[str]:
+    """ModelsDevModelIDNormalizer.candidates (ModelsDevPricing.swift 343–395)."""
+    candidates = []
+    identities = set()
+
+    def append(value):
+        normalized = _codex_trim(value)
+        identity = unicodedata.normalize("NFC", normalized)
+        if normalized and identity not in identities:
+            candidates.append(normalized)
+            identities.add(identity)
+
+    trimmed = _codex_trim(raw)
+    append(trimmed)
+    if _pricing_has_prefix(trimmed, "openai/"):
+        append(trimmed[len("openai/"):])
+    if _pricing_has_prefix(trimmed, "anthropic."):
+        append(trimmed[len("anthropic."):])
+    dot = _pricing_literal_index(trimmed, ".", last=True)
+    if dot is not None and _pricing_literal_index(trimmed, "claude-") is not None:
+        tail = trimmed[dot + 1:]
+        if _pricing_has_prefix(tail, "claude-"):
+            append(tail)
+    index = 0
+    while index < len(candidates):
+        candidate = candidates[index]
+        at_sign = _pricing_literal_index(candidate, "@")
+        if at_sign is not None:
+            base, suffix = candidate[:at_sign], candidate[at_sign + 1:]
+            if _pricing_regex_range(r"^\d{8}$", suffix):
+                append(base + "-" + suffix)
+            append(base)
+        elif _pricing_has_prefix(candidate, "claude-"):
+            append(candidate + "@default")
+        for pattern in (r"-\d{4}-\d{2}-\d{2}$", r"-\d{8}$"):
+            dated = _pricing_regex_range(pattern, candidate)
+            if dated:
+                append(candidate[:dated.start()])
+        version = _pricing_regex_range(r"-v\d+:\d+$", candidate)
+        if version:
+            append(candidate[:version.start()] + candidate[version.end():])
+        index += 1
+    return candidates
+
+
+def _models_dev_decode_model(value) -> dict | None:
+    """Decode the source model's known fields; invalid optional fields reject it."""
+    if not isinstance(value, dict) or not isinstance(value.get("id"), str):
+        return None
+    if value.get("name") is not None and not isinstance(value["name"], str):
+        return None
+    limit = value.get("limit")
+    if limit is not None:
+        if not isinstance(limit, dict):
+            return None
+        context = limit.get("context")
+        if context is not None and (type(context) is not int or not -(2**63) <= context < 2**63):
+            return None
+    cost = value.get("cost")
+    if cost is None:
+        return None
+    if not isinstance(cost, dict):
+        return None
+    block = cost.get("context_over_200k")
+    if block is not None and not isinstance(block, dict):
+        return None
+    decoded = []
+    for rates in (cost, block):
+        if rates is None:
+            decoded.append(None)
+            continue
+        parsed = {}
+        for source, target in (("input", "input"), ("output", "output"),
+                               ("cache_read", "cached_input"), ("cache_write", "cache_write")):
+            number = rates.get(source)
+            if number is None:
+                parsed[target] = None
+                continue
+            if type(number) not in (int, float):
+                return None
+            try:
+                number = float(number)
+            except OverflowError:
+                return None
+            if not math.isfinite(number):
+                return None
+            parsed[target] = number
+        decoded.append(parsed)
+    if decoded[0]["input"] is None or decoded[0]["output"] is None:
+        return None
+    return {"model_id": value["id"], "per_million": decoded[0],
+            "long_context": ({"threshold": 200000} | decoded[1]) if decoded[1] is not None else None}
+
+
+class ModelsDevIndex:
+    """Snapshot of priceable OpenAI models, preserving Swift string identities.
+
+    pricing returns raw (unfilled) per-million rates, long_context or None,
+    model_id, provider_id and normalized_model_id. The last field is the lookup
+    identity used by priority override ledgers; normalized matches retain the
+    catalog's spelling, while direct-key matches retain the query candidate.
+    """
+
+    def __init__(self, models: dict):
+        self._models = models
+        self._normalized_models = {}
+        for value in models.values():
+            spelling = _codex_trim(value["model_id"])
+            identity = unicodedata.normalize("NFC", spelling)
+            self._normalized_models.setdefault(identity, (spelling, value))
+
+    @classmethod
+    def from_catalog(cls, catalog: dict) -> ModelsDevIndex:
+        providers = catalog.get("providers", catalog)
+        models = {}
+        if not isinstance(providers, dict):
+            return cls(models)
+        for map_key, provider in providers.items():
+            if not isinstance(provider, dict) or not isinstance(map_key, str):
+                continue
+            provider_id = provider.get("id")
+            if provider_id is not None and not isinstance(provider_id, str):
+                continue
+            if provider.get("name") is not None and not isinstance(provider["name"], str):
+                continue
+            if _codex_trim(provider_id if provider_id is not None else map_key).lower() != "openai":
+                continue
+            raw_models = provider.get("models")
+            if not isinstance(raw_models, dict):
+                continue
+            models = {}
+            for key, value in raw_models.items():
+                decoded = _models_dev_decode_model(value)
+                if isinstance(key, str) and decoded is not None:
+                    models[unicodedata.normalize("NFC", key)] = decoded
+        return cls(models)
+
+    def pricing(self, provider_id: str, model_id: str) -> dict | None:
+        if _codex_trim(provider_id).lower() != "openai":
+            return None
+        for candidate in _models_dev_candidates(model_id):
+            identity = unicodedata.normalize("NFC", candidate)
+            model = self._models.get(identity)
+            spelling = candidate
+            if model is None:
+                normalized = self._normalized_models.get(identity)
+                if normalized is None:
+                    continue
+                spelling, model = normalized
+            return {"provider_id": "openai", "model_id": model["model_id"],
+                    "normalized_model_id": spelling, "per_million": dict(model["per_million"]),
+                    "long_context": dict(model["long_context"]) if model["long_context"] is not None else None}
+        return None
+
+
+def resolve_rates(model_key: str, index: ModelsDevIndex | None) -> dict | None:
+    """resolvedCodexPricing (562–620), no historical branch; fill as 704–726."""
+    key = normalize_codex_model(model_key)
+    if key == "unknown":
+        return None
+    # Approved OpenAI-only adaptation: no unrelated provider-qualified key is priced.
+    targets = codex_models_dev_pricing_targets(model_key)
+    if "/" in _codex_trim(model_key) and not targets:
+        return None
+    bundled = CURATED_BUNDLED.get(key)
+    field_map = {"inputCostPerToken": "input", "outputCostPerToken": "output",
+                 "cacheReadInputCostPerToken": "cached_input", "cacheWriteInputCostPerToken": "cache_write"}
+    raw_standard = {rate: None for rate in field_map.values()}
+    raw_long = dict(raw_standard)
+    threshold = None
+    if bundled is not None:
+        # Decimal conversion scales the shortest literal representation exactly,
+        # rather than multiplying binary floats and introducing extra rounding.
+        for source, rate in field_map.items():
+            for suffix, destination in (("", raw_standard), ("AboveThreshold", raw_long)):
+                number = bundled.get(source + suffix)
+                if number is not None:
+                    destination[rate] = float(Decimal(repr(number)).scaleb(6))
+        threshold = bundled.get("thresholdTokens")
+    lookup = None
+    if index is not None:
+        for provider, model in targets:
+            lookup = index.pricing(provider, model)
+            if lookup is not None:
+                break
+    if lookup is None and bundled is None:
+        return None
+    if lookup is not None:
+        catalog_standard = lookup["per_million"]
+        catalog_long = lookup["long_context"]
+        # Missing context block means no long-context opinion; a present empty
+        # block is an opinion, so do not borrow individual bundled long fields.
+        if catalog_long is not None:
+            raw_long = {rate: catalog_long[rate] for rate in field_map.values()}
+            if threshold is None:
+                threshold = catalog_long["threshold"]
+            for cache in ("cached_input", "cache_write"):
+                if raw_long[cache] is None:
+                    raw_long[cache] = next(number for number in (
+                        catalog_standard[cache], catalog_long["input"], catalog_standard["input"])
+                        if number is not None)
+        raw_standard["input"] = catalog_standard["input"]
+        raw_standard["output"] = catalog_standard["output"]
+        for cache in ("cached_input", "cache_write"):
+            if catalog_standard[cache] is not None:
+                raw_standard[cache] = catalog_standard[cache]
+    long_context = None
+    if threshold is not None:
+        long_input = raw_long["input"] if raw_long["input"] is not None else raw_standard["input"]
+        long_output = raw_long["output"] if raw_long["output"] is not None else raw_standard["output"]
+        long_context = {"threshold": threshold, "input": long_input, "output": long_output}
+        for cache in ("cached_input", "cache_write"):
+            long_context[cache] = next(number for number in (raw_long[cache], raw_standard[cache], long_input)
+                                       if number is not None)
+    standard = dict(raw_standard)
+    for cache in ("cached_input", "cache_write"):
+        if standard[cache] is None:
+            standard[cache] = standard["input"]
+    return {"per_million": standard, "long_context": long_context}
+
+
+def cost_usd(entry: dict, *, input: int, cached: int, output: int) -> float:
+    """codexCostUSD (694–731); Codex cache-write argument is fixed at zero."""
+    total_input = max(0, input)
+    cached = min(max(0, cached), total_input)
+    remaining_after_cache = total_input - cached
+    cache_write = 0
+    non_cached = remaining_after_cache - cache_write
+    long_context = entry["long_context"]
+    rates = long_context if long_context is not None and total_input > long_context["threshold"] else entry["per_million"]
+    input_rate = rates["input"] / 1_000_000
+    cached_input_rate = rates["cached_input"] / 1_000_000
+    cache_write_rate = rates["cache_write"] / 1_000_000
+    output_rate = rates["output"] / 1_000_000
+    return (float(non_cached) * input_rate + float(cached) * cached_input_rate
+            + float(cache_write) * cache_write_rate + float(max(0, output)) * output_rate)
+
+
+def priority_cost_usd(rates_entry: dict, priority: dict | None, *, input: int,
+                      cached: int, output: int) -> float | None:
+    """codexPriorityCostUSD; multiplier/cap are supplied by dated history (A4)."""
+    if priority is None:
+        return None
+    cap = priority["max_input_tokens"]
+    if cap is not None and input > cap:
+        return None
+    return cost_usd(rates_entry, input=input, cached=cached, output=output) * priority["multiplier"]
+
+
+def codex_api_fast_multiplier(model: str) -> float | None:
+    """Direct switch port from CostUsagePricing.swift 682–688."""
+    key = normalize_codex_model(model)
+    if key in {"gpt-5.4", "gpt-5.4-mini", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"}:
+        return 2.0
+    if key == "gpt-5.5":
+        return 2.5
+    return None
+
+
+HISTORICAL_CUTOFFS = {"gpt-5.6-sol": 1_787_270_400_000, "gpt-5.6-terra": 1_785_369_600_000,
+                      "gpt-5.6-luna": 1_785_369_600_000}
 
 
 # ===== 19. CLI =====

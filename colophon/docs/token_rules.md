@@ -1,4 +1,4 @@
-# Token routing rules
+# Token and pricing rules
 
 Normative source: `steipete/CodexBar` at `3bbf6bc48`. File paths in this
 ledger are relative to `Sources/CodexBarCore/Vendored/CostUsage/`. The launcher
@@ -173,3 +173,51 @@ rebuild directory remains subject to the existing dead-pid cleanup rules.
 This is Colophon's transaction/error contract, not an additional upstream
 parse or discovery rule. Synthetic regressions cover both filesystem errors
 and a second interruption during abort cleanup.
+
+## Task 13 — model normalization and pricing
+
+| Rule | Upstream file and function | Commit | Decision | Notes |
+| --- | --- | --- | --- | --- |
+| Bundled literals and normalization | CostUsagePricing.swift, `codex` (84–208), `gpt56Pricing` (45–60), `normalizeCodexModel` (487–526) | 3bbf6bc48 | Ported | Preserve every non-nil per-token literal in `CURATED_BUNDLED`. Strip only the exact `openai/` prefix; apply four aliases; keep bundled keys; fold dashed dates only for bundled bases. Foundation whitespace and Swift Character regex semantics remain intact. |
+| Lookup candidates and catalog spelling | ModelsDevPricing.swift, `ModelsDevCatalog.pricing`, `ModelsDevProvider.pricing`, `ModelsDevModel.pricing`, `ModelsDevModelIDNormalizer.candidates` (65–73, 185–251, 343–395) | 3bbf6bc48 | Ported | First priceable direct key wins, then normalized model IDs. Candidate expansion remains ordered. Swift string equality is canonical-equivalent; normalized-index hits retain catalog spelling, while direct-key hits retain candidate spelling. Missing input/output or malformed decoded fields provide no price evidence. |
+| Provider-qualified targets | CostUsagePricing.swift, `codexModelsDevPricingTargets` (453–485); ModelsDevPricingTargetResolver.swift, whole file | 3bbf6bc48 | Recorded deviation, A4 item 5 | Keep only OpenAI providers. Other provider-qualified IDs remain unpriced, including bundled-looking model names. The OpenAI target and alias ordering follows source. |
+| Resolver precedence | CostUsagePricing.swift, `resolvedCodexPricing` (562–620) | 3bbf6bc48 | Ported | Raw catalog lookup precedes normalized fallback. Catalog standard rates win; missing cache rates fall back to bundled values. Bundled threshold wins over catalog threshold. Absent catalog context block permits the bundled long tuple; a present empty/partial block preserves catalog omissions and catalog fallback order. Raw-alias cases match upstream (C1). |
+| History and numeric representation | CostUsagePricing.swift, `resolvedCodexPricing` and historical constants (394–407) | 3bbf6bc48 | Adapted representation, A4 | Historical lookup is omitted because dated ledgers own it; cutoffs remain exact epoch milliseconds. Per-million catalog numbers are kept as given. Bundled per-token numbers use `float(Decimal(repr(x)).scaleb(6))`; per-token reconstruction differs by at most one ulp. Fill long fields from unfilled raw fields before standard caches. |
+| Standard cost formula | CostUsagePricing.swift, `codexCostUSD(pricing:…)` (694–731) | 3bbf6bc48 | Ported | Clamp total input, cached subset and output. Bill zero cache-write tokens, while preserving logged writes for later display. Use full-request long rates strictly above the threshold. Keep the four terms in source order; reported output already includes reasoning. |
+| Priority formula and Fast multiplier | CostUsagePricing.swift, `codexPriorityCostUSD`, `codexAPIFastMultiplier`, `codexAPIFastAllowsLongContext` (646–692) | 3bbf6bc48 | Ported; dated priority source adapted, A4 | Separate priority entry supplies multiplier and cap. Over-cap requests return no priority cost; Astra has no cap. Multiply standard cost only after its source-order calculation. The public API multiplier switch is distinct from Codex credit multipliers. |
+
+models.dev `tiers` may describe a 272,000-token threshold, while upstream's
+`ModelsDevModel.pricing` uses 200,000 whenever `context_over_200k` exists and
+ignores `tiers`. Colophon keeps this upstream simplification for parity.
+Bundled thresholds still take precedence, so a bundled 272,000 threshold
+can coexist with a catalog context block. Revisit only when the pinned
+upstream implementation changes.
+
+`ModelsDevIndex.pricing` returns a dictionary with `provider_id`, `model_id`,
+`normalized_model_id`, unfilled `per_million` rates, and `long_context` or
+null. The matched `normalized_model_id` is the catalog identity needed by
+the later priority-override ledger. `resolve_rates` alone fills omissions.
+
+Edge-case decisions:
+
+- Malformed optional catalog fields, booleans and values outside finite Double representation provide no price evidence; upstream skips models whose typed decoder fails.
+- Non-numeric `tiers` content is ignored because it is outside upstream's decoded cost keys.
+- A catalog `context_over_200k: {}` is present evidence of a threshold, not absence; source omission precedence therefore applies.
+- Canonically equivalent IDs compare equal but preserve the source spelling selected by the upstream branch; no case folding or compatibility normalization is added.
+
+The narrow pricing regex compatibility slice embeds compressed public
+Unicode 17.0.0 ranges from
+[DerivedNumericType.txt](https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedNumericType.txt)
+and [GraphemeBreakProperty.txt](https://www.unicode.org/Public/17.0.0/ucd/auxiliary/GraphemeBreakProperty.txt).
+Only Numeric, Extend/SpacingMark/ZWJ and Prepend properties are embedded.
+The suffix patterns need only digit and literal graphemes, following
+[UAX #29 GB9, GB9a and GB9b](https://www.unicode.org/reports/tr29/).
+The non-ASCII String regex path treats numeric Characters as digits, including
+superscripts, fractions, Roman numerals and numeric CJK characters; the ASCII
+NSRegularExpression path uses scalar digits. Delimiters and prefix/suffix
+literals must match complete Characters. Synthetic standalone Swift probes
+verified every embedded range endpoint and delimiter boundaries; no probe,
+download, upstream checkout or binary is a test-suite dependency.
+Copyright © 1991–2026 Unicode, Inc.; the Unicode License V3 copyright and
+permission notice is included beside the data in the launcher so standalone
+copies retain it. The source text is [Unicode License V3](https://www.unicode.org/license.txt).
