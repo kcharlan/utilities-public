@@ -88,6 +88,39 @@ The synthetic example path must exist. The default source is `~/.codex`.
 Missing or unreadable Codex homes exit 1; invalid flags exit 2.
 Help and version commands do not create runtime files.
 
+Cold scans show parsed/total MB and a whole-second ETA on terminal stderr.
+Redirected stderr receives final summaries only; warm cache hits have no parsing
+progress. MB follows the page summary's 1,048,576-byte unit.
+
+## Performance validation
+
+The full suite includes a fixed cold scaling test: 100 and 200 own sessions,
+each with forty turns and one forty-turn subagent. Each turn carries a request,
+tool and token count; alternating turns also carry primary usage records, so
+both retained accounting paths are exercised. Fixture generation is outside
+the timed CLI subprocess. Three fresh runtime homes per size establish medians;
+the smaller median must stay at least two seconds and doubling must take no
+more than 2.5 times as long.
+
+Local throughput acceptance is separate from pytest. After authorizing real
+log access, run from this directory:
+
+```sh
+.venv/bin/python tests/perf/measure_throughput.py --codex-home /synthetic/codex-home
+```
+
+Replace the synthetic path with the approved source. Without `--codex-home`,
+the tool reads `~/.codex`. `COLOPHON_HOME` selects the baseline directory,
+defaulting to `~/.colophon`. It compiles offline with `--rebuild --no-open` in
+a fresh temporary runtime home, reports page size and diagnostics, then removes
+the temporary page/cache. MB/s uses the scan's actual parsed bytes divided by
+the complete cold compiler duration. The first nonempty measurement writes a
+private, atomic `perf-baseline.json` with `mb_per_s`, `measured_at`, `logs` and
+`bytes`. Later runs preserve that baseline and exit 1 with `REGRESSION` when
+throughput falls below baseline divided by 1.5. Empty measurements or damaged
+baselines exit 1 without replacing the baseline. Review and deliberately remove
+an old baseline before recording a new one. Colophon itself never reads it.
+
 ## Flags
 
 | Flag | Contract |

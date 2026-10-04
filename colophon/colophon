@@ -8364,6 +8364,13 @@ def _diagnostic_counts(diagnostics: dict) -> list[str]:
     return counts
 
 
+def format_progress(done: int, total: int, elapsed_s: float) -> str:
+    """Format parsed bytes like the page summary, with a whole-second ETA."""
+    eta = ("0" if done >= total else
+           str(math.ceil(elapsed_s * (total - done) / done)) if done else "?")
+    return f"parsing {done / (1024 * 1024):.1f}/{total / (1024 * 1024):.1f} MB · ETA {eta}s"
+
+
 def run(args: argparse.Namespace, *, now_ms: int | None = None,
         stderr_tty: bool | None = None) -> int:
     if args.offline and args.refresh_prices:
@@ -8408,8 +8415,7 @@ def run(args: argparse.Namespace, *, now_ms: int | None = None,
             nonlocal progress_active
             if tty:
                 elapsed = time.monotonic() - scan_start
-                eta = elapsed * (total - done) / done if done else 0
-                print(f"\rcolophon: parsing {done}/{total} bytes · ETA {eta:.1f}s", end="", file=sys.stderr, flush=True)
+                print("\rcolophon: " + format_progress(done, total, elapsed), end="", file=sys.stderr, flush=True)
                 progress_active = True
         scan = scan_logs(codex_home, cache, progress=progress)
         if progress_active:

@@ -99,6 +99,33 @@ class CodexHome:
                 db.executemany("INSERT INTO thread_spawn_edges VALUES (?,?)", spawn_edges)
         return path
 
+    def scaling_corpus(self, sessions: int) -> None:
+        """Forty-turn own sessions, each with one equally shaped subagent.
+
+        Every turn has token_count, request, shell item and final answer;
+        alternating turns also have primary usage, exercising both retained
+        accounting paths rather than replacing all fallback usage.
+        """
+        for index in range(sessions):
+            parent = f"synthetic-scaling-session-{index:06d}"
+            child = f"synthetic-scaling-agent-{index:06d}"
+            for identifier, is_child in ((parent, False), (child, True)):
+                meta = {"parent_thread_id": parent, "agent_nickname": "Agent-Alpha"} if is_child else {}
+                log = self.log(identifier).meta(**meta)
+                for turn in range(40):
+                    log.task_started(f"{identifier}-turn-{turn:02d}").turn_context(model="gpt-5.4")
+                    log.user_item(f"Synthetic request {turn + 1}").command()
+                    if turn == 0 and not is_child:
+                        log.subagent_activity(child)
+                    counts = {"input_tokens": 100, "cached_input_tokens": 20,
+                              "output_tokens": 10, "reasoning_output_tokens": 2,
+                              "total_tokens": 110}
+                    log.token_count(last=counts, total={key: value * (turn + 1) for key, value in counts.items()})
+                    if turn % 2 == 0:
+                        log.usage_record(usage=counts)
+                    log.agent_item().task_complete()
+                log.write(mtime=1)
+
     def session_index(self, entries: list[dict]) -> Path:
         path = self.root / "session_index.jsonl"
         path.write_text("".join(_json(entry) + "\n" for entry in entries), encoding="utf-8")

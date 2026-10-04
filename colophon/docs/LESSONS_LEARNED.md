@@ -724,3 +724,19 @@
   still requires an ellipsis and tooltip. Skip only non-rendered/hidden elements;
   apply the positive-client-width exception only to visible overflow. Regression:
   `test_checker_includes_painted_or_clipped_text_in_zero_dimension_boxes`.
+- Progress formatting needs its own byte-to-MB and rounded-ETA contract rather
+  than raw-byte arithmetic embedded in the CLI. Before any parsed bytes, no
+  rate establishes an ETA; completed and empty workloads establish zero
+  remaining work. Regression: `test_format_progress` and terminal/nonterminal
+  cold-run controls.
+- Clean compiler runs omit empty diagnostics, but local throughput acceptance
+  must always report a summary. Preserve compiler messages and explicitly
+  report no diagnostics for a clean run. Regression:
+  `test_throughput_cold_measurement_uses_scan_bytes`.
+- Invalid-baseline tests must mutate one field of an otherwise complete
+  measurement. Missing keys alone never exercise finite-rate, clock or counter
+  validation. Preserve the baseline on malformed input and on regression;
+  reject unknown measurements instead of manufacturing comparison evidence.
+  Regressions: `test_invalid_baseline_is_not_measurement_evidence`,
+  `test_invalid_baseline_schema` and
+  `test_throughput_cli_creates_then_preserves_baseline`.
