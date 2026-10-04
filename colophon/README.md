@@ -64,6 +64,8 @@ compiler. `--offline --refresh-prices` is already rejected.
 Colophon creates the runtime home with mode 0700 and reapplies that mode on
 each run. Every file it writes has mode 0600 and is replaced atomically.
 First-run files are created only when absent; existing files are preserved.
+Each initialization removes direct hidden `.*.tmp` regular files older than
+one hour, retaining recent files that may belong to a concurrent run.
 
 | Path | Purpose |
 |---|---|
@@ -75,6 +77,15 @@ First-run files are created only when absent; existing files are preserved.
 | `cache/` | Parse records, introduced with log scanning. |
 | `colophon.html` | Compiled offline page, introduced with the compiler. |
 | `perf-baseline.json`, `parity/` | Local acceptance outputs only. |
+
+The catalog fetcher stores only the OpenAI provider in `pricing-cache.json`,
+with its URL, ETag and successful fetch time. Matching URLs use conditional
+requests; refresh requests omit the ETag. A 304 preserves the fetch time.
+Connection and headers share a three-second budget; the body has thirty
+seconds. Failures use a valid cached catalog with diagnostics. A cache from
+another URL remains a fallback with a warning, without sending its ETag.
+Offline fetching opens no socket. Compiler integration arrives with the next
+pipeline task.
 
 Priority detection follows upstream's trace database and retains detected
 turn ids. Usage older than both the trace database and the first Colophon run

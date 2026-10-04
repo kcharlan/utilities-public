@@ -488,3 +488,24 @@
   separate. Task 15's per-turn source selection then replaces fallback usage
   with the primary record for that exact id. Regression:
   `test_whitespace_turn_identity_selects_primary_and_preserves_attribution`.
+- A successful socket read does not finish a watchdog phase until cancellation
+  and joining complete. The watchdog may fire between the read's flag check
+  and cancellation; resetting the flag then loses a real timeout. Check again
+  after joining, before starting the body or accepting its bytes. Regressions:
+  `test_watchdog_firing_during_cancel_is_not_forgotten[headers]` and `[body]`.
+- JSON syntax can contain a number whose Double conversion overflows, such as
+  a synthetic `1e999` rate. Writing Python's resulting Infinity poisons the
+  next strict cache load. Validate typed provider/model fields before converting
+  ignored overflow metadata to null, skip invalid models independently, and
+  preserve valid peers through offline reload. Regression:
+  `test_nonfinite_typed_model_is_skipped_without_poisoning_cache`.
+- `http.client` clears its connection socket for responses that close. Save the
+  socket after explicit connect so the body watchdog can interrupt HTTP/1.0
+  trickle responses; give body operations their own timeout. Regressions:
+  `test_body_total_budget_uses_saved_http10_socket` and
+  `test_complete_multichunk_body_with_distinct_body_socket_budget`.
+- Preserve raw catalog context-number spelling at both network and cache
+  ingestion. Double rounding can erase source Int acceptance or rejection;
+  use the verified Foundation UInt128/UInt64 Decimal boundary before ordinary
+  Double rate decoding. Regression:
+  `test_raw_context_acceptance_survives_network_and_cache`.
