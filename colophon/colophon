@@ -1003,6 +1003,727 @@ def _tools_and_links(facts: list[RecordFact], inherited: list[bool],
     return {key: tally.result() for key, tally in tallies.items()}, links
 
 
+# CodexBar 3bbf6bc48: CostUsageJsonl.swift JSONTailState (45–270).
+class JSONTailState:
+    """Byte state for committing a final segment, independent of JSON validity."""
+
+    _number_transitions = {
+        ('sign', 'zero'): 'zero', ('sign', 'digit'): 'integer',
+        ('zero', 'point'): 'point', ('zero', 'exponent'): 'exponent',
+        ('integer', 'zero'): 'integer', ('integer', 'digit'): 'integer',
+        ('integer', 'point'): 'point', ('integer', 'exponent'): 'exponent',
+        ('point', 'zero'): 'fraction', ('point', 'digit'): 'fraction',
+        ('fraction', 'zero'): 'fraction', ('fraction', 'digit'): 'fraction',
+        ('fraction', 'exponent'): 'exponent', ('exponent', 'sign'): 'exponent_sign',
+        ('exponent', 'zero'): 'exponent_digits', ('exponent', 'digit'): 'exponent_digits',
+        ('exponent_sign', 'zero'): 'exponent_digits', ('exponent_sign', 'digit'): 'exponent_digits',
+        ('exponent_digits', 'zero'): 'exponent_digits', ('exponent_digits', 'digit'): 'exponent_digits',
+        ('zero', 'space'): 'finished', ('integer', 'space'): 'finished',
+        ('fraction', 'space'): 'finished', ('exponent_digits', 'space'): 'finished',
+        ('finished', 'space'): 'finished',
+    }
+
+    def __init__(self):
+        self.depth = 0
+        self.inside_string = self.escaping = self.saw_non_whitespace = False
+        self.scalar = 'not_scalar'
+        self.matched = 0
+        self.number = None
+
+    @property
+    def is_structurally_complete(self) -> bool:
+        if not self.saw_non_whitespace:
+            return False
+        if self.scalar == 'not_scalar':
+            return not self.inside_string and self.depth == 0
+        if self.scalar == 'number':
+            return self.number in ('finished', 'invalid')
+        if self.scalar == 'invalid':
+            return True
+        return self.matched == len(self.scalar)
+
+    def append(self, byte: int) -> None:
+        if not self.saw_non_whitespace:
+            if byte in b' \t\n\r':
+                return
+            self.saw_non_whitespace = True
+            if byte == 34:
+                self.inside_string = True
+            elif byte in (123, 91):
+                self.depth = 1
+            elif byte in (116, 102, 110):
+                self.scalar = {116: 'true', 102: 'false', 110: 'null'}[byte]
+                self.matched = 1
+            elif byte == 45 or 48 <= byte <= 57:
+                self.scalar = 'number'
+                self.number = 'sign' if byte == 45 else 'zero' if byte == 48 else 'integer'
+            else:
+                self.scalar = 'invalid'
+            return
+        if self.scalar in ('true', 'false', 'null'):
+            if self.matched < len(self.scalar):
+                if byte == ord(self.scalar[self.matched]):
+                    self.matched += 1
+                else:
+                    self.scalar = 'invalid'
+            elif byte not in b' \t\n\r':
+                self.scalar = 'invalid'
+            return
+        if self.scalar == 'number':
+            kind = ('zero' if byte == 48 else 'digit' if 49 <= byte <= 57 else
+                    'point' if byte == 46 else 'exponent' if byte in (101, 69) else
+                    'sign' if byte in (43, 45) else 'space' if byte in b' \t\n\r' else 'other')
+            self.number = self._number_transitions.get((self.number, kind), 'invalid')
+            return
+        if self.scalar == 'invalid':
+            return
+        if self.inside_string:
+            if self.escaping:
+                self.escaping = False
+            elif byte == 92:
+                self.escaping = True
+            elif byte == 34:
+                self.inside_string = False
+            return
+        if byte == 34:
+            self.inside_string = True
+        elif byte in (123, 91):
+            self.depth += 1
+        elif byte in (125, 93):
+            self.depth = max(0, self.depth - 1)
+
+
+def _reject_json_constant(value):
+    raise ValueError(f'Non-JSON constant: {value}')
+
+
+class _CodexJSONFloat(float):
+    """Retain the Foundation number representation for fallback integer casts."""
+
+    def __new__(cls, text):
+        value = super().__new__(cls, text)
+        mantissa = re.split('[eE]', text)[0].lstrip('+-')
+        whole, _, fraction = mantissa.partition('.')
+        if len(whole.lstrip('0')) + len(fraction) > 17:
+            decimal = Decimal(text)
+            sign, digits, exponent = decimal.as_tuple()
+            digits = list(digits)
+            while digits and digits[-1] == 0:
+                digits.pop()
+                exponent += 1
+            coefficient = 0
+            for digit in digits:
+                coefficient = (coefficient * 10 + digit) % 2**64
+            if exponent >= 0:
+                coefficient = coefficient * pow(10, exponent, 2**64) % 2**64
+            elif exponent < -20:
+                coefficient = 0
+            else:
+                coefficient //= 10**(-exponent)
+            if sign:
+                coefficient = -coefficient
+            value.foundation_int = (coefficient + 2**63) % 2**64 - 2**63
+        elif value >= 2**63:
+            value.foundation_int = 2**63 - 1
+        elif value < -(2**63):
+            value.foundation_int = -(2**63)
+        else:
+            value.foundation_int = int(value)
+        return value
+
+
+def _upstream_json(data: bytes):
+    """Foundation JSONSerialization stand-in, including its Unicode checks."""
+    try:
+        value = json.loads(data, parse_constant=_reject_json_constant, parse_float=_CodexJSONFloat)
+        pending = [value]
+        while pending:
+            item = pending.pop()
+            if isinstance(item, str):
+                if any(0xD800 <= ord(c) <= 0xDFFF for c in item):
+                    return None
+            elif isinstance(item, float) and item == math.inf:
+                return None
+            elif isinstance(item, dict):
+                pending.extend(item.keys())
+                pending.extend(item.values())
+            elif isinstance(item, list):
+                pending.extend(item)
+        return (value,)
+    except (ValueError, UnicodeError, RecursionError, ArithmeticError):
+        return None
+
+
+class _CodexByteFields:
+    """Literal fast extractor; deliberately does not validate a JSON envelope.
+
+    CostUsageScanner+CodexFastJSON.swift 4–309. Keep numeric-prefix and
+    unescaped-key matching separate from Foundation fallback semantics.
+    """
+
+    def __init__(self, data: bytes):
+        self.data = data
+
+    def string_range(self, index: int, limit: int):
+        data = self.data
+        if index >= limit or data[index] != 34:
+            return None
+        start = index = index + 1
+        escaped = False
+        while index < limit:
+            if data[index] == 92:
+                escaped = True
+                index += 2
+            elif data[index] == 34:
+                return start, index, escaped, index + 1
+            else:
+                index += 1
+        return None
+
+    def object_range(self, index: int, limit: int):
+        data = self.data
+        if index >= limit or data[index] != 123:
+            return None
+        start, depth = index, 0
+        while index < limit:
+            byte = data[index]
+            if byte == 34:
+                parsed = self.string_range(index, limit)
+                if parsed is None:
+                    return None
+                index = parsed[3]
+                continue
+            if byte == 123:
+                depth += 1
+            elif byte == 125:
+                depth -= 1
+                if depth == 0:
+                    return start, index + 1
+            index += 1
+        return None
+
+    def field(self, key: str, bounds, kind: str = 'string'):
+        if bounds is None:
+            return None
+        data = self.data
+        index, limit = bounds
+        depth = 0
+        marker = key.encode('ascii')
+        while index < limit:
+            byte = data[index]
+            if byte == 123:
+                depth += 1
+                index += 1
+            elif byte == 125:
+                depth -= 1
+                index += 1
+            elif byte == 34:
+                parsed = self.string_range(index, limit)
+                if parsed is None:
+                    return None
+                start, end, escaped, value_index = parsed
+                index = value_index
+                if depth != 1 or escaped or data[start:end] != marker:
+                    continue
+                while value_index < limit and data[value_index] in b' \t\n\r':
+                    value_index += 1
+                if value_index >= limit or data[value_index] != 58:
+                    continue
+                value_index += 1
+                while value_index < limit and data[value_index] in b' \t\n\r':
+                    value_index += 1
+                value = self.value(value_index, limit, kind)
+                if value is not None:
+                    return value
+            else:
+                index += 1
+        return None
+
+    def value(self, index: int, limit: int, kind: str):
+        data = self.data
+        if kind == 'object':
+            return self.object_range(index, limit)
+        if kind == 'int':
+            sign = -1 if index < limit and data[index] == 45 else 1
+            index += sign == -1
+            start = index
+            value = 0
+            while index < limit and 48 <= data[index] <= 57:
+                value = value * 10 + data[index] - 48
+                if value > 2**63 - 1:
+                    return None
+                index += 1
+            return sign * value if index > start else None
+        if kind == 'bool':
+            if data[index: min(index+4, limit)] == b'true':
+                return True
+            if data[index: min(index+5, limit)] == b'false':
+                return False
+            return None
+        parsed = self.string_range(index, limit)
+        if parsed is None:
+            return None
+        start, end, escaped, _ = parsed
+        if start == end and kind != 'empty_string':
+            return None
+        raw = data[start:end]
+        try:
+            if not escaped:
+                return raw.decode('utf-8')
+            # Simple escapes are decoded without rejecting literal controls.
+            # A Unicode escape switches the entire string to Foundation JSON.
+            output = bytearray()
+            index = 0
+            escape_bytes = {34: 34, 92: 92, 47: 47, 98: 8, 102: 12, 110: 10, 114: 13, 116: 9}
+            while index < len(raw):
+                byte = raw[index]
+                if byte != 92:
+                    output.append(byte)
+                else:
+                    index += 1
+                    if index >= len(raw):
+                        return None
+                    byte = raw[index]
+                    if byte == 117:
+                        value = _upstream_json(b'"' + raw + b'"')
+                        return value[0] if value is not None else None
+                    if byte not in escape_bytes:
+                        return None
+                    output.append(escape_bytes[byte])
+                index += 1
+            return output.decode('utf-8')
+        except UnicodeError:
+            return None
+
+
+class _CodexPrefixFields:
+    """TruncatedPrefix.swift text extractors (escaping is literal removal)."""
+
+    def __init__(self, text: str):
+        self.text = text
+
+    def string(self, index: int):
+        text = self.text
+        if index >= len(text) or text[index] != '"':
+            return None
+        index += 1
+        output = []
+        escaped = False
+        while index < len(text):
+            char = text[index]
+            index += 1
+            if escaped:
+                output.append(char)
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                return ''.join(output), index
+            else:
+                output.append(char)
+        return None
+
+    def field(self, key: str, kind='string'):
+        text = self.text
+        index = depth = 0
+        while index < len(text):
+            char = text[index]
+            if char == '{':
+                depth += 1
+                index += 1
+            elif char == '}':
+                depth -= 1
+                index += 1
+            elif char == '"':
+                parsed = self.string(index)
+                if parsed is None:
+                    return None
+                name, index = parsed
+                if depth != 1 or name != key:
+                    continue
+                while index < len(text) and _codex_character_whitespace(text[index]):
+                    index += 1
+                if index >= len(text) or text[index] != ':':
+                    continue
+                index += 1
+                while index < len(text) and _codex_character_whitespace(text[index]):
+                    index += 1
+                if kind == 'object':
+                    if index < len(text) and text[index] == '{':
+                        return _CodexPrefixFields(text[index:])
+                else:
+                    parsed = self.string(index)
+                    if parsed is not None:
+                        value, index = parsed
+                        if value or kind == 'empty_string':
+                            return value
+            else:
+                index += 1
+        return None
+
+    def is_complete(self) -> bool:
+        # TruncatedPrefix isCompleteJSONObject: unlike tail state, only braces.
+        text = self.text
+        if not text.startswith('{'):
+            return False
+        index = depth = 0
+        while index < len(text):
+            if text[index] == '"':
+                parsed = self.string(index)
+                if parsed is None:
+                    return False
+                index = parsed[1]
+                continue
+            if text[index] == '{':
+                depth += 1
+            elif text[index] == '}':
+                depth -= 1
+                if depth == 0:
+                    return True
+                if depth < 0:
+                    return False
+            index += 1
+        return False
+
+
+def _codex_timestamp_valid(timestamp) -> bool:
+    """Port dayKeyFromTimestamp then dayKeyFromParsedISO, not display parsing.
+
+    Timestamp.swift 105–180 accepts normalized Calendar components and scans
+    backward for a zone; it does not validate RFC3339 ranges or end-of-string.
+    Four-digit years/two-digit fields fit Foundation's Gregorian date range.
+    """
+    if not isinstance(timestamp, str):
+        return False
+    data = timestamp.encode('utf-8', errors='surrogatepass')
+
+    def number(index, count=2):
+        part = data[index:index+count]
+        return int(part) if len(part) == count and all(48 <= b <= 57 for b in part) else None
+
+    if (len(data) >= 20 and data[4] == 45 and data[7] == 45
+            and all(number(i, n) is not None for i, n in ((0, 4), (5, 2), (8, 2)))):
+        clock_ok = (data[10] != 84 or (data[13] == 58 and data[16] == 58
+                    and all(number(i) is not None for i in (11, 14, 17))))
+        if clock_ok:
+            for index in range(len(data)-1, 10, -1):
+                if data[index] == 90:
+                    return True
+                if data[index] in (43, 45):
+                    start = index + 1
+                    if number(start) is None:
+                        break
+                    if len(data) > start + 2 and data[start+2] == 58 and number(start+3) is None:
+                        break
+                    return True
+    return _codex_historical_iso_valid(timestamp)
+
+
+def _codex_historical_iso_valid(timestamp: str) -> bool:
+    """Historical Foundation internet-date-time acceptance (Timestamp 28–32).
+
+    Its format is calendar-based, accepts variable-width fields and consumes
+    a date prefix. It normalizes a day up to 31 and hour 24, but rejects month
+    0/13, day 0/32, hour 25, minute 60 and second 60. Native RFC3339 successes
+    already satisfy dayKeyFromTimestamp; this is the remaining fallback.
+    """
+    match = re.match(
+        r'\s*([+-]?[0-9]+)\s*-\s*([0-9]+)\s*-\s*([0-9]+)T'
+        r'\s*([0-9]+)\s*:\s*([0-9]+)\s*:\s*([0-9]+)'
+        r'(?:\.[0-9]+)?\s*(?i:Z|UTC?|GMT|[+-][0-9]+)', timestamp)
+    if match is None:
+        return False
+    _, month, day, hour, minute, second = map(int, match.groups())
+    return (1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour <= 24
+            and 0 <= minute < 60 and 0 <= second < 60)
+
+
+def _codex_string(value):
+    return value if isinstance(value, str) else None
+
+
+def _codex_number(value):
+    # Foundation's NSNumber.intValue includes bool, truncates floating values
+    # and returns the signed platform Int for unsigned integer JSON numbers.
+    if isinstance(value, _CodexJSONFloat):
+        return value.foundation_int
+    if isinstance(value, int):
+        return (value + 2**63) % 2**64 - 2**63
+    if isinstance(value, float) and math.isfinite(value):
+        return int(value) if -(2**63) <= value < 2**63 else (2**63 - 1 if value > 0 else -(2**63))
+    return None
+
+
+def _codex_first(*values):
+    return next((value for value in values if value is not None), None)
+
+
+# Foundation CharacterSet.whitespacesAndNewlines (26 Unicode scalars).
+_CODEX_TRIM_CHARACTERS = ('\t\n\v\f\r \u0085\u00a0\u1680'
+                          '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007'
+                          '\u2008\u2009\u200a\u200b\u2028\u2029\u202f\u205f\u3000')
+
+
+def _codex_trim(value: str) -> str:
+    return value.strip(_CODEX_TRIM_CHARACTERS)
+
+
+def _codex_character_whitespace(value: str) -> bool:
+    # Swift Character.isWhitespace is Unicode White_Space, excluding 200B.
+    return value in _CODEX_TRIM_CHARACTERS and value != '\u200b'
+
+
+def _codex_model_evidence(value):
+    return _codex_trim(value) or None if isinstance(value, str) else None
+
+
+def _codex_context_model(*values):
+    present = [value for value in values if isinstance(value, str)]
+    model = _codex_first(*(_codex_model_evidence(value) for value in present))
+    return {'set': model} if model is not None else {'clear': True} if present else None
+
+
+def _codex_project_path(value):
+    if not isinstance(value, str) or not _codex_trim(value):
+        return None
+    path = os.path.expanduser(_codex_trim(value))
+    return os.path.normpath('/' + path.lstrip('/')) if path.startswith('/') else None
+
+
+def _codex_metadata(get, payload, info_object, root):
+    """Shared scalar projection; getter retains fast versus fallback semantics."""
+    parent = _codex_first(*(_codex_model_evidence(get(payload, key)) for key in
+                            ('forked_from_id', 'forkedFromId', 'parent_session_id', 'parentSessionId')))
+    history = _codex_first(info_object(payload, 'history_base'), info_object(payload, 'historyBase'))
+    history_id = _codex_first(*(_codex_model_evidence(get(history, key)) for key in ('thread_id', 'threadId')))
+    source = get(payload, 'source')
+    if source is not None:
+        subagent = _codex_trim(source).lower() == 'subagent'
+    else:
+        source = info_object(payload, 'source')
+        subagent = (get(source, 'subagent') is not None or info_object(source, 'subagent') is not None)
+    return {
+        'session_id': _codex_first(get(payload, 'id'), get(root, 'id'), get(payload, 'session_id'),
+                                  get(payload, 'sessionId'), get(root, 'session_id'), get(root, 'sessionId')),
+        'forked_from_id': parent,
+        'fork_ts': _codex_first(get(payload, 'timestamp'), get(root, 'timestamp')),
+        'project_path': _codex_project_path(get(payload, 'cwd')),
+        'is_subagent': subagent,
+        'history_start_ordinal': get(payload, 'subagent_history_start_ordinal', 'int'),
+        'history_base_thread_id': history_id,
+    }
+
+
+def _codex_projection(get, object_field, root, *, fast: bool):
+    """Port parseCodexFastLine and the corresponding dictionary fallback."""
+    kind = get(root, 'type')
+    payload = object_field(root, 'payload')
+    if kind == 'session_meta':
+        return ['M', _codex_metadata(get, payload, object_field, root)]
+    timestamp = get(root, 'timestamp')
+    if kind == 'inter_agent_communication_metadata':
+        trigger = get(payload, 'trigger_turn', 'bool')
+        return None if fast and trigger is None else ['I', trigger is True]
+    if kind == 'turn_context':
+        info = object_field(payload, 'info')
+        return ['C', timestamp, _codex_context_model(get(payload, 'model', 'empty_string'),
+            get(payload, 'model_name', 'empty_string'), get(info, 'model', 'empty_string'),
+            get(info, 'model_name', 'empty_string'))]
+    if kind != 'event_msg' or payload is None:
+        return None
+    payload_type = get(payload, 'type')
+    info = object_field(payload, 'info')
+    turn_id = _codex_first(*(get(container, key) for container in (payload, info)
+                              for key in ('turn_id', 'turnId', 'id')))
+    if payload_type == 'task_started':
+        return ['S', turn_id]
+    if payload_type != 'token_count' or (fast and (timestamp is None or info is None)):
+        return None
+    model = _codex_first(*(_codex_model_evidence(get(container, key)) for container, key in
+                           ((info, 'model'), (info, 'model_name'), (payload, 'model'), (root, 'model'))))
+
+    def totals(container):
+        if container is None:
+            return None
+        output = max(0, get(container, 'output_tokens', 'int') or 0)
+        reasoning = get(container, 'reasoning_output_tokens', 'int')
+        return [max(0, get(container, 'input_tokens', 'int') or 0),
+                max(0, get(container, 'cached_input_tokens', 'int') or 0,
+                    get(container, 'cache_read_input_tokens', 'int') or 0), output,
+                min(max(0, reasoning), output) if reasoning is not None else None]
+
+    return ['T', timestamp, model, turn_id, totals(object_field(info, 'last_token_usage')),
+            totals(object_field(info, 'total_token_usage'))]
+
+
+def _codex_fast_line(data: bytes):
+    fields = _CodexByteFields(data)
+    root = (0, len(data))
+
+    def get(container, key, kind='string'):
+        return fields.field(key, container, kind)
+
+    def child(container, key):
+        return fields.field(key, container, 'object')
+
+    return _codex_projection(get, child, root, fast=True)
+
+
+def _codex_dictionary_line(obj: dict):
+    def get(container, key, kind='string'):
+        if not isinstance(container, dict):
+            return None
+        value = container.get(key)
+        if kind == 'int':
+            return _codex_number(value)
+        if kind == 'bool':
+            return bool(value) if isinstance(value, (bool, int, float)) and value in (0, 1) else None
+        return _codex_string(value)
+
+    def child(container, key):
+        if not isinstance(container, dict):
+            return None
+        value = container.get(key)
+        return value if isinstance(value, dict) else None
+
+    return _codex_projection(get, child, obj, fast=False)
+
+
+def _codex_bare_usage(obj: dict):
+    usage = _codex_first(*(container.get('usage') if isinstance(container.get('usage'), dict) else None
+                          for container in (obj, _object(obj.get('data')), _object(obj.get('result')),
+                                            _object(obj.get('response')))))
+    if usage is None:
+        return None
+    def number(keys):
+        return _codex_first(*(_codex_number(usage.get(key)) for key in keys))
+    input_tokens = number(('input_tokens', 'prompt_tokens', 'input'))
+    output = number(('output_tokens', 'completion_tokens', 'output'))
+    if input_tokens is None or output is None:
+        return None
+    cached = max(0, number(('cached_input_tokens', 'cache_read_input_tokens', 'cached_tokens')) or 0)
+    billed = max(0, max(0, input_tokens) - cached)
+    output = max(0, output)
+    if not (billed or output or cached):
+        return None
+    data = _object(obj.get('data'))
+    model = _codex_first(*(_codex_model_evidence(container.get(key))
+                           for container in (obj, data) for key in ('model', 'model_name')))
+    return ['B', _codex_string(obj.get('timestamp')), model, [billed, cached, output, None]]
+
+
+TokenStream = dict[str, list | bool]
+
+
+class TokenStreamBuilder:
+    """Cache-safe scalar observations, built during Colophon's single read."""
+
+    def __init__(self):
+        self.observations = []
+        self.prepass = None
+        self.uidx = 0
+        self.unconsumed_tail = False
+
+    def feed(self, line_index: int, data: bytes, obj: dict | None, *, terminated: bool) -> None:
+        # obj is deliberately optional: the raw fast path can differ from a
+        # decoded object. No caller's crash recovery participates in routing.
+        truncated = len(data) > UPSTREAM_MAX_LINE_BYTES
+        prefix = data[:UPSTREAM_MAX_LINE_BYTES]
+        fast = None
+        parsed = None
+        if not truncated and data:
+            fast = _codex_fast_line(data)
+            if self.prepass is None:
+                metadata = fast if fast is not None and fast[0] == 'M' else None
+                if metadata is None:
+                    parsed = _upstream_json(data)
+                    if parsed is not None and isinstance(parsed[0], dict):
+                        candidate = _codex_dictionary_line(parsed[0])
+                        metadata = candidate if candidate is not None and candidate[0] == 'M' else None
+                if metadata is not None:
+                    self.prepass = ['P', metadata[1]]
+        if not terminated and data:
+            state = JSONTailState()
+            for byte in data:
+                state.append(byte)
+            if not state.is_structurally_complete:
+                self.unconsumed_tail = True
+                return
+            if not truncated:
+                parsed = _upstream_json(data)
+                if parsed is None:
+                    self.unconsumed_tail = True
+                    return
+        if not data:
+            return
+        uidx = self.uidx
+        self.uidx += 1
+        if truncated:
+            self._truncated(line_index, uidx, prefix)
+            return
+        if b'"usage"' in data:
+            parsed = parsed if parsed is not None else _upstream_json(data)
+            if parsed is not None and isinstance(parsed[0], dict) and 'type' not in parsed[0]:
+                bare = _codex_bare_usage(parsed[0])
+                if bare is not None:
+                    self.observations.append([bare[0], line_index, uidx, *bare[1:]])
+            return
+        if not any(marker in data for marker in (b'"event_msg"', b'"turn_context"',
+                    b'"session_meta"', b'"inter_agent_communication_metadata"')):
+            return
+        if b'"type":"event_msg"' in data and b'"token_count"' not in data and b'"task_started"' not in data:
+            return
+        fields = _CodexByteFields(data)
+        bounds = (0, len(data))
+        ordinal = fields.field('ordinal', bounds, 'int')
+        if fast is not None:
+            timestamp = fields.field('timestamp', bounds)
+            validity = True if fast[0] == 'M' else _codex_timestamp_valid(timestamp) if timestamp is not None else None
+            if validity is True:
+                self.observations.append([fast[0], line_index, uidx, ordinal, *fast[1:]])
+                return
+            if validity is False:
+                return
+        parsed = parsed if parsed is not None else _upstream_json(data)
+        if parsed is None or not isinstance(parsed[0], dict):
+            return
+        record = parsed[0]
+        fallback = _codex_dictionary_line(record)
+        if fallback is not None and (fallback[0] == 'M' or _codex_timestamp_valid(record.get('timestamp'))):
+            self.observations.append([fallback[0], line_index, uidx, _codex_number(record.get('ordinal')), *fallback[1:]])
+
+    def _truncated(self, line: int, uidx: int, prefix: bytes) -> None:
+        text = None
+        for drop in range(min(4, len(prefix)) + 1):
+            try:
+                text = prefix[:len(prefix)-drop].decode('utf-8')
+                break
+            except UnicodeError:
+                pass
+        if text is None:
+            return
+        fields = _CodexPrefixFields(text)
+        kind = fields.field('type')
+        payload = fields.field('payload', 'object')
+        if kind == 'session_meta':
+            session_id = _codex_first(*(payload.field(key) for key in ('id', 'session_id', 'sessionId'))) if payload else None
+            # Planned stream adaptation: Task14 applies subagent-pending gate.
+            self.observations.append(['XM', line, uidx, session_id])
+        elif kind == 'turn_context' and _codex_timestamp_valid(fields.field('timestamp')) and payload is not None:
+            info = payload.field('info', 'object')
+            model = _codex_context_model(payload.field('model', 'empty_string'),
+                payload.field('model_name', 'empty_string'),
+                info.field('model', 'empty_string') if info else None,
+                info.field('model_name', 'empty_string') if info else None)
+            if model == {'clear': True} and not payload.is_complete():
+                model = None
+            self.observations.append(['XC', line, uidx, model])
+
+    def result(self) -> TokenStream:
+        observations = ([self.prepass] if self.prepass is not None else []) + self.observations
+        return {'observations': observations, 'unconsumed_tail': self.unconsumed_tail}
+
+
 def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> dict:
     """Read a log once, retaining facts rather than raw decoded records."""
     result = {
@@ -1014,6 +1735,7 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
         "wrapper_ts": {"count": 0, "distinct": 0},
         "usage_records": [],
     }
+    token_builder = TokenStreamBuilder()
     wrapper_values: set[str] = set()
     facts: list[RecordFact] = []
     with path.open("rb") as fh:
@@ -1022,6 +1744,7 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
         result["key"]["tail_sha256"] = hashlib.sha256(fh.read(size - tail_start)).hexdigest()
         fh.seek(0)
         for raw in iter_log_lines(fh, size):
+            token_builder.feed(raw.index, raw.data, None, terminated=raw.terminated)
             if raw.terminated:
                 decoded = decode_line(raw.data)
                 if decoded.status in ("malformed", "recovered"):
@@ -1065,6 +1788,8 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
     # Loop bindings survive exhaustion, even for a skipped damaged tail. Keep
     # neither the last line's bytes nor a later metadata header in phase two.
     raw = header = None
+    result["token_stream"] = token_builder.result()
+    del token_builder
     result["wrapper_ts"]["distinct"] = len(wrapper_values)
     result["history"], inherited = _history(result["meta"], facts)
     builder = TurnBuilder()

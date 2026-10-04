@@ -104,3 +104,21 @@
   `test_distinct_js_identifier_prefixes_are_not_tool_evidence`,
   `test_standalone_js_calls_still_count_at_valid_boundaries` and
   `test_incomplete_js_mcp_marker_is_other_not_group_evidence`.
+- Root and missing-object sentinels must not share a nil-like value in a raw
+  routing port. An object-presence check can turn a sentinel into subagent
+  evidence. Pass the root explicitly and keep absent payload/source/history
+  objects absent. Regressions: `test_metadata_fast_vs_fallback_empty_identity`
+  and `test_invalid_timestamp_drops_token_but_not_meta`.
+- Foundation timestamp validity and Python RFC3339 validity are different
+  contracts. Port the day-key path separately and retain historical formatter
+  normalization and prefix consumption. A standalone synthetic library probe
+  can verify the platform behavior without running CodexBar or reading session
+  homes. Regressions: `test_upstream_calendar_validity_is_not_display_rfc3339`
+  and `test_historical_formatter_validity`.
+- Port library number and whitespace semantics explicitly. Python float
+  coercion loses NSNumber's lexical representation, Python strip omits U+200B,
+  and Python isspace accepts extra control separators. Keep raw fast integers,
+  Foundation fallback casts, Foundation trim and Swift Character whitespace
+  separate. Regressions: `test_fallback_numeric_lexemes_preserve_nsnumber_cast`,
+  `test_foundation_model_trim_set` and
+  `test_truncated_swift_character_whitespace_excludes_control_separator`.
