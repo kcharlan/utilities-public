@@ -3246,7 +3246,7 @@ class ParseCache:
         live_names = {self._entry_name(path) for path in keep_paths}
         for path in self.directory.glob("*.json"):
             if path.name not in live_names:
-                path.unlink()
+                path.unlink(missing_ok=True)
         if self.rebuild:
             old = self.home / f"cache.old-{os.getpid()}"
             # Reject any existing backup before entering mutation recovery.

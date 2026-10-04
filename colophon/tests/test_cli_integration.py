@@ -443,3 +443,69 @@ def test_unreadable_old_cache_entry_requires_trusted_marker(colophon,home,codex_
             assert peer.get(logs[blocked_key]) is not None
     finally:
         peer.abort()
+
+
+def test_concurrent_compilers_can_prune_same_stale_cache_entry(colophon,home,codex_home,monkeypatch,capsys):
+    stale = log(codex_home,'synthetic-stale').write()
+    log(codex_home,'synthetic-retained').write()
+    assert colophon.run(args(colophon,codex_home),now_ms=NOW) == 0
+    stale_name = colophon.ParseCache._entry_name(colophon.codex_path_key(stale))
+    stale.unlink()
+    capsys.readouterr()
+    path_type = type(home)
+    original_glob,original_unlink = path_type.glob,path_type.unlink
+    cache_dir = (home/'cache').resolve()
+    enumerated = threading.Barrier(2)
+    deletion_finished = threading.Event()
+    deletion_lock = threading.Lock()
+    deletion_started = False
+    def glob(path,pattern):
+        items = list(original_glob(path,pattern))
+        if path.resolve()==cache_dir and pattern=='*.json':
+            assert stale_name in {item.name for item in items}
+            enumerated.wait(timeout=10)
+        return iter(items)
+    def unlink(path,*a,**kw):
+        nonlocal deletion_started
+        if path.parent.resolve()!=cache_dir or path.name!=stale_name:
+            return original_unlink(path,*a,**kw)
+        with deletion_lock:
+            first = not deletion_started
+            deletion_started = True
+        if first:
+            try:
+                return original_unlink(path,*a,**kw)
+            finally:
+                deletion_finished.set()
+        assert deletion_finished.wait(10)
+        return original_unlink(path,*a,**kw)
+    with monkeypatch.context() as patch:
+        patch.setattr(path_type,'glob',glob)
+        patch.setattr(path_type,'unlink',unlink)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(colophon.run,args(colophon,codex_home),now_ms=NOW,stderr_tty=False) for _ in range(2)]
+            results = [future.result() for future in futures]
+    assert results == [0,0]
+    assert not (home/'cache'/stale_name).exists()
+    assert len(list((home/'cache').glob('*.json'))) == 1
+    assert compiled(home)['sessions'][0]['own_usage']['input'] == 100
+    assert 'FileNotFoundError' not in capsys.readouterr().err
+
+
+def test_stale_cache_prune_keeps_other_delete_errors_visible(colophon,home,codex_home,monkeypatch,capsys):
+    stale = log(codex_home,'synthetic-stale').write()
+    assert colophon.run(args(colophon,codex_home),now_ms=NOW) == 0
+    entry = home/'cache'/colophon.ParseCache._entry_name(colophon.codex_path_key(stale))
+    original_bytes = entry.read_bytes()
+    stale.unlink()
+    capsys.readouterr()
+    original_unlink = type(home).unlink
+    def unlink(path,*a,**kw):
+        if path.resolve()==entry.resolve():
+            raise PermissionError('Synthetic stale cache deletion denied')
+        return original_unlink(path,*a,**kw)
+    monkeypatch.setattr(type(home),'unlink',unlink)
+    assert colophon.run(args(colophon,codex_home),now_ms=NOW,stderr_tty=False) == 1
+    assert entry.read_bytes() == original_bytes
+    assert compiled(home)['sessions'] == []
+    assert 'colophon: PermissionError: Synthetic stale cache deletion denied' in capsys.readouterr().err

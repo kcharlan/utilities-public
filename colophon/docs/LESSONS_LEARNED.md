@@ -544,3 +544,8 @@
   by the next process. With a valid marker, retain unreadable live entries as
   before. Regression:
   `test_unreadable_old_cache_entry_requires_trusted_marker`.
+- Concurrent compilers can enumerate the same stale cache entry before either
+  removes it. Treat its subsequent absence as successful pruning, while leaving
+  permission and other deletion errors visible. Regressions:
+  `test_concurrent_compilers_can_prune_same_stale_cache_entry` and
+  `test_stale_cache_prune_keeps_other_delete_errors_visible`.
