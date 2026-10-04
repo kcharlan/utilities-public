@@ -7498,6 +7498,39 @@ PAGE_JS = r"""
     return merged;
   }
   const activeMs = parts => mergedIntervals(parts).reduce((sum, [start, end]) => sum + end - start, 0);
+  function evidenceSum(values, currency = false) {
+    const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0 && (currency || Number.isSafeInteger(value));
+    if (!values.every(valid)) return null;
+    const sum = values.reduce((total, value) => total + value, 0);
+    return valid(sum) ? sum : null;
+  }
+  function provesUsage(selected, total, turn, operations, currency = false) {
+    if (evidenceSum([selected, total, turn], currency) === null || turn > total) return false;
+    // Buckets have no turn IDs. Conservation proves this particular turn only
+    // when the window cannot be filled entirely by all other own usage.
+    // Currency subtraction/addition needs a scale- and operation-count guard.
+    // Compiler unit-fold depth is absent from the payload, so also require a
+    // gap beyond the §5.6 representation tolerance, scaled to all operands.
+    // Neither .1 > (.3 - .2) nor accumulated unit-rounding proves inclusion.
+    const scale = selected + total + turn;
+    const margin = currency ? Math.max(4 * operations * (Number.EPSILON * scale + Number.MIN_VALUE), 1e-9 * scale + 1e-9) : 0;
+    return Number.isFinite(margin) && selected - total <= margin && selected - (total - turn) > margin;
+  }
+  function liveUsage(row, window) {
+    const buckets = windowBuckets(row, window), operations = row.buckets.length + row.turns.length + 4;
+    const volume = value => evidenceSum([value.input, value.output]);
+    const selected = evidenceSum(buckets.flatMap(b => [b[3], b[6]]));
+    const unpriced = evidenceSum(buckets.filter(b => b[8] === null).flatMap(b => [b[3], b[6]]));
+    const completeCosts = evidenceSum([...row.buckets.map(b => b[8]), ...row.turns.map(t => t.usage.cost_usd), row.outside_usage.cost_usd], true) !== null;
+    const cost = completeCosts ? evidenceSum(buckets.map(b => b[8]), true) : null;
+    let tokens = 0, costs = 0;
+    for (const turn of row.turns) if (turn.status === "running") {
+      if (provesUsage(selected, volume(row.own_usage), volume(turn.usage), operations)) tokens++;
+      if (provesUsage(cost, row.own_usage.cost_usd, turn.usage.cost_usd, operations, true) ||
+          provesUsage(unpriced, row.own_usage.unpriced_tokens, turn.usage.unpriced_tokens, operations)) costs++;
+    }
+    return {tokens, costs};
+  }
   function kpis(sessions, state, now) {
     const {window, rows, agents} = scope(sessions, state, now);
     const turns = rows.flatMap(row => row.turns.filter(turn => inWindow(turn.start_ms, window)));
@@ -7507,8 +7540,7 @@ PAGE_JS = r"""
     const running = (list, predicate) => list.flatMap(row => row.turns).filter(turn => turn.status === "running" && predicate(turn)).length;
     const contributesTime = turn => turnIntervals({turns: [turn]}, window).length > 0;
     const ownRunning = running(rows, turn => inWindow(turn.start_ms, window) || contributesTime(turn));
-    const usageRunning = [...rows, ...agents].reduce((sum, row) => sum + (windowBuckets(row, window).some(b => b[3] + b[6] > 0) ?
-      running([row], turn => (inWindow(turn.start_ms, window) || contributesTime(turn)) && turn.usage.input + turn.usage.output > 0) : 0), 0);
+    const usageRunning = [...rows, ...agents].map(row => liveUsage(row, window));
     return {sessions: rows.length, active_ms: activeMs(rows.flatMap(row => turnIntervals(row, window))),
       agent_ms: agents.reduce((sum, row) => sum + activeMs(turnIntervals(row, window)), 0), turns: turns.length,
       average_ms: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
@@ -7517,8 +7549,8 @@ PAGE_JS = r"""
       unpriced: usage.some(b => b[8] === null), aborted: turns.filter(t => t.status === "aborted").length,
       interrupted: turns.filter(t => t.status === "interrupted").length, abandoned: turns.filter(t => t.status === "abandoned").length,
       live: {sessions: ownRunning, active_ms: running(rows, contributesTime), agent_ms: running(agents, contributesTime),
-        turns: turns.filter(t => t.status === "running").length, tokens: usageRunning,
-        cost: data.meta.costs.available ? usageRunning : 0, aborted: 0}};
+        turns: turns.filter(t => t.status === "running").length, tokens: usageRunning.reduce((sum, value) => sum + value.tokens, 0),
+        cost: data.meta.costs.available ? usageRunning.reduce((sum, value) => sum + value.costs, 0) : 0, aborted: 0}};
   }
   function calendar(sessions, state, now) {
     const {window, rows, agents} = scope(sessions, state, now);

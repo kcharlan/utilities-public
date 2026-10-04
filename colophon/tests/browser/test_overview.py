@@ -352,6 +352,156 @@ def test_live_usage_tiles_require_running_usage_evidence(page_for,overview_paylo
     expect(page.locator('[data-kpi="cost"] .live')).to_have_count(0)
 
 
+def test_running_usage_outside_window_does_not_mark_completed_window_usage_live(page_for, overview_payload):
+    row = overview_payload['sessions'][1]
+    completed, running = row['turns']
+    completed.update(start_ms=ms('2030-01-15T09:00'), end_ms=ms('2030-01-15T09:10'), status='completed', duration_ms=10*MINUTE)
+    running.update(start_ms=ms('2030-01-14T11:00'), end_ms=NOW, duration_ms=25*60*MINUTE)
+    row.update(start_ms=running['start_ms'], end_ms=NOW)
+    row['buckets'] = [
+        [completed['start_ms']//900_000,'gpt-synthetic-alpha','standard',100,25,0,50,0,.1],
+        [running['start_ms']//900_000,'gpt-synthetic-alpha','standard',200,50,0,100,0,.2],
+    ]
+    completed['usage'] = usage([row['buckets'][0]])
+    running['usage'] = usage([row['buckets'][1]])
+    row['own_usage'] = usage(row['buckets'])
+    overview_payload.update(sessions=[row], subagents={})
+    page = page_for(overview_payload,hash='#p=custom&from=2030-01-15&to=2030-01-15')
+    totals = values(page,'kpis',overview_payload)
+    assert totals['tokens'] == 150 and totals['cost'] == .1
+    expect(page.locator('[data-kpi="active_ms"] .live')).to_be_visible()
+    assert totals['live']['tokens'] == 0 and totals['live']['cost'] == 0
+
+
+def test_running_untimed_usage_does_not_mark_completed_timed_usage_live(page_for,overview_payload):
+    row = overview_payload['sessions'][1]
+    completed, running = row['turns']
+    row['buckets'][0] = [completed['start_ms']//900_000,'gpt-synthetic-alpha','standard',100,25,0,50,0,.1]
+    row['buckets'][1] = [None,'gpt-synthetic-alpha','standard',200,50,0,100,0,.2]
+    completed['usage'] = usage([row['buckets'][0]])
+    running['usage'] = usage([row['buckets'][1]])
+    row['own_usage'] = usage(row['buckets'])
+    overview_payload.update(sessions=[row], subagents={})
+    page = page_for(overview_payload,hash='#p=custom&from=2030-01-15&to=2030-01-15')
+    totals=values(page,'kpis',overview_payload)
+    assert totals['tokens'] == 150 and totals['cost'] == .1
+    assert totals['live']['tokens'] == 0 and totals['live']['cost'] == 0
+
+
+@pytest.mark.parametrize(('entries','token_live','cost_live'), [
+    ([('completed',100,.1,'inside'),('running',200,0,'inside')],1,0),
+    ([('running',100,.1,'inside'),('running',100,.1,'outside')],0,0),
+    ([('running',200,.2,'inside'),('running',100,.1,'outside')],1,1),
+    ([('running',100,.1,'inside'),('running',200,.2,'inside')],2,2),
+    ([('completed',100,.1,'outside'),('running',200,None,'inside')],1,1),
+    ([('completed',100,None,'inside'),('running',200,None,'outside')],0,0),
+    ([('completed',100,None,'inside'),('running',200,None,'untimed')],0,0),
+    ([('completed',100,None,'inside'),('running',200,.2,'outside')],0,0),
+    ([('completed',100,None,'inside'),('running',200,.2,'inside')],1,0),
+], ids=['zero-price-running','ambiguous-two-runners','one-proven-runner','two-proven-runners',
+    'proven-unpriced','outside-unpriced','untimed-unpriced','closed-unpriced','unknown-own-cost'])
+def test_live_usage_requires_proof_for_each_running_turn(page_for,overview_payload,entries,token_live,cost_live):
+    row=overview_payload['sessions'][1]
+    template=copy.deepcopy(row['turns'][1])
+    row.update(turns=[],buckets=[],start_ms=ms('2030-01-14T11:00'),end_ms=NOW)
+    for n,(status,tokens,cost,location) in enumerate(entries):
+        turn=copy.deepcopy(template)
+        turn.update(id=f'synthetic-proof-turn-{n}',n=n+1,status=status,start_ms=row['start_ms'],end_ms=NOW,duration_ms=25*60*MINUTE)
+        at=ms('2030-01-15T09:00') if location=='inside' else ms('2030-01-14T11:00') if location=='outside' else None
+        bucket=[at//900_000 if at is not None else None,'gpt-synthetic-alpha','standard',tokens,0,0,0,0,cost]
+        turn['usage']=usage([bucket])
+        row['turns'].append(turn)
+        row['buckets'].append(bucket)
+    row['own_usage']=usage(row['buckets'])
+    overview_payload.update(sessions=[row],subagents={})
+    page=page_for(overview_payload,hash='#p=custom&from=2030-01-15&to=2030-01-15')
+    totals=values(page,'kpis',overview_payload)
+    inside=[b for b in row['buckets'] if b[0] is not None and b[0]*900_000>=ms('2030-01-15T00:00')]
+    assert totals['tokens']==sum(b[3] for b in inside)
+    assert totals['cost']==pytest.approx(sum(b[8] for b in inside if b[8] is not None),rel=0,abs=1e-12)
+    assert totals['unpriced']==any(b[8] is None for b in inside)
+    assert totals['live']['tokens']==token_live and totals['live']['cost']==cost_live
+    for key,count in [('tokens',token_live),('cost',cost_live)]:
+        expect(page.locator(f'[data-kpi="{key}"] .live')).to_have_count(int(count>0))
+        if count: expect(page.locator(f'[data-kpi="{key}"] .live')).to_contain_text(f'includes {count} running')
+
+
+@pytest.mark.parametrize('case',['ieee-boundary','null-running-cost','null-own-cost','negative','nonfinite','unsafe-tokens','exceeds-own-capacity'])
+def test_live_usage_unknown_evidence_and_cost_roundoff_do_not_prove_contribution(page_for,overview_payload,case):
+    row=overview_payload['sessions'][1]
+    row['buckets']=[
+        [ms('2030-01-15T09:00')//900_000,'gpt-synthetic-alpha','standard',100,0,0,0,0,.1],
+        [ms('2030-01-14T11:00')//900_000,'gpt-synthetic-alpha','standard',200,0,0,0,0,.2],
+    ]
+    row['own_usage']=usage(row['buckets'])
+    for turn,bucket in zip(row['turns'],row['buckets']): turn['usage']=usage([bucket])
+    # A compiler's decimal total may have the .3 representation. Subtraction
+    # makes .1 > (.3 - .2) true although the entire window cost is closed usage.
+    row['own_usage']['cost_usd']=.3
+    if case=='null-running-cost': row['turns'][1]['usage']['cost_usd']=None
+    if case=='null-own-cost': row['own_usage']['cost_usd']=None
+    if case=='negative': row['own_usage'].update(input=-1,cost_usd=-1,unpriced_tokens=-1)
+    if case=='unsafe-tokens': row['own_usage']['input']=2**53+2
+    if case=='exceeds-own-capacity':
+        row['own_usage'].update(input=50,cost_usd=.05)
+        row['turns'][1]['usage'].update(input=20,cost_usd=.02)
+    overview_payload.update(sessions=[row],subagents={})
+    page=page_for(overview_payload,hash='#p=custom&from=2030-01-15&to=2030-01-15')
+    if case=='nonfinite':
+        # Corrupt only the aggregate argument, keeping the embedded JSON valid.
+        totals=page.evaluate('''() => {
+            const payload=JSON.parse(document.getElementById('colophon-data').textContent);
+            payload.sessions[0].own_usage.input=Infinity;
+            payload.sessions[0].own_usage.cost_usd=Infinity;
+            return window.__colophonTest.aggregates.kpis(payload.sessions,window.__colophonTest.state.readState(),payload.meta.generated_at_ms);
+        }''')
+    else:
+        totals=values(page,'kpis',overview_payload)
+    assert totals['tokens']==100 and totals['cost']==.1
+    assert totals['live']['tokens']==0 and totals['live']['cost']==0
+
+
+def test_proven_running_usage_needs_no_invented_turn_timestamp(page_for,overview_payload):
+    row=overview_payload['sessions'][1]
+    row['turns'][1].update(start_ms=None,end_ms=None,duration_ms=None)
+    overview_payload.update(sessions=[row],subagents={})
+    page=page_for(overview_payload)
+    totals=values(page,'kpis',overview_payload)
+    assert totals['tokens']==750 and totals['cost']==.5
+    assert totals['live']['tokens']==1 and totals['live']['cost']==1
+    assert totals['live']['active_ms']==0 and totals['live']['sessions']==0 and totals['live']['turns']==0
+    expect(page.locator('[data-kpi="tokens"] .live')).to_be_visible()
+    expect(page.locator('[data-kpi="cost"] .live')).to_be_visible()
+
+
+@pytest.mark.parametrize('unit_count',[1000,10000])
+def test_live_cost_rejects_compiler_unit_accumulation_roundoff(page_for,overview_payload,unit_count):
+    row=overview_payload['sessions'][1]
+    closed_cost=running_cost=own_cost=0.0
+    # Mirror _usage_payload's independent per-unit += folds: unit counts are
+    # not stored in the payload, so bucket/turn counts cannot bound this error.
+    for _ in range(unit_count):
+        closed_cost+=.1
+        own_cost+=.1
+    for _ in range(unit_count):
+        running_cost+=.2
+        own_cost+=.2
+    assert closed_cost-(own_cost-running_cost)>0
+    row['buckets']=[
+        [ms('2030-01-15T09:00')//900_000,'gpt-synthetic-alpha','standard',unit_count,0,0,0,0,closed_cost],
+        [ms('2030-01-14T11:00')//900_000,'gpt-synthetic-alpha','standard',unit_count,0,0,0,0,running_cost],
+    ]
+    row['own_usage']=usage(row['buckets'])
+    row['own_usage']['cost_usd']=own_cost
+    for turn,bucket in zip(row['turns'],row['buckets']): turn['usage']=usage([bucket])
+    overview_payload.update(sessions=[row],subagents={})
+    page=page_for(overview_payload,hash='#p=custom&from=2030-01-15&to=2030-01-15')
+    totals=values(page,'kpis',overview_payload)
+    assert totals['tokens']==unit_count and totals['cost']==closed_cost
+    assert totals['live']['tokens']==0 and totals['live']['cost']==0
+    expect(page.locator('[data-kpi="cost"] .live')).to_have_count(0)
+
+
 @pytest.mark.parametrize('target',['tile-subline','tile-delta','recent-metrics'])
 def test_complete_tile_and_recent_row_hit_areas_drill(page_for,overview_payload,target):
     page=page_for(overview_payload)

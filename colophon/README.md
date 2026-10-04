@@ -23,6 +23,13 @@ membership. The snapshot instant defines “now,” keeping an offline page stab
 The model tooltip lists recorded pricing references in matching sessions across
 all dates; the payload does not map individual buckets to rate periods. Numeric
 costs with missing references retain their estimate and show “rate period unknown.”
+Token and cost LIVE markers count only running turns whose contribution to the
+selected window is proved by conserved own usage. A timed bucket and a running
+turn in the same session do not establish that relationship. Numeric cost and
+unpriced-token contributions are proved separately; ambiguous usage has no marker.
+This usage proof needs no inferred turn timestamp; time figures still require
+their own known intervals. Numeric cost evidence must exceed the documented
+currency representation tolerance as well as local arithmetic error.
 
 ## Install
 

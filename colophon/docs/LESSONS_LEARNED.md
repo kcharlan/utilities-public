@@ -1,5 +1,30 @@
 # Lessons learned
 
+- Bucket timestamps and all-dates turn usage cannot establish each other's
+  provenance. A running turn contributes to window tokens only when the window
+  volume exceeds all own volume minus that particular turn's volume; count each
+  independently proved turn once. Prove numeric cost separately with complete
+  nonnegative finite costs and an error margin scaled by magnitude and operation
+  count: `.1 > (.3 - .2)` can be true without a contribution. Null costs remain
+  unknown, while conserved unpriced-token volume can independently prove a
+  contribution to `+ unpriced`. Negative, nonfinite and unsafe integer quantities
+  provide no evidence, and a window exceeding all own capacity is inconsistent
+  rather than proof. Conserved usage needs no invented running-turn timestamp;
+  keep separate time-based markers dependent on known intervals. Regressions:
+  `test_running_usage_outside_window_does_not_mark_completed_window_usage_live`,
+  `test_running_untimed_usage_does_not_mark_completed_timed_usage_live`,
+  `test_live_usage_requires_proof_for_each_running_turn`, and
+  `test_live_usage_unknown_evidence_and_cost_roundoff_do_not_prove_contribution`.
+  Unknown clock control: `test_proven_running_usage_needs_no_invented_turn_timestamp`.
+  `_usage_payload` folds cost per usage unit, whose count is absent from the
+  page schema. Bucket/turn counts therefore bound only local arithmetic, not
+  compiler summation error. Require numeric evidence beyond both that local
+  bound and §5.6's `1e-9 × cost + 1e-9` representation tolerance, conservatively
+  scaled to the sum of comparison operands. Preserve displayed totals exactly;
+  differences inside that threshold remain insufficient LIVE evidence.
+  Regression: `test_live_cost_rejects_compiler_unit_accumulation_roundoff` uses
+  independent 1,000- and 10,000-unit compiler-style folds.
+
 - A null transient rate date is unknown, not the curated initial baseline.
   Render the source-specific meaning without changing the stored clock.
   Regression: `test_model_tooltip_uses_recorded_refs_without_inventing_bucket_attribution[override]`.
