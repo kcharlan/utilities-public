@@ -3857,7 +3857,7 @@ class RolloutShape:
 
 # CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift normalizedSessionID (222–227).
 def normalized_session_id(value):
-    return unicodedata.normalize('NFC', _codex_trim(value)) or None if value is not None else None
+    return _codex_trim(value) or None if value is not None else None
 
 
 # CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift totalsContainUsage (218–220).
@@ -3868,12 +3868,20 @@ def totals_contain_usage(totals):
 # CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift classify(observedSessionIDs:) (41–58).
 def classify_subagent_session_ids(leaf_session_id, observed_session_ids):
     leaf = normalized_session_id(leaf_session_id)
-    ancestors = [normalized_session_id(value) for value in observed_session_ids
-                 if normalized_session_id(value) != leaf]
+    leaf_identity = _codex_session_identity(leaf) if leaf is not None else None
+    ancestors = []
+    distinct = {}
+    for value in observed_session_ids:
+        normalized = normalized_session_id(value)
+        identity = _codex_session_identity(normalized) if normalized is not None else None
+        if identity != leaf_identity:
+            ancestors.append(normalized)
+            if normalized is not None:
+                # Swift Set keeps the first source spelling for this identity.
+                distinct.setdefault(identity, normalized)
     embedded = bool(ancestors) or (leaf is None and len(observed_session_ids) > 1)
-    distinct = {value for value in ancestors if value is not None}
     return RolloutShape('copied_prefix' if embedded else 'independent',
-                        inferred_parent_session_id=next(iter(distinct)) if len(distinct) == 1 else None)
+                        inferred_parent_session_id=next(iter(distinct.values())) if len(distinct) == 1 else None)
 
 
 # CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift classify(observations:) (60–207).
@@ -3885,6 +3893,7 @@ def classify_subagent_rollout(leaf_session_id: str | None, observations: list,
     if metadata_shape.counter_semantics != 'copied_prefix' and not can_propose_parent_confirmed_suffix:
         return metadata_shape
     leaf = normalized_session_id(leaf_session_id)
+    leaf_identity = _codex_session_identity(leaf) if leaf is not None else None
     last_raw_totals = None
     pending_turn_context = None
     owned_suffix = None
@@ -3897,8 +3906,9 @@ def classify_subagent_rollout(leaf_session_id: str | None, observations: list,
     for observation in observations:
         tag, _, line_index = observation[:3]
         if tag == 'M':
-            identity = normalized_session_id(observation[4].get('session_id'))
-            embedded = observed_authoritative_metadata and (leaf is None or identity != leaf)
+            normalized = normalized_session_id(observation[4].get('session_id'))
+            identity = _codex_session_identity(normalized) if normalized is not None else None
+            embedded = observed_authoritative_metadata and (leaf is None or identity != leaf_identity)
             observed_authoritative_metadata = True
             if embedded:
                 owned_suffix = None

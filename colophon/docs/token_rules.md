@@ -252,9 +252,9 @@ Rows are compared in emission order before independent model/day totals.
 | `InheritedTotalsResolver.inherited_totals` | `CostUsageScanner.swift`, `CodexInheritedTotalsResolver.inheritedTotals(for:atOrBefore:)` (1692–1734) | Port cutoff and recursion guard over cached streams. |
 | `InheritedTotalsResolver.inherited_totals_from` | `CostUsageScanner.swift`, private `inheritedTotals(from:cutoffTimestamp:cutoffDate:)` (1736–1792) | Port; replay from the first snapshot, without checkpoints or a monotonic fast path. |
 | `InheritedTotalsResolver.snapshot_resolution` | `CostUsageScanner.swift`, `snapshotResolution`, `cachedSnapshotResolution` (1847–2003); `CostUsageScanner+ForkCoverage.swift`, `isUnresolvedMissingParentFork` (43–46); `CostUsageScanner+CacheHelpers.swift`, `codexForkBaselineDependencyKey` (1297–1308); `CostUsageCacheModels.swift`, `hasBufferedCodexForkRetryLines` (381–391) | Adapt production resolution to a per-session memo; assert the stream key matches parsed identity. Missing-parent diagnostics use `missing`. Snapshot withholding follows source, not prose: `isUnresolvedMissingParentFork` reads only the parent's used dependency key, so a retained resolved key still offers snapshots after the child's own parse is unresolved; the result's `has_unresolved_fork_baseline` stays a diagnostic and does not withhold. |
-| `classify_subagent_session_ids` | `CodexSubagentRolloutShape.swift`, `classify(leafSessionID:observedSessionIDs:)` (41–58) | Port the metadata overload separately. |
+| `classify_subagent_session_ids` | `CodexSubagentRolloutShape.swift`, `classify(leafSessionID:observedSessionIDs:)` (41–58) | Port the metadata overload separately; canonical ancestor identity retains the first trimmed source spelling. |
 | `classify_subagent_rollout` | `CodexSubagentRolloutShape.swift`, `classify(leafSessionID:observations:hasExplicitParent:)` (60–207) | Port; observations use upstream `uidx` positions. |
-| `same_concrete_session_id`, `totals_contain_usage`, `normalized_session_id` | `CodexSubagentRolloutShape.swift`, `sameConcreteSessionID`, `totalsContainUsage`, `normalizedSessionID` (209–227) | Port; canonical Swift string equality is represented with NFC for identity comparisons. |
+| `same_concrete_session_id`, `totals_contain_usage`, `normalized_session_id` | `CodexSubagentRolloutShape.swift`, `sameConcreteSessionID`, `totalsContainUsage`, `normalizedSessionID` (209–227) | Port; normalization returns trimmed source text, while NFC keys represent canonical Swift string equality only in identity comparisons. |
 | `RolloutShape`, `OwnedSuffix`, `OwnedSuffixCandidate` | `CodexSubagentRolloutShape.swift`, nested result structs (14–38) | Dataclass representation. |
 | `_CodexUsageParser`, `parse_codex_usage` | `CostUsageScanner.swift`, `parseCodexFileCancellable` (4177–5264) | A small class retains the closure's mutable locals; consume cached observations instead of file bytes. |
 | `_CodexUsageParser.unix_milliseconds`, `_round_swift_ms` | `CostUsageScanner.swift`, nested `unixMilliseconds` (4262–4267) | Port rounded parsed-Date milliseconds. |
@@ -297,3 +297,10 @@ library compatibility without adding trimming, case folding or compatibility
 normalization. Returned metadata and diagnostic tuples retain their original
 spellings. A4's newest-mtime and ascending-path selection applies once per
 canonical identity; the separate rollout classifier's trimming stays separate.
+
+The rollout classifier's `normalizedSessionID` (222–227) trims without
+rewriting Unicode spelling. Both classifier overloads compare canonical keys,
+and the ancestor set retains the first trimmed spelling of a sole distinct
+identity. Inferred parent IDs therefore keep that spelling in the classifier
+and usage result. Equivalent leaf metadata does not create an ancestor or
+erase a suffix boundary. Explicit parent metadata remains source text.

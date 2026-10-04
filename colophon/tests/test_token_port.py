@@ -178,6 +178,66 @@ def _withholding_stream(identity, tokens, output, parent=None, fork_ts=None):
         'unconsumed_tail': False}
 
 
+def test_normalized_session_id_retains_trimmed_source_spelling(colophon):
+    # RolloutShape.swift 222–227 trims only; Swift canonical equality belongs
+    # to comparisons, rather than rewriting the returned source string.
+    assert colophon.normalized_session_id(' synthetic-cafe\u0301\n') == 'synthetic-cafe\u0301'
+    assert colophon.normalized_session_id(None) is None
+    assert colophon.normalized_session_id(' \n') is None
+
+
+@pytest.mark.parametrize('first,second', [
+    ('synthetic-cafe\u0301', 'synthetic-caf\u00e9'),
+    ('synthetic-caf\u00e9', 'synthetic-cafe\u0301'),
+])
+def test_classifier_canonical_ancestors_retain_first_spelling(colophon, first, second):
+    # RolloutShape.swift 44–57: Set compares canonical identity, while its
+    # sole representative retains the first inserted, trimmed ancestor string.
+    shape = colophon.classify_subagent_session_ids(
+        'synthetic-leaf', ['synthetic-leaf', ' ' + first + '\n', second])
+    assert shape.counter_semantics == 'copied_prefix'
+    assert shape.inferred_parent_session_id == first
+
+
+def test_classifier_canonical_leaf_is_not_an_ancestor(colophon):
+    shape = colophon.classify_subagent_session_ids(
+        'synthetic-caf\u00e9', [' synthetic-cafe\u0301 ', 'synthetic-caf\u00e9'])
+    assert shape.counter_semantics == 'independent'
+    assert shape.inferred_parent_session_id is None
+    assert colophon.same_concrete_session_id('synthetic-caf\u00e9', ' synthetic-cafe\u0301 ')
+
+
+def test_classifier_and_usage_result_retain_inferred_parent_spelling(colophon):
+    leaf = {'session_id': 'synthetic-leaf', 'is_subagent': True}
+    ancestor = 'synthetic-cafe\u0301'
+    observations = [['M', 0, 0, 0, leaf],
+                    ['M', 1, 1, 1, {'session_id': ' ' + ancestor + '\n'}]]
+    # Both classify overloads and parseCodexFileCancellable expose the source
+    # normalizedSessionID, so inferred fork metadata retains this spelling.
+    shape = colophon.classify_subagent_rollout('synthetic-leaf', observations, False)
+    result = colophon.parse_codex_usage(
+        {'observations': [['P', leaf]] + observations, 'unconsumed_tail': False}, resolver=None)
+    assert shape.counter_semantics == 'copied_prefix'
+    assert shape.inferred_parent_session_id == ancestor
+    assert result.forked_from_id == ancestor
+
+
+def test_classifier_canonical_leaf_metadata_preserves_suffix_candidate(colophon):
+    ts = '2030-01-07T12:00:00Z'
+    observations = [['M', 0, 0, 0, {'session_id': 'synthetic-caf\u00e9'}],
+                    ['T', 1, 1, 1, ts, None, None, [0, 0, 0, None], [10, 0, 1, None]],
+                    ['M', 2, 2, 2, {'session_id': ' synthetic-cafe\u0301 '}]]
+    # RolloutShape.swift 109–113 must not treat canonically equal leaf metadata
+    # as an embedded ancestor and erase the inherited-opening boundary.
+    shape = colophon.classify_subagent_rollout('synthetic-caf\u00e9', observations, True)
+    assert shape.counter_semantics == 'independent'
+    candidate = shape.owned_suffix_candidate
+    assert candidate is not None
+    assert candidate.owned_suffix.start_line_index == 1
+    assert candidate.parent_totals_at_boundary == colophon.Totals(10, 0, 1, None)
+    assert candidate.is_locally_confirmed
+
+
 def test_retained_parent_key_offers_snapshots(colophon):
     ts = '2030-01-07T12:00:00Z'
     parent = _withholding_stream('synthetic-parent', 10, 1)

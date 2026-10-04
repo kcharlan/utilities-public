@@ -370,3 +370,15 @@
   `test_canonical_resolver_recursion_guard_stops_equivalent_identity`,
   `test_canonical_parent_dependency_retains_offered_snapshots`, and
   `test_canonical_parent_dependency_resolves_grandchild_usage`.
+- Canonical equality must not rewrite a public normalized string.
+  `normalizedSessionID` (RolloutShape.swift 222–227) returns trimmed source
+  text, and its inferred-parent consumers expose that spelling. Compare NFC
+  keys in both classifier overloads and deduplicate ancestors by those keys,
+  retaining the first trimmed source value. A trim-only correction without
+  canonical comparison would invent ancestors or erase a valid suffix boundary
+  when leaf metadata uses an equivalent spelling. Regressions:
+  `test_normalized_session_id_retains_trimmed_source_spelling`,
+  `test_classifier_canonical_ancestors_retain_first_spelling`,
+  `test_classifier_canonical_leaf_is_not_an_ancestor`,
+  `test_classifier_and_usage_result_retain_inferred_parent_spelling`, and
+  `test_classifier_canonical_leaf_metadata_preserves_suffix_candidate`.
