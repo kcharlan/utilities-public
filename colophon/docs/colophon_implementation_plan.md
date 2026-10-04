@@ -471,10 +471,11 @@ SubagentRow = SessionRow minus "kind", plus {"parent_id", "depth", "agent_path",
 Turn = {"id", "n", "status": "completed" | "aborted" | "interrupted" | "running" | "abandoned",
   "start_ms" | null, "end_ms" | null, "duration_ms" | null, "ttft_ms" | null,
   "flags": [TurnFlag], "requests": [Request], "final_answer": {"text", "voice": bool} | null,
+  "voice_replies": [{"at_ms" | null, "text"}],
   "tools": ToolCounts, "usage": Usage, "spawned": [id], "used": [id]}
 
 Request = {"at_ms" | null, "text", "kind": "text" | "answer" | "voice",
-  "before_turn": bool, "images": int, "time_unreliable": bool}
+  "before_turn": bool, "images": int, "time_unreliable": bool, "voice_reply": str | null}
 
 Usage = {"input", "cached_input", "cache_write", "output", "reasoning",
   "cost_usd" | null, "unpriced_tokens", "priced_by": [[model_key, period_index, "rates" | "priority"], ...]}
@@ -496,15 +497,31 @@ Diagnostics = {
   "unresolved_history_boundaries": [id], "fork_baseline_unavailable": [id], "duplicate_session_ids": [{"id", "paths": [str]}],
   "unpriced_models": [{"model", "tokens"}], "history_begins": [{"model", "from_ms"}],
   "priority_without_multiplier": [{"model", "input_tokens"}],
-  "unrecorded_catalog_rates": [model], "ledger": [{"level": "error" | "warning", "message"}],
+  "unrecorded_catalog_rates": [model], "untimed_usage": [{"model", "tokens"}],
+  "ledger": [{"level": "error" | "warning", "message"}],
   "workspaces_file": [str], "catalog": [str], "trace_db": [str],
   "page_size_bytes": int, "page_size_over_limit": bool}
 ```
 
 **Notes.**
+- **User amendments (2026-10-04, Task 18).** Always emit `Request.voice_reply`
+  (text or null) and `Turn.voice_replies` (an array, empty when absent). Paired
+  voice replies remain attached to their request, including before-turn requests.
+  Unprompted replies retain their known turn and original clock (or null).
+  `session_voice.replies` is populated only for sessions with no turns.
+  Cached paired replies have no independent clock; do not invent one.
+  Existing final-answer precedence and exclusions remain unchanged.
+- **Unknown usage time (user-approved, 2026-10-04).** With `at_ms: null`, follow
+  upstream's nil `pricingDate`: use current resolved catalog/bundled rates and
+  current static Fast multiplier/cap in a transient period; do not select dated
+  ledger entries or invent a timestamp. The bucket is null. `untimed_usage`
+  sums input plus output tokens by logged normalized model for these priced
+  units, reported as "priced at current rates: usage has no timestamp". This
+  follows upstream, rather than adding an approved pricing difference.
 - `idle_ms` is the owned span minus the union of the session's active intervals (spec §5.2, "Span and idle gaps are reported separately"). `user_span_ms` runs from the first to the last kept user request, and is `null` when any user request time is unreliable (spec §5.2, collapsed timestamps).
 - `Workspace.keys` lists the normalized origins and paths that map to it. `alias` is the alias name when an alias matched.
-- `bucket` is `floor(instant_ms / 900000)`. `tier` is `"priority"` or `"standard"`.
+- `bucket` is `floor(instant_ms / 900000)`, or null for unknown-time usage.
+  `tier` is `"priority"` or `"standard"`.
 - `Flag` ∈ {`live`, `aborted`, `interrupted`, `abandoned`, `uncertain_timing`, `collapsed_timestamps`, `history_unresolved`, `orphaned`, `forked`, `fork_baseline_unavailable`, `no_session_meta`}.
 - `TurnFlag` ∈ {`live`, `collapsed`, `reported_duration`, `unknown_duration`, `start_from_completion`}.
 - `priced_by` entries are `[model_key, period_index, role]`, where `role` is `"rates"` or `"priority"`. A priority unit lists both the rates period and the period that supplied its multiplier, `history.pick(n_priced, t)`. They differ for A4 override step 2.
@@ -2202,6 +2219,8 @@ All page JavaScript lives in `PAGE_JS`, as one IIFE with `"use strict"`.
     - follow-ups beyond the first two collapse under "+ n follow-ups sent while it worked";
     - text longer than 6 lines is clamped behind "more";
     - voice requests are marked; a voice-reply answer is marked "voice reply";
+      the Task 18 voice fields preserve source associations, but require no
+      additional reader UI beyond the existing voice-reply final answer;
     - failures in tool chips are amber;
     - a subagent row expands to a miniature card with its timing, tools, tokens and final answer;
     - interaction-only turns show "also used: <label>";

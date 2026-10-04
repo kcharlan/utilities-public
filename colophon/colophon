@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 import unicodedata
+import webbrowser
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -49,6 +50,8 @@ UPSTREAM_COMMIT = "3bbf6bc48"
 TAIL_FINGERPRINT_BYTES = 4096
 UPSTREAM_MAX_LINE_BYTES = 262144
 PAGE_SIZE_WARN_BYTES = 20 * 1024 * 1024
+OPEN_IN_CODEX_SUPPORT = {"live": True, "archived": True, "subagent": True}
+CONTINUE_IN_CLI_SUPPORT = {"live": True, "archived": True, "subagent": True}
 
 
 # ===== 2. Text and tool rule lists =====
@@ -3130,6 +3133,7 @@ class ParseCache:
         self._committed = False
         self._abort_cleanup_error: BaseException | None = None
         self.finished = False
+        self._read_enabled = True
 
     @classmethod
     def open(cls, home: Path, *, rebuild: bool) -> ParseCache:
@@ -3158,15 +3162,24 @@ class ParseCache:
         if rebuild:
             cache.directory.mkdir(mode=0o700)
         else:
+            marker_missing = False
             try:
                 valid = (installed / "FORMAT").read_text() == cache._format()
+            except FileNotFoundError:
+                valid = False
+                marker_missing = True
             except (OSError, UnicodeError):
                 valid = False
-            if not valid and installed.exists():
+            # A concurrent first run can be between mkdir and FORMAT install.
+            # Only an existing mismatched marker proves an obsolete cache.
+            if not valid and not marker_missing and installed.exists():
                 shutil.rmtree(installed)
+            cache._read_enabled = valid
             ensure_runtime_home(installed)
         try:
-            if rebuild or not (cache.directory / "FORMAT").exists():
+            # An installed cache without a marker is untrusted for every
+            # concurrent reader until all entries are replaced at commit.
+            if rebuild:
                 atomic_write_bytes(cache.directory / "FORMAT", cache._format().encode())
         except BaseException as failure:
             cache._abort_after_failure(failure)
@@ -3182,7 +3195,7 @@ class ParseCache:
         return hashlib.sha256(path.encode("utf-8")).hexdigest() + ".json"
 
     def get(self, log: LogFile) -> dict | None:
-        if self.rebuild or self.finished:
+        if self.rebuild or self.finished or not self._read_enabled:
             return None
         path = codex_path_key(log.path)
         try:
@@ -3264,6 +3277,8 @@ class ParseCache:
                 # Recovery failures must not replace the original interrupt.
                 raise
         else:
+            if not self._read_enabled:
+                atomic_write_bytes(self.directory / "FORMAT", self._format().encode())
             self._committed = True
             self.buffer.clear()
             self.finished = True
@@ -3589,6 +3604,7 @@ class SessionModel:
     agent_path: str | None = None
     created_at_ms: int | float | None = None
     forked_from: str | None = None
+    voice_pairs: list[tuple[dict, dict]] = field(default_factory=list)
 
 
 @dataclass
@@ -3697,6 +3713,7 @@ def _assemble_session(identifier: str, records: list[dict], metadata: CodexMetad
     by_key = {turn.id: turn for turn in turns}
     requests = []
     session_voice = {"requests": [], "replies": []}
+    voice_pairs = []
     tools = _empty_tool_counts()
     if not unresolved:
         final_answers = _final_answer_index(record)
@@ -3715,6 +3732,9 @@ def _assemble_session(identifier: str, records: list[dict], metadata: CodexMetad
             request = {"at_ms": voice["at_ms"], "text": voice["text"], "kind": "voice",
                        "before_turn": voice["before_turn"], "images": 0,
                        "time_unreliable": collapsed}
+            # Preserve explicit source association independently of nullable
+            # clocks, repeated text, or subsequent display ordering.
+            voice_pairs.append((request, voice))
             requests.append(request)
             if voice["turn_key"] in by_key:
                 by_key[voice["turn_key"]].requests.append(request)
@@ -3764,7 +3784,8 @@ def _assemble_session(identifier: str, records: list[dict], metadata: CodexMetad
         user_span = requests[-1]["at_ms"] - requests[0]["at_ms"]
     return SessionModel(identifier, record, records, record["archived"], record["key"]["path"],
                         meta, display_title(full_title), full_title, title_source, turns, flags,
-                        session_voice, tools, start, end, idle, user_span, is_subagent, db_info=db_info)
+                        session_voice, tools, start, end, idle, user_span, is_subagent,
+                        db_info=db_info, voice_pairs=voice_pairs)
 
 
 def build_corpus(records: list[dict], metadata: CodexMetadata, snapshot_ms: int) -> Corpus:
@@ -5562,6 +5583,7 @@ class UsageUnit:
     source: Literal['record', 'token_count', 'bare']
     cost_usd: float | None = None
     period: tuple[str, int] | None = None
+    priority_period: tuple[str, int] | None = None
 
 
 # CodexBar 3bbf6bc48: CacheHelpers.swift497–555, joined String equality.
@@ -6774,6 +6796,326 @@ def fetch_catalog(url: str, cache_path: Path, *, offline: bool, refresh: bool,
             conn.close()
 
 
+# ===== 17. Compile =====
+@dataclass
+class PricingReport:
+    periods: dict[str, list[dict]] = field(default_factory=dict)
+    unpriced: dict[str, int] = field(default_factory=dict)
+    history_begins: dict[str, int] = field(default_factory=dict)
+    priority_without_multiplier: dict[str, int] = field(default_factory=dict)
+    unrecorded: set[str] = field(default_factory=set)
+    untimed: dict[str, int] = field(default_factory=dict)
+
+
+def _period_payload(entry: dict) -> dict:
+    return {"effective_from_ms": _ledger_instant(entry["effective_from"])
+            if entry.get("effective_from") is not None else None,
+            "source": entry["source"], "per_million": entry["per_million"],
+            "long_context": entry.get("long_context"), "priority": entry.get("priority")}
+
+
+def _override_key(raw: str, normalized: str, index: ModelsDevIndex | None) -> str | None:
+    if index is None:
+        return None
+    raw_match = _history_catalog_match(raw, index)
+    normalized_match = _history_catalog_match(normalized, index)
+    if raw_match is not None and (normalized_match is None or
+            raw_match["normalized_model_id"] != normalized_match["normalized_model_id"]):
+        return f'catalog:{raw_match["normalized_model_id"]}|{normalized}'
+    return None
+
+
+def price_units(corpus: Corpus, history: PriceHistory, index: ModelsDevIndex | None,
+                *, costs_available: bool) -> PricingReport:
+    """PricingRows4–45/87–95 with the approved dated-history adaptation."""
+    report = PricingReport(periods={key: [_period_payload(entry) for entry in entries]
+                                   for key, entries in history._entries.items()})
+
+    def picked(key, at):
+        pick = history.pick(key, at)
+        if pick is not None and pick.before_first:
+            report.history_begins[key] = _ledger_instant(pick.entry["effective_from"])
+        return pick
+
+    def rates(key, source_model, at, *, current=False, priority=None):
+        pick = None if current else picked(key, at)
+        if pick is not None:
+            return pick.entry, (key, pick.period_index)
+        entry = resolve_rates(source_model, index)
+        if entry is None:
+            return None, None
+        transient = dict(entry, source="transient", effective_from=None)
+        if priority is not None:
+            transient["priority"] = priority
+        periods = report.periods.setdefault(key, [])
+        period = _period_payload(transient)
+        if period not in periods:
+            periods.append(period)
+        if index is not None and _history_catalog_match(source_model, index) is not None:
+            report.unrecorded.add(key)
+        return transient, (key, periods.index(period))
+
+    for session in corpus.sessions.values():
+        for unit in session.units:
+            unit.cost_usd = unit.period = unit.priority_period = None
+            report.periods.setdefault(unit.model, [])
+            if not costs_available:
+                continue
+            trace = (unit.priority or {}).get("model")
+            override = (isinstance(trace, str) and codex_api_fast_multiplier(trace) is not None)
+            raw = trace if override else unit.model_raw
+            normalized = normalize_codex_model(raw)
+            if normalized == "unknown":
+                report.unpriced[unit.model] = report.unpriced.get(unit.model, 0) + unit.input + unit.output
+                continue
+            if unit.at_ms is None:
+                # PricingRows passes nil pricingDate upstream: resolve today's
+                # rates and static Fast policy, never select a dated ledger.
+                multiplier = codex_api_fast_multiplier(raw) if unit.tier == "priority" else None
+                priority = ({"multiplier": multiplier, "max_input_tokens":
+                    None if normalized == "gpt-6-astra" else 272_000} if multiplier is not None else None)
+                key = _override_key(raw, normalized, index) if override else None
+                entry, unit.period = rates(key or normalized, raw if override else normalized,
+                    None, current=True, priority=priority)
+                if entry is None:
+                    report.unpriced[unit.model] = report.unpriced.get(unit.model, 0) + unit.input + unit.output
+                    continue
+                report.untimed[unit.model] = report.untimed.get(unit.model, 0) + unit.input + unit.output
+                base = cost_usd(entry, input=unit.input, cached=unit.cached, output=unit.output)
+                unit.cost_usd = base
+                if unit.tier == "priority":
+                    priority_cost = priority_cost_usd(entry, priority, input=unit.input,
+                        cached=unit.cached, output=unit.output)
+                    if priority_cost is not None:
+                        unit.cost_usd = max(base, priority_cost)
+                    if priority is not None:
+                        unit.priority_period = unit.period
+                    else:
+                        report.priority_without_multiplier[normalized] = report.priority_without_multiplier.get(normalized, 0) + unit.input
+                continue
+            at = unit.at_ms
+            cutoff = HISTORICAL_CUTOFFS.get(normalized)
+            historical = cutoff is not None and unit.timestamp_unix_ms is not None and unit.timestamp_unix_ms < cutoff
+            rates_at = at if cutoff is None or unit.timestamp_unix_ms is not None else max(at, cutoff)
+            key = _override_key(raw, normalized, index) if override and not historical else None
+            if key is not None:
+                pick = history.pick(key, rates_at)
+                if pick is not None and pick.before_first:
+                    key = None
+            entry, unit.period = rates(key or normalized, raw if key else normalized, rates_at)
+            if entry is None:
+                report.unpriced[unit.model] = report.unpriced.get(unit.model, 0) + unit.input + unit.output
+                continue
+            base = cost_usd(entry, input=unit.input, cached=unit.cached, output=unit.output)
+            unit.cost_usd = base
+            if unit.tier == "priority":
+                pick = picked(normalized, at)
+                priority = pick.entry.get("priority") if pick is not None else None
+                if pick is not None and priority is not None:
+                    unit.priority_period = (normalized, pick.period_index)
+                priority_cost = priority_cost_usd(entry, priority, input=unit.input,
+                                                  cached=unit.cached, output=unit.output)
+                if priority_cost is not None:
+                    unit.cost_usd = max(base, priority_cost)
+                elif priority is None:
+                    report.priority_without_multiplier[normalized] = (
+                        report.priority_without_multiplier.get(normalized, 0) + unit.input)
+    return report
+
+
+def _usage_payload(units: list[UsageUnit], *, costs_available: bool) -> dict:
+    usage = {key: 0 for key in ("input", "cached_input", "cache_write", "output", "reasoning")}
+    priced_by = set()
+    cost = 0.0
+    unpriced = 0
+    has_unknown = not costs_available
+    for unit in units:
+        for key, value in (("input", unit.input), ("cached_input", unit.cached),
+                           ("cache_write", unit.cache_write), ("output", unit.output),
+                           ("reasoning", unit.reasoning or 0)):
+            usage[key] += value
+        if unit.cost_usd is None:
+            has_unknown = True
+            if costs_available:
+                unpriced += unit.input + unit.output
+        else:
+            cost += unit.cost_usd
+        if unit.period is not None:
+            priced_by.add((*unit.period, "rates"))
+        if unit.priority_period is not None:
+            priced_by.add((*unit.priority_period, "priority"))
+    return dict(usage, cost_usd=None if has_unknown else cost,
+                unpriced_tokens=unpriced, priced_by=[list(period) for period in sorted(priced_by)])
+
+
+def build_payload(corpus: Corpus, workspaces: dict, pricing: PricingReport,
+                  meta_inputs: dict) -> dict:
+    """Emit only the schema-locked page contract, retaining source identities."""
+    source_home = Path(codex_path_key(Path(meta_inputs["codex_home"])))
+    available = meta_inputs.get("costs_available", True)
+    id_map = {}
+    for session in corpus.sessions.values():
+        identifier = session.id
+        if "no_session_meta" in session.flags and identifier.startswith("file:"):
+            identifier = "file:" + str(Path(session.record["key"]["path"]).relative_to(source_home))
+        id_map[session.id] = identifier
+    rows, subagents = [], {}
+    for session in corpus.sessions.values():
+        meta = session.meta or {}
+        git = meta.get("git") or {}
+        voice_facts = session.record["voice"]
+        voice_reply_by_identity = {id(request): fact["reply"] for request, fact in session.voice_pairs}
+
+        def requests(items, turn_key):
+            return [dict(request, voice_reply=voice_reply_by_identity.get(id(request)))
+                    for request in items]
+
+        turns = []
+        for turn in session.turns:
+            turns.append({"id": turn.id, "n": turn.n, "status": turn.status,
+                "start_ms": turn.start_ms, "end_ms": turn.end_ms,
+                "duration_ms": turn.duration_ms, "ttft_ms": turn.ttft_ms,
+                "flags": sorted(turn.flags), "requests": requests(turn.requests, turn.id),
+                "final_answer": turn.final_answer,
+                "voice_replies": [{"at_ms": reply["at_ms"], "text": reply["text"]}
+                                  for reply in voice_facts["replies"] if reply["turn_key"] == turn.id],
+                "tools": turn.tools,
+                "usage": _usage_payload([unit for unit in session.units if unit.display_turn == turn.id], costs_available=available),
+                "spawned": [id_map.get(identifier, identifier) for identifier in turn.spawned],
+                "used": [id_map.get(identifier, identifier) for identifier in turn.used]})
+        grouped = {}
+        for unit in session.units:
+            bucket = unit.at_ms // 900_000 if unit.at_ms is not None else None
+            grouped.setdefault((bucket, unit.model, unit.tier), []).append(unit)
+        buckets = []
+        for (bucket, model, tier), units in sorted(grouped.items(), key=lambda item: (
+                item[0][0] is None, item[0][0] or 0, item[0][1], item[0][2])):
+            usage = _usage_payload(units, costs_available=available)
+            buckets.append([bucket, model, tier, *[usage[key] for key in
+                            ("input", "cached_input", "cache_write", "output", "reasoning", "cost_usd")]])
+        row = {"id": id_map[session.id], "kind": session.kind,
+               "title": session.title, "title_full": session.title_full,
+               "title_source": session.title_source, "archived": session.archived,
+               "log_path": session.log_path, "workspace": session.workspace,
+               "subfolder": session.subfolder, "cwd": meta.get("cwd") or session.db_info.get("cwd"),
+               "branch": git.get("branch") or session.db_info.get("git_branch"),
+               "originator": meta.get("originator") or session.db_info.get("originator"),
+               "forked_from": id_map.get(session.forked_from, session.forked_from),
+               "start_ms": session.start_ms, "end_ms": session.end_ms,
+               "idle_ms": session.idle_ms, "user_span_ms": session.user_span_ms,
+               "flags": sorted(session.flags), "turns": turns,
+               "session_voice": {"requests": requests(session.session_voice["requests"], None),
+                                 "replies": session.session_voice["replies"] if not session.turns else []},
+               "own_usage": _usage_payload(session.units, costs_available=available),
+               "outside_usage": _usage_payload([unit for unit in session.units if unit.display_turn is None], costs_available=available),
+               "buckets": buckets, "tools": session.tools,
+               "children": [id_map.get(identifier, identifier) for identifier in session.children]}
+        if session.kind == "subagent":
+            row.pop("kind")
+            link = session.link or {}
+            row.update(parent_id=id_map.get(session.parent_id, session.parent_id), depth=session.depth,
+                agent_path=session.agent_path, label=humanize_agent_path(session.agent_path),
+                nickname=meta.get("agent_nickname") or session.db_info.get("agent_nickname"),
+                forked="forked" in session.flags, spawn_turn=link.get("spawn_turn"),
+                interaction_turns=link.get("interaction_turns", []), link_method=link.get("method"))
+            subagents[row["id"]] = row
+        else:
+            rows.append(row)
+    rows.sort(key=lambda row: (row["start_ms"] is None, -(row["start_ms"] or 0), row["id"]))
+    diagnostics = {"skipped_files": corpus.skipped + meta_inputs.get("unreadable", []),
+        **{name: corpus.file_diagnostics.get(name, {"total": 0, "files": []})
+           for name in ("malformed_lines", "truncated_lines", "recovered_lines")},
+        "unknown_record_types": corpus.file_diagnostics.get("unknown_record_types", {}),
+        "db_threads_without_logs": corpus.db_threads_without_logs,
+        "metadata_errors": meta_inputs.get("metadata_errors", []),
+        "orphaned_subagents": [id_map.get(identifier, identifier) for identifier in corpus.orphaned_subagents],
+        "inferred_links": [id_map.get(identifier, identifier) for identifier in corpus.inferred_links],
+        "unresolved_history_boundaries": [id_map[s.id] for s in corpus.sessions.values() if "history_unresolved" in s.flags],
+        "fork_baseline_unavailable": [id_map.get(identifier, identifier) for identifier in corpus.file_diagnostics.get("fork_baseline_unavailable", [])],
+        "duplicate_session_ids": corpus.file_diagnostics.get("duplicate_session_ids", []),
+        "unpriced_models": [{"model": key, "tokens": value} for key, value in sorted(pricing.unpriced.items())],
+        "history_begins": [{"model": key, "from_ms": value} for key, value in sorted(pricing.history_begins.items())],
+        "priority_without_multiplier": [{"model": key, "input_tokens": value} for key, value in sorted(pricing.priority_without_multiplier.items())],
+        "unrecorded_catalog_rates": sorted(pricing.unrecorded), "ledger": meta_inputs.get("ledger", []),
+        "untimed_usage": [{"model": key, "tokens": value} for key, value in sorted(pricing.untimed.items())],
+        "workspaces_file": meta_inputs.get("workspaces_file", []),
+        "catalog": meta_inputs.get("catalog", CatalogResult("unavailable", None, None, None, [])).messages,
+        "trace_db": corpus.file_diagnostics.get("trace_db", []),
+        "page_size_bytes": 0, "page_size_over_limit": False}
+    catalog = meta_inputs.get("catalog", CatalogResult("unavailable", None, None, None, []))
+    meta = {"version": __version__, "generated_at_ms": meta_inputs["generated_at_ms"],
+        "generated_tz": time.strftime("%Z"), "codex_home": abbreviate_home(source_home),
+        "counts": {"logs": meta_inputs.get("logs", 0), "parsed": meta_inputs.get("parsed", 0),
+                   "cached": meta_inputs.get("cached", 0), "sessions": len(rows),
+                   "subagents": len(subagents), "orphans": len(corpus.orphaned_subagents)},
+        "catalog": {"status": catalog.status, "fetched_at_ms": catalog.fetched_at_ms,
+                    "checked_at_ms": catalog.checked_at_ms,
+                    "source_host": urlsplit(meta_inputs.get("pricing_url", DEFAULT_PRICING_URL)).hostname},
+        "costs": {"available": available, "reason": meta_inputs.get("costs_reason")},
+        "live_quiet_ms": LIVE_QUIET_MS,
+        "links": {"open_in_codex": dict(OPEN_IN_CODEX_SUPPORT),
+                  "continue_in_cli": dict(CONTINUE_IN_CLI_SUPPORT)}}
+    return {"schema": PAYLOAD_SCHEMA, "meta": meta, "sessions": rows,
+            "subagents": subagents, "workspaces": workspaces,
+            "models": {key: {"priced": bool(periods), "periods": periods}
+                       for key, periods in sorted(pricing.periods.items())}, "diagnostics": diagnostics}
+
+
+def render_page(payload: dict) -> bytes:
+    data = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+    data = data.replace("<", "\\u003c")
+    before_data, after_data = PAGE_TEMPLATE.split("@@DATA@@")
+    head = (before_data
+            .replace("/*@@CSS@@*/", PAGE_CSS)
+            .replace("/*@@FONTS@@*/", FONT_CSS)
+            .replace("/*@@JS@@*/", PAGE_JS))
+    return (head + data + after_data).encode("utf-8")
+
+
+def write_page(path: Path, page: bytes) -> None:
+    atomic_write_bytes(path, page)
+
+
+# ===== 18. Page assets =====
+PAGE_TEMPLATE = r"""<!doctype html>
+<html lang="en" data-theme="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Colophon</title><style>/*@@FONTS@@*//*@@CSS@@*/</style>
+<script>/*@@JS@@*/</script></head><body><header><h1>COLOPHON</h1></header>
+<main id="colophon-app"></main><footer>API-equivalent estimate (not billed)</footer>
+<script type="application/json" id="colophon-data">@@DATA@@</script>
+</body></html>"""
+FONT_CSS = r""""""
+PAGE_CSS = r"""
+:root[data-theme="dark"] { --bg:#0c100e; --txt:#c9d6cf; --g:#8dffbf; }
+body { margin:2rem; background:var(--bg); color:var(--txt); font:300 12px/1.5 ui-monospace,monospace; }
+h1 { color:var(--g); font-size:15px; letter-spacing:.35em; }
+"""
+PAGE_JS = r"""
+(() => {
+  "use strict";
+  // --- data
+  // --- dom
+  function el(tag, props, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props || {})) {
+      if (key === "text") node.textContent = value;
+      else node.setAttribute(key, value);
+    }
+    node.append(...children);
+    return node;
+  }
+  // --- boot
+  document.addEventListener("DOMContentLoaded", () => {
+    const data = JSON.parse(document.getElementById("colophon-data").textContent);
+    if (data.sessions.length === 0) {
+      document.getElementById("colophon-app").append(el("p", {text: "No sessions found."}));
+    }
+  });
+})();
+"""
+
+
 # ===== 19. CLI =====
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -6807,27 +7149,202 @@ Runtime files (directories 0700, written files 0600):
     return parser
 
 
-def run(args: argparse.Namespace) -> int:
+def _recording_models(corpus: Corpus, priority: PriorityTurns,
+                      index: ModelsDevIndex | None) -> dict[str, str]:
+    models = {}
+    records = [record for session in corpus.sessions.values() for record in session.records]
+    records.extend(corpus.skipped_records)
+    for record in records:
+        for observation in record["token_stream"]["observations"]:
+            tag = observation[0]
+            raw = None
+            if tag in ("C", "XC"):
+                evidence = observation[5] if tag == "C" else observation[3]
+                raw = evidence.get("set") if isinstance(evidence, dict) else None
+            elif tag in ("T", "B"):
+                raw = observation[5] if tag == "T" else observation[4]
+            if isinstance(raw, str) and (normalized := normalize_codex_model(raw)) != "unknown":
+                models[normalized] = normalized
+    for metadata in priority.turns.values():
+        raw = metadata.get("model")
+        if isinstance(raw, str) and codex_api_fast_multiplier(raw) is not None:
+            normalized = normalize_codex_model(raw)
+            models[normalized] = normalized
+            key = _override_key(raw, normalized, index)
+            if key is not None:
+                models[key] = raw
+    return models
+
+
+def _diagnostic_counts(diagnostics: dict) -> list[str]:
+    counts = []
+    for key, value in diagnostics.items():
+        if key == "page_size_bytes":
+            continue
+        if isinstance(value, dict):
+            count = value["total"] if "total" in value else sum(value.values())
+        elif isinstance(value, list):
+            count = len(value)
+        else:
+            count = int(value)
+        if count:
+            counts.append(f"{key}={count}")
+    return counts
+
+
+def run(args: argparse.Namespace, *, now_ms: int | None = None,
+        stderr_tty: bool | None = None) -> int:
+    if args.offline and args.refresh_prices:
+        print("colophon: --offline and --refresh-prices cannot be combined", file=sys.stderr)
+        return 2
     codex_home = args.codex_home.expanduser()
     if not codex_home.is_dir() or not os.access(codex_home, os.R_OK | os.X_OK):
         print(f"colophon: Codex home is missing or unreadable: {codex_home}", file=sys.stderr)
         return 1
-
-    home = ensure_runtime_home(runtime_home())
-    ledger_path = home / "price-history.json"
-    if not ledger_path.exists():
-        atomic_write_json(ledger_path, {"schema": 1, "entries": []})
-    example_path = home / "workspaces.example.json"
-    if not example_path.exists():
-        atomic_write_json(example_path, {
-            "schema": 1,
-            "aliases": [{
-                "name": "Example Tools",
-                "origins": ["https://example.invalid/synthetic/tools.git"],
-                "paths": ["/synthetic/deployed/tools"],
-            }],
-        })
-    return 0
+    snapshot_ms = globals()["now_ms"]() if now_ms is None else now_ms
+    tty = sys.stderr.isatty() if stderr_tty is None else stderr_tty
+    cache = None
+    progress_active = False
+    page_write_failure = False
+    try:
+        home = ensure_runtime_home(runtime_home())
+        ledger_path = home / "price-history.json"
+        if not ledger_path.exists():
+            atomic_write_json(ledger_path, {"schema": 1, "entries": []})
+        example_path = home / "workspaces.example.json"
+        if not example_path.exists():
+            atomic_write_json(example_path, {"schema": 1, "aliases": [{
+                "name": "Example Tools", "origins": ["https://example.invalid/synthetic/tools.git"],
+                "paths": ["/synthetic/deployed/tools"]}]})
+        if not (home / "priority-turns.json").exists():
+            atomic_write_json(home / "priority-turns.json", {"schema": 1, "turns": {}})
+        ledger_mtime = ledger_path.stat().st_mtime_ns
+        url = os.environ.get("COLOPHON_PRICING_URL", DEFAULT_PRICING_URL)
+        catalog_results = []
+        def fetch():
+            try:
+                catalog_results.append(fetch_catalog(url, home / "pricing-cache.json",
+                    offline=args.offline, refresh=args.refresh_prices, now_ms=snapshot_ms))
+            except Exception as exc:
+                catalog_results.append(CatalogResult("unavailable", None, None, snapshot_ms,
+                    [f"catalog fetch failed: {type(exc).__name__}: {exc}"]))
+        fetch_thread = threading.Thread(target=fetch, daemon=True)
+        fetch_thread.start()
+        cache = ParseCache.open(home, rebuild=args.rebuild)
+        scan_start = time.monotonic()
+        def progress(done, total):
+            nonlocal progress_active
+            if tty:
+                elapsed = time.monotonic() - scan_start
+                eta = elapsed * (total - done) / done if done else 0
+                print(f"\rcolophon: parsing {done}/{total} bytes · ETA {eta:.1f}s", end="", file=sys.stderr, flush=True)
+                progress_active = True
+        scan = scan_logs(codex_home, cache, progress=progress)
+        if progress_active:
+            print(file=sys.stderr)
+            progress_active = False
+        metadata = load_codex_metadata(codex_home)
+        corpus = build_corpus(scan.records, metadata, snapshot_ms)
+        link_subagents(corpus, metadata, snapshot_ms)
+        aliases, alias_messages = load_workspace_aliases(home / "workspaces.json")
+        workspaces = resolve_workspaces(corpus, aliases)
+        fetch_thread.join(CONNECT_TIMEOUT_S + BODY_TIMEOUT_S + 5)
+        if fetch_thread.is_alive():
+            catalog = fetch_catalog(url, home / "pricing-cache.json", offline=True,
+                                    refresh=False, now_ms=snapshot_ms)
+            catalog.status = "cached" if catalog.catalog is not None else "unavailable"
+            catalog.messages.append("catalog fetch did not finish; using cached catalog")
+        else:
+            catalog = catalog_results[0]
+        index = ModelsDevIndex.from_catalog(catalog.catalog) if catalog.catalog is not None else None
+        priority = load_priority_turns(codex_home, home)
+        try:
+            doc = json.loads(ledger_path.read_bytes(), parse_constant=_reject_json_constant)
+            check = validate_ledger(doc, curated=False)
+        except (OSError, ValueError, UnicodeError, RecursionError) as exc:
+            check = LedgerCheck([], [str(exc)], [])
+        ledger_messages = [{"level": "error", "message": f"{ledger_path}: {message}"} for message in check.errors]
+        ledger_messages.extend({"level": "warning", "message": f"{ledger_path}: {message}"} for message in check.warnings)
+        history = PriceHistory(CURATED_PRICE_HISTORY["entries"], check.entries)
+        if not check.errors and index is not None and catalog.fetched_at_ms is not None:
+            new = record_catalog_rates(history, index, catalog.fetched_at_ms,
+                                       _recording_models(corpus, priority, index), snapshot_ms)
+            appended, warning = append_user_ledger(ledger_path, new, ledger_mtime)
+            if warning is not None:
+                ledger_messages.append({"level": "warning", "message": f"{ledger_path}: {warning}"})
+            if appended:
+                history = PriceHistory(CURATED_PRICE_HISTORY["entries"], check.entries + new)
+        compose_usage(corpus, priority)
+        pricing = price_units(corpus, history, index, costs_available=not check.errors)
+        payload = build_payload(corpus, workspaces, pricing, {
+            "generated_at_ms": snapshot_ms, "codex_home": codex_home,
+            "logs": scan.parsed + scan.cached + len(scan.unreadable),
+            "parsed": scan.parsed, "cached": scan.cached,
+            "unreadable": [{"path": path, "reason": "unreadable"} for path, error in scan.unreadable],
+            "catalog": catalog, "pricing_url": url, "metadata_errors": metadata.errors,
+            "costs_available": not check.errors, "costs_reason": "; ".join(check.errors) if check.errors else None,
+            "ledger": ledger_messages, "workspaces_file": alias_messages})
+        measured = []
+        for _ in range(3):
+            page = render_page(payload)
+            size = len(page)
+            measured.append(size)
+            diagnostic = payload["diagnostics"]
+            over = size > PAGE_SIZE_WARN_BYTES
+            if diagnostic["page_size_bytes"] == size and diagnostic["page_size_over_limit"] == over:
+                break
+            diagnostic.update(page_size_bytes=size, page_size_over_limit=over)
+        else:
+            diagnostic.update(page_size_bytes=max(measured), page_size_over_limit=max(measured) > PAGE_SIZE_WARN_BYTES)
+            page = render_page(payload)
+        output = args.output.expanduser() if args.output is not None else home / "colophon.html"
+        try:
+            write_page(output, page)
+        except OSError as exc:
+            page_write_failure = True
+            raise OSError(f"cannot write {output}: {exc}") from exc
+        cache.commit(cache._live_paths)
+        if not args.no_open:
+            try:
+                opened = webbrowser.open(output.resolve().as_uri())
+            except Exception:
+                opened = False
+            if not opened:
+                print(f"colophon: open {output} in a browser", file=sys.stderr)
+        all_units = [unit for session in corpus.sessions.values() for unit in session.units]
+        tokens = sum(unit.input + unit.output for unit in all_units)
+        cost = (f"${sum(unit.cost_usd for unit in all_units):.2f}"
+                if not check.errors and all(unit.cost_usd is not None for unit in all_units) else "costs unavailable")
+        counts = payload["meta"]["counts"]
+        print(f"colophon: {counts['sessions']} sessions · {counts['subagents']} subagents · "
+              f"{counts['logs']} logs ({scan.parsed} parsed, {scan.cached} cached) · "
+              f"{tokens:,} tokens · {cost} est. · page {len(page)/(1024*1024):.2f} MB → {output}")
+        diagnostic_counts = _diagnostic_counts(payload["diagnostics"])
+        if diagnostic_counts:
+            print("colophon: diagnostics: " + ", ".join(diagnostic_counts) + "; see the page footer", file=sys.stderr)
+        for item in payload["diagnostics"]["untimed_usage"]:
+            print(f"colophon: {item['model']}: priced at current rates: usage has no timestamp ({item['tokens']} tokens)", file=sys.stderr)
+        for message in ledger_messages:
+            print(f"colophon: {message['message']}", file=sys.stderr)
+        for message in alias_messages:
+            print(f"colophon: {message}", file=sys.stderr)
+        return 0
+    except (KeyboardInterrupt, Exception) as failure:
+        if cache is not None:
+            cache._abort_after_failure(failure)
+        if progress_active:
+            print(file=sys.stderr)
+        rebuild = ("; rebuild cache installed" if cache is not None and cache._committed else
+                   "; rebuild did not complete; previous cache kept") if args.rebuild else ""
+        if isinstance(failure, KeyboardInterrupt):
+            print(f"colophon: interrupted{rebuild}", file=sys.stderr)
+        else:
+            message = str(failure).replace("\r", " ").replace("\n", " ")
+            prefix = "" if page_write_failure else f"{type(failure).__name__}: "
+            print(f"colophon: {prefix}{message}", file=sys.stderr)
+            if rebuild:
+                print(f"colophon: {rebuild[2:]}", file=sys.stderr)
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:

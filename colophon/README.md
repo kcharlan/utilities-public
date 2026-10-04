@@ -5,8 +5,9 @@
 A colophon records who made a book, when, where and how. Colophon applies that
 idea to Codex sessions: a local, read-only explorer of their activity and cost.
 The [design spec](docs/colophon_design_spec.md) defines the complete application.
-The current scaffold validates the Codex home and initializes private runtime
-files; log compilation and the offline page are added by subsequent tasks.
+The compiler scans logs, preserves dated prices, and writes a self-contained
+offline page. The page currently provides the data contract and empty state;
+the complete explorer interface is added by subsequent tasks.
 
 ## Install
 
@@ -49,8 +50,8 @@ Help and version commands do not create runtime files.
 | `--version` | Print the version and exit. |
 | `--help` | Show flags, environment variables and runtime files. |
 
-Compilation flags are parsed now; their pipeline behavior arrives with the
-compiler. `--offline --refresh-prices` is already rejected.
+`--offline --refresh-prices` is rejected. The page is written before the parse
+cache is committed, so a failed page write preserves the previous cache.
 
 ## Environment variables
 
@@ -84,8 +85,8 @@ requests; refresh requests omit the ETag. A 304 preserves the fetch time.
 Connection and headers share a three-second budget; the body has thirty
 seconds. Failures use a valid cached catalog with diagnostics. A cache from
 another URL remains a fallback with a warning, without sending its ETag.
-Offline fetching opens no socket. Compiler integration arrives with the next
-pipeline task.
+Offline fetching opens no socket. Catalog fetching overlaps the log scan;
+failure or a bounded wait uses the available cached catalog with diagnostics.
 
 Priority detection follows upstream's trace database and retains detected
 turn ids. Usage older than both the trace database and the first Colophon run
@@ -149,6 +150,12 @@ until the catalog's rates change; a model priced only manually gets a catalog en
 when the catalog first lists it. Invalid ledgers disable recording and costs
 in the compiler while retaining token counts. An editor save during a run
 skips recording with a warning rather than overwriting the edit.
+
+Usage with no timestamp retains a null bucket and uses current resolved rates
+and the source's current priority policy in a transient period, without picking
+a dated ledger entry. Diagnostics report its input plus output token volume as
+"priced at current rates: usage has no timestamp". Costs are always an
+API-equivalent estimate (not billed).
 
 Maintainers can refresh the seed with a reviewed public models.dev snapshot:
 
