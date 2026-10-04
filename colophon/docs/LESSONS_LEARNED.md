@@ -538,3 +538,9 @@
   `test_raw_invalid_top_level_key_is_a_catalog_failure`,
   `test_raw_invalid_ignored_unicode_values_and_nested_keys_remain_ignored`, and
   `test_raw_valid_unicode_surrogate_pairs_and_scalar_keys_survive`.
+- A discovered log path does not establish cache trust. When FORMAT is missing,
+  retain only entries successfully replaced in the current commit before
+  publishing the marker; otherwise an unreadable log's old JSON becomes trusted
+  by the next process. With a valid marker, retain unreadable live entries as
+  before. Regression:
+  `test_unreadable_old_cache_entry_requires_trusted_marker`.

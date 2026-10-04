@@ -3235,10 +3235,15 @@ class ParseCache:
     def commit(self, live_paths: set[str]) -> None:
         if self.finished:
             return
+        installed_paths = set()
         for path, record in self.buffer.items():
             if path in live_paths:
                 atomic_write_json(self.directory / self._entry_name(path), record, indent=None)
-        live_names = {self._entry_name(path) for path in live_paths}
+                installed_paths.add(path)
+        # Discovery alone cannot rehabilitate entries from an unknown format:
+        # unreadable logs have no trusted replacement to publish to peers.
+        keep_paths = live_paths if self._read_enabled else installed_paths
+        live_names = {self._entry_name(path) for path in keep_paths}
         for path in self.directory.glob("*.json"):
             if path.name not in live_names:
                 path.unlink()

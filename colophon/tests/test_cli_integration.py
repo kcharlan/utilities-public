@@ -401,3 +401,45 @@ def test_missing_cache_marker_is_not_published_before_untrusted_entries_replace(
             second.abort()
     finally:
         first.abort()
+
+
+@pytest.mark.parametrize('missing_marker',[True,False])
+def test_unreadable_old_cache_entry_requires_trusted_marker(colophon,home,codex_home,monkeypatch,missing_marker):
+    blocked = log(codex_home,'synthetic-blocked').write()
+    readable = log(codex_home,'synthetic-readable')
+    readable_path = readable.write()
+    assert colophon.run(args(colophon,codex_home),now_ms=NOW) == 0
+    blocked_key = colophon.codex_path_key(blocked)
+    blocked_entry = home/'cache'/colophon.ParseCache._entry_name(blocked_key)
+    original_bytes = blocked_entry.read_bytes()
+    if missing_marker:
+        (home/'cache'/'FORMAT').unlink()
+    readable.task_started('synthetic-second-turn').turn_context(model='gpt-5.4').usage_record(usage={'input_tokens':200}).task_complete().write()
+    original_parse,original_get = colophon.parse_log_file,colophon.ParseCache.get
+    def parse(path,**kw):
+        if colophon.codex_path_key(path)==blocked_key:
+            raise PermissionError('Synthetic unreadable log during reparse')
+        return original_parse(path,**kw)
+    def get(cache,logfile):
+        if cache._read_enabled and colophon.codex_path_key(logfile.path)==blocked_key:
+            raise PermissionError('Synthetic unreadable log during fingerprint read')
+        return original_get(cache,logfile)
+    with monkeypatch.context() as patch:
+        patch.setattr(colophon,'parse_log_file',parse)
+        patch.setattr(colophon.ParseCache,'get',get)
+        assert colophon.run(args(colophon,codex_home),now_ms=NOW) == 0
+    assert compiled(home)['diagnostics']['skipped_files'] == [{'path':blocked_key,'reason':'unreadable'}]
+    assert compiled(home)['sessions'][0]['own_usage']['input'] == 300
+    assert (home/'cache'/'FORMAT').read_text() == colophon.ParseCache._format()
+    peer = colophon.ParseCache.open(home,rebuild=False)
+    try:
+        logs = {colophon.codex_path_key(item.path):item for item in colophon.discover_logs(codex_home)}
+        assert peer.get(logs[colophon.codex_path_key(readable_path)]) is not None
+        if missing_marker:
+            assert not blocked_entry.exists()
+            assert peer.get(logs[blocked_key]) is None
+        else:
+            assert blocked_entry.read_bytes() == original_bytes
+            assert peer.get(logs[blocked_key]) is not None
+    finally:
+        peer.abort()
