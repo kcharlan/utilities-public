@@ -68,9 +68,9 @@ Python 3.10 or newer is required. From this directory, create and activate a
 virtual environment, then install the project requirements:
 
 ```sh
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
 `requirements.txt` installs the TOON implementation directly from its GitHub
@@ -128,10 +128,10 @@ Important conversion behavior:
 
 ## Testing
 
-With the project virtual environment active:
+From this directory, using the project virtual environment:
 
 ```sh
-python3 -m pytest
+.venv/bin/python -m pytest
 ```
 
 The pytest suite covers each Python converter, CLI success/error paths, default

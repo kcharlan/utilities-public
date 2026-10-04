@@ -78,11 +78,13 @@ Before finalizing changes, verify you haven't:
 Use this matrix to identify project-specific validation commands after applying the testing scope above. Run the complete documented suite for every affected independently maintained project, including affected consumers of shared changes; a command listed here does not authorize omitting another test category belonging to that project. For affected projects not listed below, follow the project's README and local documentation and run every documented test category. Changes intentionally outside automated coverage do not require tests; for mixed changes, apply the scope rule above.
 
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
-  - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --script tools/check_uv_headers.py`.
+  - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
+  - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
 - `data_format_converter`:
-  - `python3 -m pytest`
+  - `.venv/bin/python -m pytest`
+  - Browser suite: `npm ci`, `npx playwright install chromium`, then `npm run test:browser`.
 - `div_conv`:
-  - `pytest tests -v`
+  - `.venv/bin/python -m pytest tests -v`
 - `web_games/multibody_sim`:
   - `npm test` (Playwright; config launches local `http-server` on `127.0.0.1:4173`)
 - `Calculation tools/backtest` (independent nested Market Atlas project):
@@ -97,20 +99,20 @@ Use this matrix to identify project-specific validation commands after applying 
   - Changes to the static audit or its child runner also require Market Atlas's complete suites above. The app synthetic command does not implicitly run root suites.
 - `tax2`:
   - `.venv/bin/python -m pytest`
-  - Run `./tax2 --help`, then start `./tax2 --no-browser --port <free-port>`, request `/` and `/api/status`, and terminate the FastAPI process cleanly.
-  - If tax rules/table generation changed, also run `uv run --with-requirements requirements.txt cli.py generate-combined --year 2026` (or target year used by your change).
+  - Run `UV_PYTHON_DOWNLOADS=never ./tax2 --help`, then start `UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser --port <free-port>`, request `/` and `/api/status`, and terminate the FastAPI process cleanly.
+  - If tax rules/table generation changed, also run `uv run --no-python-downloads --with-requirements requirements.txt cli.py generate-combined --year 2026` (or target year used by your change).
 - `mls-tracker`:
   - `.venv/bin/python -m pytest -q`
-  - Run `./mls_tracker --help`, then start `./mls_tracker --no-browser --port <free-port>`, request `/`, and terminate the FastAPI process cleanly.
+  - Run `UV_PYTHON_DOWNLOADS=never ./mls_tracker --help`, then start `UV_PYTHON_DOWNLOADS=never ./mls_tracker --no-browser --port <free-port>`, request `/`, and terminate the FastAPI process cleanly.
 - Streamlit apps (`transcription`, `md-autotax`):
-  - smoke-run the app entrypoint after edits (`streamlit run ...` or project `run.sh`/`ui.sh`).
+  - Smoke-run each Streamlit entrypoint you edited, headless, then terminate it cleanly: `venv/bin/python -m streamlit run <entrypoint> --server.headless true` from the project directory. The entrypoints are `transcription`'s `app.py` and `transcribe.py`, and `md-autotax`'s `app.py`. For `md-autotax`, run `./ui.sh --check` first; it validates the setup without starting the UI. `transcription`'s `run.sh`, `m4a-run.sh`, and `help.sh` are unsupported legacy wrappers; do not use them.
 - Shell utilities (`pdf-split`, `media-dater`, `toggle_wifi`, etc.):
   - run `--help` and at least one safe/dry-run style command when available.
 
 ## Large/Vendored Directories
 Avoid broad searches or edits in vendored/generated trees unless the task explicitly requires it:
 - `tax2/.venv/`
-- `data_format_converter/venv/`
+- `data_format_converter/.venv/`
 - `docker/webserver/index/node_modules/`
 - `docker/webserver/app_node/node_modules/`
 - `**/__pycache__/`, `**/.pytest_cache/`
@@ -213,4 +215,12 @@ Rules:
 - Prefer minimal, targeted diffs over broad formatting sweeps.
 - Update documentation when behavior, interfaces, or run commands change.
 - If a change affects multiple projects, including through shared dependencies, validate each affected project independently with the commands above.
-- Pytest environment note (Homebrew macOS): `pytest` may be installed as a shell entrypoint even when `python3 -m pytest` fails in a specific interpreter. For test execution, prefer `pytest` first; if needed, also try `python3 -m pytest` as a secondary option.
+- Python as an agent (Homebrew macOS). Agents on this setup run Python only inside a virtual environment. Project READMEs are written for developers on any platform and often assume an activated venv (`source venv/bin/activate`, then `python …`, `pip …`, `pytest …`). Do not run their Python setup and test commands literally; translate them:
+  - Use the project's existing venv: the directory the README names (`.venv` or `venv`) for the section you are following. If the README names none, use `.venv`. Call its interpreter by path instead of activating, e.g. `<dir>/bin/python -m pytest`, `<dir>/bin/python -m pip install -r <file>`, `<dir>/bin/python script.py`. Never run a bare `pytest`, `streamlit`, `pip`, `python`, or `python3`: outside an activated venv they run on Homebrew's tools or Python, which lack the project's dependencies.
+  - If the venv does not exist yet, create it under that directory name from a Homebrew interpreter by absolute path: `/opt/homebrew/bin/python3 -m venv <dir>`. If the project pins a Python version anywhere (`--python X.Y`, `pythonX.Y -m venv` in a setup script, or "Python X.Y" in the README), use `/opt/homebrew/opt/python@X.Y/bin/pythonX.Y -m venv <dir>` instead. Any README `uv venv …`, with or without `--python`, becomes `uv venv --seed --no-python-downloads --python <that Homebrew interpreter path> <dir>`. If that Homebrew Python version is not installed, stop and ask; installing a Python needs approval. Then install the documented dev/test requirements into it (`<dir>/bin/python -m pip install -r <file>` or `uv pip install --python <dir>/bin/python -r <file>`, both allowed) and any other documented setup step, such as `<dir>/bin/python -m playwright install chromium`.
+  - Do not run a project script that creates or recreates a venv with a bare interpreter. Examples include the `setup.sh` scripts in `transcription`, `reversible-skew`, `video-scenes`, `md-autotax`, `md-json`, and `apple-health-extract`, `docker/llm_collector/migrate.sh`, and scripts under `benchmark-llm/examples`. Check any setup script before running it. Reproduce its steps as above, keeping any version it pins, and ask before recreating a venv that already exists. Where a tool accepts an interpreter option (e.g. `Calculation tools/backtest`'s `--python`), pass an absolute Homebrew interpreter.
+  - Add `--no-python-downloads` right after the subcommand in `uv run`, `uv tool run`, and `uv tree --frozen` commands, and right after `uvx` (e.g. `uvx --no-python-downloads pip-audit`). For a uv launcher run directly, see the uv-managed launcher entry in the Validation Matrix.
+  - Needs approval even when a README lists it:
+    - any `uv run` without `--script`, `--with`, or `--with-requirements` (e.g. `uv run --python 3.12 python -m unittest …` and `uv run …/migrate_skills.py` in `Claude_plugin_converter/to_gemini_cli`);
+    - `uv run --with`/`--with-requirements` inside a uv project (`benchmark-llm`, `docker/llm_proxy`) without `--no-project` (e.g. `uv run --extra dev pytest` in `benchmark-llm` is approval-only too). Elsewhere, `--with` may only name packages the project's docs or requirements name; packages a task needs ad hoc go in the project venv instead;
+    - commands that change a project's lockfile or sync its environment: `uv pip compile`, `uv sync`, `uv lock`, `uv add`, `uv remove`, and `uv tree` without `--frozen`.
