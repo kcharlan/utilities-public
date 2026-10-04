@@ -1481,6 +1481,17 @@ def _codex_historical_number(text: str) -> int:
                                      {c: '+' for c in _CODEX_ICU_PLUS}))
     if text.casefold().lstrip('-') == 'nan' or text.lstrip('-') == '∞':
         return 0  # Binary64 NaN/infinity have zero low Int32 mantissa bits.
+    scientific = re.split('[eE]', text, maxsplit=1)
+    if len(scientific) == 2:
+        raw_exponent = scientific[1]
+        exponent_digits = ''.join(str(int(c)) for c in raw_exponent.lstrip('+-')).lstrip('0')
+        # ICU DecimalMatcher checks the exponent against Int32.max before
+        # adjusting magnitude. Overflow becomes infinity; underflow clears to
+        # zero. Both union casts yield zero, including signed/zero mantissas.
+        if len(exponent_digits) > 10 or (exponent_digits and int(exponent_digits) > 2**31 - 1):
+            return 0
+        exponent_sign = '-' if raw_exponent.startswith('-') else ''
+        text = scientific[0] + 'e' + exponent_sign + (exponent_digits or '0')
     decimal = Decimal(text)
     sign, digits, exponent = decimal.as_tuple()
     coefficient = 0

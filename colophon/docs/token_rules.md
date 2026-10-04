@@ -59,6 +59,7 @@ library derivation uses Apple's public ICU source at
 `getLong`), `gregocal.cpp` (`handleGetExtendedYear`, `handleComputeJulianDay`,
 `handleComputeMonthStart`), `calendar.cpp` (`computeTime`,
 `computeGregorianFields`), `numparse_scientific.cpp`, `numparse_symbols.cpp`,
+`numparse_decimal.cpp` (`DecimalMatcher::match`, exponent saturation),
 `source/common/static_unicode_sets.cpp` and `source/data/locales/root.txt`.
 These supplement the pinned CodexBar formatter-options call; they do not
 replace it. Synthetic probes corroborate this slice against the installed
@@ -69,3 +70,11 @@ Swift formatter results govern that discrepancy. For fractions with at least
 35 digits, the Int32 divisor wraps to zero; the observed macOS ARM64 formatter
 division yields zero milliseconds, which this slice preserves. This is library
 compatibility evidence, not a new token-accounting rule.
+
+Scientific exponent magnitude is checked against ICU's Int32 maximum before
+constructing a Python Decimal. A larger positive exponent saturates to infinity;
+a larger negative exponent clears the quantity to zero. Both resulting number
+casts yield zero, including signed and zero mantissas. Parse Unicode Nd exponent
+digits linearly, strip leading zeros, and compare only the bounded significant
+magnitude. This preserves accepted observations beyond Python Decimal's exponent
+range and Python's integer-string digit limit; it does not catch and drop them.

@@ -516,3 +516,32 @@ def test_historical_formatter_double_and_literal_boundaries(colophon, timestamp,
     # Its literal matcher skips bidi controls before T, but not ordinary space.
     expected = [['C', 0, 0, None, timestamp, None]] if valid else []
     assert observe(colophon, [context({}, timestamp=timestamp)])['observations'] == expected
+
+
+@pytest.mark.parametrize('mantissa', ['1', '-1', '0', '-0'],
+                         ids=['positive', 'negative', 'zero', 'negative-zero'])
+@pytest.mark.parametrize('exponent', ['99999999999999999999999', '-99999999999999999999999'],
+                         ids=['overflow', 'underflow'])
+@pytest.mark.parametrize('field', ['year', 'fraction'])
+def test_historical_scientific_exponent_saturation_retains_context(colophon, mantissa, exponent, field):
+    # Pinned Timestamp parseHistoricalISO 28–32 delegates fixed formatters.
+    # Apple ICU DecimalMatcher::match 340–364 saturates an exponent above
+    # Int32.max to infinity, or clears the quantity for a negative exponent.
+    # Formattable::getLong's Binary64 union bits (infinity) / integer zero
+    # both yield zero. This also holds for signed and zero mantissas, so the
+    # retained C timestamp must survive Python Decimal's smaller parse limit.
+    literal = mantissa + 'e' + exponent
+    timestamp = (literal + '-1-7T0:0:0z' if field == 'year'
+                 else '2030-1-7T0:0:0.' + literal + 'z')
+    assert observe(colophon, [context({}, timestamp=timestamp)])['observations'] == [
+        ['C', 0, 0, None, timestamp, None]]
+
+
+@pytest.mark.parametrize('zero', ['0', '٠'], ids=['ascii', 'unicode-decimal'])
+def test_historical_scientific_exponent_leading_zeros_keep_small_magnitude(colophon, zero):
+    # ICU DecimalMatcher consumes Unicode Nd and DecimalQuantity strips leading
+    # zeros before fitsInLong / Int32.max. Padding therefore cannot turn e3 into
+    # overflow. More than Python's 4300-digit integer-string limit remains valid.
+    timestamp = '2e' + zero * 5000 + '3-1-7T0:0:0z'
+    assert observe(colophon, [context({}, timestamp=timestamp)])['observations'] == [
+        ['C', 0, 0, None, timestamp, None]]

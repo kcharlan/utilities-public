@@ -144,3 +144,14 @@
   a negative sign and take the wrong union branch. Preserve an explicit absent
   integer value until the floating representation is selected. Regression:
   `test_historical_formatter_double_and_literal_boundaries[oversized-negative-double-union]`.
+- Module-level parser construction runs during import. Define its shared
+  character sets before constructing a regex, and use the actual constant name;
+  a missing or later-defined constant prevents every test from loading the
+  launcher. The suite's module-import fixture covers this initialization order.
+- Python Decimal's exponent limit is not ICU's scientific-number contract.
+  Apply ICU's source-defined Int32 saturation before constructing Decimal:
+  infinity/cleared zero still provide valid zero-valued field casts. Normalize
+  Unicode exponent digits and remove leading zeros before bounded comparison,
+  so padded small exponents neither overflow nor hit Python's digit limit.
+  Regressions: `test_historical_scientific_exponent_saturation_retains_context`
+  and `test_historical_scientific_exponent_leading_zeros_keep_small_magnitude`.
