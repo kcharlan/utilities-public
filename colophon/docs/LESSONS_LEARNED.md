@@ -684,3 +684,17 @@
   permission and other deletion errors visible. Regressions:
   `test_concurrent_compilers_can_prune_same_stale_cache_entry` and
   `test_stale_cache_prune_keeps_other_delete_errors_visible`.
+- A timeline label containing the word "forked" does not satisfy a badge
+  contract. Include the established bordered tag in the measured label, with
+  compact height that preserves the shared two-row collision fallback and
+  74-pixel three-lane baseline. Assert the actual visible badge, border and
+  geometry at narrow and wide widths. Regression:
+  `test_timeline_lanes_ticks_fork_badges_and_inferred_border`.
+- A fork link's display label and navigation target are separate facts.
+  Look up the parent's usable title across the full sessions/subagents payload,
+  including filtered-out rows, but navigate by its original ID. Missing,
+  invalid or conflicting titles retain the ID fallback instead of inventing
+  a title. Regressions: `test_fork_link_uses_known_title_outside_filtered_list_and_navigates_by_id`,
+  `test_fork_link_invalid_parent_title_falls_back_to_id`,
+  `test_fork_link_missing_parent_falls_back_to_id_and_preserves_navigation`, and
+  `test_fork_link_conflicting_parent_titles_fall_back_to_id`.

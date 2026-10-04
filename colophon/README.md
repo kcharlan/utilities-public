@@ -18,6 +18,9 @@ agents as flagged top-level sessions. Selecting a row opens the reader beside
 the list at widths of 900 px or more; narrower pages use a back control.
 The reader shows all-session usage with your/subagent splits, turn cards,
 requests, tools, expandable agent details, outside-turn usage and a timeline.
+Forked agents carry a timeline badge. Fork links show a known parent's title,
+including parents outside the active filters, and retain its ID for navigation;
+unavailable or conflicting titles fall back to the ID.
 Unknown clocks stay unknown; recorded durations remain visible without
 inventing active intervals. Font sources and regeneration are documented in
 [font.md](docs/font.md).

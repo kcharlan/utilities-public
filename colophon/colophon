@@ -7327,7 +7327,8 @@ input[type="date"] { width: 150px; }
 .timeline-block.sub { background: var(--tl-sub); border: 1px solid var(--tl-sub); }
 .timeline-block.inferred { border-style: dashed; border-color: var(--amb); }
 .timeline-labels { position: relative; min-width: 0; height: 20px; }
-.timeline-label { position: absolute; font-size: 8.5px; line-height: 10px; white-space: nowrap; color: var(--dim); }
+.timeline-label { position: absolute; display: flex; align-items: center; gap: 4px; font-size: 8.5px; line-height: 10px; white-space: nowrap; color: var(--dim); }
+.timeline-label .tag { font-size: 8.5px; line-height: 8px; padding: 0 3px; }
 .timeline-ticks { position: relative; height: 12px; font-size: 8px; line-height: 12px; color: var(--dim); }
 .timeline-ticks span { position: absolute; white-space: nowrap; transform: translateX(-50%); }
 .timeline-ticks span:first-child { transform: none; }
@@ -8155,7 +8156,8 @@ PAGE_JS = r"""
           ...(child ? {"data-timeline-subagent": child.id} : {"data-timeline-turn": item.id})});
         track.append(block);
         hasBlock = true;
-        const text = el("span", {class: "timeline-label", "data-timeline-label": "", "data-label-kind": child ? "subagent" : "turn", "data-left": left, text: label, title: label});
+        const text = el("span", {class: "timeline-label", "data-timeline-label": "", "data-label-kind": child ? "subagent" : "turn", "data-left": left, title: label},
+          el("span", {text: child ? child.label : label}), ...(child && child.forked ? [el("span", {class: "tag", text: "forked"})] : []));
         text._block = block;
         labels.append(text);
       }
@@ -8204,7 +8206,12 @@ PAGE_JS = r"""
       el("p", {class: "reader-meta", "data-time-range": "", text: localStamp(row.start_ms) + " — " + localStamp(row.end_ms),
         title: quantity(row.user_span_ms) ? "user-request span: " + durationText(row.user_span_ms) : undefined}),
       el("p", {class: "reader-meta", text: row.id.slice(0, 8) + "…" + row.id.slice(-8), title: row.id}), flagsLine(row));
-    if (row.forked_from) header.append(el("button", {type: "button", class: "fork-link", text: "forked from " + row.forked_from, onclick: () => act({v: "session", s: row.forked_from})}));
+    if (row.forked_from) {
+      const parents = [...data.sessions, ...Object.values(data.subagents)].filter(parent => parent.id === row.forked_from);
+      const titles = new Set(parents.filter(parent => typeof parent.title === "string" && parent.title.trim()).map(parent => parent.title));
+      const parentTitle = titles.size === 1 ? titles.values().next().value : row.forked_from;
+      header.append(el("button", {type: "button", class: "fork-link", text: "forked from " + parentTitle, onclick: () => act({v: "session", s: row.forked_from})}));
+    }
     const copyArea = el("div", {class: "copy-status", "aria-live": "polite"});
     const copy = async text => {
       try {

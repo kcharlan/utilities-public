@@ -205,8 +205,53 @@ def test_reader_header_links_and_title_expansion(page_for, reader_payload):
     expect(header).to_contain_text(reader_payload['sessions'][0]['title_full'])
     expect(page.get_by_role('link', name='Open in Codex')).to_have_attribute('href','codex://threads/'+ROOT)
     expect(page.get_by_role('button', name='Copy Continue in CLI — continues this session')).to_be_visible()
-    page.get_by_role('button', name='forked from synthetic-list-parent').click()
+    page.get_by_role('button', name='forked from Synthetic parent', exact=True).click()
     assert 's=synthetic-list-parent' in page.url
+
+
+@pytest.mark.parametrize('parent_kind', ['session', 'subagent'])
+def test_fork_link_uses_known_title_outside_filtered_list_and_navigates_by_id(page_for, reader_payload, parent_kind):
+    root = reader_payload['sessions'][0]
+    parent_id = 'synthetic-list-parent' if parent_kind == 'session' else 'synthetic-child'
+    root['forked_from'] = parent_id
+    if parent_kind == 'session':
+        parent = copy.deepcopy(root)
+        parent.update(id=parent_id, title='Synthetic known parent title', title_full='Synthetic known parent title',
+                      forked_from=None, archived=True)
+        reader_payload['sessions'].append(parent)
+    else:
+        reader_payload['subagents'][parent_id]['title'] = 'Synthetic known parent title'
+    page = page_for(reader_payload, hash='#v=session&p=all&a=0&s='+ROOT)
+    assert parent_id not in row_ids(page)
+    page.get_by_role('button', name='forked from Synthetic known parent title', exact=True).click()
+    assert parse_qs(urlsplit(page.url).fragment)['s'] == [parent_id]
+
+
+@pytest.mark.parametrize('title', [None, '', '   ', 42])
+def test_fork_link_invalid_parent_title_falls_back_to_id(page_for, reader_payload, title):
+    root = reader_payload['sessions'][0]
+    root['forked_from'] = 'synthetic-child'
+    reader_payload['subagents']['synthetic-child']['title'] = title
+    page = open_reader(page_for, reader_payload)
+    expect(page.locator('.fork-link')).to_have_text('forked from synthetic-child')
+
+
+def test_fork_link_missing_parent_falls_back_to_id_and_preserves_navigation(page_for, reader_payload):
+    reader_payload['sessions'][0]['forked_from'] = 'synthetic-missing-parent'
+    page = open_reader(page_for, reader_payload)
+    page.get_by_role('button', name='forked from synthetic-missing-parent', exact=True).click()
+    assert parse_qs(urlsplit(page.url).fragment)['s'] == ['synthetic-missing-parent']
+
+
+def test_fork_link_conflicting_parent_titles_fall_back_to_id(page_for, reader_payload):
+    root = reader_payload['sessions'][0]
+    root['forked_from'] = 'synthetic-ambiguous-parent'
+    for title in ('Synthetic parent one', 'Synthetic parent two'):
+        parent = copy.deepcopy(root)
+        parent.update(id='synthetic-ambiguous-parent', title=title, forked_from=None)
+        reader_payload['sessions'].append(parent)
+    page = open_reader(page_for, reader_payload)
+    expect(page.locator('.fork-link')).to_have_text('forked from synthetic-ambiguous-parent')
 
 
 def test_reader_six_stats_and_depth_two_independent_overall(page_for, reader_payload):
@@ -296,15 +341,29 @@ def test_reader_untimed_usage_unknown_span_and_reported_duration(page_for, reade
     assert '1970' not in page.locator('[data-reader]').inner_text()
 
 
-def test_timeline_lanes_ticks_fork_badges_and_inferred_border(page_for, reader_payload):
-    page = open_reader(page_for,reader_payload)
+@pytest.mark.parametrize('width', [390, 1440])
+def test_timeline_lanes_ticks_fork_badges_and_inferred_border(page_for, reader_payload, width):
+    page = open_reader(page_for,reader_payload,width=width)
+    page.evaluate('document.fonts.ready')
     expect(page.locator('[data-timeline-tick]')).to_have_count(5)
     expect(page.locator('[data-timeline-lane]')).to_have_count(3)
     expect(page.locator('[data-timeline-idle]')).to_be_visible()
     inferred = page.locator('[data-timeline-subagent="synthetic-child"]')
     assert inferred.evaluate('(n)=>getComputedStyle(n).borderStyle') == 'dashed'
     assert page.locator('[data-timeline-turn]').evaluate('(n)=>getComputedStyle(n).backgroundColor') == 'rgb(42, 122, 82)'
-    expect(page.locator('[data-timeline]')).to_contain_text('forked')
+    badge = page.locator('[data-timeline-label] .tag')
+    expect(badge).to_have_count(1)
+    expect(badge).to_have_text('forked')
+    expect(badge).to_be_visible()
+    assert badge.evaluate('(n)=>getComputedStyle(n).borderStyle') == 'solid'
+    assert badge.evaluate('(n)=>getComputedStyle(n).borderTopWidth') == '1px'
+    assert 0 < badge.bounding_box()['height'] <= 10
+    assert page.locator('[data-timeline]').bounding_box()['height'] == 74
+    assert page.locator('.timeline-track').evaluate_all('(nodes)=>nodes.every(n=>n.getBoundingClientRect().height===14)')
+    assert page.locator('.timeline-block').evaluate_all('(nodes)=>nodes.every(n=>n.getBoundingClientRect().height===12)')
+    assert page.locator('[data-timeline-label-row]').evaluate_all('''nodes=>nodes.every(n=>{const r=n.getBoundingClientRect(),p=n.parentElement.getBoundingClientRect();return r.left>=p.left && r.right<=p.right+1;})''')
+    rects = page.locator('[data-timeline-label-row]').evaluate_all('(nodes)=>nodes.map(n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom};})')
+    assert all(not(a['x'] < b['right'] and b['x'] < a['right'] and a['y'] < b['bottom'] and b['y'] < a['bottom']) for n,a in enumerate(rects) for b in rects[n+1:])
 
 
 @pytest.mark.parametrize('width',[390,1440])
