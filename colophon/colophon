@@ -263,6 +263,826 @@ CURATED_BUNDLED = json.loads(r"""
 """)
 # <<< CURATED_BUNDLED
 
+# >>> CURATED_PRICE_HISTORY
+CURATED_PRICE_HISTORY = json.loads(r"""
+{
+  "schema": 1,
+  "entries": [
+    {
+      "model": "gpt-3.5-turbo",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.5,
+        "output": 1.5,
+        "cached_input": 0.0,
+        "cache_write": 0.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4",
+      "effective_from": null,
+      "per_million": {
+        "input": 30.0,
+        "output": 60.0,
+        "cached_input": 30.0,
+        "cache_write": 30.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4-turbo",
+      "effective_from": null,
+      "per_million": {
+        "input": 10.0,
+        "output": 30.0,
+        "cached_input": 10.0,
+        "cache_write": 10.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4.1",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.0,
+        "output": 8.0,
+        "cached_input": 0.5,
+        "cache_write": 2.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4.1-mini",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.4,
+        "output": 1.6,
+        "cached_input": 0.1,
+        "cache_write": 0.4
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4.1-nano",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.1,
+        "output": 0.4,
+        "cached_input": 0.025,
+        "cache_write": 0.1
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4o",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.5,
+        "output": 10.0,
+        "cached_input": 1.25,
+        "cache_write": 2.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4o-2024-05-13",
+      "effective_from": null,
+      "per_million": {
+        "input": 5.0,
+        "output": 15.0,
+        "cached_input": 5.0,
+        "cache_write": 5.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4o-2024-08-06",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.5,
+        "output": 10.0,
+        "cached_input": 1.25,
+        "cache_write": 2.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4o-2024-11-20",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.5,
+        "output": 10.0,
+        "cached_input": 1.25,
+        "cache_write": 2.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-4o-mini",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.15,
+        "output": 0.6,
+        "cached_input": 0.075,
+        "cache_write": 0.15
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.25,
+        "output": 10.0,
+        "cached_input": 0.125,
+        "cache_write": 1.25
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5-codex",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.25,
+        "output": 10.0,
+        "cached_input": 0.125,
+        "cache_write": 1.25
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5-mini",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.25,
+        "output": 2.0,
+        "cached_input": 0.025,
+        "cache_write": 0.25
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5-nano",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.05,
+        "output": 0.4,
+        "cached_input": 0.005,
+        "cache_write": 0.05
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5-pro",
+      "effective_from": null,
+      "per_million": {
+        "input": 15.0,
+        "output": 120.0,
+        "cached_input": 15.0,
+        "cache_write": 15.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.1",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.25,
+        "output": 10.0,
+        "cached_input": 0.125,
+        "cache_write": 1.25
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.1-codex",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.25,
+        "output": 10.0,
+        "cached_input": 0.125,
+        "cache_write": 1.25
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.1-codex-max",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.25,
+        "output": 10.0,
+        "cached_input": 0.125,
+        "cache_write": 1.25
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.1-codex-mini",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.25,
+        "output": 2.0,
+        "cached_input": 0.025,
+        "cache_write": 0.25
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.2",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.75,
+        "output": 14.0,
+        "cached_input": 0.175,
+        "cache_write": 1.75
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.2-chat-latest",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.75,
+        "output": 14.0,
+        "cached_input": 0.175,
+        "cache_write": 1.75
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.2-codex",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.75,
+        "output": 14.0,
+        "cached_input": 0.175,
+        "cache_write": 1.75
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.2-pro",
+      "effective_from": null,
+      "per_million": {
+        "input": 21.0,
+        "output": 168.0,
+        "cached_input": 21.0,
+        "cache_write": 21.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.3-chat-latest",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.75,
+        "output": 14.0,
+        "cached_input": 0.175,
+        "cache_write": 1.75
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.3-codex",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.75,
+        "output": 14.0,
+        "cached_input": 0.175,
+        "cache_write": 1.75
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.3-codex-spark",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.75,
+        "output": 14.0,
+        "cached_input": 0.175,
+        "cache_write": 1.75
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.4",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.5,
+        "output": 15.0,
+        "cached_input": 0.25,
+        "cache_write": 2.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 5.0,
+        "output": 22.5,
+        "cached_input": 0.5,
+        "cache_write": 5.0
+      },
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-5.4-mini",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.75,
+        "output": 4.5,
+        "cached_input": 0.075,
+        "cache_write": 0.75
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-5.4-nano",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.2,
+        "output": 1.25,
+        "cached_input": 0.02,
+        "cache_write": 0.2
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.4-pro",
+      "effective_from": null,
+      "per_million": {
+        "input": 30.0,
+        "output": 180.0,
+        "cached_input": 30.0,
+        "cache_write": 30.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 200000,
+        "input": 60.0,
+        "output": 270.0,
+        "cached_input": 60.0,
+        "cache_write": 60.0
+      }
+    },
+    {
+      "model": "gpt-5.5",
+      "effective_from": null,
+      "per_million": {
+        "input": 5.0,
+        "output": 30.0,
+        "cached_input": 0.5,
+        "cache_write": 5.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 10.0,
+        "output": 45.0,
+        "cached_input": 1.0,
+        "cache_write": 10.0
+      },
+      "priority": {
+        "multiplier": 2.5,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-5.5-cyber",
+      "effective_from": null,
+      "per_million": {
+        "input": 12.5,
+        "output": 75.0,
+        "cached_input": 1.25,
+        "cache_write": 12.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.5-pro",
+      "effective_from": null,
+      "per_million": {
+        "input": 30.0,
+        "output": 180.0,
+        "cached_input": 30.0,
+        "cache_write": 30.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 200000,
+        "input": 60.0,
+        "output": 270.0,
+        "cached_input": 60.0,
+        "cache_write": 60.0
+      }
+    },
+    {
+      "model": "gpt-5.6-cyber",
+      "effective_from": null,
+      "per_million": {
+        "input": 12.5,
+        "output": 75.0,
+        "cached_input": 1.25,
+        "cache_write": 15.625
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "effective_from": null,
+      "per_million": {
+        "input": 1,
+        "cached_input": 0.1,
+        "cache_write": 1.25,
+        "output": 6
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 2,
+        "cached_input": 0.2,
+        "cache_write": 2.5,
+        "output": 9
+      },
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "effective_from": "2026-07-30T00:00:00Z",
+      "per_million": {
+        "input": 0.2,
+        "output": 1.2,
+        "cached_input": 0.02,
+        "cache_write": 0.25
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 0.4,
+        "output": 1.8,
+        "cached_input": 0.04,
+        "cache_write": 0.5
+      },
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "effective_from": null,
+      "per_million": {
+        "input": 5,
+        "cached_input": 0.5,
+        "cache_write": 6.25,
+        "output": 30
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 10,
+        "cached_input": 1,
+        "cache_write": 12.5,
+        "output": 45
+      },
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "effective_from": "2026-08-21T00:00:00Z",
+      "per_million": {
+        "input": 4.0,
+        "output": 20.0,
+        "cached_input": 0.4,
+        "cache_write": 5.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 8.0,
+        "output": 30.0,
+        "cached_input": 0.8,
+        "cache_write": 10.0
+      },
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-5.6-terra",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.5,
+        "cached_input": 0.25,
+        "cache_write": 3.125,
+        "output": 15
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 5,
+        "cached_input": 0.5,
+        "cache_write": 6.25,
+        "output": 22.5
+      },
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-5.6-terra",
+      "effective_from": "2026-07-30T00:00:00Z",
+      "per_million": {
+        "input": 2.0,
+        "output": 12.0,
+        "cached_input": 0.2,
+        "cache_write": 2.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 4.0,
+        "output": 18.0,
+        "cached_input": 0.4,
+        "cache_write": 5.0
+      },
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": 272000
+      }
+    },
+    {
+      "model": "gpt-6-astra",
+      "effective_from": null,
+      "per_million": {
+        "input": 10.0,
+        "output": 50.0,
+        "cached_input": 1.0,
+        "cache_write": 12.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 272000,
+        "input": 20.0,
+        "output": 75.0,
+        "cached_input": 2.0,
+        "cache_write": 25.0
+      },
+      "priority": {
+        "multiplier": 2.0,
+        "max_input_tokens": null
+      }
+    },
+    {
+      "model": "gpt-6-luna",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "cache_write": 0.125
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 200000,
+        "input": 0.2,
+        "output": 0.75,
+        "cached_input": 0.02,
+        "cache_write": 0.25
+      }
+    },
+    {
+      "model": "gpt-6-sol",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.0,
+        "output": 10.0,
+        "cached_input": 0.2,
+        "cache_write": 2.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 200000,
+        "input": 4.0,
+        "output": 15.0,
+        "cached_input": 0.4,
+        "cache_write": 5.0
+      }
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.0,
+        "output": 10.0,
+        "cached_input": 0.1,
+        "cache_write": 2.5
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04",
+      "long_context": {
+        "threshold": 200000,
+        "input": 4.0,
+        "output": 15.0,
+        "cached_input": 0.2,
+        "cache_write": 5.0
+      }
+    },
+    {
+      "model": "gpt-image-2",
+      "effective_from": null,
+      "per_million": {
+        "input": 5.0,
+        "output": 30.0,
+        "cached_input": 1.25,
+        "cache_write": 5.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "gpt-realtime-2.1",
+      "effective_from": null,
+      "per_million": {
+        "input": 4.0,
+        "output": 24.0,
+        "cached_input": 0.4,
+        "cache_write": 4.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "o1",
+      "effective_from": null,
+      "per_million": {
+        "input": 15.0,
+        "output": 60.0,
+        "cached_input": 7.5,
+        "cache_write": 15.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "o1-pro",
+      "effective_from": null,
+      "per_million": {
+        "input": 150.0,
+        "output": 600.0,
+        "cached_input": 150.0,
+        "cache_write": 150.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "o3",
+      "effective_from": null,
+      "per_million": {
+        "input": 2.0,
+        "output": 8.0,
+        "cached_input": 0.5,
+        "cache_write": 2.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "o3-mini",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.1,
+        "output": 4.4,
+        "cached_input": 0.55,
+        "cache_write": 1.1
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "o3-pro",
+      "effective_from": null,
+      "per_million": {
+        "input": 20.0,
+        "output": 80.0,
+        "cached_input": 20.0,
+        "cache_write": 20.0
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "o4-mini",
+      "effective_from": null,
+      "per_million": {
+        "input": 1.1,
+        "output": 4.4,
+        "cached_input": 0.275,
+        "cache_write": 1.1
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "text-embedding-3-large",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.13,
+        "output": 0.0,
+        "cached_input": 0.13,
+        "cache_write": 0.13
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "text-embedding-3-small",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.02,
+        "output": 0.0,
+        "cached_input": 0.02,
+        "cache_write": 0.02
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    },
+    {
+      "model": "text-embedding-ada-002",
+      "effective_from": null,
+      "per_million": {
+        "input": 0.1,
+        "output": 0.0,
+        "cached_input": 0.1,
+        "cache_write": 0.1
+      },
+      "source": "curated",
+      "note": "seed from models.dev snapshot 2026-10-04"
+    }
+  ]
+}
+""")
+# <<< CURATED_PRICE_HISTORY
+
 
 # ===== 4. Utilities =====
 def now_ms() -> int:
@@ -5332,7 +6152,7 @@ def cost_usd(entry: dict, *, input: int, cached: int, output: int) -> float:
     remaining_after_cache = total_input - cached
     cache_write = 0
     non_cached = remaining_after_cache - cache_write
-    long_context = entry["long_context"]
+    long_context = entry.get("long_context")
     rates = long_context if long_context is not None and total_input > long_context["threshold"] else entry["per_million"]
     input_rate = rates["input"] / 1_000_000
     cached_input_rate = rates["cached_input"] / 1_000_000
@@ -5365,6 +6185,245 @@ def codex_api_fast_multiplier(model: str) -> float | None:
 
 HISTORICAL_CUTOFFS = {"gpt-5.6-sol": 1_787_270_400_000, "gpt-5.6-terra": 1_785_369_600_000,
                       "gpt-5.6-luna": 1_785_369_600_000}
+
+
+# ===== 15. Price history =====
+@dataclass
+class LedgerCheck:
+    entries: list[dict]
+    errors: list[str]
+    warnings: list[str]
+
+
+def _ledger_instant(value) -> int | None:
+    """D15 ledger instants are UTC at whole-second precision."""
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value
+    ):
+        return None
+    return parse_rfc3339_ms(value)
+
+
+def _ledger_number(value, *, positive: bool = False) -> bool:
+    """A plain finite JSON number, never a boolean or nonfinite float."""
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(float(value)) and (value > 0 if positive else value >= 0)
+    except OverflowError:
+        return False
+
+
+def _ledger_model(value) -> bool:
+    """Check the key contract without changing a valid key's spelling."""
+    if not isinstance(value, str) or not value or not _codex_trim(value):
+        return False
+    if value.startswith("catalog:"):
+        matched, separator, normalized = value.removeprefix("catalog:").rpartition("|")
+        return (bool(separator and matched and normalized) and _codex_trim(matched) == matched
+                and normalize_codex_model(normalized) == normalized)
+    return normalize_codex_model(value) == value
+
+
+def validate_ledger(doc, *, curated: bool) -> LedgerCheck:
+    """Validate without repairing: one bad entry disables the whole ledger."""
+    errors, warnings, entries = [], [], []
+    if not isinstance(doc, dict) or type(doc.get("schema")) is not int or doc["schema"] != 1:
+        return LedgerCheck([], ["ledger schema must be 1 in a JSON object"], [])
+    if not isinstance(doc.get("entries"), list):
+        return LedgerCheck([], ["ledger entries must be a list"], [])
+    seen = {}
+    rate_keys = ("input", "cached_input", "cache_write", "output")
+    for number, entry in enumerate(doc["entries"]):
+        prefix = f"entry {number}: "
+        start_errors = len(errors)
+        if not isinstance(entry, dict):
+            errors.append(prefix + "must be an object")
+            continue
+        if not _ledger_model(entry.get("model")):
+            errors.append(prefix + "model must be a nonempty normalized id or catalog override key")
+        if "effective_from" not in entry or not (
+            curated and entry["effective_from"] is None
+        ) and _ledger_instant(entry.get("effective_from")) is None:
+            errors.append(prefix + "effective_from must be a whole-second RFC 3339 UTC instant"
+                          + (" or null" if curated else "; null is curated-only"))
+        sources = ("curated",) if curated else ("catalog", "manual")
+        if entry.get("source") not in sources:
+            errors.append(prefix + "source must be " + " or ".join(sources))
+        for field_name in ("per_million", "long_context"):
+            if field_name == "long_context" and field_name not in entry:
+                continue
+            rates = entry.get(field_name)
+            if not isinstance(rates, dict):
+                errors.append(prefix + field_name + " must be an object")
+                continue
+            for rate in rate_keys:
+                if not _ledger_number(rates.get(rate)):
+                    errors.append(prefix + field_name + "." + rate + " must be a finite number >= 0")
+            if field_name == "long_context" and not (
+                type(rates.get("threshold")) is int and rates["threshold"] > 0
+            ):
+                errors.append(prefix + "long_context.threshold must be a positive integer")
+        if "priority" in entry:
+            priority = entry["priority"]
+            if not isinstance(priority, dict):
+                errors.append(prefix + "priority must be an object")
+            else:
+                if not _ledger_number(priority.get("multiplier"), positive=True):
+                    errors.append(prefix + "priority.multiplier must be a finite number > 0")
+                cap = priority.get("max_input_tokens")
+                if "max_input_tokens" not in priority or not (
+                    cap is None or type(cap) is int and cap > 0
+                ):
+                    errors.append(prefix + "priority.max_input_tokens must be a positive integer or null")
+        if entry.get("source") == "catalog" and "recorded_at" not in entry:
+            errors.append(prefix + "recorded_at is required for catalog entries")
+        if "recorded_at" in entry and parse_rfc3339_ms(entry["recorded_at"]) is None:
+            errors.append(prefix + "recorded_at must be an RFC 3339 instant")
+        if "note" in entry and not isinstance(entry["note"], str):
+            errors.append(prefix + "note must be a string")
+        if "approximate_date" in entry and type(entry["approximate_date"]) is not bool:
+            errors.append(prefix + "approximate_date must be a boolean")
+        if len(errors) != start_errors:
+            continue
+        key = (entry["model"], entry["effective_from"], entry["source"])
+        comparable = {key: value for key, value in entry.items() if key not in ("note", "recorded_at")}
+        if key in seen:
+            earlier_number, earlier = seen[key]
+            if comparable == earlier:
+                warnings.append(prefix + f"duplicate of entry {earlier_number}; collapsed")
+            else:
+                errors.append(prefix + f"conflicts with entry {earlier_number}")
+        else:
+            seen[key] = (number, comparable)
+            entries.append(entry)
+    return LedgerCheck([] if errors else entries, errors, warnings)
+
+
+class Pick(NamedTuple):
+    entry: dict
+    period_index: int
+    before_first: bool
+
+
+class PriceHistory:
+    """Merged validated entries, indexed by exact pricing key and period."""
+
+    def __init__(self, curated: list[dict], user: list[dict]):
+        self._entries = {}
+        self._times = {}
+        ranks = {"curated": 0, "catalog": 1, "manual": 2}
+        for entry in curated + user:
+            self._entries.setdefault(entry["model"], []).append(entry)
+        for model, entries in self._entries.items():
+            entries.sort(key=lambda entry: (entry["effective_from"] is not None,
+                         _ledger_instant(entry["effective_from"]) if entry["effective_from"] is not None else 0,
+                         ranks[entry["source"]]))
+            self._times[model] = [float("-inf") if entry["effective_from"] is None
+                                  else _ledger_instant(entry["effective_from"]) for entry in entries]
+
+    def entries_for(self, model: str) -> list[dict]:
+        return list(self._entries.get(model, []))
+
+    def has_any(self, model: str) -> bool:
+        return bool(self._entries.get(model))
+
+    def pick(self, model: str, at_ms: int) -> Pick | None:
+        entries = self._entries.get(model)
+        if not entries:
+            return None
+        times = self._times[model]
+        position = bisect.bisect_right(times, at_ms) - 1
+        before_first = position < 0
+        if before_first:
+            # Earliest date still observes manual > catalog > curated ties.
+            position = bisect.bisect_right(times, times[0]) - 1
+        return Pick(entries[position], position, before_first)
+
+
+def _history_catalog_match(model: str, index: ModelsDevIndex) -> dict | None:
+    for provider, candidate in codex_models_dev_pricing_targets(model):
+        lookup = index.pricing(provider, candidate)
+        if lookup is not None:
+            return lookup
+    return None
+
+
+def record_catalog_rates(history: PriceHistory, index: ModelsDevIndex,
+                         fetched_at_ms: int, recording_ids: dict[str, str], now_ms: int) -> list[dict]:
+    """Record changes at fetch time, never compare against manual corrections."""
+    sources = {normalize_codex_model(value["model_id"]): normalize_codex_model(value["model_id"])
+               for value in index._models.values()}
+    sources.update({key: key for key in history._entries})
+    sources.update(recording_ids)
+    effective_ms = fetched_at_ms // 1000 * 1000
+    effective_from = format_rfc3339(effective_ms)
+    appended = []
+    for key, source_model in sorted(sources.items()):
+        if _history_catalog_match(source_model, index) is None:
+            continue
+        entries = history.entries_for(key)
+        if any(entry["effective_from"] == effective_from for entry in entries):
+            continue
+        rates = resolve_rates(source_model, index)
+        if rates is None:
+            continue
+        previous = next((entry for entry in reversed(entries)
+                         if entry["source"] != "manual" and (entry["effective_from"] is None
+                         or _ledger_instant(entry["effective_from"]) <= effective_ms)), None)
+        if previous is not None and previous["per_million"] == rates["per_million"] and (
+            previous.get("long_context") == rates["long_context"]
+        ):
+            continue
+        new = {"model": key, "effective_from": effective_from,
+               "per_million": rates["per_million"], "source": "catalog",
+               "recorded_at": format_rfc3339(now_ms), "approximate_date": True}
+        if rates["long_context"] is not None:
+            new["long_context"] = rates["long_context"]
+        picked = history.pick(key, effective_ms)
+        if picked is not None and "priority" in picked.entry:
+            new["priority"] = picked.entry["priority"]
+        appended.append(new)
+    return appended
+
+
+def append_user_ledger(path: Path, new_entries: list[dict],
+                       start_mtime_ns: int | None) -> tuple[bool, str | None]:
+    """Append atomically only if the start-of-run ledger is still current."""
+    if not new_entries:
+        return False, None
+    changed = "price-history.json changed during the run; recording skipped"
+    try:
+        try:
+            before = path.stat().st_mtime_ns
+        except FileNotFoundError:
+            before = None
+        if before != start_mtime_ns:
+            return False, changed
+        if before is None:
+            text = None
+        else:
+            text = path.read_bytes()
+        try:
+            after = path.stat().st_mtime_ns
+        except FileNotFoundError:
+            after = None
+        if after != start_mtime_ns:
+            return False, changed
+        doc = {"schema": 1, "entries": []} if text is None else json.loads(text.decode("utf-8"))
+        checked = validate_ledger(doc, curated=False)
+        if checked.errors:
+            return False, "price-history.json: " + "; ".join(checked.errors)
+        # Validation may collapse duplicates for pricing, but the user's existing
+        # JSON entries stay unchanged when persisted.
+        combined = dict(doc, entries=doc["entries"] + new_entries)
+        checked = validate_ledger(combined, curated=False)
+        if checked.errors:
+            return False, "price-history.json: " + "; ".join(checked.errors)
+        atomic_write_json(path, combined, indent=2)
+        return True, None
+    except (OSError, UnicodeError, ValueError) as exc:
+        return False, f"price-history.json: recording skipped: {exc}"
 
 
 # ===== 19. CLI =====

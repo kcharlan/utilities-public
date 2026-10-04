@@ -1,5 +1,26 @@
 # Token and pricing rules
 
+Curated price-history seed provenance: public `https://models.dev/api.json`,
+downloaded once on **2026-10-04**, SHA-256
+`9095031166fec35632248c736bd29d383771ea8eb2c73dcc5ccdb3082923bc6e`.
+The downloaded snapshot stays outside the repository. Method: run
+`.venv/bin/python tests/tools/seed_price_history.py --snapshot <external-snapshot.json> --snapshot-date 2026-10-04`
+and paste its deterministic `indent=2` JSON between `CURATED_PRICE_HISTORY`
+markers. The seed combines sorted bundled ids and normalized priceable OpenAI
+catalog ids, resolving with Task 13's pinned resolver. Historical null periods
+and fixed cutoff periods use the upstream table; all other models start at null.
+No catalog `last_updated` values are used. The committed block contains only
+reviewed public rates, with 56 entries for 53 model keys.
+The tool checks raw floating `limit.context` spellings before normalization,
+using Task 13's source-grounded JSONDecoder Int boundary results. The 53
+OpenAI context fields in this snapshot are integers and are unaffected;
+the checked parser regenerates the exact same seed bytes. Cost fields retain
+the existing Double conversion and invalid model children are skipped individually.
+The source boundary follows Swift Foundation's
+[JSONDecoder integer conversion](https://raw.githubusercontent.com/swiftlang/swift-foundation/main/Sources/FoundationEssentials/JSON/JSONDecoder.swift)
+and the independent pinned-model probes; rate resolution stays pinned to
+CodexBar `3bbf6bc48`.
+
 Normative source: `steipete/CodexBar` at `3bbf6bc48`. File paths in this
 ledger are relative to `Sources/CodexBarCore/Vendored/CostUsage/`. The launcher
 ports routing into scalar observations; subsequent accounting replays them.
@@ -8,6 +29,10 @@ an upstream checkout, binary, cache or fixtures.
 
 | Rule | Upstream file | Function | Commit | Decision | Notes |
 | --- | --- | --- | --- | --- | --- |
+| Historical rate seed | CostUsagePricing.swift | codexHistoricalPricing (394–407), gpt56Pricing (47–61) | 3bbf6bc48 | Ported values, adapted representation | Sol cutoff 2026-08-21; Terra/Luna cutoff 2026-07-30. Historical null entries use the exact decimal per-million tuples and 272000 threshold; cutoff entries use the explicit snapshot resolver. |
+| Priority seed | CostUsagePricing.swift | codexAPIFastMultiplier, codexAPIFastAllowsLongContext (682–692) | 3bbf6bc48 | Ported | ×2 for 5.4, 5.4-mini, 5.6 Sol/Terra/Luna and 6 Astra; ×2.5 for 5.5. Cap 272000 except Astra's null cap. |
+| Dated ledgers and recording | Colophon spec §5.6, plan Task 16/D15 | validate_ledger, PriceHistory, record_catalog_rates, append_user_ledger | — | Colophon addition, approved A4 item 2 | Exact pricing keys; null first, then dated periods; manual > catalog > curated ties. Record at fetch time, compare non-manual standard/long rates only, carry priority, preserve existing JSON on append, detect mtime edits. Compiler diagnostic wiring belongs to Task 18. |
+| Optional ledger context compatibility | CostUsagePricing.swift | codexCostUSD (704–726) | 3bbf6bc48 | Ported behavior | An omitted long_context selects standard rates. cost_usd reads it optionally without adding a null field to picked or persisted entries. |
 | One observation stream during the existing read | CostUsageScanner.swift | parseCodexFileCancellable, onLine (4772–5005) | 3bbf6bc48 | Adapted representation | Cache observations instead of reducing usage immediately. Raw bytes route independently of Colophon's recovered display records. |
 | Physical position and upstream position | CostUsageJsonl.swift; CostUsageScanner.swift | flushLine (358–359); onLine (4773–4774) | 3bbf6bc48 | Ported | `line` counts physical lines; `uidx` counts prior nonzero-byte lines. Whitespace and carriage-return-only lines advance `uidx`. |
 | Bounded prefix | CostUsageJsonl.swift | appendSegment (342–353) | 3bbf6bc48 | Ported | Strictly more than 262144 bytes truncates; extractors receive only the first 262144 bytes. |

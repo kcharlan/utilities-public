@@ -1,5 +1,38 @@
 # Lessons learned
 
+- Re-stat a reread ledger before decoding or parsing its bytes. An editor may
+  leave partial JSON or invalid UTF-8 while saving; decoding first hides the
+  required mtime-change warning behind a codec or JSON error. Regressions:
+  `test_edit_during_reread_takes_precedence_over_invalid_json` and
+  `test_edit_during_reread_takes_precedence_over_invalid_utf8`.
+- The seed tool is also a raw catalog ingestion boundary. Preserve floating
+  numeric lexemes until typed `limit.context` acceptance is checked; normalize
+  accepted Int values exactly and skip invalid model children. Then restore
+  ordinary float rates before passing to the existing resolver. The prior
+  source probes show that plain float rounding loses accepted Int evidence
+  near Int64 boundaries. Regression:
+  `test_seed_raw_context_preserves_jsondecoder_acceptance`.
+
+- Ledger optional objects are object-or-omitted, whereas the pricing resolver
+  represents absent long context with null. Keep stored and picked entries
+  JSON-equal; consumers use optional lookup rather than inserting null into
+  the ledger or broadening validation. Regression:
+  `test_picked_entry_without_long_context_prices_standard_rates`.
+- D15's whole-second UTC rule governs `effective_from`, not observation
+  metadata. Reusing its validator for `recorded_at` rejects valid fractional
+  timestamps. Use RFC 3339 parsing for that metadata separately. Regression:
+  `test_recorded_at_allows_rfc3339_fraction_metadata`.
+- A dev seed generator must validate its input container before passing it
+  to the typed catalog index. Valid JSON can still be a scalar or list; report
+  a clear input error instead of leaking `AttributeError`. Regression:
+  `test_seed_rejects_nonobject_snapshot`.
+- String type alone does not establish a usable pricing identity, and a
+  nonnegative arbitrary-precision integer need not fit the cost formula's
+  floating representation. Validate normalized or complete override keys
+  without rewriting them, and reject rates whose finite Double conversion
+  fails. Regressions: `test_invalid_pricing_identity_never_establishes_history`
+  and `test_oversized_rate_is_not_representable_price_evidence`.
+
 - Port upstream verbatim. Cite the code, verify every restated rule against the function, never invent variants.
 
 - JSON strings can contain lone surrogate code points after damaged logs

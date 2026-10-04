@@ -101,3 +101,53 @@ an interpreter on its first invocation. The generated page contains private
 requests and final answers, so keep it private, including explicit outputs.
 Public tests and examples use conspicuously synthetic values; private
 acceptance output must never be committed.
+
+## Price history
+
+The curated ledger in the launcher supplies starting rates. The user ledger
+`price-history.json` stores dated catalog observations and manual corrections;
+curated entries are never copied into it. Rates are USD per million tokens.
+Each entry names an exact normalized model id, or a priority override pricing
+key. A newer catalog observation keeps earlier usage on its earlier rates.
+Catalog changes are dated when downloaded, so detection can lag the real change.
+
+To correct a historical rate or introduce a priority multiplier, copy the
+applicable entry's `per_million` and, if present, `long_context` into a new
+`manual` entry with the true UTC date. For example, this invented model gains
+a multiplier from a date without changing its standard rates:
+
+```json
+{
+  "model": "gpt-synthetic-example",
+  "effective_from": "2030-01-07T00:00:00Z",
+  "per_million": {"input": 2, "cached_input": 0.5, "cache_write": 3, "output": 7},
+  "priority": {"multiplier": 2, "max_input_tokens": null},
+  "source": "manual",
+  "note": "Synthetic example; replace with reviewed public rates"
+}
+```
+
+Add the entry to the ledger's existing `entries` list under `schema: 1`.
+All four rates are required. Optional `long_context` and `priority` must be
+objects when supplied; omit absent objects. Only the curated ledger permits
+a null effective date. A manual correction remains effective until the
+catalog's rates change; a model priced only manually gets a catalog entry
+when the catalog first lists it. Invalid ledgers disable recording and costs
+in the compiler while retaining token counts. An editor save during a run
+skips recording with a warning rather than overwriting the edit.
+
+Maintainers can refresh the seed with a reviewed public models.dev snapshot:
+
+```sh
+.venv/bin/python tests/tools/seed_price_history.py --snapshot /tmp/public-models-dev-snapshot.json --snapshot-date YYYY-MM-DD
+```
+
+The tool reads only the explicit snapshot and launcher, prints deterministic
+indented JSON, and never fetches data. Paste its output between the launcher's
+`CURATED_PRICE_HISTORY` markers and record the date, SHA-256 and command in
+`docs/token_rules.md`. Keep the snapshot outside the repository. Historical
+cutoffs and priority multipliers remain pinned to the cited CodexBar source.
+To promote later observed rates, list user-ledger catalog entries newer than
+the curated history, review their public rates, and add selected entries to
+the curated block with source `curated`; then validate and commit. Promote
+manual corrections only deliberately, after reviewing them for privacy.
