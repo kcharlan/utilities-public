@@ -3566,9 +3566,7 @@ def codex_models_dev_pricing_targets(raw: str) -> list[tuple[str, str]]:
             return []
         # TargetResolver trims the route-qualified id, removes its matching
         # route and validates the remainder before emitting a target.
-        if _pricing_has_prefix(model, "/") or _pricing_has_suffix(model, "/"):
-            return []
-        targets = [("openai", model)]
+        targets = [] if _pricing_has_prefix(model, "/") or _pricing_has_suffix(model, "/") else [("openai", model)]
         normalized = normalize_codex_model(model)
         if normalized != model:
             targets.append(("openai", normalized))
@@ -3625,6 +3623,19 @@ def _models_dev_candidates(raw: str) -> list[str]:
     return candidates
 
 
+def _models_dev_context_is_int(value) -> bool:
+    """JSONDecoder Int acceptance for an already decoded dict number's spelling."""
+    if type(value) is int:
+        return -(2**63) <= value < 2**63
+    if type(value) is not float or not math.isfinite(value):
+        return False
+    # Check the JSON-compatible decimal spelling, not rounded binary magnitude
+    # alone. At Int boundaries repr(float) can lie outside the checked range.
+    # Raw catalog lexemes must be validated before float decoding by the fetcher.
+    number = Decimal(repr(value))
+    return number == number.to_integral_value() and -(2**63) <= number < 2**63
+
+
 def _models_dev_decode_model(value) -> dict | None:
     """Decode the source model's known fields; invalid optional fields reject it."""
     if not isinstance(value, dict) or not isinstance(value.get("id"), str):
@@ -3636,7 +3647,7 @@ def _models_dev_decode_model(value) -> dict | None:
         if not isinstance(limit, dict):
             return None
         context = limit.get("context")
-        if context is not None and (type(context) is not int or not -(2**63) <= context < 2**63):
+        if context is not None and not _models_dev_context_is_int(context):
             return None
     cost = value.get("cost")
     if cost is None:
@@ -3674,6 +3685,13 @@ def _models_dev_decode_model(value) -> dict | None:
             "long_context": ({"threshold": 200000} | decoded[1]) if decoded[1] is not None else None}
 
 
+def _models_dev_provider_decodable(value) -> bool:
+    """Provider.init's typed container contract; invalid children are skipped."""
+    return (isinstance(value, dict) and isinstance(value.get("models"), dict)
+            and (value.get("id") is None or isinstance(value["id"], str))
+            and (value.get("name") is None or isinstance(value["name"], str)))
+
+
 class ModelsDevIndex:
     """Snapshot of priceable OpenAI models, preserving Swift string identities.
 
@@ -3693,23 +3711,20 @@ class ModelsDevIndex:
 
     @classmethod
     def from_catalog(cls, catalog: dict) -> ModelsDevIndex:
-        providers = catalog.get("providers", catalog)
+        wrapper = catalog.get("providers")
+        # Catalog.init tries the entire typed wrapper dictionary atomically.
+        # Any invalid provider falls back to decoding individual top-level keys.
+        providers = wrapper if isinstance(wrapper, dict) and all(
+            isinstance(key, str) and _models_dev_provider_decodable(value)
+            for key, value in wrapper.items()) else catalog
         models = {}
-        if not isinstance(providers, dict):
-            return cls(models)
         for map_key, provider in providers.items():
-            if not isinstance(provider, dict) or not isinstance(map_key, str):
+            if not isinstance(map_key, str) or not _models_dev_provider_decodable(provider):
                 continue
             provider_id = provider.get("id")
-            if provider_id is not None and not isinstance(provider_id, str):
-                continue
-            if provider.get("name") is not None and not isinstance(provider["name"], str):
-                continue
             if _codex_trim(provider_id if provider_id is not None else map_key).lower() != "openai":
                 continue
-            raw_models = provider.get("models")
-            if not isinstance(raw_models, dict):
-                continue
+            raw_models = provider["models"]
             models = {}
             for key, value in raw_models.items():
                 decoded = _models_dev_decode_model(value)

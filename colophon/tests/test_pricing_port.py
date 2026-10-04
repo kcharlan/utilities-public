@@ -381,3 +381,78 @@ def test_resolver_does_not_mutate_catalog_or_bundled_data(colophon):
     result["per_million"]["input"] = 999
     assert (source, colophon.CURATED_BUNDLED) == before
     assert colophon.resolve_rates("gpt-5.4", index)["per_million"]["input"] == 1.5
+
+
+@pytest.mark.parametrize("bad_provider", [
+    {"id": "synthetic-other"}, {"models": None}, {"models": []}, 42,
+    {"id": 42, "models": {}}, {"name": 42, "models": {}},
+])
+@pytest.mark.parametrize("top_level", [False, True])
+def test_invalid_wrapper_provider_abandons_entire_wrapped_map(colophon, bad_provider, top_level):
+    # ModelsDevCatalog.init L36–58: one invalid provider fails the whole wrapped
+    # dictionary; then decode top-level keys separately, including any usable OpenAI provider.
+    source = {"providers": {"openai": catalog()["openai"], "synthetic-other": bad_provider}}
+    if top_level:
+        source["openai"] = catalog({"gpt-synthetic-1": model(input=3, output=8)})["openai"]
+    lookup = colophon.ModelsDevIndex.from_catalog(source).pricing("openai", "gpt-synthetic-1")
+    if top_level:
+        assert lookup["per_million"]["input"] == 3
+    else:
+        assert lookup is None
+
+
+@pytest.mark.parametrize("wrapper", [None, [1], "synthetic-invalid", 42])
+def test_non_dictionary_wrapper_falls_back_to_top_level_provider(colophon, wrapper):
+    source = {"providers": wrapper, "openai": catalog()["openai"]}
+    assert colophon.ModelsDevIndex.from_catalog(source).pricing("openai", "gpt-synthetic-1") is not None
+
+
+def test_valid_empty_wrapper_suppresses_top_level_provider(colophon):
+    # Empty [String: ModelsDevProvider] successfully decodes; no top-level fallback follows.
+    source = {"providers": {}, "openai": catalog()["openai"]}
+    assert colophon.ModelsDevIndex.from_catalog(source).pricing("openai", "gpt-synthetic-1") is None
+
+
+def test_invalid_models_do_not_abandon_valid_provider_wrapper(colophon):
+    # Provider.init L166–169 skips individual malformed models rather than failing its container.
+    source = catalog({"gpt-synthetic-1": model(input=2, output=7),
+                      "gpt-synthetic-invalid": {"id": 42}}, wrapped=True)
+    source["openai"] = catalog({"gpt-synthetic-1": model(input=3, output=8)})["openai"]
+    assert colophon.ModelsDevIndex.from_catalog(source).pricing("openai", "gpt-synthetic-1")["per_million"]["input"] == 2
+
+
+@pytest.mark.parametrize("context, priceable", [
+    (128000.0, True), (1e5, True), (5e3, True), (-0.0, True), (0.0, True),
+    (9223372036854774784.0, True), (-9223372036854774784.0, True),
+    (2**63 - 1, True), (-(2**63), True), (None, True),
+    (True, False), ("1", False), (1.5, False), (1e19, False), (2**63, False),
+    (float(2**63), False), (float(-(2**63)), False), (math.inf, False), (math.nan, False),
+])
+def test_context_uses_jsondecoder_int_number_semantics(colophon, context, priceable):
+    # ModelsDevLimit.context (ModelsDevPricing L291–293) uses JSONDecoder Int.
+    # Standalone pinned-struct probes accept finite integral floats and exponent
+    # spellings, reject fractional/bool/nonfinite/overflow values, and reject
+    # floating -2**63 while accepting the integer spelling of -2**63.
+    entry = model(input=2, output=7)
+    entry["limit"] = {"context": context}
+    lookup = colophon.ModelsDevIndex.from_catalog(catalog({"gpt-synthetic-1": entry})).pricing(
+        "openai", "gpt-synthetic-1")
+    assert (lookup is not None) == priceable
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("openai/openai/gpt-synthetic-1/", [("openai", "gpt-synthetic-1/")]),
+    ("openai/openai/gpt-5/", [("openai", "gpt-5/")]),
+    ("openai/ gpt-synthetic-1/", [("openai", "gpt-synthetic-1/")]),
+])
+def test_normalized_target_fallback_survives_resolver_rejection(colophon, raw, expected):
+    # CostUsagePricing L466–474 appends normalized modelID even when the
+    # TargetResolver rejected the trailing slash. This is downstream lookup
+    # evidence, not permission to price a non-OpenAI provider.
+    assert colophon.codex_models_dev_pricing_targets(raw) == expected
+    index = colophon.ModelsDevIndex.from_catalog(catalog({
+        "gpt-synthetic-1/": model("gpt-synthetic-1/", input=2, output=7),
+        "gpt-5/": model("gpt-5/", input=3, output=8),
+    }))
+    assert colophon.resolve_rates(raw, index) is not None
+    assert colophon.resolve_rates("synthetic-other/" + raw.split("/", 1)[1], index) is None

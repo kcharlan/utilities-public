@@ -201,6 +201,10 @@ the later priority-override ledger. `resolve_rates` alone fills omissions.
 Edge-case decisions:
 
 - Malformed optional catalog fields, booleans and values outside finite Double representation provide no price evidence; upstream skips models whose typed decoder fails.
+- A wrapped provider map is decoded as a whole; one malformed provider abandons it and triggers top-level fallback, while malformed models remain individually skippable.
+- `limit.context` accepts finite integral JSON numbers under the source's checked Int conversion, including decimal/exponent float spellings; boolean, fractional and out-of-range values reject the model.
+- The dict interface checks each already decoded number's JSON-compatible spelling; raw catalog lexemes must be validated before Python float conversion at the fetch boundary, since lost original digits cannot be reconstructed.
+- A normalized OpenAI fallback target is appended even when the target resolver rejected the original nested or whitespace-bearing route; source fallback order remains authoritative.
 - Non-numeric `tiers` content is ignored because it is outside upstream's decoded cost keys.
 - A catalog `context_over_200k: {}` is present evidence of a threshold, not absence; source omission precedence therefore applies.
 - Canonically equivalent IDs compare equal but preserve the source spelling selected by the upstream branch; no case folding or compatibility normalization is added.

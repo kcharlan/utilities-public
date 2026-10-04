@@ -315,3 +315,17 @@
   Double conversion explicitly, reject failed/nonfinite conversions as invalid
   typed model evidence, and keep valid neighboring models priceable. Regression:
   `test_unpriceable_or_malformed_models_are_not_evidence[bad9]`.
+- Typed decode failure scope is part of the port: a wrapped provider map fails
+  as a whole on any invalid provider, then falls back to top-level keys. Invalid
+  model children instead remain individually skippable. Regression:
+  `test_invalid_wrapper_provider_abandons_entire_wrapped_map`.
+- A JSONDecoder Int field accepts integral decimal/exponent numbers rather than
+  only integer-typed JSON. Check the decimal spelling and signed range; ordinary
+  float integrality alone cannot establish boundary acceptance. Preserve raw
+  catalog number lexemes until typed context validation at the fetch boundary,
+  because Python float conversion can erase accepted source digits. Regression:
+  `test_context_uses_jsondecoder_int_number_semantics`.
+- A downstream resolver rejection does not necessarily end the caller's lookup
+  chain. Codex pricing targets append normalized OpenAI fallback after the
+  target resolver returns, including when its result is empty. Regression:
+  `test_normalized_target_fallback_survives_resolver_rejection`.
