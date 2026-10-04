@@ -2582,6 +2582,11 @@ class SessionModel:
     units: list = field(default_factory=list)
     link: dict | None = None
     db_info: dict = field(default_factory=dict)
+    kind: str = "session"
+    depth: int | None = None
+    agent_path: str | None = None
+    created_at_ms: int | float | None = None
+    forked_from: str | None = None
 
 
 @dataclass
@@ -2591,6 +2596,8 @@ class Corpus:
     skipped_records: list[dict] = field(default_factory=list)
     file_diagnostics: dict = field(default_factory=dict)
     db_threads_without_logs: int = 0
+    orphaned_subagents: list[str] = field(default_factory=list)
+    inferred_links: list[str] = field(default_factory=list)
 
 
 def _turn_models(turns: list[dict], *, mtime_ms: int, snapshot_ms: int,
@@ -2823,6 +2830,177 @@ def build_corpus(records: list[dict], metadata: CodexMetadata, snapshot_ms: int)
         result.sessions[key] = _assemble_session(display, copies, metadata, snapshot_ms,
                                                  session_id=identities[group])
     return result
+
+
+# ===== 10. Subagents =====
+def _subagent_spawn_turn(child: SessionModel, parent: SessionModel,
+                         snapshot_ms: int) -> tuple[str | None, str | None]:
+    """Apply §5.3 evidence precedence; unusable evidence falls through."""
+    turns = {turn.id: turn for turn in parent.turns}
+    links = parent.record["links"]
+    activity_keys = {entry["turn_key"] for entry in links["activities"]
+                     if entry["kind"] == "started" and entry["child_id"] == child.id
+                     and _metadata_text(entry["turn_key"]) and entry["turn_key"] in turns}
+    if len(activity_keys) == 1:
+        return activity_keys.pop(), "activity"
+    created = child.created_at_ms
+    if _metadata_text(child.agent_path) and created is not None:
+        candidates = [entry for entry in links["spawn_calls"]
+                      if entry["task_name"] == child.agent_path
+                      and _finite_number(entry["at_ms"]) is not None
+                      and entry["at_ms"] <= created]
+        if candidates:
+            latest = max(entry["at_ms"] for entry in candidates)
+            latest_entries = [entry for entry in candidates if entry["at_ms"] == latest]
+            keys = {entry["turn_key"] for entry in latest_entries
+                    if _metadata_text(entry["turn_key"]) and entry["turn_key"] in turns}
+            if len(keys) == 1 and all(entry["turn_key"] in keys for entry in latest_entries):
+                return keys.pop(), "spawn_call"
+    # A generated turn key is not evidence of a logged root_turn_id.
+    root_turns = {fact["turn_id"]: fact["key"] for fact in parent.record["turns"]
+                  if _metadata_text(fact["turn_id"]) and fact["key"] in turns}
+    if child.depth == 1:
+        for usage in child.record["usage_records"]:
+            root = usage["root_turn_id"]
+            if (usage["thread_id"] == child.id and _metadata_text(root) and root in root_turns):
+                return root_turns[root], "root_turn_id"
+    if created is not None:
+        last = {fact["key"]: fact["last_ms"] for fact in parent.record["turns"]}
+        contained = []
+        for turn in parent.turns:
+            start = _finite_number(turn.start_ms)
+            end = (snapshot_ms if turn.status == "running" else last.get(turn.id)
+                   if turn.status == "abandoned" else turn.end_ms)
+            end = _finite_number(end)
+            if start is not None and end is not None and start <= created <= end:
+                contained.append(turn.id)
+        if len(contained) == 1:
+            return contained[0], "inferred"
+    return None, None
+
+
+def _subagent_interaction_turns(child: SessionModel, parent: SessionModel,
+                                spawn_turn: str | None) -> list[str]:
+    links = parent.record["links"]
+    keys = {entry["turn_key"] for entry in links["activities"]
+            if entry["kind"] == "interacted" and entry["child_id"] == child.id
+            and _metadata_text(entry["turn_key"])}
+    keys.update(entry["turn_key"] for entry in links["collab_receivers"]
+                if entry["child_id"] == child.id and _metadata_text(entry["turn_key"]))
+    if _metadata_text(child.agent_path):
+        parent_path = child.agent_path.rsplit("/", 1)[0] if "/" in child.agent_path else None
+        for entry in links["targets"]:
+            target = entry["target"]
+            if not _metadata_text(target) or not _metadata_text(entry["turn_key"]):
+                continue
+            if (target == child.agent_path or (not target.startswith("/")
+                    and parent_path is not None and f"{parent_path}/{target}" == child.agent_path)):
+                keys.add(entry["turn_key"])
+    return [turn.id for turn in sorted(parent.turns, key=lambda turn: turn.n)
+            if turn.id in keys and turn.id != spawn_turn]
+
+
+def link_subagents(corpus: Corpus, metadata: CodexMetadata, snapshot_ms: int) -> None:
+    """Build direct parent edges and turn links without modifying cached facts."""
+    corpus.orphaned_subagents.clear()
+    corpus.inferred_links.clear()
+    # Filename/display IDs never establish a thread identity, even when a
+    # selected parent's spelling collides with a generated corpus key.
+    identified = {identifier: session for session in corpus.sessions.values()
+                  if (identifier := _history_identifier((session.meta or {}).get("id"))) is not None}
+    for session in corpus.sessions.values():
+        meta = session.meta or {}
+        session.children.clear()
+        session.flags.difference_update({"orphaned", "forked"})
+        session.parent_id = None
+        session.kind = "subagent" if session.is_subagent else "session"
+        session.link = ({"spawn_turn": None, "interaction_turns": [], "method": None}
+                        if session.is_subagent else None)
+        depth = meta.get("depth")
+        session.depth = depth if type(depth) is int and depth >= 0 else None
+        session.agent_path = next((value for value in
+            (meta.get("agent_path"), session.db_info.get("agent_path")) if _metadata_text(value)), None)
+        session.created_at_ms = _finite_number(meta.get("created_at_ms"))
+        fork = meta.get("forked_from_id")
+        session.forked_from = fork if not session.is_subagent and _metadata_text(fork) else None
+        for turn in session.turns:
+            turn.spawned.clear()
+            turn.used.clear()
+        if not session.is_subagent:
+            if session.depth is None:
+                session.depth = 0
+            continue
+        identifier = _history_identifier(meta.get("id"))
+        edge = metadata.spawn_parents.get(identifier) if identifier is not None else None
+        session.parent_id = next((value for value in (edge, meta.get("parent_thread_id"))
+                                  if _metadata_text(value)), None)
+
+    # Reject only edges participating in a cycle. Iterative traversal keeps
+    # malformed deep chains from exhausting Python's recursion limit.
+    visited = set()
+    for identifier in identified:
+        chain, positions = [], {}
+        cursor = identifier
+        while cursor in identified and cursor not in visited:
+            if cursor in positions:
+                for cyclic in chain[positions[cursor]:]:
+                    identified[cyclic].parent_id = None
+                break
+            positions[cursor] = len(chain)
+            chain.append(cursor)
+            cursor = identified[cursor].parent_id
+        visited.update(chain)
+
+    for session in corpus.sessions.values():
+        if not session.is_subagent:
+            continue
+        identifier = _history_identifier((session.meta or {}).get("id"))
+        parent = identified.get(session.parent_id) if identifier is not None else None
+        if parent is None:
+            session.kind = "orphan"
+            session.flags.add("orphaned")
+            corpus.orphaned_subagents.append(session.id)
+        else:
+            parent.children.append(session.id)
+        fork = (session.meta or {}).get("forked_from_id")
+        if _metadata_text(fork) and fork == session.parent_id:
+            session.flags.add("forked")
+
+    # Resolve missing depths from parents, regardless of corpus insertion order.
+    for session in corpus.sessions.values():
+        chain = []
+        cursor = session
+        while cursor.depth is None:
+            chain.append(cursor)
+            parent = identified.get(cursor.parent_id)
+            if parent is None:
+                break
+            cursor = parent
+        depth = cursor.depth
+        for child in reversed(chain):
+            if depth is not None:
+                depth += 1
+                child.depth = depth
+
+    by_id = {session.id: session for session in corpus.sessions.values()}
+    for session in corpus.sessions.values():
+        session.children.sort(key=lambda identifier: (
+            by_id[identifier].start_ms is None,
+            by_id[identifier].start_ms if by_id[identifier].start_ms is not None else 0))
+        if not session.is_subagent or session.kind == "orphan":
+            continue
+        parent = identified[session.parent_id]
+        spawn, method = _subagent_spawn_turn(session, parent, snapshot_ms)
+        interactions = _subagent_interaction_turns(session, parent, spawn)
+        session.link = {"spawn_turn": spawn, "interaction_turns": interactions, "method": method}
+        if method == "inferred":
+            corpus.inferred_links.append(session.id)
+        interaction_ids = set(interactions)
+        for turn in parent.turns:
+            if turn.id == spawn:
+                turn.spawned.append(session.id)
+            if turn.id in interaction_ids:
+                turn.used.append(session.id)
 
 
 # ===== 19. CLI =====

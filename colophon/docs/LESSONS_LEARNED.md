@@ -279,3 +279,10 @@
   visits in growing synthetic sessions rather than asserting volatile timings.
   Regressions: `test_assembly_bounds_retained_fact_visits_as_sessions_grow` and
   `test_final_answers_keep_recorded_precedence_and_last_eligible_voice`.
+- A latest-spawn rule must select by timestamp before validating turn placement.
+  Filtering unusable turns first borrows an older spawn and invents a link.
+  Conflicting started activities likewise establish no unique turn; duplicate
+  activities for the same turn remain evidence. Fall through to the next
+  documented method. Regressions:
+  `test_latest_spawn_with_unusable_turn_does_not_borrow_older_spawn` and
+  `test_conflicting_started_activities_fail_over_but_duplicates_are_evidence`.
