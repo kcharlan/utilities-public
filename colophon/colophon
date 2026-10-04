@@ -49,6 +49,21 @@ INJECTED_PREFIXES = ("# AGENTS.md", "<environment_context>", "<INSTRUCTIONS>",
                      "<codex_apps_open_page_instructions>", "<realtime_delegation>",
                      "<skill>", "<turn_aborted>")
 ANSWER_TAG = "send_user_message_question_reply"
+ORCHESTRATION_FUNCTIONS: frozenset[str] = frozenset({
+    "update_plan", "request_user_input", "request_user_input_async", "write_stdin",
+    "wait", "wait_agent", "list_agents", "spawn_agent", "followup_task",
+    "send_message", "interrupt_agent",
+})
+ORCHESTRATION_JS: frozenset[str] = frozenset({
+    "write_stdin", "update_plan", "wait", "request_user_input",
+    "request_user_input_async", "clock__sleep",
+})
+STRUCTURED_TOOL_TYPES: frozenset[str] = frozenset({
+    "CommandExecution", "FileChange", "McpToolCall", "WebSearch", "ImageView", "Extension",
+})
+JS_TOOL_CALL = re.compile(r"(?<![A-Za-z0-9_.])tools\.([A-Za-z_][A-Za-z0-9_]*)\(")
+JS_WEB_CALL = re.compile(r"(?<![A-Za-z0-9_.])web\.run\(")
+ToolCounts = dict[str, int | dict[str, int]]
 KNOWN_RECORD_KEYS: frozenset[str] = frozenset({
     "session_meta", "turn_context", "token_usage_record", "world_state", "compacted",
     "inter_agent_communication_metadata", "realtime_item", "bare_usage",
@@ -228,6 +243,192 @@ def decode_line(data: bytes) -> DecodedLine:
 # ===== 6. Per-file parse =====
 def _object(value) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+def _empty_tool_counts() -> ToolCounts:
+    return {"shell": 0, "shell_failed": 0, "file_edits": 0, "mcp": {},
+            "web": 0, "image": 0, "other": {}}
+
+
+def _merge_tool_counts(target: ToolCounts, source: ToolCounts) -> None:
+    for key, value in source.items():
+        if key in ("mcp", "other"):
+            for name, count in value.items():
+                target[key][name] = target[key].get(name, 0) + count
+        else:
+            target[key] += value
+
+
+class ToolTally:
+    """Keep both representations until structured precedence is known."""
+
+    def __init__(self):
+        self.has_structured = False
+        self.structured = _empty_tool_counts()
+        self.raw = _empty_tool_counts()
+
+    @staticmethod
+    def _group(counts: ToolCounts, category: str, name) -> None:
+        if _history_identifier(name) is not None:
+            counts[category][name] = counts[category].get(name, 0) + 1
+
+    def add_structured(self, item: dict) -> None:
+        item = _object(item)
+        kind = item.get("type")
+        if not isinstance(kind, str) or kind not in STRUCTURED_TOOL_TYPES:
+            return
+        self.has_structured = True
+        counts = self.structured
+        if kind == "CommandExecution":
+            counts["shell"] += 1
+            exit_code = item.get("exit_code")
+            if isinstance(exit_code, int) and not isinstance(exit_code, bool) and exit_code != 0:
+                counts["shell_failed"] += 1
+        elif kind == "FileChange":
+            counts["file_edits"] += len(_object(item.get("changes")))
+        elif kind == "McpToolCall":
+            self._group(counts, "mcp", item.get("server"))
+        elif kind == "WebSearch":
+            counts["web"] += 1
+        elif kind == "ImageView":
+            counts["image"] += 1
+        elif item.get("kind") == "web.search":
+            counts["web"] += 1
+        elif item.get("kind") != "clock.sleep":
+            self._group(counts, "other", item.get("kind"))
+
+    def _add_js(self, text: str) -> None:
+        for name in JS_TOOL_CALL.findall(text):
+            if name in ORCHESTRATION_JS or name.startswith("collaboration__"):
+                continue
+            if name == "exec_command":
+                self.raw["shell"] += 1
+            elif name == "apply_patch":
+                self.raw["file_edits"] += 1
+            elif name.startswith("mcp__") and "__" in name[5:]:
+                self._group(self.raw, "mcp", name[5:].split("__", 1)[0])
+            elif name == "web__run":
+                self.raw["web"] += 1
+            elif name == "view_image":
+                self.raw["image"] += 1
+            else:
+                self._group(self.raw, "other", name)
+        self.raw["web"] += len(JS_WEB_CALL.findall(text))
+
+    def add_raw(self, record: dict) -> None:
+        if _object(record).get("type") != "response_item":
+            return
+        payload = _object(record.get("payload"))
+        kind, name, namespace = (payload.get(key) for key in ("type", "name", "namespace"))
+        if kind == "local_shell_call":
+            self.raw["shell"] += 1
+        elif kind == "web_search_call":
+            self.raw["web"] += 1
+        elif kind == "custom_tool_call":
+            if name == "apply_patch":
+                self.raw["file_edits"] += 1
+            elif name == "exec" and isinstance(payload.get("input"), str):
+                self._add_js(payload["input"])
+        elif kind == "function_call" and _history_identifier(name) is not None:
+            if namespace in ("collaboration", "clock") or name in ORCHESTRATION_FUNCTIONS:
+                return
+            if namespace is not None and not isinstance(namespace, str):
+                return
+            if name in ("exec_command", "shell") and not namespace:
+                self.raw["shell"] += 1
+            elif namespace and namespace.startswith("mcp__"):
+                self._group(self.raw, "mcp", namespace[5:])
+            elif namespace == "web" and name == "run":
+                self.raw["web"] += 1
+            elif name == "view_image":
+                self.raw["image"] += 1
+            else:
+                self._group(self.raw, "other", f"{namespace}:{name}" if namespace else name)
+
+    def result(self) -> ToolCounts:
+        counts = _empty_tool_counts()
+        _merge_tool_counts(counts, self.structured if self.has_structured else self.raw)
+        return counts
+
+
+class ToolCandidate(NamedTuple):
+    structured: bool
+    counts: ToolCounts
+
+
+def _tool_candidate(record: dict, payload: dict, kind: str) -> ToolCandidate | None:
+    structured = kind.removeprefix("event_msg/item_completed/") in STRUCTURED_TOOL_TYPES
+    if not structured and kind not in (
+        "response_item/function_call", "response_item/custom_tool_call",
+        "response_item/local_shell_call", "response_item/web_search_call",
+    ):
+        return None
+    tally = ToolTally()
+    if structured:
+        tally.add_structured(_object(payload.get("item")))
+    elif kind.startswith("response_item/"):
+        tally.add_raw(record)
+    counts = tally.result()
+    if tally.has_structured or any(counts.values()):
+        return ToolCandidate(tally.has_structured, counts)
+    return None
+
+
+class LinkCandidate(NamedTuple):
+    kind: str
+    values: tuple
+
+
+def _json_fields(value) -> dict:
+    if not isinstance(value, str):
+        return {}
+    try:
+        return _object(json.loads(value))
+    except (ValueError, RecursionError):
+        return {}
+
+
+def _link_candidate(payload: dict, kind: str) -> LinkCandidate | None:
+    item = _object(payload.get("item"))
+    if kind == "event_msg/item_completed/SubAgentActivity":
+        return LinkCandidate("activity", tuple(_history_identifier(item.get(key))
+                             for key in ("kind", "agent_thread_id", "agent_path")))
+    if kind == "event_msg/item_completed/CollabAgentToolCall":
+        receivers = item.get("receiver_thread_ids")
+        return LinkCandidate("receivers", tuple(value for value in receivers
+                             if _history_identifier(value) is not None) if isinstance(receivers, list) else ())
+    if kind == "response_item/function_call" and payload.get("namespace") == "collaboration":
+        name = payload.get("name")
+        if name == "spawn_agent":
+            return LinkCandidate("spawn", (_history_identifier(payload.get("call_id")),))
+        if name in ("followup_task", "send_message"):
+            return LinkCandidate("target", (_history_identifier(
+                _json_fields(payload.get("arguments")).get("target")),))
+    if kind == "response_item/function_call_output":
+        return LinkCandidate("output", (_history_identifier(payload.get("call_id")),
+                             _history_identifier(_json_fields(payload.get("output")).get("task_name"))))
+    return None
+
+
+def _usage_timestamp_unix_ms(timestamp) -> int | None:
+    # parseNativeRFC3339 keeps only three fraction digits (Timestamp.swift:59–69)
+    # before unixMilliseconds rounds date * 1000 (Scanner.swift:4262–4267).
+    # The existing strict parser already yields those integral native ms;
+    # the broader upstream historical parsing/routing belongs to Task 7.
+    return parse_rfc3339_ms(timestamp)
+
+
+def _usage_record(record: dict, payload: dict, fact: RecordFact) -> dict:
+    usage = _object(payload.get("usage"))
+    timestamp = record.get("timestamp")
+    return {"line": fact.line, "rec": fact.rec,
+            **{key: payload.get(key) for key in ("response_id", "thread_id", "turn_id", "root_turn_id")},
+            "ts": timestamp, "at_ms": fact.at_ms,
+            "timestamp_unix_ms": _usage_timestamp_unix_ms(timestamp),
+            **{target: usage.get(source) for target, source in (
+                ("input", "input_tokens"), ("cached_input", "cached_input_tokens"),
+                ("cache_read_input", "cache_read_input_tokens"), ("cache_write", "cache_write_input_tokens"),
+                ("output", "output_tokens"), ("reasoning", "reasoning_output_tokens"))}}
 
 
 def record_type_key(record: dict) -> str:
@@ -411,6 +612,8 @@ class RecordFact(NamedTuple):
     item_message: bool
     message: MessageCandidate | None
     voice: VoiceSegment | None
+    tool: ToolCandidate | None
+    link: LinkCandidate | None
 
 
 def _finite_number(value) -> int | float | None:
@@ -448,6 +651,7 @@ def _record_fact(record: dict, payload: dict, *, rec: int, line: int, kind: str,
         _nonnegative_number(payload.get("time_to_first_token_ms")),
         kind in ("event_msg/item_completed/UserMessage", "event_msg/item_completed/AgentMessage"),
         _message_candidate(payload, kind), _voice_segment(payload, kind),
+        _tool_candidate(record, payload, kind), _link_candidate(payload, kind),
     )
 
 
@@ -744,6 +948,56 @@ def select_final_answer(record_facts: dict, turn_key: str) -> dict | None:
     return None
 
 
+def _tools_and_links(facts: list[RecordFact], inherited: list[bool],
+                     attributed: dict[int, str | None], builder: TurnBuilder) -> tuple[dict, dict]:
+    tallies = {turn["key"]: ToolTally() for turn in builder.turns}
+    links = {"activities": [], "spawn_calls": [], "targets": [], "collab_receivers": []}
+    spawns = []
+    spawn_counts = {}
+    outputs = {}
+    output_counts = {}
+    for fact in facts:
+        if inherited[fact.rec]:
+            continue
+        turn_key = attributed.get(fact.rec)
+        if turn_key is None and fact.turn_id in builder.by_id:
+            turn_key = builder.by_id[fact.turn_id]["key"]
+        if fact.tool is not None and turn_key is not None:
+            tally = tallies[turn_key]
+            if fact.tool.structured:
+                tally.has_structured = True
+            _merge_tool_counts(tally.structured if fact.tool.structured else tally.raw, fact.tool.counts)
+        link = fact.link
+        if link is None:
+            continue
+        if link.kind == "activity":
+            kind, child_id, agent_path = link.values
+            links["activities"].append({"kind": kind, "child_id": child_id,
+                                        "agent_path": agent_path, "turn_key": turn_key})
+        elif link.kind == "target":
+            links["targets"].append({"target": link.values[0], "turn_key": turn_key})
+        elif link.kind == "receivers":
+            links["collab_receivers"].extend({"child_id": child_id, "turn_key": turn_key}
+                                             for child_id in link.values)
+        elif link.kind == "spawn":
+            call_id = link.values[0]
+            spawn = {"task_name": None, "turn_key": turn_key, "at_ms": fact.at_ms}
+            links["spawn_calls"].append(spawn)
+            spawns.append((call_id, spawn))
+            if call_id is not None:
+                spawn_counts[call_id] = spawn_counts.get(call_id, 0) + 1
+        elif link.kind == "output":
+            call_id, task_name = link.values
+            if call_id is not None:
+                outputs[call_id] = task_name
+                output_counts[call_id] = output_counts.get(call_id, 0) + 1
+    for call_id, spawn in spawns:
+        if (call_id is not None and spawn_counts[call_id] == 1
+                and output_counts.get(call_id) == 1):
+            spawn["task_name"] = outputs[call_id]
+    return {key: tally.result() for key, tally in tallies.items()}, links
+
+
 def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> dict:
     """Read a log once, retaining facts rather than raw decoded records."""
     result = {
@@ -753,6 +1007,7 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
         "lines": {"malformed": 0, "recovered": 0, "partial_final_line": False},
         "unknown_types": {}, "meta": None, "extra_meta_count": 0,
         "wrapper_ts": {"count": 0, "distinct": 0},
+        "usage_records": [],
     }
     wrapper_values: set[str] = set()
     facts: list[RecordFact] = []
@@ -797,6 +1052,8 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
                 result["status"] = "ok"
             facts.append(_record_fact(record, payload, rec=len(facts), line=raw.index,
                                       kind=key, meta_id=header["id"] if key == "session_meta" else None))
+            if key == "token_usage_record":
+                result["usage_records"].append(_usage_record(record, payload, facts[-1]))
             # The next phase uses scalar facts only, including after the final
             # iteration where loop variables would otherwise retain a payload.
             del record, payload
@@ -833,6 +1090,7 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
             candidates.append((fact, turn_key))
     result["messages"] = _deduplicate_messages(candidates, item_turns)
     result["voice"] = _place_voice(facts, inherited, builder)
+    result["tools"], result["links"] = _tools_and_links(facts, inherited, attributed, builder)
     return result
 
 

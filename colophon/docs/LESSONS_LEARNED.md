@@ -80,3 +80,11 @@
   concrete turns never match. Regressions:
   `test_reserved_star_turn_id_does_not_match_other_concrete_id` and
   `test_reserved_star_turn_id_matches_same_id_and_missing_id`.
+- Follow the whole timestamp conversion chain before interpreting a rounding
+  rule. CodexBar `3bbf6bc48`'s `parseNativeRFC3339` keeps only the first three
+  fractional digits before `unixMilliseconds` rounds the parsed date; rounding
+  the original higher-precision text changes pricing instants. Task 6's
+  "round(ms)" refers to that parsed date, while Task 7 owns broader upstream
+  timestamp routing. Regressions:
+  `test_usage_timestamp_native_parser_truncates_beyond_three_digits` and
+  `test_usage_timestamp_native_precision_at_ties_negative_epochs_and_second_boundary`.
