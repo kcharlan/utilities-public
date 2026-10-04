@@ -1,0 +1,11 @@
+{
+  "name": "b02_fork_parent_missing",
+  "description": "Forked session whose parent log is missing: fork baseline unresolved.",
+  "day_utc": "2025-03-14",
+  "files": [
+    "sessions/2025/03/14/rollout-2025-03-14T09-30-36-019593e1-be80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/14/rollout-2025-03-14T09-30-36-019593e1-be80-7000-8000-000000002000.jsonl": 1741944636000
+  }
+}

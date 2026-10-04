@@ -1,0 +1,11 @@
+{
+  "name": "a11_model_normalization",
+  "description": "Row models through normalizeCodexModel: openai/ prefix, gpt-5.6 and gpt-reserve aliases, a dated suffix on a bundled base, and a compact date that is not folded.",
+  "day_utc": "2025-03-11",
+  "files": [
+    "sessions/2025/03/11/rollout-2025-03-11T09-01-01-0195846e-aa80-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/11/rollout-2025-03-11T09-01-01-0195846e-aa80-7000-8000-000000001000.jsonl": 1741683661000
+  }
+}

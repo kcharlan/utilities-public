@@ -1,0 +1,13 @@
+{
+  "name": "b06_history_base_continued_counter",
+  "description": "Fork whose history_base differs from forked_from: raised baseline.",
+  "day_utc": "2025-03-18",
+  "files": [
+    "sessions/2025/03/18/rollout-2025-03-18T09-00-21-0195a87b-2e80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/18/rollout-2025-03-18T09-30-25-0195a87b-2e80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/18/rollout-2025-03-18T09-30-25-0195a87b-2e80-7000-8000-000000002000.jsonl": 1742290225000,
+    "sessions/2025/03/18/rollout-2025-03-18T09-00-21-0195a87b-2e80-7000-8000-000000001000.jsonl": 1742288421000
+  }
+}

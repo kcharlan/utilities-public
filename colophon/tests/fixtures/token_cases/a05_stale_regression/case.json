@@ -1,0 +1,11 @@
+{
+  "name": "a05_stale_regression",
+  "description": "A total that falls back by about one recent increment is stale.",
+  "day_utc": "2025-03-05",
+  "files": [
+    "sessions/2025/03/05/rollout-2025-03-05T09-00-36-01956588-8280-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/05/rollout-2025-03-05T09-00-36-01956588-8280-7000-8000-000000001000.jsonl": 1741165236000
+  }
+}

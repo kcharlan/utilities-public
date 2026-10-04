@@ -1,0 +1,13 @@
+{
+  "name": "c05_subagent_parent_confirmed_candidate",
+  "description": "Explicit parent, no ancestor meta, zero-usage opening snapshot.",
+  "day_utc": "2025-03-28",
+  "files": [
+    "sessions/2025/03/28/rollout-2025-03-28T09-00-26-0195dbfa-c680-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/28/rollout-2025-03-28T09-30-30-0195dbfa-c680-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/28/rollout-2025-03-28T09-30-30-0195dbfa-c680-7000-8000-000000002000.jsonl": 1743154230000,
+    "sessions/2025/03/28/rollout-2025-03-28T09-00-26-0195dbfa-c680-7000-8000-000000001000.jsonl": 1743152426000
+  }
+}

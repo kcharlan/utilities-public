@@ -1,0 +1,13 @@
+{
+  "name": "c09_depth2_dependent_parent_unresolved",
+  "description": "Depth-2 subagent with no boundary under a depth-1 parent that depends on a missing root.",
+  "day_utc": "2025-04-01",
+  "files": [
+    "sessions/2025/04/01/rollout-2025-04-01T09-10-16-0195f094-3680-7000-8000-000000002000.jsonl",
+    "sessions/2025/04/01/rollout-2025-04-01T09-30-21-0195f094-3680-7000-8000-000000003000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/04/01/rollout-2025-04-01T09-30-21-0195f094-3680-7000-8000-000000003000.jsonl": 1743499821000,
+    "sessions/2025/04/01/rollout-2025-04-01T09-10-16-0195f094-3680-7000-8000-000000002000.jsonl": 1743498616000
+  }
+}

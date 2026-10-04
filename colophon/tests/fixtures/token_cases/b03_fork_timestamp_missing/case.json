@@ -1,0 +1,13 @@
+{
+  "name": "b03_fork_timestamp_missing",
+  "description": "Forked session whose session_meta has no timestamp: unresolved.",
+  "day_utc": "2025-03-15",
+  "files": [
+    "sessions/2025/03/15/rollout-2025-03-15T09-00-26-01959908-1a80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/15/rollout-2025-03-15T09-30-36-01959908-1a80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/15/rollout-2025-03-15T09-00-26-01959908-1a80-7000-8000-000000001000.jsonl": 1742029226000,
+    "sessions/2025/03/15/rollout-2025-03-15T09-30-36-01959908-1a80-7000-8000-000000002000.jsonl": 1742031036000
+  }
+}

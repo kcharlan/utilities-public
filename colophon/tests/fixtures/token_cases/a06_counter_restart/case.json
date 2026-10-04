@@ -1,0 +1,11 @@
+{
+  "name": "a06_counter_restart",
+  "description": "A counter drop below the watermark latches interleaved mode.",
+  "day_utc": "2025-03-06",
+  "files": [
+    "sessions/2025/03/06/rollout-2025-03-06T09-00-41-01956aae-de80-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/06/rollout-2025-03-06T09-00-41-01956aae-de80-7000-8000-000000001000.jsonl": 1741251641000
+  }
+}

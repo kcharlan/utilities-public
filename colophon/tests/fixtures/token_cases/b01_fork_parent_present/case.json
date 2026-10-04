@@ -1,0 +1,13 @@
+{
+  "name": "b01_fork_parent_present",
+  "description": "Forked session with its parent log present: inherited totals subtracted.",
+  "day_utc": "2025-03-13",
+  "files": [
+    "sessions/2025/03/13/rollout-2025-03-13T09-00-26-01958ebb-6280-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/13/rollout-2025-03-13T09-30-36-01958ebb-6280-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/13/rollout-2025-03-13T09-30-36-01958ebb-6280-7000-8000-000000002000.jsonl": 1741858236000,
+    "sessions/2025/03/13/rollout-2025-03-13T09-00-26-01958ebb-6280-7000-8000-000000001000.jsonl": 1741856426000
+  }
+}

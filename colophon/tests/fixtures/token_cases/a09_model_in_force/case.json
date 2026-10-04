@@ -1,0 +1,11 @@
+{
+  "name": "a09_model_in_force",
+  "description": "turn_context model tri-state: set, blank-then-set, all blank clears, omitted keeps.",
+  "day_utc": "2025-03-09",
+  "files": [
+    "sessions/2025/03/09/rollout-2025-03-09T09-00-41-01957a21-f280-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/09/rollout-2025-03-09T09-00-41-01957a21-f280-7000-8000-000000001000.jsonl": 1741510841000
+  }
+}

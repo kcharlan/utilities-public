@@ -1,0 +1,11 @@
+{
+  "name": "a07_total_only",
+  "description": "Events with a total and no last count the total delta.",
+  "day_utc": "2025-03-07",
+  "files": [
+    "sessions/2025/03/07/rollout-2025-03-07T09-00-31-01956fd5-3a80-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/07/rollout-2025-03-07T09-00-31-01956fd5-3a80-7000-8000-000000001000.jsonl": 1741338031000
+  }
+}

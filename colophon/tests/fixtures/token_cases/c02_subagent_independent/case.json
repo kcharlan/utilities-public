@@ -1,0 +1,13 @@
+{
+  "name": "c02_subagent_independent",
+  "description": "Subagent with no embedded ancestor and no fork id: independent counter.",
+  "day_utc": "2025-03-25",
+  "files": [
+    "sessions/2025/03/25/rollout-2025-03-25T09-00-26-0195cc87-b280-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/25/rollout-2025-03-25T09-30-25-0195cc87-b280-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/25/rollout-2025-03-25T09-30-25-0195cc87-b280-7000-8000-000000002000.jsonl": 1742895025000,
+    "sessions/2025/03/25/rollout-2025-03-25T09-00-26-0195cc87-b280-7000-8000-000000001000.jsonl": 1742893226000
+  }
+}

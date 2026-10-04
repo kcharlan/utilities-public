@@ -1,0 +1,9 @@
+[
+  "s01_fork_depth1",
+  "s02_fork_depth1_parent_missing",
+  "s03_fork_depth2",
+  "s04_subagent_nonfork_start_past_end",
+  "s05_subagent_no_ordinal",
+  "s06_depth2_nonfork",
+  "s07_fork_start_past_end"
+]

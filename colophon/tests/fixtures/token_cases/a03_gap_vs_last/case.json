@@ -1,0 +1,11 @@
+{
+  "name": "a03_gap_vs_last",
+  "description": "Total delta smaller than last, then a gap larger than last.",
+  "day_utc": "2025-03-03",
+  "files": [
+    "sessions/2025/03/03/rollout-2025-03-03T09-00-31-01955b3b-ca80-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/03/rollout-2025-03-03T09-00-31-01955b3b-ca80-7000-8000-000000001000.jsonl": 1740992431000
+  }
+}

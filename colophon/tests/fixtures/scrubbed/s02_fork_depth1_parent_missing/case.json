@@ -1,0 +1,14 @@
+{
+  "name": "s02_fork_depth1_parent_missing",
+  "description": "As s01 without the parent log.",
+  "files": [
+    "archived_sessions/rollout-2025-06-02T08-12-21-01972df0-1c01-7000-8000-000000000001.jsonl"
+  ],
+  "mtimes_ms": {
+    "archived_sessions/rollout-2025-06-02T08-12-21-01972df0-1c01-7000-8000-000000000001.jsonl": 1748866357340
+  },
+  "scrub": {
+    "token_scale": 2,
+    "tool": "colophon/tests/tools/scrub_codex_logs.py"
+  }
+}

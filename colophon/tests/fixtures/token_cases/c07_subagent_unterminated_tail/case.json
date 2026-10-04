@@ -1,0 +1,13 @@
+{
+  "name": "c07_subagent_unterminated_tail",
+  "description": "Subagent (copied prefix + boundary) ending in incomplete JSON: no rows yet.",
+  "day_utc": "2025-03-30",
+  "files": [
+    "sessions/2025/03/30/rollout-2025-03-30T09-00-26-0195e647-7e80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/30/rollout-2025-03-30T09-30-31-0195e647-7e80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/30/rollout-2025-03-30T09-00-26-0195e647-7e80-7000-8000-000000001000.jsonl": 1743325226000,
+    "sessions/2025/03/30/rollout-2025-03-30T09-30-31-0195e647-7e80-7000-8000-000000002000.jsonl": 1743327031000
+  }
+}

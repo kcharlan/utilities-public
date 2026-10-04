@@ -1,0 +1,13 @@
+{
+  "name": "b05_fork_of_fork_missing_grandparent",
+  "description": "Fork of a fork whose grandparent log is missing.",
+  "day_utc": "2025-03-17",
+  "files": [
+    "sessions/2025/03/17/rollout-2025-03-17T09-30-36-0195a354-d280-7000-8000-000000002000.jsonl",
+    "sessions/2025/03/17/rollout-2025-03-17T09-32-17-0195a354-d280-7000-8000-000000003000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/17/rollout-2025-03-17T09-30-36-0195a354-d280-7000-8000-000000002000.jsonl": 1742203836000,
+    "sessions/2025/03/17/rollout-2025-03-17T09-32-17-0195a354-d280-7000-8000-000000003000.jsonl": 1742203937000
+  }
+}

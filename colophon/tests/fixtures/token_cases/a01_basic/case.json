@@ -1,0 +1,11 @@
+{
+  "name": "a01_basic",
+  "description": "Plain cumulative totals with matching last deltas.",
+  "day_utc": "2025-03-01",
+  "files": [
+    "sessions/2025/03/01/rollout-2025-03-01T09-00-31-019550ef-1280-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/01/rollout-2025-03-01T09-00-31-019550ef-1280-7000-8000-000000001000.jsonl": 1740819631000
+  }
+}

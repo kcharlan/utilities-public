@@ -1,0 +1,11 @@
+{
+  "name": "a02_first_event_divergent",
+  "description": "First event total exceeds last (resumed counter): divergence latches.",
+  "day_utc": "2025-03-02",
+  "files": [
+    "sessions/2025/03/02/rollout-2025-03-02T09-00-31-01955615-6e80-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/02/rollout-2025-03-02T09-00-31-01955615-6e80-7000-8000-000000001000.jsonl": 1740906031000
+  }
+}

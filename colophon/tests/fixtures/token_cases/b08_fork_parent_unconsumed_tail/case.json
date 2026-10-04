@@ -1,0 +1,13 @@
+{
+  "name": "b08_fork_parent_unconsumed_tail",
+  "description": "Fork parent ends in an incomplete JSON segment and its last event precedes the fork: unresolved.",
+  "day_utc": "2025-03-20",
+  "files": [
+    "sessions/2025/03/20/rollout-2025-03-20T09-00-26-0195b2c7-e680-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/20/rollout-2025-03-20T09-31-02-0195b2c7-e680-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/20/rollout-2025-03-20T09-00-26-0195b2c7-e680-7000-8000-000000001000.jsonl": 1742461226000,
+    "sessions/2025/03/20/rollout-2025-03-20T09-31-02-0195b2c7-e680-7000-8000-000000002000.jsonl": 1742463062000
+  }
+}

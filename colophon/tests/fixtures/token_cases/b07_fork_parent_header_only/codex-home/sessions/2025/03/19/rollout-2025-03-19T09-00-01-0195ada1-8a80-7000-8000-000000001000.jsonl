@@ -1,0 +1,1 @@
+{"timestamp":"2025-03-19T09:00:01.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"0195ada1-8a80-7000-8000-000000001000","id":"0195ada1-8a80-7000-8000-000000001000","timestamp":"2025-03-19T09:00:01.000Z","cwd":"/synthetic/projects/alpha","originator":"Codex Desktop","cli_version":"0.0.0-synthetic","model_provider":"openai","source":"vscode"}}

@@ -1,0 +1,13 @@
+{
+  "name": "b07_fork_parent_header_only",
+  "description": "Fork whose parent log is header-only (session_meta only).",
+  "day_utc": "2025-03-19",
+  "files": [
+    "sessions/2025/03/19/rollout-2025-03-19T09-00-01-0195ada1-8a80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/19/rollout-2025-03-19T09-30-25-0195ada1-8a80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/19/rollout-2025-03-19T09-00-01-0195ada1-8a80-7000-8000-000000001000.jsonl": 1742374801000,
+    "sessions/2025/03/19/rollout-2025-03-19T09-30-25-0195ada1-8a80-7000-8000-000000002000.jsonl": 1742376625000
+  }
+}

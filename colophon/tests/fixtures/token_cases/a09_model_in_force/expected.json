@@ -1,0 +1,151 @@
+{
+  "bucket_tz": "America/New_York",
+  "day_aggregates": [
+    {
+      "authoritative_cost_nanos": 0,
+      "cached_tokens": 0,
+      "day": "2025-03-09",
+      "input_tokens": 2000,
+      "model": "gpt-5.4",
+      "output_tokens": 200,
+      "priority_cached_tokens": 0,
+      "priority_input_tokens": 0,
+      "priority_output_tokens": 0,
+      "priority_tokens": 0,
+      "reasoning_tokens": 0,
+      "request_count": 2,
+      "standard_cached_tokens": 0,
+      "standard_input_tokens": 2000,
+      "standard_output_tokens": 200,
+      "standard_tokens": 2200
+    },
+    {
+      "authoritative_cost_nanos": 0,
+      "cached_tokens": 0,
+      "day": "2025-03-09",
+      "input_tokens": 1000,
+      "model": "gpt-5.5",
+      "output_tokens": 100,
+      "priority_cached_tokens": 0,
+      "priority_input_tokens": 0,
+      "priority_output_tokens": 0,
+      "priority_tokens": 0,
+      "reasoning_tokens": 0,
+      "request_count": 1,
+      "standard_cached_tokens": 0,
+      "standard_input_tokens": 1000,
+      "standard_output_tokens": 100,
+      "standard_tokens": 1100
+    }
+  ],
+  "files": [
+    {
+      "file": "sessions/2025/03/09/rollout-2025-03-09T09-00-41-01957a21-f280-7000-8000-000000001000.jsonl",
+      "rows": [
+        {
+          "cached": 0,
+          "day": "2025-03-09",
+          "eventIndex": 0,
+          "input": 1000,
+          "model": "gpt-5.4",
+          "output": 100,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.4",
+          "rawModel": "gpt-5.4",
+          "reasoning": 0,
+          "row_index": 0,
+          "timestampUnixMs": 1741510816000,
+          "turnID": "t1"
+        },
+        {
+          "cached": 0,
+          "day": "2025-03-09",
+          "eventIndex": 1,
+          "input": 1000,
+          "model": "gpt-5.4",
+          "output": 100,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.4",
+          "rawModel": "gpt-5.4",
+          "reasoning": 0,
+          "row_index": 1,
+          "timestampUnixMs": 1741510826000,
+          "turnID": "t1"
+        },
+        {
+          "cached": 0,
+          "day": "2025-03-09",
+          "eventIndex": 2,
+          "input": 1000,
+          "model": "gpt-5.5",
+          "output": 100,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.5",
+          "rawModel": "gpt-5.5",
+          "reasoning": 0,
+          "row_index": 2,
+          "timestampUnixMs": 1741510836000,
+          "turnID": "t1"
+        }
+      ],
+      "scan_complete": true,
+      "session_id": "01957a21-f280-7000-8000-000000001000"
+    }
+  ],
+  "generator": {
+    "catalog_sha256": "b4d6f197664b40c1ee70375fab90ed25a570d95f1146c0640bc52d14b8b94506",
+    "cli_sha256": "232d6708fbd8e403619b7451c4ec55db86911707b8422ad73cfbc2108e151353",
+    "command": "cost --provider codex --period all --format json",
+    "tool": "colophon/tests/tools/codexbar_expected.py",
+    "upstream_commit": "3bbf6bc48c20d8e507b30ed93dbdce19ed928bb6"
+  },
+  "report": {
+    "coverage": {
+      "estimated": 0,
+      "priced": 1,
+      "unmetered": 0,
+      "unpriced": 0
+    },
+    "daily": [
+      {
+        "date": "2025-03-09",
+        "inputTokens": 3000,
+        "modelBreakdowns": [
+          {
+            "cost": 0.0048,
+            "modelName": "gpt-5.4",
+            "totalTokens": 2200
+          },
+          {
+            "cost": 0.0048,
+            "modelName": "gpt-5.5",
+            "totalTokens": 1100
+          }
+        ],
+        "modelsUsed": [
+          "gpt-5.4",
+          "gpt-5.5"
+        ],
+        "outputTokens": 300,
+        "totalCost": 0.0096,
+        "totalTokens": 3300
+      }
+    ],
+    "error": null,
+    "historyCoverageIsEstablished": true,
+    "provenance": "listPriceEstimate",
+    "totals": {
+      "coverage": {
+        "estimated": 0,
+        "priced": 1,
+        "unmetered": 0,
+        "unpriced": 0
+      },
+      "inputTokens": 3000,
+      "outputTokens": 300,
+      "provenance": "listPriceEstimate",
+      "totalCost": 0.0096,
+      "totalTokens": 3300
+    }
+  }
+}

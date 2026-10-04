@@ -1,0 +1,11 @@
+{
+  "name": "a08_bare_usage",
+  "description": "Typeless bare usage lines: line model, data container, model in force, unknown, outside a turn.",
+  "day_utc": "2025-03-08",
+  "files": [
+    "sessions/2025/03/08/rollout-2025-03-08T09-00-36-019574fb-9680-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/08/rollout-2025-03-08T09-00-36-019574fb-9680-7000-8000-000000001000.jsonl": 1741424436000
+  }
+}

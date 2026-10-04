@@ -1,0 +1,50 @@
+{
+  "bucket_tz": "America/New_York",
+  "day_aggregates": [],
+  "files": [
+    {
+      "file": "sessions/2025/04/01/rollout-2025-04-01T09-10-16-0195f094-3680-7000-8000-000000002000.jsonl",
+      "rows": [],
+      "scan_complete": true,
+      "session_id": "0195f094-3680-7000-8000-000000002000"
+    },
+    {
+      "file": "sessions/2025/04/01/rollout-2025-04-01T09-30-21-0195f094-3680-7000-8000-000000003000.jsonl",
+      "rows": [],
+      "scan_complete": true,
+      "session_id": "0195f094-3680-7000-8000-000000003000"
+    }
+  ],
+  "generator": {
+    "catalog_sha256": "b4d6f197664b40c1ee70375fab90ed25a570d95f1146c0640bc52d14b8b94506",
+    "cli_sha256": "232d6708fbd8e403619b7451c4ec55db86911707b8422ad73cfbc2108e151353",
+    "command": "cost --provider codex --period all --format json",
+    "tool": "colophon/tests/tools/codexbar_expected.py",
+    "upstream_commit": "3bbf6bc48c20d8e507b30ed93dbdce19ed928bb6"
+  },
+  "report": {
+    "coverage": {
+      "estimated": 0,
+      "priced": 0,
+      "unmetered": 2,
+      "unpriced": 0
+    },
+    "daily": [
+      {
+        "date": "2025-04-01"
+      }
+    ],
+    "error": null,
+    "historyCoverageIsEstablished": false,
+    "provenance": "unknown",
+    "totals": {
+      "coverage": {
+        "estimated": 0,
+        "priced": 0,
+        "unmetered": 2,
+        "unpriced": 0
+      },
+      "provenance": "unknown"
+    }
+  }
+}

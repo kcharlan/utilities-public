@@ -1,0 +1,13 @@
+{
+  "name": "b11_fork_timestamp_unparseable",
+  "description": "Forked session whose fork timestamp is unparseable text: lexical cutoff comparison.",
+  "day_utc": "2025-03-23",
+  "files": [
+    "sessions/2025/03/23/rollout-2025-03-23T09-00-26-0195c23a-fa80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/23/rollout-2025-03-23T09-30-36-0195c23a-fa80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/23/rollout-2025-03-23T09-00-26-0195c23a-fa80-7000-8000-000000001000.jsonl": 1742720426000,
+    "sessions/2025/03/23/rollout-2025-03-23T09-30-36-0195c23a-fa80-7000-8000-000000002000.jsonl": 1742722236000
+  }
+}

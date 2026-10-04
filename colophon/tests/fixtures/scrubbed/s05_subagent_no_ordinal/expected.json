@@ -1,0 +1,348 @@
+{
+  "bucket_tz": "America/New_York",
+  "day_aggregates": [
+    {
+      "authoritative_cost_nanos": 0,
+      "cached_tokens": 1943040,
+      "day": "2025-06-02",
+      "input_tokens": 2098890,
+      "model": "gpt-6-astra",
+      "output_tokens": 9816,
+      "priority_cached_tokens": 0,
+      "priority_input_tokens": 0,
+      "priority_output_tokens": 0,
+      "priority_tokens": 0,
+      "reasoning_tokens": 1070,
+      "request_count": 17,
+      "standard_cached_tokens": 1943040,
+      "standard_input_tokens": 2098890,
+      "standard_output_tokens": 9816,
+      "standard_tokens": 2108706
+    }
+  ],
+  "files": [
+    {
+      "file": "sessions/2025/06/02/rollout-2025-06-02T06-24-59-01972df0-1c01-7000-8000-000000000001.jsonl",
+      "rows": [
+        {
+          "cached": 45568,
+          "day": "2025-06-02",
+          "eventIndex": 0,
+          "input": 70358,
+          "model": "gpt-6-astra",
+          "output": 350,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 0,
+          "timestampUnixMs": 1748860067259,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 69888,
+          "day": "2025-06-02",
+          "eventIndex": 1,
+          "input": 89910,
+          "model": "gpt-6-astra",
+          "output": 328,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 1,
+          "timestampUnixMs": 1748860077848,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 89600,
+          "day": "2025-06-02",
+          "eventIndex": 2,
+          "input": 111714,
+          "model": "gpt-6-astra",
+          "output": 540,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 2,
+          "timestampUnixMs": 1748860095127,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 111360,
+          "day": "2025-06-02",
+          "eventIndex": 3,
+          "input": 123596,
+          "model": "gpt-6-astra",
+          "output": 462,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 26,
+          "row_index": 3,
+          "timestampUnixMs": 1748860105923,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 123136,
+          "day": "2025-06-02",
+          "eventIndex": 4,
+          "input": 139382,
+          "model": "gpt-6-astra",
+          "output": 566,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 70,
+          "row_index": 4,
+          "timestampUnixMs": 1748860119066,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 139008,
+          "day": "2025-06-02",
+          "eventIndex": 5,
+          "input": 149180,
+          "model": "gpt-6-astra",
+          "output": 1832,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 122,
+          "row_index": 5,
+          "timestampUnixMs": 1748860159022,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 148736,
+          "day": "2025-06-02",
+          "eventIndex": 6,
+          "input": 151060,
+          "model": "gpt-6-astra",
+          "output": 460,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 6,
+          "timestampUnixMs": 1748860170009,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 150784,
+          "day": "2025-06-02",
+          "eventIndex": 7,
+          "input": 151566,
+          "model": "gpt-6-astra",
+          "output": 802,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 284,
+          "row_index": 7,
+          "timestampUnixMs": 1748860190262,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 151296,
+          "day": "2025-06-02",
+          "eventIndex": 8,
+          "input": 153028,
+          "model": "gpt-6-astra",
+          "output": 258,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 42,
+          "row_index": 8,
+          "timestampUnixMs": 1748860199818,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 152576,
+          "day": "2025-06-02",
+          "eventIndex": 9,
+          "input": 153730,
+          "model": "gpt-6-astra",
+          "output": 344,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 9,
+          "timestampUnixMs": 1748860210576,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 153344,
+          "day": "2025-06-02",
+          "eventIndex": 10,
+          "input": 154122,
+          "model": "gpt-6-astra",
+          "output": 514,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 10,
+          "timestampUnixMs": 1748860224367,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 153856,
+          "day": "2025-06-02",
+          "eventIndex": 11,
+          "input": 154680,
+          "model": "gpt-6-astra",
+          "output": 572,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 526,
+          "row_index": 11,
+          "timestampUnixMs": 1748860247582,
+          "turnID": "turn-1"
+        },
+        {
+          "cached": 154880,
+          "day": "2025-06-02",
+          "eventIndex": 12,
+          "input": 155648,
+          "model": "gpt-6-astra",
+          "output": 1930,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 12,
+          "timestampUnixMs": 1748860280745,
+          "turnID": "turn-1"
+        }
+      ],
+      "scan_complete": true,
+      "session_id": "01972df0-1c01-7000-8000-000000000001"
+    },
+    {
+      "file": "sessions/2025/06/02/rollout-2025-06-02T06-30-24-01972df0-1c02-7000-8000-000000000002.jsonl",
+      "rows": [
+        {
+          "cached": 69120,
+          "day": "2025-06-02",
+          "eventIndex": 0,
+          "input": 69872,
+          "model": "gpt-6-astra",
+          "output": 134,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 0,
+          "timestampUnixMs": 1748860230665,
+          "turnID": "turn-2"
+        },
+        {
+          "cached": 69632,
+          "day": "2025-06-02",
+          "eventIndex": 1,
+          "input": 71866,
+          "model": "gpt-6-astra",
+          "output": 216,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 1,
+          "timestampUnixMs": 1748860236850,
+          "turnID": "turn-2"
+        },
+        {
+          "cached": 71424,
+          "day": "2025-06-02",
+          "eventIndex": 2,
+          "input": 89202,
+          "model": "gpt-6-astra",
+          "output": 308,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 2,
+          "timestampUnixMs": 1748860245851,
+          "turnID": "turn-2"
+        },
+        {
+          "cached": 88832,
+          "day": "2025-06-02",
+          "eventIndex": 3,
+          "input": 109976,
+          "model": "gpt-6-astra",
+          "output": 200,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-6-astra",
+          "rawModel": "gpt-6-astra",
+          "reasoning": 0,
+          "row_index": 3,
+          "timestampUnixMs": 1748860251525,
+          "turnID": "turn-2"
+        }
+      ],
+      "scan_complete": true,
+      "session_id": "01972df0-1c02-7000-8000-000000000002"
+    }
+  ],
+  "generator": {
+    "catalog_sha256": "b4d6f197664b40c1ee70375fab90ed25a570d95f1146c0640bc52d14b8b94506",
+    "cli_sha256": "232d6708fbd8e403619b7451c4ec55db86911707b8422ad73cfbc2108e151353",
+    "command": "cost --provider codex --period all --format json",
+    "tool": "colophon/tests/tools/codexbar_expected.py",
+    "upstream_commit": "3bbf6bc48c20d8e507b30ed93dbdce19ed928bb6"
+  },
+  "report": {
+    "coverage": {
+      "estimated": 0,
+      "priced": 1,
+      "unmetered": 0,
+      "unpriced": 0
+    },
+    "daily": [
+      {
+        "cacheReadTokens": 1943040,
+        "date": "2025-06-02",
+        "inputTokens": 2098890,
+        "modelBreakdowns": [
+          {
+            "cost": 3.99234,
+            "modelName": "gpt-6-astra",
+            "totalTokens": 2108706
+          }
+        ],
+        "modelsUsed": [
+          "gpt-6-astra"
+        ],
+        "outputTokens": 9816,
+        "reasoningTokens": 1070,
+        "totalCost": 3.99234,
+        "totalTokens": 2108706
+      }
+    ],
+    "error": null,
+    "historyCoverageIsEstablished": true,
+    "provenance": "listPriceEstimate",
+    "totals": {
+      "cacheReadTokens": 1943040,
+      "coverage": {
+        "estimated": 0,
+        "priced": 1,
+        "unmetered": 0,
+        "unpriced": 0
+      },
+      "inputTokens": 2098890,
+      "outputTokens": 9816,
+      "provenance": "listPriceEstimate",
+      "reasoningTokens": 1070,
+      "totalCost": 3.99234,
+      "totalTokens": 2108706
+    }
+  }
+}
