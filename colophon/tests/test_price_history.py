@@ -296,6 +296,57 @@ def test_manual_correction_not_compared_until_catalog_changes(colophon):
     assert colophon.PriceHistory([old], [manual] + changed).pick(old["model"], stamp(colophon)).entry == changed[0]
 
 
+@pytest.mark.parametrize("container", ["per_million", "long_context"])
+def test_recording_ignores_rate_metadata_preserving_manual_correction(colophon, container):
+    # Task16 compares only four standard rates plus long threshold/four rates.
+    long = {"threshold": 200000, "input": 4, "cached_input": 0.5, "cache_write": 3, "output": 11}
+    old = entry(at="2028-01-01T00:00:00Z", long_context=dict(long))
+    old[container]["synthetic_provenance"] = {"nested": ["synthetic review"]}
+    manual = entry(at="2029-01-01T00:00:00Z", source="manual",
+                   per_million=dict(RATES, input=99), long_context=dict(long, input=199))
+    checked = colophon.validate_ledger(ledger(old, manual), curated=False)
+    assert checked.errors == [] and checked.entries[0] is old
+    idx = index(colophon, input=2, output=7, cache_read=0.5, cache_write=3,
+                context_over_200k={"input": 4, "output": 11})
+    history = colophon.PriceHistory([], checked.entries)
+    new = colophon.record_catalog_rates(history, idx, stamp(colophon), {}, stamp(colophon))
+    assert new == []
+    merged = colophon.PriceHistory([], checked.entries + new)
+    assert merged.pick(old["model"], stamp(colophon)).entry is manual
+    assert old[container]["synthetic_provenance"] == {"nested": ["synthetic review"]}
+
+
+@pytest.mark.parametrize("container,field", [("per_million", field) for field in RATES]
+    + [("long_context", field) for field in ("threshold", *RATES)])
+def test_recording_known_rate_change_overrides_manual_despite_metadata(colophon, container, field):
+    long = {"threshold": 200000, "input": 4, "cached_input": 0.5, "cache_write": 3, "output": 11}
+    old = entry(at="2028-01-01T00:00:00Z", long_context=dict(long))
+    old[container].update({field: 88, "synthetic_provenance": "synthetic review"})
+    manual = entry(at="2029-01-01T00:00:00Z", source="manual", per_million=dict(RATES, input=99))
+    idx = index(colophon, input=2, output=7, cache_read=0.5, cache_write=3,
+                context_over_200k={"input": 4, "output": 11})
+    new = colophon.record_catalog_rates(colophon.PriceHistory([], [old, manual]), idx,
+        stamp(colophon), {}, stamp(colophon))
+    assert len(new) == 1 and new[0]["per_million"] == RATES and new[0]["long_context"] == long
+    assert colophon.PriceHistory([], [old, manual] + new).pick(old["model"], stamp(colophon)).entry is new[0]
+
+
+@pytest.mark.parametrize("before,after", [(False, False), (False, True), (True, False), (True, True)])
+def test_recording_long_context_presence_compared(colophon, before, after):
+    long = {"threshold": 200000, "input": 4, "cached_input": 0.5, "cache_write": 3, "output": 11}
+    old = entry(at=None, source="curated", **({"long_context": long} if before else {}))
+    manual = entry(at="2029-01-01T00:00:00Z", source="manual", per_million=dict(RATES, input=99))
+    idx = index(colophon, input=2, output=7, cache_read=0.5, cache_write=3,
+                **({"context_over_200k": {"input": 4, "output": 11}} if after else {}))
+    new = colophon.record_catalog_rates(colophon.PriceHistory([old], [manual]), idx,
+        stamp(colophon), {}, stamp(colophon))
+    assert len(new) == int(before != after)
+    if new:
+        assert new[0].get("long_context") == (long if after else None)
+    else:
+        assert colophon.PriceHistory([old], [manual] + new).pick(old["model"], stamp(colophon)).entry is manual
+
+
 def test_record_long_context_change_and_priority_not_compared(colophon):
     old = entry(at=None, source="curated", priority={"multiplier": 2, "max_input_tokens": 10})
     changed = index(colophon, input=2, output=7, cache_read=0.5, cache_write=3,

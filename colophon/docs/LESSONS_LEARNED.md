@@ -1,5 +1,13 @@
 # Lessons learned
 
+- Catalog change detection compares the four standard rates and long-context
+  threshold/four rates, not whole rate objects. Accepted extra metadata must
+  not trigger a catalog observation that displaces a manual correction. Keep
+  duplicate validation's full JSON comparison separate. Regressions:
+  `test_recording_ignores_rate_metadata_preserving_manual_correction`,
+  `test_recording_known_rate_change_overrides_manual_despite_metadata`, and
+  `test_recording_long_context_presence_compared`.
+
 - Python container equality is not JSON-value equality: `True == 1` even
   inside nested lists or objects. Duplicate ledger comparison must distinguish
   booleans from numbers while preserving int/float numeric equality and raw

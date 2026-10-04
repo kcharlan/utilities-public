@@ -6381,6 +6381,14 @@ def _history_catalog_match(model: str, index: ModelsDevIndex) -> dict | None:
     return None
 
 
+def _history_rate_fields(entry: dict) -> tuple:
+    """Recording compares only rates and threshold; metadata stays untouched."""
+    fields = ("input", "cached_input", "cache_write", "output")
+    standard = tuple(entry["per_million"][field] for field in fields)
+    long = entry.get("long_context")
+    return standard, None if long is None else tuple(long[field] for field in ("threshold", *fields))
+
+
 def record_catalog_rates(history: PriceHistory, index: ModelsDevIndex,
                          fetched_at_ms: int, recording_ids: dict[str, str], now_ms: int) -> list[dict]:
     """Record changes at fetch time, never compare against manual corrections."""
@@ -6403,9 +6411,7 @@ def record_catalog_rates(history: PriceHistory, index: ModelsDevIndex,
         previous = next((entry for entry in reversed(entries)
                          if entry["source"] != "manual" and (entry["effective_from"] is None
                          or _ledger_instant(entry["effective_from"]) <= effective_ms)), None)
-        if previous is not None and previous["per_million"] == rates["per_million"] and (
-            previous.get("long_context") == rates["long_context"]
-        ):
+        if previous is not None and _history_rate_fields(previous) == _history_rate_fields(rates):
             continue
         new = {"model": key, "effective_from": effective_from,
                "per_million": rates["per_million"], "source": "catalog",
