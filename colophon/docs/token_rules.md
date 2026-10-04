@@ -309,7 +309,7 @@ erase a suffix boundary. Explicit parent metadata remains source text.
 
 | Rule | Upstream file and function at `3bbf6bc48` | Treatment |
 | --- | --- | --- |
-| Request, submission and completion parsing | `CostUsageScanner+CodexPriority.swift`, `parseCodexPriorityTraceRow`, `parseCodexPrioritySubmissionRow`, `parseCodexCompletedTraceRow`, `value`, `quotedValue` (1020–1098) | Ported. Preserve marker precedence, prefix turn-id precedence, Foundation JSON/type checks, first duplicate-key projection and Foundation trimming. A request marker with invalid JSON never falls through to submission parsing. |
+| Request, submission and completion parsing | `CostUsageScanner+CodexPriority.swift`, `parseCodexPriorityTraceRow`, `parseCodexPrioritySubmissionRow`, `parseCodexCompletedTraceRow`, `value`, `quotedValue` (1020–1098) | Ported. Preserve Swift Character boundaries for markers, names, punctuation and quotes; marker precedence, prefix turn-id precedence, Foundation JSON/type checks, first duplicate-key projection and Foundation trimming. A request marker with invalid JSON never falls through to submission parsing. |
 | Pending completion FIFO and completed-model selection | `CostUsageScanner+CodexPriority.swift`, `storePendingCodexCompletedModels`, `accumulateCodexPriorityTurns` (889–971), `filteredResolvedCodexPriorityTurns`, `latestCodexCompletedModel` (440–459) | Ported. Retain at most 4,096 pending turn identities in insertion order; repeated completions do not refresh insertion order. Known priority turns retain completions separately. Highest rowid wins regardless of timestamp or subsequent request model. |
 | Cold query and source database | `CostUsageScanner+CodexPriority.swift`, `codexPriorityAccumulationPlan` (973–1005) | Adapted, A1/A4 item 4. Run only the non-indexed cold query with `rowid > 0` and `ts >= 0`; no memo, cursor, anchors or pruning. The database follows `--codex-home`. Open with `mode=ro`, `timeout=0.25`, normal SQLite coordination. Any SQLite error discards this scan's detections and retains sticky entries with a diagnostic. |
 | SQLite text and timestamp projection | `CostUsageScanner+CodexPriority.swift`, `text`, `timestamp` (1100–1113) | Ported library compatibility. INTEGER becomes signed decimal; TEXT/BLOB are decoded as zero-terminated UTF-8 with replacement. REAL uses the same native SQLite library as the Python connection, preserving that backend's default numeric-to-text formatting. |
@@ -335,6 +335,21 @@ SQLite CAST, including subnormal and maximum Double values, and verify native
 allocation/free ownership. No source session database or CodexBar binary was
 used. This corrects representation, without a token or cost deviation.
 
+Trace parsing follows Swift Characters rather than Python scalar substring
+matches. Task 13's ASCII literal boundary matcher also applies to every trace
+marker, name and quote: preceding Prepend or following Extend/SpacingMark/ZWJ
+prevents a whole literal match. Value punctuation stops only as a whole
+Character. Swift's
+[Character whitespace predicate](https://raw.githubusercontent.com/swiftlang/swift/main/stdlib/public/core/CharacterProperties.swift)
+uses the Character's first scalar. Ordinary whitespace with trailing Extend
+therefore stops a value, whereas preceding Prepend makes it part of the value.
+[Unicode grapheme rules GB3–5 and GB9–9b](https://www.unicode.org/reports/tr29/#Grapheme_Cluster_Boundary_Rules)
+make control whitespace, including CRLF, break from preceding Prepend.
+Standalone synthetic source-helper probes corroborate these narrow predicates;
+tests preserve clustered punctuation and quote spelling without inventing
+shorter turn identities. No general Unicode rewrite or accounting deviation
+is introduced.
+
 Edge-case decisions:
 
 - Malformed or wrong-schema sticky memory, invalid entry types and boolean `first_seen_ms` never establish priority; retain valid neighboring entries and report rejected entries.
@@ -342,5 +357,6 @@ Edge-case decisions:
 - Empty submission ids and completed models are rejected exactly as upstream; a non-string request model is retained as unknown rather than inferred.
 - SQLite's own numeric text conversion, C-string NUL termination and UTF-8 replacement govern trace fields; Python's generic `str` is not the contract.
 - Canonically equivalent priority and cross-file identities match without rewriting the public selected spelling.
+- Clustered trace markers and quotes are absent; clustered value punctuation remains in the identity. Ordinary whitespace is governed by the Character's first scalar, with the source's control/CRLF boundaries preserved.
 - Missing, cleared or unreplayed model evidence never supplies an invented model; only the explicitly specified pending-tail context rule supplies a model from C/XC observations.
 - Duplicate-id diagnostics use pre-pass identities and also list differing display ids, with each display id's actual file paths.

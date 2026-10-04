@@ -404,3 +404,19 @@
   true-first display ids. An oversized metadata line can make those identities
   differ even while both files share one accounting parent key. Regression:
   `test_duplicate_prepass_diagnostic_includes_differing_display_ids`.
+- Port trace searches and delimiters at the source's Character boundaries.
+  Python scalar `find`, `partition` and quote slicing accepted markers joined
+  to Prepend/Extend and truncated clustered punctuation into invented turn ids.
+  Reuse the source-backed ASCII literal boundary matcher for every request,
+  completion, submission, service-tier, name and quote search. Whitespace is a
+  separate predicate: Swift inspects a Character's first scalar, so space plus
+  Extend qualifies, Prepend plus space does not, and control whitespace/CRLF
+  still breaks from preceding Prepend. Independent synthetic Swift helpers
+  established these expectations before the repair. Regressions:
+  `test_trace_value_uses_swift_character_boundaries`,
+  `test_trace_value_character_whitespace_matrix`,
+  `test_trace_value_only_whole_punctuation_delimits`,
+  `test_trace_quoted_value_uses_whole_quote_characters`,
+  `test_all_trace_markers_reject_clustered_boundaries`,
+  `test_clustered_request_marker_falls_back_to_valid_submission`, and
+  `test_character_correct_ids_reach_priority_and_completed_composition`.

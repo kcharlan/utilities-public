@@ -4533,26 +4533,52 @@ def _codex_sqlite_text(value) -> str | None:
 
 
 # CodexBar 3bbf6bc48: CodexPriority.swift value/quotedValue (1081–1098).
+def _codex_trace_partition(text: str, marker: str) -> tuple[str, str, str]:
+    # Every trace marker is ASCII. Task13's source-backed literal matcher
+    # recognizes its complete Characters (GB9/9a/9b), never clustered scalars.
+    index = _pricing_literal_index(text, marker)
+    return (text, '', '') if index is None else (text[:index], marker, text[index + len(marker):])
+
+
+def _codex_trace_whitespace_start(text: str, index: int) -> bool:
+    # Character.isWhitespace inspects the first scalar. Ordinary whitespace
+    # still qualifies with attached Extend/SpacingMark/ZWJ; Prepend changes
+    # that first scalar. GB3–5 make control whitespace (including CRLF) break
+    # from preceding Prepend before GB9b can join it. U+200B is not whitespace.
+    character = text[index]
+    if not _codex_character_whitespace(character):
+        return False
+    if character in '\t\n\v\f\r\u0085\u2028\u2029':
+        return True
+    return index == 0 or re.fullmatch(_PRICING_PREPEND_CLASS, text[index - 1]) is None
+
+
 def _codex_trace_value(name: str, text: str) -> str | None:
     marker = name + '='
-    start = text.find(marker)
-    if start < 0:
+    start = _pricing_literal_index(text, marker)
+    if start is None:
         return None
     start += len(marker)
     end = start
-    while end < len(text) and not _codex_character_whitespace(text[end]) and text[end] not in ',])}:':
+    # Only whole ASCII delimiter Characters and whitespace Characters stop
+    # this prefix. Other Unicode graphemes need no segmentation or rewriting.
+    while end < len(text):
+        if (_codex_trace_whitespace_start(text, end)
+                or text[end] in ',])}:' and _pricing_literal_pattern(text[end]).match(text, end) is not None):
+            break
         end += 1
     return text[start:end] or None
 
 
 def _codex_trace_quoted_value(name: str, text: str) -> str | None:
     marker = name + ': "'
-    start = text.find(marker)
-    if start < 0:
+    start = _pricing_literal_index(text, marker)
+    if start is None:
         return None
     start += len(marker)
-    end = text.find('"', start)
-    return text[start:end] or None if end >= 0 else None
+    tail = text[start:]
+    end = _pricing_literal_index(tail, '"')
+    return tail[:end] or None if end is not None else None
 
 
 def _codex_trace_json(text: str) -> dict | None:
@@ -4562,7 +4588,7 @@ def _codex_trace_json(text: str) -> dict | None:
 
 # CodexBar 3bbf6bc48: CodexPriority.swift parseCodexCompletedTraceRow (1058–1079).
 def _parse_codex_completed_trace(body: str) -> tuple[str, str] | None:
-    prefix, marker, tail = body.partition('websocket event:')
+    prefix, marker, tail = _codex_trace_partition(body, 'websocket event:')
     if not marker:
         return None
     event = _codex_trace_json(tail)
@@ -4576,7 +4602,7 @@ def _parse_codex_completed_trace(body: str) -> tuple[str, str] | None:
 
 # CodexBar 3bbf6bc48: CodexPriority.swift priority trace/submission (1020–1056).
 def _parse_codex_priority_trace(timestamp: str | None, body: str) -> tuple[str, dict] | None:
-    prefix, marker, tail = body.partition('websocket request:')
+    prefix, marker, tail = _codex_trace_partition(body, 'websocket request:')
     if marker:
         request = _codex_trace_json(tail)
         if (request is None or request.get('type') != 'response.create'
@@ -4586,8 +4612,8 @@ def _parse_codex_priority_trace(timestamp: str | None, body: str) -> tuple[str, 
             _codex_trace_value('turn_id', prefix), _codex_string(request.get('turn_id')))
         model = _codex_string(request.get('model'))
     else:
-        prefix, marker, tail = body.partition('Submission sub=Submission {')
-        if not marker or 'service_tier: Some(Some("priority"))' not in body:
+        prefix, marker, tail = _codex_trace_partition(body, 'Submission sub=Submission {')
+        if not marker or _pricing_literal_index(body, 'service_tier: Some(Some("priority"))') is None:
             return None
         turn_id = _codex_trace_quoted_value('id', tail)
         model = None

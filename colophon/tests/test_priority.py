@@ -262,3 +262,101 @@ def test_live_wal_trace_reads_latest_committed_row(colophon, tmp_path):
         assert colophon.load_priority_turns(source.root, runtime).turns['synthetic-turn']['model'] == 'gpt-5-mini'
         assert database.read_bytes() == before
         assert marker.read_text() == 'Synthetic non-SQLite source must stay unchanged'
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('\u0600turn.id=synthetic-a', None),
+    ('turn.id=\u0301synthetic-a', None),
+    ('turn.id=synthetic-a,\u0301synthetic-b', 'synthetic-a,\u0301synthetic-b'),
+    ('turn.id=synthetic-a\u0600,synthetic-b', 'synthetic-a\u0600,synthetic-b'),
+    ('turn.id=synthetic-a \u0301synthetic-b', 'synthetic-a'),
+    ('turn.id=synthetic-a\u0600 synthetic-b', 'synthetic-a\u0600 synthetic-b'),
+    ('turn.id=synthetic-a\u00a0\u0301synthetic-b', 'synthetic-a'),
+    ('turn.id=synthetic-a\u0600\r\nsynthetic-b', 'synthetic-a\u0600'),
+    ('turn.id=synthetic-a\u0600\t\u0301synthetic-b', 'synthetic-a\u0600'),
+    ('turn.id=synthetic-a\u001csynthetic-b', 'synthetic-a\u001csynthetic-b'),
+    ('turn.id=synthetic-a\u200bsynthetic-b', 'synthetic-a\u200bsynthetic-b'),
+    ('\u0600turn.id=synthetic-b turn.id=synthetic-a', 'synthetic-a'),
+])
+def test_trace_value_uses_swift_character_boundaries(colophon, text, expected):
+    # CodexPriority.swift1081–1089: range(of:) and prefix over Characters;
+    # source-helper Swift probes pin Prepend/Extend, CRLF and whitespace behavior.
+    assert colophon._codex_trace_value('turn.id', text) == expected
+
+
+@pytest.mark.parametrize('prepend', ['', '\u0600'])
+@pytest.mark.parametrize('separator,kind', [
+    ('\t', 'control'), ('\n', 'control'), ('\v', 'control'), ('\f', 'control'),
+    ('\r', 'control'), ('\u0085', 'control'), ('\u2028', 'control'),
+    ('\u2029', 'control'), ('\r\n', 'control'),
+    (' ', 'ordinary'), ('\u00a0', 'ordinary'), ('\u1680', 'ordinary'),
+    ('\u2000', 'ordinary'), ('\u2007', 'ordinary'), ('\u202f', 'ordinary'),
+    ('\u205f', 'ordinary'), ('\u3000', 'ordinary'),
+    ('\u001c', 'other'), ('\u200b', 'other'),
+])
+def test_trace_value_character_whitespace_matrix(colophon, prepend, separator, kind):
+    # CodexPriority.swift1085: Character.isWhitespace uses its first scalar.
+    # Synthetic Swift source-helper outputs: GB3–5 break controls from Prepend;
+    # GB9b joins ordinary whitespace to Prepend, while GB9 joins trailing Extend.
+    value = 'synthetic-a' + prepend + separator + '\u0301synthetic-b'
+    expected = ('synthetic-a' + prepend if kind == 'control' else
+                'synthetic-a' if kind == 'ordinary' and not prepend else value)
+    assert colophon._codex_trace_value('turn.id', 'turn.id=' + value) == expected
+
+
+@pytest.mark.parametrize('delimiter', list(',])}:'))
+@pytest.mark.parametrize('following', ['\u0301', '\u200d', '\u0900', '\u0600'])
+def test_trace_value_only_whole_punctuation_delimits(colophon, delimiter, following):
+    # CodexPriority.swift1085–1089 compares entire Characters with punctuation.
+    # GB9/9a attach Extend, ZWJ and SpacingMark; following Prepend starts anew.
+    value = 'synthetic-a' + delimiter + following + 'synthetic-b'
+    expected = 'synthetic-a' if following == '\u0600' else value
+    assert colophon._codex_trace_value('turn.id', 'turn.id=' + value) == expected
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('\u0600id: "synthetic-a"', None),
+    ('id: "\u0301synthetic-a"', None),
+    ('id: \u0600"synthetic-a"', None),
+    ('id: "synthetic-a"\u0301synthetic-b"', 'synthetic-a"\u0301synthetic-b'),
+    ('id: "synthetic-a\u0600"synthetic-b"', 'synthetic-a\u0600"synthetic-b'),
+    ('id: "synthetic-a"\u0301', None),
+])
+def test_trace_quoted_value_uses_whole_quote_characters(colophon, text, expected):
+    # CodexPriority.swift1091–1098: clustered open marker/close quote are absent.
+    assert colophon._codex_trace_quoted_value('id', text) == expected
+
+
+@pytest.mark.parametrize('prefix,suffix', [('\u0600', ''), ('', '\u0301')])
+@pytest.mark.parametrize('kind', ['request', 'completed', 'submission', 'tier'])
+def test_all_trace_markers_reject_clustered_boundaries(colophon, prefix, suffix, kind):
+    # CodexPriority.swift1020–1079: each range/contains literal is Character-aware.
+    if kind == 'request':
+        body = 'turn.id=synthetic-a ' + prefix + 'websocket request:' + suffix + ' {"type":"response.create","service_tier":"priority"}'
+        assert colophon._parse_codex_priority_trace('12', body) is None
+    elif kind == 'completed':
+        body = 'turn.id=synthetic-a ' + prefix + 'websocket event:' + suffix + ' {"type":"response.completed","response":{"model":"gpt-5"}}'
+        assert colophon._parse_codex_completed_trace(body) is None
+    else:
+        marker = 'Submission sub=Submission {'
+        tier = 'service_tier: Some(Some("priority"))'
+        marker = prefix + marker + suffix if kind == 'submission' else marker
+        tier = prefix + tier + suffix if kind == 'tier' else tier
+        body = marker + ' id: "synthetic-a", ' + tier + ' }'
+        assert colophon._parse_codex_priority_trace('12', body) is None
+
+
+def test_clustered_request_marker_falls_back_to_valid_submission(colophon):
+    # An absent Character marker takes submission fallback; malformed found JSON does not.
+    body = '\u0600websocket request: {} Submission sub=Submission { id: "synthetic-a", service_tier: Some(Some("priority")) }'
+    assert colophon._parse_codex_priority_trace('12', body) == ('synthetic-a', {
+        'thread_id': None, 'model': None, 'timestamp': '12'})
+
+
+def test_character_correct_ids_reach_priority_and_completed_composition(colophon, tmp_path):
+    source, runtime = homes(tmp_path)
+    turn = 'synthetic-a,\u0301synthetic-b'
+    source.trace_db([request(source, turn), source.completed_row(turn, 'gpt-5-mini', 15)])
+    result = colophon.load_priority_turns(source.root, runtime)
+    assert list(result.turns) == [turn]
+    assert result.turns[turn]['model'] == 'gpt-5-mini'
