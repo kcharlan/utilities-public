@@ -8,8 +8,21 @@ The [design spec](docs/colophon_design_spec.md) defines the complete application
 The compiler scans logs, preserves dated prices, and writes a self-contained
 offline page. The page shell includes embedded Martian Mono, period controls,
 URL history, search across full titles and requests, an archive toggle, and
-collapsible diagnostics. The complete explorer views are added by subsequent
-tasks. Font sources and regeneration are documented in [font.md](docs/font.md).
+collapsible diagnostics. Overview tiles and calendar, weekday/hour, workspace,
+model, notable, and recent-session panels respect the active filters and the
+viewer’s time zone. Click their values to drill into your matching sessions;
+model-only descendant matches retain their parent and highlight the child.
+The complete list and reader are added by subsequent tasks. Font sources and
+regeneration are documented in [font.md](docs/font.md).
+
+Overview time totals clip to the selected period: your active time unions
+overlapping own turns, while agent time sums each descendant’s own union.
+Token and cost totals use the starts of the recorded 15-minute buckets and
+include each descendant once. Unknown timestamps do not establish period
+membership. The snapshot instant defines “now,” keeping an offline page stable.
+The model tooltip lists recorded pricing references in matching sessions across
+all dates; the payload does not map individual buckets to rate periods. Numeric
+costs with missing references retain their estimate and show “rate period unknown.”
 
 ## Install
 

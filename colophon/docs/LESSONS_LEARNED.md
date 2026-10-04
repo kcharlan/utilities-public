@@ -1,5 +1,34 @@
 # Lessons learned
 
+- A null transient rate date is unknown, not the curated initial baseline.
+  Render the source-specific meaning without changing the stored clock.
+  Regression: `test_model_tooltip_uses_recorded_refs_without_inventing_bucket_attribution[override]`.
+- A clickable tile or row includes its sublines and metadata, not just its
+  title button. Delegate container clicks while excluding nested buttons so
+  independent status links keep their own navigation. Regression:
+  `test_complete_tile_and_recent_row_hit_areas_drill`.
+
+- A running turn proves live session and turn counts, but its status alone is
+  not usage evidence. Keep time markers for known clipped running intervals;
+  token/cost markers also require recorded running-turn usage. Global disabled
+  costs establish neither an unpriced model nor a numeric comparison: show
+  "costs unavailable" in tooltips and suppress cost LIVE/delta figures.
+  Regressions: `test_live_usage_tiles_require_running_usage_evidence` and
+  `test_deltas_live_cost_and_separate_status_links`.
+
+- Rate histories describe available periods, not proof that usage picked them.
+  Overview tooltips must dereference recorded `Usage.priced_by` entries from
+  contributing accounting rows and label their all-dates session scope. Buckets
+  have no period reference, so never invent precise window attribution or call a
+  numeric cost unpriced because its reference is unavailable. Regressions:
+  `test_model_tooltip_uses_recorded_refs_without_inventing_bucket_attribution`.
+- JavaScript's left-fold addition and Python's compensated `sum` can differ by
+  a few ulps for identical bucket costs (`0.1 + 0.2 + 0.3`). Compare only monetary
+  sums with `rel=0, abs=1e-12`, tighter than the documented pricing tolerance;
+  keep counts, tokens, time, statuses and schema exact, and never round application
+  bucket costs to satisfy the oracle. Regression:
+  `test_every_kpi_and_panel_equals_independent_oracle` under Asia/Kolkata.
+
 - Diagnostic object members cannot establish their schema: unknown record
   types are arbitrary data and may literally be named `files` or `total`.
   Guessing by those members crashed footer rendering and understated stderr

@@ -7240,6 +7240,53 @@ input[type="date"] { width: 150px; }
 .shell-row:last-child { border-bottom: 0; }
 .session-title { border: 0; padding: 0; background: transparent; text-align: left; color: var(--hi); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .tag { border: 1px solid var(--tag-line); border-radius: 3px; color: var(--muted); font-size: 9px; padding: 1px 4px; }
+.kpis { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi, .overview-panel { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 12px 14px; }
+.kpi, .recent-row { cursor: pointer; }
+.kpi-main { display: block; text-align: left; border: 0; background: transparent; padding: 0; width: 100%; }
+.kpi-label { display: block; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.kpi-value { display: block; font-size: 22px; font-weight: 300; color: var(--hi); margin: 6px 0; overflow-wrap: anywhere; }
+.kpi-sub, .kpi-delta, .live, .panel-meta { font-size: 9px; color: var(--dim); margin: 6px 0 0; }
+.live { color: var(--g); }
+.warning, .warning .kpi-value { color: var(--amb); }
+.status-link { font-size: 9px; border: 0; padding: 0; color: var(--amb); background: transparent; }
+.overview-grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr); gap: 16px; }
+.panel-head { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.panel-head .section-label { margin: 0; }
+.metric-toggle { display: flex; flex-wrap: wrap; gap: 4px; }
+.metric-toggle button { font-size: 9px; padding: 2px 5px; }
+.calendar-viewport { min-width: 0; }
+.calendar-viewport[data-scroll-region] { overflow-x: auto; }
+.calendar-grid { display: grid; grid-template-rows: repeat(7, var(--cell-size, 13px)); grid-auto-flow: column; grid-auto-columns: var(--cell-size, 13px); gap: 3px; width: max-content; }
+.heat-cell { display: block; border: 0; padding: 0; border-radius: 1px; min-width: 0; background: var(--heat-0); }
+.heat-cell[data-level="1"] { background: var(--heat-1); }
+.heat-cell[data-level="2"] { background: var(--heat-2); }
+.heat-cell[data-level="3"] { background: var(--heat-3); }
+.heat-cell[data-level="4"] { background: var(--heat-4); }
+.heat-cell:hover { outline: 1px solid var(--g); outline-offset: 1px; }
+.heat-cell.blank { visibility: hidden; }
+.heat-legend { display: flex; align-items: center; gap: 5px; color: var(--dim); font-size: 9px; margin-top: 10px; }
+.heat-legend .heat-cell { width: 9px; height: 9px; }
+.hour-grid { display: grid; grid-template-columns: 28px repeat(24, minmax(0, 1fr)); gap: 3px; }
+.hour-grid .heat-cell { height: 13px; }
+.axis { font-size: 8px; color: var(--dim); }
+.bar-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 64px; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; text-align: left; padding: 6px 0; }
+.bar-label, .model-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bar-track { background: var(--heat-0); height: 9px; }
+.bar-fill { display: block; height: 9px; background: linear-gradient(90deg, var(--bar-from), var(--bar-to)); }
+.bar-number { text-align: right; font-size: 10px; color: var(--g); }
+.model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; width: 100%; border: 0; border-bottom: 1px solid var(--line-soft); background: transparent; text-align: left; padding: 8px 0; }
+.notable-row { display: flex; justify-content: space-between; gap: 10px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line-soft); background: transparent; padding: 9px 0; }
+.notable-value { color: var(--g); text-align: right; }
+.recent-panel { grid-column: 1 / -1; }
+.recent-row { display: grid; grid-template-columns: 98px minmax(0, 1fr) 150px 190px; gap: 12px; border-bottom: 1px solid var(--line-soft); padding: 9px 0; align-items: center; }
+.recent-time, .recent-metrics, .recent-workspace { color: var(--dim); font-size: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.recent-workspace { color: var(--ws); }
+.recent-metrics { text-align: right; }
+.view-all, .expand-workspaces { display: block; border: 0; background: transparent; color: var(--g); padding: 10px 0 0; }
+.matched { background: var(--sel); border-left: 2px solid var(--g); padding: 8px 12px; color: var(--g); }
+@media (max-width: 1100px) { .kpis { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); } }
+@media (max-width: 760px) { .overview-grid { grid-template-columns: minmax(0, 1fr); } .recent-row { grid-template-columns: 98px minmax(0, 1fr); } .recent-metrics { text-align: left; } .bar-row { grid-template-columns: minmax(70px, 120px) minmax(0, 1fr) 64px; } }
 details { border-top: 1px solid var(--line-soft); padding: 8px 0; overflow-wrap: anywhere; }
 summary { cursor: pointer; color: var(--amb); }
 details ul { padding-left: 20px; }
@@ -7390,7 +7437,162 @@ PAGE_JS = r"""
   }
   const filters = {searchMatch};
   // --- aggregates
-  const aggregates = {};
+  const inWindow = (ms, window) => validMs(ms) && window && ms >= window.from && ms < window.to;
+  function descendants(row, byId, state) {
+    const rows = [], seen = new Set([row.id]), pending = [...row.children];
+    for (let n = 0; n < pending.length; n++) {
+      const id = pending[n], child = byId[id];
+      if (seen.has(id) || !child) continue;
+      seen.add(id);
+      if (state.a === "0" && child.archived) continue;
+      rows.push(child);
+      pending.push(...child.children);
+    }
+    return rows;
+  }
+  function windowBuckets(row, window) {
+    return row.buckets.filter(bucket => typeof bucket[0] === "number" && inWindow(bucket[0] * 900000, window));
+  }
+  function ownMatch(row, state, window) {
+    if (!window || (state.a === "0" && row.archived)) return false;
+    const buckets = windowBuckets(row, window);
+    const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms && row.start_ms < window.to && row.end_ms >= window.from;
+    if (!span && !buckets.length) return false;
+    const turns = row.turns.filter(turn => inWindow(turn.start_ms, window));
+    return (!state.q || ownSearch(row, state.q.toLowerCase())) &&
+      (!state.ws || row.workspace === state.ws) && (!state.sub || row.subfolder === state.sub) &&
+      (!state.model || buckets.some(bucket => bucket[1] === state.model)) &&
+      (!state.day || turns.some(turn => localDayKey(turn.start_ms) === state.day)) &&
+      (!state.how || turns.some(turn => mondayIndex(turn.start_ms) + "-" + localHour(turn.start_ms) === state.how)) &&
+      (!state.st || turns.some(turn => turn.status === state.st));
+  }
+  function matchSession(session, state, byId) {
+    const matchedSubagents = new Set();
+    if (state.a === "0" && session.archived) return {match: false, matchedSubagents};
+    const window = state._window || periodWindow(state.p || "90d", data.meta.generated_at_ms, state);
+    for (const child of descendants(session, byId, state)) if (ownMatch(child, state, window)) matchedSubagents.add(child.id);
+    return {match: ownMatch(session, state, window) || matchedSubagents.size > 0, matchedSubagents};
+  }
+  filters.matchSession = matchSession;
+  function scope(sessions, state, now) {
+    const window = state._window || periodWindow(state.p || "90d", now, state);
+    const rows = sessions.filter(row => matchSession(row, {...state, _window: window}, data.subagents).match);
+    const agents = new Map();
+    for (const row of rows) for (const child of descendants(row, data.subagents, state)) agents.set(child.id, child);
+    return {window, rows, agents: [...agents.values()]};
+  }
+  function turnIntervals(row, window) {
+    if (!window) return [];
+    return row.turns.filter(turn => ["completed", "aborted", "interrupted", "running"].includes(turn.status) &&
+      validMs(turn.start_ms) && validMs(turn.end_ms) && typeof turn.duration_ms === "number" && Number.isFinite(turn.duration_ms) && turn.duration_ms >= 0)
+      .map(turn => [Math.max(window.from, turn.start_ms), Math.min(window.to, turn.end_ms)])
+      .filter(([start, end]) => end > start);
+  }
+  function mergedIntervals(parts) {
+    const merged = [];
+    for (const [start, end] of parts.sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
+      const last = merged[merged.length - 1];
+      if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+      else merged.push([start, end]);
+    }
+    return merged;
+  }
+  const activeMs = parts => mergedIntervals(parts).reduce((sum, [start, end]) => sum + end - start, 0);
+  function kpis(sessions, state, now) {
+    const {window, rows, agents} = scope(sessions, state, now);
+    const turns = rows.flatMap(row => row.turns.filter(turn => inWindow(turn.start_ms, window)));
+    const durations = turns.filter(turn => turn.status !== "abandoned" && typeof turn.duration_ms === "number" && Number.isFinite(turn.duration_ms) && turn.duration_ms >= 0).map(turn => turn.duration_ms);
+    const usage = [...rows, ...agents].flatMap(row => windowBuckets(row, window));
+    const input = usage.reduce((sum, b) => sum + b[3], 0), cached = usage.reduce((sum, b) => sum + b[4], 0);
+    const running = (list, predicate) => list.flatMap(row => row.turns).filter(turn => turn.status === "running" && predicate(turn)).length;
+    const contributesTime = turn => turnIntervals({turns: [turn]}, window).length > 0;
+    const ownRunning = running(rows, turn => inWindow(turn.start_ms, window) || contributesTime(turn));
+    const usageRunning = [...rows, ...agents].reduce((sum, row) => sum + (windowBuckets(row, window).some(b => b[3] + b[6] > 0) ?
+      running([row], turn => (inWindow(turn.start_ms, window) || contributesTime(turn)) && turn.usage.input + turn.usage.output > 0) : 0), 0);
+    return {sessions: rows.length, active_ms: activeMs(rows.flatMap(row => turnIntervals(row, window))),
+      agent_ms: agents.reduce((sum, row) => sum + activeMs(turnIntervals(row, window)), 0), turns: turns.length,
+      average_ms: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
+      input, tokens: usage.reduce((sum, b) => sum + b[3] + b[6], 0), cached_share: input ? cached / input : null,
+      cost: usage.reduce((sum, b) => sum + (typeof b[8] === "number" && Number.isFinite(b[8]) ? b[8] : 0), 0),
+      unpriced: usage.some(b => b[8] === null), aborted: turns.filter(t => t.status === "aborted").length,
+      interrupted: turns.filter(t => t.status === "interrupted").length, abandoned: turns.filter(t => t.status === "abandoned").length,
+      live: {sessions: ownRunning, active_ms: running(rows, contributesTime), agent_ms: running(agents, contributesTime),
+        turns: turns.filter(t => t.status === "running").length, tokens: usageRunning,
+        cost: data.meta.costs.available ? usageRunning : 0, aborted: 0}};
+  }
+  function calendar(sessions, state, now) {
+    const {window, rows, agents} = scope(sessions, state, now);
+    if (!window) return [];
+    let first = window.from;
+    if (!Number.isFinite(first)) {
+      const activity = [...rows, ...agents].flatMap(row => [...row.turns.filter(t => inWindow(t.start_ms, window)).map(t => t.start_ms),
+        ...windowBuckets(row, window).map(b => b[0] * 900000)]);
+      first = activity.length ? activity.reduce((a, b) => Math.min(a, b)) : now;
+      first = addLocalDays(localDayStart(first), -mondayIndex(first));
+    }
+    const days = new Map();
+    for (let day = localDayStart(first); day < window.to; day = addLocalDays(day, 1)) {
+      days.set(localDayKey(day), {day: localDayKey(day), sessions: 0, active_ms: 0, tokens: 0, cost: 0, unpriced: false});
+    }
+    for (const row of rows) {
+      const starts = new Set(row.turns.filter(t => inWindow(t.start_ms, window)).map(t => localDayKey(t.start_ms)));
+      for (const day of starts) if (days.has(day)) days.get(day).sessions++;
+    }
+    for (const [start, end] of mergedIntervals(rows.flatMap(row => turnIntervals(row, window)))) {
+      for (const part of splitByLocalDay(start, end)) if (days.has(part.day)) days.get(part.day).active_ms += part.ms;
+    }
+    for (const row of [...rows, ...agents]) for (const bucket of windowBuckets(row, window)) {
+      const cell = days.get(localDayKey(bucket[0] * 900000));
+      if (!cell) continue;
+      cell.tokens += bucket[3] + bucket[6];
+      if (bucket[8] === null) cell.unpriced = true;
+      else cell.cost += bucket[8];
+    }
+    return [...days.values()];
+  }
+  function hourWeekday(sessions, state, now) {
+    const {window, rows} = scope(sessions, state, now), cells = Array.from({length: 7}, () => Array(24).fill(0));
+    for (const row of rows) for (const turn of row.turns) if (inWindow(turn.start_ms, window)) cells[mondayIndex(turn.start_ms)][localHour(turn.start_ms)]++;
+    return cells;
+  }
+  function workspaces(sessions, state, now) {
+    const {window, rows, agents} = scope(sessions, state, now), items = new Map();
+    for (const row of [...rows, ...agents]) {
+      if (!items.has(row.workspace)) items.set(row.workspace, {key: row.workspace, active_ms: 0, tokens: 0});
+      items.get(row.workspace).tokens += windowBuckets(row, window).reduce((sum, b) => sum + b[3] + b[6], 0);
+    }
+    for (const [key, item] of items) item.active_ms = activeMs(rows.filter(row => row.workspace === key).flatMap(row => turnIntervals(row, window)));
+    return [...items.values()].sort((a, b) => b.active_ms - a.active_ms || String(a.key).localeCompare(String(b.key)));
+  }
+  function models(sessions, state, now) {
+    const {window, rows, agents} = scope(sessions, state, now), items = new Map();
+    for (const row of [...rows, ...agents]) for (const bucket of windowBuckets(row, window)) {
+      if (!items.has(bucket[1])) items.set(bucket[1], {model: bucket[1], tokens: 0, cost: 0, unpriced: false});
+      const item = items.get(bucket[1]);
+      item.tokens += bucket[3] + bucket[6];
+      if (bucket[8] === null) item.unpriced = true;
+      else item.cost += bucket[8];
+    }
+    return [...items.values()].sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model));
+  }
+  function notable(sessions, state, now) {
+    const days = calendar(sessions, state, now), {rows} = scope(sessions, state, now);
+    const bestDay = metric => days.reduce((best, cell) => cell[metric] > (best ? best[metric] : 0) ? cell : best, null);
+    let fanout = null, streak = null, run = null;
+    for (const row of rows) {
+      const count = descendants(row, data.subagents, state).length;
+      if (count > (fanout ? fanout.count : 0)) fanout = {id: row.id, count};
+    }
+    for (const cell of days) {
+      if (!cell.sessions) {run = null; continue;}
+      run = run ? {...run, to: cell.day, count: run.count + 1} : {from: cell.day, to: cell.day, count: 1};
+      if (!streak || run.count > streak.count) streak = run;
+    }
+    return {busiest: bestDay("sessions"), active: bestDay("active_ms"), fanout, streak};
+  }
+  const newest = (a, b) => Number(!validMs(a.start_ms)) - Number(!validMs(b.start_ms)) || (b.start_ms || 0) - (a.start_ms || 0) || a.id.localeCompare(b.id);
+  function recent(sessions, state, now) {return scope(sessions, state, now).rows.sort(newest).slice(0, 5);}
+  const aggregates = {kpis, calendar, hourWeekday, workspaces, models, notable, recent};
   // --- format
   function localStamp(ms) {
     if (!validMs(ms)) return "unknown";
@@ -7486,6 +7688,158 @@ PAGE_JS = r"""
       ...(rows.length ? [el("h2", {class: "section-label", text: "// diagnostics"}), ...rows] : []));
   }
   // --- views/overview
+  let calendarMetric = "sessions", workspaceMetric = "active_ms", expandedWorkspaces = false;
+  const countText = value => new Intl.NumberFormat(undefined, {maximumFractionDigits: 1, notation: value >= 10000 ? "compact" : "standard"}).format(value);
+  const durationText = value => value === null ? "unknown" : value >= 3600000 ? (value / 3600000).toFixed(1) + "h" : value >= 60000 ? (value / 60000).toFixed(1) + "m" : (value / 1000).toFixed(1) + "s";
+  const costText = value => "$" + value.toFixed(2);
+  const metricText = (key, value) => ["active_ms", "agent_ms"].includes(key) ? durationText(value) : key === "cost" ? costText(value) : countText(value);
+  function drill(patch) {act({v: "list", s: undefined, ...patch});}
+  function panel(name, ...children) {return el("section", {class: "overview-panel"}, el("h2", {class: "section-label", text: "// " + name}), ...children);}
+  function levels(values) {
+    const positive = values.filter(value => value > 0).sort((a, b) => a - b);
+    const cuts = [.25, .5, .75].map(q => positive[Math.ceil(positive.length * q) - 1]);
+    return values.map(value => value <= 0 ? 0 : 1 + cuts.filter(cut => value > cut).length);
+  }
+  function renderKpis(now) {
+    const totals = kpis(data.sessions, currentState, now), window = periodWindow(currentState.p, now, currentState);
+    const previous = previousWindow(currentState.p, window, now);
+    const prior = previous ? kpis(data.sessions, {...currentState, _window: previous}, now) : null;
+    const labels = {sessions: "sessions", active_ms: "your active time", agent_ms: "agent time", turns: "turns", tokens: "tokens", cost: "estimated cost", aborted: "aborted turns"};
+    const sorts = {sessions: "newest", active_ms: "longest", agent_ms: "subtime", turns: "newest", tokens: "tokens", cost: "cost", aborted: "newest"};
+    return el("div", {class: "kpis"}, ...Object.entries(labels).map(([key, label]) => {
+      const value = key === "cost" && !data.meta.costs.available ? "costs unavailable" : metricText(key, totals[key]) + (key === "cost" && totals.unpriced ? " + unpriced" : "");
+      const open = () => drill({sort: sorts[key], ...(key === "aborted" ? {st: "aborted"} : {})});
+      const tile = el("article", {class: "kpi" + (key === "aborted" ? " warning" : ""), "data-kpi": key,
+        onclick: event => {if (!event.target.closest("button")) open();}},
+        el("button", {type: "button", class: "kpi-main", onclick: () => drill({sort: sorts[key], ...(key === "aborted" ? {st: "aborted"} : {})})},
+          el("span", {class: "kpi-label", text: label}), el("span", {class: "kpi-value", "data-value": totals[key], text: value})));
+      if (key === "turns") tile.append(el("p", {class: "kpi-sub", text: "avg " + durationText(totals.average_ms)}));
+      if (key === "tokens") tile.append(el("p", {class: "kpi-sub", text: totals.cached_share === null ? "cached input: unknown" : (totals.cached_share * 100).toFixed(1) + "% cached input"}));
+      if (key === "cost") tile.append(el("p", {class: "kpi-sub", text: "API-equivalent estimate (not billed)"}));
+      if (key === "aborted") tile.append(el("div", {class: "kpi-sub"},
+        el("button", {type: "button", class: "status-link", "data-status": "interrupted", text: totals.interrupted + " interrupted", onclick: () => drill({st: "interrupted", sort: "newest"})}),
+        el("span", {text: " · "}), el("button", {type: "button", class: "status-link", "data-status": "abandoned", text: totals.abandoned + " abandoned", onclick: () => drill({st: "abandoned", sort: "newest"})})));
+      if (totals.live[key]) tile.append(el("p", {class: "live", text: "LIVE · includes " + totals.live[key] + " running"}));
+      if (prior && (key !== "cost" || data.meta.costs.available)) {
+        const delta = totals[key] - prior[key];
+        tile.append(el("p", {class: "kpi-delta", "data-value": delta, text: (delta >= 0 ? "▲ " : "▼ ") + metricText(key, Math.abs(delta)) + " vs prior " + currentState.p.toUpperCase()}));
+      }
+      return tile;
+    }));
+  }
+  function renderCalendar(now) {
+    const days = calendar(data.sessions, currentState, now), ramp = levels(days.map(day => day[calendarMetric]));
+    const toggle = el("div", {class: "metric-toggle"}, ...[["sessions", "sessions"], ["active_ms", "active time"], ["tokens", "tokens"], ["cost", "cost"]].map(([key, label]) =>
+      el("button", {type: "button", text: label, "aria-label": "Calendar " + label, "aria-pressed": key === calendarMetric, onclick: () => {calendarMetric = key; render();}})));
+    const grid = el("div", {class: "calendar-grid"});
+    const offset = days.length ? mondayIndex(parseDay(days[0].day)) : 0;
+    for (let n = 0; n < offset; n++) grid.append(el("span", {class: "heat-cell blank"}));
+    days.forEach((day, n) => {
+      const value = calendarMetric === "cost" && !data.meta.costs.available ? "costs unavailable" : metricText(calendarMetric, day[calendarMetric]) + (calendarMetric === "cost" && day.unpriced ? " + unpriced" : "");
+      grid.append(el("button", {type: "button", class: "heat-cell", "data-day": day.day, "data-value": day[calendarMetric], "data-level": ramp[n],
+        title: day.day + " · " + value, "aria-label": day.day + " · " + value, onclick: () => drill({day: day.day})}));
+    });
+    const viewport = el("div", {class: "calendar-viewport"}, grid);
+    const result = panel("calendar", el("div", {class: "panel-head"}, toggle), viewport,
+      el("div", {class: "heat-legend"}, el("span", {text: days.length ? days[0].day + " — " + days[days.length - 1].day : "No activity"}),
+        el("span", {text: "less"}), ...Array.from({length: 5}, (_, n) => el("span", {class: "heat-cell", "data-level": n})), el("span", {text: "more"})));
+    if (calendarMetric === "cost") result.append(el("p", {class: "panel-meta", text: "API-equivalent estimate (not billed)"}));
+    return result;
+  }
+  function fitCalendar() {
+    const viewport = document.querySelector(".calendar-viewport"), grid = document.querySelector(".calendar-grid");
+    if (!viewport || !grid) return;
+    const weeks = Math.ceil(grid.children.length / 7), width = viewport.clientWidth;
+    const size = Math.max(9, Math.min(13, weeks ? (width + 3) / weeks - 3 : 13));
+    grid.style.setProperty("--cell-size", size + "px");
+    if (weeks * (size + 3) - 3 > width) {
+      viewport.setAttribute("data-scroll-region", "calendar");
+      viewport.scrollLeft = viewport.scrollWidth;
+    } else viewport.removeAttribute("data-scroll-region");
+  }
+  function renderHours(now) {
+    const cells = hourWeekday(data.sessions, currentState, now), ramp = levels(cells.flat()), grid = el("div", {class: "hour-grid"});
+    grid.append(el("span", {class: "axis"}));
+    for (let hour = 0; hour < 24; hour++) grid.append(el("span", {class: "axis", text: hour % 3 === 0 ? hour : ""}));
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach((day, index) => {
+      grid.append(el("span", {class: "axis", text: day}));
+      cells[index].forEach((value, hour) => grid.append(el("button", {class: "heat-cell", type: "button", "data-how": index + "-" + hour,
+        "data-level": ramp[index * 24 + hour], title: day + " " + hour + ":00 · " + value + " turns", "aria-label": day + " " + hour + ":00 · " + value + " turns",
+        onclick: () => drill({how: index + "-" + hour})})));
+    });
+    return panel("hour × weekday", grid);
+  }
+  const workspaceName = key => (data.workspaces[key] || {}).name || key || "unknown workspace";
+  function renderWorkspaces(now) {
+    const rows = workspaces(data.sessions, currentState, now).sort((a, b) => b[workspaceMetric] - a[workspaceMetric] || String(a.key).localeCompare(String(b.key)));
+    const maximum = rows.length ? rows[0][workspaceMetric] : 0;
+    const result = panel("workspaces", el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
+      el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}}))),
+      ...rows.slice(0, expandedWorkspaces ? rows.length : 6).map(row => el("button", {type: "button", class: "bar-row", "data-workspace": row.key, title: workspaceName(row.key), onclick: () => drill({ws: row.key})},
+        el("span", {class: "bar-label", text: workspaceName(row.key)}),
+        el("span", {class: "bar-track"}, el("span", {class: "bar-fill", style: "width:" + (maximum ? row[workspaceMetric] / maximum * 100 : 0) + "%"})),
+        el("span", {class: "bar-number", "data-value": row[workspaceMetric], text: metricText(workspaceMetric, row[workspaceMetric])}))));
+    if (!expandedWorkspaces && rows.length > 6) result.append(el("button", {class: "expand-workspaces", type: "button", text: "+ " + (rows.length - 6) + " more", onclick: () => {expandedWorkspaces = true; render();}}));
+    return result;
+  }
+  function rateTooltip(model, now) {
+    if (!data.meta.costs.available) return "costs unavailable";
+    const {window, rows, agents} = scope(data.sessions, currentState, now), refs = new Map();
+    let unpriced = false, unknown = false;
+    for (const row of [...rows, ...agents]) {
+      const buckets = windowBuckets(row, window).filter(bucket => bucket[1] === model);
+      if (!buckets.length) continue;
+      unpriced ||= buckets.some(bucket => bucket[8] === null);
+      const recorded = row.own_usage.priced_by;
+      if (!recorded.length) unknown = true;
+      for (const ref of recorded) {
+        const [key, index, role] = ref, pricing = data.models[key];
+        const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
+        if (!period || !["rates", "priority"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
+        const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
+        const label = override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "";
+        const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
+        refs.set(JSON.stringify(ref), label + key + " · " + role + " · effective_from: " + effective + " · source: " + period.source);
+      }
+    }
+    return ["Recorded rate periods in matching sessions (all dates)", ...refs.values(),
+      ...(unknown || !refs.size ? ["rate period unknown"] : []), ...(unpriced ? ["unpriced"] : [])].join("\n");
+  }
+  function renderModels(now) {
+    return panel("models", ...models(data.sessions, currentState, now).map(row => el("button", {class: "model-row", type: "button", "data-model": row.model, title: rateTooltip(row.model, now), onclick: () => drill({model: row.model})},
+      el("span", {class: "model-name", text: row.model}), el("span", {text: countText(row.tokens)}),
+      el("span", {class: row.unpriced ? "warning" : "", text: !data.meta.costs.available ? "costs unavailable" : costText(row.cost) + (row.unpriced ? " + unpriced" : "")}))),
+      el("p", {class: "panel-meta", text: "API-equivalent estimate (not billed)"}));
+  }
+  function renderNotable(now) {
+    const items = notable(data.sessions, currentState, now);
+    const entry = (key, label, text, patch) => el("button", {class: "notable-row", type: "button", "data-notable": key, onclick: () => drill(patch)},
+      el("span", {text: label}), el("span", {class: "notable-value", text}));
+    return panel("notable",
+      ...(items.busiest ? [entry("busiest", "busiest day", items.busiest.day + " · " + items.busiest.sessions + " sessions", {day: items.busiest.day})] : []),
+      ...(items.active ? [entry("active", "longest active day", items.active.day + " · " + durationText(items.active.active_ms), {day: items.active.day, sort: "longest"})] : []),
+      ...(items.fanout ? [entry("fanout", "biggest subagent fan-out", items.fanout.count + " subagents", {v: "session", s: items.fanout.id})] : []),
+      ...(items.streak ? [entry("streak", "longest streak", items.streak.count + " days · " + items.streak.from + " — " + items.streak.to, {p: "custom", from: items.streak.from, to: items.streak.to, day: undefined})] : []));
+  }
+  function renderRecent(now) {
+    const result = panel("recent sessions");
+    result.classList.add("recent-panel");
+    const list = el("div", {"data-recent": ""});
+    for (const row of recent(data.sessions, currentState, now)) {
+      const own = activeMs(turnIntervals(row, periodWindow(currentState.p, now, currentState))), agents = descendants(row, data.subagents, currentState).length;
+      list.append(el("div", {class: "recent-row", "data-session-id": row.id,
+        onclick: event => {if (!event.target.closest("button")) act({v: "session", s: row.id});}},
+        el("span", {class: "recent-time", text: validMs(row.start_ms) ? localStamp(row.start_ms).slice(5) : "unknown"}),
+        el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · ARCHIVED" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
+        el("span", {class: "recent-workspace", text: workspaceName(row.workspace)}), el("span", {class: "recent-metrics", text: durationText(own) + " · " + agents + " subagents"})));
+    }
+    result.append(list, el("button", {type: "button", class: "view-all", "data-view-all": "", text: "view all " + scope(data.sessions, currentState, now).rows.length + " →", onclick: () => drill({sort: "newest"})}));
+    return result;
+  }
+  function renderOverview() {
+    const now = data.meta.generated_at_ms;
+    return [renderKpis(now), el("div", {class: "overview-grid"}, renderCalendar(now), renderWorkspaces(now), renderHours(now), renderModels(now), renderNotable(now), renderRecent(now))];
+  }
   function renderSessions(rows) {
     return el("div", {class: "shell-sessions"}, ...rows.map(row => el("div", {class: "shell-row", "data-session-id": row.id},
       el("button", {type: "button", class: "session-title", text: row.title, title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
@@ -7495,13 +7849,24 @@ PAGE_JS = r"""
   // --- views/reader
   function render() {
     renderTopbar();
-    const rows = data.sessions.filter(row => searchMatch(row, currentState, data.subagents));
+    const rows = scope(data.sessions, currentState, data.meta.generated_at_ms).rows;
     const app = document.getElementById("colophon-app");
     if (!data.sessions.length) {
       app.replaceChildren(el("p", {class: "empty-state", text: "No Codex sessions found in " + data.meta.codex_home}));
+    } else if (currentState.v === "overview") {
+      app.replaceChildren(...renderOverview());
+      fitCalendar();
     } else {
       app.replaceChildren(el("h2", {class: "section-label", text: "// " + (currentState.v === "overview" ? "sessions" : currentState.v)}),
         ...(rows.length ? [renderSessions(rows)] : [el("p", {class: "empty-state", text: "No sessions match the active filters"})]));
+      if (currentState.v === "session" && currentState.s) {
+        const selected = rows.find(row => row.id === currentState.s);
+        if (selected) {
+          const matched = matchSession(selected, currentState, data.subagents).matchedSubagents;
+          for (const child of descendants(selected, data.subagents, currentState)) app.append(el("div", {
+            "data-subagent-id": child.id, class: matched.has(child.id) ? "matched" : "", text: child.label || child.title}));
+        }
+      }
     }
   }
   // --- boot
@@ -7516,7 +7881,8 @@ PAGE_JS = r"""
     };
     window.addEventListener("popstate", restore);
     window.addEventListener("hashchange", restore);
-    window.__colophonTest = {time, filters, aggregates, format, state: {readState, writeState}, heatColors};
+    window.addEventListener("resize", fitCalendar);
+    window.__colophonTest = {time, filters, aggregates, format, levels, state: {readState, writeState}, heatColors};
     restore();
   });
 })();
