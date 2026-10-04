@@ -329,6 +329,11 @@ def _identifier(value) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _history_identifier(value) -> str | None:
+    """Reject blank history evidence while preserving usable IDs verbatim."""
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def _record_fact(record: dict, payload: dict, *, rec: int, line: int, kind: str,
                  meta_id: str | None) -> RecordFact:
     at_ms, ts_src = event_time(record, payload)
@@ -405,13 +410,13 @@ def _history(meta: dict | None, facts: list[RecordFact]) -> tuple[dict, list[boo
         history["path"] = "B"
         # Selected metadata identity follows D18 unchanged. History mismatch
         # evidence additionally requires usable identities on both sides.
-        session_id = _identifier(meta.get("id"))
+        session_id = _history_identifier(meta.get("id"))
         in_run = False
         first_meta_seen = False
         for fact in facts:
             if fact.kind == "session_meta":
                 if (first_meta_seen and session_id is not None
-                        and _identifier(fact.meta_id) is not None and fact.meta_id != session_id):
+                        and _history_identifier(fact.meta_id) is not None and fact.meta_id != session_id):
                     in_run = True
                 first_meta_seen = True
             started = _started_epoch_ms(fact)

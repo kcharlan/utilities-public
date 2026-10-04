@@ -173,6 +173,40 @@ def test_path_b_selected_fallback_identity_remains_mismatch_evidence(colophon, l
     assert r['owned_span'] == {'first_ms': t, 'last_ms': t + 2000}
 
 
+@pytest.mark.parametrize('position', ['original', 'later'])
+@pytest.mark.parametrize('blank_id', [pytest.param(' ', id='space'),
+                                    pytest.param('\t\r\n', id='ascii-whitespace'),
+                                    pytest.param('\u00a0\u2003', id='unicode-whitespace')])
+def test_path_b_whitespace_identity_is_not_mismatch_evidence(colophon, log, position, blank_id):
+    b, t = log
+    original = blank_id if position == 'original' else b.session_id
+    later = blank_id if position == 'later' else 'synthetic-ancestor'
+    b._emit('session_meta', {'id': original, 'timestamp': iso(t)}, at=t)
+    b._emit('session_meta', {'id': later, 'timestamp': iso(t + 1000)}, at=t + 1000)
+    r = parse(colophon, b.task_complete('synthetic-owned', at=t + 2000))
+    assert r['meta']['id'] == original  # D18 extraction remains verbatim.
+    assert r['history']['inherited_recs'] == []
+    assert r['history']['inherited_lines'] == []
+    assert r['owned_span'] == {'first_ms': t, 'last_ms': t + 2000}
+    assert [turn['key'] for turn in r['turns']] == ['synthetic-owned']
+
+
+def test_path_b_nonblank_identity_strings_are_not_trimmed(colophon, log):
+    b, t = log
+    original = ' \tsynthetic-session\n '
+    later = 'synthetic-session'
+    b._emit('session_meta', {'id': original, 'timestamp': iso(t)}, at=t)
+    b._emit('session_meta', {'id': later, 'timestamp': iso(t + 1000)}, at=t + 1000)
+    b.world_state(at=t + 2000, thread_id=later)
+    r = parse(colophon, b.world_state(at=t + 3000, thread_id=original)
+              .task_complete('synthetic-owned', at=t + 4000))
+    assert r['meta']['id'] == original
+    # The two nonblank IDs differ verbatim; only the exact original ends the run.
+    assert r['history']['inherited_recs'] == [[1, 3]]
+    assert r['owned_span'] == {'first_ms': t, 'last_ms': t + 4000}
+    assert [turn['key'] for turn in r['turns']] == ['synthetic-owned']
+
+
 @pytest.mark.parametrize('started,at', [(-1001, 10000), (None, 999)])
 def test_path_b_rejects_non_owned_start(colophon, log, started, at):
     b, t = log

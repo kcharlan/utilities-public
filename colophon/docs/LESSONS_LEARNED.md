@@ -61,3 +61,9 @@
   `test_path_b_invalid_later_identity_is_not_mismatch_evidence`,
   `test_path_b_invalid_original_identity_is_not_mismatch_evidence` and
   `test_path_b_selected_fallback_identity_remains_mismatch_evidence`.
+- Nonempty strings can still be whitespace-only and provide no identity
+  evidence. Reject those strings in the history-only predicate; use stripping
+  only to test blankness, never to rewrite a nonblank selected identity or
+  change D18 extraction. Regressions:
+  `test_path_b_whitespace_identity_is_not_mismatch_evidence` and
+  `test_path_b_nonblank_identity_strings_are_not_trimmed`.
