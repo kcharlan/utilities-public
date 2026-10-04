@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import contextlib
 import hashlib
 import json
@@ -39,6 +40,15 @@ PAGE_SIZE_WARN_BYTES = 20 * 1024 * 1024
 
 
 # ===== 2. Text and tool rule lists =====
+REQUEST_HEADINGS = ("## My request:", "## My request for Codex:")
+CONTEXT_WRAPPERS = ("# Files mentioned by the user", "# Files pasted by the user",
+                    "# Browser comments", "<in-app-browser-context")
+INJECTED_PREFIXES = ("# AGENTS.md", "<environment_context>", "<INSTRUCTIONS>",
+                     "<external_codex_apps_open_page>", "<permissions instructions>",
+                     "<recommended_plugins>", "<skills_instructions>",
+                     "<codex_apps_open_page_instructions>", "<realtime_delegation>",
+                     "<skill>", "<turn_aborted>")
+ANSWER_TAG = "send_user_message_question_reply"
 KNOWN_RECORD_KEYS: frozenset[str] = frozenset({
     "session_meta", "turn_context", "token_usage_record", "world_state", "compacted",
     "inter_agent_communication_metadata", "realtime_item", "bare_usage",
@@ -298,8 +308,94 @@ def _session_meta(record: dict, payload: dict) -> dict:
     }
 
 
+def classify_user_part(text: str) -> tuple[str, str] | None:
+    """Apply spec §5.1's ordered context, answer and image filters."""
+    text = text.lstrip()
+    if text.startswith(CONTEXT_WRAPPERS):
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if line.strip() in REQUEST_HEADINGS:
+                return "text", "\n".join(lines[index + 1:]).strip()
+        return None
+    if text.startswith(INJECTED_PREFIXES):
+        return None
+    opening, closing = f"<{ANSWER_TAG}>", f"</{ANSWER_TAG}>"
+    if text.startswith(opening):
+        return "answer", text[len(opening):].strip().removesuffix(closing).strip()
+    if text.startswith("<image") or text.strip() == "</image>":
+        return None
+    return "text", text.strip()
+
+
+class MessageCandidate(NamedTuple):
+    """Compact display content only; family and raw ID are transient evidence."""
+    role: str
+    kind: str
+    text: str
+    images: int
+    family: str
+
+
+class VoiceSegment(NamedTuple):
+    role: str
+    text: str
+
+
+def _message_candidate(payload: dict, kind: str) -> MessageCandidate | None:
+    if kind in ("event_msg/item_completed/UserMessage", "event_msg/item_completed/AgentMessage"):
+        content = _object(payload.get("item"))
+        role = "user" if kind.endswith("/UserMessage") else "assistant"
+        family = "item"
+    elif kind in ("event_msg/user_message", "event_msg/agent_message"):
+        content = payload
+        role = "user" if kind.endswith("/user_message") else "assistant"
+        family = "event"
+    elif kind == "response_item/message":
+        content, role, family = payload, payload.get("role"), "response"
+        if role not in ("user", "assistant"):
+            return None
+    else:
+        return None
+    if role == "assistant" and content.get("phase") != "final_answer":
+        return None
+    parts = content.get("content")
+    parts = parts if isinstance(parts, list) else []
+    if family == "event" and isinstance(content.get("message"), str):
+        parts = [{"type": "text", "text": content["message"]}]
+    texts = []
+    images = 0
+    message_kind = "text" if role == "user" else "final"
+    for part in parts:
+        part = _object(part)
+        part_type = part.get("type")
+        if role == "user" and part_type in ("local_image", "image", "input_image"):
+            images += 1
+        accepted = ("text", "input_text") if role == "user" else ("Text", "text", "output_text")
+        text = part.get("text")
+        if part_type not in accepted or not isinstance(text, str):
+            continue
+        classified = classify_user_part(text) if role == "user" else ("final", text.strip())
+        if classified is not None:
+            if classified[0] == "answer":
+                message_kind = "answer"
+            if classified[1]:
+                texts.append(classified[1])
+    if not texts and not images:
+        return None
+    text = "\n\n".join(texts) if texts else f"+ {images} images"
+    return MessageCandidate(role, message_kind, text, images, family)
+
+
+def _voice_segment(payload: dict, kind: str) -> VoiceSegment | None:
+    if (kind == "realtime_item" and payload.get("type") == "transcript_segment"
+            and payload.get("role") in ("user", "assistant")
+            and isinstance(payload.get("text"), str)):
+        return VoiceSegment(payload["role"], payload["text"])
+    return None
+
+
 class RecordFact(NamedTuple):
-    """Transient scalar headers; decoded payloads never survive phase one."""
+    """Transient headers and display scalars; raw payloads never survive phase one."""
     rec: int
     line: int
     kind: str
@@ -312,6 +408,9 @@ class RecordFact(NamedTuple):
     started_at: int | float | None
     reported_ms: int | float | None
     ttft_ms: int | float | None
+    item_message: bool
+    message: MessageCandidate | None
+    voice: VoiceSegment | None
 
 
 def _finite_number(value) -> int | float | None:
@@ -347,6 +446,8 @@ def _record_fact(record: dict, payload: dict, *, rec: int, line: int, kind: str,
         _finite_number(payload.get("started_at")),
         _nonnegative_number(payload.get("duration_ms")),
         _nonnegative_number(payload.get("time_to_first_token_ms")),
+        kind in ("event_msg/item_completed/UserMessage", "event_msg/item_completed/AgentMessage"),
+        _message_candidate(payload, kind), _voice_segment(payload, kind),
     )
 
 
@@ -458,6 +559,9 @@ class TurnBuilder:
         self.by_id: dict[str, dict] = {}
         self.current: dict | None = None
         self.last_sources: dict[str, str] = {}
+        # Record spans belong only to this parse, never the cached TurnFact.
+        self.record_spans: dict[str, list[int | None]] = {}
+        self.completion_recs: dict[str, int] = {}
 
     def _new_turn(self, turn_id: str | None) -> dict:
         turn = {"key": turn_id or f"turn-{len(self.turns) + 1}", "turn_id": turn_id,
@@ -482,6 +586,7 @@ class TurnBuilder:
             # Freeze interruption before the later start is attributed. A later
             # explicit end can still replace this provisional interruption.
             if self.current and self.current["end_kind"] == "open" and self.current["start_rec"] is not None:
+                self.record_spans[self.current["key"]][1] = fact.rec - 1
                 self.current["end_kind"] = "interrupted"
                 self.current["end_ms"] = self.current["last_ms"]
                 self.current["end_src"] = self.last_sources.get(self.current["key"])
@@ -489,6 +594,7 @@ class TurnBuilder:
             turn.update(start_ms=fact.at_ms, start_src=fact.ts_src, start_rec=fact.rec,
                         end_ms=None, end_src=None, end_kind="open")
             self.current = turn
+            self.record_spans[turn["key"]] = [fact.rec, None]
         elif is_end:
             turn = turn if turn is not None else self._new_turn(fact.turn_id)
             if turn["start_rec"] is None and fact.started_at is not None:
@@ -497,6 +603,9 @@ class TurnBuilder:
             turn.update(end_ms=fact.at_ms, end_src=fact.ts_src,
                         end_kind="completed" if fact.kind == "event_msg/task_complete" else "aborted",
                         reported_ms=fact.reported_ms, ttft_ms=fact.ttft_ms)
+            self.completion_recs[turn["key"]] = fact.rec
+            if turn["key"] in self.record_spans:
+                self.record_spans[turn["key"]][1] = fact.rec
             if turn is self.current:
                 self.current = None
         if turn is not None and fact.at_ms is not None:
@@ -527,6 +636,112 @@ def turn_timing(turn: dict, *, collapsed: bool = False) -> dict:
         else:
             flags.append("unknown_duration")
     return {"start_ms": start, "duration_ms": duration, "flags": flags}
+
+
+def _deduplicate_messages(candidates: list[tuple[RecordFact, str | None]],
+                          item_turns: set[str]) -> list[dict]:
+    """Index kept messages only, by role, digest, family, turn and time."""
+    priorities = {"item": 2, "event": 1, "response": 0}
+    candidates = [(fact, key) for fact, key in candidates
+                  if not (fact.message.family == "response" and key in item_turns)]
+    candidates.sort(key=lambda candidate: (-priorities[candidate[0].message.family], candidate[0].rec))
+    index: dict[tuple, dict] = {}
+    kept = []
+    for fact, turn_key in candidates:
+        message = fact.message
+        digest = hashlib.sha1(message.text.encode("utf-8", errors="surrogatepass")).digest()
+        # A literal raw "*" is a concrete ID, distinct from the all-kept bucket.
+        turn_bucket = ("turn", "*") if fact.turn_id == "*" else fact.turn_id
+        duplicate = False
+        for family in priorities:
+            if family == message.family:
+                continue
+            buckets = index.get((message.role, digest, family), {})
+            keys = ("*",) if fact.turn_id is None else (turn_bucket, None)
+            for key in keys:
+                times, unknown = buckets.get(key, ([], 0))
+                if fact.at_ms is None:
+                    match = unknown > 0
+                else:
+                    pos = bisect.bisect_left(times, fact.at_ms - 10_000)
+                    match = pos < len(times) and times[pos] <= fact.at_ms + 10_000
+                if match:
+                    duplicate = True
+                    break
+            if duplicate:
+                break
+        if duplicate:
+            continue
+        kept.append({"role": message.role, "kind": message.kind, "text": message.text,
+                     "images": message.images, "at_ms": fact.at_ms, "ts_src": fact.ts_src,
+                     "turn_key": turn_key, "rec": fact.rec})
+        buckets = index.setdefault((message.role, digest, message.family), {})
+        for key in ("*", turn_bucket):
+            times, unknown = buckets.setdefault(key, ([], 0))
+            if fact.at_ms is None:
+                buckets[key] = (times, unknown + 1)
+            else:
+                bisect.insort(times, fact.at_ms)
+    return sorted(kept, key=lambda message: message["rec"])
+
+
+def _place_voice(facts: list[RecordFact], inherited: list[bool], builder: TurnBuilder) -> dict:
+    """Group transcript runs and place them by their first decoded record."""
+    runs = []
+    for fact in facts:
+        if inherited[fact.rec] or fact.voice is None:
+            continue
+        if runs and runs[-1]["role"] == fact.voice.role:
+            runs[-1]["parts"].append(fact.voice.text)
+        else:
+            runs.append({"role": fact.voice.role, "parts": [fact.voice.text],
+                         "rec": fact.rec, "at_ms": fact.at_ms})
+    spans = sorted((start, end, key) for key, (start, end) in builder.record_spans.items())
+    starts = [span[0] for span in spans]
+    # An observed completion proves that a later request follows that turn;
+    # it supplies no evidence for requests before the missing start.
+    boundaries = sorted((turn["start_rec"] if turn["start_rec"] is not None
+                         else builder.completion_recs[turn["key"]], turn["key"])
+                        for turn in builder.turns)
+    boundary_recs = [boundary[0] for boundary in boundaries]
+    voice = {"requests": [], "replies": []}
+    last_request = None
+    for run in runs:
+        text = " ".join(run["parts"])
+        previous = bisect.bisect_right(starts, run["rec"]) - 1
+        if run["role"] == "assistant":
+            if last_request is not None:
+                last_request["reply"] = text
+            elif previous >= 0 or not builder.turns:
+                voice["replies"].append({"text": text, "at_ms": run["at_ms"],
+                                         "turn_key": spans[previous][2] if previous >= 0 else None})
+            continue
+        turn_key = None
+        before_turn = follow_up = False
+        if previous >= 0 and (spans[previous][1] is None or run["rec"] <= spans[previous][1]):
+            turn_key = spans[previous][2]
+        elif previous + 1 < len(spans):
+            turn_key, before_turn = spans[previous + 1][2], True
+        else:
+            last_boundary = bisect.bisect_right(boundary_recs, run["rec"]) - 1
+            if last_boundary >= 0:
+                turn_key, follow_up = boundaries[last_boundary][1], True
+        last_request = {"text": text, "at_ms": run["at_ms"], "turn_key": turn_key,
+                        "before_turn": before_turn, "follow_up": follow_up, "reply": None}
+        voice["requests"].append(last_request)
+    return voice
+
+
+def select_final_answer(record_facts: dict, turn_key: str) -> dict | None:
+    """Select spec §5.1's last recorded final, or last eligible spoken reply."""
+    for message in reversed(record_facts["messages"]):
+        if message["turn_key"] == turn_key and message["kind"] == "final":
+            return {"text": message["text"], "voice": False}
+    for request in reversed(record_facts["voice"]["requests"]):
+        if (request["turn_key"] == turn_key and not request["before_turn"]
+                and request["reply"] is not None):
+            return {"text": request["reply"], "voice": True}
+    return None
 
 
 def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> dict:
@@ -592,6 +807,7 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
     result["history"], inherited = _history(result["meta"], facts)
     builder = TurnBuilder()
     first_ms = last_ms = None
+    attributed: dict[int, str | None] = {}
     for fact in facts:
         if inherited[fact.rec]:
             continue
@@ -599,9 +815,24 @@ def parse_log_file(path: Path, *, size: int, mtime_ns: int, archived: bool) -> d
             first_ms = fact.at_ms if first_ms is None else min(first_ms, fact.at_ms)
             last_ms = fact.at_ms if last_ms is None else max(last_ms, fact.at_ms)
         if result["history"]["method"] != "unresolved":
-            builder.add(fact)
+            attributed[fact.rec] = builder.add(fact)
     result["owned_span"] = {"first_ms": first_ms, "last_ms": last_ms}
     result["turns"] = builder.turns
+    candidates = []
+    item_turns = set()
+    for fact in facts:
+        if inherited[fact.rec]:
+            continue
+        turn_key = attributed.get(fact.rec)
+        # Explicit IDs can point at a lifecycle start later in the file.
+        if turn_key is None and fact.turn_id in builder.by_id:
+            turn_key = builder.by_id[fact.turn_id]["key"]
+        if fact.item_message and turn_key is not None:
+            item_turns.add(turn_key)
+        if fact.message is not None:
+            candidates.append((fact, turn_key))
+    result["messages"] = _deduplicate_messages(candidates, item_turns)
+    result["voice"] = _place_voice(facts, inherited, builder)
     return result
 
 

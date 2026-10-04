@@ -67,3 +67,16 @@
   change D18 extraction. Regressions:
   `test_path_b_whitespace_identity_is_not_mismatch_evidence` and
   `test_path_b_nonblank_identity_strings_are_not_trimmed`.
+- Empty question-answer parts still carry D11 classification evidence. Mark
+  the assembled request as `answer` before discarding empty text fragments.
+  Regression: `test_empty_answer_part_still_marks_assembled_request_as_answer`.
+- A completion-only turn has no known start record, but its completion proves
+  that a subsequent voice request is a follow-up. Keep the completion position
+  transiently; requests before it retain unknown placement instead of inventing
+  a start. Regressions: `test_voice_after_completion_only_turn_is_follow_up` and
+  `test_voice_before_completion_only_turn_has_unknown_placement`.
+- Dedup index sentinels must not overlap concrete log identifiers. Keep the
+  all-kept `"*"` bucket separate from a literal `"*"` turn ID so incompatible
+  concrete turns never match. Regressions:
+  `test_reserved_star_turn_id_does_not_match_other_concrete_id` and
+  `test_reserved_star_turn_id_matches_same_id_and_missing_id`.
