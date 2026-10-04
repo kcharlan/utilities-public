@@ -206,3 +206,104 @@ def test_retained_parent_key_resolves_grandchild_usage(colophon):
     # The fork's retry buffer makes it incomplete, but its final snapshot (20/0/1) covers
     # the cutoff (Scanner.swift 1716–1723), so the child owns 25-20 input and 2-1 output.
     assert [(row.input, row.cached, row.output) for row in result.rows] == [(5, 0, 1)]
+
+
+@pytest.mark.parametrize('parent_id,fork_id', [
+    ('synthetic-caf\u00e9', 'synthetic-cafe\u0301'),
+    ('synthetic-cafe\u0301', 'synthetic-caf\u00e9'),
+])
+def test_canonical_equivalent_parent_lookup(colophon, parent_id, fork_id):
+    ts = '2030-01-07T12:00:00Z'
+    parent = _withholding_stream(parent_id, 20, 1)
+    child = _withholding_stream('synthetic-child', 25, 1, fork_id, ts)
+    records = [{'key': {'path': f'/synthetic/{name}.jsonl', 'mtime_ns': 1}, 'token_stream': stream}
+               for name, stream in [('child', child), ('parent', parent)]]
+    results = colophon.account_logs(records)
+    # Scanner.swift 1172–1235 indexes Swift String keys; 1692–1734 resolves the
+    # equivalent spelling. The child owns 25-20 input, with output already inherited.
+    result = results['/synthetic/child.jsonl']
+    assert [(row.input, row.cached, row.output) for row in result.rows] == [(5, 0, 0)]
+    assert results['/synthetic/parent.jsonl'].session_id == parent_id
+    assert result.forked_from_id == fork_id
+    assert result.fork_accounting_state['metadata']['forked_from_id'] == fork_id
+
+
+@pytest.mark.parametrize('tied', [False, True])
+def test_canonical_duplicate_parent_newest_mtime(colophon, tied):
+    ts = '2030-01-07T12:00:00Z'
+    composed, decomposed = 'synthetic-caf\u00e9', 'synthetic-cafe\u0301'
+    selected = {'key': {'path': '/synthetic/a.jsonl', 'mtime_ns': 1000002},
+                'token_stream': _withholding_stream(decomposed, 20, 1)}
+    other = {'key': {'path': '/synthetic/b.jsonl', 'mtime_ns': 1000002 if tied else 1000001},
+             'token_stream': _withholding_stream(composed, 10, 1)}
+    child = {'key': {'path': '/synthetic/child.jsonl', 'mtime_ns': 2000000},
+             'token_stream': _withholding_stream('synthetic-child', 25, 1, composed, ts)}
+    # A4#6 applies once per Swift String identity: newest ns, then ascending path.
+    # The selected copy contributes baseline 20, so the child owns 25-20=5 input.
+    for records in ([child, other, selected], [selected, other, child]):
+        result = colophon.account_logs(records)['/synthetic/child.jsonl']
+        assert [(row.input, row.cached, row.output) for row in result.rows] == [(5, 0, 0)]
+
+
+@pytest.mark.parametrize('padding', ['', ' '])
+def test_canonical_resolver_keys_share_memo_and_preserve_spelling(colophon, padding):
+    ts = '2030-01-07T12:00:00Z'
+    composed = padding + 'synthetic-caf\u00e9' + padding
+    decomposed = padding + 'synthetic-cafe\u0301' + padding
+    stream = _withholding_stream(composed, 10, 1)
+    resolver = colophon.InheritedTotalsResolver({decomposed: stream})
+    # Scanner.swift 1909–1932 compares Swift String identity, without trimming.
+    assert resolver.inherited_totals(decomposed, ts) == ('resolved', colophon.Totals(10, 0, 1, None))
+    assert resolver.inherited_totals(composed, ts) == ('resolved', colophon.Totals(10, 0, 1, None))
+    assert resolver.snapshot_resolution(composed) is resolver.snapshot_resolution(decomposed)
+    assert len(resolver.memo) == len(resolver.dependency_keys) == 1
+    assert resolver.snapshot_resolution(decomposed)[0].session_id == composed
+    assert resolver.inherited_totals(decomposed, '') == ('unresolved', None)
+    assert resolver.diagnostics == [('missing-cutoff', decomposed)]
+    assert not resolver.resolving_session_ids
+    if padding:
+        assert resolver.inherited_totals('synthetic-caf\u00e9', ts) == ('unresolved', None)
+        assert resolver.diagnostics[-1] == ('missing', 'synthetic-caf\u00e9')
+
+
+def test_canonical_resolver_recursion_guard_stops_equivalent_identity(colophon):
+    ts = '2030-01-07T12:00:00Z'
+    composed, decomposed = 'synthetic-caf\u00e9', 'synthetic-cafe\u0301'
+    resolver = colophon.InheritedTotalsResolver({composed: _withholding_stream(composed, 10, 1)})
+    resolver.resolving_session_ids.add(composed)
+    # inheritedTotals 1692–1697 uses Set<String>: an alternate spelling of an
+    # active parent cannot enter snapshot resolution or acquire a missing key.
+    assert resolver.inherited_totals(decomposed, ts) == ('unresolved', None)
+    assert resolver.diagnostics == []
+    assert resolver.memo == resolver.dependency_keys == {}
+    assert resolver.resolving_session_ids == {composed}
+
+
+def test_canonical_parent_dependency_retains_offered_snapshots(colophon):
+    ts = '2030-01-07T12:00:00Z'
+    composed, decomposed = 'synthetic-caf\u00e9', 'synthetic-cafe\u0301'
+    parent = _withholding_stream(composed, 10, 1)
+    fork = _withholding_stream('synthetic-fork', 20, 1, decomposed, '')
+    resolver = colophon.InheritedTotalsResolver({composed: parent, 'synthetic-fork': fork})
+    assert resolver.inherited_totals(composed, ts)[0] == 'resolved'
+    parsed, _, offered = resolver.snapshot_resolution('synthetic-fork')
+    # dependencyKeyUsed 1814–1816 uses the same Swift dictionary identity as
+    # the primed parent. Empty cutoff retains that key, so snapshots are offered.
+    assert parsed.has_unresolved_fork_baseline
+    assert offered
+    assert parsed.forked_from_id == decomposed
+
+
+def test_canonical_parent_dependency_resolves_grandchild_usage(colophon):
+    ts = '2030-01-07T12:00:00Z'
+    composed, decomposed = 'synthetic-caf\u00e9', 'synthetic-cafe\u0301'
+    parent = _withholding_stream(composed, 10, 1)
+    primer = _withholding_stream('synthetic-primer', 15, 2, composed, ts)
+    fork = _withholding_stream('synthetic-fork', 20, 1, decomposed, '')
+    child = _withholding_stream('synthetic-child', 25, 2, 'synthetic-fork', ts)
+    records = [{'key': {'path': f'/synthetic/{name}.jsonl', 'mtime_ns': 1}, 'token_stream': stream}
+               for name, stream in [('primer', primer), ('fork', fork), ('child', child), ('parent', parent)]]
+    result = colophon.account_logs(records)['/synthetic/child.jsonl']
+    # cachedSnapshotResolution 1995 offers the fork's covered snapshot; canonical
+    # parent identity must not withhold it. The grandchild owns 25-20 and 2-1.
+    assert [(row.input, row.cached, row.output) for row in result.rows] == [(5, 0, 1)]

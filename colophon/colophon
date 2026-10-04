@@ -3964,10 +3964,16 @@ def same_concrete_session_id(lhs, rhs):
             and unicodedata.normalize('NFC', left) == unicodedata.normalize('NFC', right))
 
 
+# Swift String dictionary/set identity, CostUsageScanner.swift @ 3bbf6bc48
+# CodexSessionFileIndex (1172–1235), CodexInheritedTotalsResolver (1611–2003).
+def _codex_session_identity(session_id: str) -> str:
+    return unicodedata.normalize('NFC', session_id)
+
+
 # CodexBar 3bbf6bc48: CostUsageScanner.swift CodexInheritedTotalsResolver (1611–2003).
 class InheritedTotalsResolver:
     def __init__(self, streams: dict[str, TokenStream]):
-        self.streams = streams
+        self.streams = {_codex_session_identity(session_id): stream for session_id, stream in streams.items()}
         self.memo = {}
         self.resolving_session_ids = set()
         self.dependency_keys = {}
@@ -3975,9 +3981,10 @@ class InheritedTotalsResolver:
 
     # CodexBar 3bbf6bc48: CostUsageScanner.swift inheritedTotals(for:atOrBefore:) (1692–1734).
     def inherited_totals(self, session_id: str, cutoff_ts: str) -> ForkBaseline:
-        if len(self.resolving_session_ids) >= 64 or session_id in self.resolving_session_ids:
+        identity = _codex_session_identity(session_id)
+        if len(self.resolving_session_ids) >= 64 or identity in self.resolving_session_ids:
             return ('unresolved', None)
-        self.resolving_session_ids.add(session_id)
+        self.resolving_session_ids.add(identity)
         try:
             if not cutoff_ts:
                 self.diagnostics.append(('missing-cutoff', session_id))
@@ -3987,11 +3994,11 @@ class InheritedTotalsResolver:
                 self.diagnostics.append(('lexical-cutoff', session_id))
             resolution = self.snapshot_resolution(session_id)
             if resolution is None:
-                self.dependency_keys[session_id] = 'missing' if session_id not in self.streams else None
+                self.dependency_keys[identity] = 'missing' if identity not in self.streams else None
                 return ('unresolved', None)
             result, stream, offered = resolution
             if not offered:
-                self.dependency_keys[session_id] = None
+                self.dependency_keys[identity] = None
                 return ('unresolved', None)
             is_complete = (not stream['unconsumed_tail']
                            and not result.buffered_subagent_lines_retained
@@ -4008,10 +4015,10 @@ class InheritedTotalsResolver:
             inherited = self.inherited_totals_from(result, cutoff_ts, cutoff_date)
             if inherited is None and result.forked_from_id is not None and result.fork_accounting_state is None:
                 return ('unresolved', None)
-            self.dependency_keys[session_id] = 'resolved'
+            self.dependency_keys[identity] = 'resolved'
             return ('resolved', inherited)
         finally:
-            self.resolving_session_ids.remove(session_id)
+            self.resolving_session_ids.remove(identity)
 
     # CodexBar 3bbf6bc48: CostUsageScanner.swift private inheritedTotals(from:cutoffTimestamp:cutoffDate:) (1736–1792).
     def inherited_totals_from(self, result, cutoff_timestamp, cutoff_date):
@@ -4033,19 +4040,21 @@ class InheritedTotalsResolver:
     # ForkCoverage.swift isUnresolvedMissingParentFork (43–46),
     # CacheHelpers.swift codexForkBaselineDependencyKey (1297–1308).
     def snapshot_resolution(self, session_id):
-        if session_id not in self.streams:
+        identity = _codex_session_identity(session_id)
+        if identity not in self.streams:
             self.diagnostics.append(('missing', session_id))
             return None
-        if session_id not in self.memo:
-            stream = self.streams[session_id]
+        if identity not in self.memo:
+            stream = self.streams[identity]
             parsed = parse_codex_usage(stream, resolver=self)
-            assert parsed.session_id == session_id, 'resolver stream key differs from parsed session id'
+            assert (parsed.session_id is not None and _codex_session_identity(parsed.session_id) == identity), \
+                'resolver stream key differs from parsed session id'
             # isUnresolvedMissingParentFork derives only from the used dependency key; the
             # per-parse unresolved flag is deliberately not consulted (a retained key stays).
             offered = not (parsed.forked_from_id is not None and parsed.depends_on_parent
-                           and self.dependency_keys.get(parsed.forked_from_id) != 'resolved')
-            self.memo[session_id] = (parsed, stream, offered)
-        return self.memo[session_id]
+                           and self.dependency_keys.get(_codex_session_identity(parsed.forked_from_id)) != 'resolved')
+            self.memo[identity] = (parsed, stream, offered)
+        return self.memo[identity]
 
 
 # CodexBar 3bbf6bc48: CostUsageScanner.swift parseCodexFileCancellable (4177–5264).
@@ -4456,8 +4465,8 @@ def account_logs(records: Iterable[dict]) -> dict[str, CodexUsageResult]:
         stream = record['token_stream']
         observations = stream['observations']
         session_id = observations[0][1].get('session_id') if observations and observations[0][0] == 'P' else None
-        if session_id is not None and session_id not in streams:
-            streams[session_id] = stream
+        if session_id is not None:
+            streams.setdefault(_codex_session_identity(session_id), stream)
     resolver = InheritedTotalsResolver(streams)
     results = {}
     for index, record in enumerate(records):

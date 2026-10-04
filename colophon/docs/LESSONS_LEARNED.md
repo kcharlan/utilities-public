@@ -358,3 +358,15 @@
   grandchild's owned usage. Keep the flag as the result's own diagnostic only.
   Regressions: `test_retained_parent_key_offers_snapshots` and
   `test_retained_parent_key_resolves_grandchild_usage`.
+- Swift `String` keys and set members compare canonically equivalent Unicode
+  spellings as one identity. Raw Python parent keys split that identity,
+  losing parent baselines or selecting an older duplicate copy. Use one NFC
+  key consistently for parent indexing, lookup, memoization, recursion guards,
+  dependency state and the parsed-identity assertion. Keep source metadata and
+  diagnostics unchanged, and do not borrow the rollout classifier's trimming.
+  Regressions: `test_canonical_equivalent_parent_lookup`,
+  `test_canonical_duplicate_parent_newest_mtime`,
+  `test_canonical_resolver_keys_share_memo_and_preserve_spelling`,
+  `test_canonical_resolver_recursion_guard_stops_equivalent_identity`,
+  `test_canonical_parent_dependency_retains_offered_snapshots`, and
+  `test_canonical_parent_dependency_resolves_grandchild_usage`.

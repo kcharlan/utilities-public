@@ -289,3 +289,11 @@ Resolver dependency state remains keyed by parent session. The empty-cutoff
 guard returns unresolved before updating that state, so an earlier resolved
 key remains resolved (`CostUsageScanner.swift` 1698–1703). The port preserves
 that source behavior instead of replacing it with stricter per-parse state.
+
+Parent identity follows Swift `String` canonical equality in the session-file
+index, resolver memo, recursion set, dependency keys and parsed-identity check
+(`CostUsageScanner.swift` 1172–1235, 1611–2003). Internal NFC keys provide this
+library compatibility without adding trimming, case folding or compatibility
+normalization. Returned metadata and diagnostic tuples retain their original
+spellings. A4's newest-mtime and ascending-path selection applies once per
+canonical identity; the separate rollout classifier's trimming stays separate.
