@@ -2530,6 +2530,301 @@ def subagent_title(meta: dict | None) -> tuple[str, str]:
     return (f"{label} · {nickname}" if _metadata_text(nickname) else label), "agent_path"
 
 
+# ===== 9. Assembly =====
+@dataclass
+class TurnModel:
+    id: str
+    n: int
+    status: str
+    start_ms: int | None
+    end_ms: int | None
+    duration_ms: int | float | None
+    ttft_ms: int | float | None
+    flags: set[str] = field(default_factory=set)
+    requests: list[dict] = field(default_factory=list)
+    final_answer: dict | None = None
+    tools: ToolCounts = field(default_factory=_empty_tool_counts)
+    spawned: list[str] = field(default_factory=list)
+    used: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SessionModel:
+    """Display facts plus an independent DB adapter for downstream fallbacks.
+
+    meta retains rollout cwd/git/agent fields; db_info retains DB cwd,
+    git_origin_url/git_branch/git_sha and agent fields without merging sources.
+    Rows without a usable true metadata identity never receive DB fields.
+    """
+
+    id: str
+    record: dict
+    records: list[dict]
+    archived: bool
+    log_path: str
+    meta: dict | None
+    title: str
+    title_full: str
+    title_source: str
+    turns: list[TurnModel]
+    flags: set[str]
+    session_voice: dict
+    tools: ToolCounts
+    start_ms: int | None
+    end_ms: int | None
+    idle_ms: int | float | None
+    user_span_ms: int | None
+    is_subagent: bool
+    parent_id: str | None = None
+    children: list[str] = field(default_factory=list)
+    workspace: str | None = None
+    subfolder: str | None = None
+    units: list = field(default_factory=list)
+    link: dict | None = None
+    db_info: dict = field(default_factory=dict)
+
+
+@dataclass
+class Corpus:
+    sessions: dict[str, SessionModel] = field(default_factory=dict)
+    skipped: list[dict] = field(default_factory=list)
+    skipped_records: list[dict] = field(default_factory=list)
+    file_diagnostics: dict = field(default_factory=dict)
+    db_threads_without_logs: int = 0
+
+
+def _turn_models(turns: list[dict], *, mtime_ms: int, snapshot_ms: int,
+                 collapsed: bool) -> list[TurnModel]:
+    quiet = snapshot_ms - mtime_ms > LIVE_QUIET_MS
+    models = []
+    for fact in turns:
+        timing = turn_timing(fact, collapsed=collapsed)
+        start, end = timing["start_ms"], fact["end_ms"]
+        duration, flags = timing["duration_ms"], set(timing["flags"])
+        status = fact["end_kind"]
+        if status == "open":
+            status = "abandoned" if quiet else "running"
+            if not quiet:
+                flags.add("live")
+                end = snapshot_ms
+                if start is not None and end >= start:
+                    duration = end - start
+                else:
+                    flags.add("unknown_duration")
+        models.append(TurnModel(fact["key"], 0, status, start, end, duration,
+                                fact["ttft_ms"], flags))
+    # Stable sorting retains file order for ties and fully unknown clocks.
+    def ordering(model):
+        instant = model.start_ms if model.start_ms is not None else model.end_ms
+        return instant is None, instant if instant is not None else 0
+    models.sort(key=ordering)
+    for number, model in enumerate(models, 1):
+        model.n = number
+    return models
+
+
+def classify_open_turns(turns: list[dict], *, mtime_ms: int,
+                        snapshot_ms: int) -> list[TurnModel]:
+    """Classify cached turn facts at this snapshot, without changing the cache."""
+    return _turn_models(turns, mtime_ms=mtime_ms, snapshot_ms=snapshot_ms, collapsed=False)
+
+
+def _active_interval_union(turns: list[TurnModel]) -> int | float:
+    intervals = sorted((turn.start_ms, turn.end_ms) for turn in turns
+                       if turn.status != "abandoned" and turn.duration_ms is not None
+                       and turn.start_ms is not None and turn.end_ms is not None
+                       and turn.end_ms >= turn.start_ms)
+    total = 0
+    if intervals:
+        start, end = intervals[0]
+        for next_start, next_end in intervals[1:]:
+            if next_start <= end:
+                end = max(end, next_end)
+            else:
+                total += end - start
+                start, end = next_start, next_end
+        total += end - start
+    return total
+
+
+def _request_time_key(request: dict) -> tuple[bool, int]:
+    instant = request["at_ms"]
+    return instant is None, instant if instant is not None else 0
+
+
+def _final_answer_index(record_facts: dict) -> dict[str, dict]:
+    """Index Task 5 answers once, retaining file order rather than clock order."""
+    answers = {}
+    for request in record_facts["voice"]["requests"]:
+        key = request["turn_key"]
+        if key is not None and not request["before_turn"] and request["reply"] is not None:
+            answers[key] = {"text": request["reply"], "voice": True}
+    # Every recorded final has precedence over any spoken reply. Later
+    # recorded finals overwrite earlier ones, just as the single-turn rule.
+    for message in record_facts["messages"]:
+        key = message["turn_key"]
+        if key is not None and message["kind"] == "final":
+            answers[key] = {"text": message["text"], "voice": False}
+    return answers
+
+
+def _assemble_session(identifier: str, records: list[dict], metadata: CodexMetadata,
+                      snapshot_ms: int, *, session_id: str | None) -> SessionModel:
+    # Display tie-breaking is path order; token processing order also uses size.
+    record = min(records, key=lambda r: (-r["key"]["mtime_ns"],
+                                         r["key"]["path"]))
+    collapsed = record["wrapper_ts"]["count"] > 1 and record["wrapper_ts"]["distinct"] == 1
+    unresolved = record["history"]["method"] == "unresolved"
+    flags = set()
+    if record["no_session_meta"]:
+        flags.add("no_session_meta")
+    if collapsed:
+        flags.add("collapsed_timestamps")
+    if unresolved:
+        flags.add("history_unresolved")
+    turns = [] if unresolved else _turn_models(
+        record["turns"], mtime_ms=record["key"]["mtime_ns"] // 1_000_000,
+        snapshot_ms=snapshot_ms, collapsed=collapsed)
+    by_key = {turn.id: turn for turn in turns}
+    requests = []
+    session_voice = {"requests": [], "replies": []}
+    tools = _empty_tool_counts()
+    if not unresolved:
+        final_answers = _final_answer_index(record)
+        for message in record["messages"]:
+            if message["role"] != "user":
+                continue
+            request = {"at_ms": message["at_ms"], "text": message["text"],
+                       "kind": message["kind"], "before_turn": False, "images": message["images"],
+                       "time_unreliable": collapsed and message["ts_src"] == "record_timestamp"}
+            requests.append(request)
+            if message["turn_key"] in by_key:
+                by_key[message["turn_key"]].requests.append(request)
+        for voice in record["voice"]["requests"]:
+            # VoiceRequest has no cached provenance. A collapsed log supplies
+            # no evidence that its voice clock survived the rewrite reliably.
+            request = {"at_ms": voice["at_ms"], "text": voice["text"], "kind": "voice",
+                       "before_turn": voice["before_turn"], "images": 0,
+                       "time_unreliable": collapsed}
+            requests.append(request)
+            if voice["turn_key"] in by_key:
+                by_key[voice["turn_key"]].requests.append(request)
+            else:
+                session_voice["requests"].append(request)
+                if voice["reply"] is not None:
+                    # Parse facts retain reply text but not its separate clock.
+                    session_voice["replies"].append({"at_ms": None, "text": voice["reply"]})
+        session_voice["replies"].extend(
+            {"at_ms": reply["at_ms"], "text": reply["text"]}
+            for reply in record["voice"]["replies"] if reply["turn_key"] is None)
+        for turn in turns:
+            turn.requests.sort(key=lambda request: (not request["before_turn"], *_request_time_key(request)))
+            turn.final_answer = final_answers.get(turn.id)
+            _merge_tool_counts(turn.tools, record["tools"].get(turn.id, _empty_tool_counts()))
+            _merge_tool_counts(tools, turn.tools)
+            if turn.status == "running":
+                flags.add("live")
+            elif turn.status in ("aborted", "interrupted", "abandoned"):
+                flags.add(turn.status)
+            if turn.flags & {"unknown_duration", "collapsed"}:
+                flags.add("uncertain_timing")
+        if any(request["time_unreliable"] for request in requests):
+            flags.add("uncertain_timing")
+    requests.sort(key=_request_time_key)
+    session_voice["requests"].sort(key=_request_time_key)
+    meta = record["meta"]
+    is_subagent = bool((meta or {}).get("is_subagent"))
+    db_info = dict(metadata.threads.get(session_id, {})) if session_id is not None else {}
+    if is_subagent:
+        full_title, title_source = subagent_title(meta)
+    else:
+        info = dict(db_info)
+        if session_id is not None:
+            info.update(index_title=metadata.index_titles.get(session_id),
+                        desktop_title=metadata.desktop_titles.get(session_id))
+        full_title, title_source = select_title(
+            meta, info, requests[0]["text"] if requests else None,
+            cwd=(meta or {}).get("cwd") or info.get("cwd"), session_id=identifier,
+            path=Path(record["key"]["path"]))
+    start = None if unresolved else record["owned_span"]["first_ms"]
+    end = None if unresolved else record["owned_span"]["last_ms"]
+    idle = end - start - _active_interval_union(turns) if start is not None and end is not None else None
+    user_span = None
+    if (len(requests) >= 2 and not any(request["time_unreliable"] or request["at_ms"] is None
+                                      for request in requests)):
+        user_span = requests[-1]["at_ms"] - requests[0]["at_ms"]
+    return SessionModel(identifier, record, records, record["archived"], record["key"]["path"],
+                        meta, display_title(full_title), full_title, title_source, turns, flags,
+                        session_voice, tools, start, end, idle, user_span, is_subagent, db_info=db_info)
+
+
+def build_corpus(records: list[dict], metadata: CodexMetadata, snapshot_ms: int) -> Corpus:
+    """Group display sessions, retaining every accounting copy and diagnostic."""
+    result = Corpus(file_diagnostics={
+        name: {"total": 0, "files": []} for name in
+        ("malformed_lines", "truncated_lines", "recovered_lines")})
+    result.file_diagnostics["unknown_record_types"] = {}
+    ordered = sorted(records, key=lambda r: (-(r["key"]["mtime_ns"] // 1_000_000),
+                                             r["key"]["size"], r["key"]["path"]))
+    known_ids = {_history_identifier((record["meta"] or {}).get("id")) for record in records}
+    known_ids.discard(None)
+    result.db_threads_without_logs = len(set(metadata.threads) - known_ids)
+    # A selected metadata ID and a generated file identity are different
+    # namespaces even when their string spellings happen to be identical.
+    groups: dict[tuple[str, str], list[dict]] = {}
+    identities: dict[tuple[str, str], str | None] = {}
+    display_ids: dict[tuple[str, str], str] = {}
+    for record in ordered:
+        path = record["key"]["path"]
+        quiet = snapshot_ms - record["key"]["mtime_ns"] // 1_000_000 > LIVE_QUIET_MS
+        for source, name in (("malformed", "malformed_lines"), ("recovered", "recovered_lines"),
+                             ("partial_final_line", "truncated_lines")):
+            count = int(record["lines"][source])
+            if source == "partial_final_line" and not quiet:
+                count = 0
+            if count:
+                result.file_diagnostics[name]["total"] += count
+                result.file_diagnostics[name]["files"].append({"path": path, "count": count})
+        unknown = result.file_diagnostics["unknown_record_types"]
+        for name, count in record["unknown_types"].items():
+            unknown[name] = unknown.get(name, 0) + count
+        if record["status"] != "ok":
+            result.skipped.append({"path": path, "reason": record["status"]})
+            result.skipped_records.append(record)
+            continue
+        session_id = _history_identifier((record["meta"] or {}).get("id"))
+        key = ("session", session_id) if session_id is not None else ("file", path)
+        groups.setdefault(key, []).append(record)
+        identities[key] = session_id
+        if session_id is None:
+            stem = Path(path).stem
+            match = re.search(r"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$", stem, re.IGNORECASE)
+            display_ids[key] = match[1] if match else stem
+    collisions: dict[str, int] = {}
+    for display in display_ids.values():
+        collisions[display] = collisions.get(display, 0) + 1
+    # Keep true metadata IDs unchanged for downstream parent lookup. Reserve
+    # them all before allocating generated keys, independent of scan order.
+    allocated = set(known_ids)
+    file_keys = {}
+    for group in sorted(key for key in groups if key[0] == "file"):
+        candidate = f"file:{group[1]}"
+        while candidate in allocated:
+            candidate = f"file:{candidate}"
+        allocated.add(candidate)
+        file_keys[group] = candidate
+    for group, copies in groups.items():
+        key = group[1] if group[0] == "session" else file_keys[group]
+        display = display_ids.get(group, key)
+        if identities[group] is None and (display in known_ids or collisions[display] > 1):
+            # Payload assembly derives public IDs from record.key.path and
+            # the actual Codex home, never from this escaped dictionary key.
+            display = key
+        result.sessions[key] = _assemble_session(display, copies, metadata, snapshot_ms,
+                                                 session_id=identities[group])
+    return result
+
+
 # ===== 19. CLI =====
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(

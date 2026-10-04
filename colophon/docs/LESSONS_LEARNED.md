@@ -244,3 +244,38 @@
   basename itself to be nonblank before selecting it as a fallback title;
   preserve usable strings without stripping them. Regression:
   `test_title_fallbacks`.
+- Assembly must retain spoken replies attached to session-level requests, not
+  just standalone voice replies. The cached request retains reply text but no
+  separate reply clock; emit a null clock rather than reusing the question's
+  timestamp. Before-turn reply facts remain on the original FileRecord and
+  never become a turn's final answer. Regressions:
+  `test_no_turn_voice_reply_survives_without_inventing_reply_clock` and
+  `test_before_turn_reply_facts_survive_without_becoming_final_answer`.
+- Display-copy selection and upstream processing order are separate contracts.
+  Select the display copy using full mtime precision with path tie-breaking;
+  retain upstream millisecond/size/path ordering for accounting copies.
+  Regression: `test_newest_display_uses_submillisecond_mtime`.
+- Turn numbering uses assembled starts, including a start derived from reported
+  duration, before falling back to end time and stable file order. Sorting the
+  original logged start incorrectly numbers completion-only turns. Regression:
+  `test_numbering_uses_effective_reported_start`.
+- A standalone voice reply's cached turn key is placement evidence. Only
+  replies with no turn key belong in session-level voice; retain attributed
+  replies on the original FileRecord without inventing a request or final
+  answer. Regression:
+  `test_unprompted_in_turn_voice_reply_does_not_move_to_session_level`.
+- Raw metadata IDs can spell generated file keys, including repeated `file:`
+  prefixes. Group metadata identities and source paths in separate namespaces;
+  reserve every true metadata ID before deterministically allocating string
+  keys for file groups. Escape only conflicting generated keys, and retain
+  the original source path for accounting and payload identity. Regression:
+  `test_generated_file_identity_never_merges_with_true_metadata_id` checks
+  both input orders, mtime orders and repeated-prefix conflicts.
+- Selecting one final answer by scanning a whole transcript is suitable for
+  single-turn callers, but repeating it for every assembled turn is quadratic.
+  Build one answer index in file order per display record: last eligible spoken
+  replies win until recorded finals override them, and later recorded finals
+  replace earlier ones. Keep the single-turn interface and bound retained-fact
+  visits in growing synthetic sessions rather than asserting volatile timings.
+  Regressions: `test_assembly_bounds_retained_fact_visits_as_sessions_grow` and
+  `test_final_answers_keep_recorded_precedence_and_last_eligible_voice`.
