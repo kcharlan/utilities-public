@@ -18,7 +18,11 @@ the checked parser regenerates the exact same seed bytes. Cost fields retain
 the existing Double conversion and invalid model children are skipped individually.
 The source boundary follows Swift Foundation's
 [JSONDecoder integer conversion](https://raw.githubusercontent.com/swiftlang/swift-foundation/main/Sources/FoundationEssentials/JSON/JSONDecoder.swift)
-and the independent pinned-model probes; rate resolution stays pinned to
+and [Foundation Decimal parsing](https://github.com/swiftlang/swift-foundation/blob/swift-6.1-RELEASE/Sources/FoundationEssentials/Decimal/Decimal.swift#L320-L424).
+For the large-number slow path, the parser fills a UInt128 mantissa and
+discards excess fractional digits before checking exact Int conversion.
+Independent synthetic Foundation probes pin both sides of that boundary;
+rate resolution stays pinned to
 CodexBar `3bbf6bc48`.
 
 Normative source: `steipete/CodexBar` at `3bbf6bc48`. File paths in this
@@ -32,6 +36,7 @@ an upstream checkout, binary, cache or fixtures.
 | Historical rate seed | CostUsagePricing.swift | codexHistoricalPricing (394–407), gpt56Pricing (47–61) | 3bbf6bc48 | Ported values, adapted representation | Sol cutoff 2026-08-21; Terra/Luna cutoff 2026-07-30. Historical null entries use the exact decimal per-million tuples and 272000 threshold; cutoff entries use the explicit snapshot resolver. |
 | Priority seed | CostUsagePricing.swift | codexAPIFastMultiplier, codexAPIFastAllowsLongContext (682–692) | 3bbf6bc48 | Ported | ×2 for 5.4, 5.4-mini, 5.6 Sol/Terra/Luna and 6 Astra; ×2.5 for 5.5. Cap 272000 except Astra's null cap. |
 | Dated ledgers and recording | Colophon spec §5.6, plan Task 16/D15 | validate_ledger, PriceHistory, record_catalog_rates, append_user_ledger | — | Colophon addition, approved A4 item 2 | Exact pricing keys; null first, then dated periods; manual > catalog > curated ties. Record at fetch time, compare non-manual standard/long rates only, carry priority, preserve existing JSON on append, detect mtime edits. Compiler diagnostic wiring belongs to Task 18. |
+| Ledger JSON metadata | Colophon spec §5.6, plan Task 16 | validate_ledger, append_user_ledger | — | Literal JSON contract | Unknown fields stay intact. Duplicate comparison distinguishes booleans from numbers recursively, retains numeric equality, and excludes only note/recorded_at. Reject nonstandard constants on read and all nonfinite metadata during direct validation, with entry-indexed errors. |
 | Optional ledger context compatibility | CostUsagePricing.swift | codexCostUSD (704–726) | 3bbf6bc48 | Ported behavior | An omitted long_context selects standard rates. cost_usd reads it optionally without adding a null field to picked or persisted entries. |
 | One observation stream during the existing read | CostUsageScanner.swift | parseCodexFileCancellable, onLine (4772–5005) | 3bbf6bc48 | Adapted representation | Cache observations instead of reducing usage immediately. Raw bytes route independently of Colophon's recovered display records. |
 | Physical position and upstream position | CostUsageJsonl.swift; CostUsageScanner.swift | flushLine (358–359); onLine (4773–4774) | 3bbf6bc48 | Ported | `line` counts physical lines; `uidx` counts prior nonzero-byte lines. Whitespace and carriage-return-only lines advance `uidx`. |

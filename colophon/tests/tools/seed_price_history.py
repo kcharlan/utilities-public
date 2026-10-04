@@ -35,7 +35,7 @@ class _SnapshotFloat(float):
 
 
 def _context_integer(value: _SnapshotFloat) -> int | None:
-    # JSONDecoder's Int slow path uses Double below 2^53, then exact Decimal
+    # JSONDecoder's Int slow path uses Double below 2^53, then Foundation Decimal
     # for larger magnitudes. Task13 standalone pinned-model probes corroborate
     # Int64 boundaries, including rejected decimal -2^63 and positive rounding
     # to 2^63. This normalization is solely a raw JSON decode boundary.
@@ -44,10 +44,30 @@ def _context_integer(value: _SnapshotFloat) -> int | None:
         return None
     if abs(binary) < 2**53:
         return int(binary)
-    exact = Decimal(value.spelling)
-    if exact != exact.to_integral_value() or not -(2**63) < exact < 2**63:
+    # Foundation swift-6.1-RELEASE Decimal.swift _decimal 320–424 accumulates
+    # a UInt128 mantissa; after overflow it discards further fractional digits.
+    # Preserve that representation loss before Int(exactly:), not Python's
+    # arbitrary-precision fractional value or NSNumber's wrapping Int cast.
+    sign, digits, exponent = Decimal(value.spelling).as_tuple()
+    coefficient = discarded = 0
+    for digit in digits:
+        candidate = coefficient * 10 + digit
+        if discarded or candidate > 2**128 - 1:
+            discarded += 1
+        else:
+            coefficient = candidate
+    exponent += discarded
+    if not -128 <= exponent <= 127:
         return None
-    return int(exact)
+    if exponent >= 0:
+        integer = coefficient * 10**exponent
+    else:
+        integer, remainder = divmod(coefficient, 10**(-exponent))
+        if remainder:
+            return None
+    if sign:
+        integer = -integer
+    return integer if -(2**63) < integer < 2**63 else None
 
 
 def load_snapshot(text: str) -> dict:

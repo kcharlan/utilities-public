@@ -169,6 +169,57 @@ def test_exact_duplicates_collapse_and_warn(colophon):
     assert not result.errors and len(result.warnings) == 2
 
 
+@pytest.mark.parametrize("left,right", [(True, 1), ([False], [0]),
+    ({"value": True}, {"value": 1})], ids=["boolean-number", "array-boolean-number", "object-boolean-number"])
+def test_duplicate_metadata_json_types_conflict(colophon, left, right):
+    result = colophon.validate_ledger(ledger(entry(synthetic_extra=left),
+        entry(synthetic_extra=right)), curated=False)
+    assert result.entries == []
+    assert result.errors == ["entry 1: conflicts with entry 0"]
+    assert result.warnings == []
+
+
+def test_duplicate_metadata_numbers_compare_as_json_numbers(colophon):
+    first = entry(synthetic_extra={"value": [1, 0.5, None, True]})
+    second = entry(synthetic_extra={"value": [1.0, 0.5, None, True]}, note="synthetic note")
+    result = colophon.validate_ledger(ledger(first, second), curated=False)
+    assert result.entries == [first] and result.entries[0] is first
+    assert result.errors == [] and result.warnings == ["entry 1: duplicate of entry 0; collapsed"]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")], ids=["nan", "infinity", "negative-infinity"])
+@pytest.mark.parametrize("location", ["root", "entry", "rates", "note", "recorded_at"])
+def test_nonfinite_metadata_is_not_json(colophon, value, location):
+    doc = ledger(entry())
+    if location == "root":
+        doc["synthetic_extra"] = {"nested": [value]}
+    elif location == "rates":
+        doc["entries"][0]["per_million"]["synthetic_extra"] = [value]
+    elif location in ("note", "recorded_at"):
+        doc["entries"][0][location] = value
+    else:
+        doc["entries"][0]["synthetic_extra"] = {"nested": [value]}
+    result = colophon.validate_ledger(doc, curated=False)
+    assert result.entries == [] and result.errors
+    assert any("nonfinite JSON number" in error for error in result.errors)
+    assert any(error.startswith("ledger: " if location == "root" else "entry 0: ")
+               for error in result.errors)
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("location", ["root", "entry"])
+def test_append_rejects_nonstandard_json_constants(colophon, tmp_path, constant, location):
+    doc = ledger(entry())
+    target = doc if location == "root" else doc["entries"][0]
+    target["synthetic_extra"] = {"nested": ["CONSTANT"]}
+    original = json.dumps(doc).replace('"CONSTANT"', constant).encode()
+    path = tmp_path / "price-history.json"
+    path.write_bytes(original)
+    result, warning = colophon.append_user_ledger(path, [entry(at=LATER)], path.stat().st_mtime_ns)
+    assert result is False and constant in warning
+    assert path.read_bytes() == original
+
+
 @pytest.mark.parametrize("changes", [{"per_million": dict(RATES, input=99)},
     {"priority": {"multiplier": 2, "max_input_tokens": None}}, {"approximate_date": True},
     {"long_context": dict(RATES, threshold=3)}, {"synthetic_extra": "conflict"}])
@@ -580,6 +631,16 @@ def test_seed_rejects_nonobject_snapshot(colophon, snapshot):
     ("1e-9999", 0), ("1e-100", None), ("1.000000000000001", None),
     ("1.0000000000000001", 1), ("9007199254740993.0", 9007199254740993),
     ("9223372036854774785.0", 9223372036854774785),
+    ("9007199254740993.0000000000000000000000000000001", 9007199254740993),
+    ("9223372036854774785.00000000000000000000000000001", 9223372036854774785),
+    ("9007199254740993.00000000000000000001", None),
+    ("9007199254740993.0000000000000000000001", None),
+    ("9007199254740993.00000000000000000000001", 9007199254740993),
+    ("9223372036854774785.0000000000000000001", None),
+    ("9223372036854774785.00000000000000000001", 9223372036854774785),
+    ("-9007199254740993.00000000000000000000001", -9007199254740993),
+    ("-9223372036854774785.00000000000000000001", -9223372036854774785),
+    ("9007199254740993.9999999999999999999999999999999", None),
 ])
 def test_seed_raw_context_preserves_jsondecoder_acceptance(colophon, raw, expected):
     # ModelsDevPricing.swift ModelsDevLimit.context 291–293; independently

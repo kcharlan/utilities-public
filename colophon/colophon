@@ -6225,6 +6225,32 @@ def _ledger_model(value) -> bool:
     return normalize_codex_model(value) == value
 
 
+def _ledger_json_equal(left, right) -> bool:
+    """JSON booleans are distinct from numbers, including inside metadata."""
+    if type(left) in (int, float) and type(right) in (int, float):
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _ledger_json_equal(value, right[key]) for key, value in left.items())
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _ledger_json_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def _ledger_nonfinite_paths(value, path=""):
+    if isinstance(value, float) and not math.isfinite(value):
+        yield path
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            yield from _ledger_nonfinite_paths(child, f"{path}.{key}" if path else key)
+    elif isinstance(value, list):
+        for number, child in enumerate(value):
+            yield from _ledger_nonfinite_paths(child, f"{path}[{number}]")
+
+
 def validate_ledger(doc, *, curated: bool) -> LedgerCheck:
     """Validate without repairing: one bad entry disables the whole ledger."""
     errors, warnings, entries = [], [], []
@@ -6232,6 +6258,10 @@ def validate_ledger(doc, *, curated: bool) -> LedgerCheck:
         return LedgerCheck([], ["ledger schema must be 1 in a JSON object"], [])
     if not isinstance(doc.get("entries"), list):
         return LedgerCheck([], ["ledger entries must be a list"], [])
+    for field_name, value in doc.items():
+        if field_name != "entries":
+            errors.extend(f"ledger: {path} contains a nonfinite JSON number"
+                          for path in _ledger_nonfinite_paths(value, field_name))
     seen = {}
     rate_keys = ("input", "cached_input", "cache_write", "output")
     for number, entry in enumerate(doc["entries"]):
@@ -6240,6 +6270,8 @@ def validate_ledger(doc, *, curated: bool) -> LedgerCheck:
         if not isinstance(entry, dict):
             errors.append(prefix + "must be an object")
             continue
+        errors.extend(prefix + f"{path} contains a nonfinite JSON number"
+                      for path in _ledger_nonfinite_paths(entry))
         if not _ledger_model(entry.get("model")):
             errors.append(prefix + "model must be a nonempty normalized id or catalog override key")
         if "effective_from" not in entry or not (
@@ -6290,7 +6322,7 @@ def validate_ledger(doc, *, curated: bool) -> LedgerCheck:
         comparable = {key: value for key, value in entry.items() if key not in ("note", "recorded_at")}
         if key in seen:
             earlier_number, earlier = seen[key]
-            if comparable == earlier:
+            if _ledger_json_equal(comparable, earlier):
                 warnings.append(prefix + f"duplicate of entry {earlier_number}; collapsed")
             else:
                 errors.append(prefix + f"conflicts with entry {earlier_number}")
@@ -6410,7 +6442,8 @@ def append_user_ledger(path: Path, new_entries: list[dict],
             after = None
         if after != start_mtime_ns:
             return False, changed
-        doc = {"schema": 1, "entries": []} if text is None else json.loads(text.decode("utf-8"))
+        doc = {"schema": 1, "entries": []} if text is None else json.loads(
+            text.decode("utf-8"), parse_constant=_reject_json_constant)
         checked = validate_ledger(doc, curated=False)
         if checked.errors:
             return False, "price-history.json: " + "; ".join(checked.errors)

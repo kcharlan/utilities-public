@@ -1,5 +1,21 @@
 # Lessons learned
 
+- Python container equality is not JSON-value equality: `True == 1` even
+  inside nested lists or objects. Duplicate ledger comparison must distinguish
+  booleans from numbers while preserving int/float numeric equality and raw
+  entries. Regressions: `test_duplicate_metadata_json_types_conflict` and
+  `test_duplicate_metadata_numbers_compare_as_json_numbers`.
+- Unknown JSON metadata still belongs to the JSON validity boundary. Reject
+  `NaN`/`Infinity` constants during parsing and recursively reject nonfinite
+  direct inputs before append; known rate validation alone misses extra fields.
+  Regressions: `test_nonfinite_metadata_is_not_json` and
+  `test_append_rejects_nonstandard_json_constants`.
+- JSONDecoder's large-context Decimal slow path loses fractional digits once
+  its UInt128 mantissa fills. Test representability after that finite parse,
+  rather than against Python's unlimited Decimal precision or NSNumber's
+  wrapping integer cast. Positive and negative boundary regressions extend
+  `test_seed_raw_context_preserves_jsondecoder_acceptance`.
+
 - Re-stat a reread ledger before decoding or parsing its bytes. An editor may
   leave partial JSON or invalid UTF-8 while saving; decoding first hides the
   required mtime-change warning behind a codec or JSON error. Regressions:

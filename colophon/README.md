@@ -130,8 +130,11 @@ a multiplier from a date without changing its standard rates:
 Add the entry to the ledger's existing `entries` list under `schema: 1`.
 All four rates are required. Optional `long_context` and `priority` must be
 objects when supplied; omit absent objects. Only the curated ledger permits
-a null effective date. A manual correction remains effective until the
-catalog's rates change; a model priced only manually gets a catalog entry
+a null effective date. Unknown JSON metadata is preserved, but nonfinite
+numbers are invalid everywhere. Same-key duplicates compare JSON values:
+booleans differ from numbers, while integer and decimal numbers can be equal;
+only `note` and `recorded_at` are excluded. A manual correction remains effective
+until the catalog's rates change; a model priced only manually gets a catalog entry
 when the catalog first lists it. Invalid ledgers disable recording and costs
 in the compiler while retaining token counts. An editor save during a run
 skips recording with a warning rather than overwriting the edit.
