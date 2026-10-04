@@ -78,3 +78,15 @@ casts yield zero, including signed and zero mantissas. Parse Unicode Nd exponent
 digits linearly, strip leading zeros, and compare only the bounded significant
 magnitude. This preserves accepted observations beyond Python Decimal's exponent
 range and Python's integer-string digit limit; it does not catch and drop them.
+
+The pinned `CostUsageJsonl.swift` tail check (391) and scanner bare/dictionary
+fallbacks (4824, 4879) delegate to Foundation JSONSerialization. Its observed
+limit permits nonempty arrays/dictionaries only through container depth 512;
+an empty terminal container at depth 513 is accepted. The fallback validates
+container paths iteratively without changing Python's recursion limit, retaining
+source object pairs temporarily so an overwritten duplicate key cannot erase
+an excessive nesting path or invalid Unicode string. Synthetic Foundation
+probes establish that duplicate keys keep the first source value, including
+nested usage fields; the fallback preserves that dictionary projection.
+Terminated typed fast routing and structurally complete truncated
+tails retain their source behavior without whole-object JSON validation.

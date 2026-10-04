@@ -155,3 +155,18 @@
   so padded small exponents neither overflow nor hit Python's digit limit.
   Regressions: `test_historical_scientific_exponent_saturation_retains_context`
   and `test_historical_scientific_exponent_leading_zeros_keep_small_magnitude`.
+- JSONSerialization's nesting boundary counts nonempty containers, so an empty
+  terminal container at depth 513 is accepted while a nonempty one is rejected.
+  Preserve source object pairs during validation: a later duplicate key must
+  not erase an already invalid nesting path. Apply the boundary only to the
+  Foundation fallback; raw fast routing and truncated structural tails follow
+  separate upstream contracts. Regressions: `test_foundation_container_depth_routing`,
+  `test_foundation_depth_513_terminal_container`, and
+  `test_foundation_depth_checks_overwritten_object_values`.
+- Do not assume Foundation dictionaries share Python JSON's duplicate-key
+  projection. Synthetic library probes show Foundation keeps the first value,
+  while validating every pair, including an invalid discarded string. Preserve
+  both behaviors in the fallback. Regressions:
+  `test_foundation_duplicate_projection_keeps_first_value`,
+  `test_foundation_duplicate_usage_fields_keep_first_value`, and
+  `test_foundation_validates_overwritten_strings`.

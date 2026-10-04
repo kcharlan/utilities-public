@@ -1164,21 +1164,40 @@ class _CodexJSONFloat(float):
 def _upstream_json(data: bytes):
     """Foundation JSONSerialization stand-in, including its Unicode checks."""
     try:
+        object_pairs = {}
+
+        def capture_object(pairs):
+            obj = {}
+            for key, item in pairs:
+                obj.setdefault(key, item)  # Foundation keeps the first value.
+            # Foundation validates every source pair before projecting keys.
+            # Keep source pairs only for this parse's iterative validation.
+            object_pairs[id(obj)] = pairs
+            return obj
+
         value = json.loads(data, parse_constant=_reject_json_constant,
-                           parse_int=_CodexJSONInteger, parse_float=_CodexJSONFloat)
-        pending = [value]
+                           parse_int=_CodexJSONInteger, parse_float=_CodexJSONFloat,
+                           object_pairs_hook=capture_object)
+        pending = [(value, 0)]
         while pending:
-            item = pending.pop()
+            item, depth = pending.pop()
             if isinstance(item, str):
                 if any(0xD800 <= ord(c) <= 0xDFFF for c in item):
                     return None
             elif isinstance(item, float) and item == math.inf:
                 return None
             elif isinstance(item, dict):
-                pending.extend(item.keys())
-                pending.extend(item.values())
+                depth += 1
+                # Foundation permits an empty terminal container at depth 513;
+                # only nonempty containers beyond 512 fail serialization.
+                if item and depth > 512:
+                    return None
+                pending.extend((child, depth) for pair in object_pairs[id(item)] for child in pair)
             elif isinstance(item, list):
-                pending.extend(item)
+                depth += 1
+                if item and depth > 512:
+                    return None
+                pending.extend((child, depth) for child in item)
         return (value,)
     except (ValueError, UnicodeError, RecursionError, ArithmeticError):
         return None

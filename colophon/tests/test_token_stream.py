@@ -545,3 +545,92 @@ def test_historical_scientific_exponent_leading_zeros_keep_small_magnitude(colop
     timestamp = '2e' + zero * 5000 + '3-1-7T0:0:0z'
     assert observe(colophon, [context({}, timestamp=timestamp)])['observations'] == [
         ['C', 0, 0, None, timestamp, None]]
+
+
+def nested_json_bytes(count, kind, leaf=b'0'):
+    data = leaf
+    for index in range(count):
+        dictionary = kind == 'dict' or (kind == 'mixed' and index % 2 == 0)
+        data = b'{"synthetic":' + data + b'}' if dictionary else b'[' + data + b']'
+    return data
+
+
+@pytest.mark.parametrize('kind', ['array', 'dict', 'mixed'])
+@pytest.mark.parametrize('count,accepted', [(511, True), (512, False)], ids=['boundary', 'over-limit'])
+@pytest.mark.parametrize('leaf', [b'0', b'[]', b'{}'], ids=['scalar', 'empty-array', 'empty-dict'])
+@pytest.mark.parametrize('route', ['tail', 'bare', 'dictionary'])
+def test_foundation_container_depth_routing(colophon, kind, count, accepted, leaf, route):
+    # Pinned Jsonl 391 and Scanner 4824/4879 delegate JSONSerialization.
+    # Foundation caps nonempty containers at depth 512; a terminal empty
+    # container can sit at 513. The root plus this nonempty chain therefore
+    # accepts 511 nested containers and rejects 512, independently of leaf.
+    padding = nested_json_bytes(count, kind, leaf)
+    if route == 'bare':
+        data = b'{"usage":{"input_tokens":7,"output_tokens":2},"synthetic":' + padding + b'}'
+        observation = ['B', 0, 0, None, None, [7, 0, 2, None]]
+    else:
+        data = encode(context({}))[:-1] + b',"synthetic":' + padding + b'}'
+        if route == 'dictionary':
+            data = data.replace(b'"type":', b'"t\\u0079pe":', 1)
+        observation = ['C', 0, 0, None, TS, None]
+    assert observe(colophon, [data], terminated=route != 'tail') == {
+        'observations': [observation] if accepted else [],
+        'unconsumed_tail': route == 'tail' and not accepted}
+
+
+@pytest.mark.parametrize('kind', ['array', 'dict', 'mixed'])
+def test_container_depth_preserves_fast_and_truncated_routes(colophon, kind):
+    # Scanner 4857–4876 routes the terminated fast line before JSON fallback;
+    # Jsonl 386–388 accepts a complete truncated tail without JSONSerialization.
+    data = encode(context({}))[:-1] + b',"synthetic":' + nested_json_bytes(512, kind) + b'}'
+    assert observe(colophon, [data]) == {
+        'observations': [['C', 0, 0, None, TS, None]], 'unconsumed_tail': False}
+    truncated = data[:-1] + b',"synthetic_padding":"' + b'x' * 262145 + b'"}'
+    assert observe(colophon, [truncated], terminated=False) == {
+        'observations': [['XC', 0, 0, None]], 'unconsumed_tail': False}
+
+
+@pytest.mark.parametrize('kind', ['array', 'dict', 'mixed'])
+@pytest.mark.parametrize('leaf,accepted', [(b'[]', True), (b'{}', True),
+    (b'[0]', False), (b'{"synthetic":0}', False)],
+    ids=['empty-array', 'empty-dict', 'nonempty-array', 'nonempty-dict'])
+def test_foundation_depth_513_terminal_container(colophon, kind, leaf, accepted):
+    # JSONSerialization permits an empty terminal container at depth 513;
+    # its nonempty counterpart exceeds the same source-library boundary.
+    data = b'{"synthetic":' + nested_json_bytes(511, kind, leaf) + b'}'
+    assert (colophon._upstream_json(data) is not None) is accepted
+
+
+@pytest.mark.parametrize('kind', ['array', 'dict', 'mixed'])
+@pytest.mark.parametrize('count,accepted', [(511, True), (512, False)], ids=['boundary', 'over-limit'])
+def test_foundation_depth_checks_overwritten_object_values(colophon, kind, count, accepted):
+    # JSONSerialization applies its depth limit before duplicate-key projection.
+    # Neither key order can erase rejected source syntax; Foundation keeps the
+    # first value (same Jsonl/Scanner delegation above).
+    nested = nested_json_bytes(count, kind)
+    for data in (b'{"synthetic":' + nested + b',"synthetic":0}',
+                 b'{"synthetic":0,"synthetic":' + nested + b'}'):
+        assert (colophon._upstream_json(data) is not None) is accepted
+
+
+def test_foundation_validates_overwritten_strings(colophon):
+    # JSONSerialization validates an unpaired surrogate in either source pair,
+    # including a discarded later value under Foundation's first-key projection.
+    assert colophon._upstream_json(
+        b'{"synthetic":"\\ud800","synthetic":"synthetic-valid"}') is None
+    assert colophon._upstream_json(
+        b'{"synthetic":"synthetic-valid","synthetic":"\\ud800"}') is None
+
+
+def test_foundation_duplicate_projection_keeps_first_value(colophon):
+    # Retaining pairs for validation must not change Foundation's ordinary
+    # dictionary projection after all source values are valid.
+    assert colophon._upstream_json(b'{"synthetic":1,"synthetic":2}') == ({'synthetic': 1},)
+
+
+def test_foundation_duplicate_usage_fields_keep_first_value(colophon):
+    # Scanner 4824's Foundation bare-usage dictionary keeps the first value;
+    # all pairs still require validation before that projection is consumed.
+    data = b'{"usage":{"input_tokens":7,"input_tokens":11,"output_tokens":2}}'
+    assert observe(colophon, [data]) == {
+        'observations': [['B', 0, 0, None, None, [7, 0, 2, None]]], 'unconsumed_tail': False}
