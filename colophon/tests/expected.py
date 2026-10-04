@@ -12,6 +12,32 @@ def known(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
 
 
+def overall(row, payload, archived=True):
+    """All-session totals: own usage plus each reachable descendant once.
+
+    Unlike Overview, this includes untimed units; cached reads and reasoning
+    remain subsets rather than additions to the input+output token count.
+    """
+    units, seen, pending = [row], {row['id']}, list(row['children'])
+    while pending:
+        identifier = pending.pop(0)
+        if identifier in seen or identifier not in payload['subagents']:
+            continue
+        seen.add(identifier)
+        child = payload['subagents'][identifier]
+        if not archived and child['archived']:
+            continue
+        units.append(child)
+        pending.extend(child['children'])
+    fields = ('input', 'cached_input', 'cache_write', 'output', 'reasoning', 'unpriced_tokens')
+    result = {field: sum(item['own_usage'][field] for item in units) for field in fields}
+    result['tokens'] = result['input'] + result['output']
+    costs = [item['own_usage']['cost_usd'] for item in units]
+    result['cost_usd'] = sum(costs) if all(known(value) for value in costs) else None
+    result['subagents'] = len(units) - 1
+    return result
+
+
 def local(ms, zone='UTC'):
     return datetime.fromtimestamp(ms / 1000, ZoneInfo(zone))
 

@@ -24,7 +24,7 @@ def browser():
 def page_for(browser, colophon, tmp_path, monkeypatch):
     with ExitStack() as stack:
         page_number = 0
-        def open_page(payload_or_codex_home, *, tz='UTC', width=1440, hash=''):
+        def open_page(payload_or_codex_home, *, tz='UTC', width=1440, hash='', init_script=None):
             nonlocal page_number
             output = tmp_path / f'synthetic-page-{page_number}.html'
             page_number += 1
@@ -38,6 +38,8 @@ def page_for(browser, colophon, tmp_path, monkeypatch):
             context = browser.new_context(timezone_id=tz, viewport={'width': width, 'height': 900})
             stack.callback(context.close)
             page = context.new_page()
+            if init_script:
+                page.add_init_script(init_script)
             page.set_default_timeout(3000)
             stack.enter_context(guard_browser_errors(page))
             forbidden = []

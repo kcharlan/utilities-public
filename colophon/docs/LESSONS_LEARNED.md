@@ -1,5 +1,41 @@
 # Lessons learned
 
+- Collapsed reader sections remain in the DOM. Assert their visibility and
+  scope parent tool checks separately from miniature agent cards; hidden
+  expand buttons still participate in `textContent`. Keep request-group labels,
+  displayed text and nested tool coverage explicit. Regressions:
+  `test_turn_requests_before_group_followups_voice_and_long_text` and
+  `test_turn_header_tools_rate_periods_and_subagent_expansion`.
+- "Your sessions" includes orphaned agents as top-level rows (Task11), while
+  linked children roll up into their parent. Synthetic ranking fixtures must
+  keep their own/bucket/turn/outside quantities and clocks consistent before
+  testing ordering. Regressions:
+  `test_list_day_groups_rows_and_top_level_sessions_include_orphans` and
+  `test_list_fixture_usage_and_clock_invariants`.
+- Compiler row order is not an identity contract. Assign reader fixture labels,
+  fork flags and inferred links by explicit child ID, never dictionary iteration
+  position. Token display must retain unknown malformed counters rather than
+  truthiness-defaulting them to zero; validate both components and their sum
+  with the existing safe-integer guard. Resize must repeat rendered label
+  measurement, including second-row and tooltip fallback. Regressions:
+  `test_timeline_lanes_ticks_fork_badges_and_inferred_border`,
+  `test_malformed_token_components_remain_unknown_in_each_reader_surface`,
+  `test_zero_token_components_are_known_zero`, and
+  `test_timeline_labels_remeasure_on_resize`.
+- A reader's active time is a complete interval union, unlike Overview's
+  established window contributions. Any eligible clockless own turn makes
+  that complete union unknown, even alongside known turns; keep its reported
+  duration visible and agent time independent. Regressions:
+  `test_reader_untimed_usage_unknown_span_and_reported_duration` and
+  `test_reader_partial_unknown_clock_never_asserts_complete_active_union`.
+- Mini-timeline tracks and label rows share one compact geometry. Reserving
+  two label rows for every lane inflated the approved three-lane baseline
+  from 74 to 174 px; use two shared measured rows and per-block tooltip fallback.
+  Five equal text cells also center time labels at the wrong instants; anchor
+  ticks to session endpoints and quarters. Regressions:
+  `test_three_lane_timeline_preserves_approved_74_pixel_height` and
+  `test_timeline_ticks_align_to_session_endpoints_and_quarters`.
+
 - `_usage_payload` sets bucket cost to null if any grouped unit is unpriced;
   that bucket can still contain paid units. To prove running unpriced usage,
   compare all timed null-bucket input/output against all own input/output minus

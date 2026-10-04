@@ -7285,6 +7285,79 @@ input[type="date"] { width: 150px; }
 .recent-metrics { text-align: right; }
 .view-all, .expand-workspaces { display: block; border: 0; background: transparent; color: var(--g); padding: 10px 0 0; }
 .matched { background: var(--sel); border-left: 2px solid var(--g); padding: 8px 12px; color: var(--g); }
+.session-layout { display: grid; grid-template-columns: minmax(330px, .9fr) minmax(0, 1.35fr); gap: 20px; align-items: start; }
+.session-layout > *, .session-list, .reader, .list-main, .reader-stats > *, .subagent-row > * { min-width: 0; }
+.session-list { border: 1px solid var(--line); border-radius: 3px; background: var(--panel); }
+.list-sort { display: flex; gap: 4px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.list-sort button { font-size: 9px; padding: 3px 5px; }
+.day-header { margin: 0; padding: 12px 14px 5px; color: var(--amb); font-size: 9.5px; letter-spacing: .2em; font-weight: 500; }
+.list-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+.list-row:hover { background: var(--hover); }
+.list-row.selected { background: var(--sel); }
+.list-row .session-title { display: block; width: 100%; }
+.list-time { color: var(--dim); font-size: 10px; padding-top: 2px; }
+.list-workspace { color: var(--ws); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 5px 0; }
+.row-flags { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; font-size: 9px; }
+.list-metrics { width: 92px; text-align: right; font-size: 10px; color: var(--g); overflow-wrap: anywhere; }
+.list-metrics span { display: block; }
+.list-metrics .list-subcount { font-size: 9px; color: var(--dim); margin-top: 4px; }
+.reader { min-width: 0; }
+.reader-header { padding: 0 0 14px; border-bottom: 1px solid var(--line); }
+.reader-title { margin: 0; font-size: 17px; font-weight: 400; color: var(--hi); }
+.reader-title button { border: 0; padding: 0; display: block; width: 100%; background: transparent; text-align: left; font-size: inherit; font-weight: inherit; color: inherit; }
+.reader-title .collapsed-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-title .expanded-title { overflow-wrap: anywhere; }
+.reader-meta { color: var(--muted); font-size: 10px; margin: 8px 0; overflow-wrap: anywhere; }
+.reader-workspace { color: var(--ws); }
+.reader-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.reader-buttons > * { max-width: 100%; overflow-wrap: anywhere; font-size: 9px; }
+.reader-buttons a { color: var(--g); text-decoration: none; border: 1px solid var(--chip-line); border-radius: 3px; padding: 5px 9px; background: var(--panel); }
+.copy-status { color: var(--dim); font-size: 9px; margin-top: 8px; }
+.copy-status input { width: 100%; }
+.reader-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.reader-stat { overflow-wrap: anywhere; }
+.reader-stat-value { color: var(--hi); font-size: 18px; margin: 5px 0; }
+.reader-stat-sub { color: var(--dim); font-size: 9px; }
+.mini-timeline { min-height: 74px; margin: 16px 0; }
+.timeline-lane { min-width: 0; position: relative; }
+.timeline-lane.matched { padding: 0; border-left: 0; }
+.timeline-track { height: 14px; position: relative; min-width: 0; }
+.timeline-idle { position: absolute; left: 0; right: 0; top: 6px; border-top: 1px solid var(--line); }
+.timeline-block { position: absolute; height: 12px; min-width: 1px; background: var(--tl-turn); }
+.timeline-block.sub { background: var(--tl-sub); border: 1px solid var(--tl-sub); }
+.timeline-block.inferred { border-style: dashed; border-color: var(--amb); }
+.timeline-labels { position: relative; min-width: 0; height: 20px; }
+.timeline-label { position: absolute; font-size: 8.5px; line-height: 10px; white-space: nowrap; color: var(--dim); }
+.timeline-ticks { position: relative; height: 12px; font-size: 8px; line-height: 12px; color: var(--dim); }
+.timeline-ticks span { position: absolute; white-space: nowrap; transform: translateX(-50%); }
+.timeline-ticks span:first-child { transform: none; }
+.timeline-ticks span:last-child { transform: translateX(-100%); }
+.turn-card { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; margin: 14px 0; min-width: 0; }
+.turn-header { padding: 10px 14px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 9px; color: var(--dim); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.turn-number { color: var(--hi); font-weight: 400; margin-right: auto; }
+.turn-section { padding: 12px 14px; border-bottom: 1px solid var(--line-soft); min-width: 0; }
+.turn-section:last-child { border-bottom: 0; }
+.turn-section .section-label { margin-bottom: 8px; }
+.request { margin: 8px 0; min-width: 0; }
+.request-meta { font-size: 9px; color: var(--muted); }
+.before-turn { border-left: 1px solid var(--amb); padding-left: 10px; margin-bottom: 12px; }
+.long-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; text-overflow: ellipsis; }
+.long-text.expanded { display: block; overflow: visible; -webkit-line-clamp: unset; }
+.text-expander, .followup-toggle, .fork-link { border: 0; background: transparent; padding: 0; color: var(--g); font-size: 9px; text-align: left; max-width: 100%; overflow-wrap: anywhere; }
+.tool-chips { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.tool-chip { background: var(--tool-bg); border: 1px solid var(--tool-line); border-radius: 3px; padding: 2px 5px; font-size: 9px; color: var(--muted); overflow-wrap: anywhere; }
+.tool-chip.warning { color: var(--amb); }
+.subagent-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; padding: 9px 0; border-bottom: 1px solid var(--line-soft); align-items: start; font-size: 9px; }
+.subagent-row.matched { padding: 9px 8px; }
+.subagent-toggle { border: 0; padding: 0; background: transparent; text-align: left; color: var(--hi); overflow-wrap: anywhere; }
+.subagent-metrics { text-align: right; color: var(--g); max-width: 120px; overflow-wrap: anywhere; }
+.mini-card { grid-column: 1 / -1; padding: 10px; border: 1px solid var(--line); margin-top: 8px; min-width: 0; }
+.mini-card .reader-meta { margin-top: 0; }
+.outside-usage, .reader-note { color: var(--amb); font-size: 10px; overflow-wrap: anywhere; margin: 14px 0; }
+.reader-back { display: none; margin-bottom: 14px; color: var(--g); }
+@media (max-width: 1200px) { .reader-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 899px) { .session-layout { grid-template-columns: minmax(0, 1fr); } .session-layout.has-reader .session-list { display: none; } .reader-back { display: inline-block; } }
+@media (max-width: 600px) { .reader-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .list-row { padding: 12px 10px; gap: 8px; } }
 @media (max-width: 1100px) { .kpis { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); } }
 @media (max-width: 760px) { .overview-grid { grid-template-columns: minmax(0, 1fr); } .recent-row { grid-template-columns: 98px minmax(0, 1fr); } .recent-metrics { text-align: left; } .bar-row { grid-template-columns: minmax(70px, 120px) minmax(0, 1fr) 64px; } }
 details { border-top: 1px solid var(--line-soft); padding: 8px 0; overflow-wrap: anywhere; }
@@ -7900,13 +7973,271 @@ PAGE_JS = r"""
     const now = data.meta.generated_at_ms;
     return [renderKpis(now), el("div", {class: "overview-grid"}, renderCalendar(now), renderWorkspaces(now), renderHours(now), renderModels(now), renderNotable(now), renderRecent(now))];
   }
-  function renderSessions(rows) {
-    return el("div", {class: "shell-sessions"}, ...rows.map(row => el("div", {class: "shell-row", "data-session-id": row.id},
-      el("button", {type: "button", class: "session-title", text: row.title, title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
-      ...(row.archived ? [el("span", {class: "tag", text: "ARCHIVED"})] : []))));
-  }
   // --- views/list
+  const wholeWindow = {from: -Infinity, to: Infinity};
+  const quantity = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const usageTokens = usage => evidenceSum([usage.input, usage.output]);
+  const tokenText = usage => {const tokens = usageTokens(usage); return tokens === null ? "unknown" : countText(tokens);};
+  const workspaceLine = row => workspaceName(row.workspace) + (row.subfolder ? " › " + row.subfolder : "");
+  const timeOnly = ms => validMs(ms) ? localStamp(ms).slice(-5) : "unknown";
+  function flagsLine(row) {
+    return el("div", {class: "row-flags"}, ...(row.archived ? [el("span", {class: "tag", text: "ARCHIVED"})] : []),
+      ...row.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag === "live" ? "LIVE" : flag.replace(/_/g, " ")})));
+  }
+  function listFigures(row) {
+    const window = periodWindow(currentState.p, data.meta.generated_at_ms, currentState), children = descendants(row, data.subagents, currentState);
+    const buckets = [row, ...children].flatMap(item => windowBuckets(item, window));
+    return {active: activeMs(turnIntervals(row, window)), agents: children.length,
+      subtime: children.reduce((sum, child) => sum + activeMs(turnIntervals(child, window)), 0),
+      tokens: buckets.reduce((sum, bucket) => sum + bucket[3] + bucket[6], 0),
+      cost: data.meta.costs.available ? buckets.reduce((sum, bucket) => sum + (quantity(bucket[8]) ? bucket[8] : 0), 0) : null,
+      unpriced: buckets.some(bucket => bucket[8] === null)};
+  }
+  function renderSessionList(rows) {
+    const figures = new Map(rows.map(row => [row.id, listFigures(row)]));
+    const newest = (a, b) => (validMs(b.start_ms) ? b.start_ms : -Infinity) - (validMs(a.start_ms) ? a.start_ms : -Infinity) || a.id.localeCompare(b.id);
+    const ranked = [...rows].sort((a, b) => {
+      const key = {longest: "active", subtime: "subtime", tokens: "tokens", cost: "cost"}[currentState.sort];
+      return key ? (figures.get(b.id)[key] ?? -Infinity) - (figures.get(a.id)[key] ?? -Infinity) || newest(a, b) : newest(a, b);
+    });
+    const result = el("section", {class: "session-list", "data-session-list": ""},
+      el("div", {class: "list-sort", "aria-label": "Sort sessions"}, ...[["newest", "newest"], ["longest", "longest"], ["subtime", "subagent time"], ["tokens", "tokens"], ["cost", "cost"]].map(([key, text]) =>
+        el("button", {type: "button", text, "aria-pressed": currentState.sort === key, onclick: () => act({sort: key})}))));
+    let previousDay;
+    for (const row of ranked) {
+      const day = localDayKey(row.start_ms), figuresForRow = figures.get(row.id);
+      if (currentState.sort === "newest" && day !== previousDay) {
+        const date = validMs(row.start_ms) ? new Date(row.start_ms) : null;
+        const label = date ? ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][date.getDay()] + " " +
+          ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"][date.getMonth()] + " " + date.getDate() : "UNKNOWN DAY";
+        result.append(el("h3", {class: "day-header", "data-day-header": day || "unknown", text: label}));
+        previousDay = day;
+      }
+      const open = () => act({v: "session", s: row.id});
+      const figuresText = currentState.sort === "tokens" ? countText(figuresForRow.tokens) + " tokens" : currentState.sort === "cost" ?
+        (figuresForRow.cost === null ? "costs unavailable" : costText(figuresForRow.cost) + (figuresForRow.unpriced ? " + unpriced" : "")) :
+        currentState.sort === "subtime" ? durationText(figuresForRow.subtime) + " agent" : null;
+      result.append(el("div", {class: "list-row" + (row.id === currentState.s ? " selected" : ""), "data-list-row": "", "data-session-id": row.id,
+        onclick: event => {if (!event.target.closest("button")) open();}},
+        el("span", {class: "list-time", text: timeOnly(row.start_ms)}),
+        el("div", {class: "list-main"}, el("button", {type: "button", class: "session-title", title: row.title_full, text: row.title, onclick: open}),
+          el("p", {class: "list-workspace", text: workspaceLine(row), title: workspaceLine(row)}), flagsLine(row)),
+        el("div", {class: "list-metrics", "data-active-ms": figuresForRow.active, "data-tokens": figuresForRow.tokens, "data-cost": figuresForRow.cost,
+          title: currentState.sort === "cost" ? "API-equivalent estimate (not billed)" : undefined},
+          el("span", {text: durationText(figuresForRow.active)}), el("span", {class: "list-subcount", text: figuresForRow.agents + " sub"}),
+          ...(figuresText ? [el("span", {text: figuresText})] : []))));
+    }
+    if (!ranked.length) result.append(el("p", {class: "empty-state", text: "No sessions match the active filters"}));
+    return result;
+  }
   // --- views/reader
+  function ownActive(row) {
+    if (row.flags.includes("history_unresolved")) return null;
+    const eligible = row.turns.filter(turn => ["completed", "aborted", "interrupted", "running"].includes(turn.status));
+    if (eligible.some(turn => !validMs(turn.start_ms) || !validMs(turn.end_ms) || turn.end_ms < turn.start_ms || !quantity(turn.duration_ms))) return null;
+    return activeMs(turnIntervals(row, wholeWindow));
+  }
+  function readerUsage(rows) {
+    const tokens = rows.map(row => usageTokens(row.own_usage)), costs = rows.map(row => row.own_usage.cost_usd);
+    return {tokens: evidenceSum(tokens), cost: evidenceSum(costs, true),
+      unpriced: rows.some(row => row.own_usage.unpriced_tokens > 0)};
+  }
+  function usageCostText(usage) {
+    if (!data.meta.costs.available) return "costs unavailable";
+    return (quantity(usage.cost_usd) ? costText(usage.cost_usd) : "unknown") + (usage.unpriced_tokens > 0 ? " + unpriced" : "");
+  }
+  function usageRateTooltip(usages) {
+    if (!data.meta.costs.available) return "costs unavailable · API-equivalent estimate (not billed)";
+    const refs = new Map();
+    let unknown = false;
+    for (const usage of usages) {
+      if (usageTokens(usage) > 0 && !usage.priced_by.length) unknown = true;
+      for (const ref of usage.priced_by) {
+        const [key, index, role] = ref, pricing = data.models[key];
+        const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
+        if (!period || !["rates", "priority"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
+        const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
+        const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
+        refs.set(JSON.stringify(ref), (override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "") + key + " · " + role + " · effective_from: " + effective + " · source: " + period.source);
+      }
+    }
+    return ["API-equivalent estimate (not billed)", ...refs.values(), ...(unknown || !refs.size ? ["rate period unknown"] : [])].join("\n");
+  }
+  function expandableText(text, label = "more") {
+    const paragraph = el("p", {class: "long-text", "data-long-text": "", text, title: text});
+    const button = el("button", {type: "button", class: "text-expander", text: label, "aria-expanded": "false", onclick: () => {
+      const expanded = paragraph.classList.toggle("expanded");
+      button.textContent = expanded ? "less" : label;
+      button.setAttribute("aria-expanded", String(expanded));
+    }});
+    return el("div", {"data-expandable-text": ""}, paragraph, button);
+  }
+  function renderRequest(request) {
+    const tags = [];
+    if (request.kind === "voice") tags.push("voice request");
+    if (request.kind === "answer") tags.push("answer");
+    if (request.images) tags.push("+ " + request.images + " images");
+    if (request.time_unreliable) tags.push("uncertain timing");
+    return el("div", {class: "request", "data-request": ""}, ...(tags.length ? [el("div", {class: "request-meta", text: tags.join(" · ")})] : []), expandableText(request.text));
+  }
+  function renderTools(tools) {
+    const chips = [];
+    for (const [key, label] of [["shell", "shell"], ["file_edits", "file edits"], ["web", "web"], ["image", "image"]]) {
+      if (tools[key]) chips.push(el("span", {class: "tool-chip", text: label + " " + tools[key]}));
+    }
+    if (tools.shell_failed) chips.push(el("span", {class: "tool-chip warning", "data-tool-failure": "", text: tools.shell_failed + " failed"}));
+    for (const [name, count] of [...Object.entries(tools.mcp), ...Object.entries(tools.other)]) if (count) chips.push(el("span", {class: "tool-chip", text: name + " " + count}));
+    return el("div", {class: "tool-chips", "data-tools": ""}, ...(chips.length ? chips : [el("span", {class: "reader-meta", text: "none recorded"})]));
+  }
+  function renderAnswer(answer) {
+    return el("div", {}, ...(answer.voice ? [el("span", {class: "request-meta", text: "voice reply"})] : []), expandableText(answer.text, "expand"));
+  }
+  function renderSubagentRow(child, matched, interaction = false) {
+    const mini = el("div", {class: "mini-card", "data-mini-card": "", hidden: ""},
+      el("p", {class: "reader-meta", text: localStamp(child.start_ms) + " — " + localStamp(child.end_ms) + " · active " + durationText(ownActive(child))}),
+      renderTools(child.tools), el("p", {class: "reader-meta", text: tokenText(child.own_usage) + " tokens · " + usageCostText(child.own_usage), title: usageRateTooltip([child.own_usage])}));
+    const answers = child.turns.map(turn => turn.final_answer).filter(Boolean);
+    if (answers.length) mini.append(el("h4", {class: "section-label", text: "// final answer"}), renderAnswer(answers[answers.length - 1]));
+    const marker = el("span", {text: "▸", "aria-hidden": "true"});
+    const button = el("button", {type: "button", class: "subagent-toggle", "aria-label": "Expand " + child.label, "aria-expanded": "false",
+      text: (interaction ? "also used: " : "") + child.label + (child.nickname ? " · " + child.nickname : ""), onclick: () => {
+        mini.hidden = !mini.hidden; marker.textContent = mini.hidden ? "▸" : "▾";
+        button.setAttribute("aria-expanded", String(!mini.hidden)); fitReader();
+      }});
+    return el("div", {class: "subagent-row" + (matched.has(child.id) ? " matched" : ""), "data-subagent-id": child.id}, marker,
+      el("div", {}, button, ...(child.forked ? [el("span", {class: "tag", text: "forked"})] : [])),
+      el("span", {class: "subagent-metrics", text: timeOnly(child.start_ms) + " · " + durationText(ownActive(child)) + " · " + tokenText(child.own_usage) + " tokens"}), mini);
+  }
+  function renderTurn(turn, matched, visibleChildren) {
+    const before = turn.requests.filter(request => request.before_turn), requests = turn.requests.filter(request => !request.before_turn);
+    const asked = el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "YOU ASKED · " + requests.length}));
+    if (before.length) asked.append(el("div", {class: "before-turn", "data-before-turn": ""}, el("span", {class: "request-meta", text: "before this turn"}), ...before.map(renderRequest)));
+    asked.append(...requests.slice(0, 2).map(renderRequest));
+    if (requests.length > 2) {
+      const extra = el("div", {hidden: ""}, ...requests.slice(2).map(renderRequest));
+      const toggle = el("button", {type: "button", class: "followup-toggle", text: "+ " + (requests.length - 2) + " follow-ups sent while it worked", "aria-expanded": "false", onclick: () => {
+        extra.hidden = !extra.hidden; toggle.setAttribute("aria-expanded", String(!extra.hidden)); fitReader();
+      }});
+      asked.append(toggle, extra);
+    }
+    const card = el("article", {class: "turn-card", "data-turn-card": turn.id},
+      el("div", {class: "turn-header", "data-turn-header": ""}, el("span", {class: "turn-number", text: "turn " + turn.n}),
+        el("span", {text: timeOnly(turn.start_ms) + " — " + timeOnly(turn.end_ms)}), el("span", {text: durationText(quantity(turn.duration_ms) ? turn.duration_ms : null)}),
+        el("span", {text: "first token " + durationText(quantity(turn.ttft_ms) ? turn.ttft_ms : null)}),
+        el("span", {text: tokenText(turn.usage) + " tokens"}),
+        el("span", {"data-turn-cost": "", text: usageCostText(turn.usage), title: usageRateTooltip([turn.usage])}),
+        el("span", {class: turn.status === "running" ? "live" : turn.status === "completed" ? "" : "warning", text: turn.status}),
+        ...turn.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag.replace(/_/g, " ")}))), asked,
+      el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "IT USED"}), renderTools(turn.tools)));
+    const spawned = [...new Set(turn.spawned)].filter(id => visibleChildren.has(id)), used = [...new Set(turn.used)].filter(id => visibleChildren.has(id) && !spawned.includes(id));
+    if (spawned.length || used.length) card.append(el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "SUBAGENTS · " + spawned.length}),
+      ...spawned.map(id => renderSubagentRow(visibleChildren.get(id), matched)), ...used.map(id => renderSubagentRow(visibleChildren.get(id), matched, true))));
+    if (turn.final_answer) card.append(el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "FINAL ANSWER"}), renderAnswer(turn.final_answer)));
+    return card;
+  }
+  function renderTimeline(row, children, matched) {
+    const timeline = el("section", {class: "mini-timeline", "data-timeline": "", "aria-label": "Session timeline"});
+    if (!validMs(row.start_ms) || !validMs(row.end_ms) || row.end_ms < row.start_ms) {
+      timeline.append(el("p", {class: "reader-meta", text: "timeline unavailable: unknown session span"})); return timeline;
+    }
+    const span = row.end_ms - row.start_ms, positioned = new Set(row.turns.flatMap(turn => [...turn.spawned, ...turn.used]));
+    const labels = el("div", {class: "timeline-labels"});
+    const lane = (blocks, child = null) => {
+      const track = el("div", {class: "timeline-track"}, el("span", {class: "timeline-idle", ...(child ? {} : {"data-timeline-idle": ""})}));
+      let hasBlock = false;
+      for (const item of blocks) {
+        if (!validMs(item.start_ms) || !validMs(item.end_ms) || item.end_ms < item.start_ms || item.end_ms < row.start_ms || item.start_ms > row.end_ms) continue;
+        const left = span ? (Math.max(row.start_ms, item.start_ms) - row.start_ms) / span * 100 : 0;
+        const width = span ? (Math.min(row.end_ms, item.end_ms) - Math.max(row.start_ms, item.start_ms)) / span * 100 : 0;
+        const label = child ? child.label + (child.forked ? " · forked" : "") : "turn " + item.n;
+        const block = el("span", {class: "timeline-block" + (child ? " sub" : "") + (child && child.link_method === "inferred" ? " inferred" : ""),
+          title: label + " · " + localStamp(item.start_ms) + " — " + localStamp(item.end_ms), style: "left:" + left + "%;width:" + width + "%",
+          ...(child ? {"data-timeline-subagent": child.id} : {"data-timeline-turn": item.id})});
+        track.append(block);
+        hasBlock = true;
+        const text = el("span", {class: "timeline-label", "data-timeline-label": "", "data-label-kind": child ? "subagent" : "turn", "data-left": left, text: label, title: label});
+        text._block = block;
+        labels.append(text);
+      }
+      const result = el("div", {class: "timeline-lane" + (child && matched.has(child.id) ? " matched" : ""), "data-timeline-lane": child ? child.id : row.id,
+        ...(child && !positioned.has(child.id) ? {"data-subagent-id": child.id} : {})}, track);
+      if (child && !hasBlock) result.setAttribute("title", child.label + " · timing unknown or outside session span");
+      return result;
+    };
+    timeline.append(lane(row.turns), ...children.map(child => lane([child], child)), labels,
+      el("div", {class: "timeline-ticks"}, ...Array.from({length: 5}, (_, index) => el("span", {"data-timeline-tick": "", style: "left:" + index * 25 + "%", text: timeOnly(row.start_ms + span * index / 4)}))));
+    return timeline;
+  }
+  function fitReader() {
+    for (const labels of document.querySelectorAll(".timeline-labels")) {
+      const occupied = [[], []], width = labels.getBoundingClientRect().width;
+      for (const label of labels.querySelectorAll("[data-timeline-label]")) {
+        label.hidden = false; label.removeAttribute("data-timeline-label-row");
+        label._block.removeAttribute("data-tooltip-only");
+        const labelWidth = label.getBoundingClientRect().width, left = Math.max(0, Math.min(width - labelWidth, Number(label.dataset.left) * width / 100));
+        let placed = false;
+        for (let line = 0; line < 2; line++) {
+          if (labelWidth > width || occupied[line].some(([a, b]) => left < b + 4 && left + labelWidth + 4 > a)) continue;
+          label.style.left = left + "px"; label.style.top = line * 10 + "px";
+          label.setAttribute("data-timeline-label-row", line); occupied[line].push([left, left + labelWidth]); placed = true; break;
+        }
+        if (!placed) {label.hidden = true; label._block.setAttribute("data-tooltip-only", "");}
+      }
+    }
+    for (const wrap of document.querySelectorAll("[data-expandable-text]")) {
+      const paragraph = wrap.querySelector("[data-long-text]"), button = wrap.querySelector("button");
+      if (paragraph.getBoundingClientRect().width) button.hidden = !paragraph.classList.contains("expanded") && paragraph.scrollHeight <= paragraph.clientHeight + 1;
+    }
+  }
+  function renderReader(row) {
+    const children = descendants(row, data.subagents, currentState), visibleChildren = new Map(children.map(child => [child.id, child]));
+    const matched = matchSession(row, currentState, data.subagents).matchedSubagents;
+    const full = readerUsage([row, ...children]), own = readerUsage([row]), agent = readerUsage(children), unresolved = row.flags.includes("history_unresolved");
+    const reader = el("section", {class: "reader", "data-reader": row.id}, el("button", {type: "button", class: "reader-back", text: "← sessions", onclick: () => act({v: "list", s: undefined})}));
+    const title = el("button", {type: "button", class: "collapsed-title", title: row.title_full, "aria-label": "Expand full title", "aria-expanded": "false", text: row.title, onclick: () => {
+      const expanded = title.getAttribute("aria-expanded") !== "true";
+      title.className = expanded ? "expanded-title" : "collapsed-title"; title.textContent = expanded ? row.title_full : row.title; title.setAttribute("aria-expanded", String(expanded));
+    }});
+    const header = el("div", {class: "reader-header", "data-reader-header": ""}, el("h1", {class: "reader-title"}, title),
+      el("p", {class: "reader-meta reader-workspace", text: workspaceLine(row)}),
+      el("p", {class: "reader-meta", text: (row.branch || "branch unknown") + " · " + (row.originator || "originator unknown")}),
+      el("p", {class: "reader-meta", "data-time-range": "", text: localStamp(row.start_ms) + " — " + localStamp(row.end_ms),
+        title: quantity(row.user_span_ms) ? "user-request span: " + durationText(row.user_span_ms) : undefined}),
+      el("p", {class: "reader-meta", text: row.id.slice(0, 8) + "…" + row.id.slice(-8), title: row.id}), flagsLine(row));
+    if (row.forked_from) header.append(el("button", {type: "button", class: "fork-link", text: "forked from " + row.forked_from, onclick: () => act({v: "session", s: row.forked_from})}));
+    const copyArea = el("div", {class: "copy-status", "aria-live": "polite"});
+    const copy = async text => {
+      try {
+        if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") throw new Error("Clipboard unavailable");
+        await navigator.clipboard.writeText(text); copyArea.replaceChildren(el("span", {text: "copied"})); copyArea.removeAttribute("data-copy-fallback");
+      } catch (_) {
+        const field = el("input", {type: "text", readonly: "", value: text, "aria-label": "Text to copy"});
+        copyArea.setAttribute("data-copy-fallback", ""); copyArea.replaceChildren(field, el("span", {text: "press ⌘C"})); field.focus(); field.select();
+      }
+    };
+    const kind = !row.kind || row.kind === "orphan" ? "subagent" : row.archived ? "archived" : "live";
+    header.append(el("div", {class: "reader-buttons"},
+      ...(data.meta.links.open_in_codex[kind] ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex"})] : []),
+      ...(data.meta.links.continue_in_cli[kind] ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy("codex resume " + row.id)})] : []),
+      el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)}), el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})), copyArea);
+    const stat = (key, label, value, text, sub, tooltip) => el("div", {class: "reader-stat", "data-reader-stat": key, title: tooltip},
+      el("span", {class: "kpi-label", text: label}), el("div", {class: "reader-stat-value", "data-value": value, text}), el("div", {class: "reader-stat-sub", text: sub}));
+    const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms ? row.end_ms - row.start_ms : null;
+    const agentActive = children.map(ownActive), agentMs = agentActive.every(quantity) ? agentActive.reduce((a, b) => a + b, 0) : null;
+    reader.append(header, el("div", {class: "reader-stats"},
+      stat("active", "active time", ownActive(row), unresolved ? "withheld" : durationText(ownActive(row)), "yours"),
+      stat("span", "span", span, unresolved ? "withheld" : durationText(span), "idle " + durationText(quantity(row.idle_ms) ? row.idle_ms : null)),
+      stat("turns", "turns", unresolved ? null : row.turns.length, unresolved ? "withheld" : countText(row.turns.length), "your turns"),
+      stat("subagents", "subagents", children.length, countText(children.length), durationText(agentMs) + " agent time"),
+      stat("tokens", "tokens", full.tokens, full.tokens === null ? "unknown" : countText(full.tokens), "total (yours + subagents) · " + (own.tokens === null ? "unknown" : countText(own.tokens)) + " yours + " + (agent.tokens === null ? "unknown" : countText(agent.tokens)) + " subagents"),
+      stat("cost", "estimated cost", full.cost, usageCostText({cost_usd: full.cost, unpriced_tokens: full.unpriced ? 1 : 0}),
+        "total (yours + subagents) · API-equivalent estimate (not billed) · " + usageCostText(row.own_usage) + " yours + " + usageCostText({cost_usd: agent.cost, unpriced_tokens: agent.unpriced ? 1 : 0}) + " subagents", usageRateTooltip([row, ...children].map(item => item.own_usage)))));
+    if (unresolved) reader.append(el("p", {class: "reader-note", text: "history boundary unresolved — turn metrics withheld"}));
+    else reader.append(renderTimeline(row, children, matched), ...row.turns.map(turn => renderTurn(turn, matched, visibleChildren)));
+    if (Object.entries(row.outside_usage).some(([key, value]) => !["cost_usd", "priced_by"].includes(key) && quantity(value) && value > 0)) reader.append(el("p", {
+      class: "outside-usage", "data-outside-usage": "", text: "tokens outside displayed turns: " + tokenText(row.outside_usage), title: usageRateTooltip([row.outside_usage])}));
+    return reader;
+  }
   function render() {
     renderTopbar();
     const rows = scope(data.sessions, currentState, data.meta.generated_at_ms).rows;
@@ -7917,16 +8248,12 @@ PAGE_JS = r"""
       app.replaceChildren(...renderOverview());
       fitCalendar();
     } else {
-      app.replaceChildren(el("h2", {class: "section-label", text: "// " + (currentState.v === "overview" ? "sessions" : currentState.v)}),
-        ...(rows.length ? [renderSessions(rows)] : [el("p", {class: "empty-state", text: "No sessions match the active filters"})]));
-      if (currentState.v === "session" && currentState.s) {
-        const selected = rows.find(row => row.id === currentState.s);
-        if (selected) {
-          const matched = matchSession(selected, currentState, data.subagents).matchedSubagents;
-          for (const child of descendants(selected, data.subagents, currentState)) app.append(el("div", {
-            "data-subagent-id": child.id, class: matched.has(child.id) ? "matched" : "", text: child.label || child.title}));
-        }
-      }
+      const selected = currentState.v === "session" && currentState.s ? rows.find(row => row.id === currentState.s) || data.subagents[currentState.s] : null;
+      const visible = selected && !(currentState.a === "0" && selected.archived);
+      app.replaceChildren(el("h2", {class: "section-label", text: "// sessions"}),
+        el("div", {class: "session-layout" + (visible ? " has-reader" : "")}, renderSessionList(rows), ...(visible ? [renderReader(selected)] : [])));
+      fitReader();
+      document.fonts.ready.then(fitReader);
     }
   }
   // --- boot
@@ -7941,7 +8268,7 @@ PAGE_JS = r"""
     };
     window.addEventListener("popstate", restore);
     window.addEventListener("hashchange", restore);
-    window.addEventListener("resize", fitCalendar);
+    window.addEventListener("resize", () => {fitCalendar(); fitReader();});
     window.__colophonTest = {time, filters, aggregates, format, levels, state: {readState, writeState}, heatColors};
     restore();
   });

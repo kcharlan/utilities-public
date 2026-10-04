@@ -12,8 +12,21 @@ collapsible diagnostics. Overview tiles and calendar, weekday/hour, workspace,
 model, notable, and recent-session panels respect the active filters and the
 viewer’s time zone. Click their values to drill into your matching sessions;
 model-only descendant matches retain their parent and highlight the child.
-The complete list and reader are added by subsequent tasks. Font sources and
-regeneration are documented in [font.md](docs/font.md).
+The session list groups local days under newest and ranks other sorts by
+the active period's time, agent time, tokens or cost. It includes orphaned
+agents as flagged top-level sessions. Selecting a row opens the reader beside
+the list at widths of 900 px or more; narrower pages use a back control.
+The reader shows all-session usage with your/subagent splits, turn cards,
+requests, tools, expandable agent details, outside-turn usage and a timeline.
+Unknown clocks stay unknown; recorded durations remain visible without
+inventing active intervals. Font sources and regeneration are documented in
+[font.md](docs/font.md).
+
+Reader copy actions use the browser clipboard and fall back to a selected,
+read-only field with a “press ⌘C” hint. “Continue in CLI” copies a command that
+continues the session. Open-in-Codex and CLI support flags have browser-only
+coverage; live, archived and subagent desktop behavior remains unverified
+until the explicitly authorized pre-ship acceptance.
 
 Overview time totals clip to the selected period: your active time unions
 overlapping own turns, while agent time sums each descendant’s own union.
