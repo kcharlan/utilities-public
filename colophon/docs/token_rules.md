@@ -304,3 +304,43 @@ and the ancestor set retains the first trimmed spelling of a sole distinct
 identity. Inferred parent IDs therefore keep that spelling in the classifier
 and usage result. Equivalent leaf metadata does not create an ancestor or
 erase a suffix boundary. Explicit parent metadata remains source text.
+
+## Task 15 — priority detection and usage composition
+
+| Rule | Upstream file and function at `3bbf6bc48` | Treatment |
+| --- | --- | --- |
+| Request, submission and completion parsing | `CostUsageScanner+CodexPriority.swift`, `parseCodexPriorityTraceRow`, `parseCodexPrioritySubmissionRow`, `parseCodexCompletedTraceRow`, `value`, `quotedValue` (1020–1098) | Ported. Preserve marker precedence, prefix turn-id precedence, Foundation JSON/type checks, first duplicate-key projection and Foundation trimming. A request marker with invalid JSON never falls through to submission parsing. |
+| Pending completion FIFO and completed-model selection | `CostUsageScanner+CodexPriority.swift`, `storePendingCodexCompletedModels`, `accumulateCodexPriorityTurns` (889–971), `filteredResolvedCodexPriorityTurns`, `latestCodexCompletedModel` (440–459) | Ported. Retain at most 4,096 pending turn identities in insertion order; repeated completions do not refresh insertion order. Known priority turns retain completions separately. Highest rowid wins regardless of timestamp or subsequent request model. |
+| Cold query and source database | `CostUsageScanner+CodexPriority.swift`, `codexPriorityAccumulationPlan` (973–1005) | Adapted, A1/A4 item 4. Run only the non-indexed cold query with `rowid > 0` and `ts >= 0`; no memo, cursor, anchors or pruning. The database follows `--codex-home`. Open with `mode=ro`, `timeout=0.25`, normal SQLite coordination. Any SQLite error discards this scan's detections and retains sticky entries with a diagnostic. |
+| SQLite text and timestamp projection | `CostUsageScanner+CodexPriority.swift`, `text`, `timestamp` (1100–1113) | Ported library compatibility. INTEGER becomes signed decimal; TEXT/BLOB are decoded as zero-terminated UTF-8 with replacement. REAL uses the same native SQLite library as the Python connection, preserving that backend's default numeric-to-text formatting. |
+| Sticky memory | User decision A1 | Colophon addition. Never prune valid remembered entries. Database fields replace stored fields while retaining `first_seen_ms`. Write atomically at mode 0600 only when the merged entries change. Invalid stored entries provide no priority evidence and add diagnostics. |
+| Primary response units | User decision A4 item 1; `CostUsageScanner.swift`, `tokenTotals` (4977–4987) supplies component mapping | Colophon addition. Count matching-thread records across every copy, first response id in source processing order wins; missing response ids are never deduplicated. Compaction records count. Keep cache-write for display and bill zero through the existing cost API. |
+| Model in force | `CostUsageScanner.swift`, `processFastLine` (4663–4685), EOF suffix replay (5016–5210) | Use Task 14's own-file timeline strictly before each primary record. An unreplayed pending tail alone borrows its ordered C/XC evidence without inventing an owned suffix. Cleared/absent models remain `unknown`. |
+| Cross-file fallback union | `CostUsageScanner+CacheHelpers.swift`, `uniqueCodexRows`, `codexUsageRowKey`, `codexCrossFileRowKey` (497–555); `CostUsageScanner.swift`, `sortedCodexSessionFilesNewestFirst` (6717–6731) | Ported. Preserve joined U+001F keys, event index, normalized model, component counts and pricing timestamp. Compare canonical Swift string identities while retaining public spelling. Add each file's keys only after its rows, preserving duplicates within a file. |
+| Source selection and attribution | A4 item 1, D8; spec §5.5 | Colophon addition. Account the complete corpus including skipped parents before selecting primary/fallback units per turn. Reassign fallback row file indexes to each session's records. Display only matching owned turn ids whose unit line is outside its own file's inherited ranges; other units remain in session totals. |
+| Fork and duplicate diagnostics | A4 item 6; spec §5.1, §5.5 | Every unresolved file flags its session. Detect duplicate pre-pass identities across all records; report differing true-first display identities alongside them. The existing shared resolver selects the newest-mtime parent copy. |
+
+SQLite's REAL representation is a backend contract. The initial fifteen-digit
+assumption was corrected against primary library source:
+[SQLite 3.51.3 `vdbeMemRenderNum`](https://raw.githubusercontent.com/sqlite/sqlite/version-3.51.3/src/vdbemem.c)
+uses `%!.15g`, whereas
+[SQLite 3.52.0 `vdbeMemRenderNum`](https://raw.githubusercontent.com/sqlite/sqlite/version-3.52.0/src/vdbemem.c)
+uses the connection's floating-point precision, defaulting to 17.
+The same default is explicit in
+[SQLite 3.53.4 connection initialization](https://raw.githubusercontent.com/sqlite/sqlite/version-3.53.4/src/main.c).
+Synthetic standalone Swift `import SQLite3` probes on this execution host used
+SQLite 3.54.0 and produced the same seventeen-digit values as Python's 3.53.4
+connection. Tests independently compare native formatting with synthetic
+SQLite CAST, including subnormal and maximum Double values, and verify native
+allocation/free ownership. No source session database or CodexBar binary was
+used. This corrects representation, without a token or cost deviation.
+
+Edge-case decisions:
+
+- Malformed or wrong-schema sticky memory, invalid entry types and boolean `first_seen_ms` never establish priority; retain valid neighboring entries and report rejected entries.
+- A missing trace database is silent and never created; a locked or unreadable database keeps sticky evidence only.
+- Empty submission ids and completed models are rejected exactly as upstream; a non-string request model is retained as unknown rather than inferred.
+- SQLite's own numeric text conversion, C-string NUL termination and UTF-8 replacement govern trace fields; Python's generic `str` is not the contract.
+- Canonically equivalent priority and cross-file identities match without rewriting the public selected spelling.
+- Missing, cleared or unreplayed model evidence never supplies an invented model; only the explicitly specified pending-tail context rule supplies a model from C/XC observations.
+- Duplicate-id diagnostics use pre-pass identities and also list differing display ids, with each display id's actual file paths.

@@ -90,6 +90,10 @@ on 2026-10-04. Live reads retain normal SQLite locking and change detection;
 they do not use immutable mode or exclusive locking. Metadata reads wait up
 to one second; an unreadable or locked database falls back to older database
 schemas or log, index and desktop titles, with diagnostics.
+Priority trace reads use a 250 ms timeout; a missing trace database is silent,
+and a locked or unreadable trace database keeps stored priority-turn evidence
+with diagnostics. Detected entries replace stored metadata while preserving
+their first-seen time. Valid remembered turns survive trace pruning.
 Runtime state belongs outside this public repository.
 The completed compiler's only network traffic is the price-catalog GET; it
 sends no session data. `--offline` suppresses that request. uv may provision

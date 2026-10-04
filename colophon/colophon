@@ -4489,6 +4489,341 @@ def account_logs(records: Iterable[dict]) -> dict[str, CodexUsageResult]:
     return results
 
 
+# ===== 13. Usage composition =====
+@dataclass
+class PriorityTurns:
+    turns: dict[str, dict] = field(default_factory=dict)
+    messages: list[str] = field(default_factory=list)
+
+
+# CodexBar 3bbf6bc48: CodexPriority.swift text/timestamp (1100–1113).
+@lru_cache(maxsize=1)
+def _codex_sqlite_formatter():
+    # Use SQLite's conversion itself: Python repr and printf have different
+    # exponent spellings and significant-digit rules from sqlite3_column_text.
+    # Resolve symbols through the actual Python connection's extension and its
+    # dependency, rather than a potentially different system SQLite library.
+    library = ctypes.CDLL(sys.modules['_sqlite3'].__file__)
+    library.sqlite3_mprintf.argtypes = [ctypes.c_char_p]
+    library.sqlite3_mprintf.restype = ctypes.c_void_p
+    library.sqlite3_free.argtypes = [ctypes.c_void_p]
+    library.sqlite3_free.restype = None
+    return library
+
+
+def _codex_sqlite_text(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, float):
+        library = _codex_sqlite_formatter()
+        # SQLite vdbemem.c vdbeMemRenderNum: 3.51 uses15; 3.52+ defaults17.
+        # Our newly opened connection never changes SQLITE_DBCONFIG_FP_DIGITS.
+        format = b'%!.17g' if sqlite3.sqlite_version_info >= (3, 52, 0) else b'%!.15g'
+        pointer = library.sqlite3_mprintf(format, ctypes.c_double(value))
+        if not pointer:
+            raise MemoryError('SQLite text allocation failed')
+        try:
+            return ctypes.string_at(pointer).decode('utf-8', errors='replace')
+        finally:
+            library.sqlite3_free(pointer)
+    if isinstance(value, int):
+        return str(value)
+    data = value if isinstance(value, bytes) else value.encode('utf-8')
+    return data.split(b'\0', 1)[0].decode('utf-8', errors='replace')
+
+
+# CodexBar 3bbf6bc48: CodexPriority.swift value/quotedValue (1081–1098).
+def _codex_trace_value(name: str, text: str) -> str | None:
+    marker = name + '='
+    start = text.find(marker)
+    if start < 0:
+        return None
+    start += len(marker)
+    end = start
+    while end < len(text) and not _codex_character_whitespace(text[end]) and text[end] not in ',])}:':
+        end += 1
+    return text[start:end] or None
+
+
+def _codex_trace_quoted_value(name: str, text: str) -> str | None:
+    marker = name + ': "'
+    start = text.find(marker)
+    if start < 0:
+        return None
+    start += len(marker)
+    end = text.find('"', start)
+    return text[start:end] or None if end >= 0 else None
+
+
+def _codex_trace_json(text: str) -> dict | None:
+    parsed = _upstream_json(_codex_trim(text).encode('utf-8'))
+    return parsed[0] if parsed is not None and isinstance(parsed[0], dict) else None
+
+
+# CodexBar 3bbf6bc48: CodexPriority.swift parseCodexCompletedTraceRow (1058–1079).
+def _parse_codex_completed_trace(body: str) -> tuple[str, str] | None:
+    prefix, marker, tail = body.partition('websocket event:')
+    if not marker:
+        return None
+    event = _codex_trace_json(tail)
+    if event is None or event.get('type') != 'response.completed':
+        return None
+    response = event.get('response')
+    model = _codex_string(response.get('model')) if isinstance(response, dict) else None
+    turn_id = _codex_trace_value('turn.id', prefix) or _codex_trace_value('turn_id', prefix)
+    return (turn_id, model) if turn_id and model else None
+
+
+# CodexBar 3bbf6bc48: CodexPriority.swift priority trace/submission (1020–1056).
+def _parse_codex_priority_trace(timestamp: str | None, body: str) -> tuple[str, dict] | None:
+    prefix, marker, tail = body.partition('websocket request:')
+    if marker:
+        request = _codex_trace_json(tail)
+        if (request is None or request.get('type') != 'response.create'
+                or request.get('service_tier') != 'priority'):
+            return None
+        turn_id = _codex_first(_codex_trace_value('turn.id', prefix),
+            _codex_trace_value('turn_id', prefix), _codex_string(request.get('turn_id')))
+        model = _codex_string(request.get('model'))
+    else:
+        prefix, marker, tail = body.partition('Submission sub=Submission {')
+        if not marker or 'service_tier: Some(Some("priority"))' not in body:
+            return None
+        turn_id = _codex_trace_quoted_value('id', tail)
+        model = None
+    if not turn_id:
+        return None
+    return turn_id, {'thread_id': _codex_trace_value('thread_id', prefix),
+                     'model': model, 'timestamp': timestamp}
+
+
+def _stored_priority_turns(file: Path, messages: list[str]) -> dict[str, dict]:
+    if not file.exists():
+        return {}
+    try:
+        value = json.loads(file.read_bytes())
+        if not isinstance(value, dict) or type(value.get('schema')) is not int or value['schema'] != 1:
+            raise ValueError('unsupported priority memory schema')
+        turns = value.get('turns')
+        if not isinstance(turns, dict):
+            raise ValueError('invalid priority memory turns')
+        validated = {}
+        for turn_id, entry in turns.items():
+            if (not isinstance(turn_id, str) or not turn_id or not isinstance(entry, dict)
+                    or type(entry.get('first_seen_ms')) is not int
+                    or any(key not in entry or entry[key] is not None and not isinstance(entry[key], str)
+                           for key in ('thread_id', 'model', 'timestamp'))):
+                messages.append('Invalid priority memory entry ignored')
+                continue
+            validated[turn_id] = {key: entry[key] for key in
+                                 ('thread_id', 'model', 'timestamp', 'first_seen_ms')}
+        return validated
+    except (OSError, ValueError, UnicodeError) as exc:
+        messages.append(f'Priority memory unavailable: {exc}')
+        return {}
+
+
+def load_priority_turns(codex_home: Path, home: Path) -> PriorityTurns:
+    """A1 cold scan; sticky memory survives pruning and trace read failures."""
+    result = PriorityTurns()
+    file = home / 'priority-turns.json'
+    stored = _stored_priority_turns(file, result.messages)
+    turns, completed, pending = {}, {}, {}
+    spellings = {}
+    database = codex_home / 'logs_2.sqlite'
+    if database.exists():
+        try:
+            with contextlib.closing(sqlite3.connect(database.absolute().as_uri() + '?mode=ro',
+                                                   uri=True, timeout=0.25)) as db:
+                db.text_factory = bytes
+                # CodexPriority.swift973–1005: non-indexed cold query.
+                rows = db.execute('''select rowid, ts, feedback_log_body from logs
+                    where rowid > 0 and ts >= 0
+                      and (feedback_log_body like '%websocket request:%'
+                           or feedback_log_body like '%response.completed%'
+                           or feedback_log_body like '%service_tier: Some(Some("priority"))%')
+                    order by rowid''')
+                for rowid, timestamp, raw_body in rows:
+                    body = _codex_sqlite_text(raw_body)
+                    if body is None:
+                        continue
+                    parsed_completed = _parse_codex_completed_trace(body)
+                    if parsed_completed is not None:
+                        turn_id, model = parsed_completed
+                        key = _codex_session_identity(turn_id)
+                        if key in turns:
+                            completed.setdefault(key, {})[rowid] = model
+                        else:
+                            if key not in pending and len(pending) >= 4096:
+                                del pending[next(iter(pending))]
+                            pending.setdefault(key, {})[rowid] = model
+                        continue
+                    parsed = _parse_codex_priority_trace(_codex_sqlite_text(timestamp), body)
+                    if parsed is None:
+                        continue
+                    turn_id, entry = parsed
+                    key = _codex_session_identity(turn_id)
+                    spellings.setdefault(key, turn_id)
+                    turns[key] = entry
+                    if key in pending:
+                        completed[key] = pending.pop(key)
+            # CodexPriority.swift440–459: highest rowid, irrespective of ts.
+            for key, models in completed.items():
+                turns[key]['model'] = models[max(models)]
+        except sqlite3.Error as exc:
+            result.messages.append(f'Priority trace database unavailable: {exc}')
+            turns = {}
+    result.turns = dict(stored)
+    stored_keys = {_codex_session_identity(key): key for key in stored}
+    first_seen = now_ms()
+    for key, entry in turns.items():
+        spelling = stored_keys.get(key, spellings[key])
+        first = stored.get(spelling, {}).get('first_seen_ms', first_seen)
+        result.turns[spelling] = {**entry, 'first_seen_ms': first}
+    if result.turns != stored:
+        atomic_write_json(file, {'schema': 1, 'turns': result.turns})
+    return result
+
+
+@dataclass
+class UsageUnit:
+    session_id: str
+    file: int
+    line: int
+    turn_id: str | None
+    display_turn: str | None
+    at_ms: int | None
+    timestamp_unix_ms: int | None
+    model_raw: str
+    model: str
+    priority: dict | None
+    tier: Literal['priority', 'standard']
+    input: int
+    cached: int
+    cache_write: int
+    output: int
+    reasoning: int | None
+    source: Literal['record', 'token_count', 'bare']
+    cost_usd: float | None = None
+    period: tuple[str, int] | None = None
+
+
+# CodexBar 3bbf6bc48: CacheHelpers.swift497–555, joined String equality.
+def _codex_cross_file_row_key(session_id: str | None, file_identity: str, row: UsageRow) -> str:
+    text = '\x1f'.join((f'session:{session_id}' if session_id is not None else f'file:{file_identity}',
+        row.turn_id or '', str(row.event_index) if row.event_index is not None else '',
+        row.day_key, row.model, str(row.input), str(row.cached), str(row.output),
+        str(row.timestamp_unix_ms) if row.timestamp_unix_ms is not None else ''))
+    return _codex_session_identity(text)
+
+
+def _primary_model_timeline(record: dict, result: CodexUsageResult) -> list[tuple[float, str | None]]:
+    if result.model_timeline or not record['token_stream']['unconsumed_tail']:
+        return result.model_timeline
+    # Only unreplayed pending tails borrow C/XC evidence; never invent a suffix.
+    return [(observation[1], model.get('set'))
+            for observation in record['token_stream']['observations']
+            if observation[0] in ('C', 'XC')
+            and (model := observation[5] if observation[0] == 'C' else observation[3]) is not None]
+
+
+def compose_usage(corpus: Corpus, priority: PriorityTurns) -> None:
+    """Account every file before selection and display attribution (A4, D8)."""
+    records = [record for session in corpus.sessions.values() for record in session.records]
+    records.extend(corpus.skipped_records)
+    results = account_logs(records)
+    corpus.file_diagnostics['trace_db'] = list(priority.messages)
+    corpus.file_diagnostics['fork_baseline_unavailable'] = []
+    duplicates = {}
+    for record in records:
+        observations = record['token_stream']['observations']
+        identifier = observations[0][1].get('session_id') if observations and observations[0][0] == 'P' else None
+        if identifier is not None:
+            key = _codex_session_identity(identifier)
+            entry = duplicates.setdefault(key, {'id': identifier, 'paths': [], 'display': {}})
+            entry['paths'].append(record['key']['path'])
+            display_id = _history_identifier((record['meta'] or {}).get('id'))
+            if display_id is not None and _codex_session_identity(display_id) != key:
+                entry['display'].setdefault(display_id, []).append(record['key']['path'])
+    diagnostics = {}
+    for entry in duplicates.values():
+        if len(entry['paths']) <= 1:
+            continue
+        diagnostics.setdefault(entry['id'], set()).update(entry['paths'])
+        for identifier, paths in entry['display'].items():
+            diagnostics.setdefault(identifier, set()).update(paths)
+    corpus.file_diagnostics['duplicate_session_ids'] = [
+        {'id': identifier, 'paths': sorted(paths)} for identifier, paths in sorted(diagnostics.items())]
+    priority_index = {_codex_session_identity(key): entry for key, entry in priority.turns.items()}
+    for session in corpus.sessions.values():
+        session.units = []
+        session.flags.discard('fork_baseline_unavailable')
+        displayed = {_codex_session_identity(turn.id): turn.id for turn in session.turns}
+        responses, primary_turns, seen_rows = set(), set(), set()
+
+        def append_unit(file_index, line, turn_id, at_ms, timestamp_unix_ms, model_raw,
+                        input, cached, cache_write, output, reasoning, source):
+            turn_key = _codex_session_identity(turn_id) if isinstance(turn_id, str) else None
+            inherited = any(start <= line < end for start, end in
+                session.records[file_index]['history']['inherited_lines'])
+            display_turn = displayed.get(turn_key) if not inherited else None
+            tier_metadata = priority_index.get(turn_key)
+            session.units.append(UsageUnit(session.id, file_index, line, turn_id, display_turn,
+                at_ms, timestamp_unix_ms, model_raw, normalize_codex_model(model_raw), tier_metadata,
+                'priority' if tier_metadata is not None else 'standard',
+                input, cached, cache_write, output, reasoning, source))
+
+        # SessionModel.records already uses source ms-mtime/size/path order.
+        for file_index, record in enumerate(session.records):
+            result = results[record['key']['path']]
+            # UsageRow is frozen; rebuild local results without changing cached facts.
+            result.rows = [UsageRow(file_index, row.line, row.event_index, row.turn_id, row.ts,
+                row.at_ms, row.timestamp_unix_ms, row.day_key, row.model_raw, row.model,
+                row.input, row.cached, row.output, row.reasoning, row.kind) for row in result.rows]
+            if result.has_unresolved_fork_baseline:
+                session.flags.add('fork_baseline_unavailable')
+            timeline = _primary_model_timeline(record, result)
+            positions = [position for position, model in timeline]
+            for usage in sorted(record['usage_records'], key=lambda usage: usage['line']):
+                thread_id = usage['thread_id']
+                if not isinstance(thread_id, str) or _codex_session_identity(thread_id) != _codex_session_identity(session.id):
+                    continue
+                response_id = usage['response_id']
+                if isinstance(response_id, str) and response_id:
+                    key = (_codex_session_identity(thread_id), _codex_session_identity(response_id))
+                    if key in responses:
+                        continue
+                    responses.add(key)
+                turn_id = _history_identifier(usage['turn_id'])
+                primary_turns.add(_codex_session_identity(turn_id) if turn_id is not None else None)
+                position = bisect.bisect_left(positions, usage['line']) - 1
+                model = (timeline[position][1] if position >= 0 else None) or 'unknown'
+                def number(key):
+                    return max(0, _codex_number(usage[key]) or 0)
+                output = number('output')
+                reasoning = _codex_number(usage['reasoning'])
+                append_unit(file_index, usage['line'], turn_id, usage['at_ms'], usage['timestamp_unix_ms'],
+                    model, number('input'), max(number('cached_input'), number('cache_read_input')),
+                    number('cache_write'), output,
+                    min(max(0, reasoning), output) if reasoning is not None else None, 'record')
+        if 'fork_baseline_unavailable' in session.flags:
+            corpus.file_diagnostics['fork_baseline_unavailable'].append(session.id)
+        for file_index, record in enumerate(session.records):
+            accepted = set()
+            result = results[record['key']['path']]
+            for row in result.rows:
+                if row.turn_id is not None and _codex_session_identity(row.turn_id) in primary_turns:
+                    continue
+                key = _codex_cross_file_row_key(result.session_id, record['key']['path'], row)
+                if key in seen_rows:
+                    continue
+                accepted.add(key)
+                append_unit(row.file, row.line, row.turn_id, row.at_ms, row.timestamp_unix_ms,
+                    row.model_raw, row.input, row.cached, 0, row.output, row.reasoning, row.kind)
+            # Source uniqueCodexRows never compares rows against their own file.
+            seen_rows.update(accepted)
+
+
 # ===== 14. Pricing port =====
 # Library compatibility for String.range's non-ASCII regex path: Swift matches
 # numeric Characters, while NSRegularExpression matches scalar decimal digits.

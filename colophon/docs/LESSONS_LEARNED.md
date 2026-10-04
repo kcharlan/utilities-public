@@ -382,3 +382,25 @@
   `test_classifier_canonical_leaf_is_not_an_ancestor`,
   `test_classifier_and_usage_result_retain_inferred_parent_spelling`, and
   `test_classifier_canonical_leaf_metadata_preserves_suffix_candidate`.
+- A SQLite numeric-to-text port cannot assume fifteen-digit formatting from
+  an import name or use Python `str(float)`. SQLite 3.51 uses fifteen significant
+  digits; 3.52 and later default to seventeen. Initial hand expectations and
+  a fixed fifteen-digit native formatter disagreed with an independent CAST
+  oracle. A standalone synthetic Swift `import SQLite3` probe confirmed the
+  actual host backend (3.54) also uses seventeen, matching Python's 3.53.4
+  backend. Resolve formatter symbols through the connection's own extension
+  and apply its source-defined default; preserve allocation/free ownership
+  on every exit. Regressions: `test_real_text_matches_sqlite_column_cast`,
+  `test_sqlite_timestamp_column_text_contract`, and
+  `test_native_sqlite_allocation_is_freed_on_every_exit`.
+- Duplicate-file fixtures must assign distinct response ids when testing
+  distinct primary responses. Ordinal-generated defaults can collide across
+  copies and correctly trigger response deduplication, obscuring model or
+  attribution assertions. Keep a separate overlap test with intentionally
+  identical ids. Regressions: `test_model_context_is_file_local_strictly_before_and_clear`,
+  `test_local_file_indices_and_inherited_attribution`, and
+  `test_duplicate_files_union_primary_and_cross_file_fallback`.
+- Duplicate parent diagnostics must report the pre-pass id and differing
+  true-first display ids. An oversized metadata line can make those identities
+  differ even while both files share one accounting parent key. Regression:
+  `test_duplicate_prepass_diagnostic_includes_differing_display_ids`.
