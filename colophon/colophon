@@ -3341,6 +3341,1134 @@ def resolve_workspaces(corpus: Corpus, aliases: list[dict]) -> dict[str, dict]:
     return workspaces
 
 
+# ===== 12. Token accounting port =====
+from collections.abc import Iterable
+
+
+@dataclass(frozen=True)
+class Totals:
+    input: int
+    cached: int
+    output: int
+    reasoning: int | None = None
+
+
+ForkBaseline = tuple[Literal['resolved', 'unresolved'], Totals | None]
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexTotalsEqual (436–438).
+def codex_totals_equal(lhs: Totals | None, rhs: Totals | None) -> bool:
+    return (None if lhs is None else (lhs.input, lhs.cached, lhs.output)) == (None if rhs is None else (rhs.input, rhs.cached, rhs.output))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexTotalsAtLeast (440–442).
+def codex_totals_at_least(lhs: Totals, rhs: Totals) -> bool:
+    return lhs.input >= rhs.input and lhs.cached >= rhs.cached and lhs.output >= rhs.output
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexTotalsAtMost (444–446).
+def codex_totals_at_most(lhs: Totals, rhs: Totals) -> bool:
+    return lhs.input <= rhs.input and lhs.cached <= rhs.cached and lhs.output <= rhs.output
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexLooksLikeStaleRegression (448–475).
+def codex_looks_like_stale_regression(current: Totals, previous: Totals, last: Totals) -> bool:
+    reasoning_regressed = (current.reasoning is not None and previous.reasoning is not None
+                          and current.reasoning < previous.reasoning)
+    if not (current.input < previous.input or current.cached < previous.cached
+            or current.output < previous.output or reasoning_regressed):
+        return False
+    previous_total = previous.input + previous.output + previous.cached + (previous.reasoning or 0)
+    current_total = current.input + current.output + current.cached + (current.reasoning or 0)
+    last_total = last.input + last.output + last.cached + (last.reasoning or 0)
+    if previous_total <= 0 or current_total <= 0 or last_total <= 0:
+        return False
+    return current_total * 100 >= previous_total * 98 or current_total + last_total * 2 >= previous_total
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexShouldPreferTotalDelta (477–489).
+def codex_should_prefer_total_delta(raw_baseline, current_total, total_delta, last_delta, saw_divergent_totals):
+    return (not saw_divergent_totals and raw_baseline is not None
+            and codex_totals_at_least(current_total, raw_baseline)
+            and codex_totals_at_most(total_delta, last_delta))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexAddOptional (598–601).
+def codex_add_optional(lhs, rhs):
+    return lhs + rhs if lhs is not None and rhs is not None else None
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexMinOptional (603–606).
+def codex_min_optional(lhs, rhs):
+    return min(lhs, rhs) if lhs is not None and rhs is not None else None
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexMaxOptional (608–615).
+def codex_max_optional(lhs, rhs):
+    return max(lhs, rhs) if lhs is not None and rhs is not None else lhs if lhs is not None else rhs
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexSubtractOptional (617–620).
+def codex_subtract_optional(value, baseline):
+    return max(0, value - baseline) if value is not None and baseline is not None else None
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexOptionalDelta (622–629).
+def codex_optional_delta(baseline, current, has_baseline):
+    if current is None:
+        return None
+    return codex_subtract_optional(current, baseline) if has_baseline else current
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexDivergentOptionalDelta (632–638).
+def codex_divergent_optional_delta(raw, counted, current):
+    if raw is None or counted is None or current is None:
+        return None
+    return max(0, current - (raw if current >= raw else counted))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexContainedOptionalDelta (641–647).
+def codex_contained_optional_delta(water, counted, current):
+    if water is None or counted is None or current is None:
+        return None
+    return max(0, current - (max(water, counted) if current >= water else counted))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexAddTotals (491–501).
+def codex_add_totals(lhs: Totals, rhs: Totals) -> Totals:
+    return Totals(lhs.input + rhs.input, lhs.cached + rhs.cached, lhs.output + rhs.output,
+                  codex_add_optional(lhs.reasoning, rhs.reasoning))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexMinTotals (503–513).
+def codex_min_totals(lhs: Totals, rhs: Totals) -> Totals:
+    return Totals(min(lhs.input, rhs.input), min(lhs.cached, rhs.cached), min(lhs.output, rhs.output),
+                  codex_min_optional(lhs.reasoning, rhs.reasoning))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexMaxTotals (553–564).
+def codex_max_totals(lhs: Totals | None, rhs: Totals) -> Totals:
+    if lhs is None:
+        return rhs
+    return Totals(max(lhs.input, rhs.input), max(lhs.cached, rhs.cached), max(lhs.output, rhs.output),
+                  codex_max_optional(lhs.reasoning, rhs.reasoning))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexTotalDelta (515–529).
+def codex_total_delta(baseline: Totals | None, current: Totals) -> Totals:
+    reasoning = codex_optional_delta(baseline.reasoning if baseline else None,
+                                     current.reasoning, baseline is not None)
+    base = baseline if baseline is not None else Totals(0, 0, 0)
+    return Totals(max(0, current.input - base.input), max(0, current.cached - base.cached),
+                  max(0, current.output - base.output), reasoning)
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexDivergentTotalDelta (531–551).
+def codex_divergent_total_delta(raw_baseline, counted_baseline, current):
+    raw = raw_baseline if raw_baseline is not None else Totals(0, 0, 0)
+    counted = counted_baseline if counted_baseline is not None else Totals(0, 0, 0)
+
+    def delta(raw, counted, current):
+        return max(0, current - (raw if current >= raw else counted))
+
+    return Totals(delta(raw.input, counted.input, current.input),
+                  delta(raw.cached, counted.cached, current.cached),
+                  delta(raw.output, counted.output, current.output),
+                  codex_divergent_optional_delta(raw.reasoning, counted.reasoning, current.reasoning))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexContainedTotalDelta (573–596).
+def codex_contained_total_delta(watermark, counted, current):
+    water = watermark if watermark is not None else Totals(0, 0, 0)
+    counted = counted if counted is not None else Totals(0, 0, 0)
+
+    def component(water, counted, current):
+        return max(0, current - (max(water, counted) if current >= water else counted))
+
+    return Totals(component(water.input, counted.input, current.input),
+                  component(water.cached, counted.cached, current.cached),
+                  component(water.output, counted.output, current.output),
+                  codex_contained_optional_delta(water.reasoning, counted.reasoning, current.reasoning))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift codexPostLatchEventDelta (654–666).
+def codex_post_latch_event_delta(watermark, counted, current, adjusted_last):
+    contained = codex_contained_total_delta(watermark, counted, current)
+    return contained if adjusted_last is None else codex_min_totals(adjusted_last, contained)
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift CodexTotalsTracker (669–723).
+class CodexTotalsTracker:
+    SEEN_RAW_TOTALS_LIMIT = 64
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift init (676–686).
+    def __init__(self, watermark=None, seen_raw_totals=(), saw_interleaved_totals=False):
+        self.watermark = watermark
+        self.seen_raw_totals = list(seen_raw_totals)[-self.SEEN_RAW_TOTALS_LIMIT:]
+        self.saw_interleaved_totals = saw_interleaved_totals
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift isSeen (688–690).
+    def is_seen(self, totals):
+        return any(codex_totals_equal(previous, totals) for previous in self.seen_raw_totals)
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift latchIfBelowWatermark (695–705).
+    def latch_if_below_watermark(self, totals):
+        if self.watermark is not None and (totals.input < self.watermark.input
+                or totals.cached < self.watermark.cached or totals.output < self.watermark.output):
+            self.saw_interleaved_totals = True
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift commitObserved (709–717).
+    def commit_observed(self, totals):
+        self.raise_watermark(totals)
+        if not self.is_seen(totals):
+            self.seen_raw_totals.append(totals)
+            del self.seen_raw_totals[:-self.SEEN_RAW_TOTALS_LIMIT]
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift raiseWatermark (721–723).
+    def raise_watermark(self, totals):
+        self.watermark = codex_max_totals(self.watermark, totals)
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift CodexSnapshotAccumulator (725–855).
+class CodexSnapshotAccumulator:
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift init (736–746); checkpoints omitted for cold snapshot replay.
+    def __init__(self, state=None):
+        state = state if state is not None else {}
+        self.counted_totals = state.get('counted_totals')
+        self.raw_totals_baseline = state.get('raw_totals_baseline')
+        self.saw_divergent_totals = state.get('saw_divergent_totals', False)
+        self.tracker = CodexTotalsTracker(state.get('raw_totals_watermark'),
+            state.get('seen_raw_totals', ()), state.get('saw_interleaved_totals', False))
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift state (748–758).
+    @property
+    def state(self):
+        return {'counted_totals': self.counted_totals, 'raw_totals_baseline': self.raw_totals_baseline,
+                'saw_divergent_totals': self.saw_divergent_totals,
+                'raw_totals_watermark': self.tracker.watermark,
+                'seen_raw_totals': list(self.tracker.seen_raw_totals),
+                'saw_interleaved_totals': self.tracker.saw_interleaved_totals}
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift apply (761–854).
+    def apply(self, last: Totals | None, total: Totals | None) -> Totals:
+        if self.counted_totals is None and total is not None and last is not None:
+            self.counted_totals = codex_total_delta(last, total)
+        has_reasoning = (last is not None and last.reasoning is not None
+                         or total is not None and total.reasoning is not None)
+        base = self.counted_totals if self.counted_totals is not None else Totals(0, 0, 0, 0 if has_reasoning else None)
+        if total is not None:
+            if self.tracker.is_seen(total):
+                return base
+            stale = self.tracker.watermark if self.tracker.watermark is not None else self.raw_totals_baseline
+            if stale is not None and codex_looks_like_stale_regression(total, stale, last if last is not None else Totals(0, 0, 0)):
+                return base
+            self.tracker.latch_if_below_watermark(total)
+        watermark = self.tracker.watermark if self.tracker.watermark is not None else self.raw_totals_baseline
+        try:
+            if last is not None:
+                delta = last
+                if total is not None:
+                    if self.tracker.saw_interleaved_totals:
+                        delta = codex_post_latch_event_delta(watermark, self.counted_totals, total, last)
+                    else:
+                        total_delta = codex_total_delta(watermark, total)
+                        if codex_should_prefer_total_delta(watermark, total, total_delta, last, self.saw_divergent_totals):
+                            delta = total_delta
+                    next_totals = codex_add_totals(base, delta)
+                    self.counted_totals = next_totals
+                    self.raw_totals_baseline = total
+                    if not codex_totals_equal(total, next_totals):
+                        self.saw_divergent_totals = True
+                    return next_totals
+                next_totals = codex_add_totals(base, delta)
+                self.counted_totals = next_totals
+                self.raw_totals_baseline = next_totals
+                self.tracker.raise_watermark(next_totals)
+                return next_totals
+            if total is not None:
+                if self.tracker.saw_interleaved_totals:
+                    delta = codex_contained_total_delta(watermark, self.counted_totals, total)
+                elif self.saw_divergent_totals:
+                    delta = codex_divergent_total_delta(watermark, self.counted_totals, total)
+                else:
+                    delta = codex_total_delta(watermark, total)
+                counted = codex_add_totals(base, delta)
+                self.counted_totals = counted
+                self.raw_totals_baseline = total
+                if not codex_totals_equal(total, counted):
+                    self.saw_divergent_totals = True
+                return counted
+            return base
+        finally:
+            if total is not None:
+                self.tracker.commit_observed(total)
+
+
+# CodexBar 3bbf6bc48: Timestamp.swift dateFromTimestamp/parseISO (22–89).
+def date_from_timestamp(text: str) -> float | None:
+    native = (re.fullmatch(r'([0-9]{4})-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.([0-9]{1,9}))?(?:Z|[+-][0-9]{2}:[0-9]{2})', text)
+              if isinstance(text, str) else None)
+    native_ms = parse_rfc3339_ms(text) if native is not None and int(native[1]) >= 1900 else None
+    if native_ms is not None:
+        return native_ms / 1000
+    if not isinstance(text, str) or not _codex_historical_iso_valid(text):
+        return None
+    match = _CODEX_HISTORICAL_DATE.match(text)
+    year, month, day, hour, minute, second = map(_codex_historical_number, match.groups()[:6])
+    fraction = match[7]
+    milliseconds = 0
+    if fraction is not None:
+        milliseconds = _codex_historical_number(fraction)
+        count = sum(c.isdecimal() for c in fraction)
+        if count < 3:
+            milliseconds = _codex_int32(milliseconds * 10**(3 - count))
+        else:
+            divisor = _codex_int32(pow(10, count - 3, 2**32))
+            quotient = abs(milliseconds) // abs(divisor) if divisor else 0
+            milliseconds = -quotient if (milliseconds < 0) != (divisor < 0) else quotient
+    # The existing formatter numeric/calendar slice owns Foundation compatibility.
+    local_ms = float((_codex_historical_julian_day(year, month, day) - 2440588) * 86400000) + ((hour * 3600 + minute * 60 + second) * 1000 + milliseconds)
+    zone_start = match.end(7) if fraction is not None else match.end(6)
+    zone_text = text[zone_start:].lstrip(_CODEX_ICU_SPACE)
+    offset = _codex_historical_zone_offset(zone_text)
+    return local_ms / 1000 - offset
+
+
+# ICU 76.1 tzfmt.cpp parseOffsetISO8601/parseAsciiOffsetFields/
+# parseAbuttingAsciiOffsetFields, pinned Apple ICU 9e80977766f830c93e3cdae3d5628997e1a61b63.
+def _codex_historical_zone_offset(text):
+    if text[:1].casefold() == 'z':
+        return 0
+    named = re.match(r'(?i:GMT|UTC|UT)', text)
+    if named is not None:
+        text = text[named.end():]
+        if not text.startswith(('+', '-')):
+            return 0
+        sign = -1 if text[0] == '-' else 1
+        text = text[1:]
+        index = 0
+        hour = 0
+        # parseOffsetFieldWithLocalizedDigits reads1–2 digits, stopping on overflow.
+        while index < min(2, len(text)) and text[index].isdecimal():
+            next_hour = hour * 10 + int(text[index])
+            if next_hour > 23:
+                break
+            hour = next_hour
+            index += 1
+        minute = second = 0
+        if index and len(text) >= index + 3 and text[index] == ':':
+            digits = text[index + 1:index + 3]
+            if all(c.isdecimal() for c in digits) and int(digits) <= 59:
+                minute = int(digits)
+                index += 3
+                if len(text) >= index + 3 and text[index] == ':':
+                    digits = text[index + 1:index + 3]
+                    if all(c.isdecimal() for c in digits) and int(digits) <= 59:
+                        second = int(digits)
+        return sign * (hour * 3600 + minute * 60 + second)
+    sign = -1 if text[0] == '-' else 1
+    digits = text[1:]
+    values, lengths = [0, 0, 0], [0, -1, -1]
+    field_index = 0
+    for char in digits:
+        if field_index > 2:
+            break
+        if char == ':':
+            if field_index == 0:
+                if lengths[0] == 0:
+                    break
+            else:
+                if lengths[field_index] != -1:
+                    break
+                lengths[field_index] = 0
+            continue
+        if lengths[field_index] == -1 or char not in '0123456789':
+            break
+        values[field_index] = values[field_index] * 10 + int(char)
+        lengths[field_index] += 1
+        if lengths[field_index] >= 2:
+            field_index += 1
+    if values[0] > 23:
+        offset, parsed_length = values[0] // 10 * 3600, 1
+    else:
+        offset, parsed_length = values[0] * 3600, lengths[0]
+        if lengths[1] == 2 and values[1] <= 59:
+            offset += values[1] * 60
+            parsed_length += 3
+            if lengths[2] == 2 and values[2] <= 59:
+                offset += values[2]
+                parsed_length += 3
+    if parsed_length <= 2:
+        basic = re.match(r'[0-9]{1,6}', digits)
+        raw = basic[0] if basic is not None else ''
+        for count in range(len(raw), 0, -1):
+            width = 1 if count % 2 else 2
+            hour = int(raw[:width])
+            minute = int(raw[width:width + 2]) if count >= 3 else 0
+            second = int(raw[width + 2:width + 4]) if count >= 5 else 0
+            if hour <= 23 and minute <= 59 and second <= 59:
+                if count > parsed_length:
+                    offset = hour * 3600 + minute * 60 + second
+                break
+    return sign * offset
+
+
+# Foundation Gregorian Calendar component rendering retains the Julian cutover
+# and returns year-of-era (Timestamp.swift dayKeyFromParsedISO/dayKeyFromTimestamp).
+def _codex_local_day_key(instant):
+    local = time.localtime(instant)
+    julian = math.floor((instant + local.tm_gmtoff) / 86400) + 2440588
+    if julian < 2299161:
+        c = julian + 32082
+        d = (4 * c + 3) // 1461
+        e = c - (1461 * d) // 4
+        m = (5 * e + 2) // 153
+        day = e - (153 * m + 2) // 5 + 1
+        month = m + 3 - 12 * (m // 10)
+        year = d - 4800 + m // 10
+    else:
+        year, month, day = local.tm_year, local.tm_mon, local.tm_mday
+    if year <= 0:
+        year = 1 - year
+    return f'{_codex_int32(year):04d}-{month:02d}-{day:02d}'
+
+
+
+# CodexBar 3bbf6bc48: Timestamp.swift dayKeyFromTimestamp (104–182).
+def day_key_from_timestamp(text: str) -> tuple[str, int] | None:
+    if not isinstance(text, str):
+        return None
+    data = text.encode('utf-8', errors='surrogatepass')
+
+    def number(index, count=2):
+        part = data[index:index + count]
+        return int(part) if len(part) == count and all(48 <= byte <= 57 for byte in part) else None
+
+    if len(data) < 20 or data[4] != 45 or data[7] != 45:
+        return None
+    year, month, day = number(0, 4), number(5), number(8)
+    if year is None or month is None or day is None:
+        return None
+    hour = minute = second = 0
+    if data[10] == 84:
+        if data[13] != 58 or data[16] != 58:
+            return None
+        hour, minute, second = number(11), number(14), number(17)
+        if hour is None or minute is None or second is None:
+            return None
+    zone_index = next((index for index in range(len(data) - 1, 10, -1)
+                       if data[index] in (90, 43, 45)), None)
+    if zone_index is None:
+        return None
+    offset_seconds = 0
+    if data[zone_index] != 90:
+        start = zone_index + 1
+        hours = number(start)
+        if hours is None:
+            return None
+        minutes = 0
+        if len(data) > start + 2:
+            if data[start + 2] == 58:
+                minutes = number(start + 3)
+                if minutes is None:
+                    return None
+            elif number(start + 2) is not None:
+                minutes = number(start + 2)
+        offset_seconds = (hours * 3600 + minutes * 60) * (-1 if data[zone_index] == 45 else 1)
+    # Calendar DateComponents normalizes components, with its Gregorian cutover.
+    year, month_zero = divmod(year * 12 + month - 1, 12)
+    epoch_seconds = (_codex_historical_julian_day(year, month_zero + 1, day) - 2440588) * 86400 + hour * 3600 + minute * 60 + second
+    # Foundation's out-of-range fixed-offset TimeZone falls back to Calendar's local zone.
+    if abs(offset_seconds) > 18 * 3600:
+        instant = time.mktime((year, month_zero + 1, day, hour, minute, second, 0, 0, -1))
+    else:
+        instant = epoch_seconds - offset_seconds
+    return _codex_local_day_key(instant), _round_swift_ms(instant)
+
+
+# CodexBar 3bbf6bc48: Timestamp.swift dayKeyFromParsedISO (184–187).
+def day_key_from_parsed_iso(text: str) -> tuple[str, int] | None:
+    instant = date_from_timestamp(text)
+    if instant is None:
+        return None
+    return _codex_local_day_key(instant), _round_swift_ms(instant)
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift unixMilliseconds (4262–4267).
+def _round_swift_ms(seconds: float) -> int:
+    milliseconds = seconds * 1000
+    return math.floor(milliseconds + 0.5) if milliseconds >= 0 else math.ceil(milliseconds - 0.5)
+
+
+@dataclass(frozen=True)
+class UsageRow:
+    file: int
+    line: int
+    event_index: int
+    turn_id: str | None
+    ts: str
+    at_ms: int
+    timestamp_unix_ms: int | None
+    day_key: str
+    model_raw: str
+    model: str
+    input: int
+    cached: int
+    output: int
+    reasoning: int | None
+    kind: Literal['token_count', 'bare']
+
+
+@dataclass
+class CodexUsageResult:
+    rows: list[UsageRow] = field(default_factory=list)
+    token_snapshots: list[tuple[str, Totals | None, Totals | None]] = field(default_factory=list)
+    session_id: str | None = None
+    forked_from_id: str | None = None
+    has_unresolved_fork_baseline: bool = False
+    fork_accounting_state: dict | None = None
+    model_timeline: list[tuple[float, str | None]] = field(default_factory=list)
+    buffered_unresolved_fork_lines: list | None = None
+    buffered_subagent_lines_retained: bool = False
+    depends_on_parent: bool = False
+
+
+@dataclass(frozen=True)
+class OwnedSuffix:
+    start_line_index: int
+    raw_totals_baseline: Totals
+    first_token_line_index: int | None = None
+
+
+@dataclass(frozen=True)
+class OwnedSuffixCandidate:
+    owned_suffix: OwnedSuffix
+    parent_totals_at_boundary: Totals
+    is_locally_confirmed: bool
+
+
+@dataclass(frozen=True)
+class RolloutShape:
+    counter_semantics: Literal['independent', 'copied_prefix']
+    owned_suffix: OwnedSuffix | None = None
+    owned_suffix_candidate: OwnedSuffixCandidate | None = None
+    inferred_parent_session_id: str | None = None
+
+
+# CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift normalizedSessionID (222–227).
+def normalized_session_id(value):
+    return unicodedata.normalize('NFC', _codex_trim(value)) or None if value is not None else None
+
+
+# CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift totalsContainUsage (218–220).
+def totals_contain_usage(totals):
+    return totals.input > 0 or totals.cached > 0 or totals.output > 0
+
+
+# CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift classify(observedSessionIDs:) (41–58).
+def classify_subagent_session_ids(leaf_session_id, observed_session_ids):
+    leaf = normalized_session_id(leaf_session_id)
+    ancestors = [normalized_session_id(value) for value in observed_session_ids
+                 if normalized_session_id(value) != leaf]
+    embedded = bool(ancestors) or (leaf is None and len(observed_session_ids) > 1)
+    distinct = {value for value in ancestors if value is not None}
+    return RolloutShape('copied_prefix' if embedded else 'independent',
+                        inferred_parent_session_id=next(iter(distinct)) if len(distinct) == 1 else None)
+
+
+# CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift classify(observations:) (60–207).
+def classify_subagent_rollout(leaf_session_id: str | None, observations: list,
+                              has_explicit_parent: bool) -> RolloutShape:
+    metadata_ids = [observation[4].get('session_id') for observation in observations if observation[0] == 'M']
+    metadata_shape = classify_subagent_session_ids(leaf_session_id, metadata_ids)
+    can_propose_parent_confirmed_suffix = metadata_shape.counter_semantics == 'independent' and has_explicit_parent
+    if metadata_shape.counter_semantics != 'copied_prefix' and not can_propose_parent_confirmed_suffix:
+        return metadata_shape
+    leaf = normalized_session_id(leaf_session_id)
+    last_raw_totals = None
+    pending_turn_context = None
+    owned_suffix = None
+    parent_totals_at_boundary = None
+    locally_confirmed_boundary = False
+    inspected_owned_suffix_first_total = False
+    observed_authoritative_metadata = False
+    observed_turn_context = False
+    inherited_opening = False
+    for observation in observations:
+        tag, _, line_index = observation[:3]
+        if tag == 'M':
+            identity = normalized_session_id(observation[4].get('session_id'))
+            embedded = observed_authoritative_metadata and (leaf is None or identity != leaf)
+            observed_authoritative_metadata = True
+            if embedded:
+                owned_suffix = None
+                parent_totals_at_boundary = None
+                locally_confirmed_boundary = False
+                inspected_owned_suffix_first_total = False
+            pending_turn_context = None
+        elif tag in ('C', 'XC'):
+            first_turn_context = not observed_turn_context
+            observed_turn_context = True
+            accepts_boundary = metadata_shape.counter_semantics == 'copied_prefix' or (can_propose_parent_confirmed_suffix and first_turn_context)
+            pending_turn_context = (line_index, last_raw_totals) if accepts_boundary and last_raw_totals is not None else None
+            if inherited_opening and first_turn_context and pending_turn_context is not None:
+                owned_suffix = OwnedSuffix(*pending_turn_context)
+                inspected_owned_suffix_first_total = False
+        elif tag == 'I':
+            if (owned_suffix is None and observation[4] and pending_turn_context is not None
+                    and line_index == pending_turn_context[0] + 1
+                    and (metadata_shape.counter_semantics == 'copied_prefix' or totals_contain_usage(pending_turn_context[1]))):
+                owned_suffix = OwnedSuffix(*pending_turn_context)
+                parent_totals_at_boundary = pending_turn_context[1]
+                locally_confirmed_boundary = False
+                inspected_owned_suffix_first_total = False
+            pending_turn_context = None
+        elif tag == 'T':
+            total = Totals(*observation[8]) if observation[8] is not None else None
+            last = Totals(*observation[7]) if observation[7] is not None else None
+            if (last_raw_totals is None and can_propose_parent_confirmed_suffix and not observed_turn_context
+                    and total is not None and last is not None and totals_contain_usage(total) and not totals_contain_usage(last)):
+                inherited_opening = True
+                owned_suffix = OwnedSuffix(line_index, total)
+                parent_totals_at_boundary = total
+                locally_confirmed_boundary = True
+            if (inherited_opening and not observed_turn_context and total is not None and last is not None
+                    and totals_contain_usage(last) and not codex_totals_equal(total, last_raw_totals)):
+                inherited_opening = False
+                owned_suffix = OwnedSuffix(line_index, last_raw_totals if last_raw_totals is not None else total)
+                inspected_owned_suffix_first_total = False
+            if (not inspected_owned_suffix_first_total and owned_suffix is not None and total is not None
+                    and not codex_totals_equal(total, owned_suffix.raw_totals_baseline)):
+                inspected_owned_suffix_first_total = True
+                if last is not None:
+                    copied_snapshot = (totals_contain_usage(owned_suffix.raw_totals_baseline)
+                        and codex_totals_equal(total, last) and codex_totals_at_least(total, owned_suffix.raw_totals_baseline))
+                    owned_suffix = OwnedSuffix(owned_suffix.start_line_index,
+                        total if copied_snapshot else codex_total_delta(last, total), line_index)
+                    inspected_owned_suffix_first_total = not copied_snapshot
+                    locally_confirmed_boundary = True
+            if total is not None:
+                last_raw_totals = total
+            pending_turn_context = None
+    if metadata_shape.counter_semantics == 'copied_prefix':
+        return RolloutShape('copied_prefix', owned_suffix, None, metadata_shape.inferred_parent_session_id)
+    candidate = (OwnedSuffixCandidate(owned_suffix, parent_totals_at_boundary, locally_confirmed_boundary)
+                 if owned_suffix is not None and parent_totals_at_boundary is not None else None)
+    return RolloutShape('independent', None, candidate, metadata_shape.inferred_parent_session_id)
+
+
+# CodexBar 3bbf6bc48: CodexSubagentRolloutShape.swift sameConcreteSessionID (209–216).
+def same_concrete_session_id(lhs, rhs):
+    left, right = _codex_model_evidence(lhs), _codex_model_evidence(rhs)
+    return (left is not None and right is not None
+            and unicodedata.normalize('NFC', left) == unicodedata.normalize('NFC', right))
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift CodexInheritedTotalsResolver (1611–2003).
+class InheritedTotalsResolver:
+    def __init__(self, streams: dict[str, TokenStream]):
+        self.streams = streams
+        self.memo = {}
+        self.resolving_session_ids = set()
+        self.dependency_keys = {}
+        self.diagnostics = []
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift inheritedTotals(for:atOrBefore:) (1692–1734).
+    def inherited_totals(self, session_id: str, cutoff_ts: str) -> ForkBaseline:
+        if len(self.resolving_session_ids) >= 64 or session_id in self.resolving_session_ids:
+            return ('unresolved', None)
+        self.resolving_session_ids.add(session_id)
+        try:
+            if not cutoff_ts:
+                self.diagnostics.append(('missing-cutoff', session_id))
+                return ('unresolved', None)
+            cutoff_date = date_from_timestamp(cutoff_ts)
+            if cutoff_date is None:
+                self.diagnostics.append(('lexical-cutoff', session_id))
+            resolution = self.snapshot_resolution(session_id)
+            if resolution is None:
+                self.dependency_keys[session_id] = 'missing' if session_id not in self.streams else None
+                return ('unresolved', None)
+            result, stream, offered = resolution
+            if not offered:
+                self.dependency_keys[session_id] = None
+                return ('unresolved', None)
+            is_complete = (not stream['unconsumed_tail']
+                           and not result.buffered_subagent_lines_retained
+                           and not result.buffered_unresolved_fork_lines)
+            if not is_complete:
+                if not result.token_snapshots:
+                    return ('unresolved', None)
+                last_timestamp = result.token_snapshots[-1][0]
+                last_date = date_from_timestamp(last_timestamp)
+                covers = (last_date >= cutoff_date if last_date is not None and cutoff_date is not None
+                          else last_timestamp >= cutoff_ts)
+                if not covers:
+                    return ('unresolved', None)
+            inherited = self.inherited_totals_from(result, cutoff_ts, cutoff_date)
+            if inherited is None and result.forked_from_id is not None and result.fork_accounting_state is None:
+                return ('unresolved', None)
+            self.dependency_keys[session_id] = 'resolved'
+            return ('resolved', inherited)
+        finally:
+            self.resolving_session_ids.remove(session_id)
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift private inheritedTotals(from:cutoffTimestamp:cutoffDate:) (1736–1792).
+    def inherited_totals_from(self, result, cutoff_timestamp, cutoff_date):
+        accumulator = CodexSnapshotAccumulator()
+        inherited = None
+        # No checkpoint or monotonic fast path; preserve event route order.
+        for timestamp, last, total in result.token_snapshots:
+            event_date = date_from_timestamp(timestamp)
+            at_or_before = (event_date <= cutoff_date if event_date is not None and cutoff_date is not None
+                            else timestamp <= cutoff_timestamp)
+            counted = accumulator.apply(last, total)
+            if at_or_before:
+                inherited = counted
+        if inherited is None and result.fork_accounting_state is not None:
+            inherited = result.fork_accounting_state['inherited_totals']
+        return inherited
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift snapshotResolution and cachedSnapshotResolution (1847–2003),
+    # ForkCoverage.swift isUnresolvedMissingParentFork (43–46),
+    # CacheHelpers.swift codexForkBaselineDependencyKey (1297–1308).
+    def snapshot_resolution(self, session_id):
+        if session_id not in self.streams:
+            self.diagnostics.append(('missing', session_id))
+            return None
+        if session_id not in self.memo:
+            stream = self.streams[session_id]
+            parsed = parse_codex_usage(stream, resolver=self)
+            assert parsed.session_id == session_id, 'resolver stream key differs from parsed session id'
+            offered = not (parsed.forked_from_id is not None and parsed.depends_on_parent
+                           and (parsed.has_unresolved_fork_baseline
+                                or self.dependency_keys.get(parsed.forked_from_id) != 'resolved'))
+            self.memo[session_id] = (parsed, stream, offered)
+        return self.memo[session_id]
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift parseCodexFileCancellable (4177–5264).
+# Cold accounting consumes Task7 observations in place of byte routing.
+class _CodexUsageParser:
+    def __init__(self, stream, resolver):
+        self.stream = stream
+        self.resolver = resolver
+        self.result = CodexUsageResult()
+        self.current_model = None
+        self.current_turn_id = None
+        self.previous_totals = None
+        self.raw_totals_baseline = None
+        self.saw_divergent_totals = False
+        self.tracker = CodexTotalsTracker()
+        self.last_accepted_token_timestamp = None
+        self.did_capture_leaf_metadata = False
+        self.history_base_thread_id = None
+        self.fork_timestamp = None
+        self.project_path = None
+        self.is_subagent_thread = False
+        self.subagent_history_start_ordinal = None
+        self.subagent_counter_semantics = None
+        self.uses_local_subagent_boundary = False
+        self.candidate_boundary_depends_on_parent_totals = False
+        self.parent_confirmed_local_boundary = False
+        self.suppress_unowned_copied_prefix = False
+        self.inherited_totals = None
+        self.remaining_inherited_totals = None
+        self.fork_baseline_resolved = False
+        self.pending_subagent_lines = None
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift unixMilliseconds (4262–4267).
+    def unix_milliseconds(self, timestamp):
+        instant = date_from_timestamp(timestamp)
+        return _round_swift_ms(instant) if instant is not None else None
+
+    # Adapt emitted rows, CostUsageScanner.swift 4290–4303, 4635–4654 @ 3bbf6bc48.
+    def append_row(self, observation, timestamp, model, turn_id, totals, kind):
+        day = day_key_from_timestamp(timestamp) or day_key_from_parsed_iso(timestamp)
+        if day is None:
+            return
+        timestamp_ms = self.unix_milliseconds(timestamp)
+        self.result.rows.append(UsageRow(-1, observation[1], len(self.result.rows), turn_id,
+            timestamp, timestamp_ms if timestamp_ms is not None else day[1], timestamp_ms,
+            day[0], model, normalize_codex_model(model),
+            totals.input, totals.cached, totals.output, totals.reasoning, kind))
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift handleBareUsage (4279–4307).
+    def handle_bare_usage(self, observation):
+        timestamp = observation[3] if observation[3] is not None else self.last_accepted_token_timestamp
+        if day_key_from_timestamp(timestamp) is None and day_key_from_parsed_iso(timestamp) is None:
+            return
+        model = _codex_model_evidence(observation[4]) or _codex_model_evidence(self.current_model) or 'unknown'
+        self.append_row(observation, timestamp, model, self.current_turn_id, Totals(*observation[5]), 'bare')
+        if timestamp is not None:
+            self.last_accepted_token_timestamp = timestamp
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift resolveForkBaseline (4326–4340).
+    def resolve_fork_baseline(self, parent_session_id, forked_at):
+        if self.fork_baseline_resolved or self.resolver is None:
+            return
+        self.fork_baseline_resolved = True
+        status, totals = self.resolver.inherited_totals(parent_session_id, forked_at)
+        if status == 'resolved':
+            self.inherited_totals = totals
+            self.remaining_inherited_totals = totals
+            self.result.has_unresolved_fork_baseline = False
+        else:
+            self.result.has_unresolved_fork_baseline = True
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift configureForkAccountingIfReady (4342–4358).
+    def configure_fork_accounting_if_ready(self):
+        if self.result.forked_from_id is None:
+            return
+        if self.is_subagent_thread and self.subagent_counter_semantics is None:
+            return
+        if self.subagent_counter_semantics == 'independent' or self.uses_local_subagent_boundary:
+            self.fork_baseline_resolved = True
+            self.inherited_totals = None
+            self.remaining_inherited_totals = None
+            self.result.has_unresolved_fork_baseline = False
+            return
+        self.resolve_fork_baseline(self.result.forked_from_id, self.fork_timestamp or '')
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift raiseInheritedBaselineIfContinuedCounter (4365–4394).
+    def raise_inherited_baseline_if_continued_counter(self, total, last):
+        if self.previous_totals is not None or self.inherited_totals is None:
+            return
+        if (self.history_base_thread_id is None
+                or same_concrete_session_id(self.history_base_thread_id, self.result.forked_from_id)
+                or not codex_totals_at_least(total, last)):
+            return
+        local_inherited = codex_total_delta(last, total)
+        if not (local_inherited.input or local_inherited.cached or local_inherited.output):
+            return
+        if (not codex_totals_at_least(local_inherited, self.inherited_totals)
+                or codex_totals_equal(local_inherited, self.inherited_totals)):
+            return
+        self.inherited_totals = local_inherited
+        self.remaining_inherited_totals = local_inherited
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift handleSessionMetadata (4396–4440).
+    def handle_session_metadata(self, metadata):
+        if self.did_capture_leaf_metadata:
+            if not same_concrete_session_id(metadata.get('session_id'), self.result.session_id):
+                return
+            if self.result.forked_from_id is None and metadata.get('forked_from_id') is not None:
+                self.result.forked_from_id = metadata['forked_from_id']
+                self.fork_timestamp = metadata.get('fork_ts') if metadata.get('fork_ts') is not None else self.fork_timestamp
+                self.configure_fork_accounting_if_ready()
+            if self.project_path is None:
+                self.project_path = metadata.get('project_path')
+            if self.subagent_history_start_ordinal is None:
+                self.subagent_history_start_ordinal = metadata.get('history_start_ordinal')
+            if self.history_base_thread_id is None:
+                self.history_base_thread_id = metadata.get('history_base_thread_id')
+            return
+        self.did_capture_leaf_metadata = True
+        self.result.session_id = metadata.get('session_id')
+        self.result.forked_from_id = metadata.get('forked_from_id')
+        self.history_base_thread_id = metadata.get('history_base_thread_id')
+        self.fork_timestamp = metadata.get('fork_ts')
+        self.project_path = metadata.get('project_path')
+        self.subagent_history_start_ordinal = metadata.get('history_start_ordinal')
+        self.is_subagent_thread = metadata.get('is_subagent', False)
+        self.configure_fork_accounting_if_ready()
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift handleTokenCount (4442–4654).
+    def handle_token_count(self, observation):
+        timestamp, model_evidence, turn_id, raw_last, raw_total = observation[4:]
+        if day_key_from_timestamp(timestamp) is None and day_key_from_parsed_iso(timestamp) is None:
+            return
+        model = _codex_model_evidence(self.current_model) or _codex_model_evidence(model_evidence) or 'unknown'
+        total = Totals(*raw_total) if raw_total is not None else None
+        last = Totals(*raw_last) if raw_last is not None else None
+        if self.suppress_unowned_copied_prefix or self.result.has_unresolved_fork_baseline:
+            return
+        if total is not None and last is not None:
+            self.raise_inherited_baseline_if_continued_counter(total, last)
+
+        # CodexBar 3bbf6bc48: CostUsageScanner.swift adjustedLastDelta (4475–4500).
+        def adjusted_last_delta(raw_delta):
+            remaining = self.remaining_inherited_totals
+            if remaining is None:
+                return raw_delta
+            adjusted = Totals(max(0, raw_delta.input - remaining.input),
+                max(0, raw_delta.cached - remaining.cached), max(0, raw_delta.output - remaining.output),
+                codex_subtract_optional(raw_delta.reasoning, remaining.reasoning))
+            remaining = Totals(max(0, remaining.input - raw_delta.input),
+                max(0, remaining.cached - raw_delta.cached), max(0, remaining.output - raw_delta.output),
+                codex_subtract_optional(remaining.reasoning, raw_delta.reasoning))
+            self.remaining_inherited_totals = remaining if remaining.input or remaining.cached or remaining.output else None
+            return adjusted
+
+        if total is not None and self.inherited_totals is not None:
+            total = Totals(max(0, total.input - self.inherited_totals.input),
+                max(0, total.cached - self.inherited_totals.cached), max(0, total.output - self.inherited_totals.output),
+                codex_subtract_optional(total.reasoning, self.inherited_totals.reasoning))
+        if total is not None:
+            if self.tracker.is_seen(total):
+                return
+            stale = self.tracker.watermark if self.tracker.watermark is not None else self.raw_totals_baseline
+            if stale is not None and codex_looks_like_stale_regression(total, stale, last if last is not None else Totals(0, 0, 0)):
+                return
+            self.tracker.latch_if_below_watermark(total)
+        watermark = self.tracker.watermark if self.tracker.watermark is not None else self.raw_totals_baseline
+        try:
+            # CodexBar 3bbf6bc48: CostUsageScanner.swift totalsDerivedDelta (4523–4537).
+            def totals_derived_delta(current):
+                if self.tracker.saw_interleaved_totals:
+                    return codex_contained_total_delta(watermark, self.previous_totals, current)
+                if self.saw_divergent_totals:
+                    return codex_divergent_total_delta(watermark, self.previous_totals, current)
+                return codex_total_delta(watermark, current)
+
+            # CodexBar 3bbf6bc48: CostUsageScanner.swift commitDelta (4539–4554).
+            def commit_delta(delta, raw_baseline):
+                previous = self.previous_totals if self.previous_totals is not None else Totals(0, 0, 0, 0 if delta.reasoning is not None else None)
+                self.previous_totals = codex_add_totals(previous, delta)
+                self.raw_totals_baseline = raw_baseline
+                if not codex_totals_equal(raw_baseline, self.previous_totals):
+                    self.saw_divergent_totals = True
+
+            if total is not None and self.result.forked_from_id is not None:
+                delta = (codex_post_latch_event_delta(watermark, self.previous_totals, total,
+                            adjusted_last_delta(last) if last is not None else None)
+                         if self.tracker.saw_interleaved_totals else totals_derived_delta(total))
+                commit_delta(delta, total)
+                self.remaining_inherited_totals = None
+            elif last is not None:
+                had_remaining = self.remaining_inherited_totals is not None
+                delta = adjusted_last_delta(last)
+                if total is not None:
+                    if self.tracker.saw_interleaved_totals:
+                        delta = codex_post_latch_event_delta(watermark, self.previous_totals, total, delta)
+                        self.remaining_inherited_totals = None
+                    else:
+                        total_delta = codex_total_delta(watermark, total)
+                        if not had_remaining and codex_should_prefer_total_delta(watermark, total, total_delta, last, self.saw_divergent_totals):
+                            delta = total_delta
+                            self.remaining_inherited_totals = None
+                    commit_delta(delta, total)
+                else:
+                    previous = self.previous_totals if self.previous_totals is not None else Totals(0, 0, 0, 0 if delta.reasoning is not None else None)
+                    counted = codex_add_totals(previous, delta)
+                    self.previous_totals = counted
+                    self.raw_totals_baseline = counted
+                    self.tracker.raise_watermark(counted)
+            elif total is not None:
+                delta = totals_derived_delta(total)
+                commit_delta(delta, total)
+                self.remaining_inherited_totals = None
+            else:
+                return
+            if not (delta.input or delta.cached or delta.output):
+                return
+            self.append_row(observation, timestamp, model, turn_id if turn_id is not None else self.current_turn_id,
+                            delta, 'token_count')
+        finally:
+            if total is not None:
+                self.tracker.commit_observed(total)
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift processFastLine (4663–4685).
+    def process_fast_line(self, observation):
+        tag = observation[0]
+        if tag == 'M':
+            self.handle_session_metadata(observation[4])
+        elif tag in ('C', 'XC'):
+            model = observation[5] if tag == 'C' else observation[3]
+            if model is not None:
+                self.current_model = model.get('set')
+                self.result.model_timeline.append((observation[1], self.current_model))
+        elif tag == 'S':
+            self.current_turn_id = observation[4]
+        elif tag == 'T':
+            self.handle_token_count(observation)
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift routeFastLine (4726–4755).
+    def route_fast_line(self, observation):
+        if observation[0] == 'T' and (observation[7] is not None or observation[8] is not None):
+            self.result.token_snapshots.append((observation[4],
+                Totals(*observation[7]) if observation[7] is not None else None,
+                Totals(*observation[8]) if observation[8] is not None else None))
+        if self.pending_subagent_lines is not None:
+            self.pending_subagent_lines.append(observation)
+        else:
+            self.process_fast_line(observation)
+            if self.result.has_unresolved_fork_baseline:
+                if self.result.buffered_unresolved_fork_lines is None:
+                    self.result.buffered_unresolved_fork_lines = []
+                self.result.buffered_unresolved_fork_lines.append(observation)
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift explicitOwnedSuffix closure (5079–5127).
+    def explicit_owned_suffix(self, start_ordinal):
+        if start_ordinal is None:
+            return None
+        pending = self.pending_subagent_lines
+        first_owned = next((line for line in pending if line[3] is not None and line[3] >= start_ordinal), None)
+        if first_owned is None:
+            return None
+        inherited_total = None
+        for line in pending:
+            if line[3] is not None and line[3] >= start_ordinal:
+                break
+            if line[0] == 'T' and line[8] is not None:
+                inherited_total = Totals(*line[8])
+        first_owned_token = None
+        for line in pending:
+            if line[0] != 'T' or line[3] is None or line[3] < start_ordinal:
+                continue
+            total = Totals(*line[8]) if line[8] is not None else None
+            last = Totals(*line[7]) if line[7] is not None else None
+            if (total is not None and inherited_total is not None
+                    and (codex_totals_equal(total, inherited_total)
+                         or totals_contain_usage(inherited_total) and codex_totals_equal(total, last)
+                         and codex_totals_at_least(total, inherited_total))):
+                inherited_total = total
+                continue
+            if total is not None or last is not None:
+                first_owned_token = line
+                break
+        inferred_total = None
+        if first_owned_token is not None:
+            total = Totals(*first_owned_token[8]) if first_owned_token[8] is not None else None
+            last = Totals(*first_owned_token[7]) if first_owned_token[7] is not None else None
+            if total is not None and last is not None:
+                inferred_total = codex_total_delta(last, total)
+            elif total is None and last is not None:
+                inferred_total = Totals(0, 0, 0)
+        baseline = inferred_total if inferred_total is not None else inherited_total
+        if baseline is None:
+            return None
+        return OwnedSuffix(first_owned[2], baseline,
+                           first_owned_token[2] if first_owned_token is not None else sys.maxsize)
+
+    # CodexBar 3bbf6bc48: CostUsageScanner.swift EOF classification/replay block (5016–5210).
+    def classify_and_replay_subagent(self):
+        pending = self.pending_subagent_lines
+        for line in pending:
+            if line[0] != 'M' or not same_concrete_session_id(line[4].get('session_id'), self.result.session_id):
+                continue
+            metadata = line[4]
+            if self.result.forked_from_id is None and metadata.get('forked_from_id') is not None:
+                self.result.forked_from_id = metadata['forked_from_id']
+                self.fork_timestamp = metadata.get('fork_ts') if metadata.get('fork_ts') is not None else self.fork_timestamp
+            if self.project_path is None:
+                self.project_path = metadata.get('project_path')
+            if self.subagent_history_start_ordinal is None:
+                self.subagent_history_start_ordinal = metadata.get('history_start_ordinal')
+        observations = [line for line in pending if line[0] != 'S']
+        shape = classify_subagent_rollout(self.result.session_id, observations, self.result.forked_from_id is not None)
+        self.subagent_counter_semantics = shape.counter_semantics
+        if self.result.forked_from_id is None:
+            self.result.forked_from_id = shape.inferred_parent_session_id
+        start_ordinal = self.subagent_history_start_ordinal
+        if start_ordinal is not None and start_ordinal < 0:
+            start_ordinal = None
+        explicit_suffix = self.explicit_owned_suffix(start_ordinal)
+        has_explicit_boundary = start_ordinal is not None
+        owned_suffix = explicit_suffix if has_explicit_boundary else shape.owned_suffix
+        if has_explicit_boundary:
+            self.subagent_counter_semantics = 'copied_prefix'
+        elif shape.owned_suffix_candidate is not None:
+            candidate = shape.owned_suffix_candidate
+            if candidate.is_locally_confirmed:
+                self.subagent_counter_semantics = 'copied_prefix'
+                owned_suffix = candidate.owned_suffix
+            elif self.result.forked_from_id is not None:
+                self.candidate_boundary_depends_on_parent_totals = True
+                if self.resolver is not None:
+                    status, parent_totals = self.resolver.inherited_totals(self.result.forked_from_id, self.fork_timestamp or '')
+                    if status == 'resolved' and codex_totals_equal(parent_totals, candidate.parent_totals_at_boundary):
+                        self.subagent_counter_semantics = 'copied_prefix'
+                        owned_suffix = candidate.owned_suffix
+                        self.parent_confirmed_local_boundary = True
+        self.uses_local_subagent_boundary = has_explicit_boundary or owned_suffix is not None
+        self.suppress_unowned_copied_prefix = (self.subagent_counter_semantics == 'copied_prefix'
+            and owned_suffix is None and (has_explicit_boundary or self.result.forked_from_id is None))
+        if owned_suffix is not None:
+            self.previous_totals = None
+            self.raw_totals_baseline = owned_suffix.raw_totals_baseline
+            self.saw_divergent_totals = False
+            self.tracker = CodexTotalsTracker(watermark=owned_suffix.raw_totals_baseline)
+            self.current_model = None
+            self.current_turn_id = None
+            physical_line = next(line[1] for line in pending if line[2] == owned_suffix.start_line_index)
+            # Task15 attribution uses physical positions and excludes prefix models.
+            self.result.model_timeline = [(physical_line - 0.5, None)]
+        self.configure_fork_accounting_if_ready()
+        for line in pending:
+            if owned_suffix is not None and line[2] < owned_suffix.start_line_index:
+                continue
+            if (line[0] == 'T' and owned_suffix is not None and owned_suffix.first_token_line_index is not None
+                    and line[2] < owned_suffix.first_token_line_index):
+                continue
+            self.process_fast_line(line)
+
+    # CodexBar 3bbf6bc48: parseCodexFileCancellable pre-pass and return (4698–5264).
+    def parse(self):
+        for observation in self.stream['observations']:
+            if observation[0] == 'P':
+                self.handle_session_metadata(observation[1])
+                if self.is_subagent_thread:
+                    self.pending_subagent_lines = []
+            elif observation[0] == 'B':
+                self.handle_bare_usage(observation)
+            elif observation[0] == 'XC':
+                # onLine truncated context (4783–4795) routes nil ordinal/timestamp.
+                self.route_fast_line(['C', observation[1], observation[2], None, None, observation[3]])
+            elif observation[0] == 'XM':
+                if self.pending_subagent_lines is not None:
+                    self.route_fast_line(['M', observation[1], observation[2], None,
+                                          {'session_id': observation[3]}])
+            else:
+                self.route_fast_line(observation)
+        if self.pending_subagent_lines is not None and not self.stream['unconsumed_tail']:
+            self.classify_and_replay_subagent()
+        self.result.buffered_subagent_lines_retained = bool(self.pending_subagent_lines) and (
+            self.stream['unconsumed_tail'] or self.result.has_unresolved_fork_baseline)
+        if (self.result.session_id is not None and self.result.forked_from_id is not None
+                and not self.is_subagent_thread and self.fork_baseline_resolved
+                and not self.result.has_unresolved_fork_baseline):
+            self.result.fork_accounting_state = {
+                'metadata': {'session_id': self.result.session_id, 'forked_from_id': self.result.forked_from_id,
+                             'fork_ts': self.fork_timestamp, 'history_base_thread_id': self.history_base_thread_id},
+                'inherited_totals': self.inherited_totals,
+                'remaining_inherited_totals': self.remaining_inherited_totals}
+        self.result.depends_on_parent = (self.result.forked_from_id is not None
+            and (self.candidate_boundary_depends_on_parent_totals
+                 or self.subagent_counter_semantics != 'independent' and not self.uses_local_subagent_boundary))
+        if not self.result.has_unresolved_fork_baseline:
+            self.result.buffered_unresolved_fork_lines = None
+        return self.result
+
+
+# CodexBar 3bbf6bc48: CostUsageScanner.swift parseCodexFileCancellable (4177–5264).
+def parse_codex_usage(stream: TokenStream, *, resolver: InheritedTotalsResolver | None) -> CodexUsageResult:
+    return _CodexUsageParser(stream, resolver).parse()
+
+
+# Shared cold accounting adapter; CostUsageScanner.swift @ 3bbf6bc48, A4#6–7.
+def account_logs(records: Iterable[dict]) -> dict[str, CodexUsageResult]:
+    records = list(records)
+    streams = {}
+    # A4#6: native mtime precision, path tie-break; size never selects a parent.
+    for record in sorted(records, key=lambda record: (-record['key']['mtime_ns'], record['key']['path'])):
+        stream = record['token_stream']
+        observations = stream['observations']
+        session_id = observations[0][1].get('session_id') if observations and observations[0][0] == 'P' else None
+        if session_id is not None and session_id not in streams:
+            streams[session_id] = stream
+    resolver = InheritedTotalsResolver(streams)
+    results = {}
+    for index, record in enumerate(records):
+        result = parse_codex_usage(record['token_stream'], resolver=resolver)
+        result.rows = [UsageRow(index, row.line, row.event_index, row.turn_id, row.ts,
+                        row.at_ms, row.timestamp_unix_ms, row.day_key, row.model_raw,
+                        row.model, row.input, row.cached, row.output, row.reasoning, row.kind)
+                       for row in result.rows]
+        results[record['key']['path']] = result
+    return results
+
+
 # ===== 14. Pricing port =====
 # Library compatibility for String.range's non-ASCII regex path: Swift matches
 # numeric Characters, while NSRegularExpression matches scalar decimal digits.

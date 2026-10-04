@@ -225,3 +225,67 @@ download, upstream checkout or binary is a test-suite dependency.
 Copyright © 1991–2026 Unicode, Inc.; the Unicode License V3 copyright and
 permission notice is included beside the data in the launcher so standalone
 copies retain it. The source text is [Unicode License V3](https://www.unicode.org/license.txt).
+
+## Task 14 — fallback token accounting
+
+Every function below follows `steipete/CodexBar` at `3bbf6bc48`. The stored
+reference outputs are immutable. The harness copies inputs into temporary
+homes, restores their recorded mtimes and applies each reference's bucket zone.
+Rows are compared in emission order before independent model/day totals.
+
+| Python function or type | Upstream file and function | Treatment |
+| --- | --- | --- |
+| `Totals`, `ForkBaseline` | `CostUsageScanner.swift`, `CodexForkBaseline` and `CostUsageCodexTotals` consumers (431–667) | Frozen totals and tagged tuple representation. |
+| `codex_totals_equal` | `CostUsageScanner.swift`, `codexTotalsEqual` (436–438) | Port. |
+| `codex_totals_at_least`, `codex_totals_at_most` | `CostUsageScanner.swift`, `codexTotalsAtLeast`, `codexTotalsAtMost` (440–446) | Port. |
+| `codex_looks_like_stale_regression` | `CostUsageScanner.swift`, `codexLooksLikeStaleRegression` (448–475) | Port. |
+| `codex_should_prefer_total_delta` | `CostUsageScanner.swift`, `codexShouldPreferTotalDelta` (477–489) | Port. |
+| `codex_add_totals`, `codex_min_totals`, `codex_max_totals` | `CostUsageScanner.swift`, `codexAddTotals`, `codexMinTotals`, `codexMaxTotals` (491–513, 553–564) | Port. |
+| `codex_total_delta` | `CostUsageScanner.swift`, `codexTotalDelta` (515–529) | Port. |
+| `codex_divergent_total_delta` | `CostUsageScanner.swift`, `codexDivergentTotalDelta` (531–551) | Port. |
+| `codex_contained_total_delta` | `CostUsageScanner.swift`, `codexContainedTotalDelta` (573–596) | Port. |
+| `codex_add_optional`, `codex_min_optional`, `codex_max_optional`, `codex_subtract_optional` | `CostUsageScanner.swift`, `codexAddOptional`, `codexMinOptional`, `codexMaxOptional`, `codexSubtractOptional` (598–620) | Port. |
+| `codex_optional_delta`, `codex_divergent_optional_delta`, `codex_contained_optional_delta` | `CostUsageScanner.swift`, `codexOptionalDelta`, `codexDivergentOptionalDelta`, `codexContainedOptionalDelta` (622–647) | Port. |
+| `codex_post_latch_event_delta` | `CostUsageScanner.swift`, `codexPostLatchEventDelta` (654–666) | Port. |
+| `CodexTotalsTracker.__init__`, `is_seen`, `latch_if_below_watermark`, `commit_observed`, `raise_watermark` | `CostUsageScanner.swift`, `CodexTotalsTracker.init`, `isSeen`, `latchIfBelowWatermark`, `commitObserved`, `raiseWatermark` (669–723) | Port; `SEEN_RAW_TOTALS_LIMIT = 64`. |
+| `CodexSnapshotAccumulator.__init__`, `state`, `apply` | `CostUsageScanner.swift`, `CodexSnapshotAccumulator.init`, `state`, `apply` (725–855) | Port; accumulator state uses Python keys. |
+| `InheritedTotalsResolver.inherited_totals` | `CostUsageScanner.swift`, `CodexInheritedTotalsResolver.inheritedTotals(for:atOrBefore:)` (1692–1734) | Port cutoff and recursion guard over cached streams. |
+| `InheritedTotalsResolver.inherited_totals_from` | `CostUsageScanner.swift`, private `inheritedTotals(from:cutoffTimestamp:cutoffDate:)` (1736–1792) | Port; replay from the first snapshot, without checkpoints or a monotonic fast path. |
+| `InheritedTotalsResolver.snapshot_resolution` | `CostUsageScanner.swift`, `snapshotResolution`, `cachedSnapshotResolution` (1847–2003); `CostUsageScanner+ForkCoverage.swift`, `isUnresolvedMissingParentFork` (43–46); `CostUsageScanner+CacheHelpers.swift`, `codexForkBaselineDependencyKey` (1297–1308); `CostUsageCacheModels.swift`, `hasBufferedCodexForkRetryLines` (381–391) | Adapt production resolution to a per-session memo; assert the stream key matches parsed identity. Missing-parent diagnostics use `missing`. |
+| `classify_subagent_session_ids` | `CodexSubagentRolloutShape.swift`, `classify(leafSessionID:observedSessionIDs:)` (41–58) | Port the metadata overload separately. |
+| `classify_subagent_rollout` | `CodexSubagentRolloutShape.swift`, `classify(leafSessionID:observations:hasExplicitParent:)` (60–207) | Port; observations use upstream `uidx` positions. |
+| `same_concrete_session_id`, `totals_contain_usage`, `normalized_session_id` | `CodexSubagentRolloutShape.swift`, `sameConcreteSessionID`, `totalsContainUsage`, `normalizedSessionID` (209–227) | Port; canonical Swift string equality is represented with NFC for identity comparisons. |
+| `RolloutShape`, `OwnedSuffix`, `OwnedSuffixCandidate` | `CodexSubagentRolloutShape.swift`, nested result structs (14–38) | Dataclass representation. |
+| `_CodexUsageParser`, `parse_codex_usage` | `CostUsageScanner.swift`, `parseCodexFileCancellable` (4177–5264) | A small class retains the closure's mutable locals; consume cached observations instead of file bytes. |
+| `_CodexUsageParser.unix_milliseconds`, `_round_swift_ms` | `CostUsageScanner.swift`, nested `unixMilliseconds` (4262–4267) | Port rounded parsed-Date milliseconds. |
+| `_CodexUsageParser.handle_bare_usage` | `CostUsageScanner.swift`, nested `handleBareUsage` (4279–4307) | Port. |
+| `_CodexUsageParser.resolve_fork_baseline`, `configure_fork_accounting_if_ready` | `CostUsageScanner.swift`, nested `resolveForkBaseline`, `configureForkAccountingIfReady` (4326–4358) | Port. |
+| `_CodexUsageParser.raise_inherited_baseline_if_continued_counter` | `CostUsageScanner.swift`, nested `raiseInheritedBaselineIfContinuedCounter` (4365–4394) | Port. |
+| `_CodexUsageParser.handle_session_metadata` | `CostUsageScanner.swift`, nested `handleSessionMetadata` (4396–4440) | Port counter-relevant fields; display metadata is already owned by the FileRecord/assembly stages. |
+| `_CodexUsageParser.handle_token_count`, inner `adjusted_last_delta`, `totals_derived_delta`, `commit_delta` | `CostUsageScanner.swift`, nested `handleTokenCount`, `adjustedLastDelta`, `totalsDerivedDelta`, `commitDelta` (4442–4654) | Port. |
+| `_CodexUsageParser.process_fast_line`, `route_fast_line` | `CostUsageScanner.swift`, nested `processFastLine`, `routeFastLine` (4663–4685, 4726–4755) | Port over observations; bare usage remains outside the pending gate. |
+| `_CodexUsageParser.explicit_owned_suffix`, `classify_and_replay_subagent` | `CostUsageScanner.swift`, `explicitOwnedSuffix` closure and EOF classification/replay (5016–5210) | Port; retain the unconsumed-tail gate and nonempty retry-buffer facts. |
+| `_CodexUsageParser.append_row`, `UsageRow`, `CodexUsageResult` | `CostUsageScanner.swift`, emitted rows and parse return (4290–4303, 4635–4654, 5220–5264) | Adapt row positions and result representation. Reset model timeline at the owned suffix's physical line minus 0.5; discard unreplayed prefix models. |
+| `account_logs` | `CostUsageScanner.swift`, parent file index and cold parsing; A4 items 6–7 | One shared resolver for every record, including header-only parents. Newest native mtime selects a duplicate parent, with ascending path ties. Meta-less files remain accounting inputs but never parent sources. |
+| `date_from_timestamp` | `CostUsageScanner+Timestamp.swift`, `dateFromTimestamp`, `parseISO`, `parseNativeRFC3339`, `parseHistoricalISO` (22–89) | Port native branch selection before historical formatter compatibility; display parsing is unchanged. |
+| `day_key_from_timestamp`, `day_key_from_parsed_iso`, `_codex_local_day_key` | `CostUsageScanner+Timestamp.swift`, `dayKeyFromTimestamp`, `dayKeyFromParsedISO` (104–187); `CostUsageModels.swift`, `CostUsageLocalDay`, `CostUsageLocalDayKeyMemo` (1573–1661) | Port local Gregorian-calendar buckets; return both key and fallback instant. Preserve Julian cutover and year-of-era rendering. |
+| `_codex_historical_zone_offset` | Apple ICU 76.1, `tzfmt.cpp`, `parseOffsetISO8601`, `parseAsciiOffsetFields`, `parseAbuttingAsciiOffsetFields`, localized/default offset parsers | Library compatibility for the pinned historical formatter; bounded prefix consumption rather than strict RFC3339 validation. |
+| All-history rows | `CostUsageScanner.swift`, `CostUsageDayRange` calls in `parseCodexFileCancellable` | Adaptation: omit day-range filtering. |
+| Cold stream replay | `CostUsageScanner.swift`, `parseCodexFileCancellable` append-resume parameters and token-index checkpoints | Adaptation: no byte resume state or initial accounting state; changed logs reparse from the beginning. |
+| On-demand lineage resolution | `CostUsageScanner.swift`, incremental refresh budget, parent queue/retries; A4 item 7 | Adaptation: no scan budget, parent queue or file-order dependence. `b10` includes the verified `b04` grandchild counters on `b10`'s dates. |
+
+The historical zone compatibility source is
+[Apple ICU `tzfmt.cpp`](https://raw.githubusercontent.com/apple-oss-distributions/ICU/9e80977766f830c93e3cdae3d5628997e1a61b63/icu/icu4c/source/i18n/tzfmt.cpp).
+As with Task 7's numeric/calendar slice, standalone synthetic Foundation probes
+corroborate this library behavior outside the repository. The suite depends
+only on stored reference outputs and hand-derived assertions.
+
+No additional token-accounting deviation was introduced. The source's pending
+subagent gate and explicit-boundary suppression govern `s04` and `s07`; those
+approved suppressed totals remain suppressed. Costs and priority are outside
+Task 14's comparisons.
+
+Resolver dependency state remains keyed by parent session. The empty-cutoff
+guard returns unresolved before updating that state, so an earlier resolved
+key remains resolved (`CostUsageScanner.swift` 1698–1703). The port preserves
+that source behavior instead of replacing it with stricter per-parse state.

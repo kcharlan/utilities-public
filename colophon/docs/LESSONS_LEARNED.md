@@ -329,3 +329,22 @@
   chain. Codex pricing targets append normalized OpenAI fallback after the
   target resolver returns, including when its result is empty. Regression:
   `test_normalized_target_fallback_survives_resolver_rejection`.
+- A harness must relativize cached log paths against the same lexical path key
+  as discovery: macOS `/private/var/` keys become `/var/`. Normalize only that
+  root with `codex_path_key`; resolving arbitrary symlinks would change the
+  contract. Regression: all staged token-case comparisons in
+  `tests/test_token_port.py` exercise copied temporary homes.
+- A display timestamp parser cannot select an accounting timestamp branch.
+  `parseNativeRFC3339` requires uppercase `T`, a year at least 1900, and no
+  more than nine fraction digits. Historical parsing then preserves ICU's
+  fraction arithmetic, Julian cutover, era years, and offset-prefix parsing.
+  Select that source branch before reusing strict native conversion; render
+  accounting days with the same hybrid Gregorian calendar. Regression:
+  `test_accounting_timestamp_source_chain` pins six originally failing edges,
+  plus named-offset and invalid-fixed-zone behavior.
+- Compact stream tags can have different positional layouts. A truncated
+  context's `XC[3]` is model evidence, while a regular line's slot 3 is its
+  ordinal. Expand `XC` into a routed context with null timestamp and ordinal
+  before suffix classification; never compare its model dictionary to an
+  integer. Regression:
+  `test_truncated_context_has_no_ordinal_in_explicit_subagent_suffix`.
