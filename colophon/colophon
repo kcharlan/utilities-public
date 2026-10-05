@@ -8226,11 +8226,13 @@ PAGE_JS = r"""
         copyArea.setAttribute("data-copy-fallback", ""); copyArea.replaceChildren(field, el("span", {text: "press ⌘C"})); field.focus(); field.select();
       }
     };
-    const kind = !row.kind || row.kind === "orphan" ? "subagent" : row.archived ? "archived" : "live";
+    const lifecycle = row.archived ? "archived" : "live";
+    const isSubagent = !row.kind || row.kind === "orphan";
+    const supports = action => action[lifecycle] && (!isSubagent || action.subagent);
     header.append(el("div", {class: "reader-buttons"},
-      ...(data.meta.links.open_in_codex[kind] ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
+      ...(supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
         onkeydown: event => {if (event.key === " ") {event.preventDefault(); event.currentTarget.click();}}})] : []),
-      ...(data.meta.links.continue_in_cli[kind] ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy("codex resume " + row.id)})] : []),
+      ...(supports(data.meta.links.continue_in_cli) ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy("codex resume " + row.id)})] : []),
       el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)}), el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})), copyArea);
     const stat = (key, label, value, text, sub, tooltip) => el("div", {class: "reader-stat", "data-reader-stat": key, title: tooltip},
       el("span", {class: "kpi-label", text: label}), el("div", {class: "reader-stat-value", "data-value": value, text}), el("div", {class: "reader-stat-sub", text: sub}));

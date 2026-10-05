@@ -866,3 +866,24 @@
 - Classify the CLI's named top-level Double cost fields as money as well as its
   nested cost fields. Apply the existing monetary tolerance without changing
   exact token comparisons or accepting invalid/unknown monetary values.
+
+- Native action support must follow tested versions and cases. Archived viewing
+  required unarchive, and direct CLI resume of an unloaded multi-agent v2
+  subagent failed in the tested cases; hide those actions without generalizing
+  to all historical agents. Read-only access to a desktop-owned live session
+  does not prove writable continuation. Respect tool safety denials and retain
+  separately recorded human observations as acceptance evidence. Regressions:
+  `test_recursive_schema_and_usage_invariants` and
+  `test_production_link_support_preserves_reader_actions`.
+- A standalone copy's matching bytes, modes and installed version establish
+  that artifact's deployment, not synchronization of the whole fleet. Report
+  every read-only audit finding and diagnose without modifying deployments;
+  require separate approval before repairing another deployment or removing
+  its stale files.
+- Lifecycle and agent identity are independent action restrictions. Selecting
+  one category let archived linked and orphaned agents bypass the archived
+  Open gate; giving archive precedence would instead bypass their CLI gate.
+  Require every applicable support flag and test the intersections with actual
+  compiled synthetic rows, including contradictory flags. Regressions:
+  `test_production_actions_apply_archive_and_agent_restrictions` and
+  `test_each_applicable_support_flag_can_hide_agent_action`.

@@ -567,6 +567,73 @@ def test_production_link_support_preserves_reader_actions(page_for,colophon,tmp_
         assert page.evaluate('window.syntheticCopied') == value
 
 
+def compile_action_fixture(colophon, root, kind, archived):
+    home = CodexHome(root)
+    ids = ['synthetic-root'] if kind=='primary' else ['synthetic-root','synthetic-child'] if kind=='linked' else ['synthetic-child']
+    records = []
+    selected_id = 'synthetic-root' if kind=='primary' else 'synthetic-child'
+    for identifier in ids:
+        fields = {} if identifier=='synthetic-root' else {'parent_thread_id':'synthetic-root','depth':1}
+        path = (home.log(identifier).meta(**fields).task_started().turn_context(model='gpt-5.4')
+            .user_item().usage_record(usage={'input_tokens':100,'output_tokens':10})
+            .agent_item().task_complete().write())
+        records.append(colophon.parse_log_file(path,size=path.stat().st_size,
+            mtime_ns=path.stat().st_mtime_ns,archived=archived and identifier==selected_id))
+    metadata = colophon.CodexMetadata()
+    corpus = colophon.build_corpus(records,metadata,NOW)
+    colophon.link_subagents(corpus,metadata,NOW)
+    workspaces = colophon.resolve_workspaces(corpus,[])
+    colophon.compose_usage(corpus,colophon.PriorityTurns({},[]))
+    report = colophon.price_units(corpus,colophon.PriceHistory([entry('gpt-5.4')],[]),None,costs_available=True)
+    payload = colophon.build_payload(corpus,workspaces,report,{'generated_at_ms':NOW,'codex_home':root,
+        'logs':len(records),'parsed':len(records),'cached':0,
+        'catalog':colophon.CatalogResult('offline',None,None,None,[]),'metadata_errors':[],
+        'costs_available':True,'costs_reason':None,'ledger':[],'workspaces_file':[]})
+    row = payload['subagents'][selected_id] if kind=='linked' else next(row for row in payload['sessions'] if row['id']==selected_id)
+    assert row['archived'] is archived
+    assert row.get('kind') == {'primary':'session','linked':None,'orphan':'orphan'}[kind]
+    return payload,row
+
+
+@pytest.mark.parametrize('archived',[False,True],ids=['live','archived'])
+@pytest.mark.parametrize('kind',['primary','linked','orphan'])
+def test_production_actions_apply_archive_and_agent_restrictions(page_for,colophon,tmp_path,kind,archived):
+    payload,row = compile_action_fixture(colophon,tmp_path/'synthetic-action-source',kind,archived)
+    page = page_for(payload,hash='#v=session&p=all&s='+row['id'],
+        init_script='Object.defineProperty(navigator,"clipboard",{value:{writeText:async value=>{window.syntheticCopied=value}},configurable:true});')
+    reader = page.locator('[data-reader]')
+    codex_link = reader.get_by_role('link',name='Open in Codex')
+    if archived:
+        expect(codex_link).to_have_count(0)
+    else:
+        expect(codex_link).to_have_attribute('href','codex://threads/'+row['id'])
+    continuation = reader.get_by_role('button',name='Copy Continue in CLI — continues this session',exact=True)
+    if kind!='primary':
+        expect(continuation).to_have_count(0)
+    else:
+        continuation.click()
+        assert page.evaluate('window.syntheticCopied') == 'codex resume '+row['id']
+    for button,value in [('Copy session ID',row['id']),('Copy log path',row['log_path'])]:
+        reader.get_by_role('button',name=button,exact=True).click()
+        assert page.evaluate('window.syntheticCopied') == value
+
+
+@pytest.mark.parametrize('action,constant,role,label',[
+    ('open_in_codex','OPEN_IN_CODEX_SUPPORT','link','Open in Codex'),
+    ('continue_in_cli','CONTINUE_IN_CLI_SUPPORT','button','Copy Continue in CLI — continues this session')])
+@pytest.mark.parametrize('disabled',['lifecycle','subagent'])
+@pytest.mark.parametrize('archived',[False,True],ids=['live','archived'])
+@pytest.mark.parametrize('kind',['linked','orphan'])
+def test_each_applicable_support_flag_can_hide_agent_action(page_for,colophon,tmp_path,monkeypatch,kind,archived,disabled,action,constant,role,label):
+    support = dict(live=True,archived=True,subagent=True)
+    support['subagent' if disabled=='subagent' else 'archived' if archived else 'live'] = False
+    monkeypatch.setattr(colophon,constant,support)
+    payload,row = compile_action_fixture(colophon,tmp_path/'synthetic-conflicting-support',kind,archived)
+    assert payload['meta']['links'][action] == support
+    page = page_for(payload,hash='#v=session&p=all&s='+row['id'])
+    expect(page.locator('[data-reader]').get_by_role(role,name=label,exact=True)).to_have_count(0)
+
+
 @pytest.mark.parametrize('kind',['live','archived','subagent'])
 def test_link_support_constants_control_buttons_in_process(page_for,colophon,tmp_path,monkeypatch,kind):
     monkeypatch.setattr(colophon,'OPEN_IN_CODEX_SUPPORT',dict(live=True,archived=True,subagent=True,**{}))
