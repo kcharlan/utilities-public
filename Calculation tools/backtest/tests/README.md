@@ -7,12 +7,14 @@ financial assertions, barbell behavior and all three browser scenarios.
 ## Prerequisites
 
 From this project, use Node.js 24 or newer, the locked dependencies and
-managed Chromium:
+managed Chromium. Verified history comes from the owner's `npm run setup:data`;
+agents never run it (see the [project guide](../README.md)), so complete
+acceptance runs only where the owner has already prepared data:
 
 ```sh
 npm ci
 npx playwright install chromium
-npm run setup:data
+npm run setup:data   # owner only: may download workbooks
 ```
 
 `MARKET_ATLAS_DATA_HOME` defaults to `~/.cache/market-atlas`.
@@ -62,7 +64,8 @@ selector changes. Missing retained prerequisites fail.
 Flat-build and copy-deploy tests cover inventory/bytes, runtime modes,
 external boundaries, cold/warm/offline setup compatibility, private whole-tree
 backup, failed-copy restoration and no-write dry-run. Read-only audit fixtures
-cover source/data drift, missing inputs/targets and leftover runtime material.
+cover source drift, a missing target, missing or empty installed data and
+leftover runtime material; the audit checks installed data for presence only.
 Withdrawn immutable runtime releases, receipt/state machines, AST import proofs,
 strict native metadata admission and exact restoration tests were retired
 when the port adopted the flat copy lifecycle. Application,

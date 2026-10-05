@@ -1,0 +1,15 @@
+{
+  "name": "b04_fork_of_fork",
+  "description": "Grandparent, forked parent, forked child; both parents modified after the child.",
+  "day_utc": "2025-03-16",
+  "files": [
+    "sessions/2025/03/16/rollout-2025-03-16T09-00-26-01959e2e-7680-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/16/rollout-2025-03-16T09-30-36-01959e2e-7680-7000-8000-000000002000.jsonl",
+    "sessions/2025/03/16/rollout-2025-03-16T09-32-23-01959e2e-7680-7000-8000-000000003000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/16/rollout-2025-03-16T09-32-23-01959e2e-7680-7000-8000-000000003000.jsonl": 1742117543000,
+    "sessions/2025/03/16/rollout-2025-03-16T09-30-36-01959e2e-7680-7000-8000-000000002000.jsonl": 1742128836000,
+    "sessions/2025/03/16/rollout-2025-03-16T09-00-26-01959e2e-7680-7000-8000-000000001000.jsonl": 1742126426000
+  }
+}

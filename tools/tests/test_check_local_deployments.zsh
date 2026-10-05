@@ -90,6 +90,7 @@ AUDIT_STATUS=
 
 typeset -a COPY_MAPPINGS=(
   'abacus usage/de-abacus.py|de-abacus.py'
+  'colophon/colophon|colophon'
   'div_conv/div_conv|div_conv'
   'dloc/dloc|dloc'
   'docker/docker-disk-compact/docker-disk-compact.zsh|docker-disk-compact.zsh'
@@ -350,7 +351,6 @@ run_audit() {
       UTILITIES_SCRIPTS_DIR="$FIXTURE_SCRIPTS" \
       UTILITIES_LOCAL_ROOT="$FIXTURE_LOCAL" \
       UTILITIES_WEBROOT_DIR="$FIXTURE_HOME/invented web root" \
-      MARKET_ATLAS_DATA_HOME="$FIXTURE_HOME/invented data home" \
       /bin/zsh -f "$FIXTURE_REPO/tools/check_local_deployments.zsh"
   ) > "$AUDIT_STDOUT" 2> "$AUDIT_STDERR"; then
     AUDIT_STATUS=0
@@ -1477,7 +1477,16 @@ test_backtest_drift() {
   print 'invented drift' >> "$FIXTURE_HOME/invented web root/calculators/backtest/app.js"
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'backtest byte drift'
-  assert_contains "$AUDIT_STDERR" 'FAIL: backtest static audit unverified'
+  assert_contains "$AUDIT_STDERR" 'FAIL: backtest static audit unverified: backtest installed code differs from source'
+}
+# Market history is not redistributable and never acquired by the audit, which
+# runs without MARKET_ATLAS_DATA_HOME; a missing installed data pair is flagged by name.
+test_backtest_missing_data() {
+  new_fixture
+  mv -- "$FIXTURE_HOME/invented web root/calculators/backtest/market-data.csv" "$FIXTURE_ROOT/moved market data"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'backtest missing market data'
+  assert_contains "$AUDIT_STDERR" 'FAIL: backtest static audit unverified: backtest market data missing or empty in deployment'
 }
 test_backtest_source_inventory() {
   new_fixture
@@ -1487,6 +1496,7 @@ test_backtest_source_inventory() {
   assert_contains "$AUDIT_STDERR" 'FAIL: backtest static source inventory unverified'
 }
 test_backtest_drift
+test_backtest_missing_data
 test_backtest_source_inventory
 
 print -- "check_local_deployments tests: PASS"

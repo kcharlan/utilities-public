@@ -1,0 +1,13 @@
+{
+  "name": "c12_subagent_candidate_not_confirmed",
+  "description": "As c05, but the zero-usage opening snapshot does not equal the parent's totals; the opening snapshot still counts nothing (for these totals the rows equal c05's).",
+  "day_utc": "2025-04-04",
+  "files": [
+    "sessions/2025/04/04/rollout-2025-04-04T09-00-26-01960007-4a80-7000-8000-000000001000.jsonl",
+    "sessions/2025/04/04/rollout-2025-04-04T09-30-30-01960007-4a80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/04/04/rollout-2025-04-04T09-00-26-01960007-4a80-7000-8000-000000001000.jsonl": 1743757226000,
+    "sessions/2025/04/04/rollout-2025-04-04T09-30-30-01960007-4a80-7000-8000-000000002000.jsonl": 1743759030000
+  }
+}

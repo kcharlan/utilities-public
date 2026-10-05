@@ -1,0 +1,16 @@
+{
+  "name": "s05_subagent_no_ordinal",
+  "description": "Real non-fork depth-1 subagent without a start ordinal, and its parent.",
+  "files": [
+    "sessions/2025/06/02/rollout-2025-06-02T06-24-59-01972df0-1c01-7000-8000-000000000001.jsonl",
+    "sessions/2025/06/02/rollout-2025-06-02T06-30-24-01972df0-1c02-7000-8000-000000000002.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/06/02/rollout-2025-06-02T06-24-59-01972df0-1c01-7000-8000-000000000001.jsonl": 1748860280752,
+    "sessions/2025/06/02/rollout-2025-06-02T06-30-24-01972df0-1c02-7000-8000-000000000002.jsonl": 1748860251534
+  },
+  "scrub": {
+    "token_scale": 2,
+    "tool": "colophon/tests/tools/scrub_codex_logs.py"
+  }
+}

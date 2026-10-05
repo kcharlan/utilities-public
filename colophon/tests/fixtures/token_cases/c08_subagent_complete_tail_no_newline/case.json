@@ -1,0 +1,13 @@
+{
+  "name": "c08_subagent_complete_tail_no_newline",
+  "description": "As c07, but the final line is complete JSON without a newline.",
+  "day_utc": "2025-03-31",
+  "files": [
+    "sessions/2025/03/31/rollout-2025-03-31T09-00-26-0195eb6d-da80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/31/rollout-2025-03-31T09-30-26-0195eb6d-da80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/31/rollout-2025-03-31T09-00-26-0195eb6d-da80-7000-8000-000000001000.jsonl": 1743411626000,
+    "sessions/2025/03/31/rollout-2025-03-31T09-30-26-0195eb6d-da80-7000-8000-000000002000.jsonl": 1743413426000
+  }
+}

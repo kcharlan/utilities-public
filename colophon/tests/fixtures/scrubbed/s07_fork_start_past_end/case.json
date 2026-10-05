@@ -1,0 +1,16 @@
+{
+  "name": "s07_fork_start_past_end",
+  "description": "Real forked subagent (Jul/Aug 2026 format) whose start ordinal is past its last record, and its parent.",
+  "files": [
+    "archived_sessions/rollout-2025-06-02T09-18-38-01972df0-1c01-7000-8000-000000000001.jsonl",
+    "archived_sessions/rollout-2025-06-02T09-32-59-01972df0-1c02-7000-8000-000000000002.jsonl"
+  ],
+  "mtimes_ms": {
+    "archived_sessions/rollout-2025-06-02T09-32-59-01972df0-1c02-7000-8000-000000000002.jsonl": 1748871237220,
+    "archived_sessions/rollout-2025-06-02T09-18-38-01972df0-1c01-7000-8000-000000000001.jsonl": 1748874658686
+  },
+  "scrub": {
+    "token_scale": 2,
+    "tool": "colophon/tests/tools/scrub_codex_logs.py"
+  }
+}

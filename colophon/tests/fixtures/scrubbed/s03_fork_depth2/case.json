@@ -1,0 +1,18 @@
+{
+  "name": "s03_fork_depth2",
+  "description": "Real depth-2 forked subagent with owned usage, its depth-1 parent and the main session.",
+  "files": [
+    "archived_sessions/rollout-2025-06-02T19-21-12-01972df0-1c01-7000-8000-000000000001.jsonl",
+    "archived_sessions/rollout-2025-06-02T21-02-17-01972df0-1c02-7000-8000-000000000002.jsonl",
+    "archived_sessions/rollout-2025-06-02T21-22-12-01972df0-1c03-7000-8000-000000000003.jsonl"
+  ],
+  "mtimes_ms": {
+    "archived_sessions/rollout-2025-06-02T19-21-12-01972df0-1c01-7000-8000-000000000001.jsonl": 1748959970344,
+    "archived_sessions/rollout-2025-06-02T21-02-17-01972df0-1c02-7000-8000-000000000002.jsonl": 1748957849710,
+    "archived_sessions/rollout-2025-06-02T21-22-12-01972df0-1c03-7000-8000-000000000003.jsonl": 1748950121507
+  },
+  "scrub": {
+    "token_scale": 2,
+    "tool": "colophon/tests/tools/scrub_codex_logs.py"
+  }
+}

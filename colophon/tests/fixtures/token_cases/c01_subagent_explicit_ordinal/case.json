@@ -1,0 +1,13 @@
+{
+  "name": "c01_subagent_explicit_ordinal",
+  "description": "Subagent with subagent_history_start_ordinal: explicit owned suffix.",
+  "day_utc": "2025-03-24",
+  "files": [
+    "sessions/2025/03/24/rollout-2025-03-24T09-00-26-0195c761-5680-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/24/rollout-2025-03-24T09-30-46-0195c761-5680-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/24/rollout-2025-03-24T09-00-26-0195c761-5680-7000-8000-000000001000.jsonl": 1742806826000,
+    "sessions/2025/03/24/rollout-2025-03-24T09-30-46-0195c761-5680-7000-8000-000000002000.jsonl": 1742808646000
+  }
+}

@@ -14,7 +14,20 @@ creation; the default command is `python3.14` (override with `--python`).
 
 The public checkout contains application/compiler source and invented tests.
 Real workbooks, generated history, builds, exports and validation records stay
-outside Git and public artifacts. From this project directory:
+outside Git and public artifacts.
+
+**Market data is not redistributable.** No grant to redistribute the upstream
+workbooks or the history built from them was verified (see
+[DATA_SOURCES.md](DATA_SOURCES.md)). Never commit market data, builds or exports,
+and never publish a data-bearing build. Acquiring data is a manual step for the
+owner only. Agents must not run `npm run setup:data` (with or without
+`--refresh`) or `npm run build` without `--offline`, unless the owner explicitly
+asks: either can download workbooks and install the compiler's Python packages.
+The read-only fleet audit only checks that data is already installed in the
+webroot (see below). `npm run deploy` still needs a locally built, verified
+dataset, which the owner prepares.
+
+The owner prepares data and builds from this project directory:
 
 ```sh
 npm ci
@@ -104,16 +117,21 @@ Missing history/Chromium fails; history is never replaced by invented data.
 The synthetic subset is offline invented coverage, not historical acceptance.
 See the [test guide](tests/README.md) for prerequisites and installed acceptance.
 
-From the repository root, the read-only fleet audit compares the twelve
-installed files with validated Git source and selected external history:
+From the repository root, the read-only fleet audit compares the ten installed
+code and notice files byte-for-byte with validated Git source, and checks that
+the installed `market-data.js` and `market-data.csv` exist as regular, non-empty
+files:
 
 ```sh
 zsh tools/check_local_deployments.zsh
 ```
 
-Extra files, missing inputs and changed bytes fail as drift. A local history
-refresh requires rebuilding/redeploying. Audit does not download, build, repair
-or write deployment state. See the [deployment guide](../../docs/local_deployment_sync.md).
+The audit never reads the external data home, so it works on machines without
+local history, and it does not verify the data's content. A missing deployment,
+missing or empty data, extra or missing files and changed code each fail with a
+named reason. Refreshed local history is not reported as drift; rebuild and
+redeploy to install it. Audit does not download, build, repair or write
+deployment state. See the [deployment guide](../../docs/local_deployment_sync.md).
 
 The [architecture](docs/architecture.md) documents calculation behavior;
 [lessons](docs/LESSONS_LEARNED.md) explain privacy and validation boundaries.

@@ -1,0 +1,13 @@
+{
+  "name": "c11_depth2_boundary_under_dependent_parent",
+  "description": "Depth-2 subagent with its own turn_context + trigger boundary under an unresolved dependent parent.",
+  "day_utc": "2025-04-03",
+  "files": [
+    "sessions/2025/04/03/rollout-2025-04-03T09-10-16-0195fae0-ee80-7000-8000-000000002000.jsonl",
+    "sessions/2025/04/03/rollout-2025-04-03T09-30-41-0195fae0-ee80-7000-8000-000000003000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/04/03/rollout-2025-04-03T09-30-41-0195fae0-ee80-7000-8000-000000003000.jsonl": 1743672641000,
+    "sessions/2025/04/03/rollout-2025-04-03T09-10-16-0195fae0-ee80-7000-8000-000000002000.jsonl": 1743671416000
+  }
+}

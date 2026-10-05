@@ -10,7 +10,9 @@ retained snapshot identities and local-use restrictions.
 
 ## Setup and immutable local selection
 
-From the project directory, run `npm run setup:data`. Cold setup creates an
+The owner runs setup; agents never acquire data (see the
+[project guide](../README.md)). From the project directory, run
+`npm run setup:data`. Cold setup creates an
 external `.venv` with `python3.14 -m venv --copies`, installs the complete
 reviewed lock, acquires only missing official workbooks, compiles a private
 candidate and runs the historical acceptance gate. Use `--python EXECUTABLE`

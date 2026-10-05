@@ -145,10 +145,11 @@ local downtime is acceptable. There are no release receipts, state machines,
 parser proofs or exact metadata restoration requirements. Existing native
 attributes are accepted; shared ancestor permissions remain untouched.
 
-The [fleet helper](../../../tools/check_static_deployments.mjs) compares installed
-inventory/bytes with current source from validated Git membership and selected
-external data. Refreshing local data without redeployment reports drift. It
-does not acquire, build or repair. See the [operator guide](../README.md).
+The [fleet helper](../../../tools/check_static_deployments.mjs) compares the
+installed inventory and code/notice bytes with current source from validated Git
+membership. Market data is not redistributable, so the helper checks the
+installed data pair only for presence (regular, non-empty files) and never reads
+external data. It does not acquire, build or repair. See the [operator guide](../README.md).
 
 ## Source acceptance and installed entry
 

@@ -1,0 +1,13 @@
+{
+  "name": "c06_subagent_copied_prefix_no_suffix",
+  "description": "Embedded ancestor meta, no fork id, no boundary: unowned prefix suppressed.",
+  "day_utc": "2025-03-29",
+  "files": [
+    "sessions/2025/03/29/rollout-2025-03-29T09-00-26-0195e121-2280-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/29/rollout-2025-03-29T09-30-16-0195e121-2280-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/29/rollout-2025-03-29T09-30-16-0195e121-2280-7000-8000-000000002000.jsonl": 1743240616000,
+    "sessions/2025/03/29/rollout-2025-03-29T09-00-26-0195e121-2280-7000-8000-000000001000.jsonl": 1743238826000
+  }
+}

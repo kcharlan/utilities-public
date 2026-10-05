@@ -1,0 +1,13 @@
+{
+  "name": "c04_subagent_boundary_empty_line",
+  "description": "As c03, with an empty line between turn_context and the trigger record.",
+  "day_utc": "2025-03-27",
+  "files": [
+    "sessions/2025/03/27/rollout-2025-03-27T09-00-26-0195d6d4-6a80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/27/rollout-2025-03-27T09-30-41-0195d6d4-6a80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/27/rollout-2025-03-27T09-00-26-0195d6d4-6a80-7000-8000-000000001000.jsonl": 1743066026000,
+    "sessions/2025/03/27/rollout-2025-03-27T09-30-41-0195d6d4-6a80-7000-8000-000000002000.jsonl": 1743067841000
+  }
+}

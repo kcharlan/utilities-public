@@ -116,10 +116,11 @@ HTML, eight app modules, the data JS/CSV pair and the source notice. Build and
 browser operation work offline after setup. Real history, builds and backups
 stay outside the public checkout.
 
-From the child project, prepare data/build and review the dry-run:
+From the child project, the owner prepares data and builds (agents never run
+data acquisition; the data is not redistributable), then reviews the dry-run:
 
 ```sh
-npm run setup:data
+npm run setup:data   # owner only: may download workbooks
 npm run build -- --offline
 npm run deploy -- --dry-run --webroot "<WEBROOT>"
 ```
@@ -145,10 +146,14 @@ The canonical installed URL is
 remain a file browser. Installed acceptance checks all original browser scenarios
 and compares served HTML/scripts/notice/CSV with source/selected pair bytes.
 
-The [read-only helper](../tools/check_static_deployments.mjs) compares the twelve
-installed files with source from the fleet's validated Git inventory and the
-selected external dataset. Extra files, missing inputs and changed bytes fail
-as drift. It does not acquire, build, repair or write state. The
+The [read-only helper](../tools/check_static_deployments.mjs) compares the ten
+installed code and notice files with source from the fleet's validated Git
+inventory. Market data is not redistributable and never enters the repository,
+so the helper checks the installed `market-data.js`/`market-data.csv` pair only
+for presence (regular, non-empty files) and never reads the external dataset.
+A missing deployment, missing or empty data, extra or missing files and changed
+code fail with a named reason. It does not acquire, build, repair or write
+state; agents never run data acquisition (see the project guide). The
 [isolated tests](../tools/tests/check_static_deployments.test.mjs) use invented
 history. No release manifests, receipts, parser or metadata restoration
 framework is required for this single-owner localhost deployment.
@@ -157,6 +162,7 @@ framework is required for this single-owner localhost deployment.
 
 These files are direct copies of tracked source and should remain byte-for-byte identical:
 
+- `colophon` <- `colophon/colophon`
 - `de-abacus.py` <- `abacus usage/de-abacus.py`
 - `div_conv` <- `div_conv/div_conv`
 - `dloc` <- `dloc/dloc`

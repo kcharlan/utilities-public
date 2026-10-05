@@ -12,8 +12,6 @@ export async function makeFixture(t,{repoRoot,home}={}){
  const sourceRoot=path.join(repoRoot,'Calculation tools/backtest');
  await fs.mkdir(sourceRoot,{recursive:true});await fs.mkdir(home,{recursive:true,mode:0o700});
  await fs.cp(f.sourceRoot,sourceRoot,{recursive:true});
- await fs.mkdir(path.join(sourceRoot,'tools'),{recursive:true});
- await fs.copyFile(path.join(project,'tools/data_contract.mjs'),path.join(sourceRoot,'tools/data_contract.mjs'));
  await fs.mkdir(path.join(repoRoot,'tools'),{recursive:true});
  await fs.copyFile(path.join(repo,'tools/check_static_deployments.mjs'),path.join(repoRoot,'tools/check_static_deployments.mjs'));
  const dataHome=path.join(home,'invented data home'),webroot=path.join(home,'invented web root');

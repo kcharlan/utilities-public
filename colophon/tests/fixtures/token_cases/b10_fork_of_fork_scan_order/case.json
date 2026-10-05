@@ -1,0 +1,15 @@
+{
+  "name": "b10_fork_of_fork_scan_order",
+  "description": "As b04, but the grandchild is the newest file: CodexBar's newest-first incremental scan leaves it unresolved (an upstream scan-order artifact; see the plan's decision on this case).",
+  "day_utc": "2025-03-22",
+  "files": [
+    "sessions/2025/03/22/rollout-2025-03-22T09-00-26-0195bd14-9e80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/22/rollout-2025-03-22T09-30-36-0195bd14-9e80-7000-8000-000000002000.jsonl",
+    "sessions/2025/03/22/rollout-2025-03-22T09-32-23-0195bd14-9e80-7000-8000-000000003000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/22/rollout-2025-03-22T09-00-26-0195bd14-9e80-7000-8000-000000001000.jsonl": 1742634026000,
+    "sessions/2025/03/22/rollout-2025-03-22T09-30-36-0195bd14-9e80-7000-8000-000000002000.jsonl": 1742635836000,
+    "sessions/2025/03/22/rollout-2025-03-22T09-32-23-0195bd14-9e80-7000-8000-000000003000.jsonl": 1742635943000
+  }
+}

@@ -1,0 +1,186 @@
+{
+  "bucket_tz": "America/New_York",
+  "day_aggregates": [
+    {
+      "authoritative_cost_nanos": 0,
+      "cached_tokens": 300,
+      "day": "2025-03-08",
+      "input_tokens": 1800,
+      "model": "gpt-5.4",
+      "output_tokens": 210,
+      "priority_cached_tokens": 0,
+      "priority_input_tokens": 0,
+      "priority_output_tokens": 0,
+      "priority_tokens": 0,
+      "reasoning_tokens": 0,
+      "request_count": 2,
+      "standard_cached_tokens": 300,
+      "standard_input_tokens": 1800,
+      "standard_output_tokens": 210,
+      "standard_tokens": 2010
+    },
+    {
+      "authoritative_cost_nanos": 0,
+      "cached_tokens": 400,
+      "day": "2025-03-08",
+      "input_tokens": 600,
+      "model": "gpt-5.5",
+      "output_tokens": 100,
+      "priority_cached_tokens": 0,
+      "priority_input_tokens": 0,
+      "priority_output_tokens": 0,
+      "priority_tokens": 0,
+      "reasoning_tokens": 0,
+      "request_count": 1,
+      "standard_cached_tokens": 400,
+      "standard_input_tokens": 600,
+      "standard_output_tokens": 100,
+      "standard_tokens": 700
+    },
+    {
+      "authoritative_cost_nanos": 0,
+      "cached_tokens": 200,
+      "day": "2025-03-08",
+      "input_tokens": 500,
+      "model": "unknown",
+      "output_tokens": 70,
+      "priority_cached_tokens": 0,
+      "priority_input_tokens": 0,
+      "priority_output_tokens": 0,
+      "priority_tokens": 0,
+      "reasoning_tokens": 0,
+      "request_count": 1,
+      "standard_cached_tokens": 200,
+      "standard_input_tokens": 500,
+      "standard_output_tokens": 70,
+      "standard_tokens": 570
+    }
+  ],
+  "files": [
+    {
+      "file": "sessions/2025/03/08/rollout-2025-03-08T09-00-36-019574fb-9680-7000-8000-000000001000.jsonl",
+      "rows": [
+        {
+          "cached": 200,
+          "day": "2025-03-08",
+          "eventIndex": 0,
+          "input": 500,
+          "model": "unknown",
+          "output": 70,
+          "pricingMode": "standard",
+          "pricingModel": "unknown",
+          "rawModel": "unknown",
+          "row_index": 0,
+          "timestampUnixMs": 1741424406000
+        },
+        {
+          "cached": 400,
+          "day": "2025-03-08",
+          "eventIndex": 1,
+          "input": 600,
+          "model": "gpt-5.5",
+          "output": 100,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.5",
+          "rawModel": "gpt-5.5",
+          "row_index": 1,
+          "timestampUnixMs": 1741424421000,
+          "turnID": "t1"
+        },
+        {
+          "cached": 0,
+          "day": "2025-03-08",
+          "eventIndex": 2,
+          "input": 1200,
+          "model": "gpt-5.4",
+          "output": 120,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.4",
+          "rawModel": "gpt-5.4",
+          "row_index": 2,
+          "timestampUnixMs": 1741424426000,
+          "turnID": "t1"
+        },
+        {
+          "cached": 300,
+          "day": "2025-03-08",
+          "eventIndex": 3,
+          "input": 600,
+          "model": "gpt-5.4",
+          "output": 90,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.4",
+          "rawModel": "gpt-5.4",
+          "row_index": 3,
+          "timestampUnixMs": 1741424431000,
+          "turnID": "t1"
+        }
+      ],
+      "scan_complete": true,
+      "session_id": "019574fb-9680-7000-8000-000000001000"
+    }
+  ],
+  "generator": {
+    "catalog_sha256": "b4d6f197664b40c1ee70375fab90ed25a570d95f1146c0640bc52d14b8b94506",
+    "cli_sha256": "232d6708fbd8e403619b7451c4ec55db86911707b8422ad73cfbc2108e151353",
+    "command": "cost --provider codex --period all --format json",
+    "tool": "colophon/tests/tools/codexbar_expected.py",
+    "upstream_commit": "3bbf6bc48c20d8e507b30ed93dbdce19ed928bb6"
+  },
+  "report": {
+    "coverage": {
+      "estimated": 0,
+      "priced": 1,
+      "unmetered": 0,
+      "unpriced": 0
+    },
+    "daily": [
+      {
+        "cacheReadTokens": 900,
+        "date": "2025-03-08",
+        "inputTokens": 2900,
+        "modelBreakdowns": [
+          {
+            "cost": 0.004185,
+            "modelName": "gpt-5.4",
+            "totalTokens": 2010
+          },
+          {
+            "cost": 0.00252,
+            "modelName": "gpt-5.5",
+            "totalTokens": 700
+          },
+          {
+            "modelName": "unknown",
+            "totalTokens": 570
+          }
+        ],
+        "modelsUsed": [
+          "gpt-5.4",
+          "gpt-5.5",
+          "unknown"
+        ],
+        "outputTokens": 380,
+        "totalCost": 0.006705,
+        "totalTokens": 3280
+      }
+    ],
+    "error": null,
+    "historyCoverageIsEstablished": true,
+    "provenance": "listPriceEstimate",
+    "totals": {
+      "cacheReadTokens": 900,
+      "coverage": {
+        "estimated": 0,
+        "priced": 1,
+        "unmetered": 0,
+        "unpriced": 0
+      },
+      "inputTokens": 2900,
+      "outputTokens": 380,
+      "provenance": "listPriceEstimate",
+      "totalCost": 0.006705,
+      "totalTokens": 3280
+    }
+  }
+}

@@ -49,6 +49,7 @@ IMPORT_DISTRIBUTION_ALIASES = {
 # The migrated launchers (repo-relative). model_sentinel is intentionally
 # excluded: it is the zipapp-form reference and has no bootstrap layer.
 LAUNCHERS = [
+    "colophon/colophon",
     "editdb/editdb",
     "jtree/jtree",
     "harscope/harscope",
@@ -74,6 +75,11 @@ LAUNCHERS = [
 # directions without pretending test-only packages belong in PEP 723 metadata.
 # Values are: (format, repo-relative manifest path, allowed manifest-only deps).
 DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
+    "colophon/colophon": (
+        "requirements",
+        "colophon/requirements-dev.txt",
+        frozenset({"brotli", "fonttools", "playwright", "pytest"}),
+    ),
     "editdb/editdb": (
         "requirements",
         "editdb/requirements-dev.txt",

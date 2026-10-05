@@ -1,0 +1,13 @@
+{
+  "name": "c10_depth2_lineage_only_parent_missing",
+  "description": "Depth-2 subagent whose independent depth-1 parent has a missing parent.",
+  "day_utc": "2025-04-02",
+  "files": [
+    "sessions/2025/04/02/rollout-2025-04-02T09-10-25-0195f5ba-9280-7000-8000-000000002000.jsonl",
+    "sessions/2025/04/02/rollout-2025-04-02T09-30-36-0195f5ba-9280-7000-8000-000000003000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/04/02/rollout-2025-04-02T09-30-36-0195f5ba-9280-7000-8000-000000003000.jsonl": 1743586236000,
+    "sessions/2025/04/02/rollout-2025-04-02T09-10-25-0195f5ba-9280-7000-8000-000000002000.jsonl": 1743585025000
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "a04_repeated_total",
+  "description": "An identical cumulative total repeated is counted once.",
+  "day_utc": "2025-03-04",
+  "files": [
+    "sessions/2025/03/04/rollout-2025-03-04T09-00-36-01956062-2680-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/04/rollout-2025-03-04T09-00-36-01956062-2680-7000-8000-000000001000.jsonl": 1741078836000
+  }
+}

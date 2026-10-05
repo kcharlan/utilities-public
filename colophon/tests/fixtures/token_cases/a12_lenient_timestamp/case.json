@@ -1,0 +1,11 @@
+{
+  "name": "a12_lenient_timestamp",
+  "description": "A space-separated timestamp: the lenient day-key parser accepts it (time zeroed, so the row lands on the previous New York day) but ISO parsing rejects it (no timestampUnixMs); a date-only timestamp is rejected by both and its token_count is dropped.",
+  "day_utc": "2025-03-12",
+  "files": [
+    "sessions/2025/03/12/rollout-2025-03-12T09-00-36-01958995-0680-7000-8000-000000001000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/12/rollout-2025-03-12T09-00-36-01958995-0680-7000-8000-000000001000.jsonl": 1741770036000
+  }
+}

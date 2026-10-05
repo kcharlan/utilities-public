@@ -1,0 +1,151 @@
+{
+  "bucket_tz": "America/New_York",
+  "day_aggregates": [
+    {
+      "authoritative_cost_nanos": 0,
+      "cached_tokens": 16000,
+      "day": "2025-03-21",
+      "input_tokens": 28000,
+      "model": "gpt-5.6-sol",
+      "output_tokens": 2800,
+      "priority_cached_tokens": 0,
+      "priority_input_tokens": 0,
+      "priority_output_tokens": 0,
+      "priority_tokens": 0,
+      "reasoning_tokens": 0,
+      "request_count": 4,
+      "standard_cached_tokens": 16000,
+      "standard_input_tokens": 28000,
+      "standard_output_tokens": 2800,
+      "standard_tokens": 30800
+    }
+  ],
+  "files": [
+    {
+      "file": "sessions/2025/03/21/rollout-2025-03-21T09-00-26-0195b7ee-4280-7000-8000-000000001000.jsonl",
+      "rows": [
+        {
+          "cached": 4000,
+          "day": "2025-03-21",
+          "eventIndex": 0,
+          "input": 10000,
+          "model": "gpt-5.6-sol",
+          "output": 1000,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.6-sol",
+          "rawModel": "gpt-5.6-sol",
+          "reasoning": 0,
+          "row_index": 0,
+          "timestampUnixMs": 1742547616000,
+          "turnID": "p1"
+        },
+        {
+          "cached": 8000,
+          "day": "2025-03-21",
+          "eventIndex": 1,
+          "input": 10000,
+          "model": "gpt-5.6-sol",
+          "output": 1000,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.6-sol",
+          "rawModel": "gpt-5.6-sol",
+          "reasoning": 0,
+          "row_index": 1,
+          "timestampUnixMs": 1742547621000,
+          "turnID": "p1"
+        }
+      ],
+      "scan_complete": true,
+      "session_id": "0195b7ee-4280-7000-8000-000000001000"
+    },
+    {
+      "file": "sessions/2025/03/21/rollout-2025-03-21T09-30-31-0195b7ee-4280-7000-8000-000000002000.jsonl",
+      "rows": [
+        {
+          "cached": 2000,
+          "day": "2025-03-21",
+          "eventIndex": 0,
+          "input": 5000,
+          "model": "gpt-5.6-sol",
+          "output": 500,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.6-sol",
+          "rawModel": "gpt-5.6-sol",
+          "reasoning": 0,
+          "row_index": 0,
+          "timestampUnixMs": 1742549421000,
+          "turnID": "c2"
+        },
+        {
+          "cached": 2000,
+          "day": "2025-03-21",
+          "eventIndex": 1,
+          "input": 3000,
+          "model": "gpt-5.6-sol",
+          "output": 300,
+          "pricingMode": "standard",
+          "pricingModel": "gpt-5.6-sol",
+          "rawModel": "gpt-5.6-sol",
+          "reasoning": 0,
+          "row_index": 1,
+          "timestampUnixMs": 1742549426000,
+          "turnID": "c2"
+        }
+      ],
+      "scan_complete": true,
+      "session_id": "0195b7ee-4280-7000-8000-000000002000"
+    }
+  ],
+  "generator": {
+    "catalog_sha256": "b4d6f197664b40c1ee70375fab90ed25a570d95f1146c0640bc52d14b8b94506",
+    "cli_sha256": "232d6708fbd8e403619b7451c4ec55db86911707b8422ad73cfbc2108e151353",
+    "command": "cost --provider codex --period all --format json",
+    "tool": "colophon/tests/tools/codexbar_expected.py",
+    "upstream_commit": "3bbf6bc48c20d8e507b30ed93dbdce19ed928bb6"
+  },
+  "report": {
+    "coverage": {
+      "estimated": 0,
+      "priced": 1,
+      "unmetered": 0,
+      "unpriced": 0
+    },
+    "daily": [
+      {
+        "cacheReadTokens": 16000,
+        "date": "2025-03-21",
+        "inputTokens": 28000,
+        "modelBreakdowns": [
+          {
+            "cost": 0.152,
+            "modelName": "gpt-5.6-sol",
+            "totalTokens": 30800
+          }
+        ],
+        "modelsUsed": [
+          "gpt-5.6-sol"
+        ],
+        "outputTokens": 2800,
+        "totalCost": 0.152,
+        "totalTokens": 30800
+      }
+    ],
+    "error": null,
+    "historyCoverageIsEstablished": true,
+    "provenance": "listPriceEstimate",
+    "totals": {
+      "cacheReadTokens": 16000,
+      "coverage": {
+        "estimated": 0,
+        "priced": 1,
+        "unmetered": 0,
+        "unpriced": 0
+      },
+      "inputTokens": 28000,
+      "outputTokens": 2800,
+      "provenance": "listPriceEstimate",
+      "totalCost": 0.152,
+      "totalTokens": 30800
+    }
+  }
+}

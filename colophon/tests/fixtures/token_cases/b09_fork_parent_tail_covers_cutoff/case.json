@@ -1,0 +1,13 @@
+{
+  "name": "b09_fork_parent_tail_covers_cutoff",
+  "description": "Fork parent ends in an incomplete JSON segment but its events reach past the fork time: resolved.",
+  "day_utc": "2025-03-21",
+  "files": [
+    "sessions/2025/03/21/rollout-2025-03-21T09-00-26-0195b7ee-4280-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/21/rollout-2025-03-21T09-30-31-0195b7ee-4280-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/21/rollout-2025-03-21T09-00-26-0195b7ee-4280-7000-8000-000000001000.jsonl": 1742547626000,
+    "sessions/2025/03/21/rollout-2025-03-21T09-30-31-0195b7ee-4280-7000-8000-000000002000.jsonl": 1742549431000
+  }
+}

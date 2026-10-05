@@ -1,0 +1,13 @@
+{
+  "name": "c03_subagent_copied_prefix_boundary",
+  "description": "Subagent with embedded ancestor meta and a turn_context + trigger boundary.",
+  "day_utc": "2025-03-26",
+  "files": [
+    "sessions/2025/03/26/rollout-2025-03-26T09-00-26-0195d1ae-0e80-7000-8000-000000001000.jsonl",
+    "sessions/2025/03/26/rollout-2025-03-26T09-30-41-0195d1ae-0e80-7000-8000-000000002000.jsonl"
+  ],
+  "mtimes_ms": {
+    "sessions/2025/03/26/rollout-2025-03-26T09-30-41-0195d1ae-0e80-7000-8000-000000002000.jsonl": 1742981441000,
+    "sessions/2025/03/26/rollout-2025-03-26T09-00-26-0195d1ae-0e80-7000-8000-000000001000.jsonl": 1742979626000
+  }
+}
