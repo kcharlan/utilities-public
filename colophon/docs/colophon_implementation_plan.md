@@ -2322,8 +2322,49 @@ All page JavaScript lives in `PAGE_JS`, as one IIFE with `"use strict"`.
 
 ### Task 24: Local acceptance tooling: CodexBar parity and upstream table check
 
+**Approved native-oracle amendment (2026-10-04).** The pinned CLI's actual
+default/session/project JSON contains daily and project reports, but no session
+list. Retain all three commands as schema and catch-up checks. The session oracle
+is a dedicated Swift test target in a separate external clone at exact commit
+`3bbf6bc48c20d8e507b30ed93dbdce19ed928bb6`, with upstream `Sources/` unchanged.
+Its `@testable import CodexBarCore` exporter calls
+`CostUsageFetcher.loadCachedCodexTokenSnapshotForScopedHome` with project/session
+breakdowns enabled and Pi disabled. It serializes the native ID-keyed session
+list and optional metrics; Python must not reconstruct native session selection.
+The tracked harness and build instructions live in `tests/parity/native_oracle/`.
+Record the commit, harness hash, exact build command and bundle hash outside the
+repository; ordinary pytest never builds or executes CodexBar. Separate synthetic
+Swift assertions retain count, native latest-file/filename behavior, and historical
+window omission checks without constraining the general acceptance exporter.
+
+After CLI catch-up, compile Colophon immediately with a fixed snapshot time,
+then run only the prepared exporter through the imported protected guard against
+that same fake cache, copied trace, shared catalog and native all-time window in
+the CLI bucket zone. Require native daily/project token and cost reports to match
+CLI JSON before accepting the session list. Preserve every observation and compare
+the full ID set and all metrics. Only operation-time metadata and costs within
+the declared tolerance may differ. A later matching suffix never erases an earlier
+material disagreement. Independently detect structural ties from **all** isolated
+`files` records: two or more distinct files with the same session identity sharing
+its maximum `mtime_ms`. Name every tied ID and mark the oracle incomplete even if
+all observed totals agree. This read-only check does not select a file or filter
+by the reporting window. Pure regressions cover 500/600/500/500/500 disagreement
+and structurally tied agreeing 500/500/500 observations.
+
+Retain the original scope comparisons, cold fallback recomputation, missing-ID
+section, difference classes and cost tolerance below. Missing/malformed/ambiguous
+evidence fails closed; preserve native nulls rather than inventing numeric zeros.
+Keep CLI history classification separate from oracle completeness, including
+complete-with-unresolved-forks; any deliberate unmetered-only exclusion requires
+positive contributor-specific source evidence. Private JSON/Markdown reports
+retain observations, tied IDs, evidence failures, build provenance and fingerprints.
+The app-quit gate, sandbox self-test, denied real-home writes/network/cache reads,
+and before/after real-state fingerprints remain mandatory. Synthetic guarded runs
+are approved; real-data runs and Task 26 still require separate approval.
+
 **Files:**
 - Create: `colophon/tests/parity/compare_codexbar.py`, `colophon/tests/parity/check_upstream_tables.py`, `colophon/tests/parity/check_upstream_drift.py`, `colophon/tests/test_acceptance_tools.py`
+- Create: `colophon/tests/parity/native_oracle/ColophonNativeOracleTests.swift`, `colophon/tests/parity/native_oracle/run_native.sh`, `colophon/tests/parity/native_oracle/README.md`
 
 **Rules:**
 - **`compare_codexbar.py`** (spec §12.4). It is never collected by pytest, and its output never enters the repo.

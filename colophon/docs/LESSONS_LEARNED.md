@@ -1,5 +1,21 @@
 # Lessons learned
 
+- Acceptance table checks must compare the actual ledger shape: long-context
+  rates are flat fields beside `threshold`, while only standard rates live
+  under `per_million`. A synthetic fixture that invents the verifier's shape
+  can hide this mismatch until the pinned source check. Regression:
+  `test_table_comparison_exact_decimal_history_and_priority`.
+- Swift drift extraction must skip type-annotation delimiters before selecting
+  a literal initializer or closure body. Match strings at bounded source
+  offsets and cache declaration maps per file; slicing every remaining suffix
+  turns a source scan quadratic. Regressions:
+  `test_drift_typed_initializers_include_changed_values` and
+  `test_drift_scanner_does_not_copy_unbounded_suffixes`.
+- A cited source filename is not an enclosing-type citation. Remove filename
+  tokens before matching declaration names, so a change to an uncited sibling
+  does not appear as a change to every cited function. Regression:
+  `test_drift_file_name_does_not_cite_same_named_enclosing_type`.
+
 - Collapsed reader sections remain in the DOM. Assert their visibility and
   scope parent tool checks separately from miniature agent cards; hidden
   expand buttons still participate in `textContent`. Keep request-group labels,
@@ -746,3 +762,32 @@
   through an independent terminal-cell replay, with a CR-only defect control;
   raw output containing a correct new ETA alone cannot prove visible correctness.
   Regression: `test_cold_progress_clears_previous_longer_eta`.
+
+### Task 24 — independent parity evidence
+
+- Inspect actual CLI JSON before designing comparison adapters. The pinned
+  grouping commands emit daily/project reports without sessions. An external
+  Swift test target calling the unchanged native scoped-cache path supplies an
+  independent session oracle; a Python reconstruction does not. Ordinary pytest
+  exercises only synthetic pure helpers and compiler wiring.
+- Native dictionary iteration can choose different files at equal mtimes. Read
+  all isolated file records to detect structural ties at each session's maximum
+  mtime; never choose a winner. Agreement across three runs does not remove a
+  structural tie, and a matching suffix cannot erase earlier disagreement.
+  Regressions: `test_tied_agreeing_native_observations_still_fail_acceptance` and
+  `test_matching_suffix_does_not_erase_native_disagreement`.
+- Native cached-token null does not prove zero, even with complete coverage.
+  Keep nullable metrics and fail closed on required unknowns. Deliberately
+  unmetered-only days need exact native contributor predicates and day evidence;
+  unproven, billed, duplicate or mixed contributors remain incomplete.
+  Regressions: `test_complete_native_still_retains_null_without_explicit_zero_evidence`
+  and `test_deliberate_unmetered_day_requires_exact_native_contributor_proof`.
+- Preserve unknown project identity as a nullable report row, rather than a JSON
+  object key that collides/coerces or fails sorting. Fingerprint actual source
+  JSONL and explicit isolated cache/catalog/trace/window inputs; do not read
+  authentication/config files or SQLite coordination files. Reject symlink logs
+  before compiling or fingerprinting their contents.
+- Swift initializer extraction must start after the assignment, not at delimiters
+  in a type annotation. Citation filenames must not accidentally name enclosing
+  declarations. Masking/extraction should scan each file once, avoiding repeated
+  unbounded suffix copies. The synthetic drift regressions cover these failures.
