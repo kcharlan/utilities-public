@@ -86,6 +86,13 @@ Any tie or material disagreement in any observation fails completeness, even
 after later matching observations. A custom CLI's differences are class (d),
 never explained. Missing sessions and unproven differences remain explicit gaps.
 
+Raw project observations retain nullable model breakdowns and source-level totals,
+days and model breakdowns. Their CLI-emitted numeric counterparts also cross-check;
+native-only monetary components retain the declared stability tolerance. Codable
+nil omissions remain omitted and direct project/source optionals remain null.
+Session comparison keys use canonical Unicode identity while raw native spellings
+remain visible in observations; canonical duplicates fail validation.
+
 Private `report.json`, `report.md`, raw CLI/native output, Colophon page/logs and
 fingerprints stay outside the repository. A failing or incomplete report exits
 nonzero. Never commit these outputs or use them to regenerate protected fixtures.

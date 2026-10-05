@@ -96,7 +96,15 @@ final class ColophonNativeOracleTests: XCTestCase {
                 ["path": project.path as Any? ?? NSNull(),
                  "totalTokens": project.totalTokens as Any? ?? NSNull(),
                  "totalCostUSD": project.totalCostUSD as Any? ?? NSNull(),
-                 "daily": try Self.json(project.daily)]
+                 "daily": try Self.json(project.daily),
+                 "modelBreakdowns": try Self.json(project.modelBreakdowns),
+                 "sources": try project.sources.map { source -> [String: Any] in
+                     ["name": source.name, "path": source.path as Any? ?? NSNull(),
+                      "totalTokens": source.totalTokens as Any? ?? NSNull(),
+                      "totalCostUSD": source.totalCostUSD as Any? ?? NSNull(),
+                      "daily": try Self.json(source.daily),
+                      "modelBreakdowns": try Self.json(source.modelBreakdowns)]
+                 }]
             }
             result["historyCoverageIsEstablished"] = snapshot.historyCoverageIsEstablished
             result["historyScanIsPartial"] = snapshot.historyScanIsPartial
@@ -106,6 +114,6 @@ final class ColophonNativeOracleTests: XCTestCase {
     }
 
     private static func json(_ value: some Encodable) throws -> Any {
-        try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
+        try JSONSerialization.jsonObject(with: JSONEncoder().encode(value), options: [.fragmentsAllowed])
     }
 }

@@ -275,7 +275,7 @@ def structural_ties(records: list[dict]) -> list[str]:
 
 
 def material_equal(left, right, *, key: str = '') -> bool:
-    if key in ('costUSD', 'totalCostUSD', 'totalCost', 'cost'):
+    if key in ('costUSD', 'totalCostUSD', 'totalCost', 'cost', 'standardCostUSD', 'priorityCostUSD'):
         if left is None or right is None:
             return left is right
         if type(left) not in (int, float) or type(right) not in (int, float):
@@ -391,13 +391,11 @@ def validate_native(observation: object) -> dict:
                 or project['path'] in paths):
             raise ValueError('malformed native project identity')
         paths.add(project['path'])
-        _day_map(project.get('daily'), native=True)
-        for field in ('totalTokens', 'totalCostUSD'):
-            value = project.get(field)
-            if field not in project or value is not None and (
-                    type(value) not in (int, float) or not math.isfinite(value) or value < 0
-                    or field == 'totalTokens' and type(value) is not int):
-                raise ValueError('malformed native project metric')
+        _validate_native_project_part(project)
+        if not isinstance(project.get('sources'), list):
+            raise ValueError('malformed native project sources')
+        for source in project['sources']:
+            _validate_native_project_part(source)
     identities = set()
     for identifier, session in observation['sessions'].items():
         if (not isinstance(identifier, str) or not identifier or not isinstance(session, dict)
@@ -418,6 +416,40 @@ def validate_native(observation: object) -> dict:
                 or not isinstance(session.get('modelBreakdowns'), list)):
             raise ValueError('malformed native session metrics')
     return observation
+
+
+def _validate_native_project_part(part: object) -> None:
+    """Direct project/source optionals are explicit; Codable model nils may omit."""
+    if (not isinstance(part, dict) or 'path' not in part
+            or part['path'] is not None and not isinstance(part['path'], str)):
+        raise ValueError('malformed native project/source identity')
+    _day_map(part.get('daily'), native=True)
+    for field in ('totalTokens', 'totalCostUSD'):
+        value = part.get(field)
+        if field not in part or value is not None and (
+                type(value) not in (int, float) or not math.isfinite(value) or value < 0
+                or field == 'totalTokens' and type(value) is not int):
+            raise ValueError('malformed native project/source metric')
+    if 'modelBreakdowns' not in part:
+        raise ValueError('missing native project/source model breakdowns')
+    models = part['modelBreakdowns']
+    if models is None:
+        return
+    if not isinstance(models, list):
+        raise ValueError('malformed native project/source model breakdowns')
+    counts = {'totalTokens', 'requestCount', 'inputTokens', 'outputTokens', 'cacheReadTokens',
+              'cacheCreationTokens', 'reasoningTokens', 'standardTokens', 'priorityTokens', 'incompleteRequestCount'}
+    costs = {'costUSD', 'standardCostUSD', 'priorityCostUSD'}
+    for model in models:
+        if not isinstance(model, dict) or not isinstance(model.get('modelName'), str):
+            raise ValueError('malformed native model identity')
+        for field in counts | costs:
+            value = model.get(field)
+            if value is None:
+                continue
+            if (type(value) not in (int, float) or not math.isfinite(value) or value < 0
+                    or field in counts and type(value) is not int):
+                raise ValueError('malformed native model metric')
 
 
 def _day_map(rows: list, *, native: bool) -> dict:
@@ -448,7 +480,7 @@ def crosscheck_native(native: dict, cli: dict) -> list[str]:
     failures = []
     try:
         validate_native(native)
-        if not material_equal(_day_map(native['daily'], native=True), _day_map(cli['daily'], native=False)):
+        if not material_equal(_crosscheck_days(native['daily'], native=True), _crosscheck_days(cli['daily'], native=False)):
             failures.append('native daily metrics disagree with CLI')
         native_projects, cli_projects = {}, {}
         for source, output, is_native in ((native['projects'], native_projects, True),
@@ -456,18 +488,68 @@ def crosscheck_native(native: dict, cli: dict) -> list[str]:
             if not isinstance(source, list):
                 raise ValueError('unknown project report')
             for project in source:
-                if (not isinstance(project, dict) or 'path' not in project
-                        or (project['path'] is not None and not isinstance(project['path'], str))
-                        or project['path'] in output):
+                if (not isinstance(project, dict)
+                        or (project.get('path') is not None and not isinstance(project['path'], str))
+                        or project.get('path') in output):
                     raise ValueError('malformed/duplicate project path')
-                output[project['path']] = {'total': project.get('totalTokens'),
-                    'cost': project.get('totalCostUSD' if is_native else 'totalCost'),
-                    'daily': _day_map(project['daily'], native=is_native)}
+                item = _crosscheck_project_part(project, native=is_native)
+                sources = project.get('sources')
+                if not isinstance(sources, list):
+                    raise ValueError('unknown project source report')
+                item['sources'] = {}
+                for source in sources:
+                    if (not isinstance(source, dict) or source.get('path') is not None and not isinstance(source['path'], str)
+                            or source.get('path') in item['sources']):
+                        raise ValueError('malformed/duplicate project source path')
+                    item['sources'][source.get('path')] = _crosscheck_project_part(source, native=is_native)
+                output[project.get('path')] = item
         if not material_equal(native_projects, cli_projects):
             failures.append('native project metrics disagree with CLI')
     except (ValueError, KeyError, TypeError) as exc:
         failures.append(f'unknown native/CLI crosscheck evidence: {exc}')
     return failures
+
+
+def _crosscheck_metric(value, *, cost: bool = False):
+    if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0
+                              or not cost and type(value) is not int):
+        raise ValueError('malformed CLI/native crosscheck metric')
+    return value
+
+
+def _crosscheck_models(rows, *, native: bool):
+    if rows is None:
+        return None
+    if not isinstance(rows, list):
+        raise ValueError('malformed CLI/native model breakdowns')
+    output = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get('modelName'), str) or row['modelName'] in output:
+            raise ValueError('malformed/duplicate CLI/native model identity')
+        incomplete = _crosscheck_metric(row.get('incompleteRequestCount'))
+        output[row['modelName']] = {'total': _crosscheck_metric(row.get('totalTokens')),
+            'cost': _crosscheck_metric(row.get('costUSD' if native else 'cost'), cost=True),
+            # The pinned CLI explicitly omits zero incomplete counts.
+            'incomplete': incomplete if incomplete is not None and incomplete > 0 else None}
+    return output
+
+
+def _crosscheck_days(rows, *, native: bool) -> dict:
+    days = _day_map(rows, native=native)
+    for row in rows:
+        days[row['date']].update({field: _crosscheck_metric(row.get(field))
+                                 for field in ('cacheCreationTokens', 'reasoningTokens')})
+        incomplete = _crosscheck_metric(row.get('incompleteRequestCount'))
+        days[row['date']]['incomplete'] = incomplete if incomplete is not None and incomplete > 0 else None
+        days[row['date']]['models'] = _crosscheck_models(row.get('modelBreakdowns'), native=native)
+    return days
+
+
+def _crosscheck_project_part(part: dict, *, native: bool) -> dict:
+    return {'total': _crosscheck_metric(part.get('totalTokens')),
+            'cost': _crosscheck_metric(part.get('totalCostUSD' if native else 'totalCost'), cost=True),
+            'daily': _crosscheck_days(part['daily'], native=native),
+            'models': _crosscheck_models(part.get('modelBreakdowns'), native=native)}
 
 
 def parity_cost_equal(left, right) -> bool:
@@ -529,7 +611,8 @@ def reference_totals(native: dict, *, complete: bool = False) -> dict:
     reference = {'day': _day_map(native['daily'], native=True), 'project': {}, 'session': {},
                  'zero_cached_representation': []}
     for identifier, session in native['sessions'].items():
-        reference['session'][identifier] = {'input': session['inputTokens'], 'cached': session['cachedInputTokens'],
+        canonical = unicodedata.normalize('NFC', identifier)
+        reference['session'][canonical] = {'input': session['inputTokens'], 'cached': session['cachedInputTokens'],
             'output': session['outputTokens'], 'cost': session['costUSD']}
     for project in native['projects']:
         days = _day_map(project['daily'], native=True)
@@ -540,6 +623,12 @@ def reference_totals(native: dict, *, complete: bool = False) -> dict:
         metrics['cost'] = project.get('totalCostUSD')
         reference['project'][project['path']] = metrics
     return reference
+
+
+def observed_session_ids(observations: list[dict]) -> set[str]:
+    """Compare canonical identities without rewriting retained native spellings."""
+    return {unicodedata.normalize('NFC', identifier) for observation in observations
+            for identifier in validate_native(observation)['sessions']}
 
 
 def compare_scope(scope: str, full: dict, reference: dict, fallback: dict,
@@ -1102,7 +1191,7 @@ def run_comparison(args, *, module, guard) -> tuple[dict, int]:
                     report['missing_sessions'].extend(missing)
                 report['reference'] = reference
                 if not report['oracle']['complete']:
-                    observed_ids = set().union(*(set(item['sessions']) for item in observations))
+                    observed_ids = observed_session_ids(observations)
                     for identifier in sorted(set(full['session']) ^ observed_ids):
                         report['missing_sessions'].append({'id': identifier,
                             'side': 'Colophon' if identifier in full['session'] else 'CodexBar',

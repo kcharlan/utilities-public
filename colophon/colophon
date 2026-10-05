@@ -2345,8 +2345,10 @@ class _CodexByteFields:
                         return None
                     byte = raw[index]
                     if byte == 117:
-                        value = _upstream_json(b'"' + raw + b'"')
-                        return value[0] if value is not None else None
+                        # FastJSON.swift decodeJSONStringViaFoundation uses
+                        # JSONSerialization's default options: a quoted scalar
+                        # is rejected. JSONTail's fragment allowance is separate.
+                        return None
                     if byte not in escape_bytes:
                         return None
                     output.append(escape_bytes[byte])

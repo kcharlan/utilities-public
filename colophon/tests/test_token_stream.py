@@ -322,7 +322,12 @@ def test_fallback_nsnumber_signed_width(colophon):
 def test_foundation_model_trim_set(colophon, raw, expected):
     # Scanner codexModelEvidence 3453–3456 uses Foundation
     # CharacterSet.whitespacesAndNewlines, including 200B but excluding 001C.
-    assert observe(colophon, [context({'model': raw})])['observations'] == [['C', 0, 0, None, TS, expected]]
+    data = json.dumps(context({'model': raw}), separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    if raw == '\x1c':
+        # An escaped discriminator forces full-object Foundation decoding;
+        # its valid U+001C scalar reaches trimming without fast scalar decoding.
+        data = data.replace(b'"type":', b'"t\\u0079pe":', 1)
+    assert observe(colophon, [data])['observations'] == [['C', 0, 0, None, TS, expected]]
 
 
 def test_foundation_metadata_trim_set(colophon):
@@ -333,7 +338,8 @@ def test_foundation_metadata_trim_set(colophon):
         'source': '\u200bSUBAGENT\u200b', 'cwd': '\u200b/synthetic/project/\u200b'}}
     meta = {**META, 'forked_from_id': 'synthetic-parent', 'history_base_thread_id': 'synthetic-base',
         'is_subagent': True, 'project_path': '/synthetic/project'}
-    assert observe(colophon, [row])['observations'] == [['P', meta], ['M', 0, 0, None, meta]]
+    data = json.dumps(row, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    assert observe(colophon, [data])['observations'] == [['P', meta], ['M', 0, 0, None, meta]]
 
 
 def test_truncated_swift_character_whitespace_excludes_control_separator(colophon):

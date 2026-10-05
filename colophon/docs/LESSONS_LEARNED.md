@@ -765,6 +765,27 @@
 
 ### Task 24 — independent parity evidence
 
+- Do not reuse the fragment-capable JSON helper for the fast quoted-string
+  decoder. The pinned Foundation call omits `fragmentsAllowed`, so Unicode
+  escapes provide no fast metadata/model evidence; raw UTF-8, simple escapes,
+  full-object fallback and EOF fragments follow their own routes. This affects
+  filename identity and retained prior-model pricing. Keep trimming fixtures
+  explicit about which encoding route they exercise. Regressions:
+  `test_pinned_default_foundation_scalar_is_not_escaped_metadata_evidence` and
+  `test_escaped_context_replay_retains_prior_model_counts_and_source_price`.
+- The native project oracle must retain its nullable model breakdowns and every
+  source's totals, days and model breakdowns. Compare the CLI's shared nested
+  metrics as well as aggregates; an unchanged project total can conceal source
+  drift. Preserve native Codable nil omissions and direct optional nulls.
+  Regression: `test_native_crosscheck_includes_cli_project_model_and_source_metrics`.
+- Apply monetary tolerance to all source-named money fields, including native
+  `standardCostUSD` and `priorityCostUSD`; token fields remain exact. Regression:
+  `test_native_model_cost_components_use_declared_tolerance`.
+- Native session spellings can be canonically equivalent without identical UTF-8.
+  Normalize comparison keys and incomplete-oracle presence sets consistently,
+  retain raw spellings in observations, and reject canonical duplicate owners.
+  Regression: `test_native_reference_and_incomplete_presence_use_canonical_ids`.
+
 - Inspect actual CLI JSON before designing comparison adapters. The pinned
   grouping commands emit daily/project reports without sessions. An external
   Swift test target calling the unchanged native scoped-cache path supplies an

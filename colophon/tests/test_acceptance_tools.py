@@ -31,6 +31,216 @@ def cache_file(identifier, session, mtime, path=None):
             'path': path or f'/synthetic/{identifier}.jsonl'}
 
 
+def native_project():
+    day = {'date': '2024-01-07', 'inputTokens': 500, 'cacheReadTokens': 20,
+           'outputTokens': 10, 'totalTokens': 510, 'costUSD': .00125}
+    model = {'modelName': 'gpt-synthetic', 'totalTokens': 510, 'costUSD': .00125,
+             'standardCostUSD': .001, 'priorityCostUSD': .00025}
+    return {'path': '/synthetic/project', 'totalTokens': 510, 'totalCostUSD': .00125,
+            'daily': [day], 'modelBreakdowns': [model], 'sources': [
+                {'name': 'Synthetic source', 'path': None, 'totalTokens': None,
+                 'totalCostUSD': None, 'daily': [], 'modelBreakdowns': None}]}
+
+
+@pytest.mark.parametrize('field', ['modelBreakdowns', 'sources'])
+def test_native_project_missing_breakdown_evidence_is_incomplete(field):
+    observation = native_observation()
+    project = native_project()
+    project.pop(field)
+    observation['projects'] = [project]
+    assert helper('compare_codexbar').assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+
+
+@pytest.mark.parametrize('damage', ['missing_models', 'missing_cost', 'malformed_day', 'bad_sources'])
+def test_native_source_schema_is_required_for_stability(damage):
+    observation = native_observation()
+    project = native_project()
+    if damage == 'bad_sources':
+        project['sources'] = [None]
+    elif damage == 'missing_models':
+        project['sources'][0].pop('modelBreakdowns')
+    elif damage == 'missing_cost':
+        project['sources'][0].pop('totalCostUSD')
+    else:
+        project['sources'][0]['daily'] = [{'date': 'synthetic', 'inputTokens': True}]
+    observation['projects'] = [project]
+    assert helper('compare_codexbar').assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+
+
+@pytest.mark.parametrize('scope', ['project', 'source'])
+def test_native_project_and_source_breakdowns_are_retained_and_checked(scope):
+    module = helper('compare_codexbar')
+    observation = native_observation()
+    observation['projects'] = [native_project()]
+    encoded = 'NATIVE_ORACLE_JSON:' + json.dumps(observation)
+    assert module.parse_native_stdout(encoded) == observation
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    changed = json.loads(json.dumps(observation))
+    target = changed['projects'][0]
+    if scope == 'source':
+        target = target['sources'][0]
+        target['totalTokens'] = 1
+    else:
+        target['modelBreakdowns'][0]['totalTokens'] += 1
+    oracle = module.assess_native_oracle([observation, observation, changed], ties=[])
+    assert oracle['complete'] is False
+    assert oracle['observations'][-1] == changed
+
+
+@pytest.mark.parametrize('scope', ['project', 'source'])
+@pytest.mark.parametrize('field', ['standardCostUSD', 'priorityCostUSD'])
+def test_native_model_cost_components_use_declared_tolerance(field, scope):
+    module = helper('compare_codexbar')
+    observation = native_observation()
+    observation['projects'] = [native_project()]
+    if scope == 'source':
+        observation['projects'][0]['sources'][0]['modelBreakdowns'] = [
+            dict(observation['projects'][0]['modelBreakdowns'][0])]
+    changed = json.loads(json.dumps(observation))
+    target = changed['projects'][0]
+    if scope == 'source':
+        target = target['sources'][0]
+    target['modelBreakdowns'][0][field] += 1e-14
+    assert module.assess_native_oracle([observation, observation, changed], ties=[])['complete'] is True
+    target['modelBreakdowns'][0][field] += 1e-5
+    assert module.assess_native_oracle([observation, observation, changed], ties=[])['complete'] is False
+    assert module.material_equal({field: None}, {field: 0}) is False
+    assert module.material_equal({'standardTokens': 1}, {'standardTokens': 1 + 1e-14}) is False
+
+
+def test_native_optional_breakdowns_and_encoded_omissions_remain_distinct():
+    module = helper('compare_codexbar')
+    observation = native_observation()
+    observation['projects'] = [native_project()]
+    observation['projects'][0]['modelBreakdowns'] = [{'modelName': 'gpt-synthetic'}]
+    original = json.loads(json.dumps(observation))
+    assert module.parse_native_stdout('NATIVE_ORACLE_JSON:' + json.dumps(observation)) == original
+    changed = json.loads(json.dumps(observation))
+    changed['projects'][0]['sources'][0]['modelBreakdowns'] = []
+    assert module.assess_native_oracle([observation, observation, changed], ties=[])['complete'] is False
+    assert observation == original
+
+
+@pytest.mark.parametrize('change', [None, 'project_model_tokens', 'project_model_cost',
+                                  'source_tokens', 'source_cost', 'source_model_tokens', 'source_model_cost',
+                                  'project_daily_model_tokens', 'project_daily_model_cost',
+                                  'source_daily_model_tokens', 'source_daily_model_cost', 'day_model_tokens', 'day_model_cost'])
+def test_native_crosscheck_includes_cli_project_model_and_source_metrics(change):
+    module = helper('compare_codexbar')
+    observation = native_observation()
+    observation['projects'] = [native_project()]
+    project = observation['projects'][0]
+    project['daily'][0]['modelBreakdowns'] = project['modelBreakdowns']
+    observation['daily'] = json.loads(json.dumps(project['daily']))
+    project['sources'] = [json.loads(json.dumps({key: value for key, value in project.items() if key != 'sources'}))]
+    def cli_models(rows):
+        return None if rows is None else [
+            {'modelName': row['modelName'], 'totalTokens': row.get('totalTokens'), 'cost': row.get('costUSD')}
+            for row in rows]
+    def cli_days(rows):
+        return [{**{key: value for key, value in row.items() if key not in ('costUSD', 'modelBreakdowns')},
+                 'totalCost': row['costUSD'], 'modelBreakdowns': cli_models(row.get('modelBreakdowns'))}
+                for row in rows]
+    def cli_part(part):
+        return {'path': part['path'], 'totalTokens': part['totalTokens'], 'totalCost': part['totalCostUSD'],
+                'daily': cli_days(part['daily']), 'modelBreakdowns': cli_models(part['modelBreakdowns'])}
+    cli_project = cli_part(project)
+    cli_project['sources'] = [cli_part(part) for part in project['sources']]
+    cli = {'daily': cli_days(observation['daily']), 'projects': [cli_project]}
+    if change:
+        target = cli_project if change.startswith('project_') else cli['daily'][0] if change.startswith('day_') else cli_project['sources'][0]
+        if '_daily_' in change:
+            target = target['daily'][0]
+        if 'model_' in change:
+            target = target['modelBreakdowns'][0]
+        field = 'cost' if 'model_cost' in change else 'totalCost' if change.endswith('cost') else 'totalTokens'
+        target[field] += .01 if change.endswith('cost') else 1
+    failures = module.crosscheck_native(observation, cli)
+    assert bool(failures) is (change is not None)
+
+
+def test_native_reference_and_incomplete_presence_use_canonical_ids():
+    module = helper('compare_codexbar')
+    observation = native_observation()
+    session = observation['sessions'].pop('synthetic-tie')
+    session['sessionID'] = 'synthetic-e\u0301'
+    observation['sessions']['synthetic-e\u0301'] = session
+    raw = json.loads(json.dumps(observation))
+    reference = module.reference_totals(observation)['session']
+    assert set(reference) == {'synthetic-é'}
+    full = {'synthetic-é': reference['synthetic-é']}
+    assert module.compare_scope('session', full, reference, full, proofs={}, custom_build=False) == ([], [])
+    assert module.observed_session_ids([observation] * 3) == {'synthetic-é'}
+    assert set(full) ^ module.observed_session_ids([observation] * 3) == set()
+    assert (set(full) | {'synthetic-really-missing'}) ^ module.observed_session_ids([observation] * 3) == {'synthetic-really-missing'}
+    assert observation == raw
+    duplicate = json.loads(json.dumps(observation))
+    duplicate['sessions']['synthetic-é'] = {**session, 'sessionID': 'synthetic-é'}
+    with pytest.raises(ValueError, match='canonical'):
+        module.reference_totals(duplicate)
+
+
+def test_shared_crosscheck_preserves_nil_omissions_and_cli_zero_metadata_filter():
+    module = helper('compare_codexbar')
+    observation = native_observation()
+    project = native_project()
+    project['path'] = None
+    project['modelBreakdowns'][0]['incompleteRequestCount'] = 0
+    observation['projects'] = [project]
+    cli = {'daily': [], 'projects': [{'totalTokens': 510, 'totalCost': .00125,
+        'daily': [{**row, 'totalCost': row['costUSD']} for row in project['daily']],
+        'modelBreakdowns': [{'modelName': 'gpt-synthetic', 'totalTokens': 510, 'cost': .00125}],
+        'sources': [{'name': 'Synthetic source', 'daily': []}]}]}
+    assert module.crosscheck_native(observation, cli) == []
+    assert project['sources'][0]['totalCostUSD'] is None
+    assert 'totalCost' not in cli['projects'][0]['sources'][0]
+    assert project['modelBreakdowns'][0]['incompleteRequestCount'] == 0
+
+
+def test_pinned_default_foundation_scalar_is_not_escaped_metadata_evidence(colophon):
+    line = b'{"timestamp":"2024-01-07T00:00:00Z","type":"session_meta","payload":{"id":"synthetic-e\\u0301"}}'
+    fast = colophon._codex_fast_line(line)
+    assert fast[0] == 'M'
+    assert fast[1]['session_id'] is None
+    builder = colophon.TokenStreamBuilder()
+    builder.feed(0, line, None, terminated=True)
+    assert builder.result()['observations'][0] == ['P', fast[1]]
+
+
+def test_pinned_default_foundation_scalar_does_not_change_escaped_model_context(colophon):
+    line = b'{"timestamp":"2024-01-07T00:00:00Z","type":"turn_context","payload":{"model":"gpt\\u002d5.4"}}'
+    fast = colophon._codex_fast_line(line)
+    assert fast[0] == 'C'
+    assert fast[2] is None
+
+
+def test_escaped_context_replay_retains_prior_model_counts_and_source_price(colophon, tmp_path):
+    from fixturegen import CodexHome
+    home = CodexHome(tmp_path / 'synthetic-foundation-source')
+    builder = home.log('synthetic-foundation-context', day='2024-01-07').meta().task_started(
+        'synthetic-foundation-turn').turn_context(model='gpt-5.5')
+    builder.raw(b'{"timestamp":"2024-01-07T00:00:00.003Z","ordinal":3,"type":"turn_context",'
+                b'"payload":{"model":"gpt\\u002d5.4"}}\n')
+    builder.token_count(last={'input_tokens': 100, 'cached_input_tokens': 20, 'output_tokens': 10},
+                        total={'input_tokens': 100, 'cached_input_tokens': 20, 'output_tokens': 10}).task_complete().write()
+    runtime = tmp_path / 'synthetic-runtime'
+    colophon.ensure_runtime_home(runtime)
+    catalog = synthetic_pricing_catalog()
+    catalog['openai']['models']['gpt-5.5']['cost'] = {'input': 4, 'cache_read': 1, 'output': 16}
+    colophon.atomic_write_json(runtime / 'pricing-cache.json', {'schema': 1, 'url': 'https://example.invalid/synthetic',
+        'catalog': catalog, 'fetched_at_ms': 1704585600000, 'etag': None})
+    module = helper('compare_codexbar')
+    compiled = module.compile_colophon(colophon, home.root, runtime, tmp_path / 'synthetic.html', snapshot_ms=1704585700000)
+    fake = tmp_path / 'synthetic-fake'
+    fake.mkdir()
+    fallback = module.fallback_totals(colophon, compiled['corpus'], fake, catalog)
+    metric = fallback['session']['synthetic-foundation-context']
+    assert {field: metric[field] for field in ('input', 'cached', 'output')} == {'input': 100, 'cached': 20, 'output': 10}
+    assert {unit.original.model for unit in fallback['units']} == {'gpt-5.5'}
+    # Pinned context route keeps gpt-5.5:80*4+20*1+10*16 per million.
+    assert metric['cost'] == pytest.approx(.0005, rel=0, abs=1e-15)
+
+
 def test_structural_ties_are_per_id_at_maximum_mtime_only():
     rows = [cache_file(1, 'synthetic-a', 1), cache_file(2, 'synthetic-a', 1),
             cache_file(3, 'synthetic-a', 2), cache_file(4, 'synthetic-b', 3),
@@ -141,11 +351,11 @@ def test_native_daily_project_crosscheck_is_required_and_keeps_unknowns():
            'outputTokens': 10, 'totalTokens': 510, 'costUSD': None}
     observation['daily'] = [day]
     observation['projects'] = [{'path': '/synthetic/project', 'totalTokens': 510,
-                               'totalCostUSD': None, 'daily': [day]}]
+                               'totalCostUSD': None, 'daily': [day], 'modelBreakdowns': None, 'sources': []}]
     cli_day = {**day, 'totalCost': None}
     cli_day.pop('costUSD')
     cli = {'daily': [cli_day], 'projects': [{'path': '/synthetic/project',
-        'totalTokens': 510, 'totalCost': None, 'daily': [cli_day]}]}
+        'totalTokens': 510, 'totalCost': None, 'daily': [cli_day], 'sources': []}]}
     assert module.crosscheck_native(observation, cli) == []
     cli_day['totalCost'] = 0
     assert module.crosscheck_native(observation, cli)
@@ -535,13 +745,21 @@ def test_fork_scope_proof_requires_other_contributors_to_match(colophon, extra_u
     assert ('fallback-only_cost' in proofs['project'].get('/synthetic/project', {})) is (not extra_unexplained)
 
 
-@pytest.mark.parametrize('case', ['complete', 'tied', 'native-day-mismatch', 'cache-mutation', 'unknown-missing'])
+@pytest.mark.parametrize('case', ['complete', 'tied', 'native-day-mismatch', 'cache-mutation', 'unknown-missing',
+                                  'canonical-complete', 'canonical-incomplete'])
 def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tmp_path, monkeypatch, case):
     from fixturegen import CodexHome
     module = helper('compare_codexbar')
     codex, runtime = tmp_path / 'synthetic-codex', tmp_path / 'synthetic-runtime'
     home = CodexHome(codex)
-    home.log('synthetic-tie', day='2024-01-07').meta(cwd='/synthetic/project').task_started('synthetic-turn').turn_context(
+    identifier = 'synthetic-é' if case.startswith('canonical-') else 'synthetic-tie'
+    builder = home.log(identifier, day='2024-01-07')
+    if case.startswith('canonical-'):
+        metadata = {'type': 'session_meta', 'payload': {'id': identifier, 'cwd': '/synthetic/project'}}
+        builder.raw((json.dumps(metadata, ensure_ascii=False) + '\n').encode('utf-8'))
+    else:
+        builder.meta(cwd='/synthetic/project')
+    builder.task_started('synthetic-turn').turn_context(
         model='gpt-5.4').token_count(last={'input_tokens': 100, 'cached_input_tokens': 20, 'output_tokens': 10},
         total={'input_tokens': 100, 'cached_input_tokens': 20, 'output_tokens': 10}).task_complete().write(mtime=1704585600)
     colophon.ensure_runtime_home(runtime)
@@ -554,14 +772,21 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
     monkeypatch.setattr(colophon, 'now_ms', lambda: 1704585700000)
     native = native_observation(100)
     native['sessions']['synthetic-tie']['costUSD'] = .00025
+    if case.startswith('canonical-'):
+        session = native['sessions'].pop('synthetic-tie')
+        session['sessionID'] = 'synthetic-e\u0301'
+        native['sessions'][session['sessionID']] = session
+        if case == 'canonical-incomplete':
+            session['cachedInputTokens'] = None
     day = {'date': '2024-01-07', 'inputTokens': 100, 'cacheReadTokens': 20,
            'outputTokens': 10, 'totalTokens': 110, 'costUSD': .00025}
     native['daily'] = [day]
-    native['projects'] = [{'path': '/synthetic/project', 'totalTokens': 110, 'totalCostUSD': .00025, 'daily': [day]}]
+    native['projects'] = [{'path': '/synthetic/project', 'totalTokens': 110, 'totalCostUSD': .00025,
+                           'daily': [day], 'modelBreakdowns': None, 'sources': []}]
     cli_day = {**day, 'totalCost': .00025}
     cli_day.pop('costUSD')
     cli = {'historyCoverageIsEstablished': True, 'daily': [cli_day], 'projects': [
-        {'path': '/synthetic/project', 'totalTokens': 110, 'totalCost': .00025, 'daily': [cli_day]}]}
+        {'path': '/synthetic/project', 'totalTokens': 110, 'totalCost': .00025, 'daily': [cli_day], 'sources': []}]}
     if case == 'native-day-mismatch':
         day['costUSD'] = .02
     if case == 'unknown-missing':
@@ -579,7 +804,7 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
         database.parent.mkdir()
         db = sqlite3.connect(database)
         db.execute('CREATE TABLE files (id INTEGER,path TEXT,session_id TEXT,mtime_ms INTEGER)')
-        db.execute('INSERT INTO files VALUES (1,?,?,1)', ('/synthetic/one.jsonl', 'synthetic-tie'))
+        db.execute('INSERT INTO files VALUES (1,?,?,1)', ('/synthetic/one.jsonl', identifier))
         if case == 'tied':
             db.execute('INSERT INTO files VALUES (2,?,?,1)', ('/synthetic/two.jsonl', 'synthetic-tie'))
         db.execute('CREATE TABLE scan_metadata (payload TEXT)')
@@ -613,14 +838,19 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
         cli=cli_path, custom_build=False, offline_catalog=True, max_runs=3, native_runs=3)
     report, status = module.run_comparison(args, module=colophon, guard=guard)
     assert report['fingerprint_unchanged'] is True
-    assert report['accepted'] is (case == 'complete')
-    assert status == int(case != 'complete')
-    assert report['oracle']['complete'] is (case == 'complete')
+    accepted = case in ('complete', 'canonical-complete')
+    assert report['accepted'] is accepted
+    assert status == int(not accepted)
+    assert report['oracle']['complete'] is accepted
     assert report['oracle']['structural_ties'] == (['synthetic-tie'] if case == 'tied' else [])
     if case == 'unknown-missing':
         assert {item['id'] for item in report['missing_sessions']} == {'synthetic-tie', 'synthetic-other'}
         assert all('incomplete native oracle' in item['reason'] for item in report['missing_sessions'])
         assert report['differences'] == []
+    if case.startswith('canonical-'):
+        assert report['missing_sessions'] == []
+        assert report['oracle']['observations'][0]['sessions'].keys() == {'synthetic-e\u0301'}
+        assert report['colophon']['session'].keys() == {'synthetic-é'}
     assert events[0] == 'self-test'
     assert events[1][1] == [['cost', '--period', 'all'], ['cost', '--period', 'all', '--group-by', 'session'],
                              ['cost', '--period', 'all', '--group-by', 'project']]
