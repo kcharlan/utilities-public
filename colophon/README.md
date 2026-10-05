@@ -37,10 +37,18 @@ text/background token pairs meet WCAG AA without further color changes.
 Reader copy actions use the browser clipboard and fall back to a selected,
 read-only field with a “press ⌘C” hint. “Continue in CLI” copies a command that
 uses `codex resume <id>`; “Open in Codex” targets `codex://threads/<id>`.
-Open-in-Codex and CLI support flags have browser-only
-coverage; live, archived and subagent desktop behavior remains unverified
-until Task 26's explicitly authorized pre-ship acceptance, including archived
-session behavior. These flags do not establish desktop support.
+Native CLI checks with Codex v0.160.0 found that resuming an archived session
+offers an explicit “Unarchive and resume” choice; accepting it unarchives the
+session. A live session owned by the desktop app opened read-only with an
+“open in another app” restriction; writable live continuation remains unverified.
+Direct resume of an unloaded multi-agent v2 subagent failed, so the CLI copy
+button is hidden for subagents. This result does not establish the behavior of
+all historical agents. CLI copy actions remain available for live and archived
+sessions. Manual desktop-link checks opened the intended live and subagent
+sessions, with their session-file hashes, sizes, mtimes and locations unchanged.
+An archived desktop link offered an unarchive choice before viewing; leaving
+it unaccepted preserved the archived session. “Open in Codex” is therefore
+hidden for archived sessions.
 
 Overview time totals clip to the selected period: your active time unions
 overlapping own turns, while agent time sums each descendant’s own union.

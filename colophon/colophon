@@ -50,8 +50,8 @@ UPSTREAM_COMMIT = "3bbf6bc48"
 TAIL_FINGERPRINT_BYTES = 4096
 UPSTREAM_MAX_LINE_BYTES = 262144
 PAGE_SIZE_WARN_BYTES = 20 * 1024 * 1024
-OPEN_IN_CODEX_SUPPORT = {"live": True, "archived": True, "subagent": True}
-CONTINUE_IN_CLI_SUPPORT = {"live": True, "archived": True, "subagent": True}
+OPEN_IN_CODEX_SUPPORT = {"live": True, "archived": False, "subagent": True}
+CONTINUE_IN_CLI_SUPPORT = {"live": True, "archived": True, "subagent": False}
 
 
 # ===== 2. Text and tool rule lists =====

@@ -154,8 +154,8 @@ def test_recursive_schema_and_usage_invariants(colophon, tmp_path):
     assert set(p['meta']['catalog']) == {'status','fetched_at_ms','checked_at_ms','source_host'}
     assert set(p['meta']['costs']) == {'available','reason'}
     assert set(p['meta']['links']) == {'open_in_codex','continue_in_cli'}
-    for link in p['meta']['links'].values():
-        assert link == {'live': True,'archived': True,'subagent': True}
+    assert p['meta']['links']['open_in_codex'] == {'live': True,'archived': False,'subagent': True}
+    assert p['meta']['links']['continue_in_cli'] == {'live': True,'archived': True,'subagent': False}
     assert set(p['diagnostics']) == DIAGNOSTICS
     for key in ('malformed_lines','truncated_lines','recovered_lines'):
         assert set(p['diagnostics'][key]) == {'total','files'}

@@ -544,6 +544,30 @@ def test_clipboard_stub_and_selected_readonly_fallback(page_for,reader_payload,m
 
 
 @pytest.mark.parametrize('kind',['live','archived','subagent'])
+def test_production_link_support_preserves_reader_actions(page_for,colophon,tmp_path,kind):
+    _, payload = compile_fixture(colophon,tmp_path/'synthetic-production-links',family=True)
+    row = payload['subagents']['synthetic-child'] if kind=='subagent' else payload['sessions'][0]
+    if kind=='archived': row['archived']=True
+    page = page_for(payload,hash='#v=session&p=all&s='+row['id'],
+        init_script='Object.defineProperty(navigator,"clipboard",{value:{writeText:async value=>{window.syntheticCopied=value}},configurable:true});')
+    reader = page.locator('[data-reader]')
+    codex_link = reader.get_by_role('link',name='Open in Codex')
+    if kind=='archived':
+        expect(codex_link).to_have_count(0)
+    else:
+        expect(codex_link).to_have_attribute('href','codex://threads/'+row['id'])
+    continuation = reader.get_by_role('button',name='Copy Continue in CLI — continues this session',exact=True)
+    if kind=='subagent':
+        expect(continuation).to_have_count(0)
+    else:
+        continuation.click()
+        assert page.evaluate('window.syntheticCopied') == 'codex resume '+row['id']
+    for button,value in [('Copy session ID',row['id']),('Copy log path',row['log_path'])]:
+        reader.get_by_role('button',name=button,exact=True).click()
+        assert page.evaluate('window.syntheticCopied') == value
+
+
+@pytest.mark.parametrize('kind',['live','archived','subagent'])
 def test_link_support_constants_control_buttons_in_process(page_for,colophon,tmp_path,monkeypatch,kind):
     monkeypatch.setattr(colophon,'OPEN_IN_CODEX_SUPPORT',dict(live=True,archived=True,subagent=True,**{}))
     monkeypatch.setattr(colophon,'CONTINUE_IN_CLI_SUPPORT',dict(live=True,archived=True,subagent=True,**{}))

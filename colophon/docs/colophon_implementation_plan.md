@@ -2466,7 +2466,7 @@ are approved; real-data runs and Task 26 still require separate approval.
 
 ### Task 26: Final verification, real-data acceptance and handoff
 
-Every step that touches source data or the user's desktop is read-only. Writes are limited to documented `$COLOPHON_HOME` outputs and approved private acceptance outputs or snapshots outside the repository. **Ask the user before Steps 3 and 4** (real-data runs and opening Codex links), and **before Step 6** (deployment).
+Every step that touches source data or the user's desktop is read-only, except the user-approved native Codex disposable-session verification in Step 4 below. Other writes are limited to documented `$COLOPHON_HOME` outputs and approved private acceptance outputs or snapshots outside the repository. **Ask the user before Steps 3 and 4** (real-data runs and opening Codex links), and **before Step 6** (deployment).
 
 - [ ] **Step 1: Run the complete Colophon suite and every fleet suite** listed in Task 25. Report every failure by name, with its output. Do not continue with any failure.
 - [ ] **Step 2: Audit the branch:**
@@ -2486,6 +2486,9 @@ Every step that touches source data or the user's desktop is read-only. Writes a
   5. **Re-confirm the reference cases** (with the user's approval). Copy `tests/fixtures/token_cases` and `tests/fixtures/scrubbed` to a temporary directory, run `codexbar_expected.py --cases <copy>` on each (the tool applies each case's recorded `mtimes_ms`, so a plain copy or a fresh clone is fine), and confirm every regenerated `expected.json` is byte-identical to the committed one. Store nothing new in the repository, and investigate every difference.
   6. Measure the logs that have only two distinct wrapper timestamps (spec §15 item 6), retaining counts and evidence privately. The approved decision is recorded in spec §15: keep the collapsed rule limited to multiple wrapper timestamps whose values are all identical; two distinct values alone do not establish timestamp unreliability. Preserve existing provenance, unknown-time flags and duration fallbacks.
 - [ ] **Step 4: Verify the §8.4 links** (with the user's go-ahead). Confirm that "Open in Codex" opens a live, an archived and a subagent session without un-archiving anything, and check what `codex resume <id>` does to an archived session.
+  - **User-approved disposable-session conditions (2026-10-05):** commit Step 3 separately with a meaningful commit body before Steps 4–5. Create a trivial live session, one to archive, and one that spawns a subagent. Native Codex app/CLI verification may create and modify only these newly created disposable targets; run "Open in Codex" and `codex resume` only against them, never existing sessions.
+  - Before and after each action, record the target session file's hash, size, mtime and live/archived location, and report every change. Afterwards, list all disposable sessions created and retain them; do not delete them. Step 5's real page and its private acceptance evidence stay outside the repository.
+  - This exception changes no Colophon read-only source rule, Task 24/CLI guarding requirement or Step 6 deployment approval gate.
   - Set `OPEN_IN_CODEX_SUPPORT` and `CONTINUE_IN_CLI_SUPPORT` from the results.
   - Write the verified behavior into the README.
   - Rerun the suite.
