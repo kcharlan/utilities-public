@@ -157,6 +157,7 @@ framework is required for this single-owner localhost deployment.
 
 These files are direct copies of tracked source and should remain byte-for-byte identical:
 
+- `colophon` <- `colophon/colophon`
 - `de-abacus.py` <- `abacus usage/de-abacus.py`
 - `div_conv` <- `div_conv/div_conv`
 - `dloc` <- `dloc/dloc`

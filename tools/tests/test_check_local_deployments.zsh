@@ -90,6 +90,7 @@ AUDIT_STATUS=
 
 typeset -a COPY_MAPPINGS=(
   'abacus usage/de-abacus.py|de-abacus.py'
+  'colophon/colophon|colophon'
   'div_conv/div_conv|div_conv'
   'dloc/dloc|dloc'
   'docker/docker-disk-compact/docker-disk-compact.zsh|docker-disk-compact.zsh'
