@@ -765,6 +765,15 @@
 
 ### Task 24 — independent parity evidence
 
+- Match all exported integer representations: activity is signed Int64, while
+  native unmetered-day counters are positive bounded Swift Int. Valid negative
+  activity is retained; agreeing out-of-range values are still malformed.
+  Regression: `test_native_activity_requires_exact_signed_int64`.
+- Native model rows originate from String-keyed accumulators, so duplicate NFC
+  names cannot establish an oracle even when metrics agree. Reject ambiguity in
+  every model scope without merging rows or rewriting raw names/order/optionals.
+  Case, whitespace and compatibility characters remain distinct. Regression:
+  `test_native_model_identity_duplicates_fail_in_every_scope`.
 - Validate the source-defined nested model schema in every native scope and
   every daily request/coverage counter before comparing observations. Optional
   Codable omissions/nulls remain untouched; boolean, fractional, negative or

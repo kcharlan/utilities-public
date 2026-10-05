@@ -99,6 +99,13 @@ invalid count/money types or values make the oracle incomplete. Repeated JSON
 object keys fail decoding for both native and CLI evidence, even when their
 values agree. Raw stdout is retained before decoding.
 
+Native activity values must fit signed Int64, including valid negative times;
+unmetered-day fact counts must be positive bounded native Int. Model rows come
+from native String-keyed accumulators: duplicate NFC model names fail in every
+scope, even with agreeing metrics. Raw order/names/optionals remain unchanged;
+no rows are merged and no trimming, case folding or compatibility normalization
+is applied.
+
 Private `report.json`, `report.md`, raw CLI/native output, Colophon page/logs and
 fingerprints stay outside the repository. A failing or incomplete report exits
 nonzero. Never commit these outputs or use them to regenerate protected fixtures.

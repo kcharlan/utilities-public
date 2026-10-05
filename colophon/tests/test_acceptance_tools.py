@@ -54,6 +54,86 @@ def native_nested_scope(scope):
     return observation, targets[scope]
 
 
+def native_unmetered_fact(count=1):
+    return {'path': '/synthetic/fact.jsonl', 'sessionID': 'synthetic-other', 'parentID': 'synthetic-parent',
+            'unresolvedMissingParent': True, 'hasBilledTokens': False, 'unmeteredDays': {'2024-01-07': count}}
+
+
+@pytest.mark.parametrize('value', [-(2**63) - 1, 2**63, True, 1.5, None],
+                         ids=['below-int64', 'above-int64', 'bool', 'fractional', 'null'])
+def test_native_activity_requires_exact_signed_int64(value):
+    observation = native_observation()
+    observation['sessions']['synthetic-tie']['lastActivityUnixMs'] = value
+    module = helper('compare_codexbar')
+    with pytest.raises(ValueError, match='native'):
+        module.validate_native(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+
+
+@pytest.mark.parametrize('value', [-(2**63), -1, 0, 2**63 - 1])
+def test_native_activity_retains_signed_int64_boundary_values(value):
+    observation = native_observation()
+    observation['sessions']['synthetic-tie']['lastActivityUnixMs'] = value
+    raw = json.loads(json.dumps(observation))
+    module = helper('compare_codexbar')
+    assert module.validate_native(observation) == raw
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    assert observation['sessions']['synthetic-tie']['lastActivityUnixMs'] == value
+
+
+@pytest.mark.parametrize('value', [2**63, 10**400, True, 1.5, None, 0, -1],
+                         ids=['int-overflow', 'huge-int', 'bool', 'fractional', 'null', 'zero', 'negative'])
+def test_native_unmetered_fact_count_requires_positive_bounded_int(value):
+    observation = native_observation()
+    observation['fileFacts'] = [native_unmetered_fact(value)]
+    module = helper('compare_codexbar')
+    with pytest.raises(ValueError, match='native'):
+        module.native_unmetered_facts(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+
+
+@pytest.mark.parametrize('value', [1, 2**63 - 1])
+def test_native_unmetered_fact_retains_positive_int_boundaries(value):
+    observation = native_observation()
+    fact = native_unmetered_fact(value)
+    observation['fileFacts'] = [fact]
+    raw = json.loads(json.dumps(observation))
+    module = helper('compare_codexbar')
+    assert module.native_unmetered_facts(observation) == {'synthetic-other': fact}
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    assert observation == raw
+
+
+@pytest.mark.parametrize('scope', ['session', 'day', 'project-day', 'source-day', 'project', 'source'])
+@pytest.mark.parametrize('variant', ['same-conflicting', 'same-agreeing', 'canonical-conflicting', 'canonical-agreeing'])
+def test_native_model_identity_duplicates_fail_in_every_scope(scope, variant):
+    observation, target = native_nested_scope(scope)
+    names = ('gpt-synthetic-e\u0301', 'gpt-synthetic-é') if variant.startswith('canonical-') else ('gpt-synthetic',) * 2
+    target['modelBreakdowns'] = [{'modelName': names[0], 'inputTokens': 100, 'costUSD': None},
+                               {'modelName': names[1], 'inputTokens': 100 if variant.endswith('agreeing') else 200,
+                                'costUSD': None}]
+    raw = json.loads(json.dumps(observation))
+    module = helper('compare_codexbar')
+    with pytest.raises(ValueError, match='duplicate.*model'):
+        module.validate_native(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+    assert observation == raw
+
+
+@pytest.mark.parametrize('scope', ['session', 'day', 'project-day', 'source-day', 'project', 'source'])
+def test_native_distinct_model_identities_preserve_order_names_and_optional_values(scope):
+    observation, target = native_nested_scope(scope)
+    names = ['gpt-synthetic', 'GPT-synthetic', ' gpt-synthetic', 'gpt-synthetic-Ｋ', 'gpt-synthetic-K']
+    target['modelBreakdowns'] = [{'modelName': name, 'costUSD': None} for name in names]
+    raw = json.loads(json.dumps(observation))
+    module = helper('compare_codexbar')
+    assert module.validate_native(observation) == raw
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    assert [row['modelName'] for row in target['modelBreakdowns']] == names
+    assert all('inputTokens' not in row and row['costUSD'] is None for row in target['modelBreakdowns'])
+    assert observation == raw
+
+
 @pytest.mark.parametrize('scope', ['session', 'day', 'project-day', 'source-day', 'project', 'source'])
 @pytest.mark.parametrize('row', [None, {'modelName': 'gpt-synthetic', 'inputTokens': True},
     {'modelName': 'gpt-synthetic', 'requestCount': 1.5},
@@ -869,7 +949,10 @@ def test_fork_scope_proof_requires_other_contributors_to_match(colophon, extra_u
 @pytest.mark.parametrize('case', ['complete', 'tied', 'native-day-mismatch', 'cache-mutation', 'unknown-missing',
                                   'canonical-complete', 'canonical-incomplete', 'bad-model-null', 'bad-model-count',
                                   'bad-model-money', 'bad-day-request', 'bad-day-model', 'duplicate-native-id',
-                                  'duplicate-native-metric', 'duplicate-cli-metric'])
+                                  'duplicate-native-metric', 'duplicate-cli-metric', 'negative-activity',
+                                  'bad-activity-below', 'bad-activity-above', 'bad-unmetered-count',
+                                  'bad-model-duplicate-conflicting', 'bad-model-duplicate-agreeing',
+                                  'bad-model-canonical-conflicting', 'bad-model-canonical-agreeing'])
 def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tmp_path, monkeypatch, case):
     from fixturegen import CodexHome
     module = helper('compare_codexbar')
@@ -916,6 +999,11 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
         session = native['sessions'].pop('synthetic-tie')
         session.update(sessionID='synthetic-other', cachedInputTokens=None)
         native['sessions']['synthetic-other'] = session
+    if case == 'negative-activity' or case.startswith('bad-activity-'):
+        native['sessions']['synthetic-tie']['lastActivityUnixMs'] = (
+            -(2**63) - 1 if case == 'bad-activity-below' else 2**63 if case == 'bad-activity-above' else -1)
+    if case == 'bad-unmetered-count':
+        native['fileFacts'] = [native_unmetered_fact(2**63)]
     if case.startswith('bad-model-'):
         row = {'modelName': 'gpt-synthetic'}
         if case == 'bad-model-count':
@@ -923,6 +1011,11 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
         elif case == 'bad-model-money':
             row['standardCostUSD'] = -1
         native['sessions']['synthetic-tie']['modelBreakdowns'] = [None if case == 'bad-model-null' else row]
+        if 'duplicate' in case or 'canonical' in case:
+            names = ('gpt-synthetic-e\u0301', 'gpt-synthetic-é') if 'canonical' in case else ('gpt-synthetic',) * 2
+            native['sessions']['synthetic-tie']['modelBreakdowns'] = [
+                {'modelName': names[0], 'inputTokens': 100},
+                {'modelName': names[1], 'inputTokens': 100 if case.endswith('agreeing') else 200}]
     if case == 'bad-day-request':
         native['daily'][0]['requestCount'] = True
     if case == 'bad-day-model':
@@ -981,7 +1074,7 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
         cli=cli_path, custom_build=False, offline_catalog=True, max_runs=3, native_runs=3)
     report, status = module.run_comparison(args, module=colophon, guard=guard)
     assert report['fingerprint_unchanged'] is True
-    accepted = case in ('complete', 'canonical-complete')
+    accepted = case in ('complete', 'canonical-complete', 'negative-activity')
     assert report['accepted'] is accepted
     assert status == int(not accepted)
     assert report['oracle']['complete'] is accepted

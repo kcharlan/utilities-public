@@ -309,7 +309,7 @@ def native_unmetered_facts(observation: dict) -> dict:
                 or 'parentID' not in fact or fact['parentID'] is not None and not isinstance(fact['parentID'], str)
                 or type(fact.get('unresolvedMissingParent')) is not bool or type(fact.get('hasBilledTokens')) is not bool
                 or not isinstance(fact.get('unmeteredDays'), dict)
-                or any(not isinstance(day, str) or type(count) is not int or count <= 0
+                or any(not isinstance(day, str) or not _valid_count(count) or count <= 0
                        for day, count in fact['unmeteredDays'].items())):
             raise ValueError('malformed native file facts')
         paths.add(fact['path'])
@@ -418,6 +418,7 @@ def validate_native(observation: object) -> dict:
         if ('costUSD' not in session or (session['costUSD'] is not None and
                 not _valid_money(session['costUSD']))
                 or type(session.get('lastActivityUnixMs')) is not int
+                or not -NATIVE_INT_MAX - 1 <= session['lastActivityUnixMs'] <= NATIVE_INT_MAX
                 or 'projectPath' not in session or (session['projectPath'] is not None and not isinstance(session['projectPath'], str))):
             raise ValueError('malformed native session metrics')
         _validate_model_breakdowns(session.get('modelBreakdowns'), nullable=False)
@@ -451,9 +452,14 @@ def _validate_model_breakdowns(models, *, nullable: bool = True) -> None:
         return
     if not isinstance(models, list):
         raise ValueError('malformed native model breakdowns')
+    identities = set()
     for model in models:
         if not isinstance(model, dict) or not isinstance(model.get('modelName'), str):
             raise ValueError('malformed native model identity')
+        canonical = unicodedata.normalize('NFC', model['modelName'])
+        if canonical in identities:
+            raise ValueError('duplicate canonical native model identity')
+        identities.add(canonical)
         _validate_optional_metrics(model, counts=MODEL_COUNTS,
                                    costs=('costUSD', 'standardCostUSD', 'priorityCostUSD'))
 
