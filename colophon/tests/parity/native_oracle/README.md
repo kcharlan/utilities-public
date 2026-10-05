@@ -65,6 +65,25 @@ public snapshot; the synthetic fixture catalog is never an acceptance catalog.
 Colophon then compiles offline, without opening a browser or modifying its
 selected runtime home. The live trace is backed up consistently through a read-only
 SQLite connection; the native and cold fallback paths use that copy.
+The isolated backup is finalized in DELETE journal mode so the pinned read-only
+SQLite opener does not require WAL sidecars. Source data and journal mode are
+unchanged; permitted SQLite read coordination still applies.
+CLI stability requires three complete observations. Partial scans cannot satisfy
+the stability streak; retries respect the pinned scanner's 60-second debounce
+within the existing attempt limit. Every attempt's raw grouped output and scan
+metadata remain in the private report directory.
+
+Task 26's separately approved reproducibility procedure can capture all scanner
+JSONLs and the specified metadata/SQLite inputs into a private directory under
+`/private/var/tmp`, mode `0700`. Each non-SQLite file must remain unchanged while
+copied, with its original mtime preserved; SQLite uses consistent read-only
+backups. The manifest records hashes, sizes, mtimes, and SQLite completion times.
+This is a collection of individually stable captures, not an atomic whole-home
+snapshot. Exhausted JSONL retries stop acceptance and require a user decision;
+no truncation or source exclusion is permitted. Both implementations use the
+same captured corpus, and the imported guard denies and tests real Codex-home
+reads. Preserve every oracle check. Report the private snapshot path until
+parity is clean, then delete it while retaining its manifest as private evidence.
 
 All CLI/native execution uses the imported `codexbar_expected.py` runner,
 including its sandbox self-test, fake `HOME` and `CFFIXED_USER_HOME`, and
@@ -88,10 +107,63 @@ never explained. Missing sessions and unproven differences remain explicit gaps.
 
 Raw project observations retain nullable model breakdowns and source-level totals,
 days and model breakdowns. Their CLI-emitted numeric counterparts also cross-check;
-native-only monetary components retain the declared stability tolerance. Codable
+CLI JSON omits `standardCostUSD`, `priorityCostUSD`, `standardTokens` and
+`priorityTokens`. Those four fields are validated by conservation within each
+native report and agreement across native observations; CLI core checks remain
+mandatory. Native money retains the declared stability tolerance. Codable
 nil omissions remain omitted and direct project/source optionals remain null.
 Session comparison keys use canonical Unicode identity while raw native spellings
 remain visible in observations; canonical duplicates fail validation.
+
+The Colophon comparison's `project-source` axis uses the original working
+directory: native `projects[].sources[].path` against session `cwd`. Canonical
+projects remain separate native evidence and cross-check with CLI project JSON.
+Every source reconciles with its parent per local day for input/cached/output/
+total tokens and cost, for aggregate total tokens/cost, and for supplied daily
+and aggregate model identities and totals/costs. Within each individual report,
+daily and aggregate model `standardCostUSD`, `priorityCostUSD`, `standardTokens`
+and `priorityTokens` reconcile too, following the pinned `BreakdownAccumulator`:
+nil/inactive component contributions are skipped and an entirely unobserved
+component remains nil. No zero-valued model rows or omitted aggregate activity
+fields are reconstructed. Tokens remain exact with native overflow bounds;
+costs retain the native tolerance.
+
+Across the source/parent boundary, every discrepancy in one of those four fields
+is reported without failing acceptance, even when all contributing directory
+rows supplied it or the parent is nil. Pinned `CostUsageModels.swift`'s
+`BreakdownAccumulator` skips nil file contributions and marks a field present
+if any file supplied it; a merged directory row cannot certify complete split
+coverage. `makeCodexBilledDayEntry` also gates split emission by trusted
+`hasModeSplit`. No hidden per-file omissions or contributions are reconstructed.
+Every discrepancy is retained in JSON and Markdown as native presentation evidence, separately
+from Colophon usage differences: parent path, scope/day, model, field, parent
+value, observed source sum and every observed omitted source path/value (an
+empty list when all source rows supplied the field). Offsetting days
+remain individually visible. Component agreement between native observations,
+within-report conservation, CLI core crosschecks and all oracle safeguards stay
+mandatory. Missing model identities and complete token/cost mismatches fail.
+
+If mandatory reconciliation later aborts, already validated presentation records
+remain separate report-owned evidence, explicitly incomplete/aborted with the
+failure retained in JSON and Markdown. Per-observation collections remain visible.
+No later field, day or aggregate diagnostic is inferred, no partial reference
+metrics are published, and neither usage classification nor acceptance is granted.
+The shared-path section also distinguishes not-established/incomplete assessment
+from absence: only a completed known-empty assessment reports `none`; a completed
+nonempty assessment lists every shared path. Aborted or uncollected evidence
+includes its reason and never proves that no shared paths exist.
+
+Spec §15 item 6 is resolved: only multiple identical wrapper timestamps establish
+collapsed logs. Two distinct values alone do not justify extending that rule;
+existing provenance, unknown-time flags and duration fallbacks remain intact.
+
+Missing or unconserved source evidence prevents acceptance. Raw nulls and the
+existing explicit unmetered checks remain intact. Reject duplicate source paths
+within a parent. When the same exact raw path occurs under several parents,
+sum every validated source contribution and retain every parent association;
+the private JSON/Markdown report lists all such paths even if no difference
+remains. Those associations never relabel Colophon usage or reconstruct native
+session/file selection. Native observations remain unchanged in the report.
 
 Source-defined model/day metrics are validated in every nested scope before
 stability comparison. Optional encoder omissions and nulls remain unchanged;
@@ -103,8 +175,9 @@ Native activity values must fit signed Int64, including valid negative times;
 unmetered-day fact counts must be positive bounded native Int. Model rows come
 from native String-keyed accumulators: duplicate NFC model names fail in every
 scope, even with agreeing metrics. Raw order/names/optionals remain unchanged;
-no rows are merged and no trimming, case folding or compatibility normalization
-is applied.
+no native rows are rewritten and no trimming, case folding or compatibility
+normalization is applied. Reference aggregation only sums independently validated
+source contributions for their exact original-directory identity.
 
 Private `report.json`, `report.md`, raw CLI/native output, Colophon page/logs and
 fingerprints stay outside the repository. A failing or incomplete report exits

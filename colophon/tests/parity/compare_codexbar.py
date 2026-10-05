@@ -29,6 +29,7 @@ MODEL_COUNTS = ('totalTokens', 'requestCount', 'inputTokens', 'outputTokens', 'c
 DAY_COUNTS = ('inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens', 'reasoningTokens',
               'totalTokens', 'requestCount', 'unpricedRequestCount', 'pricedRequestCount',
               'unmeteredRequestCount', 'estimatedRequestCount')
+SOURCE_MODEL_COMPONENTS = ('standardCostUSD', 'priorityCostUSD', 'standardTokens', 'priorityTokens')
 
 
 def source_inputs(codex_home: Path) -> list[Path]:
@@ -38,7 +39,9 @@ def source_inputs(codex_home: Path) -> list[Path]:
         root = codex_home / name
         if root.is_symlink():
             raise ValueError('symlink source root refused')
-        for path in root.rglob('*.jsonl'):
+        for path in root.rglob('*'):
+            if path.suffix.lower() != '.jsonl':
+                continue
             if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
                 raise ValueError('symlink source JSONL refused')
             if path.is_file():
@@ -61,7 +64,7 @@ def serialize_report(report: dict) -> str:
         if isinstance(value, dict):
             return {key: ([{'path': path, 'metrics': encode(metrics)}
                            for path, metrics in sorted(item.items(), key=lambda pair: (pair[0] is not None, str(pair[0])))]
-                          if key == 'project' and isinstance(item, dict) else encode(item))
+                          if key in ('project', 'canonical_project') and isinstance(item, dict) else encode(item))
                     for key, item in value.items()}
         if isinstance(value, list):
             return [encode(item) for item in value]
@@ -282,7 +285,8 @@ def structural_ties(records: list[dict]) -> list[str]:
 
 
 def material_equal(left, right, *, key: str = '') -> bool:
-    if key in ('costUSD', 'totalCostUSD', 'totalCost', 'cost', 'standardCostUSD', 'priorityCostUSD'):
+    if key in ('costUSD', 'totalCostUSD', 'totalCost', 'cost', 'standardCostUSD', 'priorityCostUSD',
+               'sessionCostUSD', 'last30DaysCostUSD', 'meteredCostUSD'):
         if left is None or right is None:
             return left is right
         if not _valid_money(left) or not _valid_money(right):
@@ -337,6 +341,7 @@ def deliberate_unmetered_exclusions(observation: dict) -> dict:
 
 def assess_native_oracle(observations: list[dict], *, ties: list[str]) -> dict:
     disagreements = []
+    presentation_collections = []
     unknown_metrics = set()
     exclusions = {}
     if len(observations) < 3:
@@ -347,7 +352,13 @@ def assess_native_oracle(observations: list[dict], *, ties: list[str]) -> dict:
             validate_native(observation)
             observed_exclusions = deliberate_unmetered_exclusions(observation)
             eligible = native_unmetered_facts(observation)
+            source_reference = project_source_reference(observation)
+            presentation_collections.append({'observation': index,
+                'collection': source_reference['native_presentation_collection']})
         except ValueError as exc:
+            if isinstance(exc, ProjectSourceReconciliationError):
+                presentation_collections.append({'observation': index,
+                    'collection': exc.presentation_collection})
             disagreements.append(f'observation {index}: {exc}')
             continue
         if observation['historyScanIsPartial']:
@@ -380,7 +391,8 @@ def assess_native_oracle(observations: list[dict], *, ties: list[str]) -> dict:
             disagreements.append(f'observation {index}: native ID set or metrics disagree')
     return {'complete': not ties and not disagreements and not unknown_metrics, 'structural_ties': sorted(ties),
             'disagreements': disagreements, 'unknown_metrics': sorted(unknown_metrics),
-            'unmetered_exclusions': exclusions, 'observations': observations}
+            'unmetered_exclusions': exclusions, 'observations': observations,
+            'native_presentation_collections': presentation_collections}
 
 
 def validate_native(observation: object) -> dict:
@@ -653,15 +665,178 @@ def reference_totals(native: dict, *, complete: bool = False) -> dict:
         canonical = unicodedata.normalize('NFC', identifier)
         reference['session'][canonical] = {'input': session['inputTokens'], 'cached': session['cachedInputTokens'],
             'output': session['outputTokens'], 'cost': session['costUSD']}
+    reference.update(project_source_reference(native))
+    return reference
+
+
+def _source_sum(values, *, cost: bool = False):
+    """Unknown contributions stay unknown; never turn omitted evidence into zero."""
+    if not values or any(value is None for value in values):
+        return None
+    try:
+        value = math.fsum(values) if cost else sum(values)
+    except OverflowError as exc:
+        raise ValueError('native project-source sum overflow') from exc
+    if not (_valid_money(value) if cost else _valid_count(value)):
+        raise ValueError('native project-source sum overflow')
+    return value
+
+
+def _source_equal(expected, actual, *, cost: bool = False) -> None:
+    equal = material_equal({'costUSD': expected}, {'costUSD': actual}) if cost else expected == actual
+    if not equal:
+        raise ValueError('native project-source reconciliation mismatch')
+
+
+def _source_models(rows):
+    if not rows:
+        return {}
+    result = {}
+    for row in rows:
+        if row.get('totalTokens') is None or row.get('costUSD') is None:
+            raise ValueError('unknown native project-source model metrics')
+        result[unicodedata.normalize('NFC', row['modelName'])] = {
+            'total': row['totalTokens'], 'cost': row['costUSD'],
+            **{field: row.get(field) for field in SOURCE_MODEL_COMPONENTS}}
+    return result
+
+
+def _reconcile_source_models(expected: dict, contributors: list[dict], *, presentation: list | None = None,
+                             source_paths: list | None = None, parent_path=None, day: str | None = None) -> None:
+    names = set().union(*(set(row) for row in contributors))
+    if names != set(expected):
+        raise ValueError('native project-source model identities do not reconcile')
+    for name, metric in expected.items():
+        participating = [index for index, row in enumerate(contributors) if name in row]
+        rows = [contributors[index][name] for index in participating]
+        for field in ('total', 'cost', *SOURCE_MODEL_COMPONENTS):
+            values = [row[field] for row in rows]
+            omitted = [index for index in participating if contributors[index][name][field] is None]
+            if field in SOURCE_MODEL_COMPONENTS:
+                # Pinned BreakdownAccumulator skips nil/inactive branch values;
+                # retain nil when no contribution was observed, without zero rows.
+                values = [value for value in values if value is not None]
+            cost = field == 'cost' or field.endswith('USD')
+            actual = _source_sum(values, cost=cost)
+            if presentation is not None and field in SOURCE_MODEL_COMPONENTS:
+                # Pinned CostUsageModels.swift BreakdownAccumulator skips nil
+                # per-file contributions and marks a field present after any
+                # supplied value. Merged directory rows cannot certify complete
+                # split coverage; cross-boundary differences are presentation
+                # evidence, with observed omissions retained without inference.
+                equal = (material_equal({'costUSD': metric[field]}, {'costUSD': actual})
+                         if cost else metric[field] == actual)
+                if not equal:
+                    presentation.append({'parent_path': parent_path,
+                        'scope': 'day' if day is not None else 'aggregate', 'day': day,
+                        'model': name, 'field': field, 'parent_value': metric[field],
+                        'observed_source_sum': actual,
+                        'omitted_sources': [{'path': source_paths[index], 'value': None} for index in omitted]})
+            else:
+                _source_equal(metric[field], actual, cost=cost)
+
+
+def _source_part(part: dict, unmetered_days: set[str]) -> dict:
+    days = _day_map(part['daily'], native=True)
+    if not days:
+        raise ValueError('missing native project-source daily evidence')
+    models = _source_models(part['modelBreakdowns'])
+    daily_models = []
+    for row in part['daily']:
+        metric = days[row['date']]
+        unmetered = (row['date'] in unmetered_days
+                     and all(metric[field] is None for field in ('input', 'cached', 'output', 'total', 'cost'))
+                     and not row.get('modelBreakdowns') and not row.get('modelsUsed')
+                     and type(row.get('unmeteredRequestCount')) is int and row['unmeteredRequestCount'] > 0)
+        if not unmetered and any(metric[field] is None for field in ('input', 'cached', 'output', 'total', 'cost')):
+            raise ValueError('unknown native project-source daily metrics')
+        model = _source_models(row.get('modelBreakdowns'))
+        metric['models'] = model
+        daily_models.append(model)
+    for field, key in (('total', 'totalTokens'), ('cost', 'totalCostUSD')):
+        actual = _source_sum([row[field] for row in days.values()], cost=field == 'cost')
+        if part[key] is None and actual is not None:
+            raise ValueError('unknown native project-source aggregate metrics')
+        _source_equal(part[key], actual, cost=field == 'cost')
+    _reconcile_source_models(models, daily_models)
+    return {'days': days, 'models': models, 'total': part['totalTokens'], 'cost': part['totalCostUSD']}
+
+
+class ProjectSourceReconciliationError(ValueError):
+    """Retain validated presentation evidence without exposing partial metrics."""
+    def __init__(self, message: str, presentation_collection: dict):
+        super().__init__(message)
+        self.presentation_collection = presentation_collection
+
+
+def project_source_reference(native: dict) -> dict:
+    collection = {'complete': False, 'aborted': False, 'records': []}
+    try:
+        output = _project_source_reference(native, collection['records'])
+    except ValueError as exc:
+        collection.update(aborted=True, failure=str(exc))
+        raise ProjectSourceReconciliationError(str(exc), collection) from exc
+    collection['complete'] = True
+    output['native_presentation_collection'] = collection
+    return output
+
+
+def _project_source_reference(native: dict, presentation: list) -> dict:
+    """Observe raw native source reports; parent associations never relabel usage."""
+    unmetered = set(deliberate_unmetered_exclusions(native))
+    output = {'project': {}, 'canonical_project': {}, 'project_source_parents': [], 'cross_parent_sources': [],
+              'native_presentation': presentation,
+              'project_axis': 'project-source (original working directory)',
+              'canonical_project_axis': 'native canonical project (independent CLI crosscheck)'}
+    contributions, parents = {}, {}
     for project in native['projects']:
+        parent = _source_part(project, unmetered)
+        sources, paths = [], set()
+        for source in project['sources']:
+            path = source['path']
+            if path in paths:
+                raise ValueError('duplicate native project-source identity within parent')
+            paths.add(path)
+            observed = _source_part(source, unmetered)
+            sources.append(observed)
+            contributions.setdefault(path, []).append(observed)
+            parents.setdefault(path, []).append(project['path'])
+        if not sources:
+            raise ValueError('missing native project-source evidence')
+        if set(parent['days']) != set().union(*(set(source['days']) for source in sources)):
+            raise ValueError('native project-source day identities do not reconcile')
+        for day, expected in parent['days'].items():
+            participating = [index for index, source in enumerate(sources) if day in source['days']]
+            rows = [sources[index]['days'][day] for index in participating]
+            for field in ('input', 'cached', 'output', 'total', 'cost'):
+                _source_equal(expected[field], _source_sum([row[field] for row in rows], cost=field == 'cost'),
+                              cost=field == 'cost')
+            _reconcile_source_models(expected['models'], [row['models'] for row in rows],
+                presentation=output['native_presentation'], parent_path=project['path'], day=day,
+                source_paths=[project['sources'][index]['path'] for index in participating])
+        for field in ('total', 'cost'):
+            _source_equal(parent[field], _source_sum([source[field] for source in sources], cost=field == 'cost'),
+                          cost=field == 'cost')
+        _reconcile_source_models(parent['models'], [source['models'] for source in sources],
+            presentation=output['native_presentation'], parent_path=project['path'],
+            source_paths=[source['path'] for source in project['sources']])
         days = _day_map(project['daily'], native=True)
         metrics = {}
         for field in ('input', 'cached', 'output'):
             values = [day[field] for day in days.values()]
             metrics[field] = sum(values) if values and all(value is not None for value in values) else None
         metrics['cost'] = project.get('totalCostUSD')
-        reference['project'][project['path']] = metrics
-    return reference
+        output['canonical_project'][project['path']] = metrics
+    for path in sorted(contributions, key=lambda value: (value is not None, str(value))):
+        rows = [day for source in contributions[path] for day in source['days'].values()]
+        output['project'][path] = {field: _source_sum([row[field] for row in rows])
+                                   for field in ('input', 'cached', 'output')}
+        output['project'][path]['cost'] = _source_sum([source['cost'] for source in contributions[path]], cost=True)
+        association = {'path': path, 'parents': sorted(parents[path], key=lambda value: (value is not None, str(value)))}
+        output['project_source_parents'].append(association)
+        if len(association['parents']) > 1:
+            output['cross_parent_sources'].append(association)
+    return output
 
 
 def observed_session_ids(observations: list[dict]) -> set[str]:
@@ -804,11 +979,51 @@ def format_report(report: dict) -> str:
              f"Coverage: {_markdown(report['coverage'])}; runs: {report['runs']}",
              f"historyCoverageIsEstablished: {report['historyCoverageIsEstablished']}",
              f"Bucket zone: {_markdown(report['bucket_tz'])}", '',
-             'Costs: API-equivalent estimate (not billed).', '', '## Differences', '',
+             'Costs: API-equivalent estimate (not billed).', '',
+             'Comparison axes: local day, project-source (original working directory), session ID.',
+             'Native canonical project reports and their source associations remain separate evidence, '
+             'cross-checked against CLI project JSON.', '', '## Raw paths contributing through multiple canonical parents', '']
+    collection = report.get('native_presentation_collection',
+        report.get('reference', {}).get('native_presentation_collection'))
+    source_reference = report.get('reference', {})
+    shared = source_reference.get('cross_parent_sources')
+    shared_collection = source_reference.get('native_presentation_collection', {})
+    if shared_collection.get('complete') is True and isinstance(shared, list):
+        lines.extend(f'- {_markdown(row["path"])}: {_markdown(row["parents"])}' for row in shared)
+        if not shared:
+            lines.append('- none')
+    else:
+        reason = ('aborted: ' + collection.get('failure', 'mandatory reconciliation failed')
+                  if collection and collection['aborted'] else 'not collected')
+        lines.append(f'- not established: collection incomplete ({_markdown(reason)}).')
+    status = ('complete' if collection and collection['complete'] else
+              'incomplete (aborted)' if collection and collection['aborted'] else 'incomplete (not collected)')
+    presentation = (collection['records'] if collection is not None else
+                    report.get('reference', {}).get('native_presentation', []))
+    lines += ['', '## Native presentation discrepancies', '',
+              f'Collection: {status}. Only encountered, validated records are retained; '
+              'an aborted collection is not reference or accepted usage evidence.', '',
+              'Cross-boundary optional split discrepancies do not fail acceptance. '
+              'They are native presentation evidence, separate from Colophon usage differences. '
+              'Supplied directory fields do not certify complete per-file split coverage; '
+              'omitted-source lists retain only observed omissions. '
+              'CLI JSON omits standardCostUSD, priorityCostUSD, standardTokens and priorityTokens. '
+              'Those four fields are validated by conservation within each native report and '
+              'agreement across native observations; CLI core checks remain mandatory.', '']
+    if collection and collection.get('failure'):
+        lines += [f'Collection failure: {_markdown(collection["failure"])}', '']
+    lines += ['| Parent | Scope | Day | Model | Field | Parent value | Observed source sum | Omitted sources |',
+              '| --- | --- | --- | --- | --- | --- | --- | --- |']
+    for item in presentation:
+        lines.append('| ' + ' | '.join(_markdown(item[key]) for key in (
+            'parent_path', 'scope', 'day', 'model', 'field', 'parent_value',
+            'observed_source_sum', 'omitted_sources')) + ' |')
+    lines += ['', '## Differences', '',
              '| Scope | Key | Classification | Detail |', '| --- | --- | --- | --- |']
     for item in report['differences']:
         lines.append('| ' + ' | '.join(_markdown(value) for value in (
-            item['scope'], item['key'], labels[item['class']], item['detail'])) + ' |')
+            'project-source' if item['scope'] == 'project' else item['scope'], item['key'],
+            labels[item['class']], item['detail'])) + ' |')
     lines += ['', '## Missing sessions', '', '| Session | Present in | Classification | Reason |',
               '| --- | --- | --- | --- |']
     for item in report['missing_sessions']:
@@ -832,6 +1047,9 @@ def format_report(report: dict) -> str:
                      for day, identifiers in oracle.get('unmetered_exclusions', {}).items())
         lines += ['', 'Retained native observations:', '', '```json',
                   json.dumps(oracle['observations'], indent=2, sort_keys=True, allow_nan=False), '```']
+        lines += ['', 'Presentation collections by native observation (separate from usage differences):', '', '```json',
+                  json.dumps(oracle.get('native_presentation_collections', []),
+                             indent=2, sort_keys=True, allow_nan=False), '```']
     lines += ['', '## Evidence failures', '']
     lines.extend(f'- {_markdown(message)}' for message in report.get('failures', []))
     return '\n'.join(lines) + '\n'
@@ -1025,6 +1243,10 @@ def _trace_backup(source: Path, destination: Path) -> int | None:
     target = sqlite3.connect(destination)
     try:
         source_db.backup(target)
+        # Backups retain WAL mode; a standalone read-only snapshot must not need sidecars.
+        # Finalize only the isolated snapshot; the source keeps its original journal mode.
+        if target.execute('PRAGMA journal_mode=DELETE').fetchone() != ('delete',):
+            raise ValueError('trace snapshot journal mode could not be finalized')
         return target.execute('SELECT max(rowid) FROM logs').fetchone()[0]
     finally:
         source_db.close()
@@ -1050,6 +1272,29 @@ def _json_report(stdout: str) -> dict:
     if not isinstance(report, list) or len(report) != 1 or not isinstance(report[0], dict):
         raise ValueError('unexpected CLI JSON shape')
     return report[0]
+
+
+def _cli_stability_snapshot(reports: list[dict], metadata: dict, *, attempt: int, now_ms: int, wait) -> object:
+    """Do not count a debounced partial report as a stable complete observation."""
+    pending = metadata.get('catchUpPending')
+    completed, total = metadata.get('completedFiles'), metadata.get('totalFiles')
+    last_scan = metadata.get('lastScanUnixMs')
+    if (type(pending) is not bool or not _valid_count(completed) or not _valid_count(total)
+            or completed > total or not _valid_count(last_scan) or last_scan > now_ms):
+        raise ValueError('unknown CLI scan metadata')
+    normalized = [{key: value for key, value in item.items() if key != 'updatedAt'} for item in reports]
+    complete = (pending is False and completed == total and len(reports) == 3
+                and all(classify_coverage(item, stable=True) != 'partial' for item in reports))
+    if complete:
+        return normalized
+    # Pinned CostUsageScanner.Options (184), makeCodexRefreshPlan (5472,5590):
+    # default refresh is 60s and elapsed time must be strictly greater than it.
+    delay = max(0, (last_scan + 60_001 - now_ms) / 1000)
+    while delay > 0:
+        interval = min(60, delay)
+        wait(interval)
+        delay -= interval
+    return {'pending_attempt': attempt, 'reports': normalized}
 
 
 def run_comparison(args, *, module, guard) -> tuple[dict, int]:
@@ -1088,6 +1333,7 @@ def run_comparison(args, *, module, guard) -> tuple[dict, int]:
         'native_provenance': native, 'coverage': 'partial', 'runs': 0,
         'historyCoverageIsEstablished': None, 'bucket_tz': None, 'differences': [],
         'missing_sessions': [], 'unresolved_forks': [], 'failures': [],
+        'native_presentation_collection': {'complete': False, 'aborted': False, 'records': []},
         'oracle': {'complete': False, 'structural_ties': [], 'disagreements': [], 'observations': []},
         'cost_tolerance': {'parity': 'abs(delta) <= 1e-9*abs(reference)+1e-9 USD',
                            'native_relative': COST_REL_TOL, 'native_absolute': COST_ABS_TOL}}
@@ -1120,10 +1366,15 @@ def run_comparison(args, *, module, guard) -> tuple[dict, int]:
                 report['runs'] += 1
                 for label, stdout in zip(('default', 'session', 'project'), stdouts):
                     (args.output_dir / f'cli-{label}.json').write_text(stdout)
+                    (args.output_dir / f'cli-attempt-{report["runs"]}-{label}.json').write_text(stdout)
                 cli_reports = [_json_report(stdout) for stdout in stdouts]
-                normalized = [{key: value for key, value in item.items() if key != 'updatedAt'} for item in cli_reports]
                 report['cli_reports'] = cli_reports
-                return guard.canonical(normalized)
+                metadata = _read_scan_metadata(fake / 'Library/Caches/CodexBar/cost-usage/cost-usage.sqlite')
+                (args.output_dir / f'cli-attempt-{report["runs"]}-scan-metadata.json').write_text(
+                    json.dumps(metadata, indent=2, sort_keys=True) + '\n')
+                report.setdefault('cli_attempts', []).append({'attempt': report['runs'], 'scan_metadata': metadata})
+                return guard.canonical(_cli_stability_snapshot(cli_reports, metadata, attempt=report['runs'],
+                                                              now_ms=module.now_ms(), wait=time.sleep))
 
             cli_stable = False
             try:
@@ -1192,6 +1443,8 @@ def run_comparison(args, *, module, guard) -> tuple[dict, int]:
                 except (RuntimeError, ValueError) as exc:
                     report['failures'].append(str(exc))
             report['oracle'] = assess_native_oracle(observations, ties=ties)
+            if report['oracle']['native_presentation_collections']:
+                report['native_presentation_collection'] = report['oracle']['native_presentation_collections'][-1]['collection']
             if ties:
                 report['failures'].append('structural ties make the native session oracle incomplete')
             report['input_fingerprint_after'] = input_fingerprint(database, immutable)
@@ -1217,6 +1470,7 @@ def run_comparison(args, *, module, guard) -> tuple[dict, int]:
                 report['failures'].append('cold trace recomputation has unknown evidence')
             if observations:
                 reference = reference_totals(observations[-1], complete=report['coverage'] == 'complete')
+                report['native_presentation_collection'] = reference['native_presentation_collection']
                 priority_proofs = priority_evidence(module, compiled['priority'].turns, fallback['priority_turns'], initial_priority, newer)
                 report['priority_evidence'] = priority_proofs
                 proofs = confirmed_proofs(module, compiled, full, fallback, catalog, priority_proofs=priority_proofs)
@@ -1239,6 +1493,9 @@ def run_comparison(args, *, module, guard) -> tuple[dict, int]:
             report['colophon'] = {scope: full[scope] for scope in ('day', 'project', 'session', 'unknown_time_sessions', 'identity_mapping')}
             report['fallback'] = {scope: fallback[scope] for scope in ('day', 'project', 'session', 'unknown_time_sessions', 'unpriced_tokens')}
     except (ValueError, RuntimeError, OSError, sqlite3.Error, subprocess.SubprocessError) as exc:
+        if isinstance(exc, ProjectSourceReconciliationError):
+            report['native_presentation_collection'] = exc.presentation_collection
+            report['oracle']['complete'] = False
         report['failures'].append(f'{type(exc).__name__}: {exc}')
     finally:
         if previous_tz is None:

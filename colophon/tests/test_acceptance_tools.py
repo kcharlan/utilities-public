@@ -36,10 +36,11 @@ def native_project():
            'outputTokens': 10, 'totalTokens': 510, 'costUSD': .00125}
     model = {'modelName': 'gpt-synthetic', 'totalTokens': 510, 'costUSD': .00125,
              'standardCostUSD': .001, 'priorityCostUSD': .00025}
-    return {'path': '/synthetic/project', 'totalTokens': 510, 'totalCostUSD': .00125,
-            'daily': [day], 'modelBreakdowns': [model], 'sources': [
-                {'name': 'Synthetic source', 'path': None, 'totalTokens': None,
-                 'totalCostUSD': None, 'daily': [], 'modelBreakdowns': None}]}
+    day['modelBreakdowns'] = [dict(model)]
+    project = {'path': '/synthetic/project', 'totalTokens': 510, 'totalCostUSD': .00125,
+               'daily': [day], 'modelBreakdowns': [model]}
+    project['sources'] = [json.loads(json.dumps(project))]
+    return project
 
 
 def native_nested_scope(scope):
@@ -52,6 +53,522 @@ def native_nested_scope(scope):
                'project-day': project['daily'][0], 'source-day': project['sources'][0]['daily'][0],
                'project': project, 'source': project['sources'][0]}
     return observation, targets[scope]
+
+
+def project_axis_observation():
+    """Invented canonical parent with independently observed raw cwd sources."""
+    def part(path, count, cost):
+        model = {'modelName': 'gpt-synthetic', 'totalTokens': count + 10, 'costUSD': cost}
+        day = {'date': '2024-01-07', 'inputTokens': count, 'cacheReadTokens': 20,
+               'outputTokens': 10, 'totalTokens': count + 10, 'costUSD': cost,
+               'modelBreakdowns': [dict(model)]}
+        return {'path': path, 'totalTokens': count + 10, 'totalCostUSD': cost,
+                'daily': [day], 'modelBreakdowns': [model]}
+    observation = native_observation()
+    parent = part('/synthetic/repository', 300, .003)
+    parent['daily'][0].update(cacheReadTokens=40, outputTokens=20, totalTokens=320)
+    parent['daily'][0]['modelBreakdowns'][0]['totalTokens'] = 320
+    parent['totalTokens'] = parent['modelBreakdowns'][0]['totalTokens'] = 320
+    parent['sources'] = [part('/synthetic/repository/nested', 100, .001),
+                         part('/synthetic/worktree', 200, .002)]
+    observation['projects'] = [parent]
+    return observation
+
+
+def presentation_abort_observation():
+    """Valid split diagnostics precede a fatal later report's core-token sum."""
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    for part in [parent, *parent['sources']]:
+        for row in [part['modelBreakdowns'][0], part['daily'][0]['modelBreakdowns'][0]]:
+            row['priorityTokens'] = 25
+            if part is parent:
+                row.update(standardCostUSD=.001, standardTokens=110)
+    later = json.loads(json.dumps(parent['sources'][0]))
+    later['path'] = '/synthetic/later-parent'
+    later['sources'] = [json.loads(json.dumps(later))]
+    later['sources'][0]['totalTokens'] += 1
+    observation['projects'].append(later)
+    return observation
+
+
+def assert_aborted_presentation(collection):
+    assert collection['complete'] is False and collection['aborted'] is True
+    assert 'reconciliation mismatch' in collection['failure']
+    assert collection['records'] == [
+        {'parent_path': '/synthetic/repository', 'scope': scope, 'day': day,
+         'model': 'gpt-synthetic', 'field': field, 'parent_value': value,
+         'observed_source_sum': 50 if field == 'priorityTokens' else None,
+         'omitted_sources': [] if field == 'priorityTokens' else
+             [{'path': path, 'value': None} for path in
+              ['/synthetic/repository/nested', '/synthetic/worktree']]}
+        for scope, day in [('day', '2024-01-07'), ('aggregate', None)]
+        for field, value in [('standardCostUSD', .001), ('standardTokens', 110), ('priorityTokens', 25)]]
+
+
+def test_project_source_failure_retains_only_validated_presentation_records():
+    module = helper('compare_codexbar')
+    observation = presentation_abort_observation()
+    original = json.loads(json.dumps(observation))
+    with pytest.raises(ValueError, match='reconciliation') as raised:
+        module.reference_totals(observation)
+    assert_aborted_presentation(raised.value.presentation_collection)
+    oracle = module.assess_native_oracle([observation] * 3, ties=[])
+    assert oracle['complete'] is False
+    assert len(oracle['native_presentation_collections']) == 3
+    for index, evidence in enumerate(oracle['native_presentation_collections'], 1):
+        assert evidence['observation'] == index
+        assert_aborted_presentation(evidence['collection'])
+    assert all('reconciliation mismatch' in failure for failure in oracle['disagreements'])
+    assert observation == original
+
+
+@pytest.mark.parametrize('paths', [
+    ('/synthetic/repository/nested', '/synthetic/worktree'),
+    ('/synthetic/repository/subdirectory-one', '/synthetic/repository/subdirectory-two'),
+    ('/synthetic/repository', '/synthetic/linked-worktree'),
+], ids=['nested-and-external', 'two-subdirectories', 'main-and-linked-worktree'])
+def test_project_source_axis_uses_raw_directories_and_retains_canonical_evidence(paths):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    for source, path in zip(observation['projects'][0]['sources'], paths):
+        source['path'] = path
+    original = json.loads(json.dumps(observation))
+    reference = module.reference_totals(observation)
+    assert reference['project'] == {
+        paths[0]: {'input': 100, 'cached': 20, 'output': 10, 'cost': .001},
+        paths[1]: {'input': 200, 'cached': 20, 'output': 10, 'cost': .002}}
+    assert reference['canonical_project']['/synthetic/repository']['input'] == 300
+    assert reference['cross_parent_sources'] == []
+    assert reference['native_presentation_collection'] == {
+        'complete': True, 'aborted': False, 'records': []}
+    assert reference['project_source_parents'] == [
+        {'path': path, 'parents': ['/synthetic/repository']} for path in sorted(paths)]
+    assert observation == original
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+
+
+@pytest.mark.parametrize('scope', ['parent', 'source'])
+@pytest.mark.parametrize('daily_models', ['absent', 'null', 'empty'])
+def test_project_source_axis_aggregate_requires_daily_model_evidence(scope, daily_models):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    # Remove every daily model map so identical supplied aggregate rows cannot
+    # authorize acceptance through equal empty parent/source daily maps.
+    for part in [observation['projects'][0], *observation['projects'][0]['sources']]:
+        for day in part['daily']:
+            if daily_models == 'absent':
+                day.pop('modelBreakdowns')
+            else:
+                day['modelBreakdowns'] = None if daily_models == 'null' else []
+    target = observation['projects'][0]
+    if scope == 'source':
+        target = target['sources'][0]
+    original = json.loads(json.dumps(observation))
+    assert module.validate_native(observation) == original
+    with pytest.raises(ValueError, match='model'):
+        module._source_part(target, set())
+    with pytest.raises(ValueError, match='model'):
+        module.reference_totals(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+    assert observation == original
+
+
+@pytest.mark.parametrize('daily_models', ['absent', 'null', 'empty'])
+def test_project_source_axis_model_free_reports_need_no_daily_model_evidence(daily_models):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    for part in [observation['projects'][0], *observation['projects'][0]['sources']]:
+        part['modelBreakdowns'] = None if daily_models == 'null' else []
+        for day in part['daily']:
+            if daily_models == 'absent':
+                day.pop('modelBreakdowns')
+            else:
+                day['modelBreakdowns'] = None if daily_models == 'null' else []
+    original = json.loads(json.dumps(observation))
+    assert module.reference_totals(observation)['project']['/synthetic/worktree']['input'] == 200
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    assert observation == original
+
+
+def test_project_source_axis_sums_every_cross_parent_contribution_and_lists_paths():
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    other = json.loads(json.dumps(observation['projects'][0]['sources'][0]))
+    other['path'] = '/synthetic/another-canonical-parent'
+    other['sources'] = [json.loads(json.dumps(observation['projects'][0]['sources'][0]))]
+    observation['projects'].append(other)
+    reference = module.reference_totals(observation)
+    assert reference['project']['/synthetic/repository/nested'] == {
+        'input': 200, 'cached': 40, 'output': 20, 'cost': .002}
+    assert reference['cross_parent_sources'] == [{'path': '/synthetic/repository/nested',
+        'parents': ['/synthetic/another-canonical-parent', '/synthetic/repository']}]
+    assert len(reference['canonical_project']) == 2
+
+
+@pytest.mark.parametrize('damage', ['missing-sources', 'duplicate-source', 'unknown-input',
+    'missing-total', 'unknown-cost', 'source-total', 'source-cost', 'source-day-input',
+    'offset-source-day', 'offset-source-model', 'aggregate-model', 'daily-model',
+    'missing-model', 'missing-source-day', 'extra-source-day'])
+def test_project_source_axis_rejects_insufficient_or_unconserved_evidence(damage):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    source, other = parent['sources']
+    if damage == 'missing-sources':
+        parent['sources'] = []
+    elif damage == 'duplicate-source':
+        parent['sources'].append(json.loads(json.dumps(source)))
+    elif damage == 'unknown-input':
+        source['daily'][0]['inputTokens'] = None
+    elif damage == 'missing-total':
+        source.pop('totalTokens')
+    elif damage == 'unknown-cost':
+        source['daily'][0]['costUSD'] = None
+    elif damage == 'source-total':
+        source['totalTokens'] += 1
+    elif damage == 'source-cost':
+        source['totalCostUSD'] += .01
+    elif damage == 'source-day-input':
+        source['daily'][0]['inputTokens'] += 1
+    elif damage == 'offset-source-day':
+        # Combined parent tokens are unchanged, but each source summary is wrong.
+        source['daily'][0]['totalTokens'] += 1
+        other['daily'][0]['totalTokens'] -= 1
+    elif damage == 'offset-source-model':
+        source['daily'][0]['modelBreakdowns'][0]['totalTokens'] += 1
+        other['daily'][0]['modelBreakdowns'][0]['totalTokens'] -= 1
+    elif damage == 'aggregate-model':
+        source['modelBreakdowns'][0]['totalTokens'] += 1
+    elif damage == 'daily-model':
+        source['daily'][0]['modelBreakdowns'][0]['costUSD'] += .01
+    elif damage == 'missing-model':
+        source['daily'][0]['modelBreakdowns'] = None
+    elif damage == 'missing-source-day':
+        source['daily'] = []
+    else:
+        source['daily'].append({**source['daily'][0], 'date': '2024-01-08'})
+    with pytest.raises(ValueError):
+        module.reference_totals(observation)
+    assessment = module.assess_native_oracle([observation] * 3, ties=[])
+    assert assessment['complete'] is False
+    assert assessment['disagreements'] or assessment['unknown_metrics']
+
+
+@pytest.mark.parametrize('delta,accepted', [(1e-14, True), (1e-5, False)])
+def test_project_source_axis_reconciliation_uses_existing_native_cost_tolerance(delta, accepted):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    observation['projects'][0]['sources'][0]['totalCostUSD'] += delta
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is accepted
+
+
+def test_project_source_axis_preserves_unknown_identity_and_actual_gaps():
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    observation['projects'][0]['sources'][0]['path'] = None
+    reference = module.reference_totals(observation)
+    assert reference['project'][None]['input'] == 100
+    assert reference['project_source_parents'][0] == {'path': None, 'parents': ['/synthetic/repository']}
+    fallback = json.loads(json.dumps(reference['project']['/synthetic/worktree']))
+    fallback['input'] += 1
+    differences, _ = module.compare_scope('project', {'synthetic': fallback},
+        {'synthetic': reference['project']['/synthetic/worktree']}, {'synthetic': fallback},
+        proofs={}, custom_build=False)
+    assert {item['class'] for item in differences} == {'b'}
+
+
+def test_project_source_axis_report_labels_axes_and_lists_cross_parent_paths():
+    module = helper('compare_codexbar')
+    report = {'build': {'kind': 'pinned', 'sha256': 'synthetic'}, 'coverage': 'complete',
+              'runs': 3, 'historyCoverageIsEstablished': True, 'bucket_tz': 'UTC',
+              'differences': [], 'missing_sessions': [], 'unresolved_forks': [],
+              'reference': {'native_presentation_collection': {'complete': True, 'aborted': False, 'records': []},
+                  'cross_parent_sources': [{'path': '/synthetic/shared-cwd',
+                  'parents': ['/synthetic/parent-one', '/synthetic/parent-two']}]}, 'failures': []}
+    rendered = module.format_report(report)
+    assert 'project-source' in rendered
+    assert 'canonical project' in rendered
+    assert '/synthetic/shared-cwd' in rendered
+    assert '/synthetic/parent-one' in rendered and '/synthetic/parent-two' in rendered
+
+
+@pytest.mark.parametrize('assessment', ['missing', 'aborted-shared', 'complete-empty'])
+def test_shared_path_report_distinguishes_incomplete_assessment_from_known_absence(assessment):
+    module = helper('compare_codexbar')
+    report = {'build': {'kind': 'pinned', 'sha256': 'synthetic'}, 'coverage': 'complete',
+              'runs': 3, 'historyCoverageIsEstablished': True, 'bucket_tz': 'UTC',
+              'differences': [], 'missing_sessions': [], 'unresolved_forks': [], 'failures': []}
+    if assessment == 'complete-empty':
+        report['reference'] = module.reference_totals(project_axis_observation())
+    elif assessment == 'aborted-shared':
+        observation = presentation_abort_observation()
+        source = observation['projects'][0]['sources'][0]
+        other = json.loads(json.dumps(source))
+        other['path'] = '/synthetic/another-canonical-parent'
+        other['sources'] = [json.loads(json.dumps(source))]
+        observation['projects'].append(other)
+        with pytest.raises(ValueError) as raised:
+            module.reference_totals(observation)
+        report['native_presentation_collection'] = raised.value.presentation_collection
+    section = module.format_report(report).split(
+        '## Raw paths contributing through multiple canonical parents', 1)[1].split(
+        '## Native presentation discrepancies', 1)[0]
+    if assessment == 'complete-empty':
+        assert '- none' in section
+        assert 'not established' not in section
+    else:
+        assert 'not established' in section and 'incomplete' in section
+        assert '- none' not in section
+        if assessment == 'aborted-shared':
+            assert 'aborted' in section and 'reconciliation mismatch' in section
+
+
+def test_project_source_report_discloses_cli_split_field_limit_without_discrepancies():
+    module = helper('compare_codexbar')
+    report = {'build': {'kind': 'pinned', 'sha256': 'synthetic'}, 'coverage': 'complete',
+              'runs': 3, 'historyCoverageIsEstablished': True, 'bucket_tz': 'UTC',
+              'differences': [], 'missing_sessions': [], 'unresolved_forks': [],
+              'reference': {'native_presentation': []}, 'failures': []}
+    rendered = module.format_report(report)
+    explanation = rendered.split('## Native presentation discrepancies', 1)[1].split('| Parent |', 1)[0]
+    assert 'CLI JSON omits standardCostUSD, priorityCostUSD, standardTokens and priorityTokens' in explanation
+    assert 'conservation within each native report' in explanation
+    assert 'agreement across native observations' in explanation
+    assert 'CLI core checks remain mandatory' in explanation
+    assert 'Cross-boundary optional split discrepancies do not fail acceptance' in explanation
+
+
+def test_project_source_axis_serialization_retains_nullable_canonical_paths():
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    observation['projects'][0]['path'] = None
+    other = json.loads(json.dumps(observation['projects'][0]))
+    other['path'] = '/synthetic/other-parent'
+    observation['projects'].append(other)
+    reference = module.reference_totals(observation)
+    encoded = json.loads(module.serialize_report({'reference': reference}))['reference']
+    assert [row['path'] for row in encoded['canonical_project']] == [None, '/synthetic/other-parent']
+    assert encoded['project_axis'] == 'project-source (original working directory)'
+    assert encoded['cross_parent_sources'][0]['parents'] == [None, '/synthetic/other-parent']
+
+
+@pytest.mark.parametrize('field,value', [('standardCostUSD', .001), ('priorityCostUSD', .001),
+                                        ('standardTokens', 25), ('priorityTokens', 25)])
+def test_project_source_axis_optional_model_components_skip_inactive_sources(field, value):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    source, inactive = parent['sources']
+    for part in (parent, source):
+        part['modelBreakdowns'][0][field] = value
+        part['daily'][0]['modelBreakdowns'][0][field] = value
+    assert field not in inactive['modelBreakdowns'][0]
+    original = json.loads(json.dumps(observation))
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    assert module.reference_totals(observation)['project']['/synthetic/worktree']['input'] == 200
+    assert observation == original
+    for part in (source,):
+        part['modelBreakdowns'][0][field] += .01 if field.endswith('USD') else 1
+        part['daily'][0]['modelBreakdowns'][0][field] = part['modelBreakdowns'][0][field]
+    # Omission evidence is observed metadata, not an acceptance gate.
+    reference = module.reference_totals(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    assert reference['native_presentation'] == [
+        {'parent_path': parent['path'], 'scope': scope, 'day': day, 'model': 'gpt-synthetic',
+         'field': field, 'parent_value': value, 'observed_source_sum': source['modelBreakdowns'][0][field],
+         'omitted_sources': [{'path': inactive['path'], 'value': None}]}
+        for scope, day in [('day', '2024-01-07'), ('aggregate', None)]]
+
+
+@pytest.mark.parametrize('field,value', [('standardCostUSD', .001), ('priorityCostUSD', .001),
+                                        ('standardTokens', 25), ('priorityTokens', 25)])
+def test_project_source_axis_offsetting_daily_components_cannot_hide_in_equal_aggregates(field, value):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    for part in [parent, *parent['sources']]:
+        part['daily'].append(json.loads(json.dumps(part['daily'][0])))
+        part['daily'][1]['date'] = '2024-01-08'
+        part['totalTokens'] *= 2
+        part['totalCostUSD'] *= 2
+        part['modelBreakdowns'][0]['totalTokens'] *= 2
+        part['modelBreakdowns'][0]['costUSD'] *= 2
+    source = parent['sources'][0]
+    for part in (parent, source):
+        part['modelBreakdowns'][0][field] = value * 2
+        for day in part['daily']:
+            day['modelBreakdowns'][0][field] = value
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    delta = .0001 if field.endswith('USD') else 1
+    source['daily'][0]['modelBreakdowns'][0][field] += delta
+    source['daily'][1]['modelBreakdowns'][0][field] -= delta
+    reference = module.reference_totals(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    discrepancies = reference['native_presentation']
+    assert len(discrepancies) == 2
+    assert [item['day'] for item in discrepancies] == ['2024-01-07', '2024-01-08']
+    assert all(item['scope'] == 'day' and item['field'] == field for item in discrepancies)
+    assert [item['observed_source_sum'] for item in discrepancies] == [value + delta, value - delta]
+    assert all(item['omitted_sources'] == [{'path': parent['sources'][1]['path'], 'value': None}]
+               for item in discrepancies)
+
+
+@pytest.mark.parametrize('omission', ['absent', 'null'])
+def test_project_source_mode_split_preserves_unknowns_and_reports_every_discrepancy(omission):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    standard, priority = parent['sources']
+    for part, values in [(parent, {'standardTokens': 110, 'standardCostUSD': .001,
+                                  'priorityTokens': 210, 'priorityCostUSD': .002}),
+                         (priority, {'priorityTokens': 210, 'priorityCostUSD': .002})]:
+        for row in [part['modelBreakdowns'][0], part['daily'][0]['modelBreakdowns'][0]]:
+            row.update(values)
+    if omission == 'null':
+        for row in [standard['modelBreakdowns'][0], standard['daily'][0]['modelBreakdowns'][0]]:
+            row.update({field: None for field in module.SOURCE_MODEL_COMPONENTS})
+    original = json.loads(json.dumps(observation))
+    reference = module.reference_totals(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    diagnostics = reference['native_presentation']
+    assert len(diagnostics) == 4
+    assert {(item['scope'], item['field']) for item in diagnostics} == {
+        (scope, field) for scope in ['day', 'aggregate'] for field in ['standardTokens', 'standardCostUSD']}
+    assert all(item['observed_source_sum'] is None for item in diagnostics)
+    assert all(item['omitted_sources'] == [{'path': source['path'], 'value': None}
+                                         for source in [standard, priority]] for item in diagnostics)
+    assert observation == original
+    encoded = json.loads(module.serialize_report({'reference': reference}))
+    assert encoded['reference']['native_presentation'] == diagnostics
+    report = {'build': {'kind': 'pinned', 'sha256': 'synthetic'}, 'coverage': 'complete',
+              'runs': 3, 'historyCoverageIsEstablished': True, 'bucket_tz': 'UTC',
+              'differences': [], 'missing_sessions': [], 'unresolved_forks': [],
+              'reference': reference, 'failures': []}
+    rendered = module.format_report(report)
+    assert 'Native presentation discrepancies' in rendered
+    for item in diagnostics:
+        assert item['field'] in rendered and item['parent_path'] in rendered
+        assert str(item['parent_value']) in rendered
+    assert standard['path'] in rendered and priority['path'] in rendered
+    assert 'omitted' in rendered.lower()
+
+
+@pytest.mark.parametrize('field', ['standardCostUSD', 'priorityCostUSD', 'standardTokens', 'priorityTokens'])
+@pytest.mark.parametrize('parent_nil', [False, True])
+def test_project_source_all_supplied_mode_split_mismatch_is_presentation_evidence(field, parent_nil):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    value = .001 if field.endswith('USD') else 25
+    for part in [parent, *parent['sources']]:
+        for row in [part['modelBreakdowns'][0], part['daily'][0]['modelBreakdowns'][0]]:
+            row[field] = None if part is parent and parent_nil else value
+    original = json.loads(json.dumps(observation))
+    # Pinned CostUsageModels.swift BreakdownAccumulator marks a split present
+    # after any non-nil file contribution; a directory row cannot prove coverage.
+    reference = module.reference_totals(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    assert reference['native_presentation'] == [
+        {'parent_path': parent['path'], 'scope': scope, 'day': day,
+         'model': 'gpt-synthetic', 'field': field,
+         'parent_value': None if parent_nil else value, 'observed_source_sum': value * 2,
+         'omitted_sources': []}
+        for scope, day in [('day', '2024-01-07'), ('aggregate', None)]]
+    encoded = json.loads(module.serialize_report({'reference': reference}))
+    assert encoded['reference']['native_presentation'] == reference['native_presentation']
+    rendered = module.format_report({'build': {'kind': 'pinned', 'sha256': 'synthetic'},
+        'coverage': 'complete', 'runs': 3, 'historyCoverageIsEstablished': True, 'bucket_tz': 'UTC',
+        'differences': [], 'missing_sessions': [], 'unresolved_forks': [], 'reference': reference, 'failures': []})
+    for item in reference['native_presentation']:
+        expected_row = '| ' + ' | '.join(str(item[key]) for key in (
+            'parent_path', 'scope', 'day', 'model', 'field', 'parent_value',
+            'observed_source_sum', 'omitted_sources')) + ' |'
+        assert expected_row in rendered
+    assert observation == original
+
+
+@pytest.mark.parametrize('field', ['standardCostUSD', 'priorityCostUSD'])
+@pytest.mark.parametrize('delta,discrepant', [(0, False), (1e-13, False), (1e-9, True)])
+def test_project_source_all_supplied_split_cost_reporting_uses_existing_native_tolerance(field, delta, discrepant):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    for part in [parent, *parent['sources']]:
+        value = .003 + delta if part is parent else (.001 if part is parent['sources'][0] else .002)
+        for row in [part['modelBreakdowns'][0], part['daily'][0]['modelBreakdowns'][0]]:
+            row[field] = value
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    records = module.reference_totals(observation)['native_presentation']
+    assert len(records) == (2 if discrepant else 0)
+    assert all(item['field'] == field and item['omitted_sources'] == [] for item in records)
+
+
+def test_project_source_split_reporting_retains_supplied_values_but_requires_model_identity():
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    for part in [parent, *parent['sources']]:
+        for row in [part['modelBreakdowns'][0], part['daily'][0]['modelBreakdowns'][0]]:
+            row['priorityTokens'] = 25
+            if part is parent:
+                row['standardTokens'] = 110
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    records = module.reference_totals(observation)['native_presentation']
+    assert len(records) == 4
+    assert {item['field'] for item in records} == {'standardTokens', 'priorityTokens'}
+    assert all(item['omitted_sources'] == [] for item in records if item['field'] == 'priorityTokens')
+    for part in [parent, *parent['sources']]:
+        for row in [part['modelBreakdowns'][0], part['daily'][0]['modelBreakdowns'][0]]:
+            row.pop('priorityTokens')
+    parent['sources'][0]['modelBreakdowns'][0]['modelName'] = 'gpt-synthetic-missing'
+    parent['sources'][0]['daily'][0]['modelBreakdowns'][0]['modelName'] = 'gpt-synthetic-missing'
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+
+
+@pytest.mark.parametrize('field', ['standardCostUSD', 'priorityCostUSD', 'standardTokens', 'priorityTokens'])
+def test_project_source_presentation_reporting_never_waives_within_report_component_drift(field):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    source = parent['sources'][0]
+    value = .001 if field.endswith('USD') else 25
+    for part in [parent, source]:
+        part['modelBreakdowns'][0][field] = value
+        part['daily'][0]['modelBreakdowns'][0][field] = value
+    source['modelBreakdowns'][0][field] += .001 if field.endswith('USD') else 1
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+    with pytest.raises(ValueError, match='reconciliation'):
+        module.reference_totals(observation)
+
+
+@pytest.mark.parametrize('field', ['standardCostUSD', 'priorityCostUSD'])
+@pytest.mark.parametrize('delta,discrepant', [(1e-12, False), (1.0001e-12, True)])
+def test_project_source_all_supplied_split_cost_reporting_absolute_tolerance_boundary(field, delta, discrepant):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    for part in [parent, *parent['sources']]:
+        for row in [part['modelBreakdowns'][0], part['daily'][0]['modelBreakdowns'][0]]:
+            row[field] = delta if part is parent else 0
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    records = module.reference_totals(observation)['native_presentation']
+    assert len(records) == (2 if discrepant else 0)
+    assert all(item['field'] == field and item['parent_value'] == delta and
+               item['observed_source_sum'] == 0 and item['omitted_sources'] == [] for item in records)
+
+
+@pytest.mark.parametrize('field,value', [('priorityTokens', 2**63 - 1), ('priorityCostUSD', 1e308)])
+def test_project_source_axis_optional_component_overflow_fails_closed(field, value):
+    module = helper('compare_codexbar')
+    observation = project_axis_observation()
+    parent = observation['projects'][0]
+    for part in [parent, *parent['sources']]:
+        part['modelBreakdowns'][0][field] = value
+        part['daily'][0]['modelBreakdowns'][0][field] = value
+    with pytest.raises(ValueError):
+        module.reference_totals(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
 
 
 def native_unmetered_fact(count=1):
@@ -128,10 +645,18 @@ def test_native_distinct_model_identities_preserve_order_names_and_optional_valu
     raw = json.loads(json.dumps(observation))
     module = helper('compare_codexbar')
     assert module.validate_native(observation) == raw
-    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    # Schema preservation is separate from sufficient source reconciliation.
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is (scope in ('session', 'day'))
     assert [row['modelName'] for row in target['modelBreakdowns']] == names
     assert all('inputTokens' not in row and row['costUSD'] is None for row in target['modelBreakdowns'])
     assert observation == raw
+    known = json.loads(json.dumps(observation))
+    rows = [{'modelName': name, 'totalTokens': 510 if index == 0 else 0,
+             'costUSD': .00125 if index == 0 else 0} for index, name in enumerate(names)]
+    for part in [known['projects'][0], *known['projects'][0]['sources']]:
+        part['modelBreakdowns'] = json.loads(json.dumps(rows))
+        part['daily'][0]['modelBreakdowns'] = json.loads(json.dumps(rows))
+    assert module.assess_native_oracle([known] * 3, ties=[])['complete'] is True
 
 
 @pytest.mark.parametrize('scope', ['session', 'day', 'project-day', 'source-day', 'project', 'source'])
@@ -217,8 +742,14 @@ def test_native_source_optional_omissions_nulls_and_int_limits_remain_exact():
         # Optional encoder omissions remain omitted rather than filled as zeros.
         assert 'outputTokens' not in target['modelBreakdowns'][0]
         assert target['modelBreakdowns'][0]['costUSD'] is None
-        assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+        assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is (scope in ('session', 'day'))
         assert observation == raw
+        known = json.loads(json.dumps(observation))
+        model = {**target['modelBreakdowns'][0], 'totalTokens': 510, 'costUSD': .00125}
+        for part in [known['projects'][0], *known['projects'][0]['sources']]:
+            part['modelBreakdowns'] = [dict(model)]
+            part['daily'][0]['modelBreakdowns'] = [dict(model)]
+        assert module.assess_native_oracle([known] * 3, ties=[])['complete'] is True
     observation = native_observation()
     observation['sessions']['synthetic-tie']['inputTokens'] = 2**63
     with pytest.raises(ValueError, match='native'):
@@ -387,15 +918,24 @@ def test_shared_crosscheck_preserves_nil_omissions_and_cli_zero_metadata_filter(
     project = native_project()
     project['path'] = None
     project['modelBreakdowns'][0]['incompleteRequestCount'] = 0
+    # Deliberately unknown source still characterizes raw CLI/native omissions;
+    # it cannot establish complete project-source reconciliation.
+    project['sources'] = [{'name': 'Synthetic source', 'path': None, 'totalTokens': None,
+                           'totalCostUSD': None, 'daily': [], 'modelBreakdowns': None}]
     observation['projects'] = [project]
     cli = {'daily': [], 'projects': [{'totalTokens': 510, 'totalCost': .00125,
-        'daily': [{**row, 'totalCost': row['costUSD']} for row in project['daily']],
+        'daily': [{**{key: value for key, value in row.items() if key not in ('costUSD', 'modelBreakdowns')},
+                   'totalCost': row['costUSD'], 'modelBreakdowns': [
+                       {'modelName': model['modelName'], 'totalTokens': model['totalTokens'],
+                        'cost': model['costUSD']} for model in row['modelBreakdowns']]}
+                  for row in project['daily']],
         'modelBreakdowns': [{'modelName': 'gpt-synthetic', 'totalTokens': 510, 'cost': .00125}],
         'sources': [{'name': 'Synthetic source', 'daily': []}]}]}
     assert module.crosscheck_native(observation, cli) == []
     assert project['sources'][0]['totalCostUSD'] is None
     assert 'totalCost' not in cli['projects'][0]['sources'][0]
     assert project['modelBreakdowns'][0]['incompleteRequestCount'] == 0
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
 
 
 def test_pinned_default_foundation_scalar_is_not_escaped_metadata_evidence(colophon):
@@ -741,6 +1281,39 @@ def test_private_report_preserves_unknown_and_known_project_identities():
     assert set(report['reference']['project']) == {None, '/synthetic/project'}
 
 
+def test_source_inputs_include_every_jsonl_case_in_live_and_archived_layouts(tmp_path):
+    module = helper('compare_codexbar')
+    expected = []
+    for root in ('sessions', 'archived_sessions'):
+        for layout in ('', '2024/01/07', 'synthetic-legacy/nested'):
+            directory = tmp_path / root / layout
+            directory.mkdir(parents=True, exist_ok=True)
+            for index, extension in enumerate(('.jsonl', '.JSONL', '.JsonL')):
+                path = directory / f'synthetic-{index}{extension}'
+                path.write_text('{"synthetic":true}\n')
+                expected.append(path)
+            for name in ('synthetic.json', 'synthetic.JSONL.backup', 'synthetic.txt'):
+                (directory / name).write_text('synthetic excluded')
+            (directory / 'synthetic-directory.JSONL').mkdir()
+    assert module.source_inputs(tmp_path) == sorted(expected)
+
+
+@pytest.mark.parametrize('root', ['sessions', 'archived_sessions'])
+def test_source_fingerprint_detects_uppercase_jsonl_mutation(tmp_path, root):
+    module = helper('compare_codexbar')
+    path = tmp_path / root / 'synthetic-nested/upper.JSONL'
+    path.parent.mkdir(parents=True)
+    path.write_text('{"synthetic":1}\n')
+    database = tmp_path / 'synthetic-cache.sqlite'
+    connection = sqlite3.connect(database)
+    connection.execute('CREATE TABLE synthetic (value INTEGER)')
+    connection.commit()
+    connection.close()
+    before = module.input_fingerprint(database, module.source_inputs(tmp_path))
+    path.write_text('{"synthetic":2}\n')
+    assert module.input_fingerprint(database, module.source_inputs(tmp_path)) != before
+
+
 def test_source_inputs_ignore_auth_config_and_sqlite_side_files(tmp_path):
     module = helper('compare_codexbar')
     sessions = tmp_path / 'sessions'
@@ -754,12 +1327,13 @@ def test_source_inputs_ignore_auth_config_and_sqlite_side_files(tmp_path):
         sessions / 'synthetic-a.jsonl', archive / 'synthetic-b.jsonl'])
 
 
-def test_source_inputs_refuse_symlink_jsonl_without_following_it(tmp_path):
+@pytest.mark.parametrize('extension', ['.jsonl', '.JSONL', '.JsonL'])
+def test_source_inputs_refuse_symlink_jsonl_without_following_it(tmp_path, extension):
     source = tmp_path / 'sessions'
     source.mkdir()
     target = tmp_path / 'synthetic-other.jsonl'
     target.write_text('synthetic')
-    (source / 'synthetic-link.jsonl').symlink_to(target)
+    (source / f'synthetic-link{extension}').symlink_to(target)
     with pytest.raises(ValueError, match='symlink'):
         helper('compare_codexbar').source_inputs(tmp_path)
 
@@ -952,7 +1526,8 @@ def test_fork_scope_proof_requires_other_contributors_to_match(colophon, extra_u
                                   'duplicate-native-metric', 'duplicate-cli-metric', 'negative-activity',
                                   'bad-activity-below', 'bad-activity-above', 'bad-unmetered-count',
                                   'bad-model-duplicate-conflicting', 'bad-model-duplicate-agreeing',
-                                  'bad-model-canonical-conflicting', 'bad-model-canonical-agreeing'])
+                                  'bad-model-canonical-conflicting', 'bad-model-canonical-agreeing',
+                                  'presentation-abort'])
 def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tmp_path, monkeypatch, case):
     from fixturegen import CodexHome
     module = helper('compare_codexbar')
@@ -989,10 +1564,14 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
     native['daily'] = [day]
     native['projects'] = [{'path': '/synthetic/project', 'totalTokens': 110, 'totalCostUSD': .00025,
                            'daily': [day], 'modelBreakdowns': None, 'sources': []}]
+    native['projects'][0]['sources'] = [json.loads(json.dumps({
+        key: value for key, value in native['projects'][0].items() if key != 'sources'}))]
     cli_day = {**day, 'totalCost': .00025}
     cli_day.pop('costUSD')
     cli = {'historyCoverageIsEstablished': True, 'daily': [cli_day], 'projects': [
         {'path': '/synthetic/project', 'totalTokens': 110, 'totalCost': .00025, 'daily': [cli_day], 'sources': []}]}
+    cli['projects'][0]['sources'] = [json.loads(json.dumps({
+        key: value for key, value in cli['projects'][0].items() if key != 'sources'}))]
     if case == 'native-day-mismatch':
         day['costUSD'] = .02
     if case == 'unknown-missing':
@@ -1021,6 +1600,23 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
     if case == 'bad-day-model':
         native['daily'][0]['modelBreakdowns'] = [{'modelName': 'gpt-synthetic', 'requestCount': True}]
         cli_day['modelBreakdowns'] = [{'modelName': 'gpt-synthetic'}]
+    if case == 'presentation-abort':
+        native['projects'] = presentation_abort_observation()['projects']
+        shared_source = native['projects'][0]['sources'][0]
+        other_parent = json.loads(json.dumps(shared_source))
+        other_parent['path'] = '/synthetic/another-canonical-parent'
+        other_parent['sources'] = [json.loads(json.dumps(shared_source))]
+        native['projects'].append(other_parent)
+        def cli_part(part):
+            return {'path': part['path'], 'totalTokens': part['totalTokens'], 'totalCost': part['totalCostUSD'],
+                'daily': [{**{key: value for key, value in row.items() if key not in ('costUSD', 'modelBreakdowns')},
+                    'totalCost': row['costUSD'], 'modelBreakdowns': [
+                        {'modelName': model['modelName'], 'totalTokens': model['totalTokens'], 'cost': model['costUSD']}
+                        for model in row['modelBreakdowns']]} for row in part['daily']],
+                'modelBreakdowns': [{'modelName': model['modelName'], 'totalTokens': model['totalTokens'],
+                                    'cost': model['costUSD']} for model in part['modelBreakdowns']]}
+        cli['projects'] = [{**cli_part(parent), 'sources': [cli_part(source) for source in parent['sources']]}
+                           for parent in native['projects']]
     native_text, cli_text = json.dumps(native), json.dumps([cli])
     if case == 'duplicate-native-id':
         item = json.dumps(native['sessions']['synthetic-tie'])
@@ -1046,7 +1642,8 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
             db.execute('INSERT INTO files VALUES (2,?,?,1)', ('/synthetic/two.jsonl', 'synthetic-tie'))
         db.execute('CREATE TABLE scan_metadata (payload TEXT)')
         db.execute('INSERT INTO scan_metadata VALUES (?)', (json.dumps({
-            'timeZoneIdentifier': 'UTC', 'catchUpPending': False, 'completedFiles': 1, 'totalFiles': 1}),))
+            'timeZoneIdentifier': 'UTC', 'catchUpPending': False, 'completedFiles': 1, 'totalFiles': 1,
+            'lastScanUnixMs': 1704585700000}),))
         db.commit()
         db.close()
     def guarded_run(executable, profile, fake, source, commands, snapshot, **kwargs):
@@ -1094,12 +1691,199 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
         else:
             assert (args.output_dir / 'cli-default.json').read_text() == cli_text
             assert report['runs'] == 1
+    if case == 'presentation-abort':
+        assert report['accepted'] is False and status == 1
+        assert report['oracle']['complete'] is False
+        assert report['differences'] == []
+        assert 'reference' not in report  # Aborted metrics never become reference evidence.
+        assert any('reconciliation mismatch' in failure for failure in report['failures'])
+        assert_aborted_presentation(report['native_presentation_collection'])
+        encoded = json.loads((args.output_dir / 'report.json').read_text())
+        assert_aborted_presentation(encoded['native_presentation_collection'])
+        rendered = (args.output_dir / 'report.md').read_text()
+        section = rendered.split('## Native presentation discrepancies', 1)[1].split('## Differences', 1)[0]
+        assert 'Collection: incomplete (aborted)' in section
+        assert 'reconciliation mismatch' in section
+        assert 'standardCostUSD' in section and 'standardTokens' in section
+        assert '| gpt-synthetic | priorityTokens | 25 | 50 | [] |' in section
+        assert '/synthetic/repository/nested' in section and '/synthetic/worktree' in section
+        assert len(encoded['native_presentation_collection']['records']) == 6
+        assert all(item['parent_path'] == '/synthetic/repository'
+                   for item in encoded['native_presentation_collection']['records'])
+        assert '| aggregate |' in section
+        assert section.split('| --- | --- | --- | --- | --- | --- | --- | --- |\n', 1)[1].startswith(
+            '| /synthetic/repository | day | 2024-01-07 | gpt-synthetic | standardCostUSD |')
+        assert 'Presentation collections by native observation' in rendered
+        assert len(encoded['oracle']['native_presentation_collections']) == 3
+        shared_section = rendered.split('## Raw paths contributing through multiple canonical parents', 1)[1].split(
+            '## Native presentation discrepancies', 1)[0]
+        assert 'not established' in shared_section and 'incomplete' in shared_section
+        assert 'aborted' in shared_section and 'reconciliation mismatch' in shared_section
+        assert '- none' not in shared_section
     assert events[0] == 'self-test'
     assert events[1][1] == [['cost', '--period', 'all'], ['cost', '--period', 'all', '--group-by', 'session'],
                              ['cost', '--period', 'all', '--group-by', 'project']]
     if case != 'duplicate-cli-metric':
         assert events[2][0] == Path('/bin/sh')
     assert (args.output_dir / 'report.json').is_file()
+
+
+@pytest.mark.parametrize('field', ['sessionCostUSD', 'last30DaysCostUSD', 'meteredCostUSD'])
+def test_cli_top_level_money_uses_existing_tolerance(field):
+    equal = helper('compare_codexbar').material_equal
+    assert equal({field: 1.0}, {field: 1.0 + 5e-11})
+    assert not equal({field: 1.0}, {field: 1.0 + 2e-10})
+    assert equal({field: None}, {field: None})
+    assert not equal({field: None}, {field: 0})
+    for invalid in (True, False, -1, float('nan'), float('inf'), '1'):
+        assert not equal({field: invalid}, {field: invalid})
+    assert not equal({'sessionTokens': 1}, {'sessionTokens': 1.0})
+    assert not equal({'last30DaysTokens': 1}, {'last30DaysTokens': True})
+
+
+@pytest.mark.parametrize('complete_after', [2, None])
+def test_cli_stability_requires_three_complete_observations_without_wall_waits(tmp_path, monkeypatch, complete_after):
+    module = helper('compare_codexbar')
+    path = Path(__file__).parent / 'tools/codexbar_expected.py'
+    spec = importlib.util.spec_from_file_location('synthetic_cli_stability_guard', path)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    clock = {'now': 100000, 'calls': 0, 'attempts': 0}
+    waits = []
+
+    def wait(seconds):
+        assert 0 < seconds <= 60
+        waits.append(seconds)
+        clock['now'] += round(seconds * 1000)
+
+    def run(*args, **kwargs):
+        clock['calls'] += 1
+        return SimpleNamespace(returncode=0, stdout='synthetic-observation', stderr='')
+
+    monkeypatch.setattr(guard.subprocess, 'run', run)
+
+    def snapshot(stdouts):
+        assert stdouts == ['synthetic-observation'] * 3
+        clock['attempts'] += 1
+        complete = complete_after is not None and clock['attempts'] > complete_after
+        reports = [{'historyCoverageIsEstablished': complete, 'daily': []}] * 3
+        metadata = {'catchUpPending': not complete, 'completedFiles': 2 if complete else 1,
+                    'totalFiles': 2, 'lastScanUnixMs': clock['now']}
+        return module._cli_stability_snapshot(reports, metadata, attempt=clock['attempts'],
+                                              now_ms=clock['now'], wait=wait)
+
+    arguments = (tmp_path / 'synthetic-cli', tmp_path / 'synthetic.sb', tmp_path / 'synthetic-home',
+                 tmp_path / 'synthetic-codex', [['cost'], ['session'], ['project']], snapshot)
+    if complete_after is None:
+        with pytest.raises(RuntimeError, match='no stable result after 30 runs'):
+            guard.run_until_stable(*arguments, max_runs=30, stable_runs=3)
+        assert clock['attempts'] == 30
+        assert clock['calls'] == 90
+        assert len(waits) == 60
+        assert sum(waits) == pytest.approx(1800.03)
+    else:
+        _, attempts = guard.run_until_stable(*arguments, max_runs=30, stable_runs=3)
+        assert attempts == complete_after + 3
+        assert clock['calls'] == 15
+        assert len(waits) == 4
+        assert sum(waits) == pytest.approx(120.002)
+
+
+def test_cli_stability_rejects_unknown_scan_metadata_and_waits_for_every_group():
+    module = helper('compare_codexbar')
+    complete = {'catchUpPending': False, 'completedFiles': 2, 'totalFiles': 2, 'lastScanUnixMs': 100000}
+    reports = [{'historyCoverageIsEstablished': True, 'daily': []}] * 3
+    for changes in ({'catchUpPending': None}, {'completedFiles': True}, {'totalFiles': None},
+                    {'completedFiles': 3}, {'lastScanUnixMs': None}, {'lastScanUnixMs': 100001}):
+        with pytest.raises(ValueError, match='unknown CLI scan metadata'):
+            module._cli_stability_snapshot(reports, {**complete, **changes}, attempt=1,
+                                           now_ms=100000, wait=lambda seconds: pytest.fail('unknown must not wait'))
+    waits = []
+    partial_group = [*reports[:2], {'historyCoverageIsEstablished': False, 'daily': []}]
+    first = module._cli_stability_snapshot(partial_group, complete, attempt=1, now_ms=100000, wait=waits.append)
+    second = module._cli_stability_snapshot(partial_group, complete, attempt=2, now_ms=100000, wait=waits.append)
+    assert first != second
+    assert waits == pytest.approx([60, .001, 60, .001])
+    assert module._cli_stability_snapshot(reports, complete, attempt=3, now_ms=200000,
+                                         wait=lambda seconds: pytest.fail('complete must not wait')) == reports
+
+
+def test_trace_backup_finalizes_wal_snapshot_for_readonly_scanner(tmp_path, monkeypatch):
+    module = helper('compare_codexbar')
+    source = tmp_path / 'synthetic-live.sqlite'
+    destination = tmp_path / 'synthetic-snapshot.sqlite'
+    writer = sqlite3.connect(source)
+    try:
+        assert writer.execute('PRAGMA journal_mode=WAL').fetchone() == ('wal',)
+        writer.execute('PRAGMA wal_autocheckpoint=0')
+        writer.execute('CREATE TABLE logs (id INTEGER PRIMARY KEY, body TEXT)')
+        writer.executemany('INSERT INTO logs VALUES (?, ?)', [(1, 'synthetic-first'), (2, 'synthetic-second')])
+        writer.commit()
+        assert Path(str(source) + '-wal').stat().st_size > 0
+        before = {path.name: path.read_bytes() for path in (source, Path(str(source) + '-wal'))}
+        connect = sqlite3.connect
+        opened = []
+
+        def record_connect(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+            opened.append((args, kwargs, connection))
+            return connection
+
+        monkeypatch.setattr(module.sqlite3, 'connect', record_connect)
+        assert module._trace_backup(source, destination) == 2
+        assert opened[0][0] == (source.resolve().as_uri() + '?mode=ro',)
+        assert opened[0][1] == {'uri': True, 'timeout': .25}
+        for _, _, connection in opened:
+            with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+                connection.execute('SELECT 1')
+        snapshot = connect(destination.resolve().as_uri() + '?mode=ro', uri=True)
+        try:
+            assert snapshot.execute('PRAGMA journal_mode').fetchone() == ('delete',)
+            assert snapshot.execute('SELECT * FROM logs ORDER BY id').fetchall() == [
+                (1, 'synthetic-first'), (2, 'synthetic-second')]
+        finally:
+            snapshot.close()
+        assert not Path(str(destination) + '-wal').exists()
+        assert writer.execute('PRAGMA journal_mode').fetchone() == ('wal',)
+        assert writer.execute('SELECT * FROM logs ORDER BY id').fetchall() == [
+            (1, 'synthetic-first'), (2, 'synthetic-second')]
+        assert {path.name: path.read_bytes() for path in (source, Path(str(source) + '-wal'))} == before
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize('journal_result', [('wal',), None])
+def test_trace_backup_refuses_unfinalized_snapshot(tmp_path, monkeypatch, journal_result):
+    module = helper('compare_codexbar')
+    source = tmp_path / 'synthetic-source.sqlite'
+    destination = tmp_path / 'synthetic-snapshot.sqlite'
+    source_db = sqlite3.connect(source)
+    source_db.execute('CREATE TABLE logs (id INTEGER PRIMARY KEY)')
+    source_db.execute('INSERT INTO logs VALUES (1)')
+    source_db.commit()
+    source_db.close()
+    connect = sqlite3.connect
+    opened = []
+
+    class UnfinalizedSnapshot(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql == 'PRAGMA journal_mode=DELETE':
+                return SimpleNamespace(fetchone=lambda: journal_result)
+            return super().execute(sql, *args, **kwargs)
+
+    def record_connect(database, **kwargs):
+        if database == destination:
+            kwargs['factory'] = UnfinalizedSnapshot
+        connection = connect(database, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(module.sqlite3, 'connect', record_connect)
+    with pytest.raises(ValueError, match='trace snapshot journal mode'):
+        module._trace_backup(source, destination)
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+            connection.execute('SELECT 1')
 
 
 def test_immutable_native_inputs_detect_cache_or_catalog_changes(tmp_path):

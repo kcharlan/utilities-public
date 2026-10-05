@@ -403,7 +403,8 @@ source is kept as its provenance:
   - the user-message span is not computed when any user message has an
     unreliable time
   - durations follow the rules below
-- Open item: logs with only two distinct wrapper times (§15).
+- Two distinct wrapper times alone do not establish collapsed timestamps
+  (resolved in §15 item 6).
 
 **Turn construction.**
 - A `task_started` opens a turn, keyed by its `turn_id`. If there is no
@@ -1859,6 +1860,4 @@ dropped such sessions entirely (§5.3).
 3. Open in Codex / `codex resume` behavior (§8.4).
 4. Measure and record cold throughput and real page size.
 5. Light theme: the next release after v1 acceptance.
-6. Logs with only two distinct wrapper timestamps exist in the research
-   sample. Measure them during acceptance, and decide whether the collapsed
-   rule (§5.2) should cover them. Record the decision here.
+6. Resolved: keep the §5.2 collapsed rule limited to logs with more than one wrapper timestamp whose values are all identical. Two distinct wrapper values alone do not establish collapsed timestamps. Retain existing time provenance, unknown-time flags and duration fallbacks; do not broaden the rule without evidence establishing timestamp unreliability.

@@ -1,5 +1,25 @@
 # Lessons learned
 
+- Acceptance axes must match: a canonical git project can contain several raw
+  working directories. Compare Colophon cwd groups with native source reports,
+  preserve canonical CLI/native checks, and reconcile source days/models with
+  their parent before summing any shared raw path. A matching overall total can
+  conceal offsetting source-day or model-component errors.
+
+- Native split emission has report scope: pinned `makeCodexBilledDayEntry`
+  gates four branch fields on `hasModeSplit`, and `CostUsageModels.swift`'s
+  `BreakdownAccumulator` skips nil file contributions while marking a field
+  present if any file supplied it. A supplied directory field cannot certify
+  complete split coverage. Keep daily-to-aggregate component conservation
+  within every report mandatory; report every cross-boundary split discrepancy
+  as native presentation evidence, separate from Colophon usage differences.
+  Retain only observed omission evidence and each offsetting day, without
+  reconstructing file contributions. Model identities, complete token/cost
+  totals and agreement across native observations still fail when mismatched.
+- Two distinct wrapper timestamps alone do not prove collapsed timing. The
+  approved §15 item 6 decision keeps the multiple-identical-values rule and
+  existing time provenance, unknown flags and duration fallbacks.
+
 - Acceptance table checks must compare the actual ledger shape: long-context
   rates are flat fields beside `threshold`, while only standard rates live
   under `per_million`. A synthetic fixture that invents the verifier's shape
@@ -833,3 +853,16 @@
   in a type annotation. Citation filenames must not accidentally name enclosing
   declarations. Masking/extraction should scan each file once, avoiding repeated
   unbounded suffix copies. The synthetic drift regressions cover these failures.
+- A consistent SQLite backup can retain WAL journal mode even without WAL
+  sidecars. Finalize only the isolated trace snapshot in DELETE mode and verify
+  the returned mode before handing it to the pinned read-only scanner. Keep the
+  live source connection read-only and its journal mode unchanged. Regression:
+  `test_trace_backup_finalizes_wal_snapshot_for_readonly_scanner`.
+- A pinned scanner can repeat partial reports throughout its refresh debounce.
+  Completion metadata must gate the CLI stability streak, and retries must
+  respect that debounce rather than accepting repeated partial output. Retain
+  every attempt's raw reports and metadata; fake clocks keep the synthetic
+  retry regressions free of wall waits.
+- Classify the CLI's named top-level Double cost fields as money as well as its
+  nested cost fields. Apply the existing monetary tolerance without changing
+  exact token comparisons or accepting invalid/unknown monetary values.
