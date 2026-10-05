@@ -22,6 +22,13 @@ from pathlib import Path
 COST_REL_TOL = 1e-10
 COST_ABS_TOL = 1e-12
 PINNED_COMMIT = '3bbf6bc48c20d8e507b30ed93dbdce19ed928bb6'
+# The pinned macOS native oracle emits 64-bit Swift Int counts.
+NATIVE_INT_MAX = (1 << 63) - 1
+MODEL_COUNTS = ('totalTokens', 'requestCount', 'inputTokens', 'outputTokens', 'cacheReadTokens',
+                'cacheCreationTokens', 'reasoningTokens', 'standardTokens', 'priorityTokens', 'incompleteRequestCount')
+DAY_COUNTS = ('inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens', 'reasoningTokens',
+              'totalTokens', 'requestCount', 'unpricedRequestCount', 'pricedRequestCount',
+              'unmeteredRequestCount', 'estimatedRequestCount')
 
 
 def source_inputs(codex_home: Path) -> list[Path]:
@@ -278,10 +285,9 @@ def material_equal(left, right, *, key: str = '') -> bool:
     if key in ('costUSD', 'totalCostUSD', 'totalCost', 'cost', 'standardCostUSD', 'priorityCostUSD'):
         if left is None or right is None:
             return left is right
-        if type(left) not in (int, float) or type(right) not in (int, float):
+        if not _valid_money(left) or not _valid_money(right):
             return False
-        return math.isfinite(left) and math.isfinite(right) and math.isclose(
-            left, right, rel_tol=COST_REL_TOL, abs_tol=COST_ABS_TOL)
+        return math.isclose(left, right, rel_tol=COST_REL_TOL, abs_tol=COST_ABS_TOL)
     if type(left) is not type(right):
         return False
     if isinstance(left, dict):
@@ -407,15 +413,57 @@ def validate_native(observation: object) -> dict:
         identities.add(canonical)
         for key in ('inputTokens', 'cachedInputTokens', 'outputTokens', 'reasoningTokens',
                     'totalTokens', 'requestCount'):
-            if key not in session or (session[key] is not None and (type(session[key]) is not int or session[key] < 0)):
+            if key not in session or (session[key] is not None and not _valid_count(session[key])):
                 raise ValueError(f'malformed native session {key}')
         if ('costUSD' not in session or (session['costUSD'] is not None and
-                (type(session['costUSD']) not in (int, float) or not math.isfinite(session['costUSD']) or session['costUSD'] < 0))
+                not _valid_money(session['costUSD']))
                 or type(session.get('lastActivityUnixMs')) is not int
-                or 'projectPath' not in session or (session['projectPath'] is not None and not isinstance(session['projectPath'], str))
-                or not isinstance(session.get('modelBreakdowns'), list)):
+                or 'projectPath' not in session or (session['projectPath'] is not None and not isinstance(session['projectPath'], str))):
             raise ValueError('malformed native session metrics')
+        _validate_model_breakdowns(session.get('modelBreakdowns'), nullable=False)
     return observation
+
+
+def _valid_count(value) -> bool:
+    return type(value) is int and 0 <= value <= NATIVE_INT_MAX
+
+
+def _valid_money(value) -> bool:
+    if type(value) not in (int, float) or value < 0:
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _validate_optional_metrics(row: dict, *, counts: tuple, costs: tuple) -> None:
+    # Codable optional omissions/nulls remain untouched, never inferred as zero.
+    for fields, valid in ((counts, _valid_count), (costs, _valid_money)):
+        for field in fields:
+            value = row.get(field)
+            if value is not None and not valid(value):
+                raise ValueError(f'malformed native metric {field}')
+
+
+def _validate_model_breakdowns(models, *, nullable: bool = True) -> None:
+    if models is None and nullable:
+        return
+    if not isinstance(models, list):
+        raise ValueError('malformed native model breakdowns')
+    for model in models:
+        if not isinstance(model, dict) or not isinstance(model.get('modelName'), str):
+            raise ValueError('malformed native model identity')
+        _validate_optional_metrics(model, counts=MODEL_COUNTS,
+                                   costs=('costUSD', 'standardCostUSD', 'priorityCostUSD'))
+
+
+def _validate_native_day(row: dict) -> None:
+    _validate_optional_metrics(row, counts=DAY_COUNTS, costs=('costUSD',))
+    models = row.get('modelsUsed')
+    if models is not None and (not isinstance(models, list) or any(not isinstance(model, str) for model in models)):
+        raise ValueError('malformed native modelsUsed')
+    _validate_model_breakdowns(row.get('modelBreakdowns'))
 
 
 def _validate_native_project_part(part: object) -> None:
@@ -424,32 +472,12 @@ def _validate_native_project_part(part: object) -> None:
             or part['path'] is not None and not isinstance(part['path'], str)):
         raise ValueError('malformed native project/source identity')
     _day_map(part.get('daily'), native=True)
-    for field in ('totalTokens', 'totalCostUSD'):
-        value = part.get(field)
-        if field not in part or value is not None and (
-                type(value) not in (int, float) or not math.isfinite(value) or value < 0
-                or field == 'totalTokens' and type(value) is not int):
-            raise ValueError('malformed native project/source metric')
+    if any(field not in part for field in ('totalTokens', 'totalCostUSD')):
+        raise ValueError('missing native project/source metric')
+    _validate_optional_metrics(part, counts=('totalTokens',), costs=('totalCostUSD',))
     if 'modelBreakdowns' not in part:
         raise ValueError('missing native project/source model breakdowns')
-    models = part['modelBreakdowns']
-    if models is None:
-        return
-    if not isinstance(models, list):
-        raise ValueError('malformed native project/source model breakdowns')
-    counts = {'totalTokens', 'requestCount', 'inputTokens', 'outputTokens', 'cacheReadTokens',
-              'cacheCreationTokens', 'reasoningTokens', 'standardTokens', 'priorityTokens', 'incompleteRequestCount'}
-    costs = {'costUSD', 'standardCostUSD', 'priorityCostUSD'}
-    for model in models:
-        if not isinstance(model, dict) or not isinstance(model.get('modelName'), str):
-            raise ValueError('malformed native model identity')
-        for field in counts | costs:
-            value = model.get(field)
-            if value is None:
-                continue
-            if (type(value) not in (int, float) or not math.isfinite(value) or value < 0
-                    or field in counts and type(value) is not int):
-                raise ValueError('malformed native model metric')
+    _validate_model_breakdowns(part['modelBreakdowns'])
 
 
 def _day_map(rows: list, *, native: bool) -> dict:
@@ -459,16 +487,15 @@ def _day_map(rows: list, *, native: bool) -> dict:
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get('date'), str) or row['date'] in output:
             raise ValueError('malformed/duplicate report day')
+        if native:
+            _validate_native_day(row)
         metrics = {key: row.get(source) for key, source in (
             ('input', 'inputTokens'), ('cached', 'cacheReadTokens'), ('output', 'outputTokens'),
             ('total', 'totalTokens'), ('cost', 'costUSD' if native else 'totalCost'))}
         for key, value in metrics.items():
             if value is None:
                 continue
-            if key == 'cost':
-                valid = type(value) in (int, float) and math.isfinite(value) and value >= 0
-            else:
-                valid = type(value) is int and value >= 0
+            valid = _valid_money(value) if key == 'cost' else _valid_count(value)
             if not valid:
                 raise ValueError('malformed daily metrics')
         output[row['date']] = metrics
@@ -511,8 +538,7 @@ def crosscheck_native(native: dict, cli: dict) -> list[str]:
 
 
 def _crosscheck_metric(value, *, cost: bool = False):
-    if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0
-                              or not cost and type(value) is not int):
+    if value is not None and not (_valid_money(value) if cost else _valid_count(value)):
         raise ValueError('malformed CLI/native crosscheck metric')
     return value
 
@@ -571,7 +597,14 @@ def parse_native_stdout(stdout: str) -> dict:
 def strict_json(text: str | bytes):
     def invalid(value):
         raise ValueError(f'nonfinite JSON constant: {value}')
-    return json.loads(text, parse_constant=invalid)
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'duplicate JSON object key: {key}')
+            result[key] = value
+        return result
+    return json.loads(text, parse_constant=invalid, object_pairs_hook=unique_object)
 
 
 def aggregate_units(units: list, *, projects: dict, day_key, native_costs: bool = False) -> dict:
@@ -1078,10 +1111,10 @@ def run_comparison(args, *, module, guard) -> tuple[dict, int]:
 
             def cli_snapshot(stdouts):
                 nonlocal cli_reports
-                cli_reports = [_json_report(stdout) for stdout in stdouts]
                 report['runs'] += 1
                 for label, stdout in zip(('default', 'session', 'project'), stdouts):
                     (args.output_dir / f'cli-{label}.json').write_text(stdout)
+                cli_reports = [_json_report(stdout) for stdout in stdouts]
                 normalized = [{key: value for key, value in item.items() if key != 'updatedAt'} for item in cli_reports]
                 report['cli_reports'] = cli_reports
                 return guard.canonical(normalized)

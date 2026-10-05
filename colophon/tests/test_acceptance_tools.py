@@ -42,6 +42,127 @@ def native_project():
                  'totalCostUSD': None, 'daily': [], 'modelBreakdowns': None}]}
 
 
+def native_nested_scope(scope):
+    observation = native_observation()
+    project = native_project()
+    observation['projects'] = [project]
+    project['sources'] = [json.loads(json.dumps({key: value for key, value in project.items() if key != 'sources'}))]
+    observation['daily'] = json.loads(json.dumps(project['daily']))
+    targets = {'session': observation['sessions']['synthetic-tie'], 'day': observation['daily'][0],
+               'project-day': project['daily'][0], 'source-day': project['sources'][0]['daily'][0],
+               'project': project, 'source': project['sources'][0]}
+    return observation, targets[scope]
+
+
+@pytest.mark.parametrize('scope', ['session', 'day', 'project-day', 'source-day', 'project', 'source'])
+@pytest.mark.parametrize('row', [None, {'modelName': 'gpt-synthetic', 'inputTokens': True},
+    {'modelName': 'gpt-synthetic', 'requestCount': 1.5},
+    {'modelName': 'gpt-synthetic', 'priorityTokens': 2**63},
+    {'modelName': 'gpt-synthetic', 'standardCostUSD': -1},
+    {'modelName': 'gpt-synthetic', 'costUSD': 10**400}],
+    ids=['null-row', 'bool-count', 'fractional-count', 'int-overflow', 'negative-money', 'double-overflow'])
+def test_native_nested_models_fail_closed_in_every_scope(scope, row):
+    observation, target = native_nested_scope(scope)
+    target['modelBreakdowns'] = [row]
+    module = helper('compare_codexbar')
+    with pytest.raises(ValueError, match='native'):
+        module.validate_native(observation)
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is False
+
+
+@pytest.mark.parametrize('field', ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens',
+    'reasoningTokens', 'totalTokens', 'requestCount', 'unpricedRequestCount', 'pricedRequestCount',
+    'unmeteredRequestCount', 'estimatedRequestCount'])
+@pytest.mark.parametrize('value', [True, 1.5, -1, 2**63, 10**400],
+                         ids=['bool', 'fractional', 'negative', 'int-overflow', 'huge-int'])
+def test_native_daily_source_counts_are_bounded_ints(field, value):
+    module = helper('compare_codexbar')
+    for scope in ('day', 'project-day', 'source-day'):
+        observation, target = native_nested_scope(scope)
+        target[field] = value
+        with pytest.raises(ValueError):
+            module.validate_native(observation)
+
+
+@pytest.mark.parametrize('damage', ['bad-model-list', 'bad-model-name', 'bad-models-used', 'bad-models-used-row'])
+def test_native_daily_nested_shapes_are_source_typed(damage):
+    module = helper('compare_codexbar')
+    for scope in ('day', 'project-day', 'source-day'):
+        observation, target = native_nested_scope(scope)
+        target.update({'modelBreakdowns': None, 'modelsUsed': None})
+        if damage == 'bad-model-list':
+            target['modelBreakdowns'] = {}
+        elif damage == 'bad-model-name':
+            target['modelBreakdowns'] = [{'modelName': None}]
+        elif damage == 'bad-models-used':
+            target['modelsUsed'] = 'gpt-synthetic'
+        else:
+            target['modelsUsed'] = ['gpt-synthetic', None]
+        with pytest.raises(ValueError, match='native'):
+            module.validate_native(observation)
+
+
+@pytest.mark.parametrize('scope', ['session', 'day', 'project-day', 'source-day', 'project', 'source'])
+@pytest.mark.parametrize('value', [True, -1, float('inf'), 10**400],
+                         ids=['bool-money', 'negative-money', 'nonfinite-money', 'unrepresentable-money'])
+def test_native_source_money_rejects_invalid_values_cleanly(scope, value):
+    observation, target = native_nested_scope(scope)
+    target['totalCostUSD' if scope in ('project', 'source') else 'costUSD'] = value
+    with pytest.raises(ValueError):
+        helper('compare_codexbar').validate_native(observation)
+
+
+def test_native_finite_double_limit_and_optional_day_nil_are_preserved():
+    observation, target = native_nested_scope('day')
+    target.update(costUSD=1.7976931348623157e308, modelBreakdowns=None, modelsUsed=None,
+                  pricedRequestCount=None, estimatedRequestCount=0)
+    raw = json.loads(json.dumps(observation))
+    module = helper('compare_codexbar')
+    assert module.validate_native(observation) == raw
+    assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+    assert module.material_equal({'costUSD': 1.0}, {'costUSD': 1.0 + 1e-14}) is True
+    assert observation == raw
+
+
+def test_native_source_optional_omissions_nulls_and_int_limits_remain_exact():
+    module = helper('compare_codexbar')
+    for scope in ('session', 'day', 'project-day', 'source-day', 'project', 'source'):
+        observation, target = native_nested_scope(scope)
+        target['modelBreakdowns'] = [{'modelName': 'gpt-synthetic', 'costUSD': None,
+                                     'inputTokens': 2**63 - 1, 'priorityCostUSD': .00025}]
+        if scope.endswith('day') or scope == 'day':
+            target.update(modelsUsed=None, requestCount=None, unpricedRequestCount=2**63 - 1)
+        raw = json.loads(json.dumps(observation))
+        assert module.validate_native(observation) == raw
+        # Optional encoder omissions remain omitted rather than filled as zeros.
+        assert 'outputTokens' not in target['modelBreakdowns'][0]
+        assert target['modelBreakdowns'][0]['costUSD'] is None
+        assert module.assess_native_oracle([observation] * 3, ties=[])['complete'] is True
+        assert observation == raw
+    observation = native_observation()
+    observation['sessions']['synthetic-tie']['inputTokens'] = 2**63
+    with pytest.raises(ValueError, match='native'):
+        module.validate_native(observation)
+
+
+@pytest.mark.parametrize('text', [
+    '{"sessions":{"synthetic-tie":{"inputTokens":600},"synthetic-tie":{"inputTokens":500}}}',
+    '{"sessions":{"synthetic-tie":{"inputTokens":600,"inputTokens":500}}}',
+    '[{"daily":[{"inputTokens":600,"inputTokens":500}]}]',
+    '{"projects":[{"sources":[{"modelBreakdowns":[{"costUSD":1,"costUSD":2}]}]}]}',
+    '{"a":1,"\\u0061":2}',
+    '{"inputTokens":500,"inputTokens":500}',
+], ids=['session-id', 'session-metric', 'cli-day-metric', 'deep-model-money', 'escaped-key', 'agreeing-values'])
+def test_acceptance_json_rejects_repeated_object_keys(text):
+    with pytest.raises(ValueError, match='duplicate'):
+        helper('compare_codexbar').strict_json(text)
+
+
+def test_acceptance_json_optional_nulls_and_distinct_keys_are_retained():
+    text = '{"synthetic-é":{"costUSD":null},"synthetic-é":{"costUSD":0},"daily":[]}'
+    assert helper('compare_codexbar').strict_json(text) == json.loads(text)
+
+
 @pytest.mark.parametrize('field', ['modelBreakdowns', 'sources'])
 def test_native_project_missing_breakdown_evidence_is_incomplete(field):
     observation = native_observation()
@@ -746,7 +867,9 @@ def test_fork_scope_proof_requires_other_contributors_to_match(colophon, extra_u
 
 
 @pytest.mark.parametrize('case', ['complete', 'tied', 'native-day-mismatch', 'cache-mutation', 'unknown-missing',
-                                  'canonical-complete', 'canonical-incomplete'])
+                                  'canonical-complete', 'canonical-incomplete', 'bad-model-null', 'bad-model-count',
+                                  'bad-model-money', 'bad-day-request', 'bad-day-model', 'duplicate-native-id',
+                                  'duplicate-native-metric', 'duplicate-cli-metric'])
 def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tmp_path, monkeypatch, case):
     from fixturegen import CodexHome
     module = helper('compare_codexbar')
@@ -793,6 +916,27 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
         session = native['sessions'].pop('synthetic-tie')
         session.update(sessionID='synthetic-other', cachedInputTokens=None)
         native['sessions']['synthetic-other'] = session
+    if case.startswith('bad-model-'):
+        row = {'modelName': 'gpt-synthetic'}
+        if case == 'bad-model-count':
+            row['inputTokens'] = True
+        elif case == 'bad-model-money':
+            row['standardCostUSD'] = -1
+        native['sessions']['synthetic-tie']['modelBreakdowns'] = [None if case == 'bad-model-null' else row]
+    if case == 'bad-day-request':
+        native['daily'][0]['requestCount'] = True
+    if case == 'bad-day-model':
+        native['daily'][0]['modelBreakdowns'] = [{'modelName': 'gpt-synthetic', 'requestCount': True}]
+        cli_day['modelBreakdowns'] = [{'modelName': 'gpt-synthetic'}]
+    native_text, cli_text = json.dumps(native), json.dumps([cli])
+    if case == 'duplicate-native-id':
+        item = json.dumps(native['sessions']['synthetic-tie'])
+        contradiction = item.replace('"inputTokens": 100', '"inputTokens": 600')
+        native_text = native_text.replace('"sessions": {', '"sessions": {"synthetic-tie":' + contradiction + ',', 1)
+    if case == 'duplicate-native-metric':
+        native_text = native_text.replace('"inputTokens": 100', '"inputTokens":600,"inputTokens": 100', 1)
+    if case == 'duplicate-cli-metric':
+        cli_text = cli_text.replace('"inputTokens": 100', '"inputTokens":600,"inputTokens": 100', 1)
     events = []
     def seed(fake, catalog):
         assert catalog == synthetic_pricing_catalog()
@@ -823,8 +967,7 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
             db.commit()
             db.close()
         for _ in range(3):
-            snapshot([json.dumps([cli])] * 3 if executable == cli_path else [
-                'NATIVE_ORACLE_JSON:' + json.dumps(native)])
+            snapshot([cli_text] * 3 if executable == cli_path else ['NATIVE_ORACLE_JSON:' + native_text])
     guard = SimpleNamespace(PINNED_CLI_SHA256='synthetic-sha', COST_COMMAND=['cost', '--period', 'all'],
         require_symlink_free=lambda path: None, sha256_file=lambda path: 'synthetic-sha', app_running=lambda: False,
         real_state_fingerprint=lambda: 'synthetic-fingerprint', seed_fake_home=seed,
@@ -851,10 +994,18 @@ def test_comparison_runtime_wiring_is_isolated_and_ties_fail_closed(colophon, tm
         assert report['missing_sessions'] == []
         assert report['oracle']['observations'][0]['sessions'].keys() == {'synthetic-e\u0301'}
         assert report['colophon']['session'].keys() == {'synthetic-é'}
+    if case.startswith(('bad-', 'duplicate-')):
+        assert report['failures'] or report['oracle']['disagreements']
+        if case != 'duplicate-cli-metric':
+            assert (args.output_dir / 'native-attempt-1.stdout').read_text() == 'NATIVE_ORACLE_JSON:' + native_text
+        else:
+            assert (args.output_dir / 'cli-default.json').read_text() == cli_text
+            assert report['runs'] == 1
     assert events[0] == 'self-test'
     assert events[1][1] == [['cost', '--period', 'all'], ['cost', '--period', 'all', '--group-by', 'session'],
                              ['cost', '--period', 'all', '--group-by', 'project']]
-    assert events[2][0] == Path('/bin/sh')
+    if case != 'duplicate-cli-metric':
+        assert events[2][0] == Path('/bin/sh')
     assert (args.output_dir / 'report.json').is_file()
 
 

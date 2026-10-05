@@ -93,6 +93,12 @@ nil omissions remain omitted and direct project/source optionals remain null.
 Session comparison keys use canonical Unicode identity while raw native spellings
 remain visible in observations; canonical duplicates fail validation.
 
+Source-defined model/day metrics are validated in every nested scope before
+stability comparison. Optional encoder omissions and nulls remain unchanged;
+invalid count/money types or values make the oracle incomplete. Repeated JSON
+object keys fail decoding for both native and CLI evidence, even when their
+values agree. Raw stdout is retained before decoding.
+
 Private `report.json`, `report.md`, raw CLI/native output, Colophon page/logs and
 fingerprints stay outside the repository. A failing or incomplete report exits
 nonzero. Never commit these outputs or use them to regenerate protected fixtures.

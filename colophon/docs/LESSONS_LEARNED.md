@@ -765,6 +765,18 @@
 
 ### Task 24 — independent parity evidence
 
+- Validate the source-defined nested model schema in every native scope and
+  every daily request/coverage counter before comparing observations. Optional
+  Codable omissions/nulls remain untouched; boolean, fractional, negative or
+  overflowing counts and invalid money are not evidence. Check Int bounds before
+  floating conversion, and reject an unrepresentable Double without an exception
+  escaping the fail-closed path. Regression:
+  `test_native_nested_models_fail_closed_in_every_scope`.
+- Reject repeated acceptance JSON object keys before constructing dictionaries,
+  even when values agree. Retain raw CLI/native stdout before decoding, so a
+  contradictory ID or metric cannot disappear behind a selected last value.
+  This decoder rule is separate from the application's source-ported JSON rules.
+  Regression: `test_acceptance_json_rejects_repeated_object_keys`.
 - Do not reuse the fragment-capable JSON helper for the fast quoted-string
   decoder. The pinned Foundation call omits `fragmentsAllowed`, so Unicode
   escapes provide no fast metadata/model evidence; raw UTF-8, simple escapes,
