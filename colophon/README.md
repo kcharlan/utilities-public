@@ -36,9 +36,11 @@ text/background token pairs meet WCAG AA without further color changes.
 
 Reader copy actions use the browser clipboard and fall back to a selected,
 read-only field with a “press ⌘C” hint. “Continue in CLI” copies a command that
-continues the session. Open-in-Codex and CLI support flags have browser-only
+uses `codex resume <id>`; “Open in Codex” targets `codex://threads/<id>`.
+Open-in-Codex and CLI support flags have browser-only
 coverage; live, archived and subagent desktop behavior remains unverified
-until the explicitly authorized pre-ship acceptance.
+until Task 26's explicitly authorized pre-ship acceptance, including archived
+session behavior. These flags do not establish desktop support.
 
 Overview time totals clip to the selected period: your active time unions
 overlapping own turns, while agent time sums each descendant’s own union.
@@ -67,10 +69,13 @@ Install [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS), then run
 uv selects the interpreter. It has no third-party runtime dependencies.
 The single executable can also be copied into a directory on your `PATH`.
 
-For development, use a project virtual environment:
+For development on Homebrew macOS, create a project virtual environment only
+if `.venv` does not already exist; never overwrite an existing environment.
+The absolute Homebrew interpreter is used only to create this new environment;
+use its explicit venv binaries thereafter:
 
 ```sh
-python3 -m venv .venv
+/opt/homebrew/bin/python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m playwright install chromium
 .venv/bin/python -m pytest -q
@@ -87,6 +92,22 @@ python3 -m venv .venv
 The synthetic example path must exist. The default source is `~/.codex`.
 Missing or unreadable Codex homes exit 1; invalid flags exit 2.
 Help and version commands do not create runtime files.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Success, including empty or partly skipped inputs and failure to open the browser after writing the page. |
+| 1 | Fatal error: missing/unreadable source, page write failure, interruption or unexpected failure. |
+| 2 | Usage error, including conflicting flags. |
+
+The fixed quiet threshold is two hours. An unfinished turn with recent activity
+is running; after that threshold it is abandoned. Warm scans reclassify open
+turns against the new snapshot time. A recent partial final line is silently
+ignored; an old one produces a diagnostic. A live **subagent** caught mid-write
+withholds fallback `token_count` usage until its final line completes, matching
+CodexBar's end-of-file gate. Primary per-response records and bare usage still
+count, subject to each turn's accounting-path selection. Until fallback replay
+runs, primary usage follows the file's own `C`/`XC` model observations in order,
+without the owned-suffix model reset, so known models remain priced.
 
 Cold scans show parsed/total MB and a whole-second ETA on terminal stderr.
 Redirected stderr receives final summaries only; warm cache hits have no parsing
@@ -106,7 +127,7 @@ Local throughput acceptance is separate from pytest. After authorizing real
 log access, run from this directory:
 
 ```sh
-.venv/bin/python tests/perf/measure_throughput.py --codex-home /synthetic/codex-home
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/perf/measure_throughput.py --codex-home /synthetic/codex-home
 ```
 
 Replace the synthetic path with the approved source. Without `--codex-home`,
@@ -157,10 +178,10 @@ one hour, retaining recent files that may belong to a concurrent run.
 | `price-history.json` | User ledger; initially `{"schema": 1, "entries": []}`. |
 | `workspaces.example.json` | Synthetic alias example, never read as configuration. |
 | `workspaces.json` | Optional workspace aliases. |
-| `priority-turns.json` | Persistent priority-turn memory, introduced with usage composition. |
-| `pricing-cache.json` | OpenAI price-catalog cache, introduced with catalog fetching. |
-| `cache/` | Parse records, introduced with log scanning. |
-| `colophon.html` | Compiled offline page, introduced with the compiler. |
+| `priority-turns.json` | Persistent detected priority-turn metadata and first-seen times. |
+| `pricing-cache.json` | OpenAI price-catalog cache. |
+| `cache/` | Per-log parse records; changed logs are reparsed from the beginning. |
+| `colophon.html` | Compiled offline page. |
 | `perf-baseline.json`, `parity/` | Local acceptance outputs only. |
 
 The catalog fetcher stores only the OpenAI provider in `pricing-cache.json`,
@@ -172,8 +193,11 @@ another URL remains a fallback with a warning, without sending its ETag.
 Offline fetching opens no socket. Catalog fetching overlaps the log scan;
 failure or a bounded wait uses the available cached catalog with diagnostics.
 
-Priority detection follows upstream's trace database and retains detected
-turn ids. Usage older than both the trace database and the first Colophon run
+Priority detection (A1) cold-scans the `logs` table in
+`<codex-home>/logs_2.sqlite` for upstream priority-request trace evidence and
+retains detected turn ids in sticky memory. Later detections replace stored
+metadata while retaining `first_seen_ms`; absent turns remain remembered after
+trace pruning. Usage older than both the trace database and the first Colophon run
 remains standard-priced because no priority evidence survives for those turns.
 
 ## Privacy
@@ -191,7 +215,7 @@ and a locked or unreadable trace database keeps stored priority-turn evidence
 with diagnostics. Detected entries replace stored metadata while preserving
 their first-seen time. Valid remembered turns survive trace pruning.
 Runtime state belongs outside this public repository.
-The completed compiler's only network traffic is the price-catalog GET; it
+The compiler's only network traffic is the price-catalog GET; it
 sends no session data. `--offline` suppresses that request. uv may provision
 an interpreter on its first invocation. The generated page contains private
 requests and final answers, so keep it private, including explicit outputs.
@@ -206,11 +230,15 @@ curated entries are never copied into it. Rates are USD per million tokens.
 Each entry names an exact normalized model id, or a priority override pricing
 key. A newer catalog observation keeps earlier usage on its earlier rates.
 Catalog changes are dated when downloaded, so detection can lag the real change.
+Usage between the real change and its detection keeps the previously known
+rates. Correct that interval with a `manual` entry at the true UTC change time.
 
-To correct a historical rate or introduce a priority multiplier, copy the
-applicable entry's `per_million` and, if present, `long_context` into a new
-`manual` entry with the true UTC date. For example, this invented model gains
-a multiplier from a date without changing its standard rates:
+To correct a historical rate or introduce a priority multiplier, find the
+applicable period in the user ledger or the launcher's curated history. Copy
+its `per_million` and, if present, `long_context` into a new `manual` entry
+with the true UTC date, then add the priority object. This invented model
+gains a multiplier without changing its standard rates; its original period
+has no long-context block, so the example omits it:
 
 ```json
 {
@@ -244,7 +272,7 @@ API-equivalent estimate (not billed).
 Maintainers can refresh the seed with a reviewed public models.dev snapshot:
 
 ```sh
-.venv/bin/python tests/tools/seed_price_history.py --snapshot /tmp/public-models-dev-snapshot.json --snapshot-date YYYY-MM-DD
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/tools/seed_price_history.py --snapshot /tmp/public-models-dev-snapshot.json --snapshot-date YYYY-MM-DD
 ```
 
 The tool reads only the explicit snapshot and launcher, prints deterministic
@@ -256,3 +284,116 @@ To promote later observed rates, list user-ledger catalog entries newer than
 the curated history, review their public rates, and add selected entries to
 the curated block with source `curated`; then validate and commit. Promote
 manual corrections only deliberately, after reviewing them for privacy.
+Run the table check and full suite below before committing the curated update.
+
+## Validation and upstream parity
+
+From `colophon/`, run the complete unit, CLI, browser and scaling suite; no
+skips are permitted. Browser dependencies are installed by the development
+commands above. These tests use synthetic homes, never real Codex data:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/parity/check_upstream_tables.py --codexbar <pinned-CodexBar-checkout>
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/parity/check_upstream_drift.py --codexbar <CodexBar-checkout> --to 3bbf6bc48
+```
+
+The table checker verifies the bundled and curated source values at the pin.
+The drift checker reads the function map in [token_rules.md](docs/token_rules.md).
+From the repository root, run all fleet checks:
+
+```sh
+uv run --no-python-downloads --script tools/check_uv_headers.py
+PYTHONDONTWRITEBYTECODE=1 colophon/.venv/bin/python -m pytest tools/tests/test_check_uv_headers.py -q
+zsh tools/tests/test_check_local_deployments.zsh
+node --test tools/tests/check_static_deployments.test.mjs
+```
+
+Local parity acceptance requires explicit authorization for its source and
+runtime homes, and separate approval for real data. The three pinned CLI
+commands (`codexbar cost --provider codex --format json --period all`, with no
+group option, `--group-by session`, or `--group-by project`) provide day/project
+cross-checks; none supplies session IDs. Session truth comes from a dedicated
+Swift test target calling pinned **CodexBarCore** through
+`CostUsageFetcher.loadCachedCodexTokenSnapshotForScopedHome`, with project/session
+tracking enabled and Pi disabled, using the caught-up isolated cache, copied trace and
+shared catalog/window/time zone. Colophon reads the authorized source home
+immediately after CLI catch-up; source fingerprints must remain unchanged.
+It never reconstructs session truth in Python.
+
+Prepare an external detached clone at
+`3bbf6bc48c20d8e507b30ed93dbdce19ed928bb6`, install the tracked harness as
+documented in [the native oracle README](tests/parity/native_oracle/README.md),
+and build with exactly:
+
+```sh
+swift build --build-tests --disable-keychain --force-resolved-versions -j 8
+```
+
+Keep upstream `Sources/` untouched. The clone, source and fake home must avoid
+symlinked paths (the native README explains `/private/var/tmp` preparation).
+Read the default pinned CLI's adjacent `PROVENANCE.md` in
+`~/Downloads/colophon-prebuilt/codexbar-cli-3bbf6bc48/` before execution.
+Record provenance from the repository root, using private paths:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 colophon/.venv/bin/python colophon/tests/parity/compare_codexbar.py \
+  --native-clone <external-clone> --native-bundle <test-bundle> \
+  --native-provenance <private-provenance.json> --record-native-provenance
+```
+
+The provenance records the prescribed build command. The runner checks the
+exact pin, harness and bundle hashes and upstream source state, including
+staged, tracked and untracked source changes; it does not prove the build
+invocation from that recorded command.
+After human authorization, run acceptance from the repository root:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 colophon/.venv/bin/python colophon/tests/parity/compare_codexbar.py \
+  --approved --codex-home <authorized-source-home> --colophon-home <authorized-runtime-home> \
+  --native-clone <external-clone> --native-bundle <test-bundle> \
+  --native-provenance <private-provenance.json> --output-dir <new-private-output-directory>
+```
+
+Real-data runs additionally require `--real-data-approved`; these flags record
+approval and do not obtain it. The guarded runner requires the CodexBar app
+quit and Sandbox self-test success, sets isolated `HOME` and `CFFIXED_USER_HOME`,
+denies network and real-home writes/cache reads, and compares before/after real
+CodexBar cache/preferences fingerprints. Only the dedicated exporter is run;
+unfiltered upstream tests are prohibited. It copies ledger, catalog, sticky
+memory and a consistent read-only SQLite trace backup into private isolation.
+Public catalog fetching occurs outside the guard; `--offline-catalog` uses the
+selected cached public snapshot, never the synthetic fixture catalog.
+
+Default limits are 30 CLI and 10 native runs, each configurable only to at
+least three. Three consecutive stable CLI runs establish catch-up before
+immediate offline Colophon compilation and native export with fixed inputs.
+Native stability also requires three consecutive matches. Size
+`--max-runs` for the corpus: the pinned refresh budget is
+512 MiB per refresh, so allow catch-up plus three stable matches. Defaults
+alone do not establish completeness; scan metadata and history coverage must
+also be complete. Any structural tie at a session ID's maximum file mtime makes
+the oracle incomplete,
+including files outside the selected window: even `500/500/500` cannot resolve
+it. Any material disagreement remains a failure even after a matching suffix
+(`500/600/500/500/500`). Tied IDs are reported, never silently selected.
+
+Native day/project fields and nested model/source metrics must agree with CLI
+cross-checks (relative tolerance `1e-10`, absolute `1e-12`). Token parity is
+exact; cost parity permits `1e-9 × abs(reference) + 1e-9` USD. Missing session
+IDs, required nulls and ambiguous/tied observations remain explicit oracle
+gaps. Primary/fallback, date, sticky priority, trace and approved fork differences
+need evidence for classification as approved differences; unexplained token or
+cost differences fail. The cold fallback check uses upstream rates and the
+copied trace without sticky memory, across day/project/session units.
+Custom CLI differences are class (d), never explained as approved deviations.
+Reports, raw native/CLI output, pages, logs and fingerprints stay in the explicit
+private output directory (default `$COLOPHON_HOME/parity/<UTCstamp>/`), never in
+this repository. Real-data and desktop-link verification remain Task 26 work.
+
+## Attribution
+
+Token and pricing rules are adapted from [CodexBar](https://github.com/steipete/CodexBar)
+at `3bbf6bc48` (MIT, © 2026 Peter Steinberger). Catalog rates come from
+[models.dev](https://models.dev/) (MIT). Embedded Martian Mono uses the
+[SIL Open Font License 1.1](OFL.txt); see [font.md](docs/font.md).

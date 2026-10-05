@@ -79,6 +79,10 @@ Use this matrix to identify project-specific validation commands after applying 
 
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --script tools/check_uv_headers.py`.
+- `colophon`:
+  - `.venv/bin/python -m pytest -q` from `colophon/` (unit, CLI, browser and scaling tests; no skips).
+  - After launcher header edits: `uv run --no-python-downloads --script tools/check_uv_headers.py` from the repository root.
+  - Local acceptance requires explicit approval for real data; outputs are private and never committed. Run `colophon/tests/perf/measure_throughput.py`, `colophon/tests/parity/compare_codexbar.py`, and after curated pricing changes `colophon/tests/parity/check_upstream_tables.py` with `colophon/.venv/bin/python` from the repository root; follow the project README for arguments and the guarded native oracle.
 - `data_format_converter`:
   - `python3 -m pytest`
 - `div_conv`:
