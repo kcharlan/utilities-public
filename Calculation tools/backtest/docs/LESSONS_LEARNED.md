@@ -44,6 +44,16 @@ Preserve legacy symlinks inside the private backup. Do not strip native attribut
 or change shared ancestor permissions to satisfy a gate. Report original and
 restoration errors with the actual retained recovery location.
 
+## Audit installed data by presence, not against a local dataset
+
+The fleet audit once required the selected external dataset to verify the
+installed data pair. On a machine without local history it could never pass, and
+fixing that meant running data setup, which agents must not do. Market data is not
+redistributable, so the audit now checks only that the installed pair exists as
+regular, non-empty files, and still compares code and notice bytes with source.
+Keep the audit independent of the data home; data acquisition stays a manual
+step for the owner.
+
 ## Keep routing and authorization explicit
 
 Use `/calculators/backtest/index.html`. The folder route may remain the shared

@@ -92,7 +92,7 @@ Use this matrix to identify project-specific validation commands after applying 
 - `web_games/multibody_sim`:
   - `npm test` (Playwright; config launches local `http-server` on `127.0.0.1:4173`)
 - `Calculation tools/backtest` (independent nested Market Atlas project):
-  - Follow `tests/README.md` for verified external data, locked Node/managed Chromium and a ready external compiler venv. Test drivers never prepare data or install dependencies.
+  - Follow `tests/README.md` for verified external data, locked Node/managed Chromium and a ready external compiler venv. Test drivers never prepare data or install dependencies. Agents never acquire market data: never run `npm run setup:data` or `npm run build` without `--offline` unless the owner explicitly asks. Where the owner has not prepared data, `npm test` and full compiler discovery cannot run; report that gate as unmet.
   - `npm test` (complete retained Node suite and all three original browser cases at flat file and isolated HTTP explicit-index targets).
   - `npm run test:synthetic` (complete invented subset and both original compiler modules; run root audit suites separately; this does not replace historical acceptance).
   - `PYTHONDONTWRITEBYTECODE=1 "$MARKET_ATLAS_TEST_PYTHON" -B -m unittest discover -s data -p 'test_*.py' -v` (full compiler suite including retained real-input reproduction; interpreter must be the prepared venv).

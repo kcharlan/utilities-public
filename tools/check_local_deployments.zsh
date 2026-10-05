@@ -265,7 +265,8 @@ typeset -A stale_counts stale_history_operational_errors
 for mapping in "${copy_mappings[@]}"; do
   direct_source_paths+=("${mapping%%|*}")
 done
-# Flat runtime source and the read-only data helper; local history is external.
+# Flat runtime source only. Market history is external and not redistributable;
+# the helper checks the installed data pair for presence, never against a dataset.
 typeset -a static_source_paths=(
   'Calculation tools/backtest/DATA_SOURCES.md'
   'Calculation tools/backtest/app.js'
@@ -276,7 +277,6 @@ typeset -a static_source_paths=(
   'Calculation tools/backtest/index.html'
   'Calculation tools/backtest/lifestyle.js'
   'Calculation tools/backtest/stats.js'
-  'Calculation tools/backtest/tools/data_contract.mjs'
   'Calculation tools/backtest/views.js'
   'tools/check_static_deployments.mjs'
 )
@@ -428,7 +428,15 @@ else
       report_failure "backtest static child protocol unverified"
     fi
   else
-    report_failure "backtest static audit unverified"
+    # The helper prints one fixed reason (no paths or data); anything else stays generic.
+    static_reason=
+    IFS= read -r static_reason < "$static_stderr" || true
+    if [[ "$(stat -f '%z' "$static_stderr")" == $(( ${#static_reason} + 1 )) && ${#static_reason} -le 80 &&
+          "$static_reason" =~ '^backtest [a-z ]+$' ]]; then
+      report_failure "backtest static audit unverified: $static_reason"
+    else
+      report_failure "backtest static audit unverified"
+    fi
   fi
 fi
 
