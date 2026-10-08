@@ -111,7 +111,7 @@ The runnable projects listed above include a local README with setup and usage g
 
 ## Preferred Delivery Forms
 
-This repo does not have a single preferred application form. It has a small number of preferred forms chosen by fit.
+This repo does not have a single preferred application form. It has a small number of preferred forms chosen by fit. The forms below cover how a tool is packaged and delivered; for new projects with a browser UI, the UI Shapes rules in `agents.md` decide between a built page, a static page, and a local server.
 
 ### Installed Utility Updates
 
@@ -162,8 +162,7 @@ Implementation rules:
   # /// script
   # requires-python = ">=3.12"
   # dependencies = [
-  #     "fastapi",
-  #     "uvicorn[standard]",
+  #     "pyyaml",
   # ]
   # ///
   ```
@@ -172,7 +171,7 @@ Implementation rules:
 - Do **not** hand-roll venv bootstrap: no private venv creation, no `bootstrap_state.json` marker, no `os.execv()` re-exec, no pip invocation. uv owns the environment. The fleet drift guard `tools/check_uv_headers.py` enforces this.
 - Resolve a stable runtime home under `~/.toolname/` for *mutable state only*: config, logs, databases, caches, lock files. No venv lives there.
 - Avoid colocated config files next to the script. When legacy configuration contains sensitive or operational values, migrate it manually into the documented user-home runtime directory; do not add one-time migration logic to public source.
-- If the tool serves a local web UI, embed the SPA in the script only when that keeps the delivery model materially simpler than splitting resources out.
+- If the tool has a browser UI, choose its shape (built page, static page, or local server) with the UI Shapes rules in `agents.md`. New tools default to a built page: the launcher writes one self-contained HTML file and opens it, with no server.
 
 Single-file is still the better fit when the single-file form is buying real simplicity. Large by itself is not a sufficient reason to abandon it.
 
@@ -281,6 +280,6 @@ Do not use the zipapp pattern for:
 
 Many projects in this repo are designed to be standalone local utilities that can be copied or symlinked into `~/Library/Scripts` (or any other location) and keep working without imports from the source tree or mutable sidecar files in the repo. That delivery model means certain logic blocks are intentionally duplicated across projects rather than extracted into a shared module.
 
-Environment management is no longer duplicated: the hand-rolled self-bootstrapping venv pattern (private venv under `~/.toolname/`, `bootstrap_state.json` marker, `os.execv()` re-exec) that formerly appeared in a dozen launchers has been replaced by uv's PEP 723 inline metadata, so there is now a single declarative header per tool and no bootstrap code to keep in sync. The remaining intentional duplication is narrower: tools that serve a local web UI each carry their own `find_free_port()` implementation, and standalone HTML calculators under `Calculation tools/` each embed their own CSS theme variables.
+Environment management is no longer duplicated: the hand-rolled self-bootstrapping venv pattern (private venv under `~/.toolname/`, `bootstrap_state.json` marker, `os.execv()` re-exec) that formerly appeared in a dozen launchers has been replaced by uv's PEP 723 inline metadata, so there is now a single declarative header per tool and no bootstrap code to keep in sync. The remaining intentional duplication is narrower: tools that serve a local web UI each carry their own `find_free_port()` implementation, and standalone HTML calculators under `Calculation tools/` each embed their own CSS theme variables. Built and static pages (see UI Shapes in `agents.md`) each inline their own exact-version vendored copy of their front-end libraries, recorded (version, source URL, SHA-256, license file) in the manner of `model_sentinel/model_sentinel/browse/assets/vendor/VERSIONS.md` and copied byte-for-byte from there when that library and version are already vendored, and built-page launchers each carry their own write-and-open code, modeled on `colophon`.
 
 This is a deliberate tradeoff: some duplication is the cost of standalone deployability and runtime independence. The canonical launcher guidance lives in `agents.md`, `tools/check_uv_headers.py` enforces the uv-header contract across the fleet, and `model_sentinel` is the reference for the packaged multi-file zipapp form.

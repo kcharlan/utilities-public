@@ -150,8 +150,7 @@ How it works:
    # /// script
    # requires-python = ">=3.12"
    # dependencies = [
-   #     "fastapi",
-   #     "uvicorn[standard]",
+   #     "pyyaml",
    # ]
    # ///
    ```
@@ -176,21 +175,44 @@ When this does **not** apply:
 - Projects that already use Docker as their delivery mechanism.
 - Libraries or packages meant for `pip install` distribution.
 
-### UI: Embedded React SPA (instead of Streamlit)
-When a project needs a local web UI, prefer the **embedded single-file React SPA** pattern from `editdb` over Streamlit for responsiveness, layout control, and fewer dependencies.
+### UI Shapes
+These rules govern **new projects** unless the user chooses otherwise. Existing projects keep their current shape and front-end stack until the user deliberately ports them; do not change either as part of unrelated work. Existing React CDN apps keep the contracts in `tools/testkit.py` (`assert_react_19_import_map`, `assert_react_esm_graph`).
 
-Stack (all loaded in the browser — no `npm install`, no `node_modules`): React 19 and ReactDOM 19 through an exact-version ESM import map, Babel Standalone 8 for module-aware inline JSX, and exact-version CDN assets such as Lucide. Use Tailwind 4's browser package only when the project actually uses Tailwind.
+Answer in order and stop at the first match:
+0. **Out of scope.** Delivered as a Docker stack, a library, a browser extension, or a background agent such as a `launchd` job? Follow that delivery model; these rules do not apply.
+1. **No browser UI.** If terminal output, files, or text, CSV, or Markdown reports serve the user, build a command-line tool.
+2. **Local server.** Once the page is open, does it need to:
+   - change something outside the browser, aimed at an item the user finds in the page (save an edit back to its file, delete a file, stop a job)?
+   - run Python libraries or native programs, or make network requests, on what the user enters or picks in the page?
+   - apply security-sensitive logic (redaction, sanitizing, anything whose bug leaks a secret) to what the user enters or picks?
+   - show outside state (files, processes, jobs) that changes while the user watches?
+   - query detail too large to embed even after summarizing at build time?
 
-Architecture:
-- Python backend (FastAPI + uvicorn) serves a single HTML template via `GET /`. All React/JSX, CSS, and Tailwind config are embedded in that HTML string.
-- The import map must pin the complete base contract: `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-dom`, `react-dom/client`, and aligned `react-is`. ReactDOM and library URLs must externalize the mapped React peer.
-- Compile inline JSX with exact-version Babel Standalone 8 using `type="text/babel"`, `data-type="module"`, and explicit `data-presets="env,react"`; import React and ReactDOM bindings from the map rather than relying on UMD globals.
-- Frontend communicates with backend via `fetch()` to `/api/*` JSON endpoints.
-- State uses React hooks. For Tailwind projects, define custom tokens with CSS-first `@theme` and class-based dark mode with `@custom-variant dark (&:where(.dark, .dark *));`; persist a user-selectable theme in localStorage when the interface offers one. `ErrorBoundary` wraps the app.
-- Pin every direct CDN package URL exactly, while documenting that runtime CDN access, generated transitive resolution, and byte delivery remain network-dependent and are not fully immutable.
-- Browser tests target current Playwright Chromium, fail on unexpected `pageerror`/`console.error`, and use the shared `tools.testkit` contracts to verify the import map and React peer resources without depending on opaque CDN-generated route layouts.
+   Yes to any → local server. These do not count: page-local state (browser storage, the URL, the clipboard), browser downloads and save dialogs for new files, links that open in a new browser tab, links and copied commands that hand off to another application (never for destructive changes), and general actions the user runs before opening the page (import, rescan, refresh), which become CLI subcommands.
+3. **Built page (default).** Everything else. If the page needs only what the user types or picks with a file picker, make it a static page instead.
 
-When this does **not** apply: quick prototypes where Streamlit's speed-to-first-render matters more, or when the user explicitly requests Streamlit.
+**Built page.** A launcher (normally the uv-managed launcher above) gathers data, writes one self-contained HTML file, and opens it from `file://`. `colophon` is the reference.
+- Python gathers, validates, and precomputes, including every network request. Logic that depends on interaction in the page lives only in JavaScript; no logic lives in both. If a CLI path also needs that logic, drop the CLI path or use a local server.
+- Security-sensitive logic runs only in Python: at build time, or behind a local server when the user applies it from the page (step 2).
+- Embed data in the page (for example `<script type="application/json">`); never `fetch()` local files. Inline all scripts, styles, and fonts; the page makes no external requests.
+- By default write the page to a fixed path in a 0700 runtime home (`~/.toolname/`), replaced atomically with mode 0600; an explicit user-chosen output path gets the same mode. Never write it into the repository or a shared folder such as Downloads by default. Never embed credentials or tokens. Show the build time in the page; refreshing means rerunning the command.
+- Summarize unbounded data at build time so the page stays a manageable size.
+- A built page may have CLI subcommands that maintain a store in the runtime home (import, scan, refresh); the page is a view of that store.
+- Prefix browser-storage keys with the tool name; pages opened from `file://` may share a storage origin.
+
+**Static page.** One HTML file with no launcher. It inlines everything, makes no external requests, and prefixes its storage keys. Inputs come from form fields or the File API; outputs leave as browser downloads. `web_games/gorilla` and `Calculation tools/money_sense_calculators.html` are examples.
+
+**Local server.** The exception. Python (FastAPI + uvicorn, or the standard library for read-only tools) serves the page and `/api/*` JSON endpoints.
+- Bind to `127.0.0.1` only and select the port as described in Port Selection below.
+- Block other websites from driving the API: reject any request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (as `model_sentinel/model_sentinel/browse/server.py` `_valid_host` does; Starlette's `TrustedHostMiddleware` ignores the port, so FastAPI needs custom middleware); never change state on GET or HEAD; reject other methods unless `Origin` is present and equals the server's own origin; never send CORS headers.
+- Use the same vendored front-end stack as built pages, so the UI also works offline; fetch data from `/api/*` instead of embedding it.
+
+**Front-end stack (all three shapes).**
+- Default to Preact with hooks and htm; plain JavaScript is acceptable for small pages. `colophon` predates this default and uses plain JavaScript; follow it for shape, not stack. No JSX, no CDN, and no npm, bundler, or transpile step.
+- Vendor exact-version UMD or IIFE builds. Built and static pages inline them; a server may serve them from packaged files. Record each file's version, exact source URL, and SHA-256, and keep its license file, as `model_sentinel/model_sentinel/browse/assets/vendor/VERSIONS.md` does; include the required license notices in the page.
+- Plain CSS with custom-property color tokens; do not use Tailwind, which needs a runtime compiler or a build step. Use framework-free chart libraries (for example uPlot) or SVG; do not use React-only libraries.
+- Browser tests use Playwright Chromium, open built and static pages from `file://`, and assert that every page, including server pages, makes no external requests. Use `tools/testkit.py`'s `guard_browser_errors` to fail on `pageerror`/`console.error`, and its launcher helpers (`load_launcher`, `run_launcher`, `assert_launcher_help`) for launcher tests.
+- Do not use Streamlit for new projects unless the user explicitly asks for it.
 
 ### Port Selection (local server tools)
 Never hardcode a single port. Always scan for a free port starting from the preferred default.
@@ -211,7 +233,7 @@ def find_free_port(start_port, max_attempts=20):
 Rules:
 - Call `find_free_port(args.port)` in `main()` before starting the server or browser thread.
 - If the resolved port differs from the requested one, log a warning (e.g. `"Port 8100 is in use; using port 8101 instead."`).
-- Pass the resolved port to both the server (`uvicorn.run`) and the browser-open thread so they stay in sync.
+- Pass the resolved port to both the server (`uvicorn.run` or the standard-library server) and the browser-open thread so they stay in sync.
 - The default port in `argparse` is just a preference, not a requirement.
 
 ## Execution Guidance for Agents
