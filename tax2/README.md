@@ -166,8 +166,10 @@ A v2 rules file can instead define a `components` list. Each component supports:
 - per-filing-status `brackets`.
 
 Do not combine top-level brackets with `components` in one file. Component names
-are engine identifiers; locality names and rates belong in labels and bracket
-data rather than Python code.
+are engine identifiers; labels and rates belong in rules data rather than Python
+code. This repository is public, so keep labels generic (for example
+`Local EIT`) and never name a specific municipality, school district, or tax
+district code.
 
 ## Project layout
 

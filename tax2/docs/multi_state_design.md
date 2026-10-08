@@ -32,8 +32,9 @@ Each v2 component contains:
 
 The engine sums enabled components, then applies jurisdiction-level credits and
 floors the result at zero. Component names are identifiers only: engine, API,
-and QIF behavior must not branch on a component name or state code. Locality
-names and rates remain YAML data.
+and QIF behavior must not branch on a component name or state code. Generic
+labels and rates remain YAML data; specific municipality, school-district, and
+tax-district names or codes never enter this public repository.
 
 Federal and Georgia files currently use the normalized legacy shape.
 Pennsylvania 2026 uses components: a 3.07% state-income-tax component for both
@@ -145,8 +146,8 @@ CLI, and config tests under `tests/`.
 ## Known data constraints
 
 - Pennsylvania rules exist for 2026 only.
-- Pennsylvania local EIT is disabled by default. Its locality label and rate
-  must be verified before enabling it.
+- Pennsylvania local EIT is disabled by default. Its rate is a placeholder and
+  must be set for the resident locality before enabling it.
 - Georgia 2025 is retained as a historical fixture. Its standard deduction
   values mirror the federal 2025 values rather than Georgia's 2025 deduction;
   it remains unchanged to preserve the stored regression baseline.

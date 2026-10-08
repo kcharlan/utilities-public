@@ -188,8 +188,10 @@ components:
         - {up_to: null, rate: 0.0307}
 ```
 
-Use generic component names. Put jurisdiction or locality wording in `label` and
-put rates in bracket data so a locality change remains a data edit.
+Use generic component names. Put generic wording in `label` and rates in
+bracket data so a locality change remains a data edit. This repository is
+public: never name a specific municipality, school district, or tax district
+code in a label or comment.
 
 ## Pennsylvania notes
 
@@ -199,8 +201,9 @@ put rates in bracket data so a locality change remains a data edit.
 - Return of capital is excluded from entered income until basis is exhausted;
   after that, enter it as gain. Tax2 does not track basis.
 - The local EIT component in `rules/states/PA/2026.yaml` is disabled by default
-  and applies only to earned income. Before enabling it, verify that its label
-  and rate match the applicable locality, then set `enabled: true`.
+  and applies only to earned income. Its rate is a placeholder. Before enabling
+  it, set the total resident EIT rate for your locality, then set
+  `enabled: true`.
 - Tax Forgiveness, estimated-payment thresholds and due dates, residency
   timelines, county property tax, and local services tax are not modeled.
 

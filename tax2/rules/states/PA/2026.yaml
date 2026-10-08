@@ -15,14 +15,15 @@ components:
       married_joint:
         - { up_to: null, rate: 0.0307 }
   - name: local_eit
-    label: "Local EIT (West York Boro / West York Area SD)"
+    label: "Local EIT (resident municipality and school district)"
     enabled: false
     applies_to: [earned]
     standard_deduction:
       single: 0
       married_joint: 0
     brackets:
-      # Verified 2026-07-04 via PA DCED PSD/EIT lookup resources: West York Boro / West York Area SD PSD 671302 total resident EIT 1.00%.
+      # Placeholder rate. Before enabling, look up the total resident EIT rate for
+      # your PSD with the PA DCED EIT/PSD lookup and set it here.
       single:
         - { up_to: null, rate: 0.01 }
       married_joint:

@@ -103,6 +103,6 @@ def test_pa_2026_components_and_ga_qif_defaults():
     assert pa_rules.display_name == "Pennsylvania"
     assert len(pa_rules.components) == 2
     assert sum(1 for component in pa_rules.components if component.enabled) == 1
-    assert pa_rules.components[1].label == "Local EIT (West York Boro / West York Area SD)"
+    assert pa_rules.components[1].label == "Local EIT (resident municipality and school district)"
     assert pa_rules.components[1].applies_to == [IncomeClass.earned]
     assert ga_rules.qif.state_transfer == "[GA State Income Taxes]"
