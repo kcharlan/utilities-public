@@ -31,7 +31,29 @@ If the launcher is placed or linked on `PATH`, the same commands may use
 
 Quote glob patterns when the launcher should expand them. A batch must contain one brokerage only. Without `--brokerage`, every header is checked against all registered adapters and an ambiguous union header is rejected. `--brokerage` checks only the selected adapter’s contract, so it can intentionally resolve such ambiguity while still rejecting files that do not contain that adapter’s required headers. Files are fully validated before any output is committed.
 
-Each input produces `<input-stem>.cooked.csv` and `<input-stem>.qif`. Existing regular-file output is refused unless `--overwrite` is supplied; directories, special files, and symbolic links are never valid output targets. Every artifact for the invocation is staged and synced before commit, then installed only if its target name is still unclaimed. A failed stage or commit removes new outputs and restores files replaced by `--overwrite`, leaving a clean retry. A target created by another writer during commit is preserved rather than replaced. If the filesystem also refuses a backup restore, the backup is preserved and the error names both the backup and intended destination for manual recovery. Cleanup failures never replace the original transaction error or turn already-installed outputs into a reported failure. The console lists every generated transaction with its source row, date, normalized action, mapped security, and amount before reporting file count, transaction count, and total amount.
+Each input produces `<input-stem>.cooked.csv` and `<input-stem>.qif`. Existing regular-file output is refused unless `--overwrite` is supplied; directories, special files, and symbolic links are never valid output targets. Every artifact for the invocation is staged and synced before commit, then installed only if its target name is still unclaimed. A failed stage or commit removes new outputs and restores files replaced by `--overwrite`, leaving a clean retry. A target created by another writer during commit is preserved rather than replaced. If the filesystem also refuses a backup restore, the backup is preserved and the error names both the backup and intended destination for manual recovery. Cleanup failures never replace the original transaction error or turn already-installed outputs into a reported failure.
+
+The default console report shows one row per generated transaction, using its date, amount, and original source symbol (trimmed of surrounding whitespace). A blank symbol displays `-`; the existing QIF security mapping and memo fallbacks do not replace that display symbol. For example, this entirely synthetic input produces:
+
+```text
+Transactions:
+
+synthetic-export.csv — Dividends, oldest first
+Date            Amount  Symbol
+2030-01-03      125.00  SYNTH1
+2030-01-04       80.00  SYNTH2
+2030-01-05       42.50  SYNTH3
+2030-01-06       17.25  SYNTH4
+Total           264.75
+Copy/paste sum:
+125.00+80.00+42.50+17.25
+```
+
+Each input filename appears once. Within that file, transactions are grouped by source account and action, with groups in first-appearance order. Each group is sorted oldest first, preserving source order for equal dates. Files with multiple source accounts include the mapped account name in each group heading; source account labels disambiguate accounts that map to the same name. Every transaction remains a separate row, even when its date or symbol matches another row. This display sorting does not change the original transaction order in either cooked CSV or QIF.
+
+Dates occupy a 10-character column, followed by two spaces and right-aligned amounts, then two spaces and the symbol. Amounts have exactly two decimal places; their shared column width is at least 10 characters and expands across the entire invocation when needed. Each group's total and bare copy/paste expression use those same displayed cent amounts. The expression occupies its own line after `Copy/paste sum:` and joins signed amounts with `+`, for example `10.00+-2.50+0.00`. Fractional-cent amounts are rounded individually using the same formatting as QIF, so group totals, expressions, and the final batch total reconcile with QIF amounts. Raw source amounts and cooked CSV amounts retain their existing behavior.
+
+The complete report is checked before any output is staged and printed only after the output transaction commits successfully. It is followed by the existing `Wrote <path>` lines for both artifacts and the final file count, transaction count, and total amount. An input with no generated transactions shows `none` and has no copy/paste expression.
 
 Generated QIF files with at least one transaction begin with `!Type:Invst` and deliberately contain no embedded `!Account` block. An input containing only headers or skipped actions produces an empty QIF file alongside its cooked CSV. Choose the destination investment account during import. This prevents the import from targeting the configured account name and creating an unwanted aggregate transfer. Vanguard withdrawal rows still produce their explicit per-row `XOut` transactions; no synthetic total or balancing transaction is generated.
 

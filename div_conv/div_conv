@@ -128,6 +128,7 @@ class ExtractedRow:
     security: str
     amount: str
     description: str
+    symbol: str = ""
 
 
 @dataclass(frozen=True)
@@ -163,6 +164,7 @@ def extract_fidelity_row(row: dict[str, str]) -> ExtractedRow:
         security=row["Symbol"] or row["Description"],
         amount=row["Amount ($)"],
         description=row["Description"],
+        symbol=row["Symbol"].strip(),
     )
 
 
@@ -174,6 +176,7 @@ def extract_vanguard_row(row: dict[str, str]) -> ExtractedRow:
         security=row["Symbol"] or row["Investment Name"] or row["Transaction Description"],
         amount=row["Net Amount"],
         description=row["Transaction Description"],
+        symbol=row["Symbol"].strip(),
     )
 
 
@@ -219,6 +222,7 @@ class RawTransaction:
     memo: str
     source_file: str
     source_row: int
+    symbol: str = ""
 
 
 @dataclass(frozen=True)
@@ -240,6 +244,7 @@ class CookedTransaction:
     memo: str
     source_file: str
     source_row: int
+    symbol: str = ""
 
 
 def empty_brokerage_section() -> dict[str, dict[str, str]]:
@@ -1144,6 +1149,7 @@ def read_source(
                         memo=memo,
                         source_file=path.name,
                         source_row=row_number,
+                        symbol=extracted.symbol,
                     )
                 )
     except (csv.Error, KeyError) as exc:
@@ -1210,6 +1216,7 @@ def cook_transactions(
                 memo=transaction.memo,
                 source_file=transaction.source_file,
                 source_row=transaction.source_row,
+                symbol=transaction.symbol,
             )
         )
     return cooked
@@ -1270,11 +1277,91 @@ def render_qif(transactions: Sequence[CookedTransaction]) -> str:
     return "\n".join(chunks) + ("\n" if chunks else "")
 
 
-def transaction_detail(item: CookedTransaction) -> str:
-    return (
-        f"{item.source_file}: row {item.source_row} | {item.date} | "
-        f"{item.action} | {item.security} | {decimal_text(item.amount)}"
-    )
+def render_transaction_report(
+    prepared: Sequence[
+        tuple[Path, ParsedSource, list[CookedTransaction], Path, Path]
+    ],
+) -> tuple[str, str]:
+    """Render grouped display rows and their exact copy/paste sums without I/O."""
+    # Each group owns one ordered display-row collection. Both the table and
+    # expression use its amount strings, including their cent rounding.
+    sections: list[
+        tuple[str, list[tuple[str, list[tuple[str, str, str]], str]]]
+    ] = []
+    batch_amounts: list[Decimal] = []
+    amount_width = 10
+    action_labels = {"dividend": "Dividends", "withdrawal": "Withdrawals"}
+    with localcontext() as context:
+        context.prec = MAX_AMOUNT_SIGNIFICANT_DIGITS * 2 + 20
+        for source, parsed, cooked, _cooked_path, _qif_path in prepared:
+            groups: dict[tuple[str, str], list[CookedTransaction]] = {}
+            account_names: dict[str, str] = {}
+            for raw, item in zip(parsed.transactions, cooked, strict=True):
+                groups.setdefault((raw.account, item.action), []).append(item)
+                account_names[raw.account] = item.account
+            mapped_sources: dict[str, set[str]] = {}
+            for source_account, mapped_name in account_names.items():
+                mapped_sources.setdefault(mapped_name, set()).add(source_account)
+            display_groups = []
+            for (source_account, action), items in groups.items():
+                label = f"{action_labels[action]}, oldest first"
+                if len(account_names) > 1:
+                    account_label = account_names[source_account]
+                    if len(mapped_sources[account_label]) > 1:
+                        account_label += f" (source: {source_account})"
+                    label = f"{account_label} — {label}"
+                display_rows = [
+                    (
+                        item.date,
+                        decimal_text(
+                            item.amount,
+                            location=f"{source}: row {item.source_row} amount",
+                        ),
+                        item.symbol or "-",
+                    )
+                    for item in sorted(items, key=lambda item: item.date)
+                ]
+                displayed_amounts = [Decimal(row[1]) for row in display_rows]
+                group_total = sum(displayed_amounts, Decimal("0")).normalize()
+                total_text = decimal_text(
+                    group_total,
+                    location=f"{source}: {source_account} {action} total amount",
+                )
+                batch_amounts.extend(displayed_amounts)
+                amount_width = max(
+                    amount_width, len(total_text),
+                    *(len(row[1]) for row in display_rows),
+                )
+                display_groups.append((label, display_rows, total_text))
+            sections.append((source.name, display_groups))
+        batch_total = sum(batch_amounts, Decimal("0")).normalize()
+        batch_total_text = decimal_text(batch_total, location="batch total amount")
+    amount_width = max(amount_width, len(batch_total_text))
+    lines = ["Transactions:"]
+    if not sections:
+        lines.append("  none")
+    for filename, display_groups in sections:
+        lines.append("")
+        if len(display_groups) == 1:
+            lines.append(f"{filename} — {display_groups[0][0]}")
+        else:
+            lines.append(filename)
+        if not display_groups:
+            lines.append("  none")
+        for index, (label, display_rows, total_text) in enumerate(display_groups):
+            if len(display_groups) > 1:
+                if index:
+                    lines.append("")
+                lines.append(label)
+            lines.append(f"{'Date':<10}  {'Amount':>{amount_width}}  Symbol")
+            lines.extend(
+                f"{date:<10}  {amount:>{amount_width}}  {symbol}"
+                for date, amount, symbol in display_rows
+            )
+            lines.append(f"{'Total':<10}  {total_text:>{amount_width}}")
+            lines.append("Copy/paste sum:")
+            lines.append("+".join(row[1] for row in display_rows))
+    return "\n".join(lines) + "\n", batch_total_text
 
 
 def output_paths(source: Path, output_dir: Path | None) -> tuple[Path, Path]:
@@ -1397,17 +1484,7 @@ def run(args: argparse.Namespace) -> int:
     total_transactions = sum(
         len(items) for _source, _parsed, items, _csv, _qif in prepared
     )
-    with localcontext() as context:
-        context.prec = MAX_AMOUNT_SIGNIFICANT_DIGITS * 2 + 20
-        total_amount = sum(
-            (
-                item.amount
-                for _source, _parsed, items, _csv, _qif in prepared
-                for item in items
-            ),
-            Decimal("0"),
-        )
-    total_amount_text = decimal_text(total_amount, location="batch total amount")
+    report, total_amount_text = render_transaction_report(prepared)
     artifacts = [
         artifact
         for _source, parsed, items, cooked_path, qif_path in prepared
@@ -1420,13 +1497,7 @@ def run(args: argparse.Namespace) -> int:
         commit_output_transaction(artifacts, overwrite=args.overwrite)
     except OSError as exc:
         raise UserError(f"Could not commit output transaction: {exc}") from exc
-    print("Transactions:")
-    if total_transactions:
-        for _source, _parsed, items, _cooked_path, _qif_path in prepared:
-            for item in items:
-                print(f"  {transaction_detail(item)}")
-    else:
-        print("  none")
+    print(report, end="")
     for _source, _parsed, _items, cooked_path, qif_path in prepared:
         print(f"Wrote {cooked_path}")
         print(f"Wrote {qif_path}")
