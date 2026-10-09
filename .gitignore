@@ -273,11 +273,6 @@ apple-health-extract/export.xml
 apple-health-extract/workout_summary.csv
 apple-health-extract/workout_heart_rate_detail.csv
 apple-health-extract/exercise_bouts.csv
-md-autotax/project-dir
-md-autotax/config.json
-md-autotax/Tax-table.csv
-md-autotax/*.local.csv
-md-autotax/tax_entries_*.qif
 
 # Moneydance backup rotation private runtime configuration and logs.
 moneydance backup rotation/config

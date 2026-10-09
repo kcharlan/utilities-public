@@ -1,10 +1,5 @@
-from datetime import date
-from pathlib import Path
-
-from taxkit.engine import compute_tax
-from taxkit.models import FilingStatus, TaxInput
-from taxkit.qif import QIFConfig, build_qif_entries
-from taxkit.rules_loader import load_rules
+from taxkit.page import build_payload
+from tests.test_engine_parity import FIXTURES, ORACLE, engine_page
 
 
 MONTHLY_INCOMES = [0, 1000, 5000, 8333.33, 20000, 41666.67]
@@ -58,40 +53,39 @@ L[GA State Income Taxes]
 ^"""
 
 
-def _tax_input(annual_income: float, filing_status: FilingStatus) -> TaxInput:
-    if "annual_income" in TaxInput.model_fields:
-        return TaxInput(annual_income=annual_income, filing_status=filing_status)
-    return TaxInput(unearned_income=annual_income, filing_status=filing_status)
+def test_historical_rounded_arrays_agree_with_frozen_fixture():
+    # These legacy arrays were rounded at capture. They are historical evidence,
+    # never the tolerance or rounding policy for browser annual calculations.
+    for year in EXPECTED_FEDERAL:
+        for status in EXPECTED_FEDERAL[year]:
+            cases = [next(c for c in ORACLE['compute_cases'] if c['root']=='bundled'
+                and c['input']['year']==year and c['input']['filing_status']==status
+                and c['input']['monthly_earned']==0 and c['input']['monthly_unearned']==income
+                and c['input']['states']==[{'code':'GA','allocation_pct':100}]) for income in MONTHLY_INCOMES]
+            assert [round(c['expected']['federal_annual'],10) for c in cases] == EXPECTED_FEDERAL[year][status]
+            assert [round(c['expected']['states'][0]['annual'],10) for c in cases] == EXPECTED_GA[year][status]
 
 
-def _actual_values(rules_path: Path, status: str) -> list[float]:
-    rules = load_rules(str(rules_path))
-    filing_status = FilingStatus(status)
-    return [
-        round(
-            compute_tax(_tax_input(monthly_income * 12, filing_status), rules),
-            10,
-        )
-        for monthly_income in MONTHLY_INCOMES
-    ]
+def test_single_ga_qif_golden_baseline(engine_page):
+    rules = build_payload(FIXTURES / 'bundled/rules', rules_source='custom')
+    assert engine_page.evaluate('r => Tax2Engine.buildQif({federal_cents:234567,states:[{code:"GA",state_cents:51234}]},{txDate:"2026-09-15"},{},r)', rules) == EXPECTED_QIF
 
 
-def test_federal_golden_baselines():
-    base = Path(__file__).resolve().parents[1] / "rules" / "federal"
-    for year, by_status in EXPECTED_FEDERAL.items():
-        for status, expected in by_status.items():
-            assert _actual_values(base / f"{year}.yaml", status) == expected
-
-
-def test_ga_golden_baselines():
-    base = Path(__file__).resolve().parents[1] / "rules" / "states" / "GA"
-    for year, by_status in EXPECTED_GA.items():
-        for status, expected in by_status.items():
-            assert _actual_values(base / f"{year}.yaml", status) == expected
-
-
-def test_single_ga_qif_golden_baseline():
-    assert (
-        build_qif_entries(date(2026, 9, 15), 2345.67, 512.34, QIFConfig())
-        == EXPECTED_QIF
-    )
+def test_live_annual_golden_baselines_match_exact_frozen_values(engine_page):
+    rules = build_payload(FIXTURES / 'bundled/rules', rules_source='custom')
+    cases = [next(c for c in ORACLE['compute_cases'] if c['root'] == 'bundled'
+                  and c['input']['year'] == year and c['input']['filing_status'] == status
+                  and c['input']['monthly_earned'] == 0
+                  and c['input']['monthly_unearned'] == income
+                  and c['input']['states'] == [{'code': 'GA', 'allocation_pct': 100}])
+             for year in (2025, 2026) for status in ('single', 'married_joint')
+             for income in MONTHLY_INCOMES]
+    results = engine_page.evaluate('''({cases, rules}) => cases.map(({input:i}) => {
+        const annual = Tax2Engine.computeAnnual(i.monthly_earned, i.monthly_unearned,
+            i.filing_status, i.year, i.states, rules);
+        return {federal:annual.federal_annual, ga:annual.states[0].annual};
+    })''', {'cases': cases, 'rules': rules})
+    assert len(results) == 24
+    for case, actual in zip(cases, results):
+        assert actual == {'federal': case['expected']['federal_annual'],
+                          'ga': case['expected']['states'][0]['annual']}, case['id']

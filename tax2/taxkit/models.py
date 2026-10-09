@@ -48,12 +48,3 @@ class TaxRules(BaseModel):
     components: List[TaxComponent]
     credits: List[Credit] = Field(default_factory=list)
     qif: Optional[QIFDefaults] = None
-
-class TaxInput(BaseModel):
-    earned_income: float = Field(0.0, ge=0)
-    unearned_income: float = Field(0.0, ge=0)
-    filing_status: FilingStatus
-
-    @property
-    def annual_income(self) -> float:
-        return self.earned_income + self.unearned_income

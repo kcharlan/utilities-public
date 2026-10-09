@@ -10,6 +10,14 @@ It is written for the agent that will write the implementation plan. The spec
 fixes the decisions, contracts and load-bearing algorithms. The planner owns
 the task breakdown, sequencing within §11, and routine implementation detail.
 
+**Approved historical-document exception.** The user approved retaining
+`tax2/docs/tax2-built-page-migration-implementation-plan.md` as an exact-path
+historical exception alongside this spec and the two named dated audits below.
+That exception covers `md-autotax`, `md_autotax`, `legacy_combined_alias`,
+`generate-combined`, `combined_*.csv` and other retired migration contracts.
+It supersedes narrower exception lists in this spec; it does not exempt other
+plans, documentation or runtime code.
+
 ## 0. Read first
 
 - **`agents.md` → UI Shapes.** The canonical rules for built pages, the
@@ -95,7 +103,7 @@ before planning):
 | S1 | Page source lives in separate tracked files under `tax2/web/` (§5.1). The builder inlines them into one output file. |
 | S2 | System font stacks replace the three Google Fonts families. Lucide is dropped: its `Icon` component is defined but never rendered. |
 | S3 | `--rules-dir PATH` replaces the positional `rules_dir` argument, which today is accepted but ignored by `/api/compute`. |
-| S4 | An invalid rules file fails the build with exit 1 and a message naming the file. A file is invalid if it fails to load, if it does not declare both filing statuses the UI offers (`single`, `married_joint`), or if any component lacks a standard deduction or brackets for either status. A file is also invalid if any bracket `rate` or credit-phaseout `rate_per_dollar` is negative, which keeps tax non-decreasing in income, or if bracket `up_to` values are not strictly ascending (`null` allowed only last), which keeps the tax curve free of jumps. A rules root with no federal year, or with no state directories holding a valid rules file, also exits 1. Today `_discover_states` logs the error and lists the state with fallback values, and the compute later fails with a 500. |
+| S4 | An invalid rules file fails the build with exit 1 and a message naming the file. Validate every numeric-year `.yaml` and `.yml` file, including older years and shadowed extensions, before preferring `.yaml` for duplicate years. Both offered filing statuses (`single`, `married_joint`) must be declared, with explicit deductions and nonempty bracket lists in every component, including disabled components. Components must be nonempty. Every `applies_to` list must contain exactly earned, unearned, or both without repetition; either order is valid and preserved, and omission defaults to both. Bracket `rate` and credit-phaseout `rate_per_dollar` must be nonnegative. Every non-null `up_to` must be finite, nonnegative and strictly ascending; null is allowed only last. Negative non-null `refundable_cap` is invalid; absent/null, zero and positive caps are valid. Every numeric value in the normalized JSON must be finite. Deductions have no additional restrictions. These approved basis/P1–P3 amendments preserve engine arithmetic. A rules root with no federal year or no state directory holding valid rules also fails. Empty-year state directories remain listed but cannot satisfy that minimum. |
 | S5 | The in-page state selection persists in browser storage and takes precedence over `default_states` (§6.6). The page never writes `config.yaml`. |
 | S6 | The schedule exports as Markdown and the lookup table as CSV. Scope: the selected year, all filing statuses (schedule) or the selected filing status (CSV), and every jurisdiction with rules for that year. |
 | S7 | Keep the `--no-browser` flag name. Remove `--port`. The app version becomes `3.0`. |
@@ -126,7 +134,7 @@ directory copy (§12).
 |---|---|
 | (none) | Build and open the page. |
 | `--no-browser` | Build without opening. Also implied when `UTILITIES_TESTING` is truthy, as today. |
-| `--output PATH` | Write the page to PATH instead of the runtime home. Same mode 0600 and atomic replace. |
+| `--output PATH` | Write the page to PATH instead of the runtime home. Same mode 0600 and atomic replace. Reject config publication entries and verified utilities-public source destinations under the approved P4 policy below. |
 | `--rules-dir PATH` | Rules root containing `federal/` and `states/`. Default: `rules/` beside the launcher. |
 | `--help` | Usage, flags, `TAX2_HOME` and the runtime files. |
 
@@ -135,7 +143,8 @@ On success, print the written page path.
 **Exit codes:**
 - 0: success, including a failure to open the browser after the page is written.
 - 1: fatal error: missing or invalid federal rules, invalid state rules, no
-  valid state, or an unwritable output.
+  valid state, an unwritable output, a config-replacing destination, a verified
+  source destination, or an unclassifiable Git-marked destination.
 - 2: usage error (argparse).
 
 **Runtime home:** `$TAX2_HOME` or `~/.tax2`.
@@ -150,15 +159,81 @@ On success, print the written page path.
 - Drop `legacy_combined_alias` from the defaults. Ignore it when present so
   existing files still load.
 - A corrupt config still warns, uses the defaults and is not overwritten.
+- An existing non-mapping document, including empty YAML, warns exactly
+  `config.yaml is not a mapping; using defaults` and remains untouched.
+  Missing config is created without that warning.
+- An existing config entry that cannot be read (a dangling link, a symlink
+  loop, or a link chain through an inaccessible directory) warns exactly
+  `Unable to read config.yaml; using defaults` once per build, uses the
+  defaults and creates nothing at the entry or its link targets (the runtime
+  home itself still gets its usual 0700 mode); the build still succeeds. `create_config_if_missing` tests the entry itself with
+  `os.lstat` (a missing entry is created; any existing or uninspectable entry
+  is left alone) and `load_config` delegates that decision to it, so no
+  `OSError` from existence or read checks escapes either helper and the result
+  does not depend on Python-version `Path.exists` semantics (tie-off I1).
 - The config is edited by hand; the page never writes it.
+
+**Publication destination safety (approved P4).** Derive output/config paths
+without writes and validate the destination before loading or creating config.
+Expand `~`, normalize relative paths against the working directory and resolve
+the physical parent, including parent symlinks; preserve the final leaf entry.
+Reject the config entry, every symlink entry encountered in its resolution
+chain (including directory links and symlinked runtime homes), and the final
+target even when missing. `config_resolution_entries` walks link text with
+`lstat`/`readlink`, respecting `..` after link expansion, without `Path.resolve`.
+Stop at repeated traversal state or 40 expansions; unreadable or looping chains
+still allow unrelated output and the normal config read warns/uses defaults.
+`entry_matches` compares existing entries by `(st_dev, st_ino)` (including
+hard links). Otherwise compare NFC-casefolded leaf names with identical parents:
+`samefile` when both parents exist, NFC-casefolded `realpath` otherwise. Errors
+mean absent/not identical and never escape these helpers. This deliberately
+rejects case variants on case-sensitive volumes unless both entries exist;
+then distinct identities are allowed. Unicode case folding maps `ß` to `ss`.
+`ensure_no_config_conflict` in `taxkit/config.py` is the single
+conflict-then-raise step around `config_conflict` (tie-off I5). Run it early,
+inside `validate_output_destination`, before private state access, and again in
+the launcher after payload building immediately before atomic publication; the
+launcher never references `config_conflict` directly. Git classification runs
+only early. Either conflict exits 1 with `Tax2: Output destination would replace
+config.yaml`, preserving config bytes/mtime and writing no page.
+Atomic replacement replaces an unrelated output leaf
+symlink without writing through it. Never chmod arbitrary output parents.
+
+Inspect the physical output parent and all ancestors for `.git` metadata using
+`lstat`. Only missing metadata is absent; permission errors and broken metadata
+links are unclassifiable. For each candidate, run bounded read-only Git commands
+using argument arrays, no shell and no inherited Git repository/index override
+environment: `git -C <candidate> rev-parse --show-toplevel`, followed by
+`git -C <root> ls-files --cached -z -- tax2/tax2 tools/check_uv_headers.py`.
+Both exact tracked paths identify a protected utilities-public source root,
+including clones/worktrees regardless of directory name. Check every ancestor
+candidate so nested unrelated repositories cannot hide an outer protected root;
+use path ancestry, not string prefixes. Do not follow the output leaf symlink.
+
+Reject verified source destinations before private state reads/writes. Git
+missing, timeout, execution error or inability to classify a Git-marked
+candidate also fails closed with exit 1 and a destination-safety message.
+Git is required only for Git-marked ancestry: help and default home output with
+no such ancestry require no Git invocation. A standalone deployment directory,
+successfully classified unrelated repository and sibling with a shared name
+prefix remain valid. No bypass flags, hardcoded private source paths or
+warning-only bypass are added. This local publication model assumes parent
+stability; it does not add an adversarial filesystem framework.
 
 ## 4. Build pipeline and payload
 
 **Pipeline:**
 1. Resolve the rules root.
-2. Discover the federal years and state directories, as `get_available_years`
-   and `_discover_states` do today.
+2. Discover federal/state year files through the single
+   `taxkit.utils.discover_year_files(directory: Path) -> dict[int, list[Path]]`;
+   all callers use its filename-sorted inventory. Match ASCII `[0-9]+` years
+   with `.yaml`/`.yml` only, retaining entries regardless of filesystem type.
 3. Load and validate every rules file with `load_rules`, plus the S4 checks.
+   Reject directories, broken links, FIFOs and other non-regular year entries
+   before reading, naming the path; symlinks to regular files remain valid.
+   Validate all candidates before selection: keep when the year is new or
+   suffix is `.yaml`, so last sorted `.yaml` wins and first `.yml` wins.
+   Valid normalized payloads remain unchanged apart from build time.
 4. Load the config.
 5. Assemble the payload.
 6. Render the page:
@@ -192,8 +267,17 @@ On success, print the written page path.
 - `<TaxRules>` is `TaxRules.model_dump(mode="json")` of the normalized rules.
   Enums become strings, and a v1 file arrives as one `default` component.
 - A state's `display_name` and `qif` come from its latest year, as the sidebar
-  does today.
+  does today. Missing display names fall back to the original directory name,
+  preserving its case; the code is still uppercased.
 - Never embed absolute paths or anything from the environment.
+- Embedded `qif_overrides` project mappings only: normalize nonempty string
+  state keys by trimming and uppercasing, accept unknown custom codes, and
+  keep only string `state_expense`/`state_transfer` fields (including empty).
+  Collisions merge in file order with the last valid field winning; malformed
+  later fields do not erase earlier ones. Warn and ignore malformed containers,
+  entries and recognized fields while retaining valid siblings. Warnings name
+  only stable entry indices and recognized fields, never supplied keys/values.
+  Existing config bytes and modification times remain unchanged.
 
 ## 5. Page architecture
 
@@ -212,9 +296,18 @@ tax2/web/
 - Copy them byte-for-byte from model_sentinel (Preact 10.29.8, hooks 10.29.8,
   htm 3.1.1). Copy the same `VERSIONS.md` rows (version, exact source URL,
   SHA-256) for those files and their licences. `preact.LICENSE` covers hooks.
-- Put the licence notices in the page, as UI Shapes requires.
-- The builder fails if any inlined file contains `</script`; today's files do
-  not.
+- Put the licence notices in the page, as UI Shapes requires. The builder
+  escapes them into `<template id="tax2-licenses">` (a `<details>` with a
+  `Software licenses` summary); `app.js` mounts one copy at the end of the
+  export column. Above 1200 px they scroll with that column, so the document
+  never grows past the viewport; at 1200 px and below they are last in the
+  stacked page. They stay openable and in normal flow, never fixed or sticky
+  (tie-off I2).
+- The builder fails if any inlined source asset contains `</script`
+  case-insensitively, including CSS and raw license text before escaping.
+  The surrounding template and separately escaped payload are excluded.
+  Assemble template/assets first and insert JSON last so placeholder-looking
+  data round-trips untouched.
 
 **Scripts.**
 - `engine.js` exposes its functions on one global, `window.Tax2Engine`, so
@@ -240,7 +333,7 @@ tax2/web/
 Inspect the template for exact wording.
 
 **Header and sidebar**
-- Title.
+- Page title: `Tax2 - Professional Tax Calculator`.
 - Tax Year selector, newest first. The default is the current **local** year if
   federal rules exist for it, otherwise the latest federal year. Evaluate it
   when the page opens, not when it was built.
@@ -254,9 +347,20 @@ Inspect the template for exact wording.
 - Monthly Unearned Income and Monthly Earned Income, defaulting to 12,500 and 0.
 - Today's money-input behaviour:
   - shows the raw number while focused;
+  - focusing a zero-valued money field shows an empty box;
   - formats to 2 decimals with grouping on blur;
   - an empty input means 0.
 - The line `Total ${monthly} monthly = ${monthly×12} annually`.
+  Either invalid money input replaces it with
+  `Total unavailable — fix the highlighted inputs.`; a lone
+  `.` retains the previous value without error. Valid recovery recomputes it.
+- Allocation ArrowUp sets `floor(v) + 1`, ArrowDown `ceil(v) - 1`, clamped
+  to 0–100. Invalid text uses the last valid value; prevent caret movement.
+- Above 1200 px, the viewport-height container's sidebar, main and export
+  columns scroll independently, and the document itself never scrolls: its
+  height equals the viewport, and wheel input over a column moves only that
+  column. At 1200 px and below, the whole page scrolls
+  with stacked exports; at 769–1200 px the sidebar spans both grid rows.
 
 **Results** (monthly figures only; no annual figures are shown today):
 - Federal Tax card: `federal_cents`, formatted from cents (§6.4), with an
@@ -330,8 +434,18 @@ Inspect the template for exact wording.
     and whitespace, never through `parseFloat` (`.5` is 50 cents, `12.` is
     1200).
   - These cases are F6 test vectors.
-  - Allocation fields: clamp numbers outside 0–100, as today. Empty or
-    non-numeric text shows "Enter 0–100" instead of silently becoming 0.
+  - Allocation fields accept only
+    `^\s*[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)\s*$` with a finite value;
+    clamp outside 0–100 and show the clamped text. Empty, exponent, radix,
+    percent, grouped and non-finite text shows "Enter 0–100".
+  - Every invalid input has an `--accent-tax` indicator, focused/unfocused
+    in both themes: bordered fields use a border; money fields an outline or
+    underline. A focused invalid input never shows the green
+    `--accent-income-light` focus glow at any width or theme: bordered fields
+    show a 3px `--accent-tax-light` ring and money fields no box-shadow, while
+    valid focused inputs keep the income glow (tie-off P3).
+    Restoring validity restores baseline styles. Allocation/date
+    errors use `aria-describedby` pointing to the visible error.
   - While any input is invalid, the results area shows the error card
     `Error: Fix the highlighted inputs.`, and the QIF download is disabled.
   - Both engine entry points (§6.3) also throw on non-finite or negative
@@ -400,6 +514,10 @@ Port `taxkit/engine.py` exactly, keeping the order of operations.
   `total_annual` nor Python's float `sum()` is needed any more.
 
 ### 6.4 Rounding toward the safe side (load-bearing, D6)
+
+`ratePercent(taxCents, grossCents, decimals)` is the single rate arithmetic
+helper: zero gross returns 0; otherwise upward `ceilScaled` rounds the
+percentage. Both monthly totals (two decimals) and UI cards (one) call it.
 
 **The rule.** Ask what the consequence of each displayed figure being wrong
 would be, and round so the error is harmless.
@@ -557,11 +675,16 @@ File name: `tax2_rate_schedule_{year}.md`.
 - Title, build time, rules year, a "not tax advice" line, and the caveats.
 - The manual procedure:
   1. Multiply monthly income by 12.
-  2. For a state, multiply by its allocation.
-  3. Subtract the component's standard deduction, flooring at 0.
+  2. For a state, multiply earned and unearned income by its allocation first.
+     Federal uses unallocated total income.
+  3. Use each component's income basis. Subtract its standard deduction,
+     flooring taxable income at 0.
   4. Find the bracket and apply its formula.
-  5. Divide by 12 and round **up** to the next cent.
-  6. Add the components.
+  5. For a jurisdiction with credits, subtract them once from the annual tax of
+     its total-income components, flooring at zero (see Credits).
+  6. Divide each component's annual tax (or the credited total-income section's)
+     by 12 and round up to the next cent.
+  7. Add the results.
 
 **Sections**
 - Order: federal first, then states with rules for the year, alphabetically.
@@ -577,6 +700,12 @@ File name: `tax2_rate_schedule_{year}.md`.
   present.
 
 **Formatting**
+- Backslash-escape user-supplied Markdown text in every label/code path:
+  backslash, backtick, `*`, `_`, `[`, `]`, `<`, `>`, `|`, `&`, `~` and `#`;
+  collapse CR/LF to spaces. Rule numeric formatting remains unchanged.
+- `formatCents` and `exactNumber` reuse one `groupDigits` helper without
+  changing outputs; the grouping regex occurs only once. `bases` is a direct
+  mapping without mutable state.
 - **Rates** print exactly as percentages. Take the rule value's shortest
   decimal string and move the decimal point two places, with no float
   multiplication (`0.0307` gives `3.07%`, never `3.0700000000000003%`).
@@ -800,11 +929,86 @@ code.
 
 ### 9.2 Test suite after the port
 
+**Review-fix regression coverage (2026-10-08)**
+- Config/publication: `test_non_mapping_config_warns`,
+  `test_missing_config_does_not_warn`,
+  `test_entry_matches_unicode_missing_and_existing_identity`,
+  `test_config_resolution_preserves_link_dotdot_and_missing_tail`,
+  `test_config_resolution_bounded_and_read_errors`,
+  `test_case_variant_config_output_rejected`,
+  `test_case_variant_config_output_rejected_on_first_run`,
+  `test_case_variant_missing_parent_rejected_early`,
+  `test_case_variant_missing_target_parent_rejected`,
+  `test_prepublish_recheck_rejects_conflict`,
+  `test_dangling_config_symlink_target_rejected`,
+  `test_intermediate_config_symlink_rejected`,
+  `test_directory_symlink_in_config_path_rejected`,
+  `test_config_symlink_loop_still_builds_default_output`, and
+  `test_unresolvable_config_chain_still_builds`.
+- Discovery/payload: `test_discovery_single_implementation`,
+  `test_discovery_groups_all_entry_types_in_filename_order`,
+  `test_broken_year_symlink_fails_build`,
+  `test_non_regular_year_entry_fails_build`,
+  `test_fifo_year_entry_rejected_before_read`,
+  `test_regular_year_symlink_is_valid`, `test_non_ascii_digit_year_ignored`,
+  `test_leading_zero_duplicate_precedence`,
+  `test_shadowed_leading_zero_candidate_still_validates`,
+  `test_bundled_payload_unchanged_by_discovery_refactor`, and
+  `test_display_name_falls_back_to_directory_name`.
+- Browser/engine: extend `test_parsers_exact_money_grammar_and_allocation`;
+  add `test_shared_rate_percent_rounds_up`,
+  `test_allocation_decimal_only_and_keyboard_recovery`,
+  `test_income_total_error_recovery_and_rate_display`,
+  `test_invalid_indicator_and_valid_style_restoration`,
+  `test_title_empty_zero_focus_and_desktop_column_layout`,
+  `test_tablet_sidebar_spans_main_and_export`, and
+  `test_available_years_multi_year_format`. Extend
+  `test_engine_rejects_invalid_inputs_and_missing_status_data` to pin each
+  exact cause-specific message, in call order.
+- Exports: `test_schedule_manual_procedure_applies_credits_before_monthly_rounding`,
+  `test_schedule_escapes_every_user_supplied_label_path`, and
+  `test_engine_digit_grouping_regex_has_one_shared_definition`.
+- Golden/source hygiene: `test_live_annual_golden_baselines_match_exact_frozen_values`
+  runs the live engine for all legacy income/year/status cases while retaining
+  the historical-array check. `test_tests_do_not_use_fixed_temporary_paths`
+  rejects fixed temporary paths outside its own source; screenshots use pytest
+  temporary directories. `test_retired_config_key_source_inventory` checks
+  exact equality to the four approved project files by walking disk without
+  Git and excluding dot-directories/bytecode directories; stale deployed
+  files therefore fail. Remove generated bytecode outside `.venv` and verify
+  no retired-module bytecode returns after the full suite.
+
+**Tie-off regression coverage (2026-10-08)**
+- Unreadable config (I1): `test_unreadable_config_chain_still_builds`,
+  `test_unreadable_config_chain_unrelated_output_builds`,
+  `test_config_helpers_tolerate_permission_errors` (all through a real
+  chmod-000 link chain from the shared `tests/helpers.py`; skipped only when
+  run as root) and `test_load_config_tolerates_raising_exists`.
+- Desktop scrolling and licence notices (I2):
+  `test_desktop_wheel_scroll_never_moves_window` (real wheel input at
+  1440×600) and `test_license_notices_reachable_at_all_widths` (1440×600,
+  1024×700, 390×844). `test_title_empty_zero_focus_and_desktop_column_layout`
+  keeps the layout facts without `scrollTop` assignments.
+- Conflict helper (I3, I5): `test_config_conflict_raise_has_one_home`; the
+  strengthened `test_prepublish_recheck_rejects_conflict` blinds only the
+  first `config_conflict` call and delegates the pre-publish recheck.
+- Invalid focus (P3): `test_invalid_focus_has_no_income_glow` (widths 1440,
+  1024 and 390, both themes).
+- Tightened assertions (I4, P2): `test_schedule_structure` and
+  `test_schedule_manual_procedure_applies_credits_before_monthly_rounding`
+  reject `before dividing`; `test_allocation_decimal_only_and_keyboard_recovery`
+  checks the visible `Enter 0–100` message;
+  `test_discovery_groups_all_entry_types_in_filename_order` checks a lone
+  `2026.YAML`; `test_shared_rate_percent_rounds_up` rejects multiplication by
+  100 in `app.js` with a self-checked regex;
+  `test_case_variant_config_output_rejected_on_first_run` uses explicit
+  branches.
+
 **Dispositions of the current tests**
 
 | Current test | Disposition |
 |---|---|
-| `test_rules_v2.py` | Keep. Add the S4 build-failure cases. |
+| `test_rules_v2.py` | Keep. Add S4/basis/P1–P3 failures for v1/v2 and disabled components; valid zero-rate/all-disabled, cap and basis-order/default cases. |
 | `test_config.py` | Keep. Adjust for the dropped `legacy_combined_alias`, create-if-missing, and 0600/atomic writes. |
 | `test_golden_baselines.py`, `test_engine_components.py`, `test_qif_multistate.py` | Port to browser tests that call `window.Tax2Engine` via `page.evaluate`, run against the frozen bundled root. Compare with the unrounded fixture values exactly rather than reproducing `round(x, 10)`. Add the whole §9.1 parity fixture. |
 | `test_api.py` | Replace each test with a page or payload test of the same scenario (list below). |
@@ -860,6 +1064,17 @@ The `test_api.py` replacements:
 - Invalid rules exit 1 and name the file.
 - A config containing `legacy_combined_alias` loads.
 - An existing config is never rewritten.
+- Destination/config protection runs before config access and preserves old
+  bytes and `mtime_ns` on rejection. Cover direct/relative/normalized paths,
+  symlinked parents and config targets, unrelated output leaf replacement,
+  synthetic source clones, worktree `.git` files, nested repositories and
+  nonexistent output subdirectories. Verify allowed deployment/unrelated/sibling
+  destinations and outside leaf links into source; reject inside links out.
+- Inject Git missing/timeout/execution/nonzero/unclassifiable results and
+  metadata permission/broken-link failures. Require exit 1, a safety message,
+  no private-state access and no new runtime files. Verify no Git invocation
+  for help or unmarked output ancestry. Use synthetic repositories outside the
+  source checkout for all probes.
 
 **Repository checks**
 - In `tools/check_uv_headers.py`, set the `tax2/tax2` policy's extras to
@@ -919,8 +1134,9 @@ Validation Matrix tax2 commands from §8.
    `docs/cleanup_audit_20260916.md`.
 9. Tell the user that `~/.md-autotax/` is their private runtime folder, outside
    the repository, and theirs to delete.
-10. Verify by running `rg -n "md-autotax|md_autotax"`. Only the two dated
-    audits and this spec may match.
+10. Verify tracked references to `md-autotax|md_autotax`. Only the two named
+    dated audits, this spec and the exact implementation-plan path approved
+    above may match.
 
 ## 11. Ordering constraints for the plan
 
@@ -970,6 +1186,11 @@ whether to keep them.
 
 ## 13. Acceptance criteria
 
+- **Rules validation.** Every discovered rules file passes S4 and the approved
+  basis/P1–P3 amendments, including disabled components and shadowed/older
+  files. Zero-rate open brackets, nonempty all-disabled rules and unrestricted
+  finite deductions remain supported; bundled normalization is unchanged.
+
 - **Build.** With a warm uv cache and no network, `./tax2` writes
   `~/.tax2/tax2.html` (mode 0600, runtime home 0700) and opens it.
 - **Offline page.** The page makes zero network requests and logs no errors.
@@ -992,9 +1213,11 @@ whether to keep them.
   typer are gone, and the uv header guard passes.
 - **No leftovers.**
   - No table-mode, `generate-combined` or `combined_*.csv` code or docs remain,
-    except in this spec and the dated audits.
+    except in this spec, the two named dated audits and the exact approved
+    implementation-plan path.
   - `legacy_combined_alias` appears only in the config loader's ignore path, its
-    compatibility test and this spec.
+    compatibility test, this spec and the exact approved implementation-plan
+    path (plus the two named audits as historical documents).
   - `md-autotax` appears only where §10.10 allows.
 - **Tests.** The full tax2 suite and the updated Validation Matrix commands
   pass.

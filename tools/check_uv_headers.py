@@ -115,7 +115,7 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
     "tax2/tax2": (
         "requirements",
         "tax2/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest", "typer"}),
+        frozenset({"playwright", "pytest"}),
     ),
     "routerview/routerview": (
         "requirements",

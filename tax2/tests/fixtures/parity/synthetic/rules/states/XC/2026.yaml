@@ -1,0 +1,20 @@
+year: 2026
+jurisdiction: XC
+display_name: Synthetic Credit State
+filing_statuses: [single, married_joint]
+components:
+  - name: synthetic_total
+    label: Synthetic total-income component
+    applies_to: [earned, unearned]
+    standard_deduction: {single: 0, married_joint: 0}
+    brackets:
+      single: [{up_to: null, rate: 0.1}]
+      married_joint: [{up_to: null, rate: 0.1}]
+credits:
+  - name: synthetic_phaseout_credit
+    amount: 1000
+    refundable_cap: 500
+    phaseout: {start_income: 20000, rate_per_dollar: 0.05}
+qif:
+  state_expense: "Synthetic:Credit Tax"
+  state_transfer: "[Synthetic Credit Transfer]"

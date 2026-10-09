@@ -1,28 +1,13 @@
-from datetime import date
+from taxkit.page import build_payload
+from tests.test_engine_parity import FIXTURES, engine_page
 
-from taxkit.qif import QIFConfig, StateQIFItem, build_qif_entries
 
-
-def test_multistate_qif_has_one_federal_pair_and_ordered_states():
-    qif = build_qif_entries(
-        date(2026, 9, 15),
-        100,
-        [
-            StateQIFItem(
-                code="GA",
-                amount=20,
-                expense="Tax:GA",
-                transfer="[GA Taxes]",
-            ),
-            StateQIFItem(
-                code="PA",
-                amount=30,
-                expense="Tax:PA",
-                transfer="[PA Taxes]",
-            ),
-        ],
-        QIFConfig(),
-    )
+def test_multistate_qif_has_one_federal_pair_and_ordered_states(engine_page):
+    rules = build_payload(FIXTURES / 'bundled/rules', rules_source='custom')
+    qif = engine_page.evaluate('''r => Tax2Engine.buildQif(
+        {federal_cents:10000,states:[{code:'GA',state_cents:2000},{code:'PA',state_cents:3000}]},
+        {txDate:'2026-09-15'},
+        {GA:{expense:'Tax:GA',transfer:'[GA Taxes]'},PA:{expense:'Tax:PA',transfer:'[PA Taxes]'}},r)''',rules)
 
     lines = qif.splitlines()
     assert lines[0] == "!Type:Bank"

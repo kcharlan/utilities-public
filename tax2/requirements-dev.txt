@@ -1,6 +1,6 @@
--r requirements.txt
+pydantic
+pyyaml
 
 # Test-only dependencies.
 pytest>=8.0
-httpx
 playwright>=1.63

@@ -1,213 +1,201 @@
 # Tax2
 
-Tax2 is a rules-driven federal and state estimated-tax calculator with an
-embedded React web UI, table generation, table lookup, and QIF export. The
-executable is a uv-managed Python script that serves a local FastAPI app; the UI
-does not require Node.js or a separate frontend build.
+Tax2 3.0 builds a private, self-contained estimated-tax calculator from federal and
+state YAML rules. Open the resulting HTML file in a browser to calculate tax
+and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
+All rules, scripts, styles and license notices are embedded; the page uses local
+system fonts. It works offline without a server or frontend build step.
 
-Tax2 currently includes federal rules for 2025 and 2026, Georgia rules for 2025
-and 2026, and Pennsylvania rules for 2026. The checked-in rules are application
-inputs, not tax advice; verify rates and eligibility rules before relying on the
-results.
+Bundled rules cover federal and Georgia tax for 2025 and 2026, and Pennsylvania
+for 2026. Verify rates and eligibility before relying on estimates. See
+[Usage](docs/Usage.md) for tax and lookup limitations, and
+[multi-state design](docs/multi_state_design.md) for interfaces and invariants.
 
 ## Quick start
 
-Install [uv](https://docs.astral.sh/uv/), then run:
+Install [uv](https://docs.astral.sh/uv/), then run from this directory:
 
 ```bash
-./tax2
+UV_PYTHON_DOWNLOADS=never ./tax2
 ```
 
-The launcher resolves its PEP 723 dependencies through uv, starts the server at
-`http://127.0.0.1:8000`, and opens that address in the default browser. The first
-run may access the network while uv fills its shared cache. Tax2 also creates a
-preference file at `~/.tax2/config.yaml`, or at
-`$TAX2_HOME/config.yaml` when `TAX2_HOME` is set.
-
-Useful options:
+The launcher validates local rules, writes `~/.tax2/tax2.html`, opens its
+`file://` URL, and exits. First use may need network access to resolve/cache
+dependencies. With compatible Python and dependencies cached, offline rebuilds
+work; opening an already-built page needs neither uv nor a network connection.
+The launcher depends on pydantic and pyyaml. Network access may be needed again
+after clearing the uv cache or changing dependencies.
 
 ```bash
-./tax2 --port 9000
-./tax2 --no-browser
-./tax2 --help
+UV_PYTHON_DOWNLOADS=never ./tax2 --help
+UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser
+UV_PYTHON_DOWNLOADS=never ./tax2 --output "$HOME/.tax2/example.html"
+UV_PYTHON_DOWNLOADS=never ./tax2 --rules-dir "$HOME/.tax2/rules"
+UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 ./tax2 --no-browser
 ```
 
-The preferred port is not selected automatically. If it is occupied, choose a
-different port with `--port`.
+`TAX2_HOME` overrides the runtime home, whose directory has mode `0700`.
+New config and built pages have mode `0600`. Pages are replaced atomically,
+including explicit outputs. Help writes no files. Build failure preserves the
+previous page; browser-opening failure warns, leaving the printed file available
+to open manually.
 
-The build-free frontend uses an exact-version import map for React 19.3.0,
-ReactDOM 19.3.0, and react-is 19.3.0, with Babel Standalone 8.0.5 compiling the
-module-aware inline JSX. Tailwind uses the exact `@tailwindcss/browser` 4.3.3
-package with CSS-first `@theme` font tokens and an explicit class-based
-dark-mode variant. The exact URLs pin direct top-level package versions, but
-CDN-generated transitive dependencies are not fully locked, runtime CDN
-delivery is not byte-immutable, and the UI still requires network access when
-the assets are not cached. The browser smoke test protects these boundaries
-and the Lucide UMD API.
+Exit codes are 0 for success (including a browser-opening warning after writing),
+1 for a fatal build or destination-safety error, and 2 for a command-line usage
+error.
 
-### Browser support
+An unreadable or malformed existing config is not a build error. A config entry
+that cannot be read or parsed (including a dangling link, a symlink loop or a
+link chain through an inaccessible directory) warns
+`Unable to read config.yaml; using defaults`; an existing non-mapping config
+(including an empty YAML document) warns
+`config.yaml is not a mapping; using defaults`. The warning is printed to stderr
+once per build, the build continues with default preferences (exit 0 when
+nothing else fails), and nothing is created or modified at the config entry or
+its link targets (the runtime home itself still gets its usual `0700` mode).
 
-The automated browser suite runs with current Playwright Chromium and verifies
-the Tailwind resource graph, custom font and dark-mode computed styles,
-persisted theme selection, tax recomputation, and page/console error
-cleanliness.
-Tailwind 4's manual client floors for this browser-delivered UI are Chrome 111,
-Safari 16.4, and Firefox 128. Safari and Firefox are not covered by the
-automated browser test, so browser-specific behavior on those clients requires
-manual verification.
+`--output` rejects destinations that replace the config entry, any entry
+in its symlink chain (including directory links and a symlinked `TAX2_HOME`),
+or its final target, even if missing. Existing entries are compared by file
+identity, so hard links to config or its target are rejected even though
+replacing such a link would leave the protected file's other name intact.
+Distinct existing files on a
+case-sensitive volume remain allowed; when either entry is missing, names use
+NFC normalization and Unicode case folding and parents use identity when both
+exist, otherwise folded physical paths. This rule is conservative on
+case-sensitive volumes: missing `CONFIG.yaml` conflicts with `config.yaml`,
+missing `STRASSE.yaml` conflicts with a protected `Straße.yaml`, and differently
+cased missing parent paths also conflict. These name checks cover missing,
+existing and dangling-link targets. Unrelated outputs still build when config
+has a loop or unreadable chain, with a config warning and defaults.
+Utilities-public source checkouts are rejected, and Git-marked ancestry that
+cannot be classified fails closed. An unrelated output leaf symlink is replaced
+as an entry, without writing through it to its target.
 
-## Web UI
+Rerun after changing rules or config: browser refresh only reloads the snapshot.
+No server restart is involved.
+The page shows its UTC build timestamp; its initial tax year and transaction
+date use the browser's local date when opened.
 
-The UI:
+## Calculator and downloads
 
-- separates monthly earned and unearned income;
-- computes federal tax once on the total income;
-- discovers available states from `rules/states/`;
-- supports one or more independently allocated states;
-- calculates from YAML rules or generated lookup tables;
-- shows total monthly tax alongside net monthly income; and
-- exports the displayed monthly estimates as one QIF bundle.
+Enter monthly earned and unearned income, select a year and filing status,
+and choose one or more independently allocated states. Federal uses full income
+once; state allocations apply to both buckets before computation. Allocations
+need not sum to 100%.
 
-**Net Monthly Income** subtracts the displayed **Total Monthly Tax** from the
-combined monthly earned and unearned income, reconciled to the displayed cents.
-It includes all displayed federal and selected-state estimates. Net can be
-negative; it is not a separate QIF transaction. Results and QIF export are
-unavailable while a changed calculation is pending or has failed, so amounts
-always belong to the current inputs.
+Monthly tax rounds up to cents once per jurisdiction. Total sums those cents,
+and net subtracts them from gross cents; net can be negative. QIF uses the same
+displayed amounts and is disabled for invalid inputs or missing selected-state
+rules.
 
-The selected year defaults to the current year when federal rules exist,
-otherwise to the latest available federal year. A state still needs a rules
-file, or a generated table in table mode, for the selected year. For example,
-Pennsylvania has no 2025 rules and returns a clear error if selected for 2025.
+- `tax_transactions.qif`: federal expense/transfer pair, then selected-state
+  pairs in selection order.
+- `tax2_rate_schedule_YEAR.md`: selected year, both filing statuses, federal
+  and every state with rules for that year.
+- `tax2_lookup_YEAR_STATUS.csv`: selected year/status, income-basis columns
+  for all available jurisdictions, monthly rows 0–500,000 in steps of 50.
 
-State allocations range from 0% to 100% and are independent. GA at 100% and PA
-at 100% is valid; Tax2 does not normalize the values or require them to total
-100%. In rules mode, each state computes tax on its allocated share of earned
-and unearned income. In table mode, the allocation is applied before the
-nearest-income row is selected.
+Reference exports ignore calculator income, state selection and allocations;
+they remain available when selected-state rules are missing. They are downloads,
+never calculator inputs. Read their caveats: component rounding and credits can
+make manual totals approximate.
 
-Generated tables treat all income as unearned. Use rules mode when an
-earned-only component, such as Pennsylvania local EIT, is enabled.
+A single-state Georgia export keeps the transaction text of earlier versions;
+multi-state memos include the state code.
 
-## Generate lookup tables
+## Manual lookup
 
-The CLI uses `requirements.txt` because `typer` is not needed by the web
-launcher:
+For CSV lookup, apply each state's allocation to both monthly income buckets
+first; federal uses unallocated income. Look up combined income in total-income
+columns, earned income in earned-only columns, and unearned income in
+unearned-only columns, then add the applicable columns.
 
-```bash
-uv run --with-requirements requirements.txt cli.py generate-combined --year 2026 --states GA,PA
-```
+The rate schedule uses these seven steps:
 
-`--states` accepts a comma-separated list. Without it, the command uses
-`default_states` from the runtime config. The deprecated `--state` option still
-accepts one state.
+1. Multiply monthly income by 12.
+2. For a state, multiply earned and unearned income by its allocation first.
+   Federal uses unallocated total income.
+3. Use each component's income basis. Subtract its standard deduction,
+   flooring taxable income at 0.
+4. Find the bracket and apply its formula.
+5. For a jurisdiction with credits, subtract them once from the annual tax of
+   its total-income components, flooring at zero (see Credits).
+6. Divide each component's annual tax (or the credited total-income section's)
+   by 12 and round up to the next cent.
+7. Add the results.
 
-For each requested state with rules for the selected year, the command writes:
+The calculator rounds once per jurisdiction. Individually rounded schedule
+components or lookup columns can overstate manual totals by a few cents.
+Credits couple components: lookups subtract them only in the total-income
+column and floor each column at zero, so credited jurisdictions are approximate.
+When no enabled total-income component exists, the rate schedule discloses
+omitted credits, which overestimate tax; the calculator still credits the
+jurisdiction's total.
 
-```text
-tables/federal_YYYY.parquet
-tables/{state}_YYYY.parquet
-tables/combined_YYYY_STATE.csv
-```
+Interpolate linearly between CSV rows, then round up to cents. Within a straight
+segment this is conservative, potentially adding about two cents per column.
+The tax curve bends at deduction thresholds, bracket boundaries
+`(standard deduction + up_to) / 12`, credit phaseouts and caps. Interpolating
+across a bend where the marginal rate drops can underestimate. Use the schedule
+for an exact rules calculation, or use the next row up to avoid underestimating
+between rows: accepted nonnegative rates and valid credits make tax
+nondecreasing. Above 500,000 monthly income, use the schedule. Nearest-row lookup
+without interpolation can differ by $25 × the marginal rate per month per
+column (about $9.25 at 37%); summed errors can be larger.
 
-It also copies the configured `legacy_combined_alias` state's combined CSV to
-`tables/combined_YYYY.csv` when that state was generated. Combined CSVs contain
-`MonthlyIncome`, `FederalMonthlyTax`, and `StateMonthlyTax`. Generated table
-files are ignored by Git.
+Federal treats both income buckets as ordinary income. Qualified-dividend and
+long-term capital-gain rates, NIIT, FICA and self-employment tax are not modelled.
 
-For lower-level table generation from a single rules file or directory:
+## Preferences and rules
 
-```bash
-uv run --with-requirements requirements.txt cli.py tablegen \
-  --rules rules/federal --year 2026 --out tables/federal_2026.parquet
-```
+`~/.tax2/config.yaml` (or `$TAX2_HOME/config.yaml`) holds hand-edited
+`default_states` and nested `qif_overrides`. Tax2 creates defaults only when
+missing and reads existing config without rewriting it. Optional `tax2:`
+browser-storage keys save theme and state selection; a valid saved selection
+wins over config. Browser interactions never write config or rules.
+An existing non-mapping config (including an empty YAML document) warns
+`config.yaml is not a mapping; using defaults`, uses defaults and remains untouched.
 
-## QIF export
-
-Each exported payment bundle contains two federal transactions followed by two
-transactions for every selected state:
-
-1. an expense transaction with a negative amount; and
-2. a transfer transaction with the corresponding positive amount.
-
-The state expense categories and transfer accounts come from the state YAML
-`qif` block, with optional runtime overrides. Federal fields have UI defaults;
-all fields can be edited in the UI. Dates use `MM/DD/YY` on QIF date lines
-and `MM/DD/YYYY` in memos. A single-state Georgia export retains compatibility
-with the previous Tax2/`md-autotax` transaction text; multi-state memos include
-the state code.
-
-## Runtime configuration
-
-The generated YAML config contains preferences only:
-
-```yaml
-default_states:
-  - GA
-legacy_combined_alias: GA
-qif_overrides: {}
-```
-
-Selecting states in the UI updates `default_states`. `legacy_combined_alias`
-controls the state represented by `combined_YYYY.csv`. Optional per-state
-`qif_overrides` are read when populating QIF fields. Tax rates, brackets, and
-local-tax details belong in repository rule files, never in this config.
-
-## Rules model
-
-Legacy federal and Georgia YAML files define top-level
-`standard_deduction` and `brackets`; the loader normalizes them to one component.
-A v2 rules file can instead define a `components` list. Each component supports:
-
-- a generic `name` and optional display `label`;
-- `enabled`;
-- `applies_to` (`earned`, `unearned`, or both);
-- per-filing-status `standard_deduction`; and
-- per-filing-status `brackets`.
-
-Do not combine top-level brackets with `components` in one file. Component names
-are engine identifiers; labels and rates belong in rules data rather than Python
-code. This repository is public, so keep labels generic (for example
-`Local EIT`) and never name a specific municipality, school district, or tax
-district code.
+Add `rules/federal/YEAR.yaml` or `rules/states/STATE/YEAR.yaml`, or supply a
+private `--rules-dir`, then rebuild. Use generic locality labels in this public
+repo. Pennsylvania's earned-only local EIT is disabled by default; set the
+applicable rate before enabling it and rerun.
 
 ## Project layout
 
 ```text
-tax2                  uv-managed FastAPI server and embedded React SPA
-cli.py                Typer table-generation CLI
-taxkit/               rules loader, engine, table generator, QIF, and config
-rules/federal/        federal YAML rules
-rules/states/         state YAML rules organized by state code
-tables/               generated lookup tables (ignored except legacy fixtures)
-tests/                unit, API, CLI, config, and regression tests
-docs/Usage.md         detailed operating guide
+tax2                  uv-managed built-page launcher
+taxkit/               rules normalization, payload, private publication/config
+web/engine.js         browser calculation and export builders
+web/app.js            Preact/htm UI, browser preferences and downloads
+web/vendor/           exact-version assets, provenance and licenses
+rules/                federal and state YAML inputs
+tests/                rules, launcher, parity, config, export and browser tests
+docs/Usage.md         operating guide and tax limitations
 docs/multi_state_design.md
-                      durable multi-state design and invariants
-docs/UI_Design_Reference.html
-                      visual reference for the embedded UI
+                      maintained interfaces and invariants
 ```
 
-## Tests
+## Development validation
 
-Create an isolated development environment and run the complete project suite:
+Use the existing project `.venv`, or create it only if absent. On Homebrew
+macOS (do not recreate an existing environment):
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
+/opt/homebrew/bin/python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m playwright install chromium
 .venv/bin/python -m pytest
 ```
 
-When a launcher header changes, also run the repository-level uv header guard:
+The complete suite includes offline Chromium interaction and all three real
+downloads, parity, bundled expectations, and publication safety. Other browsers
+require manual verification. After launcher-header changes, run from repo root:
 
 ```bash
-uv run --script ../tools/check_uv_headers.py
+uv run --no-python-downloads --script tools/check_uv_headers.py
 ```
 
-## Adding rules
-
-Add a year by creating the corresponding federal and state YAML files. Add a
-state by creating `rules/states/{STATE}/{YEAR}.yaml`; the UI discovers state
-directories automatically. See [docs/Usage.md](docs/Usage.md) for the workflow
-and Pennsylvania-specific limitations.
+For executable changes, also follow the private build, permissions and warmed
+offline acceptance steps in the repository's Tax2 validation matrix.

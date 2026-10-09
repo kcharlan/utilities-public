@@ -1,0 +1,16 @@
+year: 2026
+jurisdiction: XU
+display_name: Synthetic Unearned State
+filing_statuses: [single, married_joint]
+components:
+  - name: synthetic_unearned
+    label: Synthetic unearned component
+    applies_to: [unearned]
+    standard_deduction: {single: 1000, married_joint: 2000}
+    brackets:
+      single: [{up_to: null, rate: 0.02}]
+      married_joint: [{up_to: null, rate: 0.02}]
+credits: []
+qif:
+  state_expense: "Synthetic:Unearned Tax"
+  state_transfer: "[Synthetic Unearned Transfer]"

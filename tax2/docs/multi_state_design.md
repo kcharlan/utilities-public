@@ -1,155 +1,146 @@
 # Multi-State Tax Design
 
-Status: implemented. This document records the durable architecture, behavioral
-invariants, and known limitations of Tax2's multi-state support.
+Status: implemented. Tax2 publishes a schema-1 rules snapshot to an offline
+HTML page; browser JavaScript owns all interaction-dependent arithmetic.
 
 ## Goals and boundaries
 
-Tax2 supports one or more states in a single calculation and QIF export. Federal
-tax is calculated once; every state receives an independent allocation of the
-entered earned and unearned income. New states and tax components should be
-addable through YAML without jurisdiction-specific branches in the engine.
+The page estimates ordinary-income federal and selected-state tax offline.
+Qualified-dividend and long-term capital-gain rates, NIIT, FICA and
+self-employment tax are not modelled. Credits use the one-child placeholder
+and do not implement full dependent eligibility or refunds. Pennsylvania Tax
+Forgiveness, residency timelines, estimated-payment thresholds/due dates,
+county property tax, local services tax and return-of-capital basis tracking
+are omitted; see [Usage](Usage.md#tax-limitations) for rule-specific caveats.
 
-Tax2 intentionally does not automate residency timelines, estimated-payment
-thresholds or due dates, return-of-capital basis, federal preferential rates for
-qualified dividends or long-term capital gains, Pennsylvania Tax Forgiveness,
-county property tax, or local services tax.
+Runtime config contains preferences only, never tax rates or locality rules;
+those belong in YAML rules. Allocations are the caller's independent choice
+and are never normalized to sum to 100%. Bundled federal rules depend on total
+income, regardless of its earned/unearned split. Custom component rules still
+honor each declared income basis through the generic engine.
+
+## Runtime boundary and interfaces
+
+`tax2` validates its output destination before private config access, then
+`taxkit.page.build_payload(rules_root, rules_source=...)` validates every
+numeric-year YAML file and assembles federal years, ordered states with
+per-year rules/QIF metadata, build time, and recognized config preferences.
+`render_page(payload)` escapes embedded JSON and inlines vendored Preact/htm,
+application JavaScript, CSS and licenses. Publication is private and atomic.
+
+There are no HTTP APIs, table-input files, Python interactive tax engine or
+browser config writes. `web/engine.js` exposes `window.Tax2Engine`:
+
+- `computeAnnual(earned, unearned, filingStatus, year, states, rules)` accepts
+  monthly dollar values and selections `{code, allocation_pct}`; returns
+  unrounded `federal_annual` and ordered states containing `annual`.
+- `computeMonthly({earnedCents, unearnedCents, filingStatus, year, states}, rules)`
+  accepts safe integer cents; returns `federal_cents`, state `state_cents`,
+  `total_monthly_cents`, `gross_cents`, `net_cents` and `effective_rate`.
+- `buildQif(result, qifConfig, qifStates, rules)`,
+  `buildRateSchedule(year, rules)` and
+  `buildLookupCsv(year, filingStatus, rules)` return download text.
+
+`web/app.js` owns input editing, DOM, optional browser storage and Blob
+downloads. Year/date defaults use local opening time; payload build time is UTC.
 
 ## Rules schema
 
-The engine consumes a component-only model. `taxkit.rules_loader.load_rules`
-normalizes legacy YAML containing top-level `standard_deduction` and `brackets`
-into one enabled component that applies to earned and unearned income. A file
-that combines top-level brackets with `components` is rejected as ambiguous.
+`taxkit.rules_loader.load_rules` normalizes legacy top-level deduction/brackets
+to one enabled component for both earned and unearned income. Mixing that shape
+with `components` fails. Components contain generic name/label, enabled flag,
+income basis, per-status deductions and brackets.
 
-Each v2 component contains:
+Every numeric-year YAML/YML validates before YAML precedence is applied.
+Both offered statuses, nonempty components, and explicit deductions/nonempty
+brackets per status are required even for disabled components. Income bases
+contain earned, unearned or both without repetition; either order is preserved,
+and omission defaults to both. All normalized numbers are finite; thresholds
+are nonnegative and strictly ascending, with null only last. Bracket rates,
+phaseout rates and non-null refundable caps are nonnegative. Deductions have
+no additional restrictions. Zero-rate/all-disabled rules remain valid.
+Roots require federal rules and at least one state with valid rules.
 
-- a generic `name` and optional display `label`;
-- an `enabled` flag;
-- one or both values in `applies_to`: `earned` and `unearned`;
-- a standard deduction by filing status; and
-- brackets by filing status.
+Federal/Georgia currently normalize legacy files; Pennsylvania 2026 uses
+components for 3.07% state tax and disabled earned-only local EIT. Names are
+identifiers, never jurisdiction-specific engine branches. Generic labels and
+rates stay in YAML; private locality names/codes never enter this public repo.
 
-The engine sums enabled components, then applies jurisdiction-level credits and
-floors the result at zero. Component names are identifiers only: engine, API,
-and QIF behavior must not branch on a component name or state code. Generic
-labels and rates remain YAML data; specific municipality, school-district, and
-tax-district names or codes never enter this public repository.
+## Income, credits and allocations
 
-Federal and Georgia files currently use the normalized legacy shape.
-Pennsylvania 2026 uses components: a 3.07% state-income-tax component for both
-income classes and a disabled earned-only local EIT component.
+Annual arithmetic sums enabled components, applies jurisdiction credits once,
+then floors tax at zero. Federal uses full combined income once. States allocate
+both buckets before component deductions/brackets; full-income tax is never
+prorated. Allocations default to 100%, range 0–100, and remain independent,
+including two states at 100%. Finite UI values clamp; invalid inputs error.
 
-## Income and allocation model
+Credits preserve the one-child placeholder and max semantics: greater of fixed
+amount/per-child amount with zero floor, phaseout reduction with zero floor,
+then refundable cap. These are approximate eligibility/refund semantics.
 
-`TaxInput` stores annual `earned_income` and `unearned_income`; its
-`annual_income` property is their sum. The UI accepts monthly values and
-annualizes them for rules computation.
+Inputs parse as cents. Each jurisdiction's monthly amount rounds up once via
+`ceilCents`; scaled values within `1e-6` of an integer count as exact.
+Total is the sum of jurisdiction cents; net is gross cents minus that sum and
+may be negative. Rates also round upward. See [Usage](Usage.md) for exact input
+grammar, blur behavior, tax omissions and lookup caveats.
 
-Federal tax always uses the full entered income. For each state, rules mode
-multiplies both income buckets by that state's allocation and computes tax on
-the resulting income. This distinction matters for deductions and progressive
-brackets: Tax2 does not compute a full-income state tax and then prorate it.
+## Discovery and missing years
 
-Allocation percentages:
+States are discovered at build time from `rules/states/*/`. Numeric years and
+latest rule display/QIF metadata enter the payload; empty-year directories
+remain selectable metadata but do not satisfy the required valid-state minimum.
+The selector uses federal years. Missing selected-state rules error without
+substituting a year and disable QIF; reference exports remain available.
 
-- range from 0% through 100%;
-- default to 100%;
-- are independent across states; and
-- are never normalized or required to sum to 100%.
+## QIF and reference exports
 
-Thus GA at 100% and PA at 100% deliberately computes full state tax for both.
-The caller is responsible for choosing allocations appropriate to the tax
-situation.
+QIF has one bank header, federal expense/transfer once, then selected-state
+pairs in selection order. It uses displayed cents. Fixed-amount Georgia
+single-state text remains golden-compatible; multi-state memos include codes.
+Dates and zero-expense text retain their established formats.
 
-## State discovery and API
+The Markdown schedule covers selected year/both statuses; CSV covers selected
+year/status with rows 0–500,000 by 50. Both include federal then all states
+available for that year, independent of calculator selections/allocations.
+CSV columns group enabled components by total/earned-only/unearned-only basis.
+Reference exports are never calculator inputs.
 
-`GET /api/states` scans `rules/states/*/`, returning each directory's upper-case
-code, latest rules display name, available years, and QIF defaults. Adding a
-state directory therefore makes the state selectable without a frontend code
-change.
+Manual component/column rounding can overstate totals. Lookup credits attach
+only to total-income groups; absent such a group they are omitted with a
+warning, overestimating tax. Credited lookups remain approximate. Interpolation
+is conservative within straight segments but can underestimate across
+falling-rate bends; next-row-up lookup is conservative under accepted rates/
+credits. Use the schedule above 500,000 or for exact boundary calculations.
 
-`POST /api/compute` accepts monthly earned/unearned income, filing status, year,
-mode, and a non-empty state selection list. State codes and allocation bounds
-are validated. The response contains one federal result, an ordered state result
-list, combined totals, and an effective rate.
+## Config, storage and publication
 
-The UI's year selector is based on federal rule years. Rules mode returns a
-clear error when a selected state has no file for that year; it does not
-silently substitute another state year.
+Missing `~/.tax2/config.yaml` (or `$TAX2_HOME/config.yaml`) is created privately
+with `default_states: [GA]` and `qif_overrides: {}`. Existing config is read-only.
+Override mappings normalize state keys and retain only string `state_expense`
+and `state_transfer`. Malformed parts warn/fall back while valid siblings remain:
+this is the adopted compatibility assumption. Obsolete alias preferences are
+ignored. Corrupt/unreadable config is not overwritten.
 
-## Lookup tables
+A valid saved `tax2:selected-states` selection precedes config defaults, then
+the first discovered state. `tax2:theme` stores theme; unavailable storage is
+nonfatal. QIF defaults use override, YAML then generic fallback, both for later
+initialized states and empty edits. Other calculator/QIF fields are session-only.
 
-Table generation treats the entire income amount as unearned so the output
-remains a one-dimensional income grid. It writes:
+Runtime home is `0700`, new config/page files `0600`; page replacement is
+atomic. Before config reads/writes, the physical-parent-plus-leaf gate protects
+config entries/targets and checks all Git-marked ancestors for verified source
+identity. Source/worktree/nested-source output is rejected; unclassifiable
+Git-marked ancestry fails closed. Git is conditional on markers, so standalone
+unmarked deployment/default home output works without it. Source identity uses
+tracked files, not directory names or hard-coded paths.
 
-```text
-federal_YYYY.parquet
-{state}_YYYY.parquet
-combined_YYYY_STATE.csv
-combined_YYYY.csv
-```
+## Compatibility and verification
 
-Each state-specific combined CSV retains the three-column contract:
-`MonthlyIncome`, `FederalMonthlyTax`, and `StateMonthlyTax`.
-`combined_YYYY.csv` is a compatibility copy for `legacy_combined_alias` when
-that state was part of the generation run.
-
-Table lookup chooses the nearest `MonthlyIncome` row. Federal lookup uses total
-monthly income. State lookup uses allocated total monthly income, but cannot
-distinguish earned from unearned income. Rules mode is authoritative when an
-earned-only component is enabled.
-
-## QIF structure
-
-One QIF bundle has a single `!Type:Bank` header followed by:
-
-1. one federal expense transaction;
-2. one matching federal transfer;
-3. one state expense; and
-4. one matching state transfer for each selected state, in selection order.
-
-Federal appears exactly once. Single-state exports use the legacy generic state
-memo, preserving the established Georgia output. Multi-state exports add the
-state code to state memos. State expense and transfer defaults are stored in
-rules YAML and may be overridden by UI/config data.
-
-## Runtime preferences
-
-`taxkit.config` stores preferences in `~/.tax2/config.yaml`, or
-`$TAX2_HOME/config.yaml`. The default shape is:
-
-```yaml
-default_states:
-  - GA
-legacy_combined_alias: GA
-qif_overrides: {}
-```
-
-Missing config is created with defaults. Corrupt or unreadable config produces
-a warning and in-memory defaults without overwriting the bad file. Runtime
-config never contains tax rates or locality rules.
-
-## Compatibility invariants
-
-- Legacy rules files continue to load through normalization.
-- Federal results depend on total income, not the earned/unearned split.
-- A single-state Georgia QIF remains byte-compatible with the captured golden
-  baseline.
-- State allocations remain independent, including two states at 100%.
-- State-specific combined CSVs retain their three-column schema.
-- Jurisdiction-specific behavior remains in YAML rather than engine branches.
-
-These invariants are covered by the golden, engine-component, rules, QIF, API,
-CLI, and config tests under `tests/`.
-
-## Known data constraints
-
-- Pennsylvania rules exist for 2026 only.
-- Pennsylvania local EIT is disabled by default. Its rate is a placeholder and
-  must be set for the resident locality before enabling it.
-- Georgia 2025 is retained as a historical fixture. Its standard deduction
-  values mirror the federal 2025 values rather than Georgia's 2025 deduction;
-  it remains unchanged to preserve the stored regression baseline.
-- Checked-in rules and generated estimates are inputs to a personal utility,
-  not a substitute for official tax guidance.
+Tests cover legacy normalization, exact annual parity against an independent
+test oracle, bundled rule expectations, fixed-amount Georgia QIF text, independent
+allocations, generic YAML components, intentional zero tax and negative net,
+config/storage fallbacks, publication safety and offline Chromium downloads.
+Bundled rules remain unchanged. Georgia 2025's historical federal-like
+deductions are preserved for its fixture, not corrected silently. Pennsylvania
+has only 2026 rules and its local EIT stays disabled until its placeholder rate
+is deliberately edited and the page rebuilt.

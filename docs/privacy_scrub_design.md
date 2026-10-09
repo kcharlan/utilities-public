@@ -33,7 +33,6 @@ Operational data belongs in user-home runtime configuration:
 
 - `~/.div_conv/config.json`
 - `~/.etf_montecarlo/config.json`
-- `~/.md-autotax/config.json` and its private tax table
 - `~/.hysa-excel/inputs.csv`
 - `~/.config/moneydance-backup-rotation/config`
 

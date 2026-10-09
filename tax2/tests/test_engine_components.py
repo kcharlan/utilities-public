@@ -1,10 +1,9 @@
-from taxkit.engine import compute_tax
+from tests.test_engine_parity import engine_page
 from taxkit.models import (
     Bracket,
     FilingStatus,
     IncomeClass,
     TaxComponent,
-    TaxInput,
     TaxRules,
 )
 
@@ -39,53 +38,37 @@ def _rules(*components: TaxComponent) -> TaxRules:
     )
 
 
-def test_earned_only_component_ignores_unearned_income():
+def compute_tax(page, earned, unearned, rules):
+    return page.evaluate('({earned,unearned,rules}) => Tax2Engine.computeTax({earned_income:earned,unearned_income:unearned},rules,"single")',
+                         dict(earned=earned, unearned=unearned, rules=rules.model_dump(mode='json')))
+
+
+def test_earned_only_component_ignores_unearned_income(engine_page):
     rules = _rules(_flat_component("earned_only", 0.01, [IncomeClass.earned]))
 
     assert (
-        compute_tax(
-            TaxInput(
-                earned_income=0,
-                unearned_income=100000,
-                filing_status=FilingStatus.single,
-            ),
-            rules,
-        )
+        compute_tax(engine_page, 0, 100000, rules)
         == 0
     )
 
 
-def test_two_component_sum_uses_income_classes():
+def test_two_component_sum_uses_income_classes(engine_page):
     rules = _rules(
         _flat_component("all_income", 0.03),
         _flat_component("earned_extra", 0.01, [IncomeClass.earned]),
     )
 
-    tax = compute_tax(
-        TaxInput(
-            earned_income=10000,
-            unearned_income=5000,
-            filing_status=FilingStatus.single,
-        ),
-        rules,
-    )
+    tax = compute_tax(engine_page, 10000, 5000, rules)
 
     assert tax == 550
 
 
-def test_disabled_component_contributes_nothing():
+def test_disabled_component_contributes_nothing(engine_page):
     rules = _rules(
         _flat_component("all_income", 0.03),
         _flat_component("disabled", 0.99, enabled=False),
     )
 
-    tax = compute_tax(
-        TaxInput(
-            earned_income=0,
-            unearned_income=10000,
-            filing_status=FilingStatus.single,
-        ),
-        rules,
-    )
+    tax = compute_tax(engine_page, 0, 10000, rules)
 
     assert tax == 300

@@ -1,8 +1,0 @@
-fastapi
-uvicorn
-pydantic
-pyyaml
-pandas
-python-dateutil
-pyarrow
-typer

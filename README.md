@@ -38,7 +38,7 @@ Interactive JSON viewer and editor that renders any JSON document as a pannable,
 Capable tools that solve specific problems well and see regular use.
 
 ### tax2
-Full rules-driven tax engine that computes federal and state income tax from YAML-defined bracket tables, deductions, and credits. It supports dynamic year selection, precomputed lookup tables for fast queries, consistency cross-checking between rules and tables, and QIF export for direct import into Quicken or Moneydance. The web UI offers multiple operational modes — rules compute, table lookup, cross-check, and QIF export — while a CLI mode handles batch table generation for all supported years.
+Builds a private offline HTML calculator from validated federal and state YAML rules. The browser computes monthly estimates with independent state allocations and downloads QIF payments, a Markdown rate schedule, and a CSV lookup reference. The uv launcher exits after building and opening the page; rerun it after rule or preference edits. See [Tax2](tax2/README.md).
 
 ### docpipe
 Fully local document conversion pipeline that turns PDF, DOCX, PPTX, HTML, and XLSX files into clean Markdown and structured JSON suitable for LLM ingestion or archival. It handles the messy reality of real-world documents — extracting text, tables, speaker notes, and optionally page images — while falling back gracefully when optional backends are unavailable. Python packages are managed through uv (PEP 723); PDF conversion requires Poppler, and Pandoc enables additional fallback paths.
@@ -82,7 +82,6 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `hysa-excel` – Privacy-safe uv launcher that generates a formula-driven HYSA vs CD workbook from local runtime inputs under `~/.hysa-excel/` or explicit private paths.
 - `jtree` – Interactive JSON viewer and editor that renders JSON as a pannable/zoomable node-graph mind map with full CRUD, copy/paste, array reordering, undo/redo, search, and SVG/PNG/JPEG export.
 - `launchmaster` – Local macOS `launchd` control center with a localhost FastAPI backend, embedded React UI, and runtime state/backups under `~/.launchmaster/`.
-- `md-autotax` – Streamlit + CLI tools that use a private local tax table and private QIF label mappings to generate estimated-tax transactions without tracking jurisdiction or account details.
 - `md-json` – Moneydance JSON export to CSV converter with account hierarchy resolution and split transaction handling.
 - `media-dater` – CLI wrapper for `exiftool` that safely renames image and video files by their creation date with collision handling and dry-run support.
 - `mem_snapshots` – Two manual shell commands for capturing macOS memory and process snapshots; scheduling is optional and not included.
@@ -94,7 +93,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `routerview` – Self-hosted OpenRouter analytics dashboard for CSV imports, with calendar-aligned comparisons, cumulative cost tracking, saved views, and full export. Replaces the official OpenRouter Activity page without any live integration setup.
 - `storage_monitor` – Local-first macOS disk-usage and cleanup console. Scans APFS volumes, local snapshots, caches, model stores, and large files, then serves a React dashboard with treemap breakdowns, drill-down directory exploration (with file/folder icons, on-demand scanning, Reveal in Finder, and per-directory Rescan), watchlist-based cleanup actions, and snapshot management.
 - `reversible-skew` – Burrows-Wheeler/Move-to-Front experiment with reversible block-wise compression and passthrough heuristics.
-- `tax2` – Full rules-driven tax engine with FastAPI + React SPA UI, CLI table generation, and QIF export pipelines.
+- `tax2` – Private built-page tax calculator with offline browser computation, QIF payments, and Markdown/CSV reference downloads.
 - `time_machine_snapshot_monitor` – Hourly alert-only macOS monitor for Time Machine local snapshots that remain mounted after backup activity stops, with an explicit safe-repair action, bounded logs, and user-level `launchd` installation.
 - `toggle_wifi` – macOS helper that briefly toggles Wi-Fi when invoked; wake detection or scheduling must be configured separately.
 - `transcription` – Whisper-backed Streamlit console for bulk transcription with meticulous session/lifetime counters and batching helpers.

@@ -251,7 +251,7 @@ done
 Do not treat local-only files as drift. Important examples include:
 
 - Apple Health exports and its project venv.
-- Tax2 generated CSV/Parquet tables and `~/.tax2/config.json`.
+- Tax2 hand-edited `~/.tax2/config.yaml` and private built page `~/.tax2/tax2.html` (or the corresponding `TAX2_HOME` paths).
 - Transcription counters and session backups.
 - Docker databases, exports, logs, extension configuration, API credentials, and Compose `.env` files.
 - Project venvs, caches, and `.DS_Store` files.
@@ -261,7 +261,7 @@ Some project tests use the repository's shared `tools.testkit` helper. A top-lev
 ```bash
 cd "$HOME/tax2"
 PYTHONPATH="$HOME/source/utilities-public" \
-  uv run --with-requirements requirements-dev.txt python -m pytest -q
+  uv run --no-python-downloads --with-requirements requirements-dev.txt python -m pytest -q
 ```
 
 The same pattern applies to `~/mls-tracker`.
