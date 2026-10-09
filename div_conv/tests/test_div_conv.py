@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import dataclasses
+import io
 import json
 import os
 import runpy
@@ -17,6 +18,201 @@ import pytest
 PROJECT = Path(__file__).resolve().parents[1]
 LAUNCHER = PROJECT / "div_conv"
 APP = runpy.run_path(str(LAUNCHER))
+
+
+def compact_source(name, rows):
+    """Prepare conspicuously synthetic transactions without touching files."""
+    source = Path(name)
+    raw = []
+    cooked = []
+    for index, (date, amount, symbol, account, action, mapped_account) in enumerate(rows, 2):
+        common = dict(date=date, amount=Decimal(amount), action=action,
+                      memo="SYNTHETIC MEMO", source_file=name, source_row=index,
+                      symbol=symbol)
+        raw.append(APP["RawTransaction"](account=account, security="SYNTHETIC SOURCE", **common))
+        cooked.append(APP["CookedTransaction"](
+            brokerage="vanguard", account=mapped_account,
+            security="SYNTHETIC MAPPED SECURITY " * 20,
+            category_or_transfer="SYNTHETIC TARGET", **common))
+    parsed = APP["ParsedSource"](tuple(raw), (), ())
+    return source, parsed, cooked, source.with_suffix(".cooked.csv"), source.with_suffix(".qif")
+
+
+def compact_row(date, amount, symbol="SYNTH1", account="SYNTHETIC SOURCE A",
+                action="dividend", mapped="SYNTHETIC ACCOUNT A"):
+    return date, amount, symbol, account, action, mapped
+
+
+def test_compact_report_exact_layout_and_sorted_sample():
+    prepared = [compact_source("synthetic.csv", [
+        compact_row("2031-01-02", "17.25"),
+        compact_row("2030-12-31", "42.50"),
+        compact_row("2030-02-01", "80"),
+        compact_row("2029-12-31", "125"),
+    ])]
+    text, total = APP["render_transaction_report"](prepared)
+    assert text == (
+        "Transactions:\n\nsynthetic.csv — Dividends, oldest first\n"
+        "Date            Amount  Symbol\n"
+        "2029-12-31      125.00  SYNTH1\n"
+        "2030-02-01       80.00  SYNTH1\n"
+        "2030-12-31       42.50  SYNTH1\n"
+        "2031-01-02       17.25  SYNTH1\n"
+        "Total           264.75\n"
+        "Copy/paste sum:\n125.00+80.00+42.50+17.25\n"
+    )
+    assert total == "264.75"
+    assert "MAPPED SECURITY" not in text
+
+
+def test_compact_report_stable_repeats_signed_expression_and_no_mutation():
+    prepared = [compact_source("synthetic.csv", [
+        compact_row("2030-03-01", "10", "SYNTH1"),
+        compact_row("2030-02-01", "-2.5", "SYNTH2"),
+        compact_row("2030-03-01", "0", "SYNTH3"),
+        compact_row("2030-03-01", "10", "SYNTH1"),
+    ])]
+    before = [(entry[1], list(entry[2])) for entry in prepared]
+    text, total = APP["render_transaction_report"](prepared)
+    rows = [line for line in text.splitlines() if line.startswith("2030-")]
+    assert [line.split() for line in rows] == [
+        ["2030-02-01", "-2.50", "SYNTH2"],
+        ["2030-03-01", "10.00", "SYNTH1"],
+        ["2030-03-01", "0.00", "SYNTH3"],
+        ["2030-03-01", "10.00", "SYNTH1"],
+    ]
+    assert "Copy/paste sum:\n-2.50+10.00+0.00+10.00\n" in text
+    assert total == "17.50"
+    assert [(entry[1], entry[2]) for entry in prepared] == before
+
+
+def test_compact_report_invocation_width_includes_batch_total_and_long_symbols():
+    prepared = [compact_source("synthetic-a.csv", [
+        compact_row("2030-01-01", "9999999999.00", "SYNTH" * 40),
+        compact_row("2030-01-02", "-1"), compact_row("2030-01-03", "0"),
+    ]), compact_source("synthetic-b.csv", [compact_row("2030-01-01", "2")])]
+    text, total = APP["render_transaction_report"](prepared)
+    assert total == "10000000000.00"
+    width = len(total)
+    for line in text.splitlines():
+        if line.startswith(("2030-", "Date", "Total")):
+            label, amount = line[:10], line[12:12 + width]
+            assert line[10:12] == "  "
+            assert amount == amount.strip().rjust(width)
+            assert label.strip() in {"2030-01-01", "2030-01-02", "2030-01-03", "Date", "Total"}
+            if not line.startswith("Total"):
+                assert line[12 + width:14 + width] == "  "
+    assert "SYNTH" * 40 in text
+    assert f"{'Total':<10}  {'9999999998.00':>{width}}" in text
+
+
+def test_compact_report_multifile_interleaved_groups_and_account_collisions():
+    prepared = [compact_source("synthetic-first.csv", [
+        compact_row("2030-02-01", "2", account="SYNTHETIC B", mapped="SYNTHETIC SAME"),
+        compact_row("2030-03-01", "3", account="SYNTHETIC A", action="withdrawal", mapped="SYNTHETIC SAME"),
+        compact_row("2030-01-01", "1", account="SYNTHETIC B", mapped="SYNTHETIC SAME"),
+        compact_row("2030-01-02", "4", account="SYNTHETIC A", mapped="SYNTHETIC SAME"),
+    ]), compact_source("synthetic-second.csv", [compact_row("2020-01-01", "5")])]
+    text, total = APP["render_transaction_report"](prepared)
+    assert text.count("synthetic-first.csv") == text.count("synthetic-second.csv") == 1
+    headings = ["SYNTHETIC SAME (source: SYNTHETIC B) — Dividends, oldest first",
+                "SYNTHETIC SAME (source: SYNTHETIC A) — Withdrawals, oldest first",
+                "SYNTHETIC SAME (source: SYNTHETIC A) — Dividends, oldest first"]
+    assert all(heading in text for heading in headings)
+    assert text.index(headings[0]) < text.index(headings[1]) < text.index(headings[2]) < text.index("synthetic-second.csv")
+    assert "Copy/paste sum:\n1.00+2.00\n" in text
+    assert "Copy/paste sum:\n3.00\n" in text
+    assert "Copy/paste sum:\n4.00\n" in text
+    assert total == "15.00"
+    assert "income" not in text.lower() and "net flow" not in text.lower()
+
+
+def test_compact_report_single_account_mixed_actions():
+    text, total = APP["render_transaction_report"]([compact_source("synthetic.csv", [
+        compact_row("2030-01-01", "1", action="withdrawal"),
+        compact_row("2030-01-02", "2"),
+    ])])
+    assert "synthetic.csv\nWithdrawals, oldest first\n" in text
+    assert "\nDividends, oldest first\n" in text
+    assert "SYNTHETIC ACCOUNT" not in text
+    assert total == "3.00"
+
+
+def test_compact_report_empty_and_one_row_missing_or_supplied_symbols():
+    prepared = [compact_source("synthetic-empty.csv", []),
+                compact_source("synthetic-dividend.csv", [compact_row("2030-01-01", "1", "")]),
+                compact_source("synthetic-withdrawal.csv", [compact_row("2030-01-01", "2", "", action="withdrawal")]),
+                compact_source("synthetic-symbol.csv", [compact_row("2030-01-01", "3", "SYNTH9", action="withdrawal")])]
+    text, total = APP["render_transaction_report"](prepared)
+    assert "synthetic-empty.csv\n  none\n" in text
+    empty_section = text.split("synthetic-empty.csv\n", 1)[1].split("synthetic-dividend.csv", 1)[0]
+    assert "Date" not in empty_section and "Total" not in empty_section and "sum" not in empty_section
+    assert "2030-01-01        1.00  -\n" in text
+    assert "2030-01-01        2.00  -\n" in text
+    assert "2030-01-01        3.00  SYNTH9\n" in text
+    assert "Copy/paste sum:\n1.00\n" in text
+    assert total == "6.00"
+    assert APP["render_transaction_report"]([]) == ("Transactions:\n  none\n", "0.00")
+
+
+@pytest.mark.parametrize(("amount", "display", "total"), [(".005", "0.00", "0.00"), (".015", "0.02", "0.04")])
+def test_compact_report_totals_sum_displayed_fractional_cents(amount, display, total):
+    text, result = APP["render_transaction_report"]([compact_source("synthetic.csv", [
+        compact_row("2030-01-01", amount), compact_row("2030-01-02", amount)])])
+    assert result == total
+    assert f"Copy/paste sum:\n{display}+{display}\n" in text
+    assert f"{'Total':<10}  {total:>10}\n" in text
+
+
+@pytest.mark.parametrize("amount", ["1" + "0" * 99, "1" + "0" * 98 + "1"])
+def test_compact_report_accepts_100_integer_digits_without_context_rounding(amount):
+    text, total = APP["render_transaction_report"]([compact_source("synthetic.csv", [compact_row("2030-01-01", amount)])])
+    assert total == amount + ".00"
+    assert f"Copy/paste sum:\n{total}\n" in text
+
+
+@pytest.mark.parametrize("separate_files", [False, True])
+def test_compact_report_rejects_oversized_group_or_batch_totals(separate_files):
+    amount = "9" * 100
+    first = compact_row("2030-01-01", amount)
+    second = compact_row("2030-01-02", amount)
+    prepared = ([compact_source("synthetic-a.csv", [first]), compact_source("synthetic-b.csv", [second])]
+                if separate_files else [compact_source("synthetic-a.csv", [first, second])])
+    location = "batch total amount" if separate_files else "synthetic-a.csv.*total"
+    with pytest.raises(APP["UserError"], match=location + ".*too large"):
+        APP["render_transaction_report"](prepared)
+
+
+def test_compact_report_strict_raw_cooked_cardinality():
+    prepared = [compact_source("synthetic.csv", [compact_row("2030-01-01", "1")])]
+    prepared[0][2].clear()
+    with pytest.raises(ValueError, match="zip"):
+        APP["render_transaction_report"](prepared)
+
+
+def test_compact_report_width_accounts_for_large_group_canceled_in_batch():
+    prepared = [compact_source("synthetic-a.csv", [
+        compact_row("2030-01-01", "9999999999"),
+        compact_row("2030-01-02", "9999999999"),
+    ]), compact_source("synthetic-b.csv", [compact_row("2030-01-01", "-19999999998")])]
+    text, total = APP["render_transaction_report"](prepared)
+    width = len("-19999999998.00")
+    assert total == "0.00"
+    assert f"{'Date':<10}  {'Amount':>{width}}  Symbol\n" in text
+    assert f"{'Total':<10}  {'19999999998.00':>{width}}\n" in text
+    assert f"2030-01-01  {'-19999999998.00':>{width}}  SYNTH1\n" in text
+
+
+def test_compact_report_distinct_accounts_use_mapped_names():
+    prepared = [compact_source("synthetic.csv", [
+        compact_row("2030-01-01", "1"),
+        compact_row("2030-01-01", "2", account="SYNTHETIC SOURCE B", mapped="SYNTHETIC ACCOUNT B"),
+    ])]
+    text, total = APP["render_transaction_report"](prepared)
+    assert "SYNTHETIC ACCOUNT A — Dividends, oldest first\n" in text
+    assert "SYNTHETIC ACCOUNT B — Dividends, oldest first\n" in text
+    assert "SYNTHETIC SOURCE" not in text
+    assert total == "3.00"
 
 VANGUARD_HOLDINGS_HEADERS = [
     "Account Number",
@@ -141,6 +337,346 @@ def write_config(home: Path, brokerages: dict, **extra: object) -> Path:
     payload = {"schema_version": 1, "brokerages": brokerages, **extra}
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def synthetic_fidelity_row(date: str, amount: str, symbol: str = "SYNTH1") -> list[str]:
+    return ["SYNTHETIC ACCOUNT", date, "DIVIDEND RECEIVED", symbol,
+            "SYNTHETIC DESCRIPTION", "2.000", "", "", "", "", amount, ""]
+
+
+def test_cli_compact_chronology_preserves_exact_export_order(tmp_path: Path) -> None:
+    home = tmp_path / "runtime"
+    section = configured_section("SYNTHETIC ACCOUNT", "SYNTH1")
+    section["securities"]["SYNTH2"] = "SYNTHETIC VERY LONG MAPPED SECURITY " * 10
+    write_config(home, {"fidelity": section})
+    source = tmp_path / "synthetic.csv"
+    rows = [synthetic_fidelity_row(date, amount, symbol) for date, amount, symbol in [
+        ("2031-02-01", "4.00", "SYNTH1"),
+        ("2031-01-01", "2.00", "SYNTH2"),
+        ("2031-01-01", "2.00", "SYNTH1"),
+        ("2030-12-31", "1.00", "SYNTH1"),
+    ]]
+    write_csv(source, APP["FIDELITY_HEADERS"], rows)
+    result = run_cli(home, str(source))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "Transactions:\n\nsynthetic.csv — Dividends, oldest first\n"
+        "Date            Amount  Symbol\n"
+        "2030-12-31        1.00  SYNTH1\n"
+        "2031-01-01        2.00  SYNTH2\n"
+        "2031-01-01        2.00  SYNTH1\n"
+        "2031-02-01        4.00  SYNTH1\n"
+        "Total             9.00\nCopy/paste sum:\n1.00+2.00+2.00+4.00\n"
+        f"Wrote {tmp_path / 'synthetic.cooked.csv'}\n"
+        f"Wrote {tmp_path / 'synthetic.qif'}\n"
+        "Converted 1 file(s), 4 transaction(s), total amount 9.00.\n"
+    )
+    expected_rows = [row.copy() for row in rows]
+    for row, date in zip(expected_rows, ["2/1/31", "1/1/31", "1/1/31", "12/31/30"]):
+        row[1], row[5] = date, "2"
+    expected_csv = io.StringIO(newline="")
+    csv.writer(expected_csv).writerows([APP["FIDELITY_HEADERS"], *expected_rows])
+    assert (tmp_path / "synthetic.cooked.csv").read_bytes() == expected_csv.getvalue().encode()
+    expected_qif = "!Type:Invst\n"
+    for date, row in zip(["2/1'31", "1/1'31", "1/1'31", "12/31'30"], rows):
+        expected_qif += (f"D{date}\nNMiscInc\nY{section['securities'][row[3]]}\n"
+                         f"T{row[10]}\nMDividend {row[3]}\nLSynthetic:Dividends\n^\n")
+    assert (tmp_path / "synthetic.qif").read_bytes() == expected_qif.encode()
+
+
+@pytest.mark.parametrize(("amount", "display", "total"), [(".005", "0.00", "0.00"), (".015", "0.02", "0.04")])
+def test_cli_fractional_cents_sum_displayed_rows(tmp_path: Path, amount: str, display: str, total: str) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    source = tmp_path / "synthetic.csv"
+    write_csv(source, APP["FIDELITY_HEADERS"], [synthetic_fidelity_row("2030-01-01", amount)] * 2)
+    result = run_cli(home, str(source))
+    assert result.returncode == 0, result.stderr
+    assert f"Copy/paste sum:\n{display}+{display}\n" in result.stdout
+    assert f"Total       {total:>10}\n" in result.stdout
+    assert result.stdout.endswith(f"total amount {total}.\n")
+    assert (tmp_path / "synthetic.qif").read_text().count(f"T{display}\n") == 2
+
+
+def test_cli_report_failure_precedes_all_artifact_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    source = tmp_path / "synthetic.csv"
+    write_csv(source, APP["FIDELITY_HEADERS"], [synthetic_fidelity_row("2030-01-01", "1.00")])
+    monkeypatch.setenv("DIV_CONV_HOME", str(home))
+    calls = []
+    def report_failure(prepared):
+        raise APP["UserError"]("synthetic report failure")
+    def unexpected(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("artifact work occurred before report validation")
+    globals_ = APP["run"].__globals__
+    monkeypatch.setitem(globals_, "render_transaction_report", report_failure)
+    for name in ("render_cooked_csv", "render_qif", "stage_artifact", "commit_output_transaction"):
+        monkeypatch.setitem(globals_, name, unexpected)
+    assert APP["main"]([str(source)]) == 2
+    captured = capsys.readouterr()
+    assert "synthetic report failure" in captured.err
+    assert captured.out == ""
+    assert calls == []
+    assert not list(tmp_path.glob("*.qif"))
+    assert not list(tmp_path.glob("*.cooked.csv"))
+
+
+def test_cli_commit_failure_emits_no_success_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    source = tmp_path / "synthetic.csv"
+    write_csv(source, APP["FIDELITY_HEADERS"], [synthetic_fidelity_row("2030-01-01", "1.00")])
+    monkeypatch.setenv("DIV_CONV_HOME", str(home))
+    def fail_install(*args):
+        raise OSError("synthetic install failure")
+    monkeypatch.setitem(APP["run"].__globals__, "transaction_link_no_replace", fail_install)
+    assert APP["main"]([str(source)]) == 2
+    captured = capsys.readouterr()
+    assert "synthetic install failure" in captured.err
+    assert captured.out == ""
+    assert not list(tmp_path.glob("*.qif"))
+    assert not list(tmp_path.glob("*.cooked.csv"))
+    assert_no_transaction_temps(tmp_path)
+
+
+def test_cli_accepts_exact_100_digit_amount(tmp_path: Path) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    source = tmp_path / "synthetic.csv"
+    amount = "1" + "0" * 99
+    display = amount + ".00"
+    write_csv(source, APP["FIDELITY_HEADERS"], [synthetic_fidelity_row("2030-01-01", amount)])
+    result = run_cli(home, str(source))
+    assert result.returncode == 0, result.stderr
+    assert f"2030-01-01  {display}  SYNTH1\nTotal       {display}\nCopy/paste sum:\n{display}\n" in result.stdout
+    assert result.stdout.endswith(f"total amount {display}.\n")
+    assert f"T{display}\n" in (tmp_path / "synthetic.qif").read_text()
+
+
+@pytest.mark.parametrize("separate_files", [False, True])
+def test_cli_101_digit_sum_fails_before_staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], separate_files: bool) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    rows = [synthetic_fidelity_row("2030-01-01", "9" * 100)] * 2
+    sources = [tmp_path / "synthetic.csv"]
+    if separate_files:
+        sources.append(tmp_path / "synthetic-second.csv")
+        for source, row in zip(sources, rows):
+            write_csv(source, APP["FIDELITY_HEADERS"], [row])
+    else:
+        write_csv(sources[0], APP["FIDELITY_HEADERS"], rows)
+    monkeypatch.setenv("DIV_CONV_HOME", str(home))
+    def unexpected(*args, **kwargs):
+        raise AssertionError("artifact work occurred before oversized report rejection")
+    for name in ("render_cooked_csv", "render_qif", "stage_artifact", "commit_output_transaction"):
+        monkeypatch.setitem(APP["run"].__globals__, name, unexpected)
+    assert APP["main"]([str(source) for source in sources]) == 2
+    captured = capsys.readouterr()
+    assert "total amount" in captured.err
+    assert "100" in captured.err
+    assert captured.out == ""
+    assert not list(tmp_path.glob("*.qif"))
+    assert not list(tmp_path.glob("*.cooked.csv"))
+    assert_no_transaction_temps(tmp_path)
+
+
+@pytest.mark.parametrize("skipped", [False, True])
+@pytest.mark.parametrize("mixed", [False, True])
+def test_cli_empty_sources_have_no_expression(tmp_path: Path, skipped: bool, mixed: bool) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    source = tmp_path / "synthetic-empty.csv"
+    rows = []
+    if skipped:
+        row = synthetic_fidelity_row("2030-01-01", "1.00")
+        row[2] = "REINVESTMENT"
+        rows.append(row)
+    write_csv(source, APP["FIDELITY_HEADERS"], rows)
+    sources = [source]
+    if mixed:
+        nonempty = tmp_path / "synthetic-filled.csv"
+        write_csv(nonempty, APP["FIDELITY_HEADERS"], [synthetic_fidelity_row("2030-01-01", "1.00")])
+        sources.append(nonempty)
+    result = run_cli(home, *(str(path) for path in sources))
+    assert result.returncode == 0, result.stderr
+    assert "Transactions:\n\nsynthetic-empty.csv\n  none\n" in result.stdout
+    assert result.stdout.count("Copy/paste sum:") == int(mixed)
+    assert result.stdout.endswith(f"Converted {len(sources)} file(s), {int(mixed)} transaction(s), total amount {'1.00' if mixed else '0.00'}.\n")
+    assert (tmp_path / "synthetic-empty.qif").read_bytes() == b""
+    cooked = list(csv.DictReader((tmp_path / "synthetic-empty.cooked.csv").open()))
+    assert len(cooked) == int(skipped)
+    assert ("Skipped action 'REINVESTMENT'" in result.stderr) == skipped
+
+
+@pytest.mark.parametrize(("action", "symbol"), [("Dividend", ""), ("Withdrawal", ""), ("Withdrawal", "SYNTH2")])
+def test_cli_missing_symbol_fallback_and_withdrawal(tmp_path: Path, action: str, symbol: str) -> None:
+    home = tmp_path / "runtime"
+    section = configured_section("SYNTHETIC ACCOUNT", "SYNTHETIC INVESTMENT", brokerage="vanguard")
+    write_config(home, {"vanguard": section})
+    source = tmp_path / "synthetic.csv"
+    values = dict.fromkeys(APP["VANGUARD_HEADERS"], "")
+    values.update({"Account Number": "SYNTHETIC ACCOUNT", "Trade Date": "2030-01-01", "Transaction Type": action,
+                   "Investment Name": "SYNTHETIC INVESTMENT", "Symbol": symbol, "Net Amount": "1.00"})
+    write_csv(source, APP["VANGUARD_HEADERS"], [[values[key] for key in APP["VANGUARD_HEADERS"]]])
+    result = run_cli(home, str(source))
+    assert result.returncode == 0, result.stderr
+    assert f"2030-01-01        1.00  {symbol or '-'}\n" in result.stdout
+    assert f"synthetic.csv — {'Dividends' if action == 'Dividend' else 'Withdrawals'}, oldest first\n" in result.stdout
+    qif = (tmp_path / "synthetic.qif").read_text()
+    assert qif.count("^\n") == 1
+    expected_security = "SYNTHETIC INCOME FUND" if action == "Dividend" else "SYNTHETIC CASH"
+    assert f"Y{expected_security}\n" in qif
+
+
+@pytest.mark.parametrize("symbol", ["SYNTH\nINJECTION", "SYNTH\tINJECTION"])
+def test_cli_control_character_symbol_retains_source_validation(tmp_path: Path, symbol: str) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    source = tmp_path / "synthetic.csv"
+    write_csv(source, APP["FIDELITY_HEADERS"], [synthetic_fidelity_row("2030-01-01", "1.00", symbol)])
+    result = run_cli(home, str(source))
+    assert result.returncode == 2
+    assert "control character" in result.stderr
+    assert f"row {3 if '\n' in symbol else 2} source security" in result.stderr
+    assert result.stdout == ""
+    assert not list(tmp_path.glob("*.qif"))
+    assert not list(tmp_path.glob("*.cooked.csv"))
+
+
+def test_cli_missing_dividend_symbol_still_requires_fallback_mapping(tmp_path: Path) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    source = tmp_path / "synthetic.csv"
+    write_csv(source, APP["FIDELITY_HEADERS"], [synthetic_fidelity_row("2030-01-01", "1.00", "")])
+    result = run_cli(home, str(source))
+    assert result.returncode == 2
+    assert "SYNTHETIC DESCRIPTION" in result.stderr
+    assert "securities" in result.stderr
+    assert result.stdout == ""
+    assert not list(tmp_path.glob("*.qif"))
+    assert not list(tmp_path.glob("*.cooked.csv"))
+
+
+def test_cli_interleaved_account_action_collision_groups(tmp_path: Path) -> None:
+    home = tmp_path / "runtime"
+    section = configured_section("SYNTHETIC ACCOUNT A", "SYNTH1", brokerage="vanguard")
+    section["accounts"]["SYNTHETIC ACCOUNT B"] = "SYNTHETIC CHECKING"
+    write_config(home, {"vanguard": section})
+    source = tmp_path / "synthetic.csv"
+    rows = []
+    for account, action, date, amount in [
+        ("A", "Dividend", "2030-02-01", "2.00"),
+        ("B", "Withdrawal", "2030-01-01", "-3.00"),
+        ("A", "Dividend", "2030-01-01", "1.00"),
+        ("B", "Dividend", "2030-01-01", "4.00"),
+        ("A", "Withdrawal", "2030-01-01", "-5.00"),
+    ]:
+        values = dict.fromkeys(APP["VANGUARD_HEADERS"], "")
+        values.update({"Account Number": f"SYNTHETIC ACCOUNT {account}", "Trade Date": date,
+                       "Transaction Type": action, "Symbol": "SYNTH1", "Net Amount": amount})
+        rows.append([values[key] for key in APP["VANGUARD_HEADERS"]])
+    write_csv(source, APP["VANGUARD_HEADERS"], rows)
+    result = run_cli(home, str(source))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("synthetic.csv\n") == 1
+    for account, label in [("A", "Dividends"), ("B", "Withdrawals"), ("B", "Dividends"), ("A", "Withdrawals")]:
+        assert f"SYNTHETIC CHECKING (source: SYNTHETIC ACCOUNT {account}) — {label}, oldest first\n" in result.stdout
+    assert [result.stdout.split("Copy/paste sum:\n")[i].splitlines()[0] for i in range(1, 5)] == ["1.00+2.00", "3.00", "4.00", "5.00"]
+    assert result.stdout.endswith("5 transaction(s), total amount 15.00.\n")
+    assert (tmp_path / "synthetic.qif").read_text().count("^\n") == 5
+
+
+@pytest.mark.parametrize(
+    ("brokerage", "header_name", "source_symbol", "source_name", "action"),
+    [
+        ("fidelity", "FIDELITY_HEADERS", "SYNTH1", "SYNTHETIC DESCRIPTION", "dividend"),
+        ("fidelity", "FIDELITY_HISTORY_HEADERS", "SYNTH1", "SYNTHETIC DESCRIPTION", "dividend"),
+        ("vanguard", "VANGUARD_HEADERS", "SYNTH1", "SYNTHETIC INVESTMENT", "dividend"),
+        ("fidelity", "FIDELITY_HEADERS", "", "SYNTHETIC DESCRIPTION", "dividend"),
+        ("fidelity", "FIDELITY_HISTORY_HEADERS", "", "SYNTHETIC DESCRIPTION", "dividend"),
+        ("vanguard", "VANGUARD_HEADERS", "", "SYNTHETIC INVESTMENT", "dividend"),
+        ("vanguard", "VANGUARD_HEADERS", "", "", "dividend"),
+        ("vanguard", "VANGUARD_HEADERS", "SYNTH2", "SYNTHETIC INVESTMENT", "withdrawal"),
+    ],
+)
+def test_source_symbol_survives_adapters_and_mapping_without_changing_exports(
+    tmp_path: Path,
+    brokerage: str,
+    header_name: str,
+    source_symbol: str,
+    source_name: str,
+    action: str,
+) -> None:
+    account = "SYNTHETIC SOURCE ACCOUNT"
+    description = "SYNTHETIC TRANSACTION DESCRIPTION"
+    headers = APP[header_name]
+    row = dict.fromkeys(headers, "")
+    row["Symbol"] = f"  {source_symbol}  "
+    if brokerage == "fidelity":
+        row.update({
+            "Run Date": "2030-01-02",
+            "Action": "DIVIDEND RECEIVED",
+            "Description": source_name,
+            "Amount ($)": "1.00",
+            "Quantity": "2.0",
+        })
+        if "Account" in row:
+            row["Account"] = account
+    else:
+        row.update({
+            "Account Number": account,
+            "Trade Date": "2030-01-02",
+            "Transaction Type": "Dividend" if action == "dividend" else "Withdrawal",
+            "Transaction Description": description,
+            "Investment Name": source_name,
+            "Net Amount": "1.00" if action == "dividend" else "-1.00",
+        })
+    source = tmp_path / "synthetic-symbol.csv"
+    source_values = [row[header] for header in headers]
+    write_csv(source, headers, [source_values])
+
+    adapter_row = {**row, "Account": account}
+    extracted = APP["ADAPTERS"][brokerage].extractor(adapter_row)
+    assert extracted.symbol == source_symbol
+
+    lookup = source_symbol or source_name or description
+    section = configured_section(account, lookup, brokerage=brokerage)
+    parsed = APP["read_source"](source, brokerage, source_account=account)
+    raw = parsed.transactions[0]
+    assert raw.symbol == source_symbol
+    assert raw.security == lookup
+    cooked = APP["cook_transactions"](
+        parsed.transactions, brokerage, section, tmp_path / "synthetic-config.json"
+    )
+    item = cooked[0]
+    assert item.symbol == source_symbol
+    assert item.account == "SYNTHETIC CHECKING"
+    expected_security = "SYNTHETIC INCOME FUND" if action == "dividend" else "SYNTHETIC CASH"
+    expected_memo = f"Dividend {lookup}" if action == "dividend" else description
+    assert item.security == expected_security
+    assert item.memo == raw.memo == expected_memo
+    assert APP["render_qif"](cooked) == (
+        "!Type:Invst\nD1/2'30\n"
+        f"N{'MiscInc' if action == 'dividend' else 'XOut'}\n"
+        f"Y{expected_security}\nT1.00\nM{expected_memo}\n"
+        f"L{'Synthetic:Dividends' if action == 'dividend' else '[SYNTHETIC CASH]'}\n^\n"
+    )
+    expected_csv_values = source_values.copy()
+    if brokerage == "fidelity":
+        expected_csv_values[headers.index("Run Date")] = "1/2/30"
+        expected_csv_values[headers.index("Quantity")] = "2"
+    assert list(csv.reader(io.StringIO(APP["render_cooked_csv"](parsed)))) == [
+        headers, expected_csv_values
+    ]
+
+
+@pytest.mark.parametrize("model", ["ExtractedRow", "RawTransaction", "CookedTransaction"])
+def test_transaction_symbol_is_an_optional_trailing_field(model: str) -> None:
+    fields = dataclasses.fields(APP[model])
+    assert fields[-1].name == "symbol"
+    assert fields[-1].default == ""
 
 
 def test_help_does_not_create_runtime_home(tmp_path: Path) -> None:
@@ -465,10 +1001,8 @@ def test_fidelity_history_export_is_detected_and_converted(tmp_path: Path) -> No
     assert "T10.00\nMDividend SYNTH1\nLSynthetic:Dividends\n" in qif
     assert "Skipped action 'REINVESTMENT'" in result.stderr
     assert "1 transaction(s)" in result.stdout
-    assert (
-        "synthetic-fidelity-history.csv: row 4 | 2030-01-02 | dividend | "
-        "SYNTHETIC INCOME FUND | 10.00"
-    ) in result.stdout
+    assert "synthetic-fidelity-history.csv — Dividends, oldest first\n" in result.stdout
+    assert "2030-01-02       10.00  SYNTH1\nTotal            10.00\nCopy/paste sum:\n10.00\n" in result.stdout
 
 
 def test_accountless_fidelity_history_rejects_multiple_configured_accounts(
@@ -559,10 +1093,8 @@ def test_glob_multi_file_conversion_writes_cooked_csv_qif_and_summary(
         assert "!Account" not in qif_text
         assert "NMiscInc\n" in qif_text
         assert "LSynthetic:Dividends\n" in qif_text
-        assert (
-            f"synthetic-{index}.csv: row 2 | 2030-01-0{index + 1} | dividend | "
-            f"SYNTHETIC INCOME FUND | {index}0.00"
-        ) in result.stdout
+        assert f"synthetic-{index}.csv — Dividends, oldest first\n" in result.stdout
+        assert f"2030-01-0{index + 1}       {index}0.00  SYNTH1\nTotal            {index}0.00\nCopy/paste sum:\n{index}0.00\n" in result.stdout
 
 
 def test_unknown_account_fails_before_any_outputs_are_committed(tmp_path: Path) -> None:
@@ -989,10 +1521,8 @@ def test_vanguard_composite_export_selects_embedded_transaction_table(
     assert qif.count("NMiscInc\n") == 1
     assert "SYNTHETIC HOLDING ONLY" not in qif
     assert "SYNTHETIC ACTIVITY ONLY" not in qif
-    assert (
-        "synthetic-vanguard-composite.csv: row 7 | 2030-01-03 | dividend | "
-        "SYNTHETIC INCOME FUND | 40.00"
-    ) in result.stdout
+    assert "synthetic-vanguard-composite.csv — Dividends, oldest first\n" in result.stdout
+    assert "2030-01-03       40.00  SYNTH2\nTotal            40.00\nCopy/paste sum:\n40.00\n" in result.stdout
 
 
 def test_vanguard_composite_export_rejects_multiple_transaction_tables(
@@ -1144,14 +1674,10 @@ def test_vanguard_processes_dividend_and_withdrawal_and_visibly_skips_legacy_row
     assert "Skipped action 'Reinvestment'" in result.stderr
     assert "Skipped action 'Sweep out'" in result.stderr
     assert "3 transaction(s)" in result.stdout
-    assert (
-        "synthetic-vanguard.csv: row 2 | 2030-01-03 | dividend | "
-        "SYNTHETIC INCOME FUND | 40.00"
-    ) in result.stdout
-    assert (
-        "synthetic-vanguard.csv: row 3 | 2030-01-03 | withdrawal | "
-        "SYNTHETIC CASH | 15.00"
-    ) in result.stdout
+    assert "synthetic-vanguard.csv\nDividends, oldest first\n" in result.stdout
+    assert "2030-01-03       40.00  SYNTH2\nTotal            40.00\nCopy/paste sum:\n40.00\n" in result.stdout
+    assert "Withdrawals, oldest first\n" in result.stdout
+    assert "2030-01-03       15.00  SYNTH2\n2030-01-03        5.00  SYNTH2\nTotal            20.00\nCopy/paste sum:\n15.00+5.00\n" in result.stdout
 
 
 def test_vanguard_withdrawal_memo_rejects_qif_record_injection(
