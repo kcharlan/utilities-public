@@ -872,6 +872,13 @@
         <span class="input-wrap"><input id="allocation-bill" data-allocation="bill" type="number" value="0" min="0" max="100" step="1" inputmode="decimal" aria-describedby="allocation-status app-status-message"><span class="suffix">%</span></span>
       </div>
       <div id="allocation-status" class="allocation-status" role="status" aria-live="polite">Allocation totals 100%.</div>
+      <div class="field">
+        <label for="bill-series">T-bill series</label>
+        <select id="bill-series" aria-describedby="app-status-message">
+          <option value="damodaran">Damodaran (default)</option>
+          <option value="dtb3">Daily 3-month T-bill (FRED DTB3)</option>
+        </select>
+      </div>
     </div>
 
     <div class="group">

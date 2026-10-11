@@ -30,6 +30,20 @@ test('parsePair accepts algorithmically invented rows and never executes JS', as
   assert.equal(parsePair(js,csv).rows.length,154);
   assert.throws(() => parsePair(Buffer.concat([js,Buffer.from('process.exit(0);')]),csv), /envelope/);
 });
+test('both legacy and current schemas verify, mixed schemas and legacy candidates fail',async()=>{
+ const {parsePair,retainedInputName}=await api;
+ const current=inventedPair(),legacy=inventedPair({legacy:true});
+ assert.ok(Object.hasOwn(parsePair(current.js,current.csv).rows[0],'tbill_dtb3_tr'));
+ assert.ok(!Object.hasOwn(parsePair(legacy.js,legacy.csv).rows[0],'tbill_dtb3_tr'));
+ assert.throws(()=>parsePair(legacy.js,legacy.csv,{requireCurrentSchema:true}),/tbill_dtb3_tr/);
+ assert.throws(()=>parsePair(current.js,legacy.csv),/CSV/);
+ assert.throws(()=>parsePair(legacy.js,current.csv),/CSV/);
+ for(const [before,after]of [['"tbill_dtb3_tr":null','"tbill_dtb3_tr":0'],['"tbill_dtb3_tr":0.00456789','"tbill_dtb3_tr":null']])
+  assert.throws(()=>parsePair(Buffer.from(current.js.toString().replace(before,after)),current.csv));
+ assert.equal(retainedInputName('fred'),'source.csv');
+ assert.equal(retainedInputName('shiller'),'source.xls');assert.equal(retainedInputName('damodaran'),'source.xls');
+ assert.throws(()=>retainedInputName('invented'),/Unknown/);
+});
 test('parsePair rejects invalid dates, pair divergence, chronology and quality', async () => {
   const { parsePair } = await api; const {js,csv} = inventedPair();
   for (const [before,after] of [['2026-10-01','2026-02-30'],['"year":1872','"year":1873'],

@@ -49,7 +49,7 @@ test('child nonzero exits fail and abort awaits child termination',async t=>{
 test('synthetic suite is a whole-file explicit allowlist and requires both invented compiler modules',()=>{
  const {SYNTHETIC_TESTS,PYTHON_SYNTHETIC}=require('./helpers/runner.cjs');
  for(const mixed of ['dataset','engine','historical','lifestyle','export','sweep-render','browser-smoke'])assert.equal(SYNTHETIC_TESTS.includes(mixed+'.test.js'),false);
- for(const pure of ['admission','app-render','browser-target','charts','config-apply','data-contract','format','privacy','setup-data','stats','strategies','structure','theme','window-render','static-build','static-deploy','dataset-helper','runner-contract','browser-contract'])assert.ok(SYNTHETIC_TESTS.includes(pure+'.test.js'));
+ for(const pure of ['admission','app-render','browser-target','charts','config-apply','data-contract','format','privacy','setup-data','stats','strategies','strategy-baseline','year-end','structure','theme','window-render','static-build','static-deploy','dataset-helper','runner-contract','browser-contract'])assert.ok(SYNTHETIC_TESTS.includes(pure+'.test.js'));
  assert.deepEqual(PYTHON_SYNTHETIC,['test_compile_market_data','test_external_compiler']);
 });
 

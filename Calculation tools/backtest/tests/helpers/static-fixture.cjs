@@ -23,7 +23,7 @@ async function staticFixture(t) {
     const files = [{path:'market-data.csv',sha256:contract.sha256(pair.csv)}, {path:'market-data.js',sha256:contract.sha256(pair.js)}];
     const dataId = contract.fileIdentity(files), sources = [...recipe.recipe.sources].sort((a,b)=>a.id.localeCompare(b.id)).map(source => {
       const sha256 = contract.sha256(sourceSalt + source.id);
-      return {id:source.id,url:source.url,sha256,path:`inputs/${sha256}/source.xls`};
+      return {id:source.id,url:source.url,sha256,path:`inputs/${sha256}/${contract.retainedInputName(source.id)}`};
     });
     const generatedDate = JSON.parse(pair.js.toString().slice('globalThis.MARKET_DATA = '.length, -2)).generated;
     const bundleId = contract.bundleIdentity({dataId,recipeId:recipe.recipeId,sources,generatedDate});

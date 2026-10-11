@@ -16,6 +16,16 @@
       }
     },
     {
+      "id": "fred",
+      "name": "FRED",
+      "url": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DTB3",
+      "pageUrl": "https://fred.stlouisfed.org/series/DTB3",
+      "allowedOrigins": ["https://fred.stlouisfed.org"],
+      "cacheFilename": "DTB3.csv",
+      "format": "CSV",
+      "layout": {"header": ["observation_date", "DTB3"]}
+    },
+    {
       "id": "shiller",
       "name": "Shiller",
       "url": "https://img1.wsimg.com/blobby/go/e5e77e0b-59d1-44d9-ab25-4763ac982e53/downloads/70fec4f5-727f-4e53-b5f1-179af109c5fa/ie_data.xls?ver=1788371540009",
@@ -32,6 +42,7 @@
     "stock_tr": "Before the splice, nominalize Shiller's real total-return index with CPI and use December-to-December ratios; thereafter use Damodaran annual total returns.",
     "bond10_tr": "Before the splice, chain all twelve Shiller monthly gross bond factors; thereafter use Damodaran annual total returns.",
     "tbill_tr": "Unavailable before the splice; thereafter use Damodaran annual bill returns.",
+    "tbill_dtb3_tr": "Unavailable before 1928; Damodaran annual bill returns through 1953; annual arithmetic mean of numeric daily FRED DTB3 percentages divided by 100 from 1954, reconciled with Damodaran through 1981.",
     "cpi_change": "Before the splice, use Shiller December-to-December CPI ratios; thereafter use Damodaran annual CPI changes.",
     "rounding": "Eight decimal places; reconstructed quality before the splice and ok thereafter."
   }

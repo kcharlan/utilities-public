@@ -14,7 +14,7 @@ import unittest
 
 
 class RetainedReproductionTests(unittest.TestCase):
-    def test_selected_bundle_reproduces_exact_pair_from_both_retained_inputs(self):
+    def test_selected_bundle_reproduces_exact_pair_from_all_retained_inputs(self):
         self.assertNotEqual(sys.prefix, sys.base_prefix, "Use the documented external ready venv")
         project = Path(__file__).resolve().parent.parent
         bridge = project / "tests/helpers/retained-reproduction.cjs"
@@ -32,7 +32,8 @@ class RetainedReproductionTests(unittest.TestCase):
             return json.loads(result.stdout)
 
         admitted = verified()
-        self.assertEqual({source["id"] for source in admitted["inputs"]}, {"shiller", "damodaran"})
+        # Current recipe adds a CSV input while legacy bundle reading supports migration.
+        self.assertEqual({source["id"] for source in admitted["inputs"]}, {"shiller", "damodaran", "fred"})
         root = Path(admitted["root"])
         expected = {name: (root / name).read_bytes() for name in admitted["pairHashes"]}
         for name, content in expected.items():
@@ -64,6 +65,7 @@ class RetainedReproductionTests(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, "-B", str(project / "data/compile_market_data.py"),
                  "--shiller", sources["shiller"], "--damodaran", sources["damodaran"],
+                 "--fred", sources["fred"],
                  "--output-dir", str(output), "--end-year", "2025",
                  "--generated-date", admitted["generatedDate"]],
                 cwd=project, env=env, capture_output=True, timeout=300,

@@ -15,6 +15,26 @@ function inventedData() {
 }
 const load = () => import("../tools/check_admission.mjs");
 
+test('admission detects both schemas including pre-splice nulls and whole-file FRED CSV', async () => {
+  const { inspectBlob } = await load();
+  for (const current of [false, true]) {
+    const rows = Array.from({length:20}, (_, i) => ({year:1900+i,stock_tr:.01,bond10_tr:.02,
+      tbill_tr:null,...(current ? {tbill_dtb3_tr:null} : {}),cpi_change:.03,quality:'reconstructed'}));
+    const json = JSON.stringify({rows});
+    const csv = Object.keys(rows[0]).join(',')+'\n'+rows.map(row=>Object.values(row).map(v=>v===null?'':v).join(',')).join('\n');
+    for (const text of [json,csv,`globalThis.MARKET_DATA = ${json};`])
+      assert.match(inspectBlob('innocent.txt',Buffer.from(text)),/dataset/);
+  }
+  const fred = ['observation_date','DTB3'].join(',')+'\n'+Array.from({length:20},(_,i)=>`1954-01-${String(i+1).padStart(2,'0')},${i%3 ? '3' : ''}`).join('\n');
+  assert.ok(inspectBlob('innocent.txt',Buffer.from(fred)));
+  // Raw CSV may quote either cell; renamed copies still must be detected.
+  for(const quoted of [fred.split('\n').map((line,i)=>i===0?line:line.split(',').map(value=>'"'+value+'"').join(',')).join('\n'),
+    fred.split('\n').map((line,i)=>i===0?line:line.split(',').map((value,column)=>column===i%2?'"'+value+'"':value).join(',')).join('\n')])
+    assert.ok(inspectBlob('renamed.csv',Buffer.from(quoted)));
+  assert.equal(inspectBlob('tests/example.js',Buffer.from('// source\n'+fred)),null);
+  for (const name of ['DTB3.csv','DTB3-copy.csv','fredgraph.csv']) assert.ok(inspectBlob(name,Buffer.from('invented')));
+});
+
 test("admission rejects prohibited paths even without observations", async () => {
   const { inspectBlob } = await load();
   for (const name of ["market-data.js", "market-data.csv", "renamed.xls", "renamed.xlsx", "datasets/id/data.json", "exports/example.csv"])
@@ -76,13 +96,15 @@ test("source recipe names only approved HTTPS acquisition and reviewed range", (
   const recipe = JSON.parse(fs.readFileSync(path.join(__dirname, "../data/sources.json"), "utf8"));
   assert.equal(recipe.schemaVersion, 1);
   assert.deepEqual(recipe.output, { firstYear: 1872, lastYear: 2025, spliceYear: 1928, reconciliationLastYear: 2022 });
-  assert.deepEqual(recipe.sources.map(s => s.id), ["damodaran", "shiller"]);
+  // FRED CSV joins the two workbook inputs in the reviewed recipe.
+  assert.deepEqual(recipe.sources.map(s => s.id), ["damodaran", "fred", "shiller"]);
   for (const source of recipe.sources) {
     const url = new URL(source.url);
     assert.equal(url.protocol, "https:");
     assert.ok(source.allowedOrigins.includes(url.origin));
-    assert.equal(source.format, "OLE/XLS");
-    assert.ok(source.requiredSheets.length);
+    assert.equal(source.format, source.id === 'fred' ? 'CSV' : 'OLE/XLS');
+    if(source.id === 'fred')assert.deepEqual(source.layout.header,['observation_date','DTB3']);
+    else assert.ok(source.requiredSheets.length);
   }
   assert.ok(!Object.hasOwn(recipe, "rows"));
 });

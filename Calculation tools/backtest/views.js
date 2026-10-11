@@ -428,6 +428,7 @@
     details.push(`${strategy && typeof strategy.initialAllocation === 'function' ? 'Managed opening mix' : 'Allocation'}: ${allocationLabel}`);
     details.push(`Fee: ${fmtPctConcise(configuration.options.feeRate)}`);
     details.push(`Tax: ${fmtPctConcise(configuration.options.taxRate)}`);
+    if (configuration.options.billSeries === 'dtb3') details.push('T-bills: Daily 3-month T-bill (FRED DTB3)');
     return { title, details: details.join(' · ') };
   }
 
@@ -729,6 +730,7 @@
       byId('starting-balance').value = String(configuration.options.startingBalance);
       byId('fee-rate').value = String(configuration.options.feeRate * 100);
       byId('tax-rate').value = String(configuration.options.taxRate * 100);
+      byId('bill-series').value = configuration.options.billSeries || 'damodaran';
       if (!targetManaged) {
         for (const asset of ['stock', 'bond', 'bill']) {
           const value = String(Number((configuration.options.allocation[asset] * 100).toPrecision(12)));

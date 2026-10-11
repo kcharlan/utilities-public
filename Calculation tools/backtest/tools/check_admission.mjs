@@ -77,7 +77,7 @@ function embeddedDataset(text) {
 
 export function inspectBlob(filename, bytes) {
   const normalized = filename.replaceAll('\\', '/');
-  if (/(?:^|\/)(?:market-data\.(?:js|csv)|[^/]+\.xlsx?)$/i.test(normalized)
+  if (/(?:^|\/)(?:market-data\.(?:js|csv)|(?:DTB3|fredgraph)[^/]*\.csv|[^/]+\.xlsx?)$/i.test(normalized)
     || /(?:^|\/)(?:\.venv|cache|archives|exports|dist|site|builds|datasets|inputs)(?:\/|$)/i.test(normalized))
     return 'prohibited local data/runtime path';
   if (bytes.length > MAX_BLOB_BYTES) return 'oversized unreviewed blob';
@@ -85,6 +85,11 @@ export function inspectBlob(filename, bytes) {
   let text;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
   catch { return 'unreviewed non-UTF-8 binary'; }
+  // Whole-file shape only: source-code literals and comments are not raw CSV.
+  const fredLines=text.replace(/^\uFEFF/,'').trimEnd().split(/\r?\n/);
+  if(/^(?:observation_date|DATE),[^,\r\n]+$/.test(fredLines[0])&&fredLines.length>1&&
+    fredLines.slice(1).every(line=>/^("?)(\d{4}-\d{2}-\d{2})\1,("?)(?:[+-]?(?:\d+(?:\.\d*)?|\.\d+)|\.)?\3$/.test(line)))
+    return 'raw FRED-shaped data copy';
   let parsed;try {parsed=JSON.parse(text);}catch { /* Source text need not be JSON. */ }
   const rows=Array.isArray(parsed)?parsed:parsed?.rows;
   if(Array.isArray(rows)&&rows.filter(observation).length>=16 || csvDataset(text) || embeddedDataset(text))return 'dataset-shaped data copy';

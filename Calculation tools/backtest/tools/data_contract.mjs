@@ -42,34 +42,43 @@ export function bundleIdentity({dataId,recipeId,sources,generatedDate}) {
   if (new Set(records.map(record=>record.id)).size !== records.length) fail('Duplicate source identity');
   return sha256(JSON.stringify({schemaVersion:1,dataId,recipeId,sources:records,generatedDate})+'\n');
 }
-const FIELDS = ['year','stock_tr','bond10_tr','tbill_tr','cpi_change','quality'];
-export function parsePair(js,csv) {
+const LEGACY_FIELDS = ['year','stock_tr','bond10_tr','tbill_tr','cpi_change','quality'];
+const FIELDS = ['year','stock_tr','bond10_tr','tbill_tr','tbill_dtb3_tr','cpi_change','quality'];
+export function retainedInputName(sourceId) {
+  if(sourceId==='fred')return 'source.csv';
+  if(sourceId==='damodaran'||sourceId==='shiller')return 'source.xls';
+  fail('Unknown retained input source');
+}
+export function parsePair(js,csv,{requireCurrentSchema=false}={}) {
   const text = new TextDecoder('utf-8',{fatal:true}).decode(js);
   const match = text.match(/^globalThis\.MARKET_DATA = (\{[\s\S]*\});\n$/);
   if (!match) fail('Invalid market-data JSON envelope');
   let payload; try { payload = JSON.parse(match[1]); } catch { fail('Invalid market-data JSON envelope'); }
   keys(payload,['generated','sources','rows']); validDate(payload.generated);
-  keys(payload.sources,FIELDS.slice(1,5));
-  if(Object.keys(payload.sources).join(',')!==FIELDS.slice(1,5).join(','))fail('Invalid source field order');
+  const fields=Object.hasOwn(payload.sources,'tbill_dtb3_tr')?FIELDS:LEGACY_FIELDS;
+  if(requireCurrentSchema&&fields!==FIELDS)fail('Current output requires tbill_dtb3_tr');
+  const returns=fields.slice(1,-1);
+  keys(payload.sources,returns);
+  if(Object.keys(payload.sources).join(',')!==returns.join(','))fail('Invalid source field order');
   if (Object.values(payload.sources).some(value=>typeof value !== 'string' || !value.length || value.length > 1024 || /[\\/]|:\/\//.test(value)))
     fail('Invalid browser source metadata');
   if (!Array.isArray(payload.rows) || payload.rows.length !== 154) fail('Invalid dataset range/count');
   for (const [index,row] of payload.rows.entries()) {
-    keys(row,FIELDS);if(Object.keys(row).join(',')!==FIELDS.join(','))fail('Invalid row field order');
+    keys(row,fields);if(Object.keys(row).join(',')!==fields.join(','))fail('Invalid row field order');
     if (row.year !== 1872+index || row.quality !== (row.year < 1928 ? 'reconstructed' : 'ok')) fail('Invalid year/quality schema');
-    for (const field of FIELDS.slice(1,5)) {
-      if (field === 'tbill_tr' && row.year < 1928) { if (row[field] !== null) fail('Invalid bill coverage'); }
+    for (const field of returns) {
+      if (['tbill_tr','tbill_dtb3_tr'].includes(field) && row.year < 1928) { if (row[field] !== null) fail('Invalid bill coverage'); }
       else if (typeof row[field] !== 'number' || !Number.isFinite(row[field]) || row[field] <= -1) fail('Invalid finite returns');
     }
   }
   const lines = new TextDecoder('utf-8',{fatal:true}).decode(csv).replaceAll('\r\n','\n').split('\n');
-  if (lines.pop() !== '' || lines.shift() !== FIELDS.join(',') || lines.length !== 154) fail('Invalid CSV schema');
+  if (lines.pop() !== '' || lines.shift() !== fields.join(',') || lines.length !== 154) fail('Invalid CSV schema');
   for (const [index,line] of lines.entries()) {
-    const values = line.split(','); if (values.length !== FIELDS.length) fail('Invalid CSV row');
-    for (let field=0;field<FIELDS.length;field++) {
-      const expected=payload.rows[index][FIELDS[field]];
-      if(field!==5&&!(field===3&&values[field]==='')&&!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(values[field]))fail('CSV numeric cells must be decimal');
-      const actual=field===5 ? values[field] : values[field]==='' ? null : Number(values[field]);
+    const values = line.split(','); if (values.length !== fields.length) fail('Invalid CSV row');
+    for (let field=0;field<fields.length;field++) {
+      const name=fields[field],expected=payload.rows[index][name];
+      if(name!=='quality'&&!(name.startsWith('tbill_')&&values[field]==='')&&!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(values[field]))fail('CSV numeric cells must be decimal');
+      const actual=name==='quality' ? values[field] : values[field]==='' ? null : Number(values[field]);
       if (actual!==expected) fail('JS/CSV pair parity failure');
     }
   }
@@ -120,7 +129,7 @@ export async function readRecipe(sourceRoot) {
   const recipe=JSON.parse(bytes.get('data/sources.json'));
   if(recipe.schemaVersion!==1||recipe.output.firstYear!==1872||recipe.output.lastYear!==2025||
     recipe.output.spliceYear!==1928||recipe.output.reconciliationLastYear!==2022||
-    recipe.sources.map(source=>source.id).sort().join(',')!=='damodaran,shiller') fail('Unrecognized reviewed source recipe');
+    recipe.sources.map(source=>source.id).sort().join(',')!=='damodaran,fred,shiller') fail('Unrecognized reviewed source recipe');
   return {recipeId:fileIdentity(files),files,bytes,recipe};
 }
 export async function verifyBundle({dataHome,dataRoot,bundleId=dataRoot&&path.basename(path.resolve(dataRoot)),sourceRoot,repoRoot,requireCurrentRecipe=false}) {
@@ -150,7 +159,7 @@ export async function verifyBundle({dataHome,dataRoot,bundleId=dataRoot&&path.ba
   if(!Array.isArray(provenance.sources)||provenance.sources.length!==approved.length) fail('Invalid provenance sources');
   for(const [index,source] of provenance.sources.entries()) {
     keys(source,['id','url','sha256','path']); const expected=approved[index];
-    if(source.id!==expected.id||source.url!==expected.url||!isHash(source.sha256)||source.path!==`inputs/${source.sha256}/source.xls`) fail('Source provenance mismatch');
+    if(source.id!==expected.id||source.url!==expected.url||!isHash(source.sha256)||source.path!==`inputs/${source.sha256}/${retainedInputName(source.id)}`) fail('Source provenance mismatch');
   }
   if(bundleIdentity(provenance)!==bundleId) fail('Bundle identity mismatch');
   if(requireCurrentRecipe&&(await readRecipe(sourceRoot)).recipeId!==provenance.recipeId) fail('Selected data recipe is stale; run npm run setup:data');
@@ -162,7 +171,7 @@ export async function verifyRetainedInputs({dataHome,provenance,sourceRoot,repoR
   const objects=new Map();
   for(const source of provenance.sources){
     keys(source,['id','url','sha256','path']);
-    if(!isHash(source.sha256)||source.path!==`inputs/${source.sha256}/source.xls`)fail('Invalid retained input reference');
+    if(!isHash(source.sha256)||source.path!==`inputs/${source.sha256}/${retainedInputName(source.id)}`)fail('Invalid retained input reference');
     await guardDirectory(path.join(dataHome,'inputs',source.sha256));
     const bytes=await readOwned(path.join(dataHome,source.path));
     if(sha256(bytes)!==source.sha256)fail('Retained input hash mismatch');objects.set(source.id,bytes);

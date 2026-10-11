@@ -26,6 +26,12 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function (stats) {
   const { needProfile } = stats;
 
+  function failureNote(row) {
+    return row.settlement === 'yearEnd'
+      ? 'Portfolio depleted after returns were applied'
+      : 'Portfolio depleted before returns were applied';
+  }
+
   function serializeCsv(rows) {
     if (!Array.isArray(rows)) throw new TypeError('CSV rows must be an array.');
     if (!rows.length) return '';
@@ -67,7 +73,7 @@
       total_balance_nominal: row?.endTotal ?? null,
       total_balance_real: row?.endTotalReal ?? null,
       notes: row
-        ? [row.failed ? 'Portfolio depleted before returns were applied' : '', row.notes || ''].filter(Boolean).join(' · ')
+        ? [row.failed ? failureNote(row) : '', row.notes || ''].filter(Boolean).join(' · ')
         : 'unfunded',
       status: row ? (row.failed ? 'failed' : 'completed') : 'unfunded',
       quality: row?.quality || '',
@@ -160,6 +166,7 @@
 
   return Object.freeze({
     serializeCsv,
+    failureNote,
     windowExportRows,
     sweepCurveExportRows,
     heatmapExportRows,

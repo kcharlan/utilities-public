@@ -26,6 +26,7 @@ const {
 
 const {
   windowExportRows, sweepCurveExportRows, heatmapExportRows, createCsvDownloader,
+  failureNote,
 } = globalThis.MarketAtlasCsv;
 
 /*
@@ -137,7 +138,6 @@ const HUMAN_LABELS = Object.freeze({
   bill: 'Treasury bills',
 });
 
-const RETURN_COLUMNS = Object.freeze({ stock: 'stock_tr', bond: 'bond10_tr', bill: 'tbill_tr' });
 
 function byId(id) { return document.getElementById(id); }
 function finiteNumber(value) {
@@ -368,6 +368,7 @@ function updateAllocationMode() {
       allocation: validAllocationOrFallback(manual),
       feeRate: finiteNumber(byId('fee-rate').value) / 100,
       taxRate: finiteNumber(byId('tax-rate').value) / 100,
+      billSeries: byId('bill-series').value,
       horizon: finiteNumber(byId('horizon').value),
     },
   );
@@ -385,6 +386,7 @@ function readOptions() {
     allocation: readAllocation(),
     feeRate: finiteNumber(byId('fee-rate').value) / 100,
     taxRate: finiteNumber(byId('tax-rate').value) / 100,
+    billSeries: byId('bill-series').value,
     display: AppState.display,
     horizon: finiteNumber(byId('horizon').value),
     startYear: finiteNumber(byId('start-year').value),
@@ -465,7 +467,7 @@ function validateSharedInputs() {
 }
 
 function firstUsableYearForAsset(asset) {
-  const column = RETURN_COLUMNS[asset];
+  const column = globalThis.BacktestEngine.returnColumns(byId('bill-series').value)[asset];
   if (!column || !globalThis.MARKET_DATA || !Array.isArray(globalThis.MARKET_DATA.rows)) return null;
   const match = globalThis.MARKET_DATA.rows
     .filter((row) => row && Number.isFinite(row.year) && Number.isFinite(row[column]) && row[column] >= -1)
@@ -513,7 +515,7 @@ function updateYearRange() {
     strategy,
     readParams(),
     globalThis.MARKET_DATA.rows,
-    { allocation: readAllocation() },
+    { allocation: readAllocation(), billSeries: byId('bill-series').value },
   );
   AppState.yearRange = range;
   populateStartYears(range);
@@ -764,7 +766,7 @@ function renderWindowTable(rows, display, spending, needDollars) {
     appendLedgerCell(tr, fmtMoney(displayBalance(row.endTotal, row, display)), row.failed ? 'delta-neg' : '');
     const notes = normalizeNotes(row.notes);
     if (floorFlags[index]) notes.unshift('floor');
-    if (row.failed) notes.unshift('Portfolio depleted before returns were applied');
+    if (row.failed) notes.unshift(failureNote(row));
     appendLedgerCell(tr, notes.length ? notes.join(' · ') : '—', 'notes-cell');
     body.append(tr);
   }
@@ -814,6 +816,7 @@ function renderWindowMode(snapshot, { signal }) {
       allocation: snapshot.options.allocation,
       feeRate: snapshot.options.feeRate,
       taxRate: snapshot.options.taxRate,
+      billSeries: snapshot.options.billSeries,
       horizon: snapshot.options.horizon,
     };
     result = globalThis.BacktestEngine.simulate(sequence, strategy, snapshot.params, engineOptions);
@@ -855,6 +858,7 @@ function configurationOptions(options) {
     allocation: { ...options.allocation },
     feeRate: options.feeRate,
     taxRate: options.taxRate,
+    billSeries: options.billSeries,
   };
 }
 
@@ -1903,9 +1907,10 @@ function renderMethodFootnote() {
   title.id = 'method-footnote-title';
   title.textContent = 'Method note. ';
   method.append(title, document.createTextNode(
-    `Historical windows overlap and are not independent. With about ${observationCount} annual observations, the record contains only roughly ${independentThirtyYearPeriods} non-overlapping 30-year periods; failures cluster around the mid-1960s cohort. Reported percentages are historical frequencies, not probabilities. Pre-1928 observations use the Cowles splice derived from monthly-average prices, which slightly dampens volatility relative to the modern series. No T-bill observations exist before 1928, so bill-funded strategies begin in 1928. All asset figures are total returns with dividends and coupons reinvested. Taxes use one flat effective-rate gross-up on withdrawals. Lifestyle values always use real, after-tax retirement-start dollars, regardless of the Real/Nominal display toggle. Any failure gives a zero spending floor, including a partial withdrawal in the final year. Guyton–Klinger's portfolio management rule is omitted. Its heatmap spending paths can differ by horizon because the capital-preservation cutoff depends on years remaining. Adaptive maximum-safe-rate values are approximate at the displayed 0.1 percentage-point discovery resolution; progress is reported while they are calculated.`,
+    `Historical windows overlap and are not independent. With about ${observationCount} annual observations, the record contains only roughly ${independentThirtyYearPeriods} non-overlapping 30-year periods; failures cluster around the mid-1960s cohort. Reported percentages are historical frequencies, not probabilities. Pre-1928 observations use the Cowles splice derived from monthly-average prices, which slightly dampens volatility relative to the modern series. No T-bill observations exist before 1928, so bill-funded strategies begin in 1928. Stock and bond figures are total returns with dividends and coupons reinvested. Taxes use one flat effective-rate gross-up on withdrawals. Lifestyle values always use real, after-tax retirement-start dollars, regardless of the Real/Nominal display toggle. Any failure gives a zero spending floor, including a partial withdrawal in the final year. Guyton–Klinger's portfolio management rule is omitted. Its heatmap spending paths can differ by horizon because the capital-preservation cutoff depends on years remaining. Adaptive maximum-safe-rate values are approximate at the displayed 0.1 percentage-point discovery resolution; progress is reported while they are calculated.`,
   ));
   const provenance = document.createElement('p');
+  method.append(document.createTextNode(' The daily 3-month T-bill (FRED DTB3) option uses annual mean discount-basis rates from 1954, spliced with Damodaran through 1953; neither bill series compounds within the year.'));
   provenance.className = 'footnote-sources';
   const provenanceTitle = document.createElement('strong');
   provenanceTitle.textContent = 'Data lineage. ';
@@ -1970,6 +1975,7 @@ function initialize() {
     for (const id of ['starting-balance', 'fee-rate', 'tax-rate']) {
       byId(id).addEventListener('input', scheduleRecalculate);
     }
+    byId('bill-series').addEventListener('change', scheduleRecalculate);
     byId('horizon').addEventListener('input', () => {
       setSharedHorizon(byId('horizon').value);
       scheduleRecalculate();
